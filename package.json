@@ -1,0 +1,6 @@
+{
+  "name": "pimote",
+  "private": true,
+  "type": "module",
+  "workspaces": ["shared", "server", "client"]
+}
