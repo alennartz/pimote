@@ -1,6 +1,9 @@
 import http from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { PimoteConfig } from './config.js';
+import type { PimoteSessionManager } from './session-manager.js';
+import type { FolderIndex } from './folder-index.js';
+import { WsHandler } from './ws-handler.js';
 
 export interface PimoteServer {
   httpServer: http.Server;
@@ -9,7 +12,11 @@ export interface PimoteServer {
   close(): Promise<void>;
 }
 
-export function createServer(config: PimoteConfig): PimoteServer {
+export function createServer(
+  config: PimoteConfig,
+  sessionManager: PimoteSessionManager,
+  folderIndex: FolderIndex,
+): PimoteServer {
   const httpServer = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -36,12 +43,17 @@ export function createServer(config: PimoteConfig): PimoteServer {
   wss.on('connection', (ws: WebSocket) => {
     console.log('[pimote] WebSocket client connected');
 
+    const handler = new WsHandler(sessionManager, folderIndex, ws);
+
     ws.on('message', (data) => {
-      console.log('[pimote] WebSocket message received:', data.toString().slice(0, 200));
+      handler.handleMessage(data.toString()).catch((err) => {
+        console.error('[pimote] Unhandled error in message handler:', err);
+      });
     });
 
     ws.on('close', () => {
       console.log('[pimote] WebSocket client disconnected');
+      handler.cleanup();
     });
   });
 
