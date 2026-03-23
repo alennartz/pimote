@@ -49,8 +49,11 @@
 		loading = true;
 		try {
 			const res = await connection.send({ type: 'get_available_models' });
-			if (res.success && Array.isArray(res.data)) {
-				models = res.data as AvailableModel[];
+			if (res.success && res.data) {
+				const arr = (res.data as any).models;
+				if (Array.isArray(arr)) {
+					models = arr as AvailableModel[];
+				}
 			}
 		} catch {
 			// ignore — models stay empty

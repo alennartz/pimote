@@ -33,8 +33,8 @@ async function serveStatic(
   const urlPath = req.url === '/' ? '/index.html' : req.url!.split('?')[0];
   const filePath = join(CLIENT_DIR, urlPath);
 
-  // Prevent directory traversal
-  if (!filePath.startsWith(CLIENT_DIR)) {
+  // Prevent directory traversal — ensure path is within CLIENT_DIR
+  if (!filePath.startsWith(CLIENT_DIR + '/') && filePath !== CLIENT_DIR) {
     return false;
   }
 

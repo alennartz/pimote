@@ -27,12 +27,12 @@ class SessionStore {
         // Request initial state and message history
         connection.send({ type: 'get_state', sessionId: event.sessionId }).then((res) => {
           if (res.success && res.data) {
-            this.applyState(res.data as SessionState);
+            this.applyState((res.data as any).state as SessionState);
           }
         });
         connection.send({ type: 'get_messages', sessionId: event.sessionId }).then((res) => {
           if (res.success && res.data) {
-            this.messages = res.data as PimoteAgentMessage[];
+            this.messages = (res.data as any).messages as PimoteAgentMessage[];
           }
         });
         break;

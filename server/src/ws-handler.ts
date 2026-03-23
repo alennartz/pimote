@@ -114,6 +114,12 @@ export class WsHandler {
             break;
           }
 
+          // Resolve any pending extension UI responses before closing
+          for (const [reqId, pending] of this.pendingUiResponses) {
+            pending.resolve(undefined);
+          }
+          this.pendingUiResponses.clear();
+
           await this.sessionManager.closeSession(sessionId);
 
           if (this.activeSessionId === sessionId) {
