@@ -1,4 +1,5 @@
 import { Marked } from 'marked';
+import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/core';
 
 // Register common languages
@@ -68,7 +69,8 @@ function escapeHtml(text: string): string {
 
 export function renderMarkdown(text: string): string {
 	try {
-		return marked.parse(text) as string;
+		const raw = marked.parse(text) as string;
+		return DOMPurify.sanitize(raw);
 	} catch {
 		return `<pre>${escapeHtml(text)}</pre>`;
 	}

@@ -16,21 +16,27 @@
 	const levels = ['off', 'minimal', 'low', 'medium', 'high'] as const;
 
 	let selectedLevel = $state(sessionStore.thinkingLevel);
+	let mounted = $state(false);
 
 	// Keep local selection in sync with store
 	$effect(() => {
 		selectedLevel = sessionStore.thinkingLevel;
 	});
 
-	// Send command when local selection changes from store value
+	// Send command when local selection changes from store value (skip on mount)
 	$effect(() => {
-		if (selectedLevel !== sessionStore.thinkingLevel && sessionStore.sessionId) {
+		if (mounted && selectedLevel !== sessionStore.thinkingLevel && sessionStore.sessionId) {
 			connection.send({
 				type: 'set_thinking_level',
 				sessionId: sessionStore.sessionId,
 				level: selectedLevel,
 			});
 		}
+	});
+
+	// Mark as mounted after first effects have run
+	$effect(() => {
+		mounted = true;
 	});
 
 	function labelFor(level: string): string {
