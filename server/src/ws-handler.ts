@@ -7,10 +7,14 @@ import type {
   PimoteAgentMessage,
   PimoteMessageContent,
   SessionState,
+  BufferedEventsEvent,
+  ConnectionRestoredEvent,
+  FullResyncEvent,
 } from '@pimote/shared';
 import type { PimoteSessionManager, ManagedSession } from './session-manager.js';
 import type { FolderIndex } from './folder-index.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
+import { killExternalPiProcesses } from './takeover.js';
 
 export class WsHandler {
   private readonly pendingUiResponses = new Map<string, { resolve: (value: any) => void }>();
@@ -126,12 +130,113 @@ export class WsHandler {
         }
 
         case 'reconnect': {
-          this.sendResponse(id, false, undefined, 'Reconnect not yet implemented');
+          const managed = this.sessionManager.getSession(command.sessionId);
+          if (!managed) {
+            this.sendResponse(id, false, undefined, 'session_expired');
+            break;
+          }
+
+          const replayResult = managed.eventBuffer.replay(command.lastCursor);
+
+          if (replayResult !== null) {
+            // Incremental replay — send buffered events then connection_restored
+            const bufferedEventsEvent: BufferedEventsEvent = {
+              type: 'buffered_events',
+              sessionId: command.sessionId,
+              events: replayResult,
+            };
+            this.sendEvent(bufferedEventsEvent);
+
+            const connectionRestoredEvent: ConnectionRestoredEvent = {
+              type: 'connection_restored',
+              sessionId: command.sessionId,
+            };
+            this.sendEvent(connectionRestoredEvent);
+          } else {
+            // Cursor too old — full resync required
+            const session = managed.session;
+            const model = session.model;
+            const state: SessionState = {
+              model: model
+                ? { provider: model.provider, id: model.id, name: model.name }
+                : null,
+              thinkingLevel: session.thinkingLevel,
+              isStreaming: session.isStreaming,
+              isCompacting: session.isCompacting,
+              sessionFile: session.sessionFile,
+              sessionId: session.sessionId,
+              sessionName: session.sessionName,
+              autoCompactionEnabled: session.autoCompactionEnabled,
+              messageCount: session.messages.length,
+            };
+
+            const messages = mapAgentMessages(session.messages);
+
+            const fullResyncEvent: FullResyncEvent = {
+              type: 'full_resync',
+              sessionId: command.sessionId,
+              state,
+              messages,
+            };
+            this.sendEvent(fullResyncEvent);
+          }
+
+          // Re-attach WebSocket to session
+          managed.connectedClient = this.ws;
+          managed.lastActivity = Date.now();
+          this.activeSessionId = command.sessionId;
+
+          this.sendResponse(id, true);
           break;
         }
 
         case 'takeover_folder': {
-          this.sendResponse(id, false, undefined, 'Takeover not yet implemented');
+          const killedCount = await killExternalPiProcesses(command.folderPath);
+
+          // Now open a session for that folder (same logic as open_session)
+          const takeoverSendLive = (event: PimoteSessionEvent): void => {
+            this.sendEvent(event);
+          };
+
+          const takeoverSessionId = await this.sessionManager.openSession(
+            command.folderPath,
+            undefined,
+            takeoverSendLive,
+          );
+
+          const takeoverManaged = this.sessionManager.getSession(takeoverSessionId)!;
+          takeoverManaged.connectedClient = this.ws;
+          this.activeSessionId = takeoverSessionId;
+
+          // Bind extension UI bridge
+          const takeoverWaitForResponse = (requestId: string): Promise<any> => {
+            return new Promise<any>((resolve) => {
+              this.pendingUiResponses.set(requestId, { resolve });
+            });
+          };
+
+          const takeoverSendToClient = (event: PimoteEvent): void => {
+            if (event.type === 'extension_ui_request' && !event.sessionId) {
+              (event as any).sessionId = takeoverSessionId;
+            }
+            this.sendEvent(event);
+          };
+
+          const takeoverUiContext = createExtensionUIBridge(takeoverSendToClient, takeoverWaitForResponse);
+          await takeoverManaged.session.bindExtensions({ uiContext: takeoverUiContext });
+
+          // Send session_opened event
+          this.sendEvent({
+            type: 'session_opened',
+            sessionId: takeoverSessionId,
+            folder: {
+              path: takeoverManaged.folderPath,
+              name: takeoverManaged.folderPath.split('/').pop() ?? takeoverManaged.folderPath,
+              hasActiveSessions: true,
+            },
+          });
+
+          this.sendResponse(id, true, { sessionId: takeoverSessionId, killedProcesses: killedCount });
           break;
         }
 
