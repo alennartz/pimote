@@ -3,6 +3,8 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 	import FolderList from '$lib/components/FolderList.svelte';
+	import ExtensionDialog from '$lib/components/ExtensionDialog.svelte';
+	import ExtensionStatus from '$lib/components/ExtensionStatus.svelte';
 	import Menu from '@lucide/svelte/icons/menu';
 	import X from '@lucide/svelte/icons/x';
 	import { connection } from '$lib/stores/connection.svelte.js';
@@ -86,5 +88,11 @@
 		<main class="flex-1 overflow-auto">
 			{@render children()}
 		</main>
+
+		<!-- Extension status bar & widgets -->
+		<ExtensionStatus />
 	</div>
+
+	<!-- Extension UI dialogs (global overlay) -->
+	<ExtensionDialog />
 </div>
