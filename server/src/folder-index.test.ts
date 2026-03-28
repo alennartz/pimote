@@ -26,7 +26,8 @@ describe('FolderIndex.scan()', () => {
     expect(folders[0]).toEqual({
       path: projectDir,
       name: 'my-project',
-      hasActiveSessions: false,
+      activeSessionCount: 0,
+      activeStatus: null,
     });
   });
 

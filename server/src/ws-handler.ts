@@ -45,9 +45,11 @@ export class WsHandler {
           // Enrich with active session info
           const activeSessions = this.sessionManager.getAllSessions();
           for (const folder of folders) {
-            folder.hasActiveSessions = activeSessions.some(
+            const folderSessions = activeSessions.filter(
               (s) => s.folderPath === folder.path,
             );
+            folder.activeSessionCount = folderSessions.length;
+            folder.activeStatus = folderSessions.length > 0 ? 'idle' : null;
           }
           this.sendResponse(id, true, { folders });
           break;
@@ -99,7 +101,8 @@ export class WsHandler {
             folder: {
               path: managed.folderPath,
               name: managed.folderPath.split('/').pop() ?? managed.folderPath,
-              hasActiveSessions: true,
+              activeSessionCount: 1,
+              activeStatus: 'idle',
             },
           });
 
@@ -238,7 +241,8 @@ export class WsHandler {
             folder: {
               path: takeoverManaged.folderPath,
               name: takeoverManaged.folderPath.split('/').pop() ?? takeoverManaged.folderPath,
-              hasActiveSessions: true,
+              activeSessionCount: 1,
+              activeStatus: 'idle',
             },
           });
 

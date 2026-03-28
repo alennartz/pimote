@@ -11,7 +11,8 @@
 export interface FolderInfo {
   path: string;
   name: string;
-  hasActiveSessions: boolean;
+  activeSessionCount: number;
+  activeStatus: 'working' | 'idle' | 'attention' | null;
 }
 
 export interface SessionInfo {
@@ -181,6 +182,26 @@ export interface ReconnectCommand extends CommandBase {
   lastCursor: number;
 }
 
+export interface ViewSessionCommand extends CommandBase {
+  type: 'view_session';
+  sessionId: string;
+}
+
+// -- Push notification commands --
+
+export interface RegisterPushCommand extends CommandBase {
+  type: 'register_push';
+  subscription: {
+    endpoint: string;
+    keys: { p256dh: string; auth: string };
+  };
+}
+
+export interface UnregisterPushCommand extends CommandBase {
+  type: 'unregister_push';
+  endpoint: string;
+}
+
 // -- Extension UI commands --
 
 export interface ExtensionUiResponseCommand extends CommandBase {
@@ -219,6 +240,10 @@ export type PimoteCommand =
   | CloseSessionCommand
   | TakeoverFolderCommand
   | ReconnectCommand
+  | ViewSessionCommand
+  // Push notifications
+  | RegisterPushCommand
+  | UnregisterPushCommand
   // Extension UI
   | ExtensionUiResponseCommand;
 
@@ -348,6 +373,14 @@ export type PimoteSessionEvent =
   | AutoRetryEndEvent
   | ExtensionErrorEvent;
 
+// -- Session status events --
+
+export interface SessionStatusChangedEvent {
+  type: 'session_status_changed';
+  sessionId: string;
+  status: 'idle' | 'working';
+}
+
 // -- Extension UI request events --
 
 export interface ExtensionUiRequestEvent {
@@ -395,6 +428,8 @@ export interface FullResyncEvent {
 export type PimoteEvent =
   // Session events
   | PimoteSessionEvent
+  // Session status
+  | SessionStatusChangedEvent
   // Extension UI
   | ExtensionUiRequestEvent
   // Server-level

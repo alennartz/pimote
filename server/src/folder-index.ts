@@ -44,7 +44,8 @@ export class FolderIndex {
         folders.push({
           path: fullPath,
           name: basename(fullPath),
-          hasActiveSessions: false, // Will be enriched by session pool later
+          activeSessionCount: 0, // Will be enriched by session pool later
+          activeStatus: null,
         });
       }
     }

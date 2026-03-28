@@ -91,7 +91,7 @@
 							{folder.name}
 						</div>
 					</div>
-					{#if folder.hasActiveSessions}
+					{#if folder.activeSessionCount > 0}
 						<span class="size-2 shrink-0 rounded-full bg-status-connected"></span>
 					{/if}
 				</button>
