@@ -20,6 +20,7 @@ export interface ManagedSession {
   eventBuffer: EventBuffer;
   connectedClient: WebSocket | null;
   lastActivity: number; // Date.now()
+  status: 'idle' | 'working';
   unsubscribe: () => void;
 }
 
@@ -38,6 +39,7 @@ export class PimoteSessionManager {
     folderPath: string,
     sessionPath?: string,
     sendLive?: (event: PimoteSessionEvent) => void,
+    onStatusChange?: (sessionId: string, status: 'idle' | 'working') => void,
   ): Promise<string> {
     const sessionId = crypto.randomUUID();
 
@@ -56,10 +58,6 @@ export class PimoteSessionManager {
 
     const eventBuffer = new EventBuffer(this.config.bufferSize);
 
-    const unsubscribe = session.subscribe((event) => {
-      eventBuffer.onEvent(event, sessionId, sendLive ?? (() => {}));
-    });
-
     const managed: ManagedSession = {
       id: sessionId,
       session,
@@ -68,8 +66,22 @@ export class PimoteSessionManager {
       eventBuffer,
       connectedClient: null,
       lastActivity: Date.now(),
-      unsubscribe,
+      status: 'idle',
+      unsubscribe: () => {},
     };
+
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === 'agent_start' && managed.status !== 'working') {
+        managed.status = 'working';
+        onStatusChange?.(sessionId, 'working');
+      } else if (event.type === 'agent_end' && managed.status !== 'idle') {
+        managed.status = 'idle';
+        onStatusChange?.(sessionId, 'idle');
+      }
+      eventBuffer.onEvent(event, sessionId, sendLive ?? (() => {}));
+    });
+
+    managed.unsubscribe = unsubscribe;
 
     this.sessions.set(sessionId, managed);
     return sessionId;
