@@ -17,6 +17,7 @@ export interface PerSessionState {
   messageCount: number;
   status: 'idle' | 'working';
   needsAttention: boolean;
+  conflictingProcesses: Array<{ pid: number; command: string }>;
 }
 
 export class SessionRegistry {
@@ -40,4 +41,7 @@ export class SessionRegistry {
 
   /** Switch viewed session, clears needsAttention for target */
   switchTo(sessionId: string): void { throw new Error('Not implemented'); }
+
+  /** Clear conflicting processes for a session (after user dismisses or kills them) */
+  clearConflict(sessionId: string): void { throw new Error('Not implemented'); }
 }

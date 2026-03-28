@@ -202,6 +202,14 @@ export interface UnregisterPushCommand extends CommandBase {
   endpoint: string;
 }
 
+// -- Session conflict commands --
+
+export interface KillConflictingProcessesCommand extends CommandBase {
+  type: 'kill_conflicting_processes';
+  sessionId: string;
+  pids: number[];
+}
+
 // -- Extension UI commands --
 
 export interface ExtensionUiResponseCommand extends CommandBase {
@@ -244,6 +252,8 @@ export type PimoteCommand =
   // Push notifications
   | RegisterPushCommand
   | UnregisterPushCommand
+  // Session conflict
+  | KillConflictingProcessesCommand
   // Extension UI
   | ExtensionUiResponseCommand;
 
@@ -373,12 +383,12 @@ export type PimoteSessionEvent =
   | AutoRetryEndEvent
   | ExtensionErrorEvent;
 
-// -- Session status events --
+// -- Session conflict events --
 
-export interface SessionStatusChangedEvent {
-  type: 'session_status_changed';
+export interface SessionConflictEvent {
+  type: 'session_conflict';
   sessionId: string;
-  status: 'idle' | 'working';
+  processes: Array<{ pid: number; command: string }>;
 }
 
 // -- Extension UI request events --
@@ -428,10 +438,10 @@ export interface FullResyncEvent {
 export type PimoteEvent =
   // Session events
   | PimoteSessionEvent
-  // Session status
-  | SessionStatusChangedEvent
   // Extension UI
   | ExtensionUiRequestEvent
+  // Session conflict
+  | SessionConflictEvent
   // Server-level
   | SessionOpenedEvent
   | SessionClosedEvent

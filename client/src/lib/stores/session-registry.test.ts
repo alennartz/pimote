@@ -45,6 +45,7 @@ describe('SessionRegistry', () => {
       expect(session!.activeToolCalls.size).toBe(0);
       expect(session!.autoCompactionEnabled).toBe(false);
       expect(session!.messageCount).toBe(0);
+      expect(session!.conflictingProcesses).toEqual([]);
     });
 
     it('addSession() with folderPath extracts projectName correctly', () => {
@@ -331,32 +332,12 @@ describe('SessionRegistry', () => {
       });
       const session = registry.sessions.get('s1')!;
       expect(session.isStreaming).toBe(false);
+      expect(session.status).toBe('idle');
       expect(session.model).toEqual({ provider: 'anthropic', id: 'claude-4', name: 'Claude 4' });
       expect(session.thinkingLevel).toBe('high');
       expect(session.autoCompactionEnabled).toBe(true);
       expect(session.messageCount).toBe(2);
       expect(session.messages).toEqual(messages);
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // Event Routing — Status Changes
-  // --------------------------------------------------------------------------
-  describe('Event Routing — Status Changes', () => {
-    it('session_status_changed updates session status field', () => {
-      registry.addSession('s1', '/path', 'proj');
-      registry.handleEvent({
-        type: 'session_status_changed',
-        sessionId: 's1',
-        status: 'working',
-      });
-      expect(registry.sessions.get('s1')!.status).toBe('working');
-      registry.handleEvent({
-        type: 'session_status_changed',
-        sessionId: 's1',
-        status: 'idle',
-      });
-      expect(registry.sessions.get('s1')!.status).toBe('idle');
     });
   });
 
@@ -416,6 +397,70 @@ describe('SessionRegistry', () => {
       registry.handleEvent(makeSessionEvent('message_end', 's1', { message: msg1 }));
       registry.handleEvent(makeSessionEvent('message_end', 's1', { message: msg2 }));
       expect(registry.sessions.get('s1')!.firstMessage).toBe('First question');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Session Conflict
+  // --------------------------------------------------------------------------
+  describe('Session Conflict', () => {
+    it('session_conflict event populates conflictingProcesses on the target session', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent({
+        type: 'session_conflict',
+        sessionId: 's1',
+        processes: [
+          { pid: 1234, command: 'node /usr/bin/pi' },
+          { pid: 5678, command: 'node pi-coding-agent' },
+        ],
+      });
+      const session = registry.sessions.get('s1')!;
+      expect(session.conflictingProcesses).toHaveLength(2);
+      expect(session.conflictingProcesses[0].pid).toBe(1234);
+      expect(session.conflictingProcesses[1].pid).toBe(5678);
+    });
+
+    it('session_conflict event for unknown sessionId is ignored', () => {
+      expect(() =>
+        registry.handleEvent({
+          type: 'session_conflict',
+          sessionId: 'unknown',
+          processes: [{ pid: 99, command: 'pi' }],
+        }),
+      ).not.toThrow();
+    });
+
+    it('clearConflict() resets conflictingProcesses to empty', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent({
+        type: 'session_conflict',
+        sessionId: 's1',
+        processes: [{ pid: 1234, command: 'pi' }],
+      });
+      expect(registry.sessions.get('s1')!.conflictingProcesses).toHaveLength(1);
+      registry.clearConflict('s1');
+      expect(registry.sessions.get('s1')!.conflictingProcesses).toEqual([]);
+    });
+
+    it('clearConflict() for unknown sessionId does not throw', () => {
+      expect(() => registry.clearConflict('nonexistent')).not.toThrow();
+    });
+
+    it('subsequent session_conflict events replace previous conflicts', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent({
+        type: 'session_conflict',
+        sessionId: 's1',
+        processes: [{ pid: 1111, command: 'pi' }],
+      });
+      registry.handleEvent({
+        type: 'session_conflict',
+        sessionId: 's1',
+        processes: [{ pid: 2222, command: 'pi' }, { pid: 3333, command: 'pi' }],
+      });
+      const session = registry.sessions.get('s1')!;
+      expect(session.conflictingProcesses).toHaveLength(2);
+      expect(session.conflictingProcesses[0].pid).toBe(2222);
     });
   });
 });

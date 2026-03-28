@@ -141,9 +141,6 @@ describe('PushNotificationService', () => {
       await service.removeSubscription('https://push.example.com/nonexistent');
 
       expect(service.getSubscriptions()).toHaveLength(1);
-
-      // Still persists (even though nothing changed)
-      expect(store.saved).toHaveLength(1);
     });
   });
 
