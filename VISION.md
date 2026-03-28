@@ -8,11 +8,11 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 
 ## What
 
-**Pimote Server** — A Node.js process manager that:
+**Pimote Server** — A Node.js process that:
 - Indexes project folders and pi sessions on your machine
-- Spawns and manages `pi --mode rpc` instances on demand
-- Brokers WebSocket connections between clients and pi
-- Buffers events for seamless reconnect after network drops
+- Embeds AgentSession instances directly via the pi SDK
+- Brokers WebSocket connections between clients and sessions
+- Buffers coalesced events for seamless reconnect after network drops
 - Handles session takeover by killing existing pi processes per folder
 
 **Pimote Client** — A Svelte 5 PWA that:
@@ -26,15 +26,15 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 ## Architecture
 
 ```
-Phone/Browser ←→ Cloudflare Tunnel ←→ Pimote Server ←→ pi --mode rpc
+Phone/Browser ←→ Cloudflare Tunnel ←→ Pimote Server
                                            ↕
-                                     Process Manager
+                                     AgentSession (pi SDK)
                                      Event Buffer
-                                     Session Index
+                                     Folder Index
 ```
 
 Internet access via Cloudflare tunnel. Auth via API key/token.
 
 ## Status
 
-Early development. See [docs/brainstorms/pimote.md](docs/brainstorms/pimote.md) for the full brainstorm including decisions, trade-offs, and open questions.
+Early development (v1 implemented).
