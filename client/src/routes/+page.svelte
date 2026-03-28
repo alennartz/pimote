@@ -4,6 +4,7 @@
 	import InputBar from '$lib/components/InputBar.svelte';
 	import StatusBar from '$lib/components/StatusBar.svelte';
 	import ActiveSessionBar from '$lib/components/ActiveSessionBar.svelte';
+	import NotificationBanner from '$lib/components/NotificationBanner.svelte';
 	import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 	import { connection } from '$lib/stores/connection.svelte.js';
 
@@ -47,7 +48,9 @@
 	</div>
 {:else}
 	<!-- Landing / folder browser -->
-	<div class="flex h-full flex-col items-center justify-center p-8">
+	<div class="flex h-full flex-col">
+		<NotificationBanner />
+		<div class="flex flex-1 flex-col items-center justify-center p-8">
 		<h1 class="mb-2 text-2xl font-bold text-foreground">Pimote</h1>
 		<p class="mb-8 text-sm text-muted-foreground">Select a folder and session from the sidebar to get started.</p>
 
@@ -57,5 +60,6 @@
 		</div>
 
 		<ActiveSessionBar />
+		</div>
 	</div>
 {/if}

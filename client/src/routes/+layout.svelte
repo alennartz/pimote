@@ -8,6 +8,7 @@
 	import Menu from '@lucide/svelte/icons/menu';
 	import X from '@lucide/svelte/icons/x';
 	import { connection } from '$lib/stores/connection.svelte.js';
+	import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 	import { onMount } from 'svelte';
 
 	let { children } = $props();
@@ -27,8 +28,13 @@
 		if ('serviceWorker' in navigator) {
 			navigator.serviceWorker.addEventListener('message', (event) => {
 				if (event.data?.type === 'push_notification') {
-					// Could trigger a toast notification or update session bar
-					console.log('[pimote] Push notification received:', event.data);
+					const sid = event.data.sessionId;
+					if (sid) {
+						const session = sessionRegistry.sessions.get(sid);
+						if (session) {
+							session.needsAttention = true;
+						}
+					}
 				}
 			});
 		}

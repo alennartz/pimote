@@ -13,27 +13,27 @@ connection.onEvent((event) => {
       sessionRegistry.addSession(event.sessionId, folder?.path ?? '', projectName);
       connection.addSubscribedSession(event.sessionId);
       sessionRegistry.switchTo(event.sessionId);
-      // Request initial state and messages
-      connection.send({ type: 'get_state', sessionId: event.sessionId }).then((res) => {
-        if (res.success && res.data) {
-          const state = (res.data as any).state;
-          // Apply state to the session in registry
-          sessionRegistry.handleEvent({
-            type: 'full_resync',
-            sessionId: event.sessionId,
-            state,
-            messages: [], // Messages fetched separately
-          });
+      // Request initial state and messages atomically to avoid race conditions
+      Promise.all([
+        connection.send({ type: 'get_state', sessionId: event.sessionId }),
+        connection.send({ type: 'get_messages', sessionId: event.sessionId }),
+      ]).then(([stateRes, msgRes]) => {
+        const session = sessionRegistry.sessions.get(event.sessionId);
+        if (!session) return;
+        if (stateRes.success && stateRes.data) {
+          const state = (stateRes.data as any).state;
+          session.model = state.model;
+          session.thinkingLevel = state.thinkingLevel;
+          session.isStreaming = state.isStreaming;
+          session.isCompacting = state.isCompacting;
+          session.autoCompactionEnabled = state.autoCompactionEnabled;
+          session.messageCount = state.messageCount;
+          session.status = state.isStreaming ? 'working' : 'idle';
         }
-      });
-      connection.send({ type: 'get_messages', sessionId: event.sessionId }).then((res) => {
-        if (res.success && res.data) {
-          const messages = (res.data as any).messages;
-          const session = sessionRegistry.sessions.get(event.sessionId);
-          if (session) {
-            session.messages = messages;
-            session.messageCount = messages.length;
-          }
+        if (msgRes.success && msgRes.data) {
+          const messages = (msgRes.data as any).messages;
+          session.messages = messages;
+          session.messageCount = messages.length;
         }
       });
       break;

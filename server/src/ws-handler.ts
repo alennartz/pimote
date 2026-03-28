@@ -18,7 +18,7 @@ import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js'
 import type { PushNotificationService } from './push-notification.js';
 
 export class WsHandler {
-  private readonly pendingUiResponses = new Map<string, { resolve: (value: any) => void }>();
+  private readonly pendingUiResponses = new Map<string, { resolve: (value: any) => void; sessionId: string }>();
   private subscribedSessions = new Set<string>();
   private viewedSessionId: string | null = null;
 
@@ -58,6 +58,8 @@ export class WsHandler {
             folder.activeSessionCount = folderSessions.length;
             if (folderSessions.some(s => s.status === 'working')) {
               folder.activeStatus = 'working';
+            } else if (folderSessions.some(s => s.needsAttention)) {
+              folder.activeStatus = 'attention';
             } else if (folderSessions.length > 0) {
               folder.activeStatus = 'idle';
             } else {
@@ -79,18 +81,7 @@ export class WsHandler {
             this.sendEvent(event);
           };
 
-          const onStatusChange = (sid: string, status: 'idle' | 'working') => {
-            if (status === 'idle') {
-              if (this.viewedSessionId !== sid) {
-                const managed = this.sessionManager.getSession(sid);
-                this.pushNotificationService.notifySessionIdle({
-                  projectName: managed?.folderPath.split('/').pop() ?? 'Unknown',
-                  firstMessage: undefined,
-                  sessionId: sid,
-                }).catch(err => console.error('[WsHandler] Push notification error:', err));
-              }
-            }
-          };
+          const onStatusChange = this.createStatusChangeCallback();
 
           const sessionId = await this.sessionManager.openSession(
             command.folderPath,
@@ -107,7 +98,7 @@ export class WsHandler {
           // Bind extension UI bridge
           const waitForResponse = (requestId: string): Promise<any> => {
             return new Promise<any>((resolve) => {
-              this.pendingUiResponses.set(requestId, { resolve });
+              this.pendingUiResponses.set(requestId, { resolve, sessionId });
             });
           };
 
@@ -155,11 +146,13 @@ export class WsHandler {
             break;
           }
 
-          // Resolve any pending extension UI responses before closing
-          for (const [, pending] of this.pendingUiResponses) {
-            pending.resolve(undefined);
+          // Resolve only pending extension UI responses for the closed session
+          for (const [key, pending] of this.pendingUiResponses) {
+            if (pending.sessionId === closeSessionId) {
+              pending.resolve(undefined);
+              this.pendingUiResponses.delete(key);
+            }
           }
-          this.pendingUiResponses.clear();
 
           await this.sessionManager.closeSession(closeSessionId);
 
@@ -229,9 +222,11 @@ export class WsHandler {
             this.sendEvent(fullResyncEvent);
           }
 
-          // Re-attach WebSocket to session
+          // Re-attach WebSocket and update mutable callbacks to use this WsHandler
           managed.connectedClient = this.ws;
           managed.lastActivity = Date.now();
+          managed.sendLive = (event: PimoteSessionEvent) => { this.sendEvent(event); };
+          managed.onStatusChange = this.createStatusChangeCallback();
           this.subscribedSessions.add(command.sessionId);
           this.viewedSessionId = command.sessionId;
 
@@ -257,18 +252,7 @@ export class WsHandler {
             this.sendEvent(event);
           };
 
-          const takeoverOnStatusChange = (sid: string, status: 'idle' | 'working') => {
-            if (status === 'idle') {
-              if (this.viewedSessionId !== sid) {
-                const managed = this.sessionManager.getSession(sid);
-                this.pushNotificationService.notifySessionIdle({
-                  projectName: managed?.folderPath.split('/').pop() ?? 'Unknown',
-                  firstMessage: undefined,
-                  sessionId: sid,
-                }).catch(err => console.error('[WsHandler] Push notification error:', err));
-              }
-            }
-          };
+          const takeoverOnStatusChange = this.createStatusChangeCallback();
 
           const takeoverSessionId = await this.sessionManager.openSession(
             command.folderPath,
@@ -285,7 +269,7 @@ export class WsHandler {
           // Bind extension UI bridge
           const takeoverWaitForResponse = (requestId: string): Promise<any> => {
             return new Promise<any>((resolve) => {
-              this.pendingUiResponses.set(requestId, { resolve });
+              this.pendingUiResponses.set(requestId, { resolve, sessionId: takeoverSessionId });
             });
           };
 
@@ -337,6 +321,10 @@ export class WsHandler {
         // ---- Multi-session & push commands ----
         case 'view_session': {
           this.viewedSessionId = command.sessionId;
+          const viewedManaged = this.sessionManager.getSession(command.sessionId);
+          if (viewedManaged) {
+            viewedManaged.needsAttention = false;
+          }
           this.sendResponse(id, true);
           break;
         }
@@ -359,7 +347,7 @@ export class WsHandler {
             this.sendResponse(id, false, undefined, `Session not found: ${command.sessionId}`);
             break;
           }
-          const killedProcessCount = await killExternalPiProcesses(killManaged.folderPath);
+          const killedProcessCount = await killExternalPiProcesses(killManaged.folderPath, command.pids);
           this.sendResponse(id, true, { killedCount: killedProcessCount });
           break;
         }
@@ -555,6 +543,45 @@ export class WsHandler {
         break;
       }
     }
+  }
+
+  /**
+   * Create a status change callback that uses this WsHandler's current state.
+   * Stored on ManagedSession so it can be replaced on reconnect.
+   */
+  private createStatusChangeCallback(): (sid: string, status: 'idle' | 'working') => void {
+    return (sid: string, status: 'idle' | 'working') => {
+      if (status === 'idle') {
+        const managed = this.sessionManager.getSession(sid);
+        if (managed && this.viewedSessionId !== sid) {
+          managed.needsAttention = true;
+          const firstMessage = this.extractFirstMessage(managed);
+          this.pushNotificationService.notifySessionIdle({
+            projectName: managed.folderPath.split('/').pop() ?? 'Unknown',
+            firstMessage,
+            sessionId: sid,
+          }).catch(err => console.error('[WsHandler] Push notification error:', err));
+        }
+      }
+    };
+  }
+
+  /**
+   * Extract the first user message's text from a session for push notification context.
+   */
+  private extractFirstMessage(managed: ManagedSession): string | undefined {
+    const messages = managed.session.messages ?? [];
+    for (const msg of messages) {
+      if ((msg as any).role !== 'user') continue;
+      const content = (msg as any).content;
+      if (typeof content === 'string') return content.slice(0, 100);
+      if (Array.isArray(content)) {
+        const textItem = content.find((c: any) => c.type === 'text');
+        if (textItem?.text) return textItem.text.slice(0, 100);
+      }
+      break;
+    }
+    return undefined;
   }
 
   private sendResponse(id: string, success: boolean, data?: unknown, error?: string): void {

@@ -21,6 +21,9 @@ export interface ManagedSession {
   connectedClient: WebSocket | null;
   lastActivity: number; // Date.now()
   status: 'idle' | 'working';
+  needsAttention: boolean;
+  sendLive: (event: PimoteSessionEvent) => void;
+  onStatusChange: ((sessionId: string, status: 'idle' | 'working') => void) | null;
   unsubscribe: () => void;
 }
 
@@ -67,18 +70,21 @@ export class PimoteSessionManager {
       connectedClient: null,
       lastActivity: Date.now(),
       status: 'idle',
+      needsAttention: false,
+      sendLive: sendLive ?? (() => {}),
+      onStatusChange: onStatusChange ?? null,
       unsubscribe: () => {},
     };
 
     const unsubscribe = session.subscribe((event) => {
       if (event.type === 'agent_start' && managed.status !== 'working') {
         managed.status = 'working';
-        onStatusChange?.(sessionId, 'working');
+        managed.onStatusChange?.(sessionId, 'working');
       } else if (event.type === 'agent_end' && managed.status !== 'idle') {
         managed.status = 'idle';
-        onStatusChange?.(sessionId, 'idle');
+        managed.onStatusChange?.(sessionId, 'idle');
       }
-      eventBuffer.onEvent(event, sessionId, sendLive ?? (() => {}));
+      eventBuffer.onEvent(event, sessionId, (e) => managed.sendLive(e));
     });
 
     managed.unsubscribe = unsubscribe;

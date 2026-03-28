@@ -72,8 +72,8 @@ export class PushNotificationService {
         if (result.statusCode === 410) {
           expiredEndpoints.push(sub.endpoint);
         }
-      } catch (_err) {
-        // Log and continue to next subscription
+      } catch (err) {
+        console.warn('[PushNotificationService] Failed to send notification:', (err as Error).message ?? err);
       }
     }
 

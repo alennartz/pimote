@@ -12,7 +12,7 @@ let nextId = 1;
 
 class ConnectionStore {
   status: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' = $state('disconnected');
-  lastCursor: number = $state(0);
+  private sessionCursors: Map<string, number> = new Map();
   subscribedSessions: Set<string> = $state(new Set());
 
   private ws: WebSocket | null = null;
@@ -35,12 +35,12 @@ class ConnectionStore {
       this.status = 'connected';
       this.reconnectDelay = 1000;
 
-      // Reconnect all subscribed sessions
+      // Reconnect all subscribed sessions with per-session cursors
       for (const sessionId of this.subscribedSessions) {
         this.send({
           type: 'reconnect',
           sessionId,
-          lastCursor: this.lastCursor,
+          lastCursor: this.sessionCursors.get(sessionId) ?? 0,
         });
       }
     };
@@ -67,9 +67,9 @@ class ConnectionStore {
       // Event
       const event = msg as PimoteEvent;
 
-      // Track cursor
-      if ('cursor' in event && typeof event.cursor === 'number') {
-        this.lastCursor = event.cursor;
+      // Track per-session cursor
+      if ('cursor' in event && typeof event.cursor === 'number' && 'sessionId' in event && typeof event.sessionId === 'string') {
+        this.sessionCursors.set(event.sessionId, event.cursor);
       }
 
       // Notify listeners
@@ -121,6 +121,7 @@ class ConnectionStore {
     const next = new Set(this.subscribedSessions);
     next.delete(id);
     this.subscribedSessions = next;
+    this.sessionCursors.delete(id);
   }
 
   send(command: PimoteCommand): Promise<PimoteResponse> {

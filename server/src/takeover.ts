@@ -77,8 +77,11 @@ function isPiProcess(cmdline: string): boolean {
  * Sends SIGTERM, waits 1 second, then SIGKILL if needed.
  * Returns the number of processes killed.
  */
-export async function killExternalPiProcesses(folderPath: string): Promise<number> {
-  const pids = await findExternalPiProcesses(folderPath);
+export async function killExternalPiProcesses(folderPath: string, targetPids?: number[]): Promise<number> {
+  let pids = await findExternalPiProcesses(folderPath);
+  if (targetPids && targetPids.length > 0) {
+    pids = pids.filter(pid => targetPids.includes(pid));
+  }
   if (pids.length === 0) return 0;
 
   let killed = 0;
