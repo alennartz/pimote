@@ -175,6 +175,3 @@ class SessionStore {
 }
 
 export const sessionStore = new SessionStore();
-
-// Subscribe to events at module load time so all events are captured from the start
-connection.onEvent((event) => sessionStore.handleEvent(event));

@@ -13,7 +13,7 @@
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Check from '@lucide/svelte/icons/check';
 	import Loader2 from '@lucide/svelte/icons/loader-2';
-	import { sessionStore } from '$lib/stores/session.svelte.js';
+	import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 	import { connection } from '$lib/stores/connection.svelte.js';
 
 	interface AvailableModel {
@@ -63,10 +63,10 @@
 	}
 
 	async function selectModel(model: AvailableModel) {
-		if (!sessionStore.sessionId) return;
+		if (!sessionRegistry.viewed?.sessionId) return;
 		await connection.send({
 			type: 'set_model',
-			sessionId: sessionStore.sessionId,
+			sessionId: sessionRegistry.viewed.sessionId,
 			provider: model.provider,
 			modelId: model.id,
 		});
@@ -75,8 +75,8 @@
 
 	function isSelected(model: AvailableModel): boolean {
 		return (
-			sessionStore.model?.provider === model.provider &&
-			sessionStore.model?.id === model.id
+			sessionRegistry.viewed?.model?.provider === model.provider &&
+			sessionRegistry.viewed?.model?.id === model.id
 		);
 	}
 </script>
@@ -88,12 +88,12 @@
 				variant="ghost"
 				size="xs"
 				class="gap-1 text-muted-foreground max-w-48 truncate"
-				title={sessionStore.model
-					? `${sessionStore.model.provider}/${sessionStore.model.name}`
+				title={sessionRegistry.viewed?.model
+					? `${sessionRegistry.viewed.model.provider}/${sessionRegistry.viewed.model.name}`
 					: 'No model selected'}
 			>
 				<span class="truncate text-xs">
-					{sessionStore.model?.name ?? 'No model'}
+					{sessionRegistry.viewed?.model?.name ?? 'No model'}
 				</span>
 				<ChevronDown class="size-3 shrink-0" />
 			</Button>

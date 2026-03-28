@@ -89,13 +89,20 @@ export function createServer(
       return;
     }
 
-    // 2. Static file lookup
+    // 2. VAPID public key for push notification subscription
+    if (req.method === 'GET' && req.url === '/api/vapid-key') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ publicKey: config.vapidPublicKey ?? '' }));
+      return;
+    }
+
+    // 3. Static file lookup
     if (req.method === 'GET') {
       const served = await serveStatic(req, res);
       if (served) return;
     }
 
-    // 3. SPA fallback — serve index.html for unmatched GET routes
+    // 4. SPA fallback — serve index.html for unmatched GET routes
     if (req.method === 'GET') {
       await serveFallback(res);
       return;

@@ -10,25 +10,26 @@
 	} from '$lib/components/ui/dropdown-menu/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import BrainCog from '@lucide/svelte/icons/brain-cog';
-	import { sessionStore } from '$lib/stores/session.svelte.js';
+	import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 	import { connection } from '$lib/stores/connection.svelte.js';
 
 	const levels = ['off', 'minimal', 'low', 'medium', 'high'] as const;
 
-	let selectedLevel = $state(sessionStore.thinkingLevel);
+	let selectedLevel = $state(sessionRegistry.viewed?.thinkingLevel ?? 'off');
 	let mounted = $state(false);
 
 	// Keep local selection in sync with store
 	$effect(() => {
-		selectedLevel = sessionStore.thinkingLevel;
+		selectedLevel = sessionRegistry.viewed?.thinkingLevel ?? 'off';
 	});
 
 	// Send command when local selection changes from store value (skip on mount)
 	$effect(() => {
-		if (mounted && selectedLevel !== sessionStore.thinkingLevel && sessionStore.sessionId) {
+		const viewedLevel = sessionRegistry.viewed?.thinkingLevel ?? 'off';
+		if (mounted && selectedLevel !== viewedLevel && sessionRegistry.viewed?.sessionId) {
 			connection.send({
 				type: 'set_thinking_level',
-				sessionId: sessionStore.sessionId,
+				sessionId: sessionRegistry.viewed.sessionId,
 				level: selectedLevel,
 			});
 		}
@@ -51,10 +52,10 @@
 				variant="ghost"
 				size="xs"
 				class="gap-1 text-muted-foreground"
-				title="Thinking level: {sessionStore.thinkingLevel}"
+				title="Thinking level: {sessionRegistry.viewed?.thinkingLevel ?? 'off'}"
 			>
 				<BrainCog class="size-3" />
-				<span class="text-xs">{labelFor(sessionStore.thinkingLevel)}</span>
+				<span class="text-xs">{labelFor(sessionRegistry.viewed?.thinkingLevel ?? 'off')}</span>
 			</Button>
 		{/snippet}
 	</DropdownMenuTrigger>

@@ -2,14 +2,14 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import Shrink from '@lucide/svelte/icons/shrink';
 	import Loader2 from '@lucide/svelte/icons/loader-2';
-	import { sessionStore } from '$lib/stores/session.svelte.js';
+	import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 	import { connection } from '$lib/stores/connection.svelte.js';
 
 	async function handleCompact() {
-		if (!sessionStore.sessionId || sessionStore.isCompacting) return;
+		if (!sessionRegistry.viewed?.sessionId || sessionRegistry.viewed?.isCompacting) return;
 		await connection.send({
 			type: 'compact',
-			sessionId: sessionStore.sessionId,
+			sessionId: sessionRegistry.viewed.sessionId,
 		});
 	}
 </script>
@@ -17,12 +17,12 @@
 <Button
 	variant="ghost"
 	size="xs"
-	disabled={sessionStore.isCompacting || !sessionStore.sessionId}
+	disabled={sessionRegistry.viewed?.isCompacting || !sessionRegistry.viewed?.sessionId}
 	onclick={handleCompact}
 	class="gap-1 text-muted-foreground"
-	title={sessionStore.isCompacting ? 'Compacting…' : 'Compact conversation'}
+	title={sessionRegistry.viewed?.isCompacting ? 'Compacting…' : 'Compact conversation'}
 >
-	{#if sessionStore.isCompacting}
+	{#if sessionRegistry.viewed?.isCompacting}
 		<Loader2 class="size-3 animate-spin" />
 		<span class="text-xs">Compacting…</span>
 	{:else}

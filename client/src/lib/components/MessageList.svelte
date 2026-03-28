@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick, onMount } from 'svelte';
-	import { sessionStore } from '$lib/stores/session.svelte.js';
+	import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 	import Message from './Message.svelte';
 	import TextBlock from './TextBlock.svelte';
 	import ThinkingBlock from './ThinkingBlock.svelte';
@@ -28,10 +28,10 @@
 	// Auto-scroll when new content arrives
 	$effect(() => {
 		// Access reactive deps to trigger on changes
-		sessionStore.messages;
-		sessionStore.streamingText;
-		sessionStore.streamingThinking;
-		sessionStore.activeToolCalls;
+		sessionRegistry.viewed?.messages;
+		sessionRegistry.viewed?.streamingText;
+		sessionRegistry.viewed?.streamingThinking;
+		sessionRegistry.viewed?.activeToolCalls;
 
 		if (autoScrollEnabled && scrollContainer) {
 			tick().then(() => {
@@ -51,25 +51,25 @@
 
 	// Derived: do we have any streaming content to show?
 	let hasStreamingContent = $derived(
-		sessionStore.isStreaming &&
-			(sessionStore.streamingText.length > 0 ||
-				sessionStore.streamingThinking.length > 0 ||
-				sessionStore.activeToolCalls.size > 0)
+		(sessionRegistry.viewed?.isStreaming ?? false) &&
+			((sessionRegistry.viewed?.streamingText ?? '').length > 0 ||
+				(sessionRegistry.viewed?.streamingThinking ?? '').length > 0 ||
+				(sessionRegistry.viewed?.activeToolCalls?.size ?? 0) > 0)
 	);
 
-	let activeToolEntries = $derived([...sessionStore.activeToolCalls.entries()]);
+	let activeToolEntries = $derived([...(sessionRegistry.viewed?.activeToolCalls?.entries() ?? [])]);
 </script>
 
 <div class="message-list-wrapper">
 	<div class="message-list" bind:this={scrollContainer} onscroll={onScroll}>
 		<div class="message-list-inner">
-			{#if sessionStore.messages.length === 0 && !sessionStore.isStreaming}
+			{#if (sessionRegistry.viewed?.messages ?? []).length === 0 && !sessionRegistry.viewed?.isStreaming}
 				<div class="empty-state">
 					<p>No messages yet</p>
 				</div>
 			{/if}
 
-			{#each sessionStore.messages as message, i (i)}
+			{#each sessionRegistry.viewed?.messages ?? [] as message, i (i)}
 				<Message {message} />
 			{/each}
 
@@ -77,8 +77,8 @@
 			{#if hasStreamingContent}
 				<div class="message assistant-message streaming">
 					<div class="streaming-body">
-						{#if sessionStore.streamingThinking}
-							<ThinkingBlock text={sessionStore.streamingThinking} streaming={true} />
+						{#if sessionRegistry.viewed?.streamingThinking}
+							<ThinkingBlock text={sessionRegistry.viewed.streamingThinking} streaming={true} />
 						{/if}
 
 						{#each activeToolEntries as [toolCallId, tool] (toolCallId)}
@@ -94,15 +94,15 @@
 							/>
 						{/each}
 
-						{#if sessionStore.streamingText}
-							<TextBlock text={sessionStore.streamingText} streaming={true} />
+						{#if sessionRegistry.viewed?.streamingText}
+							<TextBlock text={sessionRegistry.viewed.streamingText} streaming={true} />
 						{/if}
 					</div>
 				</div>
 			{/if}
 
 			<!-- Streaming indicator (agent is working but no content yet) -->
-			{#if sessionStore.isStreaming && !hasStreamingContent}
+			{#if sessionRegistry.viewed?.isStreaming && !hasStreamingContent}
 				<div class="streaming-indicator-row">
 					<StreamingIndicator />
 				</div>

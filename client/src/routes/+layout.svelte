@@ -15,6 +15,24 @@
 
 	onMount(() => {
 		connection.connect();
+
+		// Register service worker for push notifications
+		if ('serviceWorker' in navigator) {
+			navigator.serviceWorker.register('/sw.js').catch((err) => {
+				console.warn('[pimote] Service worker registration failed:', err);
+			});
+		}
+
+		// Handle in-app push messages from service worker
+		if ('serviceWorker' in navigator) {
+			navigator.serviceWorker.addEventListener('message', (event) => {
+				if (event.data?.type === 'push_notification') {
+					// Could trigger a toast notification or update session bar
+					console.log('[pimote] Push notification received:', event.data);
+				}
+			});
+		}
+
 		return () => connection.disconnect();
 	});
 

@@ -4,7 +4,7 @@
 	import CompactButton from './CompactButton.svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
-	import { sessionStore } from '$lib/stores/session.svelte.js';
+	import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 	import { connection } from '$lib/stores/connection.svelte.js';
 
 	let connectionLabel = $derived(
@@ -46,7 +46,7 @@
 	<div class="flex-1"></div>
 
 	<!-- Streaming indicator -->
-	{#if sessionStore.isStreaming}
+	{#if sessionRegistry.viewed?.isStreaming}
 		<Badge variant="secondary" class="gap-1.5 text-xs">
 			<span class="relative flex size-2">
 				<span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
@@ -57,7 +57,7 @@
 	{/if}
 
 	<!-- Compacting indicator -->
-	{#if sessionStore.isCompacting}
+	{#if sessionRegistry.viewed?.isCompacting}
 		<Badge variant="secondary" class="gap-1 text-xs">
 			<span class="relative flex size-2">
 				<span class="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
