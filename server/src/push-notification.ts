@@ -24,6 +24,8 @@ export interface SessionIdlePayload {
 }
 
 export class PushNotificationService {
+  private subscriptions: PushSubscriptionRecord[] = [];
+
   constructor(
     private readonly sender: PushSender,
     private readonly store: SubscriptionStore,
@@ -31,26 +33,55 @@ export class PushNotificationService {
 
   /** Load subscriptions from store on startup */
   async initialize(): Promise<void> {
-    throw new Error('Not implemented');
+    this.subscriptions = await this.store.load();
   }
 
   /** Store a new push subscription (or update if endpoint matches) */
   async addSubscription(subscription: PushSubscriptionRecord): Promise<void> {
-    throw new Error('Not implemented');
+    const idx = this.subscriptions.findIndex((s) => s.endpoint === subscription.endpoint);
+    if (idx !== -1) {
+      this.subscriptions[idx] = subscription;
+    } else {
+      this.subscriptions.push(subscription);
+    }
+    await this.store.save(this.subscriptions);
   }
 
   /** Remove a subscription by endpoint */
   async removeSubscription(endpoint: string): Promise<void> {
-    throw new Error('Not implemented');
+    const before = this.subscriptions.length;
+    this.subscriptions = this.subscriptions.filter((s) => s.endpoint !== endpoint);
+    if (this.subscriptions.length !== before) {
+      await this.store.save(this.subscriptions);
+    }
   }
 
   /** Get all current subscriptions */
   getSubscriptions(): PushSubscriptionRecord[] {
-    throw new Error('Not implemented');
+    return [...this.subscriptions];
   }
 
   /** Send push notification to all subscriptions when a session goes idle */
   async notifySessionIdle(payload: SessionIdlePayload): Promise<void> {
-    throw new Error('Not implemented');
+    const expiredEndpoints: string[] = [];
+    const payloadStr = JSON.stringify(payload);
+
+    for (const sub of this.subscriptions) {
+      try {
+        const result = await this.sender.sendNotification(sub, payloadStr);
+        if (result.statusCode === 410) {
+          expiredEndpoints.push(sub.endpoint);
+        }
+      } catch (_err) {
+        // Log and continue to next subscription
+      }
+    }
+
+    if (expiredEndpoints.length > 0) {
+      this.subscriptions = this.subscriptions.filter(
+        (s) => !expiredEndpoints.includes(s.endpoint),
+      );
+      await this.store.save(this.subscriptions);
+    }
   }
 }
