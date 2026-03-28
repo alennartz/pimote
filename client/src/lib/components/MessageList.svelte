@@ -54,10 +54,10 @@
 		(sessionRegistry.viewed?.isStreaming ?? false) &&
 			((sessionRegistry.viewed?.streamingText ?? '').length > 0 ||
 				(sessionRegistry.viewed?.streamingThinking ?? '').length > 0 ||
-				(sessionRegistry.viewed?.activeToolCalls?.size ?? 0) > 0)
+				Object.keys(sessionRegistry.viewed?.activeToolCalls ?? {}).length > 0)
 	);
 
-	let activeToolEntries = $derived([...(sessionRegistry.viewed?.activeToolCalls?.entries() ?? [])]);
+	let activeToolEntries = $derived(Object.entries(sessionRegistry.viewed?.activeToolCalls ?? {}));
 </script>
 
 <div class="message-list-wrapper">

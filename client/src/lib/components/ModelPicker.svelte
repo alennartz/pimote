@@ -48,7 +48,9 @@
 		if (loading) return;
 		loading = true;
 		try {
-			const res = await connection.send({ type: 'get_available_models' });
+			const sessionId = sessionRegistry.viewed?.sessionId;
+			if (!sessionId) { loading = false; return; }
+			const res = await connection.send({ type: 'get_available_models', sessionId });
 			if (res.success && res.data) {
 				const arr = (res.data as any).models;
 				if (Array.isArray(arr)) {

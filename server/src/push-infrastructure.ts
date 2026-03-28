@@ -14,15 +14,19 @@ export class FilePushSubscriptionStore implements SubscriptionStore {
       if (err && typeof err === 'object' && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
         return [];
       }
-      throw err;
+      throw new Error('Failed to load push subscriptions');
     }
   }
 
   async save(subscriptions: PushSubscriptionRecord[]): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    const tmpPath = this.filePath + '.tmp';
-    await writeFile(tmpPath, JSON.stringify(subscriptions, null, 2) + '\n', 'utf-8');
-    await rename(tmpPath, this.filePath);
+    try {
+      await mkdir(dirname(this.filePath), { recursive: true });
+      const tmpPath = this.filePath + '.tmp';
+      await writeFile(tmpPath, JSON.stringify(subscriptions, null, 2) + '\n', 'utf-8');
+      await rename(tmpPath, this.filePath);
+    } catch {
+      throw new Error('Failed to save push subscriptions');
+    }
   }
 }
 

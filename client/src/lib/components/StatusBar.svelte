@@ -6,6 +6,14 @@
 	import { Separator } from '$lib/components/ui/separator/index.js';
 	import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 	import { connection } from '$lib/stores/connection.svelte.js';
+	import { X } from '@lucide/svelte';
+
+	function closeSession() {
+		const id = sessionRegistry.viewedSessionId;
+		if (id) {
+			connection.send({ type: 'close_session', sessionId: id });
+		}
+	}
 
 	let connectionLabel = $derived(
 		connection.status === 'connected'
@@ -74,4 +82,15 @@
 		</span>
 		<span class="hidden text-xs sm:inline">{connectionLabel}</span>
 	</div>
+
+	<Separator orientation="vertical" class="mx-0.5 h-4" />
+
+	<!-- Close session -->
+	<button
+		onclick={closeSession}
+		class="flex items-center justify-center rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+		title="Close session"
+	>
+		<X class="size-3.5" />
+	</button>
 </div>

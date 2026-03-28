@@ -330,7 +330,28 @@ export class WsHandler {
         }
 
         case 'register_push': {
-          await this.pushNotificationService.addSubscription(command.subscription);
+          const sub = command.subscription;
+          if (
+            !sub ||
+            typeof sub !== 'object' ||
+            typeof sub.endpoint !== 'string' ||
+            !sub.endpoint ||
+            !sub.keys ||
+            typeof sub.keys !== 'object' ||
+            typeof sub.keys.p256dh !== 'string' ||
+            !sub.keys.p256dh ||
+            typeof sub.keys.auth !== 'string' ||
+            !sub.keys.auth
+          ) {
+            this.sendResponse(id, false, undefined, 'Invalid push subscription: endpoint, keys.p256dh, and keys.auth are required');
+            break;
+          }
+          try {
+            await this.pushNotificationService.addSubscription(sub);
+          } catch {
+            this.sendResponse(id, false, undefined, 'Failed to save push subscription');
+            break;
+          }
           this.sendResponse(id, true);
           break;
         }

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { SessionInfo } from '@pimote/shared';
 	import { connection } from '$lib/stores/connection.svelte.js';
+	import { sessionRegistry, switchToSession } from '$lib/stores/session-registry.svelte.js';
 
 	interface Props {
 		session: SessionInfo;

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { PimoteEvent, PimoteAgentMessage } from '@pimote/shared';
-import { SessionRegistry } from './session-registry.js';
+import { SessionRegistry } from './session-registry.svelte.js';
 
 function makeSessionEvent(type: string, sessionId: string, extra: Record<string, any> = {}): PimoteEvent {
   return { type, sessionId, cursor: 0, ...extra } as any;
@@ -27,7 +27,7 @@ describe('SessionRegistry', () => {
   describe('Session Lifecycle', () => {
     it('addSession() creates an entry with correct initial state', () => {
       registry.addSession('s1', '/home/user/projects/myapp', 'myapp');
-      const session = registry.sessions.get('s1');
+      const session = registry.sessions['s1'];
       expect(session).toBeDefined();
       expect(session!.sessionId).toBe('s1');
       expect(session!.folderPath).toBe('/home/user/projects/myapp');
@@ -42,7 +42,7 @@ describe('SessionRegistry', () => {
       expect(session!.thinkingLevel).toBe('off');
       expect(session!.streamingText).toBe('');
       expect(session!.streamingThinking).toBe('');
-      expect(session!.activeToolCalls.size).toBe(0);
+      expect(Object.keys(session!.activeToolCalls).length).toBe(0);
       expect(session!.autoCompactionEnabled).toBe(false);
       expect(session!.messageCount).toBe(0);
       expect(session!.conflictingProcesses).toEqual([]);
@@ -50,13 +50,13 @@ describe('SessionRegistry', () => {
 
     it('addSession() with folderPath extracts projectName correctly', () => {
       registry.addSession('s1', '/home/user/repos/pimote', 'pimote');
-      expect(registry.sessions.get('s1')!.projectName).toBe('pimote');
+      expect(registry.sessions['s1'].projectName).toBe('pimote');
     });
 
     it('removeSession() deletes the entry', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.removeSession('s1');
-      expect(registry.sessions.has('s1')).toBe(false);
+      expect(registry.sessions['s1']).toBeUndefined();
     });
 
     it('removeSession() for unknown sessionId does nothing', () => {
@@ -84,7 +84,7 @@ describe('SessionRegistry', () => {
       registry.addSession('s1', '/path/a', 'a');
       registry.addSession('s2', '/path/b', 'b');
       registry.switchTo('s2');
-      expect(registry.viewed).toBe(registry.sessions.get('s2'));
+      expect(registry.viewed).toBe(registry.sessions['s2']);
     });
 
     it('switchTo() updates viewedSessionId', () => {
@@ -100,9 +100,9 @@ describe('SessionRegistry', () => {
       registry.switchTo('s1');
       registry.handleEvent(makeSessionEvent('agent_start', 's2'));
       registry.handleEvent(makeSessionEvent('agent_end', 's2'));
-      expect(registry.sessions.get('s2')!.needsAttention).toBe(true);
+      expect(registry.sessions['s2'].needsAttention).toBe(true);
       registry.switchTo('s2');
-      expect(registry.sessions.get('s2')!.needsAttention).toBe(false);
+      expect(registry.sessions['s2'].needsAttention).toBe(false);
     });
 
     it('switchTo() with unknown sessionId sets viewedSessionId (no error)', () => {
@@ -136,7 +136,7 @@ describe('SessionRegistry', () => {
     it('agent_start event sets session status to working and isStreaming to true', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.handleEvent(makeSessionEvent('agent_start', 's1'));
-      const session = registry.sessions.get('s1')!;
+      const session = registry.sessions['s1'];
       expect(session.status).toBe('working');
       expect(session.isStreaming).toBe(true);
     });
@@ -145,7 +145,7 @@ describe('SessionRegistry', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.handleEvent(makeSessionEvent('agent_start', 's1'));
       registry.handleEvent(makeSessionEvent('agent_end', 's1'));
-      const session = registry.sessions.get('s1')!;
+      const session = registry.sessions['s1'];
       expect(session.status).toBe('idle');
       expect(session.isStreaming).toBe(false);
     });
@@ -167,7 +167,7 @@ describe('SessionRegistry', () => {
       registry.handleEvent(makeSessionEvent('message_update', 's1', {
         content: { type: 'text', text: 'world' },
       }));
-      expect(registry.sessions.get('s1')!.streamingText).toBe('Hello world');
+      expect(registry.sessions['s1'].streamingText).toBe('Hello world');
     });
 
     it('message_update with thinking content appends to streamingThinking', () => {
@@ -178,7 +178,7 @@ describe('SessionRegistry', () => {
       registry.handleEvent(makeSessionEvent('message_update', 's1', {
         content: { type: 'thinking', text: 'think...' },
       }));
-      expect(registry.sessions.get('s1')!.streamingThinking).toBe('Let me think...');
+      expect(registry.sessions['s1'].streamingThinking).toBe('Let me think...');
     });
 
     it('message_end appends message to messages array and clears streaming text', () => {
@@ -191,7 +191,7 @@ describe('SessionRegistry', () => {
       }));
       const msg = makeAssistantMessage('Final answer');
       registry.handleEvent(makeSessionEvent('message_end', 's1', { message: msg }));
-      const session = registry.sessions.get('s1')!;
+      const session = registry.sessions['s1'];
       expect(session.messages).toHaveLength(1);
       expect(session.messages[0]).toEqual(msg);
       expect(session.streamingText).toBe('');
@@ -203,9 +203,9 @@ describe('SessionRegistry', () => {
       const msg1 = makeAssistantMessage('First');
       const msg2 = makeAssistantMessage('Second');
       registry.handleEvent(makeSessionEvent('message_end', 's1', { message: msg1 }));
-      expect(registry.sessions.get('s1')!.messageCount).toBe(1);
+      expect(registry.sessions['s1'].messageCount).toBe(1);
       registry.handleEvent(makeSessionEvent('message_end', 's1', { message: msg2 }));
-      expect(registry.sessions.get('s1')!.messageCount).toBe(2);
+      expect(registry.sessions['s1'].messageCount).toBe(2);
     });
   });
 
@@ -220,11 +220,11 @@ describe('SessionRegistry', () => {
         toolName: 'read',
         args: { path: '/foo' },
       }));
-      const calls = registry.sessions.get('s1')!.activeToolCalls;
-      expect(calls.has('tc1')).toBe(true);
-      expect(calls.get('tc1')!.name).toBe('read');
-      expect(calls.get('tc1')!.args).toEqual({ path: '/foo' });
-      expect(calls.get('tc1')!.partialResult).toBe('');
+      const calls = registry.sessions['s1'].activeToolCalls;
+      expect(calls['tc1']).toBeDefined();
+      expect(calls['tc1'].name).toBe('read');
+      expect(calls['tc1'].args).toEqual({ path: '/foo' });
+      expect(calls['tc1'].partialResult).toBe('');
     });
 
     it('tool_execution_update appends to partialResult', () => {
@@ -242,7 +242,7 @@ describe('SessionRegistry', () => {
         toolCallId: 'tc1',
         content: 'result',
       }));
-      expect(registry.sessions.get('s1')!.activeToolCalls.get('tc1')!.partialResult).toBe('partial result');
+      expect(registry.sessions['s1'].activeToolCalls['tc1'].partialResult).toBe('partial result');
     });
 
     it('tool_execution_end removes entry from activeToolCalls', () => {
@@ -256,7 +256,7 @@ describe('SessionRegistry', () => {
         toolCallId: 'tc1',
         result: 'done',
       }));
-      expect(registry.sessions.get('s1')!.activeToolCalls.has('tc1')).toBe(false);
+      expect(registry.sessions['s1'].activeToolCalls['tc1']).toBeUndefined();
     });
   });
 
@@ -267,7 +267,7 @@ describe('SessionRegistry', () => {
     it('auto_compaction_start sets isCompacting to true', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.handleEvent(makeSessionEvent('auto_compaction_start', 's1', { reason: 'threshold' }));
-      expect(registry.sessions.get('s1')!.isCompacting).toBe(true);
+      expect(registry.sessions['s1'].isCompacting).toBe(true);
     });
 
     it('auto_compaction_end sets isCompacting to false', () => {
@@ -278,7 +278,7 @@ describe('SessionRegistry', () => {
         aborted: false,
         willRetry: false,
       }));
-      expect(registry.sessions.get('s1')!.isCompacting).toBe(false);
+      expect(registry.sessions['s1'].isCompacting).toBe(false);
     });
   });
 
@@ -298,7 +298,7 @@ describe('SessionRegistry', () => {
           { type: 'agent_end', sessionId: 's1', cursor: 3 },
         ],
       });
-      const session = registry.sessions.get('s1')!;
+      const session = registry.sessions['s1'];
       expect(session.messages).toHaveLength(1);
       expect(session.messages[0]).toEqual(msg);
       expect(session.status).toBe('idle');
@@ -309,7 +309,7 @@ describe('SessionRegistry', () => {
       registry.addSession('s1', '/path', 'proj');
       // Set some initial state
       registry.handleEvent(makeSessionEvent('agent_start', 's1'));
-      expect(registry.sessions.get('s1')!.isStreaming).toBe(true);
+      expect(registry.sessions['s1'].isStreaming).toBe(true);
 
       const messages: PimoteAgentMessage[] = [
         makeUserMessage('Hello'),
@@ -330,7 +330,7 @@ describe('SessionRegistry', () => {
         },
         messages,
       });
-      const session = registry.sessions.get('s1')!;
+      const session = registry.sessions['s1'];
       expect(session.isStreaming).toBe(false);
       expect(session.status).toBe('idle');
       expect(session.model).toEqual({ provider: 'anthropic', id: 'claude-4', name: 'Claude 4' });
@@ -347,7 +347,7 @@ describe('SessionRegistry', () => {
   describe('Needs Attention', () => {
     it('needsAttention starts as false for new sessions', () => {
       registry.addSession('s1', '/path', 'proj');
-      expect(registry.sessions.get('s1')!.needsAttention).toBe(false);
+      expect(registry.sessions['s1'].needsAttention).toBe(false);
     });
 
     it('agent_end sets needsAttention=true when session is NOT the viewed session', () => {
@@ -356,7 +356,7 @@ describe('SessionRegistry', () => {
       registry.switchTo('s1');
       registry.handleEvent(makeSessionEvent('agent_start', 's2'));
       registry.handleEvent(makeSessionEvent('agent_end', 's2'));
-      expect(registry.sessions.get('s2')!.needsAttention).toBe(true);
+      expect(registry.sessions['s2'].needsAttention).toBe(true);
     });
 
     it('agent_end does NOT set needsAttention when session IS the viewed session', () => {
@@ -364,7 +364,7 @@ describe('SessionRegistry', () => {
       registry.switchTo('s1');
       registry.handleEvent(makeSessionEvent('agent_start', 's1'));
       registry.handleEvent(makeSessionEvent('agent_end', 's1'));
-      expect(registry.sessions.get('s1')!.needsAttention).toBe(false);
+      expect(registry.sessions['s1'].needsAttention).toBe(false);
     });
 
     it('switchTo() clears needsAttention', () => {
@@ -373,9 +373,9 @@ describe('SessionRegistry', () => {
       registry.switchTo('s1');
       registry.handleEvent(makeSessionEvent('agent_start', 's2'));
       registry.handleEvent(makeSessionEvent('agent_end', 's2'));
-      expect(registry.sessions.get('s2')!.needsAttention).toBe(true);
+      expect(registry.sessions['s2'].needsAttention).toBe(true);
       registry.switchTo('s2');
-      expect(registry.sessions.get('s2')!.needsAttention).toBe(false);
+      expect(registry.sessions['s2'].needsAttention).toBe(false);
     });
   });
 
@@ -387,7 +387,7 @@ describe('SessionRegistry', () => {
       registry.addSession('s1', '/path', 'proj');
       const msg = makeUserMessage('What is the meaning of life?');
       registry.handleEvent(makeSessionEvent('message_end', 's1', { message: msg }));
-      expect(registry.sessions.get('s1')!.firstMessage).toBe('What is the meaning of life?');
+      expect(registry.sessions['s1'].firstMessage).toBe('What is the meaning of life?');
     });
 
     it('firstMessage is not overwritten by subsequent user messages', () => {
@@ -396,7 +396,7 @@ describe('SessionRegistry', () => {
       const msg2 = makeUserMessage('Second question');
       registry.handleEvent(makeSessionEvent('message_end', 's1', { message: msg1 }));
       registry.handleEvent(makeSessionEvent('message_end', 's1', { message: msg2 }));
-      expect(registry.sessions.get('s1')!.firstMessage).toBe('First question');
+      expect(registry.sessions['s1'].firstMessage).toBe('First question');
     });
   });
 
@@ -414,7 +414,7 @@ describe('SessionRegistry', () => {
           { pid: 5678, command: 'node pi-coding-agent' },
         ],
       });
-      const session = registry.sessions.get('s1')!;
+      const session = registry.sessions['s1'];
       expect(session.conflictingProcesses).toHaveLength(2);
       expect(session.conflictingProcesses[0].pid).toBe(1234);
       expect(session.conflictingProcesses[1].pid).toBe(5678);
@@ -437,9 +437,9 @@ describe('SessionRegistry', () => {
         sessionId: 's1',
         processes: [{ pid: 1234, command: 'pi' }],
       });
-      expect(registry.sessions.get('s1')!.conflictingProcesses).toHaveLength(1);
+      expect(registry.sessions['s1'].conflictingProcesses).toHaveLength(1);
       registry.clearConflict('s1');
-      expect(registry.sessions.get('s1')!.conflictingProcesses).toEqual([]);
+      expect(registry.sessions['s1'].conflictingProcesses).toEqual([]);
     });
 
     it('clearConflict() for unknown sessionId does not throw', () => {
@@ -458,7 +458,7 @@ describe('SessionRegistry', () => {
         sessionId: 's1',
         processes: [{ pid: 2222, command: 'pi' }, { pid: 3333, command: 'pi' }],
       });
-      const session = registry.sessions.get('s1')!;
+      const session = registry.sessions['s1'];
       expect(session.conflictingProcesses).toHaveLength(2);
       expect(session.conflictingProcesses[0].pid).toBe(2222);
     });
