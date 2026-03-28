@@ -14,17 +14,24 @@ import type {
 import type { PimoteSessionManager, ManagedSession } from './session-manager.js';
 import type { FolderIndex } from './folder-index.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
-import { killExternalPiProcesses } from './takeover.js';
+import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
+import type { PushNotificationService } from './push-notification.js';
 
 export class WsHandler {
   private readonly pendingUiResponses = new Map<string, { resolve: (value: any) => void }>();
-  private activeSessionId: string | null = null;
+  private subscribedSessions = new Set<string>();
+  private viewedSessionId: string | null = null;
 
   constructor(
     private readonly sessionManager: PimoteSessionManager,
     private readonly folderIndex: FolderIndex,
     private readonly ws: WebSocket,
+    private readonly pushNotificationService: PushNotificationService,
   ) {}
+
+  getViewedSessionId(): string | null {
+    return this.viewedSessionId;
+  }
 
   async handleMessage(raw: string): Promise<void> {
     let command: PimoteCommand;
@@ -49,7 +56,13 @@ export class WsHandler {
               (s) => s.folderPath === folder.path,
             );
             folder.activeSessionCount = folderSessions.length;
-            folder.activeStatus = folderSessions.length > 0 ? 'idle' : null;
+            if (folderSessions.some(s => s.status === 'working')) {
+              folder.activeStatus = 'working';
+            } else if (folderSessions.length > 0) {
+              folder.activeStatus = 'idle';
+            } else {
+              folder.activeStatus = null;
+            }
           }
           this.sendResponse(id, true, { folders });
           break;
@@ -66,15 +79,30 @@ export class WsHandler {
             this.sendEvent(event);
           };
 
+          const onStatusChange = (sid: string, status: 'idle' | 'working') => {
+            if (status === 'idle') {
+              if (this.viewedSessionId !== sid) {
+                const managed = this.sessionManager.getSession(sid);
+                this.pushNotificationService.notifySessionIdle({
+                  projectName: managed?.folderPath.split('/').pop() ?? 'Unknown',
+                  firstMessage: undefined,
+                  sessionId: sid,
+                }).catch(err => console.error('[WsHandler] Push notification error:', err));
+              }
+            }
+          };
+
           const sessionId = await this.sessionManager.openSession(
             command.folderPath,
             command.sessionPath,
             sendLive,
+            onStatusChange,
           );
 
           const managed = this.sessionManager.getSession(sessionId)!;
           managed.connectedClient = this.ws;
-          this.activeSessionId = sessionId;
+          this.subscribedSessions.add(sessionId);
+          this.viewedSessionId = sessionId;
 
           // Bind extension UI bridge
           const waitForResponse = (requestId: string): Promise<any> => {
@@ -106,32 +134,43 @@ export class WsHandler {
             },
           });
 
+          // Check for conflicting external pi processes
+          const openConflictPids = await findExternalPiProcesses(command.folderPath);
+          if (openConflictPids.length > 0) {
+            this.sendEvent({
+              type: 'session_conflict',
+              sessionId,
+              processes: openConflictPids.map(pid => ({ pid, command: 'pi' })),
+            });
+          }
+
           this.sendResponse(id, true, { sessionId });
           break;
         }
 
         case 'close_session': {
-          const sessionId = command.sessionId ?? this.activeSessionId;
-          if (!sessionId) {
-            this.sendResponse(id, false, undefined, 'No active session');
+          const closeSessionId = command.sessionId;
+          if (!closeSessionId) {
+            this.sendResponse(id, false, undefined, 'sessionId is required');
             break;
           }
 
           // Resolve any pending extension UI responses before closing
-          for (const [reqId, pending] of this.pendingUiResponses) {
+          for (const [, pending] of this.pendingUiResponses) {
             pending.resolve(undefined);
           }
           this.pendingUiResponses.clear();
 
-          await this.sessionManager.closeSession(sessionId);
+          await this.sessionManager.closeSession(closeSessionId);
 
-          if (this.activeSessionId === sessionId) {
-            this.activeSessionId = null;
+          this.subscribedSessions.delete(closeSessionId);
+          if (this.viewedSessionId === closeSessionId) {
+            this.viewedSessionId = null;
           }
 
           this.sendEvent({
             type: 'session_closed',
-            sessionId,
+            sessionId: closeSessionId,
           });
 
           this.sendResponse(id, true);
@@ -193,7 +232,18 @@ export class WsHandler {
           // Re-attach WebSocket to session
           managed.connectedClient = this.ws;
           managed.lastActivity = Date.now();
-          this.activeSessionId = command.sessionId;
+          this.subscribedSessions.add(command.sessionId);
+          this.viewedSessionId = command.sessionId;
+
+          // Check for conflicting external pi processes
+          const reconnectConflictPids = await findExternalPiProcesses(managed.folderPath);
+          if (reconnectConflictPids.length > 0) {
+            this.sendEvent({
+              type: 'session_conflict',
+              sessionId: command.sessionId,
+              processes: reconnectConflictPids.map(pid => ({ pid, command: 'pi' })),
+            });
+          }
 
           this.sendResponse(id, true);
           break;
@@ -207,15 +257,30 @@ export class WsHandler {
             this.sendEvent(event);
           };
 
+          const takeoverOnStatusChange = (sid: string, status: 'idle' | 'working') => {
+            if (status === 'idle') {
+              if (this.viewedSessionId !== sid) {
+                const managed = this.sessionManager.getSession(sid);
+                this.pushNotificationService.notifySessionIdle({
+                  projectName: managed?.folderPath.split('/').pop() ?? 'Unknown',
+                  firstMessage: undefined,
+                  sessionId: sid,
+                }).catch(err => console.error('[WsHandler] Push notification error:', err));
+              }
+            }
+          };
+
           const takeoverSessionId = await this.sessionManager.openSession(
             command.folderPath,
             undefined,
             takeoverSendLive,
+            takeoverOnStatusChange,
           );
 
           const takeoverManaged = this.sessionManager.getSession(takeoverSessionId)!;
           takeoverManaged.connectedClient = this.ws;
-          this.activeSessionId = takeoverSessionId;
+          this.subscribedSessions.add(takeoverSessionId);
+          this.viewedSessionId = takeoverSessionId;
 
           // Bind extension UI bridge
           const takeoverWaitForResponse = (requestId: string): Promise<any> => {
@@ -269,6 +334,36 @@ export class WsHandler {
           break;
         }
 
+        // ---- Multi-session & push commands ----
+        case 'view_session': {
+          this.viewedSessionId = command.sessionId;
+          this.sendResponse(id, true);
+          break;
+        }
+
+        case 'register_push': {
+          await this.pushNotificationService.addSubscription(command.subscription);
+          this.sendResponse(id, true);
+          break;
+        }
+
+        case 'unregister_push': {
+          await this.pushNotificationService.removeSubscription(command.endpoint);
+          this.sendResponse(id, true);
+          break;
+        }
+
+        case 'kill_conflicting_processes': {
+          const killManaged = this.sessionManager.getSession(command.sessionId);
+          if (!killManaged) {
+            this.sendResponse(id, false, undefined, `Session not found: ${command.sessionId}`);
+            break;
+          }
+          const killedProcessCount = await killExternalPiProcesses(killManaged.folderPath);
+          this.sendResponse(id, true, { killedCount: killedProcessCount });
+          break;
+        }
+
         // ---- Session control commands ----
         case 'prompt':
         case 'steer':
@@ -303,9 +398,9 @@ export class WsHandler {
   }
 
   private async handleSessionCommand(command: PimoteCommand, id: string): Promise<void> {
-    const sessionId = command.sessionId ?? this.activeSessionId;
+    const sessionId = command.sessionId;
     if (!sessionId) {
-      this.sendResponse(id, false, undefined, 'No active session');
+      this.sendResponse(id, false, undefined, 'sessionId is required');
       return;
     }
 
@@ -483,21 +578,21 @@ export class WsHandler {
   }
 
   cleanup(): void {
-    if (this.activeSessionId) {
-      const managed = this.sessionManager.getSession(this.activeSessionId);
+    for (const sid of this.subscribedSessions) {
+      const managed = this.sessionManager.getSession(sid);
       if (managed) {
         managed.connectedClient = null;
         managed.lastActivity = Date.now();
       }
     }
+    this.subscribedSessions.clear();
+    this.viewedSessionId = null;
 
     // Resolve all pending UI responses with undefined
     for (const [, pending] of this.pendingUiResponses) {
       pending.resolve(undefined);
     }
     this.pendingUiResponses.clear();
-
-    this.activeSessionId = null;
   }
 }
 

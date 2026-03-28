@@ -6,6 +6,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { PimoteConfig } from './config.js';
 import type { PimoteSessionManager } from './session-manager.js';
 import type { FolderIndex } from './folder-index.js';
+import type { PushNotificationService } from './push-notification.js';
 import { WsHandler } from './ws-handler.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -78,6 +79,7 @@ export function createServer(
   config: PimoteConfig,
   sessionManager: PimoteSessionManager,
   folderIndex: FolderIndex,
+  pushNotificationService: PushNotificationService,
 ): PimoteServer {
   const httpServer = http.createServer(async (req, res) => {
     // 1. Health check
@@ -118,7 +120,7 @@ export function createServer(
   wss.on('connection', (ws: WebSocket) => {
     console.log('[pimote] WebSocket client connected');
 
-    const handler = new WsHandler(sessionManager, folderIndex, ws);
+    const handler = new WsHandler(sessionManager, folderIndex, ws, pushNotificationService);
 
     ws.on('message', (data) => {
       handler.handleMessage(data.toString()).catch((err) => {

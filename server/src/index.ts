@@ -1,10 +1,15 @@
-import { loadConfig } from './config.js';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { loadConfig, ensureVapidKeys } from './config.js';
 import { createServer } from './server.js';
 import { PimoteSessionManager } from './session-manager.js';
 import { FolderIndex } from './folder-index.js';
+import { PushNotificationService } from './push-notification.js';
+import { FilePushSubscriptionStore, WebPushSender } from './push-infrastructure.js';
 
 async function main() {
-  const config = await loadConfig();
+  let config = await loadConfig();
+  config = await ensureVapidKeys(config);
 
   // Allow PORT env var to override config
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : config.port;
@@ -12,7 +17,19 @@ async function main() {
   const sessionManager = new PimoteSessionManager(config);
   const folderIndex = new FolderIndex(config.roots);
 
-  const server = createServer(config, sessionManager, folderIndex);
+  // Initialize push notification service
+  const pushStore = new FilePushSubscriptionStore(
+    join(homedir(), '.config', 'pimote', 'push-subscriptions.json'),
+  );
+  const pushSender = new WebPushSender(
+    config.vapidPublicKey!,
+    config.vapidPrivateKey!,
+    config.vapidEmail || 'pimote@localhost',
+  );
+  const pushNotificationService = new PushNotificationService(pushSender, pushStore);
+  await pushNotificationService.initialize();
+
+  const server = createServer(config, sessionManager, folderIndex, pushNotificationService);
 
   // Start idle session reaping
   sessionManager.startIdleCheck(config.idleTimeout);
