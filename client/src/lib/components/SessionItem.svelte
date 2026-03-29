@@ -10,6 +10,8 @@
 
 	let { session, folderPath }: Props = $props();
 
+	const isActive = $derived(sessionRegistry.isActiveSessionPath(session.path));
+
 	function formatRelativeTime(dateStr: string): string {
 		const date = new Date(dateStr);
 		const now = Date.now();
@@ -50,15 +52,22 @@
 </script>
 
 <button
-	class="w-full rounded-md px-3 py-2 text-left transition-colors hover:bg-sidebar-accent"
+	class="w-full rounded-md px-3 py-2 text-left transition-colors active:scale-[0.97] active:bg-sidebar-accent/80 {isActive ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent'}"
 	onclick={openSession}
 >
-	<div class="truncate text-sm font-medium text-sidebar-foreground">
-		{displayName()}
-	</div>
-	<div class="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-		<span>{session.messageCount} msg{session.messageCount !== 1 ? 's' : ''}</span>
-		<span>·</span>
-		<span>{formatRelativeTime(session.modified)}</span>
+	<div class="flex items-center gap-2">
+		<div class="min-w-0 flex-1">
+			<div class="truncate text-sm font-medium text-sidebar-foreground">
+				{displayName()}
+			</div>
+			<div class="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+				<span>{session.messageCount} msg{session.messageCount !== 1 ? 's' : ''}</span>
+				<span>·</span>
+				<span>{formatRelativeTime(session.modified)}</span>
+			</div>
+		</div>
+		{#if isActive}
+			<div class="size-2 shrink-0 rounded-full bg-status-connected"></div>
+		{/if}
 	</div>
 </button>

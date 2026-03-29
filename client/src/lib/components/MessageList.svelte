@@ -20,18 +20,18 @@
 		// Consider "at bottom" if within 80px
 		const atBottom = distanceFromBottom < 80;
 		userScrolledUp = !atBottom;
-		if (atBottom) {
-			autoScrollEnabled = true;
-		}
+		autoScrollEnabled = atBottom;
 	}
 
 	// Auto-scroll when new content arrives
 	$effect(() => {
-		// Access reactive deps to trigger on changes
-		sessionRegistry.viewed?.messages;
+		// Access reactive deps to trigger on changes.
+		// Read .length / Object.keys so Svelte tracks array/object mutations,
+		// not just property-reference changes.
+		sessionRegistry.viewed?.messages.length;
 		sessionRegistry.viewed?.streamingText;
 		sessionRegistry.viewed?.streamingThinking;
-		sessionRegistry.viewed?.activeToolCalls;
+		Object.keys(sessionRegistry.viewed?.activeToolCalls ?? {}).length;
 
 		if (autoScrollEnabled && scrollContainer) {
 			tick().then(() => {

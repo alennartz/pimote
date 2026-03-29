@@ -105,8 +105,12 @@
 			</Dialog.Header>
 
 			{#if current.method === 'select'}
+				{@const rawOptions = current.options ?? []}
+				{@const normalizedOptions = rawOptions.map((o: any) =>
+					typeof o === 'string' ? { label: o, value: o } : o
+				)}
 				<div class="flex flex-col gap-1">
-					{#each current.options ?? [] as option}
+					{#each normalizedOptions as option}
 						<button
 							class="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
 							onclick={() => handleSelect(option.value)}

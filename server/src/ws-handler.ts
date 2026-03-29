@@ -1,12 +1,13 @@
 import type { WebSocket } from 'ws';
+import { execFileSync } from 'node:child_process';
 import type {
   PimoteCommand,
   PimoteResponse,
   PimoteEvent,
   PimoteSessionEvent,
-  PimoteAgentMessage,
-  PimoteMessageContent,
+
   SessionState,
+  SessionMeta,
   BufferedEventsEvent,
   ConnectionRestoredEvent,
   FullResyncEvent,
@@ -16,6 +17,21 @@ import type { FolderIndex } from './folder-index.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
+import { mapAgentMessages } from './message-mapper.js';
+
+/** Resolve the current git branch for a directory. Returns null if not a git repo. */
+function getGitBranch(cwd: string): string | null {
+  try {
+    return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 2000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
 
 export class WsHandler {
   private readonly pendingUiResponses = new Map<string, { resolve: (value: any) => void; sessionId: string }>();
@@ -117,6 +133,7 @@ export class WsHandler {
           this.sendEvent({
             type: 'session_opened',
             sessionId,
+            sessionFilePath: managed.session.sessionFile,
             folder: {
               path: managed.folderPath,
               name: managed.folderPath.split('/').pop() ?? managed.folderPath,
@@ -228,17 +245,9 @@ export class WsHandler {
           managed.sendLive = (event: PimoteSessionEvent) => { this.sendEvent(event); };
           managed.onStatusChange = this.createStatusChangeCallback();
           this.subscribedSessions.add(command.sessionId);
-          this.viewedSessionId = command.sessionId;
-
-          // Check for conflicting external pi processes
-          const reconnectConflictPids = await findExternalPiProcesses(managed.folderPath);
-          if (reconnectConflictPids.length > 0) {
-            this.sendEvent({
-              type: 'session_conflict',
-              sessionId: command.sessionId,
-              processes: reconnectConflictPids.map(pid => ({ pid, command: 'pi' })),
-            });
-          }
+          // Don't overwrite viewedSessionId here — the client reconnects ALL
+          // subscribed sessions in a loop, so the last one would win arbitrarily.
+          // The client sends an explicit view_session after reconnect to set this.
 
           this.sendResponse(id, true);
           break;
@@ -552,6 +561,18 @@ export class WsHandler {
         break;
       }
 
+      case 'get_session_meta': {
+        const contextUsage = session.getContextUsage();
+        const meta: SessionMeta = {
+          gitBranch: getGitBranch(managed.folderPath),
+          contextUsage: contextUsage
+            ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow }
+            : null,
+        };
+        this.sendResponse(id, true, { meta });
+        break;
+      }
+
       case 'get_commands': {
         // Placeholder — will be implemented later
         this.sendResponse(id, true, { commands: [] });
@@ -630,6 +651,8 @@ export class WsHandler {
       const managed = this.sessionManager.getSession(sid);
       if (managed) {
         managed.connectedClient = null;
+        managed.sendLive = () => {};
+        managed.onStatusChange = null;
         managed.lastActivity = Date.now();
       }
     }
@@ -642,68 +665,4 @@ export class WsHandler {
     }
     this.pendingUiResponses.clear();
   }
-}
-
-/**
- * Map pi SDK AgentMessage[] to PimoteAgentMessage[] for wire transfer.
- */
-function mapAgentMessages(messages: any[]): PimoteAgentMessage[] {
-  return messages.map((msg) => {
-    const role = msg.role ?? 'unknown';
-    const content: PimoteMessageContent[] = [];
-
-    if (typeof msg.content === 'string') {
-      content.push({ type: 'text', text: msg.content });
-    } else if (Array.isArray(msg.content)) {
-      for (const item of msg.content) {
-        switch (item.type) {
-          case 'text':
-            content.push({ type: 'text', text: item.text ?? '' });
-            break;
-          case 'thinking':
-            content.push({ type: 'thinking', text: item.thinking ?? '' });
-            break;
-          case 'toolCall':
-            content.push({
-              type: 'tool_call',
-              toolCallId: item.id,
-              toolName: item.name,
-              args: item.arguments,
-            });
-            break;
-          case 'image':
-            // Images in user messages — map as text placeholder
-            content.push({ type: 'text', text: '[image]' });
-            break;
-          default:
-            // Unknown content type — pass through as text
-            content.push({ type: 'text', text: item.text ?? JSON.stringify(item) });
-            break;
-        }
-      }
-    }
-
-    // Handle tool result messages
-    if (role === 'toolResult') {
-      const resultContent: PimoteMessageContent[] = [];
-      if (Array.isArray(msg.content)) {
-        for (const item of msg.content) {
-          if (item.type === 'text') {
-            resultContent.push({ type: 'text', text: item.text ?? '' });
-          }
-        }
-      }
-      return {
-        role,
-        content: [{
-          type: 'tool_result' as const,
-          toolCallId: msg.toolCallId,
-          toolName: msg.toolName,
-          result: resultContent.length > 0 ? resultContent[0].text : undefined,
-        }],
-      };
-    }
-
-    return { role, content };
-  });
 }

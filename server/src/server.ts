@@ -153,11 +153,30 @@ export function createServer(
     },
     close(): Promise<void> {
       return new Promise((resolve, reject) => {
-        wss.close(() => {
+        // Force-close all active WebSocket connections
+        wss.clients.forEach((client) => {
+          client.close();
+        });
+
+        // Close the WebSocket server with a timeout to prevent hanging
+        const timeout = setTimeout(() => {
+          console.warn('[pimote] WebSocket server close timeout — forcing shutdown');
           httpServer.close((err) => {
             if (err) reject(err);
             else resolve();
           });
+        }, 5000);
+
+        wss.close((err) => {
+          clearTimeout(timeout);
+          if (err) {
+            reject(err);
+          } else {
+            httpServer.close((err) => {
+              if (err) reject(err);
+              else resolve();
+            });
+          }
         });
       });
     },

@@ -7,6 +7,9 @@ export interface PimoteConfig {
   idleTimeout: number;
   bufferSize: number;
   port: number;
+  defaultProvider?: string;
+  defaultModel?: string;
+  defaultThinkingLevel?: string;
   vapidPublicKey?: string;
   vapidPrivateKey?: string;
   vapidEmail?: string;
@@ -69,6 +72,9 @@ export async function loadConfig(): Promise<PimoteConfig> {
     idleTimeout: typeof obj.idleTimeout === 'number' ? obj.idleTimeout : DEFAULTS.idleTimeout,
     bufferSize: typeof obj.bufferSize === 'number' ? obj.bufferSize : DEFAULTS.bufferSize,
     port: typeof obj.port === 'number' ? obj.port : DEFAULTS.port,
+    defaultProvider: typeof obj.defaultProvider === 'string' ? obj.defaultProvider : undefined,
+    defaultModel: typeof obj.defaultModel === 'string' ? obj.defaultModel : undefined,
+    defaultThinkingLevel: typeof obj.defaultThinkingLevel === 'string' ? obj.defaultThinkingLevel : undefined,
     vapidPublicKey: typeof obj.vapidPublicKey === 'string' ? obj.vapidPublicKey : undefined,
     vapidPrivateKey: typeof obj.vapidPrivateKey === 'string' ? obj.vapidPrivateKey : undefined,
     vapidEmail: typeof obj.vapidEmail === 'string' ? obj.vapidEmail : undefined,

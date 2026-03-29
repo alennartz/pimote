@@ -9,6 +9,9 @@
 	import Loader2 from '@lucide/svelte/icons/loader-2';
 
 	let expandedFolders = $state(new Set<string>());
+	let expandedSessionLists = $state(new Set<string>());
+
+	const MAX_SESSIONS_SHOWN = 6;
 
 	onMount(() => {
 		// Load folders when connected
@@ -18,7 +21,12 @@
 
 		// Also reload when connection status changes to connected
 		const unsub = connection.onEvent((event) => {
-			if (event.type === 'session_opened' || event.type === 'session_closed') {
+			if (
+				event.type === 'session_opened' ||
+				event.type === 'session_closed' ||
+				event.type === 'agent_start' ||
+				event.type === 'agent_end'
+			) {
 				indexStore.loadFolders();
 			}
 		});
@@ -43,6 +51,16 @@
 			indexStore.loadSessions(path);
 		}
 		expandedFolders = next;
+	}
+
+	function toggleSessionList(path: string) {
+		const next = new Set(expandedSessionLists);
+		if (next.has(path)) {
+			next.delete(path);
+		} else {
+			next.add(path);
+		}
+		expandedSessionLists = next;
 	}
 
 	async function newSession(folderPath: string) {
@@ -79,7 +97,7 @@
 			<div class="rounded-lg">
 				<!-- Folder header -->
 				<button
-					class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent"
+					class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent active:scale-[0.97] active:bg-sidebar-accent/80"
 					onclick={() => toggleFolder(folder.path)}
 				>
 					<ChevronRight
@@ -99,22 +117,42 @@
 				<!-- Expanded content: sessions -->
 				{#if expanded}
 					<div class="ml-4 flex flex-col gap-0.5 border-l border-sidebar-border pl-2 pt-1">
-						{#if sessions.length === 0}
-							<div class="px-3 py-2 text-xs text-muted-foreground">No sessions</div>
-						{:else}
-							{#each sessions as session (session.id)}
-								<SessionItem {session} folderPath={folder.path} />
-							{/each}
-						{/if}
-
-						<!-- New session button -->
+						<!-- New session button at top -->
 						<button
-							class="flex items-center gap-2 rounded-md px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+							class="flex items-center gap-2 rounded-md px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground active:scale-[0.97] active:bg-sidebar-accent/80"
 							onclick={() => newSession(folder.path)}
 						>
 							<Plus class="size-3.5" />
 							New session
 						</button>
+
+						{#if sessions.length === 0}
+							<div class="px-3 py-2 text-xs text-muted-foreground">No sessions</div>
+						{:else}
+							{@const showAll = expandedSessionLists.has(folder.path)}
+							{@const visibleSessions = showAll ? sessions : sessions.slice(0, MAX_SESSIONS_SHOWN)}
+							{@const hiddenCount = Math.max(0, sessions.length - MAX_SESSIONS_SHOWN)}
+
+							{#each visibleSessions as session (session.id)}
+								<SessionItem {session} folderPath={folder.path} />
+							{/each}
+
+							{#if hiddenCount > 0 && !showAll}
+								<button
+									class="rounded-md px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+									onclick={() => toggleSessionList(folder.path)}
+								>
+									Show {hiddenCount} more session{hiddenCount !== 1 ? 's' : ''}
+								</button>
+							{:else if showAll && hiddenCount > 0}
+								<button
+									class="rounded-md px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+									onclick={() => toggleSessionList(folder.path)}
+								>
+									Show fewer sessions
+								</button>
+							{/if}
+						{/if}
 					</div>
 				{/if}
 			</div>

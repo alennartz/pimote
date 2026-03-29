@@ -75,7 +75,7 @@
 	}
 </script>
 
-<div class="shrink-0 border-t border-border bg-background px-3 pb-[env(safe-area-inset-bottom,8px)] pt-2">
+<div class="shrink-0 border-t border-border bg-background px-3 pb-[max(env(safe-area-inset-bottom),16px)] pt-2">
 	<div class="mx-auto flex max-w-3xl items-end gap-2">
 		<!-- Abort button (visible only when streaming) -->
 		{#if sessionRegistry.viewed?.isStreaming}

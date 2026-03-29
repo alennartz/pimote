@@ -5,6 +5,7 @@
 	import FolderList from '$lib/components/FolderList.svelte';
 	import ExtensionDialog from '$lib/components/ExtensionDialog.svelte';
 	import ExtensionStatus from '$lib/components/ExtensionStatus.svelte';
+	import InstallBanner from '$lib/components/InstallBanner.svelte';
 	import Menu from '@lucide/svelte/icons/menu';
 	import X from '@lucide/svelte/icons/x';
 	import { connection } from '$lib/stores/connection.svelte.js';
@@ -17,20 +18,19 @@
 	onMount(() => {
 		connection.connect();
 
-		// Register service worker for push notifications
+		// Register service worker for push notifications and PWA
 		if ('serviceWorker' in navigator) {
-			navigator.serviceWorker.register('/sw.js').catch((err) => {
-				console.warn('[pimote] Service worker registration failed:', err);
-			});
-		}
+			navigator.serviceWorker
+				.register('/sw.js')
+				.then((reg) => console.log('[pimote] Service worker registered:', reg))
+				.catch((err) => console.warn('[pimote] Service worker registration failed:', err));
 
-		// Handle in-app push messages from service worker
-		if ('serviceWorker' in navigator) {
+			// Handle in-app push messages from service worker
 			navigator.serviceWorker.addEventListener('message', (event) => {
 				if (event.data?.type === 'push_notification') {
 					const sid = event.data.sessionId;
 					if (sid) {
-						const session = sessionRegistry.sessions.get(sid);
+						const session = sessionRegistry.sessions[sid];
 						if (session) {
 							session.needsAttention = true;
 						}
@@ -49,7 +49,7 @@
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 
-<div class="flex h-screen overflow-hidden bg-background">
+<div class="flex h-dvh overflow-hidden bg-background">
 	<!-- Mobile overlay -->
 	{#if sidebarOpen}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -119,4 +119,7 @@
 
 	<!-- Extension UI dialogs (global overlay) -->
 	<ExtensionDialog />
+
+	<!-- PWA install prompt (mobile only) -->
+	<InstallBanner />
 </div>

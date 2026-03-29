@@ -5,8 +5,13 @@
 	import ToolCall from './ToolCall.svelte';
 	import User from '@lucide/svelte/icons/user';
 	import Bot from '@lucide/svelte/icons/bot';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+
+	const MAX_COLLAPSED_LINES = 10;
 
 	let { message }: { message: PimoteAgentMessage } = $props();
+	let customExpanded = $state(false);
 
 	function getUserText(msg: PimoteAgentMessage): string {
 		return msg.content
@@ -14,9 +19,20 @@
 			.map((c) => c.text!)
 			.join('\n');
 	}
+
+	let customText = $derived(getUserText(message));
+	let customLines = $derived(customText.split('\n'));
+	let customNeedsCollapse = $derived(customLines.length > MAX_COLLAPSED_LINES);
+	let customDisplayText = $derived(
+		customNeedsCollapse && !customExpanded
+			? customLines.slice(0, MAX_COLLAPSED_LINES).join('\n')
+			: customText
+	);
 </script>
 
-{#if message.role === 'user'}
+{#if message.role === 'toolResult'}
+	<!-- Tool results are displayed inline with their tool calls — skip standalone rendering -->
+{:else if message.role === 'user'}
 	<div class="message user-message">
 		<div class="message-icon user-icon">
 			<User size={16} />
@@ -42,6 +58,37 @@
 					<ToolCall content={block} />
 				{/if}
 			{/each}
+		</div>
+	</div>
+{:else if message.role === 'custom'}
+	<!-- Custom message (extension-injected, e.g. subagent results) -->
+	<div class="message custom-message">
+		<div class="custom-body">
+			<button class="custom-header" onclick={() => customExpanded = !customExpanded}>
+				{#if customNeedsCollapse}
+					{#if customExpanded}
+						<ChevronDown size={14} />
+					{:else}
+						<ChevronRight size={14} />
+					{/if}
+				{/if}
+				<span class="custom-label">[{message.customType ?? 'custom'}]</span>
+				{#if customNeedsCollapse}
+					<span class="custom-line-count">{customLines.length} lines</span>
+				{/if}
+			</button>
+			<div class="custom-content">
+				<TextBlock text={customDisplayText} />
+				{#if customNeedsCollapse && !customExpanded}
+					<button class="custom-toggle" onclick={() => customExpanded = true}>
+						Show more…
+					</button>
+				{:else if customNeedsCollapse && customExpanded}
+					<button class="custom-toggle" onclick={() => customExpanded = false}>
+						Show less
+					</button>
+				{/if}
+			</div>
 		</div>
 	</div>
 {:else}
@@ -113,5 +160,68 @@
 		font-size: 0.8rem;
 		color: var(--muted-foreground);
 		font-style: italic;
+	}
+
+	.custom-message {
+		flex-direction: column;
+		gap: 0;
+		padding: 8px 0;
+	}
+
+	.custom-body {
+		border-left: 3px solid oklch(0.55 0.1 280);
+		background: oklch(0.2 0.02 270 / 0.5);
+		border-radius: 4px;
+		overflow: hidden;
+	}
+
+	.custom-header {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 6px 10px;
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: oklch(0.7 0.1 280);
+		font-size: 0.75rem;
+		font-weight: 600;
+		text-align: left;
+	}
+
+	.custom-header:hover {
+		background: oklch(0.25 0.02 270 / 0.5);
+	}
+
+	.custom-label {
+		font-family: var(--font-mono, monospace);
+	}
+
+	.custom-line-count {
+		color: var(--muted-foreground);
+		font-weight: 400;
+	}
+
+	.custom-content {
+		padding: 0 10px 8px;
+		font-size: 0.85rem;
+	}
+
+	.custom-toggle {
+		display: inline-block;
+		margin-top: 4px;
+		padding: 0;
+		background: none;
+		border: none;
+		color: oklch(0.65 0.1 280);
+		font-size: 0.75rem;
+		cursor: pointer;
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+
+	.custom-toggle:hover {
+		color: oklch(0.75 0.1 280);
 	}
 </style>

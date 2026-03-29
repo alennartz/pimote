@@ -22,6 +22,9 @@ class ConnectionStore {
   private reconnectDelay = 1000;
   private intentionalClose = false;
 
+  /** Called after all session reconnects complete. Set by session-registry to restore viewed session. */
+  onReconnected: (() => void) | null = null;
+
   connect(): void {
     if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
       return;
@@ -36,13 +39,32 @@ class ConnectionStore {
       this.reconnectDelay = 1000;
 
       // Reconnect all subscribed sessions with per-session cursors
+      const reconnectPromises: Promise<void>[] = [];
       for (const sessionId of this.subscribedSessions) {
-        this.send({
+        const p = this.send({
           type: 'reconnect',
           sessionId,
           lastCursor: this.sessionCursors.get(sessionId) ?? 0,
+        }).then((response) => {
+          if (!response.success) {
+            // Session expired (server restarted, idle-reaped, etc.) — fire
+            // a synthetic session_closed so the registry cleans up the tab
+            const closedEvent = { type: 'session_closed', sessionId } as PimoteEvent;
+            for (const listener of this.listeners) {
+              try { listener(closedEvent); } catch (e) { console.error('[ConnectionStore] listener error:', e); }
+            }
+          }
+        }).catch(() => {
+          // WebSocket dropped before response — will retry on next reconnect
         });
+        reconnectPromises.push(p);
       }
+
+      // After all reconnects, restore correct viewed session on the server.
+      // Import is circular so we use the onReconnected callback instead.
+      Promise.all(reconnectPromises).then(() => {
+        this.onReconnected?.();
+      });
     };
 
     this.ws.onmessage = (ev) => {

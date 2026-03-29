@@ -65,13 +65,20 @@
 	}
 
 	async function selectModel(model: AvailableModel) {
-		if (!sessionRegistry.viewed?.sessionId) return;
-		await connection.send({
+		const sessionId = sessionRegistry.viewed?.sessionId;
+		if (!sessionId) return;
+		const res = await connection.send({
 			type: 'set_model',
-			sessionId: sessionRegistry.viewed.sessionId,
+			sessionId,
 			provider: model.provider,
 			modelId: model.id,
 		});
+		if (res.success) {
+			const session = sessionRegistry.sessions[sessionId];
+			if (session) {
+				session.model = { provider: model.provider, id: model.id, name: model.name };
+			}
+		}
 		open = false;
 	}
 

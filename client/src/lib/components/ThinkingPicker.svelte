@@ -27,10 +27,17 @@
 	$effect(() => {
 		const viewedLevel = sessionRegistry.viewed?.thinkingLevel ?? 'off';
 		if (mounted && selectedLevel !== viewedLevel && sessionRegistry.viewed?.sessionId) {
+			const sid = sessionRegistry.viewed.sessionId;
+			const level = selectedLevel;
 			connection.send({
 				type: 'set_thinking_level',
-				sessionId: sessionRegistry.viewed.sessionId,
-				level: selectedLevel,
+				sessionId: sid,
+				level,
+			}).then((res) => {
+				if (res.success) {
+					const session = sessionRegistry.sessions[sid];
+					if (session) session.thinkingLevel = level;
+				}
 			});
 		}
 	});

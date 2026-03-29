@@ -1,12 +1,11 @@
 <script lang="ts">
 	import ModelPicker from './ModelPicker.svelte';
 	import ThinkingPicker from './ThinkingPicker.svelte';
-	import CompactButton from './CompactButton.svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
 	import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 	import { connection } from '$lib/stores/connection.svelte.js';
-	import { X } from '@lucide/svelte';
+	import { X, GitBranch } from '@lucide/svelte';
 
 	function closeSession() {
 		const id = sessionRegistry.viewedSessionId;
@@ -32,10 +31,35 @@
 				? 'bg-amber-500'
 				: 'bg-red-500'
 	);
+
+	let contextPercent = $derived(sessionRegistry.viewed?.contextUsage?.percent);
+	let contextWindow = $derived(sessionRegistry.viewed?.contextUsage?.contextWindow ?? 0);
+
+	function formatTokens(n: number): string {
+		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)}M`;
+		if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
+		return `${n}`;
+	}
+
+	let contextDisplay = $derived(
+		contextPercent != null
+			? `${contextPercent.toFixed(1)}%/${formatTokens(contextWindow)}`
+			: contextWindow > 0
+				? `?/${formatTokens(contextWindow)}`
+				: null
+	);
+
+	let contextColor = $derived(
+		contextPercent != null && contextPercent > 90
+			? 'text-red-400'
+			: contextPercent != null && contextPercent > 70
+				? 'text-amber-400'
+				: 'text-muted-foreground'
+	);
 </script>
 
 <div
-	class="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-muted/30 px-2 text-xs text-muted-foreground"
+	class="flex h-9 shrink-0 items-center gap-1 overflow-hidden border-b border-border bg-muted/30 px-2 text-xs text-muted-foreground"
 >
 	<!-- Model picker -->
 	<ModelPicker />
@@ -45,13 +69,25 @@
 	<!-- Thinking level picker -->
 	<ThinkingPicker />
 
-	<Separator orientation="vertical" class="mx-0.5 h-4" />
-
-	<!-- Compact button -->
-	<CompactButton />
-
 	<!-- Spacer -->
 	<div class="flex-1"></div>
+
+	<!-- Context usage -->
+	{#if contextDisplay}
+		<span class="flex items-center gap-1 {contextColor}" title="Context window usage">
+			{contextDisplay}
+		</span>
+	{/if}
+
+	<!-- Git branch -->
+	{#if sessionRegistry.viewed?.gitBranch}
+		<span class="flex items-center gap-1 text-muted-foreground" title="Git branch">
+			<GitBranch class="size-3" />
+			<span class="max-w-[8rem] truncate">{sessionRegistry.viewed.gitBranch}</span>
+		</span>
+
+		<Separator orientation="vertical" class="mx-0.5 h-4" />
+	{/if}
 
 	<!-- Streaming indicator -->
 	{#if sessionRegistry.viewed?.isStreaming}

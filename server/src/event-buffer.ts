@@ -1,4 +1,5 @@
 import type { PimoteSessionEvent } from '@pimote/shared';
+import { mapAgentMessage } from './message-mapper.js';
 
 interface BufferEntry {
   cursor: number;
@@ -127,7 +128,9 @@ export class EventBuffer {
         return {
           ...base,
           type: 'message_end',
-          message: sdkEvent.message ?? { role: 'assistant', content: [] },
+          message: sdkEvent.message
+            ? mapAgentMessage(sdkEvent.message)
+            : { role: 'assistant', content: [] },
         };
 
       case 'tool_execution_start':

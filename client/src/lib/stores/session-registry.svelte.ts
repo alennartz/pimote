@@ -6,13 +6,14 @@
 // instances are returned as-is. That means wrapping `new SessionRegistry()`
 // with $state() does nothing. The runes must be on the individual fields.
 
-import type { PimoteEvent, PimoteAgentMessage, SessionState } from '@pimote/shared';
+import type { PimoteEvent, PimoteAgentMessage, SessionState, SessionMeta } from '@pimote/shared';
 import { connection } from './connection.svelte.js';
 
 export interface PerSessionState {
   sessionId: string;
   folderPath: string;
   projectName: string;
+  sessionFilePath: string | undefined;
   firstMessage: string | undefined;
   messages: PimoteAgentMessage[];
   isStreaming: boolean;
@@ -27,6 +28,8 @@ export interface PerSessionState {
   status: 'idle' | 'working';
   needsAttention: boolean;
   conflictingProcesses: Array<{ pid: number; command: string }>;
+  gitBranch: string | null;
+  contextUsage: { percent: number | null; contextWindow: number } | null;
 }
 
 export class SessionRegistry {
@@ -72,6 +75,18 @@ export class SessionRegistry {
         if (sessionId !== this.viewedSessionId) {
           session.needsAttention = true;
         }
+        // Refresh meta (context usage changes after each turn, branch may change)
+        connection.send({ type: 'get_session_meta', sessionId }).then((res) => {
+          if (res.success && res.data) {
+            this.updateMeta(sessionId, (res.data as any).meta);
+          }
+        }).catch(() => {});
+        break;
+
+      case 'message_start':
+        // Reset streaming accumulators for the new message within a turn
+        session.streamingText = '';
+        session.streamingThinking = '';
         break;
 
       case 'message_update': {
@@ -87,7 +102,7 @@ export class SessionRegistry {
       case 'message_end': {
         const end = event as any;
         const message: PimoteAgentMessage = end.message;
-        session.messages.push(message);
+        session.messages = [...session.messages, message];
         session.streamingText = '';
         session.streamingThinking = '';
         session.messageCount++;
@@ -132,6 +147,12 @@ export class SessionRegistry {
 
       case 'auto_compaction_end':
         session.isCompacting = false;
+        // Context usage changes significantly after compaction
+        connection.send({ type: 'get_session_meta', sessionId }).then((res) => {
+          if (res.success && res.data) {
+            this.updateMeta(sessionId, (res.data as any).meta);
+          }
+        }).catch(() => {});
         break;
 
       case 'full_resync': {
@@ -161,11 +182,12 @@ export class SessionRegistry {
   }
 
   /** Add a session to the registry */
-  addSession(sessionId: string, folderPath: string, projectName: string): void {
+  addSession(sessionId: string, folderPath: string, projectName: string, sessionFilePath?: string): void {
     const session: PerSessionState = {
       sessionId,
       folderPath,
       projectName,
+      sessionFilePath,
       firstMessage: undefined,
       messages: [],
       isStreaming: false,
@@ -180,15 +202,22 @@ export class SessionRegistry {
       status: 'idle',
       needsAttention: false,
       conflictingProcesses: [],
+      gitBranch: null,
+      contextUsage: null,
     };
     this.sessions[sessionId] = session;
   }
 
   /** Remove a session from the registry */
   removeSession(sessionId: string): void {
-    delete this.sessions[sessionId];
-    if (this.viewedSessionId === sessionId) {
-      this.viewedSessionId = null;
+    const wasViewed = this.viewedSessionId === sessionId;
+    // Reassign rather than delete to reliably trigger Svelte 5 $state reactivity
+    const { [sessionId]: _, ...rest } = this.sessions;
+    this.sessions = rest;
+    if (wasViewed) {
+      // Switch to another active session if one exists, otherwise go to landing
+      const remaining = Object.keys(this.sessions);
+      this.viewedSessionId = remaining.length > 0 ? remaining[0] : null;
     }
   }
 
@@ -198,6 +227,20 @@ export class SessionRegistry {
     const session = this.sessions[sessionId];
     if (session) {
       session.needsAttention = false;
+    }
+  }
+
+  /** Check if a given session file path is currently active */
+  isActiveSessionPath(filePath: string): boolean {
+    return Object.values(this.sessions).some((s) => s.sessionFilePath === filePath);
+  }
+
+  /** Update session meta (git branch, context usage) */
+  updateMeta(sessionId: string, meta: SessionMeta): void {
+    const session = this.sessions[sessionId];
+    if (session) {
+      session.gitBranch = meta.gitBranch;
+      session.contextUsage = meta.contextUsage;
     }
   }
 
@@ -219,14 +262,16 @@ connection.onEvent((event) => {
     case 'session_opened': {
       const folder = (event as any).folder;
       const projectName = folder?.name ?? 'Unknown';
-      sessionRegistry.addSession(event.sessionId, folder?.path ?? '', projectName);
+      const sessionFilePath = (event as any).sessionFilePath as string | undefined;
+      sessionRegistry.addSession(event.sessionId, folder?.path ?? '', projectName, sessionFilePath);
       connection.addSubscribedSession(event.sessionId);
       sessionRegistry.switchTo(event.sessionId);
-      // Request initial state and messages atomically to avoid race conditions
+      // Request initial state, messages, and meta atomically to avoid race conditions
       Promise.all([
         connection.send({ type: 'get_state', sessionId: event.sessionId }),
         connection.send({ type: 'get_messages', sessionId: event.sessionId }),
-      ]).then(([stateRes, msgRes]) => {
+        connection.send({ type: 'get_session_meta', sessionId: event.sessionId }),
+      ]).then(([stateRes, msgRes, metaRes]) => {
         const session = sessionRegistry.sessions[event.sessionId];
         if (!session) return;
         if (stateRes.success && stateRes.data) {
@@ -243,6 +288,10 @@ connection.onEvent((event) => {
           const messages = (msgRes.data as any).messages;
           session.messages = messages;
           session.messageCount = messages.length;
+        }
+        if (metaRes.success && metaRes.data) {
+          const meta = (metaRes.data as any).meta;
+          sessionRegistry.updateMeta(event.sessionId, meta);
         }
       });
       break;
@@ -261,6 +310,14 @@ connection.onEvent((event) => {
     }
   }
 });
+
+// After reconnect completes, restore the correct viewed session on the server
+connection.onReconnected = () => {
+  const viewedId = sessionRegistry.viewedSessionId;
+  if (viewedId) {
+    connection.send({ type: 'view_session', sessionId: viewedId }).catch(() => {});
+  }
+};
 
 // Helper that also sends view_session to server
 export function switchToSession(sessionId: string): void {

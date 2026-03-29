@@ -55,6 +55,8 @@ export interface PimoteMessageContent {
 export interface PimoteAgentMessage {
   role: string;
   content: PimoteMessageContent[];
+  /** Present when role === 'custom' — the extension-defined message type (e.g. 'agent-complete') */
+  customType?: string;
   [key: string]: unknown;
 }
 
@@ -139,6 +141,18 @@ export interface NewSessionCommand extends CommandBase {
 
 export interface GetSessionStatsCommand extends CommandBase {
   type: 'get_session_stats';
+}
+
+export interface GetSessionMetaCommand extends CommandBase {
+  type: 'get_session_meta';
+}
+
+export interface SessionMeta {
+  gitBranch: string | null;
+  contextUsage: {
+    percent: number | null;
+    contextWindow: number;
+  } | null;
 }
 
 export interface GetCommandsCommand extends CommandBase {
@@ -239,6 +253,7 @@ export type PimoteCommand =
   | GetMessagesCommand
   | NewSessionCommand
   | GetSessionStatsCommand
+  | GetSessionMetaCommand
   | GetCommandsCommand
   | SetSessionNameCommand
   // Server-level
@@ -408,6 +423,7 @@ export interface SessionOpenedEvent {
   type: 'session_opened';
   sessionId: string;
   folder: FolderInfo;
+  sessionFilePath?: string;
 }
 
 export interface SessionClosedEvent {

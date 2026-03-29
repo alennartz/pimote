@@ -59,6 +59,26 @@ export class PimoteSessionManager {
       modelRegistry: this.modelRegistry,
     });
 
+    // Apply default model from config (only for new sessions without an existing model preference)
+    if (!sessionPath && this.config.defaultProvider && this.config.defaultModel) {
+      const models = this.modelRegistry.getAvailable();
+      const defaultModel = models.find(
+        (m) => m.provider === this.config.defaultProvider && m.id === this.config.defaultModel,
+      );
+      if (defaultModel) {
+        await session.setModel(defaultModel);
+        console.log(`[pimote] Set default model: ${defaultModel.provider}/${defaultModel.id}`);
+      } else {
+        console.warn(`[pimote] Default model not found: ${this.config.defaultProvider}/${this.config.defaultModel}`);
+      }
+    }
+
+    // Apply default thinking level from config
+    if (!sessionPath && this.config.defaultThinkingLevel) {
+      session.setThinkingLevel(this.config.defaultThinkingLevel as any);
+      console.log(`[pimote] Set default thinking level: ${this.config.defaultThinkingLevel}`);
+    }
+
     const eventBuffer = new EventBuffer(this.config.bufferSize);
 
     const managed: ManagedSession = {
