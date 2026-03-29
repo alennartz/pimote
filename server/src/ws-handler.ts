@@ -697,6 +697,15 @@ export class WsHandler {
     return undefined;
   }
 
+  /** Close this handler's WebSocket connection. */
+  closeWebSocket(): void {
+    try {
+      this.ws.close();
+    } catch {
+      // Already closed or errored — ignore
+    }
+  }
+
   /** Send a session_closed event with reason 'displaced' to this client's WebSocket.
    *  Also removes the session from this handler's subscribedSessions so that
    *  cleanup() won't stomp the new owner's bindings when this handler closes. */

@@ -5,7 +5,7 @@
 	import StatusBar from '$lib/components/StatusBar.svelte';
 	import ActiveSessionBar from '$lib/components/ActiveSessionBar.svelte';
 	import NotificationBanner from '$lib/components/NotificationBanner.svelte';
-	import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+	import { sessionRegistry, confirmTakeover, dismissTakeover } from '$lib/stores/session-registry.svelte.js';
 	import { connection } from '$lib/stores/connection.svelte.js';
 
 	function killConflicts() {
@@ -31,6 +31,17 @@
 	<!-- Active session view -->
 	<div class="flex h-full flex-col">
 		<StatusBar />
+		{#if sessionRegistry.viewed?.pendingTakeover}
+			<div class="flex items-center gap-2 bg-warning/10 border-b border-warning/30 px-4 py-2 text-sm text-warning">
+				<span>This session is owned by another client. Take it over?</span>
+				<button class="ml-auto rounded bg-warning px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-warning/80" onclick={() => confirmTakeover(sessionRegistry.viewedSessionId!)}>
+					Take Over
+				</button>
+				<button class="rounded border border-warning/30 px-3 py-1 text-xs font-medium hover:bg-warning/20" onclick={() => dismissTakeover(sessionRegistry.viewedSessionId!)}>
+					Dismiss
+				</button>
+			</div>
+		{/if}
 		{#if sessionRegistry.viewed?.conflictingProcesses?.length}
 			<div class="flex items-center gap-2 bg-destructive/10 border-b border-destructive/30 px-4 py-2 text-sm text-destructive">
 				<span>External pi processes detected in this project.</span>

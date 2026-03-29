@@ -26,6 +26,9 @@ class ConnectionStore {
   /** Called after all session reconnects complete. Set by session-registry to restore viewed session. */
   onReconnected: (() => void) | null = null;
 
+  /** Called when a reconnect is rejected with session_owned (another client owns it). */
+  onSessionOwned: ((sessionId: string) => void) | null = null;
+
   connect(): void {
     if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
       return;
@@ -48,11 +51,16 @@ class ConnectionStore {
           lastCursor: this.sessionCursors.get(sessionId) ?? 0,
         }).then((response) => {
           if (!response.success) {
-            // Session expired (server restarted, idle-reaped, etc.) — fire
-            // a synthetic session_closed so the registry cleans up the tab
-            const closedEvent = { type: 'session_closed', sessionId } as PimoteEvent;
-            for (const listener of this.listeners) {
-              try { listener(closedEvent); } catch (e) { console.error('[ConnectionStore] listener error:', e); }
+            if (response.error === 'session_owned') {
+              // Another client owns this session — let the registry prompt the user
+              this.onSessionOwned?.(sessionId);
+            } else {
+              // Session expired (server restarted, idle-reaped, etc.) — fire
+              // a synthetic session_closed so the registry cleans up the tab
+              const closedEvent = { type: 'session_closed', sessionId } as PimoteEvent;
+              for (const listener of this.listeners) {
+                try { listener(closedEvent); } catch (e) { console.error('[ConnectionStore] listener error:', e); }
+              }
             }
           }
         }).catch(() => {
@@ -145,6 +153,15 @@ class ConnectionStore {
     next.delete(id);
     this.subscribedSessions = next;
     this.sessionCursors.delete(id);
+  }
+
+  forceReconnect(sessionId: string): Promise<PimoteResponse> {
+    return this.send({
+      type: 'reconnect',
+      sessionId,
+      lastCursor: this.sessionCursors.get(sessionId) ?? 0,
+      force: true,
+    });
   }
 
   send(command: PimoteCommand): Promise<PimoteResponse> {

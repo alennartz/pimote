@@ -29,6 +29,7 @@ export interface PerSessionState {
   needsAttention: boolean;
   conflictingProcesses: Array<{ pid: number; command: string }>;
   conflictingRemoteSessions: Array<{ sessionId: string; status: 'working' | 'idle' }>;
+  pendingTakeover: boolean;
   gitBranch: string | null;
   contextUsage: { percent: number | null; contextWindow: number } | null;
 }
@@ -205,6 +206,7 @@ export class SessionRegistry {
       needsAttention: false,
       conflictingProcesses: [],
       conflictingRemoteSessions: [],
+      pendingTakeover: false,
       gitBranch: null,
       contextUsage: null,
     };
@@ -315,6 +317,14 @@ connection.onEvent((event) => {
   }
 });
 
+// When a reconnect is rejected because another client owns the session, prompt user
+connection.onSessionOwned = (sessionId) => {
+  const session = sessionRegistry.sessions[sessionId];
+  if (session) {
+    session.pendingTakeover = true;
+  }
+};
+
 // After reconnect completes, restore the correct viewed session on the server
 connection.onReconnected = () => {
   const viewedId = sessionRegistry.viewedSessionId;
@@ -322,6 +332,30 @@ connection.onReconnected = () => {
     connection.send({ type: 'view_session', sessionId: viewedId }).catch(() => {});
   }
 };
+
+/** Confirm takeover — retry reconnect with force:true */
+export function confirmTakeover(sessionId: string): void {
+  const session = sessionRegistry.sessions[sessionId];
+  if (session) {
+    session.pendingTakeover = false;
+  }
+  connection.forceReconnect(sessionId).then((response) => {
+    if (!response.success) {
+      // Force also failed — give up
+      sessionRegistry.removeSession(sessionId);
+      connection.removeSubscribedSession(sessionId);
+    }
+  }).catch(() => {
+    sessionRegistry.removeSession(sessionId);
+    connection.removeSubscribedSession(sessionId);
+  });
+}
+
+/** Dismiss takeover — drop the session */
+export function dismissTakeover(sessionId: string): void {
+  sessionRegistry.removeSession(sessionId);
+  connection.removeSubscribedSession(sessionId);
+}
 
 // Helper that also sends view_session to server
 export function switchToSession(sessionId: string): void {

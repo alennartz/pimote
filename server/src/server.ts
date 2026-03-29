@@ -133,14 +133,16 @@ export function createServer(
     const clientId = url.searchParams.get('clientId') ?? crypto.randomUUID();
     console.log(`[pimote] WebSocket client connected (clientId=${clientId})`);
 
-    // If a stale connection exists for this clientId, close it first
+    // Register new handler first, then close any stale connection.
+    // No cleanup() — sessions will be rebound by the new handler's reconnect
+    // commands. The close handler skips cleanup when the registry already
+    // points to a different handler.
     const existing = clientRegistry.get(clientId);
-    if (existing) {
-      existing.cleanup();
-    }
-
     const handler = new WsHandler(sessionManager, folderIndex, ws, pushNotificationService, clientId, clientRegistry);
     clientRegistry.set(clientId, handler);
+    if (existing) {
+      existing.closeWebSocket();
+    }
 
     ws.on('message', (data) => {
       handler.handleMessage(data.toString()).catch((err) => {
@@ -150,11 +152,13 @@ export function createServer(
 
     ws.on('close', () => {
       console.log(`[pimote] WebSocket client disconnected (clientId=${clientId})`);
-      // Only remove from registry if this handler is still the current entry
+      // Only clean up if this handler is still the current entry.
+      // If a new handler replaced us (stale-connection reconnect), the new
+      // handler owns the sessions — don't orphan them.
       if (clientRegistry.get(clientId) === handler) {
         clientRegistry.delete(clientId);
+        handler.cleanup();
       }
-      handler.cleanup();
     });
   });
 
