@@ -286,11 +286,6 @@ describe('WsHandler', () => {
       const sessions = new Map([['session-1', session]]);
       const clientRegistry: ClientRegistry = new Map();
 
-      const { sent } = createTestHandler('new-client', {
-        sessions,
-        clientRegistry,
-      });
-
       const ctx = createTestHandler('new-client', { sessions, clientRegistry });
       await ctx.handler.handleMessage(JSON.stringify({
         type: 'reconnect',
@@ -693,6 +688,212 @@ describe('WsHandler', () => {
       const resp = findResponse(myCtx.sent, 'req-17');
       expect(resp).toBeDefined();
       expect(resp!.success).toBe(true);
+    });
+  });
+
+  describe('list_sessions — ownership enrichment', () => {
+    it('annotates sessions with isOwnedByMe and liveStatus', async () => {
+      // Two active pimote sessions in the same folder: one owned by me, one by another client
+      const mySession = createMockManagedSession({
+        id: 'my-session',
+        connectedClientId: 'my-client',
+        folderPath: '/home/user/project',
+        status: 'working',
+      });
+      const otherSession = createMockManagedSession({
+        id: 'other-session',
+        connectedClientId: 'other-client',
+        folderPath: '/home/user/project',
+        status: 'idle',
+      });
+
+      const sessions = new Map([
+        ['my-session', mySession],
+        ['other-session', otherSession],
+      ]);
+
+      // FolderIndex returns base session info (without ownership fields)
+      const folderIndex = {
+        scan: async () => [],
+        listSessions: async (_folderPath: string) => [
+          {
+            path: '/home/user/project/.pi/sessions/a.json',
+            id: 'file-session-a',
+            name: undefined,
+            created: '2025-01-01T00:00:00.000Z',
+            modified: '2025-01-02T00:00:00.000Z',
+            messageCount: 5,
+            firstMessage: 'Hello',
+          },
+          {
+            path: '/home/user/project/.pi/sessions/b.json',
+            id: 'file-session-b',
+            name: undefined,
+            created: '2025-01-01T00:00:00.000Z',
+            modified: '2025-01-02T00:00:00.000Z',
+            messageCount: 3,
+            firstMessage: undefined,
+          },
+        ],
+      } as unknown as FolderIndex;
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { handler, sent } = createTestHandler('my-client', {
+        sessions,
+        clientRegistry,
+        folderIndex,
+      });
+
+      await handler.handleMessage(JSON.stringify({
+        type: 'list_sessions',
+        folderPath: '/home/user/project',
+        id: 'req-list',
+      }));
+
+      const resp = findResponse(sent, 'req-list');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+
+      const listedSessions = (resp!.data as any).sessions;
+      expect(listedSessions).toHaveLength(2);
+
+      // Each listed session should have isOwnedByMe and liveStatus fields.
+      // The enrichment cross-references file sessions with active managed sessions
+      // by matching session file paths. These file sessions don't match active
+      // sessions (different IDs/paths), so they should report no ownership.
+      for (const s of listedSessions) {
+        expect(s).toHaveProperty('isOwnedByMe');
+        expect(s).toHaveProperty('liveStatus');
+      }
+    });
+
+    it('marks active sessions owned by requesting client with isOwnedByMe=true', async () => {
+      // Active session owned by the requesting client
+      const mySession = createMockManagedSession({
+        id: 'active-1',
+        connectedClientId: 'my-client',
+        folderPath: '/home/user/project',
+        status: 'working',
+        sessionFilePath: '/home/user/project/.pi/sessions/a.json',
+      } as any);
+
+      const sessions = new Map([['active-1', mySession]]);
+
+      const folderIndex = {
+        scan: async () => [],
+        listSessions: async () => [
+          {
+            path: '/home/user/project/.pi/sessions/a.json',
+            id: 'a',
+            name: undefined,
+            created: '2025-01-01T00:00:00.000Z',
+            modified: '2025-01-02T00:00:00.000Z',
+            messageCount: 5,
+          },
+        ],
+      } as unknown as FolderIndex;
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { handler, sent } = createTestHandler('my-client', {
+        sessions,
+        clientRegistry,
+        folderIndex,
+      });
+
+      await handler.handleMessage(JSON.stringify({
+        type: 'list_sessions',
+        folderPath: '/home/user/project',
+        id: 'req-list-mine',
+      }));
+
+      const resp = findResponse(sent, 'req-list-mine');
+      const listedSessions = (resp!.data as any).sessions;
+      expect(listedSessions).toHaveLength(1);
+      expect(listedSessions[0].isOwnedByMe).toBe(true);
+      expect(listedSessions[0].liveStatus).toBe('working');
+    });
+
+    it('marks active sessions owned by another client with isOwnedByMe=false', async () => {
+      const otherSession = createMockManagedSession({
+        id: 'active-2',
+        connectedClientId: 'other-client',
+        folderPath: '/home/user/project',
+        status: 'idle',
+        sessionFilePath: '/home/user/project/.pi/sessions/b.json',
+      } as any);
+
+      const sessions = new Map([['active-2', otherSession]]);
+
+      const folderIndex = {
+        scan: async () => [],
+        listSessions: async () => [
+          {
+            path: '/home/user/project/.pi/sessions/b.json',
+            id: 'b',
+            name: undefined,
+            created: '2025-01-01T00:00:00.000Z',
+            modified: '2025-01-02T00:00:00.000Z',
+            messageCount: 3,
+          },
+        ],
+      } as unknown as FolderIndex;
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { handler, sent } = createTestHandler('my-client', {
+        sessions,
+        clientRegistry,
+        folderIndex,
+      });
+
+      await handler.handleMessage(JSON.stringify({
+        type: 'list_sessions',
+        folderPath: '/home/user/project',
+        id: 'req-list-other',
+      }));
+
+      const resp = findResponse(sent, 'req-list-other');
+      const listedSessions = (resp!.data as any).sessions;
+      expect(listedSessions).toHaveLength(1);
+      expect(listedSessions[0].isOwnedByMe).toBe(false);
+      expect(listedSessions[0].liveStatus).toBe('idle');
+    });
+
+    it('returns liveStatus=null for sessions that are not active in memory', async () => {
+      // No active managed sessions
+      const sessions = new Map<string, ManagedSession>();
+
+      const folderIndex = {
+        scan: async () => [],
+        listSessions: async () => [
+          {
+            path: '/home/user/project/.pi/sessions/c.json',
+            id: 'c',
+            name: undefined,
+            created: '2025-01-01T00:00:00.000Z',
+            modified: '2025-01-02T00:00:00.000Z',
+            messageCount: 1,
+          },
+        ],
+      } as unknown as FolderIndex;
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { handler, sent } = createTestHandler('my-client', {
+        sessions,
+        clientRegistry,
+        folderIndex,
+      });
+
+      await handler.handleMessage(JSON.stringify({
+        type: 'list_sessions',
+        folderPath: '/home/user/project',
+        id: 'req-list-inactive',
+      }));
+
+      const resp = findResponse(sent, 'req-list-inactive');
+      const listedSessions = (resp!.data as any).sessions;
+      expect(listedSessions).toHaveLength(1);
+      expect(listedSessions[0].isOwnedByMe).toBe(false);
+      expect(listedSessions[0].liveStatus).toBeNull();
     });
   });
 
