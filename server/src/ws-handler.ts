@@ -96,7 +96,28 @@ export class WsHandler {
 
         case 'list_sessions': {
           const sessions = await this.folderIndex.listSessions(command.folderPath);
-          this.sendResponse(id, true, { sessions });
+
+          // Build lookup from session file path to managed session for ownership enrichment
+          const activeSessions = this.sessionManager.getAllSessions();
+          const managedByPath = new Map<string, ManagedSession>();
+          for (const ms of activeSessions) {
+            const filePath = ms.sessionFilePath ?? ms.session.sessionFile;
+            if (filePath) {
+              managedByPath.set(filePath, ms);
+            }
+          }
+
+          // Enrich each session with ownership and live status
+          const enriched = sessions.map(s => {
+            const ms = managedByPath.get(s.path);
+            return {
+              ...s,
+              isOwnedByMe: ms ? ms.connectedClientId === this.clientId : false,
+              liveStatus: ms ? ms.status : null,
+            };
+          });
+
+          this.sendResponse(id, true, { sessions: enriched });
           break;
         }
 
@@ -151,13 +172,19 @@ export class WsHandler {
             },
           });
 
-          // Check for conflicting external pi processes
+          // Check for conflicting external pi processes and remote pimote sessions
           const openConflictPids = await findExternalPiProcesses(command.folderPath);
-          if (openConflictPids.length > 0) {
+          const allSessions = this.sessionManager.getAllSessions();
+          const remoteSessions = allSessions
+            .filter(s => s.folderPath === command.folderPath && s.connectedClientId !== this.clientId && s.id !== sessionId)
+            .map(s => ({ sessionId: s.id, status: s.status }));
+
+          if (openConflictPids.length > 0 || remoteSessions.length > 0) {
             this.sendEvent({
               type: 'session_conflict',
               sessionId,
               processes: openConflictPids.map(pid => ({ pid, command: 'pi' })),
+              remoteSessions,
             });
           }
 
@@ -201,6 +228,21 @@ export class WsHandler {
           if (!managed) {
             this.sendResponse(id, false, undefined, 'session_expired');
             break;
+          }
+
+          // Displacement check: different client owns this session?
+          if (managed.connectedClientId && managed.connectedClientId !== this.clientId) {
+            const oldHandler = this.clientRegistry.get(managed.connectedClientId);
+            if (oldHandler) {
+              // Old client is still connected
+              if (!command.force) {
+                this.sendResponse(id, false, undefined, 'session_owned');
+                break;
+              }
+              // Force takeover — notify old client of displacement
+              oldHandler.sendDisplacedEvent(command.sessionId);
+            }
+            // If old client not in registry, they disconnected — silent rebind
           }
 
           const replayResult = managed.eventBuffer.replay(command.lastCursor);
@@ -377,6 +419,25 @@ export class WsHandler {
 
         case 'unregister_push': {
           await this.pushNotificationService.removeSubscription(command.endpoint);
+          this.sendResponse(id, true);
+          break;
+        }
+
+        case 'kill_conflicting_sessions': {
+          for (const targetSessionId of command.sessionIds) {
+            const targetManaged = this.sessionManager.getSession(targetSessionId);
+            if (!targetManaged) continue;
+
+            // Notify the owning client if still connected
+            if (targetManaged.connectedClientId) {
+              const ownerHandler = this.clientRegistry.get(targetManaged.connectedClientId);
+              if (ownerHandler) {
+                ownerHandler.sendKilledEvent(targetSessionId);
+              }
+            }
+
+            await this.sessionManager.closeSession(targetSessionId);
+          }
           this.sendResponse(id, true);
           break;
         }
@@ -634,6 +695,24 @@ export class WsHandler {
       break;
     }
     return undefined;
+  }
+
+  /** Send a session_closed event with reason 'displaced' to this client's WebSocket */
+  sendDisplacedEvent(sessionId: string): void {
+    this.sendEvent({
+      type: 'session_closed',
+      sessionId,
+      reason: 'displaced',
+    });
+  }
+
+  /** Send a session_closed event with reason 'killed' to this client's WebSocket */
+  sendKilledEvent(sessionId: string): void {
+    this.sendEvent({
+      type: 'session_closed',
+      sessionId,
+      reason: 'killed',
+    });
   }
 
   private sendResponse(id: string, success: boolean, data?: unknown, error?: string): void {
