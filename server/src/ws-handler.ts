@@ -176,7 +176,7 @@ export class WsHandler {
           const openConflictPids = await findExternalPiProcesses(command.folderPath);
           const allSessions = this.sessionManager.getAllSessions();
           const remoteSessions = allSessions
-            .filter(s => s.folderPath === command.folderPath && s.connectedClientId !== this.clientId && s.id !== sessionId)
+            .filter(s => s.folderPath === command.folderPath && s.connectedClientId !== null && s.connectedClientId !== this.clientId && s.id !== sessionId)
             .map(s => ({ sessionId: s.id, status: s.status }));
 
           if (openConflictPids.length > 0 || remoteSessions.length > 0) {
@@ -697,8 +697,11 @@ export class WsHandler {
     return undefined;
   }
 
-  /** Send a session_closed event with reason 'displaced' to this client's WebSocket */
+  /** Send a session_closed event with reason 'displaced' to this client's WebSocket.
+   *  Also removes the session from this handler's subscribedSessions so that
+   *  cleanup() won't stomp the new owner's bindings when this handler closes. */
   sendDisplacedEvent(sessionId: string): void {
+    this.subscribedSessions.delete(sessionId);
     this.sendEvent({
       type: 'session_closed',
       sessionId,
@@ -706,8 +709,11 @@ export class WsHandler {
     });
   }
 
-  /** Send a session_closed event with reason 'killed' to this client's WebSocket */
+  /** Send a session_closed event with reason 'killed' to this client's WebSocket.
+   *  Also removes the session from this handler's subscribedSessions so that
+   *  cleanup() won't stomp stale entries. */
   sendKilledEvent(sessionId: string): void {
+    this.subscribedSessions.delete(sessionId);
     this.sendEvent({
       type: 'session_closed',
       sessionId,

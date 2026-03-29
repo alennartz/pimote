@@ -9,6 +9,7 @@ import type {
 type EventListener = (event: PimoteEvent) => void;
 
 let nextId = 1;
+const clientId = crypto.randomUUID();
 
 class ConnectionStore {
   status: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' = $state('disconnected');
@@ -32,7 +33,7 @@ class ConnectionStore {
 
     this.status = this.status === 'disconnected' ? 'connecting' : 'reconnecting';
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    this.ws = new WebSocket(`${protocol}//${location.host}/ws`);
+    this.ws = new WebSocket(`${protocol}//${location.host}/ws?clientId=${clientId}`);
 
     this.ws.onopen = () => {
       this.status = 'connected';
