@@ -58,75 +58,98 @@
 	);
 </script>
 
-<div
-	class="flex h-9 shrink-0 items-center gap-1 overflow-hidden border-b border-border bg-muted/30 px-2 text-xs text-muted-foreground"
->
-	<!-- Model picker -->
-	<ModelPicker />
-
-	<Separator orientation="vertical" class="mx-0.5 h-4" />
-
-	<!-- Thinking level picker -->
-	<ThinkingPicker />
-
-	<!-- Spacer -->
-	<div class="flex-1"></div>
-
-	<!-- Context usage -->
-	{#if contextDisplay}
-		<span class="flex items-center gap-1 {contextColor}" title="Context window usage">
-			{contextDisplay}
-		</span>
-	{/if}
-
-	<!-- Git branch -->
-	{#if sessionRegistry.viewed?.gitBranch}
-		<span class="flex items-center gap-1 text-muted-foreground" title="Git branch">
-			<GitBranch class="size-3" />
-			<span class="max-w-[8rem] truncate">{sessionRegistry.viewed.gitBranch}</span>
-		</span>
+<div class="shrink-0 border-b border-border bg-muted/30 text-xs text-muted-foreground">
+	<!-- Row 1: controls + status -->
+	<div class="flex h-9 items-center gap-1 px-2">
+		<!-- Model picker -->
+		<ModelPicker />
 
 		<Separator orientation="vertical" class="mx-0.5 h-4" />
-	{/if}
 
-	<!-- Streaming indicator -->
-	{#if sessionRegistry.viewed?.isStreaming}
-		<Badge variant="secondary" class="gap-1.5 text-xs">
-			<span class="relative flex size-2">
-				<span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-				<span class="relative inline-flex size-2 rounded-full bg-emerald-500"></span>
+		<!-- Thinking level picker -->
+		<ThinkingPicker />
+
+		<!-- Spacer -->
+		<div class="flex-1"></div>
+
+		<!-- Context usage (desktop only — shown in row 2 on mobile) -->
+		{#if contextDisplay}
+			<span class="hidden items-center gap-1 md:flex {contextColor}" title="Context window usage">
+				{contextDisplay}
 			</span>
-			Streaming
-		</Badge>
-	{/if}
+		{/if}
 
-	<!-- Compacting indicator -->
-	{#if sessionRegistry.viewed?.isCompacting}
-		<Badge variant="secondary" class="gap-1 text-xs">
-			<span class="relative flex size-2">
-				<span class="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
-				<span class="relative inline-flex size-2 rounded-full bg-amber-500"></span>
+		<!-- Git branch (desktop only — shown in row 2 on mobile) -->
+		{#if sessionRegistry.viewed?.gitBranch}
+			<span class="hidden items-center gap-1 text-muted-foreground md:flex" title="Git branch">
+				<GitBranch class="size-3" />
+				<span class="max-w-[8rem] truncate">{sessionRegistry.viewed.gitBranch}</span>
 			</span>
-			Compacting…
-		</Badge>
-	{/if}
 
-	<!-- Connection status -->
-	<div class="flex items-center gap-1.5" title={connectionLabel}>
-		<span class="relative flex size-2">
-			<span class="relative inline-flex size-2 rounded-full {connectionColor}"></span>
-		</span>
-		<span class="hidden text-xs sm:inline">{connectionLabel}</span>
+			<Separator orientation="vertical" class="mx-0.5 hidden h-4 md:block" />
+		{/if}
+
+		<!-- Streaming indicator -->
+		{#if sessionRegistry.viewed?.isStreaming}
+			<Badge variant="secondary" class="gap-1.5 text-xs">
+				<span class="relative flex size-2">
+					<span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+					<span class="relative inline-flex size-2 rounded-full bg-emerald-500"></span>
+				</span>
+				Streaming
+			</Badge>
+		{/if}
+
+		<!-- Compacting indicator -->
+		{#if sessionRegistry.viewed?.isCompacting}
+			<Badge variant="secondary" class="gap-1 text-xs">
+				<span class="relative flex size-2">
+					<span class="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
+					<span class="relative inline-flex size-2 rounded-full bg-amber-500"></span>
+				</span>
+				Compacting…
+			</Badge>
+		{/if}
+
+		<!-- Connection status -->
+		<div class="flex items-center gap-1.5" title={connectionLabel}>
+			<span class="relative flex size-2">
+				<span class="relative inline-flex size-2 rounded-full {connectionColor}"></span>
+			</span>
+			<span class="hidden text-xs sm:inline">{connectionLabel}</span>
+		</div>
+
+		<Separator orientation="vertical" class="mx-0.5 h-4" />
+
+		<!-- Close session -->
+		<button
+			onclick={closeSession}
+			class="flex items-center justify-center rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+			title="Close session"
+		>
+			<X class="size-3.5" />
+		</button>
 	</div>
 
-	<Separator orientation="vertical" class="mx-0.5 h-4" />
+	<!-- Row 2: git branch + context usage (mobile only) -->
+	{#if sessionRegistry.viewed?.gitBranch || contextDisplay}
+		<div class="flex h-7 items-center gap-2 border-t border-border/50 px-2 md:hidden">
+			{#if sessionRegistry.viewed?.gitBranch}
+				<span class="flex items-center gap-1 text-muted-foreground" title="Git branch">
+					<GitBranch class="size-3" />
+					<span class="max-w-[10rem] truncate">{sessionRegistry.viewed.gitBranch}</span>
+				</span>
+			{/if}
 
-	<!-- Close session -->
-	<button
-		onclick={closeSession}
-		class="flex items-center justify-center rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-		title="Close session"
-	>
-		<X class="size-3.5" />
-	</button>
+			{#if sessionRegistry.viewed?.gitBranch && contextDisplay}
+				<Separator orientation="vertical" class="mx-0.5 h-3" />
+			{/if}
+
+			{#if contextDisplay}
+				<span class="flex items-center gap-1 {contextColor}" title="Context window usage">
+					{contextDisplay}
+				</span>
+			{/if}
+		</div>
+	{/if}
 </div>
