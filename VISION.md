@@ -14,9 +14,10 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Manages multiple concurrent sessions per client with status tracking
 - Brokers WebSocket connections between clients and sessions
 - Buffers coalesced events for seamless reconnect after network drops
-- Detects conflicting external pi processes per folder
+- Detects conflicting external pi processes and remote pimote sessions per folder
+- Tracks per-client session ownership with reconnect displacement
 - Sends push notifications (Web Push / VAPID) when background sessions finish working
-- Handles session takeover by killing existing pi processes per folder
+- Handles session takeover by killing external processes or conflicting remote sessions
 
 **Pimote Client** — A Svelte 5 PWA that:
 - Works on phone (installable) and desktop browser
@@ -27,7 +28,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Sends prompts, steers, aborts, switches models
 - Handles extension UI dialogs (select, confirm, input)
 - Receives push notifications when background sessions finish working
-- Reconnects transparently with gap replay
+- Reconnects transparently with gap replay and session displacement handling
 
 ## Architecture
 

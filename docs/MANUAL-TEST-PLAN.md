@@ -177,6 +177,7 @@
 - **[S]** Open client in browser
 - **[E]** Sidebar shows green connection status dot
 - **[E]** `connection.status` transitions: `disconnected` → `connecting` → `connected`
+- **[E]** WebSocket URL includes `?clientId=<uuid>` query parameter (stable per tab, generated via `crypto.randomUUID()`)
 
 ### TC-03.02 — Intentional disconnect 🟡
 - **[S]** Close browser tab
@@ -207,7 +208,13 @@
 - **[S]** Attempt `connection.send(...)` from console
 - **[E]** Immediately rejects with `WebSocket not connected`
 
-### TC-03.07 — Reconnect backoff cap 🟡
+### TC-03.07 — Client identity stable across reconnects 🟡
+- **[P]** Client connected with clientId X
+- **[S]** Disconnect and reconnect (e.g., server restart)
+- **[E]** Same `clientId` used in the new WebSocket URL
+- **[E]** Server recognizes the stale connection, registers the new handler, closes the old WebSocket without cleanup (sessions preserved for rebinding)
+
+### TC-03.08 — Reconnect backoff cap 🟡
 - **[P]** Server is unreachable
 - **[S]** Observe reconnect attempts
 - **[E]** Delay doubles each attempt: 1s, 2s, 4s, 8s, 16s, 30s, 30s, 30s... (caps at 30s)
@@ -254,6 +261,7 @@
 - **[S]** Click/expand folder in sidebar
 - **[E]** Lists sessions with: id, name (if set), created date, modified date, message count, first message preview
 - **[E]** Sessions sorted by modified date (most recent first, or per SDK ordering)
+- **[E]** Each session enriched with `isOwnedByMe` (true if this client owns the live session) and `liveStatus` (working/idle/null if not managed)
 
 ### TC-04.08 — Session list for folder with no sessions 🟡
 - **[P]** Project exists but has no `.pi/sessions`
@@ -593,7 +601,32 @@ The InputBar sends `prompt` when idle and `steer` when streaming. There is no se
 - **[E]** Server responds `success: false, error: "session_expired"`
 - **[E]** Client handles gracefully (session removed from UI)
 
-### TC-11.08 — Reconnect re-binds live events 🟠
+### TC-11.08 — Reconnect rejected when another client owns session 🟠
+- **[P]** Tab A has session S open; Tab B also had session S subscribed but was disconnected
+- **[S]** Tab B reconnects, sends `reconnect` for session S (without `force`)
+- **[E]** Server responds `success: false, error: "session_owned"` (Tab A still owns it)
+- **[E]** Tab B shows takeover banner: "This session is owned by another client. Take it over?"
+
+### TC-11.09 — Force reconnect displaces previous owner 🟠
+- **[P]** Tab A owns session S; Tab B's reconnect was rejected with `session_owned`
+- **[S]** Click "Take Over" in Tab B's takeover banner
+- **[E]** Tab B sends `reconnect` with `force: true`
+- **[E]** Tab A receives `session_closed` event with `reason: 'displaced'`; session removed from Tab A's registry
+- **[E]** Tab B receives buffered events and binds to session S
+
+### TC-11.10 — Dismiss takeover drops session 🟡
+- **[P]** Takeover banner showing for session S in Tab B
+- **[S]** Click "Dismiss" in the takeover banner
+- **[E]** Session S removed from Tab B's registry and subscription set
+- **[E]** Banner disappears; Tab B returns to landing page (or switches to another session)
+
+### TC-11.11 — Reconnect silent rebind when owner disconnected 🟡
+- **[P]** Tab A owned session S but disconnected (clientId no longer in registry)
+- **[S]** Tab B reconnects, sends `reconnect` for session S
+- **[E]** Server silently rebinds — no `session_owned` error (stale owner is gone)
+- **[E]** Tab B receives buffered events normally
+
+### TC-11.12 — Reconnect re-binds live events 🟠
 - **[P]** Client reconnects to a session where the agent is still working
 - **[S]** After reconnect
 - **[E]** New live events stream correctly to the reconnected client
@@ -603,12 +636,19 @@ The InputBar sends `prompt` when idle and `steer` when streaming. There is no se
 
 ## TP-12: Session Conflict Detection & Takeover
 
-### TC-12.01 — Conflict detected on session open 🟠
+### TC-12.01 — External process conflict detected on session open 🟠
 - **[P]** An external `pi` process is running in the target folder (started via terminal)
 - **[S]** Open a session for that folder
-- **[E]** `session_conflict` event received with list of `{ pid, command }` entries
+- **[E]** `session_conflict` event received with `processes` list of `{ pid, command }` entries
 - **[E]** Conflict banner appears: "External pi processes detected in this project."
 - **[E]** Two buttons: "Kill & Continue", "Dismiss"
+
+### TC-12.01a — Remote pimote session conflict detected on session open 🟠
+- **[P]** Another client (Tab B) has an active session open for the same folder
+- **[S]** Open a new session for that folder from Tab A
+- **[E]** `session_conflict` event received with `remoteSessions` list of `{ sessionId, status }` entries
+- **[E]** Remote sessions listed alongside any external process conflicts
+- **[E]** `remoteSessions` only includes sessions owned by a *different* clientId (not the opener's own sessions)
 
 ### TC-12.02 — Conflict detected on reconnect 🟡
 - **[P]** Session exists; external pi process started while client was disconnected
@@ -633,12 +673,25 @@ The InputBar sends `prompt` when idle and `steer` when streaming. There is no se
 - **[E]** External processes killed; new session opened for folder
 - **[E]** Response includes `sessionId` and `killedProcesses` count
 
-### TC-12.06 — No conflicts when none exist 🟡
-- **[P]** No external pi processes in target folder
+### TC-12.06 — Kill conflicting remote sessions 🟠
+- **[P]** `session_conflict` event reported remote pimote sessions in the same folder
+- **[S]** Send `kill_conflicting_sessions` command with the reported session IDs
+- **[E]** Server closes each target session
+- **[E]** Owning clients of those sessions receive `session_closed` events with `reason: 'killed'`
+- **[E]** Sessions removed from killed clients' registries
+- **[E]** Response confirms success
+
+### TC-12.07 — Kill conflicting sessions — owner disconnected 🟡
+- **[P]** Conflicting remote session exists but its owner has disconnected
+- **[S]** Send `kill_conflicting_sessions` command with that session ID
+- **[E]** Session closed on server; no notification sent (no connected owner to notify)
+
+### TC-12.08 — No conflicts when none exist 🟡
+- **[P]** No external pi processes or remote pimote sessions in target folder
 - **[S]** Open session
 - **[E]** No `session_conflict` event sent
 
-### TC-12.07 — Excludes own PID from conflict scan 🟡
+### TC-12.09 — Excludes own PID from conflict scan 🟡
 - **[P]** Pimote server itself is a Node.js process in the scanned folder
 - **[S]** Open session
 - **[E]** Server's own PID not included in conflicts
@@ -972,8 +1025,9 @@ The InputBar sends `prompt` when idle and `steer` when streaming. There is no se
 
 ### TC-20.03 — Multiple concurrent WebSocket clients 🟡
 - **[S]** Open 2 browser tabs connecting to the same server
-- **[E]** Each gets its own WsHandler; independent session subscriptions
+- **[E]** Each gets its own WsHandler with a distinct `clientId`; independent session subscriptions
 - **[E]** No interference between clients
+- **[E]** Sessions owned by one client show as `isOwnedByMe: false` in the other client's `list_sessions`
 
 ### TC-20.04 — Long-running server stability 🟡
 - **[S]** Run server for 24+ hours with periodic session opens/closes
@@ -1024,3 +1078,7 @@ The InputBar sends `prompt` when idle and `steer` when streaming. There is no se
 9. **Textarea auto-resize cap**: The InputBar textarea caps at 200px height (~8 lines). Very long pasted content will require scrolling within the textarea. This is intentional but should be verified on mobile where screen real estate is limited.
 
 10. **Markdown XSS protection**: The markdown renderer uses DOMPurify to sanitize output. Verify that malicious markdown (e.g., `<img onerror=...>`, `<script>` tags) is properly sanitized in rendered assistant messages.
+
+11. **Session displacement race conditions**: The displacement flow (reconnect → `session_owned` → force reconnect → displaced event) involves multiple round trips. If both clients attempt force reconnects simultaneously, the last one wins. The `pendingTakeover` state is client-local, so server restarts between the initial reject and the force retry will silently succeed (session no longer owned).
+
+12. **`kill_conflicting_sessions` authorization**: Any connected client can send `kill_conflicting_sessions` with arbitrary session IDs. The server closes those sessions without checking whether the requesting client has any relationship to them. A malicious client could kill any active session.
