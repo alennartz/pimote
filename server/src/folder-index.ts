@@ -45,6 +45,7 @@ export class FolderIndex {
           path: fullPath,
           name: basename(fullPath),
           activeSessionCount: 0, // Will be enriched by session pool later
+          externalProcessCount: 0,
           activeStatus: null,
         });
       }

@@ -7,7 +7,8 @@ import type { PimoteConfig } from './config.js';
 import type { PimoteSessionManager } from './session-manager.js';
 import type { FolderIndex } from './folder-index.js';
 import type { PushNotificationService } from './push-notification.js';
-import { WsHandler } from './ws-handler.js';
+import { WsHandler, type ClientRegistry } from './ws-handler.js';
+import crypto from 'node:crypto';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const CLIENT_DIR = process.env.CLIENT_DIR || join(__dirname, '..', '..', 'client', 'build');
@@ -71,6 +72,7 @@ async function serveFallback(res: http.ServerResponse): Promise<void> {
 export interface PimoteServer {
   httpServer: http.Server;
   wss: WebSocketServer;
+  clientRegistry: ClientRegistry;
   start(port: number): Promise<void>;
   close(): Promise<void>;
 }
@@ -113,9 +115,11 @@ export function createServer(
   });
 
   const wss = new WebSocketServer({ noServer: true });
+  const clientRegistry: ClientRegistry = new Map();
 
   httpServer.on('upgrade', (req, socket, head) => {
-    if (req.url === '/ws') {
+    const url = new URL(req.url ?? '', `http://${req.headers.host}`);
+    if (url.pathname === '/ws') {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit('connection', ws, req);
       });
@@ -124,10 +128,19 @@ export function createServer(
     }
   });
 
-  wss.on('connection', (ws: WebSocket) => {
-    console.log('[pimote] WebSocket client connected');
+  wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
+    const url = new URL(req.url ?? '', `http://${req.headers.host}`);
+    const clientId = url.searchParams.get('clientId') ?? crypto.randomUUID();
+    console.log(`[pimote] WebSocket client connected (clientId=${clientId})`);
 
-    const handler = new WsHandler(sessionManager, folderIndex, ws, pushNotificationService);
+    // If a stale connection exists for this clientId, close it first
+    const existing = clientRegistry.get(clientId);
+    if (existing) {
+      existing.cleanup();
+    }
+
+    const handler = new WsHandler(sessionManager, folderIndex, ws, pushNotificationService, clientId, clientRegistry);
+    clientRegistry.set(clientId, handler);
 
     ws.on('message', (data) => {
       handler.handleMessage(data.toString()).catch((err) => {
@@ -136,7 +149,11 @@ export function createServer(
     });
 
     ws.on('close', () => {
-      console.log('[pimote] WebSocket client disconnected');
+      console.log(`[pimote] WebSocket client disconnected (clientId=${clientId})`);
+      // Only remove from registry if this handler is still the current entry
+      if (clientRegistry.get(clientId) === handler) {
+        clientRegistry.delete(clientId);
+      }
       handler.cleanup();
     });
   });
@@ -144,6 +161,7 @@ export function createServer(
   return {
     httpServer,
     wss,
+    clientRegistry,
     start(port: number): Promise<void> {
       return new Promise((resolve) => {
         httpServer.listen(port, () => {

@@ -12,7 +12,9 @@ export interface FolderInfo {
   path: string;
   name: string;
   activeSessionCount: number;
-  activeStatus: 'working' | 'idle' | 'attention' | null;
+  externalProcessCount: number;
+  /** @deprecated Client derives status from per-session data. Will be removed. */
+  activeStatus?: 'working' | 'idle' | 'attention' | null;
 }
 
 export interface SessionInfo {
@@ -25,6 +27,10 @@ export interface SessionInfo {
   modified: string;
   messageCount: number;
   firstMessage?: string;
+  /** Whether this session is owned by the requesting client */
+  isOwnedByMe?: boolean;
+  /** Live status if this is an active in-memory session, null otherwise */
+  liveStatus?: 'working' | 'idle' | null;
 }
 
 export interface SessionState {
@@ -194,6 +200,8 @@ export interface ReconnectCommand extends CommandBase {
   type: 'reconnect';
   sessionId: string;
   lastCursor: number;
+  /** Take over even if owned by another live client */
+  force?: boolean;
 }
 
 export interface ViewSessionCommand extends CommandBase {
@@ -222,6 +230,11 @@ export interface KillConflictingProcessesCommand extends CommandBase {
   type: 'kill_conflicting_processes';
   sessionId: string;
   pids: number[];
+}
+
+export interface KillConflictingSessionsCommand extends CommandBase {
+  type: 'kill_conflicting_sessions';
+  sessionIds: string[];
 }
 
 // -- Extension UI commands --
@@ -269,6 +282,7 @@ export type PimoteCommand =
   | UnregisterPushCommand
   // Session conflict
   | KillConflictingProcessesCommand
+  | KillConflictingSessionsCommand
   // Extension UI
   | ExtensionUiResponseCommand;
 
@@ -404,6 +418,10 @@ export interface SessionConflictEvent {
   type: 'session_conflict';
   sessionId: string;
   processes: Array<{ pid: number; command: string }>;
+  remoteSessions?: Array<{
+    sessionId: string;
+    status: 'working' | 'idle';
+  }>;
 }
 
 // -- Extension UI request events --
@@ -429,6 +447,7 @@ export interface SessionOpenedEvent {
 export interface SessionClosedEvent {
   type: 'session_closed';
   sessionId: string;
+  reason?: 'displaced' | 'killed';
 }
 
 export interface ConnectionRestoredEvent {

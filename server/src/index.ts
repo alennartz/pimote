@@ -31,8 +31,11 @@ async function main() {
 
   const server = createServer(config, sessionManager, folderIndex, pushNotificationService);
 
-  // Start idle session reaping
-  sessionManager.startIdleCheck(config.idleTimeout);
+  // Start idle session reaping with client connectivity check
+  sessionManager.startIdleCheck(
+    config.idleTimeout,
+    (clientId) => server.clientRegistry.has(clientId),
+  );
 
   await server.start(port);
 

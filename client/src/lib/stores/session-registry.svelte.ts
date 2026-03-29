@@ -28,6 +28,7 @@ export interface PerSessionState {
   status: 'idle' | 'working';
   needsAttention: boolean;
   conflictingProcesses: Array<{ pid: number; command: string }>;
+  conflictingRemoteSessions: Array<{ sessionId: string; status: 'working' | 'idle' }>;
   gitBranch: string | null;
   contextUsage: { percent: number | null; contextWindow: number } | null;
 }
@@ -176,6 +177,7 @@ export class SessionRegistry {
       case 'session_conflict': {
         const conflict = event as any;
         session.conflictingProcesses = conflict.processes;
+        session.conflictingRemoteSessions = conflict.remoteSessions ?? [];
         break;
       }
     }
@@ -202,6 +204,7 @@ export class SessionRegistry {
       status: 'idle',
       needsAttention: false,
       conflictingProcesses: [],
+      conflictingRemoteSessions: [],
       gitBranch: null,
       contextUsage: null,
     };
@@ -249,6 +252,7 @@ export class SessionRegistry {
     const session = this.sessions[sessionId];
     if (session) {
       session.conflictingProcesses = [];
+      session.conflictingRemoteSessions = [];
     }
   }
 }

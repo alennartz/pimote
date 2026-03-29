@@ -463,4 +463,149 @@ describe('SessionRegistry', () => {
       expect(session.conflictingProcesses[0].pid).toBe(2222);
     });
   });
+
+  // --------------------------------------------------------------------------
+  // Session Closed — Displacement / Kill Reasons
+  // --------------------------------------------------------------------------
+  describe('Session Closed — Displacement', () => {
+    it('removeSession removes the session regardless of close reason (contract: reason is event-level, not class-level)', () => {
+      registry.addSession('s1', '/path', 'proj');
+      // The routing layer calls removeSession for all session_closed events,
+      // whether reason is 'displaced', 'killed', or absent. The class itself
+      // is reason-agnostic — it just removes the entry.
+      registry.removeSession('s1');
+      expect(registry.sessions['s1']).toBeUndefined();
+    });
+
+    it('displaced session that was viewed resets viewedSessionId', () => {
+      registry.addSession('s1', '/path/a', 'a');
+      registry.addSession('s2', '/path/b', 'b');
+      registry.switchTo('s1');
+      expect(registry.viewedSessionId).toBe('s1');
+      // Simulate: routing layer receives session_closed with reason:'displaced' → calls removeSession
+      registry.removeSession('s1');
+      expect(registry.viewedSessionId).not.toBe('s1');
+      // Should switch to a remaining session
+      expect(registry.viewedSessionId).toBe('s2');
+    });
+
+    it('killed session removal switches to remaining session', () => {
+      registry.addSession('s1', '/path/a', 'a');
+      registry.addSession('s2', '/path/b', 'b');
+      registry.switchTo('s1');
+      // Simulate: routing layer receives session_closed with reason:'killed' → calls removeSession
+      registry.removeSession('s1');
+      expect(registry.sessions['s1']).toBeUndefined();
+      expect(registry.viewedSessionId).toBe('s2');
+    });
+
+    it('removing the last session (any reason) sets viewedSessionId to null', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.switchTo('s1');
+      registry.removeSession('s1');
+      expect(registry.viewedSessionId).toBeNull();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Session Conflict — Remote Sessions
+  // --------------------------------------------------------------------------
+  describe('Session Conflict — Remote Sessions', () => {
+    it('conflictingRemoteSessions initializes as empty array', () => {
+      registry.addSession('s1', '/path', 'proj');
+      expect(registry.sessions['s1'].conflictingRemoteSessions).toEqual([]);
+    });
+
+    it('session_conflict with remoteSessions populates conflictingRemoteSessions', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent({
+        type: 'session_conflict',
+        sessionId: 's1',
+        processes: [],
+        remoteSessions: [
+          { sessionId: 'remote-1', status: 'working' },
+          { sessionId: 'remote-2', status: 'idle' },
+        ],
+      });
+      const session = registry.sessions['s1'];
+      expect(session.conflictingRemoteSessions).toHaveLength(2);
+      expect(session.conflictingRemoteSessions[0]).toEqual({ sessionId: 'remote-1', status: 'working' });
+      expect(session.conflictingRemoteSessions[1]).toEqual({ sessionId: 'remote-2', status: 'idle' });
+    });
+
+    it('session_conflict with both processes and remoteSessions populates both fields', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent({
+        type: 'session_conflict',
+        sessionId: 's1',
+        processes: [{ pid: 1234, command: 'node pi' }],
+        remoteSessions: [{ sessionId: 'remote-1', status: 'idle' }],
+      });
+      const session = registry.sessions['s1'];
+      expect(session.conflictingProcesses).toHaveLength(1);
+      expect(session.conflictingProcesses[0].pid).toBe(1234);
+      expect(session.conflictingRemoteSessions).toHaveLength(1);
+      expect(session.conflictingRemoteSessions[0].sessionId).toBe('remote-1');
+    });
+
+    it('session_conflict with only processes (no remoteSessions) sets remoteSessions to empty', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent({
+        type: 'session_conflict',
+        sessionId: 's1',
+        processes: [{ pid: 5678, command: 'pi' }],
+      });
+      const session = registry.sessions['s1'];
+      expect(session.conflictingProcesses).toHaveLength(1);
+      expect(session.conflictingRemoteSessions).toEqual([]);
+    });
+
+    it('subsequent session_conflict events replace previous remoteSessions', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent({
+        type: 'session_conflict',
+        sessionId: 's1',
+        processes: [],
+        remoteSessions: [{ sessionId: 'remote-1', status: 'working' }],
+      });
+      registry.handleEvent({
+        type: 'session_conflict',
+        sessionId: 's1',
+        processes: [],
+        remoteSessions: [
+          { sessionId: 'remote-2', status: 'idle' },
+          { sessionId: 'remote-3', status: 'working' },
+        ],
+      });
+      const session = registry.sessions['s1'];
+      expect(session.conflictingRemoteSessions).toHaveLength(2);
+      expect(session.conflictingRemoteSessions[0].sessionId).toBe('remote-2');
+    });
+
+    it('clearConflict() resets both conflictingProcesses and conflictingRemoteSessions', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent({
+        type: 'session_conflict',
+        sessionId: 's1',
+        processes: [{ pid: 1234, command: 'pi' }],
+        remoteSessions: [{ sessionId: 'remote-1', status: 'working' }],
+      });
+      expect(registry.sessions['s1'].conflictingProcesses).toHaveLength(1);
+      expect(registry.sessions['s1'].conflictingRemoteSessions).toHaveLength(1);
+      registry.clearConflict('s1');
+      expect(registry.sessions['s1'].conflictingProcesses).toEqual([]);
+      expect(registry.sessions['s1'].conflictingRemoteSessions).toEqual([]);
+    });
+
+    it('session_conflict for unknown sessionId with remoteSessions is ignored', () => {
+      expect(() =>
+        registry.handleEvent({
+          type: 'session_conflict',
+          sessionId: 'unknown',
+          processes: [],
+          remoteSessions: [{ sessionId: 'remote-1', status: 'idle' }],
+        }),
+      ).not.toThrow();
+    });
+  });
 });

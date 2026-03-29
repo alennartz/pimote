@@ -27,6 +27,7 @@ describe('FolderIndex.scan()', () => {
       path: projectDir,
       name: 'my-project',
       activeSessionCount: 0,
+      externalProcessCount: 0,
       activeStatus: null,
     });
   });

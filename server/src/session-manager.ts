@@ -10,7 +10,6 @@ import type { AgentSession } from '@mariozechner/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
 import type { PimoteSessionEvent } from '@pimote/shared';
-import type { WebSocket } from 'ws';
 
 export interface ManagedSession {
   id: string;
@@ -18,7 +17,7 @@ export interface ManagedSession {
   folderPath: string;
   sessionFilePath: string | undefined;
   eventBuffer: EventBuffer;
-  connectedClient: WebSocket | null;
+  connectedClientId: string | null;
   lastActivity: number; // Date.now()
   status: 'idle' | 'working';
   needsAttention: boolean;
@@ -87,7 +86,7 @@ export class PimoteSessionManager {
       folderPath,
       sessionFilePath: sessionPath,
       eventBuffer,
-      connectedClient: null,
+      connectedClientId: null,
       lastActivity: Date.now(),
       status: 'idle',
       needsAttention: false,
@@ -130,12 +129,18 @@ export class PimoteSessionManager {
     return Array.from(this.sessions.values());
   }
 
-  startIdleCheck(idleTimeout: number): void {
+  startIdleCheck(
+    idleTimeout: number,
+    isClientConnected?: (clientId: string) => boolean,
+  ): void {
     this.stopIdleCheck();
     this.idleCheckHandle = setInterval(() => {
       for (const [sessionId, managed] of this.sessions) {
+        const hasConnectedClient =
+          managed.connectedClientId !== null &&
+          (isClientConnected?.(managed.connectedClientId) ?? false);
         if (
-          managed.connectedClient === null &&
+          !hasConnectedClient &&
           Date.now() - managed.lastActivity > idleTimeout
         ) {
           this.closeSession(sessionId).catch(() => {

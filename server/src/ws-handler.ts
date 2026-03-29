@@ -33,17 +33,25 @@ function getGitBranch(cwd: string): string | null {
   }
 }
 
+/** Client ID → WsHandler lookup for cross-client communication (e.g. displacement notifications) */
+export type ClientRegistry = Map<string, WsHandler>;
+
 export class WsHandler {
   private readonly pendingUiResponses = new Map<string, { resolve: (value: any) => void; sessionId: string }>();
   private subscribedSessions = new Set<string>();
   private viewedSessionId: string | null = null;
+  readonly clientId: string;
 
   constructor(
     private readonly sessionManager: PimoteSessionManager,
     private readonly folderIndex: FolderIndex,
     private readonly ws: WebSocket,
     private readonly pushNotificationService: PushNotificationService,
-  ) {}
+    clientId: string,
+    private readonly clientRegistry: ClientRegistry,
+  ) {
+    this.clientId = clientId;
+  }
 
   getViewedSessionId(): string | null {
     return this.viewedSessionId;
@@ -107,7 +115,7 @@ export class WsHandler {
           );
 
           const managed = this.sessionManager.getSession(sessionId)!;
-          managed.connectedClient = this.ws;
+          managed.connectedClientId = this.clientId;
           this.subscribedSessions.add(sessionId);
           this.viewedSessionId = sessionId;
 
@@ -138,6 +146,7 @@ export class WsHandler {
               path: managed.folderPath,
               name: managed.folderPath.split('/').pop() ?? managed.folderPath,
               activeSessionCount: 1,
+              externalProcessCount: 0,
               activeStatus: 'idle',
             },
           });
@@ -240,7 +249,7 @@ export class WsHandler {
           }
 
           // Re-attach WebSocket and update mutable callbacks to use this WsHandler
-          managed.connectedClient = this.ws;
+          managed.connectedClientId = this.clientId;
           managed.lastActivity = Date.now();
           managed.sendLive = (event: PimoteSessionEvent) => { this.sendEvent(event); };
           managed.onStatusChange = this.createStatusChangeCallback();
@@ -271,7 +280,7 @@ export class WsHandler {
           );
 
           const takeoverManaged = this.sessionManager.getSession(takeoverSessionId)!;
-          takeoverManaged.connectedClient = this.ws;
+          takeoverManaged.connectedClientId = this.clientId;
           this.subscribedSessions.add(takeoverSessionId);
           this.viewedSessionId = takeoverSessionId;
 
@@ -300,6 +309,7 @@ export class WsHandler {
               path: takeoverManaged.folderPath,
               name: takeoverManaged.folderPath.split('/').pop() ?? takeoverManaged.folderPath,
               activeSessionCount: 1,
+              externalProcessCount: 0,
               activeStatus: 'idle',
             },
           });
@@ -650,7 +660,7 @@ export class WsHandler {
     for (const sid of this.subscribedSessions) {
       const managed = this.sessionManager.getSession(sid);
       if (managed) {
-        managed.connectedClient = null;
+        managed.connectedClientId = null;
         managed.sendLive = () => {};
         managed.onStatusChange = null;
         managed.lastActivity = Date.now();
