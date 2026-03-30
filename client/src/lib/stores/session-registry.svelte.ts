@@ -47,6 +47,7 @@ export interface PerSessionState {
   gitBranch: string | null;
   contextUsage: { percent: number | null; contextWindow: number } | null;
   draftText: string;
+  pendingSteeringMessages: string[];
 }
 
 export class SessionRegistry {
@@ -131,6 +132,17 @@ export class SessionRegistry {
           const textContent = message.content.find((c: PimoteMessageContent) => c.type === 'text');
           if (textContent && textContent.text) {
             session.firstMessage = textContent.text;
+          }
+        }
+        // Reconcile pending steering messages: when a user message is consumed,
+        // find and remove the first text-matching entry from the optimistic list.
+        if (message.role === 'user' && session.pendingSteeringMessages.length > 0) {
+          const textContent = message.content.find((c: PimoteMessageContent) => c.type === 'text');
+          if (textContent?.text) {
+            const idx = session.pendingSteeringMessages.indexOf(textContent.text);
+            if (idx !== -1) {
+              session.pendingSteeringMessages.splice(idx, 1);
+            }
           }
         }
         // toolResult messages carry the canonical completion data — update toolExecutions
@@ -240,6 +252,7 @@ export class SessionRegistry {
       gitBranch: null,
       contextUsage: null,
       draftText: '',
+      pendingSteeringMessages: [],
     };
     this.sessions[sessionId] = session;
   }

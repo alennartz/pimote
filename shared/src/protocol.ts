@@ -169,6 +169,10 @@ export interface SetSessionNameCommand extends CommandBase {
   name: string;
 }
 
+export interface DequeueSteeringCommand extends CommandBase {
+  type: 'dequeue_steering';
+}
+
 // -- Server-level commands --
 
 export interface ListFoldersCommand extends CommandBase {
@@ -268,6 +272,7 @@ export type PimoteCommand =
   | GetSessionMetaCommand
   | GetCommandsCommand
   | SetSessionNameCommand
+  | DequeueSteeringCommand
   // Server-level
   | ListFoldersCommand
   | ListSessionsCommand

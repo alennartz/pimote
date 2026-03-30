@@ -33,6 +33,7 @@ function createMockManagedSession(overrides: Partial<ManagedSession> = {}): Mana
       autoCompactionEnabled: false,
       bindExtensions: async () => {},
       modelRegistry: { getAvailable: () => [] },
+      clearQueue: () => ({ steering: [], followUp: [] }),
     } as any,
     folderPath: overrides.folderPath ?? '/home/user/project',
     eventBuffer: overrides.eventBuffer ?? createMockEventBuffer(),
@@ -994,6 +995,95 @@ describe('WsHandler', () => {
       handler.cleanup();
 
       expect(handler.getViewedSessionId()).toBeNull();
+    });
+  });
+
+  describe('dequeue_steering', () => {
+    it('responds with session not found when sessionId does not exist', async () => {
+      const { handler, sent } = createTestHandler('client-1');
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'dequeue_steering',
+          sessionId: 'nonexistent',
+          id: 'req-dequeue-1',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-dequeue-1');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toContain('not found');
+    });
+
+    it('responds with error when sessionId is missing', async () => {
+      const { handler, sent } = createTestHandler('client-1');
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'dequeue_steering',
+          id: 'req-dequeue-2',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-dequeue-2');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toContain('sessionId');
+    });
+
+    it('returns empty arrays when no messages are queued', async () => {
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+      });
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'dequeue_steering',
+          sessionId: 'session-1',
+          id: 'req-dequeue-3',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-dequeue-3');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect(resp!.data).toEqual({ steering: [], followUp: [] });
+    });
+
+    it('returns queued steering and follow-up messages from clearQueue', async () => {
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+      });
+      // Override clearQueue to return pending messages
+      (session.session as any).clearQueue = () => ({
+        steering: ['fix the bug', 'also update tests'],
+        followUp: ['then deploy'],
+      });
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'dequeue_steering',
+          sessionId: 'session-1',
+          id: 'req-dequeue-4',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-dequeue-4');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect(resp!.data).toEqual({
+        steering: ['fix the bug', 'also update tests'],
+        followUp: ['then deploy'],
+      });
     });
   });
 });

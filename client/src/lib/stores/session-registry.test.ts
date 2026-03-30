@@ -684,4 +684,117 @@ describe('SessionRegistry', () => {
       ).not.toThrow();
     });
   });
+
+  // --------------------------------------------------------------------------
+  // Pending Steering Messages
+  // --------------------------------------------------------------------------
+  describe('Pending Steering Messages', () => {
+    it('pendingSteeringMessages initializes as empty array', () => {
+      registry.addSession('s1', '/path', 'proj');
+      expect(registry.sessions['s1'].pendingSteeringMessages).toEqual([]);
+    });
+
+    it('optimistic add: pushing to pendingSteeringMessages tracks the message', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions['s1'];
+      session.pendingSteeringMessages.push('fix the bug');
+      expect(session.pendingSteeringMessages).toEqual(['fix the bug']);
+    });
+
+    it('reconciliation: message_end with role user removes the first matching pending message', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions['s1'];
+      session.pendingSteeringMessages.push('fix the bug');
+      session.pendingSteeringMessages.push('also update tests');
+
+      registry.handleEvent(
+        makeSessionEvent('message_end', 's1', {
+          message: makeUserMessage('fix the bug'),
+        }),
+      );
+
+      expect(session.pendingSteeringMessages).toEqual(['also update tests']);
+    });
+
+    it('reconciliation: non-matching user message does not remove pending entries', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions['s1'];
+      session.pendingSteeringMessages.push('fix the bug');
+
+      registry.handleEvent(
+        makeSessionEvent('message_end', 's1', {
+          message: makeUserMessage('something completely different'),
+        }),
+      );
+
+      expect(session.pendingSteeringMessages).toEqual(['fix the bug']);
+    });
+
+    it('reconciliation: assistant message does not affect pending steering messages', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions['s1'];
+      session.pendingSteeringMessages.push('fix the bug');
+
+      registry.handleEvent(
+        makeSessionEvent('message_end', 's1', {
+          message: makeAssistantMessage('I fixed the bug'),
+        }),
+      );
+
+      expect(session.pendingSteeringMessages).toEqual(['fix the bug']);
+    });
+
+    it('reconciliation: only the first matching entry is removed when duplicates exist', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions['s1'];
+      session.pendingSteeringMessages.push('fix the bug');
+      session.pendingSteeringMessages.push('fix the bug');
+      session.pendingSteeringMessages.push('update tests');
+
+      registry.handleEvent(
+        makeSessionEvent('message_end', 's1', {
+          message: makeUserMessage('fix the bug'),
+        }),
+      );
+
+      expect(session.pendingSteeringMessages).toEqual(['fix the bug', 'update tests']);
+    });
+
+    it('reconciliation: empty pending list is unaffected by user message_end', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions['s1'];
+
+      registry.handleEvent(
+        makeSessionEvent('message_end', 's1', {
+          message: makeUserMessage('hello'),
+        }),
+      );
+
+      expect(session.pendingSteeringMessages).toEqual([]);
+    });
+
+    it('full_resync does not affect pendingSteeringMessages (optimistic state preserved)', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions['s1'];
+      session.pendingSteeringMessages.push('pending message');
+
+      registry.handleEvent({
+        type: 'full_resync',
+        sessionId: 's1',
+        state: {
+          model: null,
+          thinkingLevel: 'off',
+          isStreaming: false,
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 's1',
+          autoCompactionEnabled: false,
+          messageCount: 0,
+        },
+        messages: [],
+      });
+
+      expect(session.pendingSteeringMessages).toEqual(['pending message']);
+    });
+  });
 });

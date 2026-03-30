@@ -463,7 +463,8 @@ export class WsHandler {
         case 'get_session_stats':
         case 'get_session_meta':
         case 'get_commands':
-        case 'set_session_name': {
+        case 'set_session_name':
+        case 'dequeue_steering': {
           await this.handleSessionCommand(command, id);
           break;
         }
@@ -508,6 +509,12 @@ export class WsHandler {
           console.error(`[WsHandler] steer error:`, err);
         });
         this.sendResponse(id, true);
+        break;
+      }
+
+      case 'dequeue_steering': {
+        const result = session.clearQueue();
+        this.sendResponse(id, true, { steering: result.steering, followUp: result.followUp });
         break;
       }
 
