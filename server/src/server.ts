@@ -28,10 +28,7 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 /** Try to serve a static file from CLIENT_DIR. Returns true if served. */
-async function serveStatic(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-): Promise<boolean> {
+async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   const urlPath = req.url === '/' ? '/index.html' : req.url!.split('?')[0];
   const filePath = join(CLIENT_DIR, urlPath);
 
@@ -89,12 +86,7 @@ export interface PimoteServer {
   close(): Promise<void>;
 }
 
-export function createServer(
-  config: PimoteConfig,
-  sessionManager: PimoteSessionManager,
-  folderIndex: FolderIndex,
-  pushNotificationService: PushNotificationService,
-): PimoteServer {
+export function createServer(config: PimoteConfig, sessionManager: PimoteSessionManager, folderIndex: FolderIndex, pushNotificationService: PushNotificationService): PimoteServer {
   const httpServer = http.createServer(async (req, res) => {
     // 1. Health check
     if (req.method === 'GET' && req.url === '/health') {

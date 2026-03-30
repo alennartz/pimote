@@ -37,41 +37,35 @@ hljs.registerLanguage('sh', shell);
 hljs.registerLanguage('diff', diff);
 
 const marked = new Marked({
-	renderer: {
-		code({ text, lang }: { text: string; lang?: string }) {
-			const language = lang && hljs.getLanguage(lang) ? lang : undefined;
-			let highlighted: string;
-			try {
-				highlighted = language
-					? hljs.highlight(text, { language }).value
-					: hljs.highlightAuto(text).value;
-			} catch {
-				highlighted = escapeHtml(text);
-			}
-			const langLabel = language ? `<span class="code-lang">${escapeHtml(language)}</span>` : '';
-			return `<div class="code-block">${langLabel}<pre><code class="hljs${language ? ` language-${language}` : ''}">${highlighted}</code></pre></div>`;
-		},
-		codespan({ text }: { text: string }) {
-			return `<code class="inline-code">${text}</code>`;
-		},
-	},
-	gfm: true,
-	breaks: false,
+  renderer: {
+    code({ text, lang }: { text: string; lang?: string }) {
+      const language = lang && hljs.getLanguage(lang) ? lang : undefined;
+      let highlighted: string;
+      try {
+        highlighted = language ? hljs.highlight(text, { language }).value : hljs.highlightAuto(text).value;
+      } catch {
+        highlighted = escapeHtml(text);
+      }
+      const langLabel = language ? `<span class="code-lang">${escapeHtml(language)}</span>` : '';
+      return `<div class="code-block">${langLabel}<pre><code class="hljs${language ? ` language-${language}` : ''}">${highlighted}</code></pre></div>`;
+    },
+    codespan({ text }: { text: string }) {
+      return `<code class="inline-code">${text}</code>`;
+    },
+  },
+  gfm: true,
+  breaks: false,
 });
 
 function escapeHtml(text: string): string {
-	return text
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;');
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 export function renderMarkdown(text: string): string {
-	try {
-		const raw = marked.parse(text) as string;
-		return DOMPurify.sanitize(raw);
-	} catch {
-		return `<pre>${escapeHtml(text)}</pre>`;
-	}
+  try {
+    const raw = marked.parse(text) as string;
+    return DOMPurify.sanitize(raw);
+  } catch {
+    return `<pre>${escapeHtml(text)}</pre>`;
+  }
 }

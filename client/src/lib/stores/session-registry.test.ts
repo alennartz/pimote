@@ -161,34 +161,46 @@ describe('SessionRegistry', () => {
   describe('Event Routing — Messages', () => {
     it('message_update with text content appends to streamingText', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.handleEvent(makeSessionEvent('message_update', 's1', {
-        content: { type: 'text', text: 'Hello ' },
-      }));
-      registry.handleEvent(makeSessionEvent('message_update', 's1', {
-        content: { type: 'text', text: 'world' },
-      }));
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          content: { type: 'text', text: 'Hello ' },
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          content: { type: 'text', text: 'world' },
+        }),
+      );
       expect(registry.sessions['s1'].streamingText).toBe('Hello world');
     });
 
     it('message_update with thinking content appends to streamingThinking', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.handleEvent(makeSessionEvent('message_update', 's1', {
-        content: { type: 'thinking', text: 'Let me ' },
-      }));
-      registry.handleEvent(makeSessionEvent('message_update', 's1', {
-        content: { type: 'thinking', text: 'think...' },
-      }));
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          content: { type: 'thinking', text: 'Let me ' },
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          content: { type: 'thinking', text: 'think...' },
+        }),
+      );
       expect(registry.sessions['s1'].streamingThinking).toBe('Let me think...');
     });
 
     it('message_end appends message to messages array and clears streaming text', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.handleEvent(makeSessionEvent('message_update', 's1', {
-        content: { type: 'text', text: 'streaming...' },
-      }));
-      registry.handleEvent(makeSessionEvent('message_update', 's1', {
-        content: { type: 'thinking', text: 'thinking...' },
-      }));
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          content: { type: 'text', text: 'streaming...' },
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          content: { type: 'thinking', text: 'thinking...' },
+        }),
+      );
       const msg = makeAssistantMessage('Final answer');
       registry.handleEvent(makeSessionEvent('message_end', 's1', { message: msg }));
       const session = registry.sessions['s1'];
@@ -215,11 +227,13 @@ describe('SessionRegistry', () => {
   describe('Event Routing — Tool Calls', () => {
     it('tool_execution_start adds entry to activeToolCalls', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.handleEvent(makeSessionEvent('tool_execution_start', 's1', {
-        toolCallId: 'tc1',
-        toolName: 'read',
-        args: { path: '/foo' },
-      }));
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_start', 's1', {
+          toolCallId: 'tc1',
+          toolName: 'read',
+          args: { path: '/foo' },
+        }),
+      );
       const calls = registry.sessions['s1'].activeToolCalls;
       expect(calls['tc1']).toBeDefined();
       expect(calls['tc1'].name).toBe('read');
@@ -229,33 +243,43 @@ describe('SessionRegistry', () => {
 
     it('tool_execution_update appends to partialResult', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.handleEvent(makeSessionEvent('tool_execution_start', 's1', {
-        toolCallId: 'tc1',
-        toolName: 'bash',
-        args: {},
-      }));
-      registry.handleEvent(makeSessionEvent('tool_execution_update', 's1', {
-        toolCallId: 'tc1',
-        content: 'partial ',
-      }));
-      registry.handleEvent(makeSessionEvent('tool_execution_update', 's1', {
-        toolCallId: 'tc1',
-        content: 'result',
-      }));
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_start', 's1', {
+          toolCallId: 'tc1',
+          toolName: 'bash',
+          args: {},
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_update', 's1', {
+          toolCallId: 'tc1',
+          content: 'partial ',
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_update', 's1', {
+          toolCallId: 'tc1',
+          content: 'result',
+        }),
+      );
       expect(registry.sessions['s1'].activeToolCalls['tc1'].partialResult).toBe('partial result');
     });
 
     it('tool_execution_end removes entry from activeToolCalls', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.handleEvent(makeSessionEvent('tool_execution_start', 's1', {
-        toolCallId: 'tc1',
-        toolName: 'bash',
-        args: {},
-      }));
-      registry.handleEvent(makeSessionEvent('tool_execution_end', 's1', {
-        toolCallId: 'tc1',
-        result: 'done',
-      }));
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_start', 's1', {
+          toolCallId: 'tc1',
+          toolName: 'bash',
+          args: {},
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_end', 's1', {
+          toolCallId: 'tc1',
+          result: 'done',
+        }),
+      );
       expect(registry.sessions['s1'].activeToolCalls['tc1']).toBeUndefined();
     });
   });
@@ -273,11 +297,13 @@ describe('SessionRegistry', () => {
     it('auto_compaction_end sets isCompacting to false', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.handleEvent(makeSessionEvent('auto_compaction_start', 's1', { reason: 'threshold' }));
-      registry.handleEvent(makeSessionEvent('auto_compaction_end', 's1', {
-        result: {},
-        aborted: false,
-        willRetry: false,
-      }));
+      registry.handleEvent(
+        makeSessionEvent('auto_compaction_end', 's1', {
+          result: {},
+          aborted: false,
+          willRetry: false,
+        }),
+      );
       expect(registry.sessions['s1'].isCompacting).toBe(false);
     });
   });
@@ -311,10 +337,7 @@ describe('SessionRegistry', () => {
       registry.handleEvent(makeSessionEvent('agent_start', 's1'));
       expect(registry.sessions['s1'].isStreaming).toBe(true);
 
-      const messages: PimoteAgentMessage[] = [
-        makeUserMessage('Hello'),
-        makeAssistantMessage('Hi there'),
-      ];
+      const messages: PimoteAgentMessage[] = [makeUserMessage('Hello'), makeAssistantMessage('Hi there')];
       registry.handleEvent({
         type: 'full_resync',
         sessionId: 's1',
@@ -456,7 +479,10 @@ describe('SessionRegistry', () => {
       registry.handleEvent({
         type: 'session_conflict',
         sessionId: 's1',
-        processes: [{ pid: 2222, command: 'pi' }, { pid: 3333, command: 'pi' }],
+        processes: [
+          { pid: 2222, command: 'pi' },
+          { pid: 3333, command: 'pi' },
+        ],
       });
       const session = registry.sessions['s1'];
       expect(session.conflictingProcesses).toHaveLength(2);

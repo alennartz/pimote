@@ -1,10 +1,4 @@
-import {
-  createAgentSession,
-  AuthStorage,
-  ModelRegistry,
-  DefaultResourceLoader,
-  SessionManager as PiSessionManager,
-} from '@mariozechner/pi-coding-agent';
+import { createAgentSession, AuthStorage, ModelRegistry, DefaultResourceLoader, SessionManager as PiSessionManager } from '@mariozechner/pi-coding-agent';
 import type { AgentSession } from '@mariozechner/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
@@ -38,20 +32,29 @@ export class PimoteSessionManager {
     this.modelRegistry = new ModelRegistry(this.authStorage);
   }
 
-  async openSession(
-    folderPath: string,
-    sessionFilePath?: string,
-    sendLive?: (event: PimoteSessionEvent) => void,
-  ): Promise<string> {
+  async openSession(folderPath: string, sessionFilePath?: string, sendLive?: (event: PimoteSessionEvent) => void): Promise<string> {
     const loader = new DefaultResourceLoader({ cwd: folderPath });
     await loader.reload();
+
+    // Flush extension provider registrations so extension-provided models are
+    // available for model resolution before AgentSession is created.
+    // Without this, extension models (e.g. azure-foundry) aren't in the registry
+    // when findInitialModel() runs inside createAgentSession, causing the first
+    // session after restart to get model: null.
+    const extensionsResult = loader.getExtensions();
+    for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
+      try {
+        this.modelRegistry.registerProvider(name, config);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[pimote] Extension "${extensionPath}" provider registration error: ${message}`);
+      }
+    }
 
     const { session } = await createAgentSession({
       cwd: folderPath,
       resourceLoader: loader,
-      sessionManager: sessionFilePath
-        ? PiSessionManager.open(sessionFilePath)
-        : PiSessionManager.create(folderPath),
+      sessionManager: sessionFilePath ? PiSessionManager.open(sessionFilePath) : PiSessionManager.create(folderPath),
       authStorage: this.authStorage,
       modelRegistry: this.modelRegistry,
     });
@@ -61,9 +64,7 @@ export class PimoteSessionManager {
     // Apply default model from config (only for new sessions without an existing model preference)
     if (!sessionFilePath && this.config.defaultProvider && this.config.defaultModel) {
       const models = this.modelRegistry.getAvailable();
-      const defaultModel = models.find(
-        (m) => m.provider === this.config.defaultProvider && m.id === this.config.defaultModel,
-      );
+      const defaultModel = models.find((m) => m.provider === this.config.defaultProvider && m.id === this.config.defaultModel);
       if (defaultModel) {
         await session.setModel(defaultModel);
         console.log(`[pimote] Set default model: ${defaultModel.provider}/${defaultModel.id}`);
@@ -101,12 +102,14 @@ export class PimoteSessionManager {
         managed.needsAttention = true;
         const projectName = folderPath.split('/').pop() ?? 'Unknown';
         const firstMessage = this.extractFirstMessage(managed);
-        this.pushNotificationService.notifySessionIdle({
-          projectName,
-          folderPath,
-          firstMessage,
-          sessionId,
-        }).catch(err => console.error('[SessionManager] Push notification error:', err));
+        this.pushNotificationService
+          .notifySessionIdle({
+            projectName,
+            folderPath,
+            firstMessage,
+            sessionId,
+          })
+          .catch((err) => console.error('[SessionManager] Push notification error:', err));
       }
       eventBuffer.onEvent(event, sessionId, (e) => managed.sendLive(e));
     });
@@ -149,20 +152,12 @@ export class PimoteSessionManager {
     return Array.from(this.sessions.values());
   }
 
-  startIdleCheck(
-    idleTimeout: number,
-    isClientConnected?: (clientId: string) => boolean,
-  ): void {
+  startIdleCheck(idleTimeout: number, isClientConnected?: (clientId: string) => boolean): void {
     this.stopIdleCheck();
     this.idleCheckHandle = setInterval(() => {
       for (const [sessionId, managed] of this.sessions) {
-        const hasConnectedClient =
-          managed.connectedClientId !== null &&
-          (isClientConnected?.(managed.connectedClientId) ?? false);
-        if (
-          !hasConnectedClient &&
-          Date.now() - managed.lastActivity > idleTimeout
-        ) {
+        const hasConnectedClient = managed.connectedClientId !== null && (isClientConnected?.(managed.connectedClientId) ?? false);
+        if (!hasConnectedClient && Date.now() - managed.lastActivity > idleTimeout) {
           this.closeSession(sessionId).catch(() => {
             // Best-effort cleanup — swallow errors during idle reaping
           });

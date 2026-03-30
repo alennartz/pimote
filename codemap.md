@@ -83,6 +83,7 @@ Shared TypeScript types defining the WebSocket wire format between client and se
 **Dependencies:** none
 
 **Files:**
+
 - `shared/src/**`
 
 ### Server
@@ -94,6 +95,7 @@ Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges
 **Dependencies:** Protocol (wire format types)
 
 **Files:**
+
 - `server/src/index.ts` — entry point, wires up config, session manager, folder index, push notification service
 - `server/src/config.ts` — config loading from ~/.config/pimote/config.json, VAPID key fields, ensureVapidKeys() auto-generation
 - `server/src/server.ts` — HTTP server, static files, SPA fallback, /api/vapid-key endpoint, WebSocket upgrade with clientId extraction, client registry (Map<clientId, WsHandler>), stale connection displacement (register-first-then-close, cleanup gated on registry ownership)
@@ -116,6 +118,7 @@ SvelteKit PWA that renders pi conversations in real time and provides session/fo
 **Dependencies:** Protocol (wire format types), Server (WebSocket API)
 
 **Files:**
+
 - `client/src/lib/stores/session-registry.ts` — SessionRegistry class (pure logic: addSession, removeSession, switchTo, clearConflict, handleEvent routing by sessionId, PerSessionState shape)
 - `client/src/lib/stores/session-registry.svelte.ts` — reactive singleton wrapping SessionRegistry in $state, wires connection events to registry, onSessionOwned handler (sets pendingTakeover), confirmTakeover (force reconnect) / dismissTakeover (drop session) exports, switchToSession helper (sends view_session to server)
 - `client/src/lib/stores/session-registry.test.ts` — SessionRegistry tests

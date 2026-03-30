@@ -37,11 +37,7 @@ export class EventBuffer {
   /**
    * Process an SDK event: assign cursor, map to PimoteSessionEvent, forward live, and buffer (coalesced).
    */
-  onEvent(
-    sdkEvent: { type: string; [key: string]: any },
-    sessionId: string,
-    sendLive: (event: PimoteSessionEvent) => void,
-  ): void {
+  onEvent(sdkEvent: { type: string; [key: string]: any }, sessionId: string, sendLive: (event: PimoteSessionEvent) => void): void {
     this._cursor++;
     const cursor = this._cursor;
 
@@ -91,11 +87,7 @@ export class EventBuffer {
 
   // ---- Private helpers ----
 
-  private mapEvent(
-    sdkEvent: { type: string; [key: string]: any },
-    sessionId: string,
-    cursor: number,
-  ): PimoteSessionEvent {
+  private mapEvent(sdkEvent: { type: string; [key: string]: any }, sessionId: string, cursor: number): PimoteSessionEvent {
     const base = { sessionId, cursor };
 
     switch (sdkEvent.type) {
@@ -128,9 +120,7 @@ export class EventBuffer {
         return {
           ...base,
           type: 'message_end',
-          message: sdkEvent.message
-            ? mapAgentMessage(sdkEvent.message)
-            : { role: 'assistant', content: [] },
+          message: sdkEvent.message ? mapAgentMessage(sdkEvent.message) : { role: 'assistant', content: [] },
         };
 
       case 'tool_execution_start':

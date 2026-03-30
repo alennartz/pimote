@@ -5,10 +5,7 @@ export interface PushSubscriptionRecord {
 
 // Abstraction for the underlying push delivery mechanism (web-push in production)
 export interface PushSender {
-  sendNotification(
-    subscription: PushSubscriptionRecord,
-    payload: string,
-  ): Promise<{ statusCode: number }>;
+  sendNotification(subscription: PushSubscriptionRecord, payload: string): Promise<{ statusCode: number }>;
 }
 
 // Abstraction for subscription persistence (JSON file in production)
@@ -79,9 +76,7 @@ export class PushNotificationService {
     }
 
     if (expiredEndpoints.length > 0) {
-      this.subscriptions = this.subscriptions.filter(
-        (s) => !expiredEndpoints.includes(s.endpoint),
-      );
+      this.subscriptions = this.subscriptions.filter((s) => !expiredEndpoints.includes(s.endpoint));
       await this.store.save(this.subscriptions);
     }
   }

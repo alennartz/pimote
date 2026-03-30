@@ -10,7 +10,7 @@ import type { PimoteEvent, PimoteResponse, PimoteSessionEvent } from '@pimote/sh
 
 function createMockEventBuffer(opts?: { replayResult?: PimoteSessionEvent[] | null }): EventBuffer {
   return {
-    replay: () => opts?.replayResult !== undefined ? opts.replayResult : [],
+    replay: () => (opts?.replayResult !== undefined ? opts.replayResult : []),
     currentCursor: 0,
     onEvent: () => {},
   } as unknown as EventBuffer;
@@ -51,7 +51,9 @@ function createMockSessionManager(sessions: Map<string, ManagedSession> = new Ma
     getSession: (id: string) => sessions.get(id),
     getAllSessions: () => Array.from(sessions.values()),
     openSession: async () => 'new-session-id',
-    closeSession: async (id: string) => { sessions.delete(id); },
+    closeSession: async (id: string) => {
+      sessions.delete(id);
+    },
     startIdleCheck: () => {},
     stopIdleCheck: () => {},
     dispose: async () => {},
@@ -110,14 +112,7 @@ function createTestHandler(
   const folderIndex = opts?.folderIndex ?? createMockFolderIndex();
   const pushService = createMockPushService();
 
-  const handler = new WsHandler(
-    sessionManager,
-    folderIndex,
-    ws,
-    pushService,
-    clientId,
-    clientRegistry,
-  );
+  const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, clientId, clientRegistry);
 
   clientRegistry.set(clientId, handler);
 
@@ -148,12 +143,14 @@ describe('WsHandler', () => {
     it('responds with session_expired when session does not exist', async () => {
       const { handler, sent } = createTestHandler('client-1');
 
-      await handler.handleMessage(JSON.stringify({
-        type: 'reconnect',
-        sessionId: 'nonexistent-session',
-        lastCursor: 0,
-        id: 'req-1',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'reconnect',
+          sessionId: 'nonexistent-session',
+          lastCursor: 0,
+          id: 'req-1',
+        }),
+      );
 
       const resp = findResponse(sent, 'req-1');
       expect(resp).toBeDefined();
@@ -178,12 +175,14 @@ describe('WsHandler', () => {
       const sessions = new Map([['session-1', session]]);
       const { handler, sent } = createTestHandler('client-1', { sessions });
 
-      await handler.handleMessage(JSON.stringify({
-        type: 'reconnect',
-        sessionId: 'session-1',
-        lastCursor: 4,
-        id: 'req-2',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'reconnect',
+          sessionId: 'session-1',
+          lastCursor: 4,
+          id: 'req-2',
+        }),
+      );
 
       // Should get buffered_events, connection_restored, and success response
       const buffered = findEvents(sent, 'buffered_events');
@@ -208,12 +207,14 @@ describe('WsHandler', () => {
       const sessions = new Map([['session-1', session]]);
       const { handler, sent } = createTestHandler('client-1', { sessions });
 
-      await handler.handleMessage(JSON.stringify({
-        type: 'reconnect',
-        sessionId: 'session-1',
-        lastCursor: 0,
-        id: 'req-3',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'reconnect',
+          sessionId: 'session-1',
+          lastCursor: 0,
+          id: 'req-3',
+        }),
+      );
 
       const resync = findEvents(sent, 'full_resync');
       expect(resync).toHaveLength(1);
@@ -233,12 +234,14 @@ describe('WsHandler', () => {
       const sessions = new Map([['session-1', session]]);
       const { handler } = createTestHandler('client-1', { sessions });
 
-      await handler.handleMessage(JSON.stringify({
-        type: 'reconnect',
-        sessionId: 'session-1',
-        lastCursor: 0,
-        id: 'req-4',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'reconnect',
+          sessionId: 'session-1',
+          lastCursor: 0,
+          id: 'req-4',
+        }),
+      );
 
       expect(session.connectedClientId).toBe('client-1');
     });
@@ -261,12 +264,14 @@ describe('WsHandler', () => {
         clientRegistry,
       });
 
-      await handler.handleMessage(JSON.stringify({
-        type: 'reconnect',
-        sessionId: 'session-1',
-        lastCursor: 0,
-        id: 'req-5',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'reconnect',
+          sessionId: 'session-1',
+          lastCursor: 0,
+          id: 'req-5',
+        }),
+      );
 
       const resp = findResponse(sent, 'req-5');
       expect(resp).toBeDefined();
@@ -285,12 +290,14 @@ describe('WsHandler', () => {
       const clientRegistry: ClientRegistry = new Map();
 
       const ctx = createTestHandler('new-client', { sessions, clientRegistry });
-      await ctx.handler.handleMessage(JSON.stringify({
-        type: 'reconnect',
-        sessionId: 'session-1',
-        lastCursor: 0,
-        id: 'req-6',
-      }));
+      await ctx.handler.handleMessage(
+        JSON.stringify({
+          type: 'reconnect',
+          sessionId: 'session-1',
+          lastCursor: 0,
+          id: 'req-6',
+        }),
+      );
 
       // No session_closed events should be sent
       const closedEvents = findEvents(ctx.sent, 'session_closed');
@@ -315,12 +322,14 @@ describe('WsHandler', () => {
       // Create new client's handler
       const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
 
-      await newCtx.handler.handleMessage(JSON.stringify({
-        type: 'reconnect',
-        sessionId: 'session-1',
-        lastCursor: 0,
-        id: 'req-7',
-      }));
+      await newCtx.handler.handleMessage(
+        JSON.stringify({
+          type: 'reconnect',
+          sessionId: 'session-1',
+          lastCursor: 0,
+          id: 'req-7',
+        }),
+      );
 
       const resp = findResponse(newCtx.sent, 'req-7');
       expect(resp).toBeDefined();
@@ -346,13 +355,15 @@ describe('WsHandler', () => {
       const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
       const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
 
-      await newCtx.handler.handleMessage(JSON.stringify({
-        type: 'reconnect',
-        sessionId: 'session-1',
-        lastCursor: 0,
-        force: true,
-        id: 'req-8',
-      }));
+      await newCtx.handler.handleMessage(
+        JSON.stringify({
+          type: 'reconnect',
+          sessionId: 'session-1',
+          lastCursor: 0,
+          force: true,
+          id: 'req-8',
+        }),
+      );
 
       const resp = findResponse(newCtx.sent, 'req-8');
       expect(resp).toBeDefined();
@@ -377,12 +388,14 @@ describe('WsHandler', () => {
       const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
       const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
 
-      await newCtx.handler.handleMessage(JSON.stringify({
-        type: 'open_session',
-        folderPath: '/home/user/project',
-        sessionId: 'session-1',
-        id: 'req-9',
-      }));
+      await newCtx.handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-1',
+          id: 'req-9',
+        }),
+      );
 
       const resp = findResponse(newCtx.sent, 'req-9');
       expect(resp).toBeDefined();
@@ -404,13 +417,15 @@ describe('WsHandler', () => {
       const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
       const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
 
-      await newCtx.handler.handleMessage(JSON.stringify({
-        type: 'open_session',
-        folderPath: '/home/user/project',
-        sessionId: 'session-1',
-        force: true,
-        id: 'req-10',
-      }));
+      await newCtx.handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-1',
+          force: true,
+          id: 'req-10',
+        }),
+      );
 
       // New client gets success + session_opened
       const resp = findResponse(newCtx.sent, 'req-10');
@@ -441,12 +456,14 @@ describe('WsHandler', () => {
 
       const ctx = createTestHandler('my-client', { sessions, clientRegistry });
 
-      await ctx.handler.handleMessage(JSON.stringify({
-        type: 'open_session',
-        folderPath: '/home/user/project',
-        sessionId: 'session-1',
-        id: 'req-11-same',
-      }));
+      await ctx.handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-1',
+          id: 'req-11-same',
+        }),
+      );
 
       const resp = findResponse(ctx.sent, 'req-11-same');
       expect(resp).toBeDefined();
@@ -474,11 +491,7 @@ describe('WsHandler', () => {
 
       // Mock openSession to add the new session and return its ID
       let newSessionId = 'new-session';
-      (sessionManager as any).openSession = async (
-        folderPath: string,
-        sessionFilePath: string | undefined,
-        sendLive: any,
-      ) => {
+      (sessionManager as any).openSession = async (folderPath: string, sessionFilePath: string | undefined, sendLive: any) => {
         const newSession = createMockManagedSession({
           id: newSessionId,
           folderPath,
@@ -493,30 +506,23 @@ describe('WsHandler', () => {
       const folderIndex = createMockFolderIndex();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(
-        sessionManager,
-        folderIndex,
-        ws,
-        pushService,
-        'my-client',
-        clientRegistry,
-      );
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
-      await handler.handleMessage(JSON.stringify({
-        type: 'open_session',
-        folderPath: '/home/user/project',
-        id: 'req-11',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          id: 'req-11',
+        }),
+      );
 
       // Should receive a session_conflict event with remoteSessions
       const conflicts = findEvents(sent, 'session_conflict');
       expect(conflicts.length).toBeGreaterThanOrEqual(1);
 
       // At least one conflict event should include remoteSessions
-      const conflictWithRemote = conflicts.find(
-        (e: any) => e.remoteSessions && e.remoteSessions.length > 0,
-      );
+      const conflictWithRemote = conflicts.find((e: any) => e.remoteSessions && e.remoteSessions.length > 0);
       expect(conflictWithRemote).toBeDefined();
       expect((conflictWithRemote as any).remoteSessions).toEqual(
         expect.arrayContaining([
@@ -556,29 +562,22 @@ describe('WsHandler', () => {
       const folderIndex = createMockFolderIndex();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(
-        sessionManager,
-        folderIndex,
-        ws,
-        pushService,
-        'my-client',
-        clientRegistry,
-      );
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
-      await handler.handleMessage(JSON.stringify({
-        type: 'open_session',
-        folderPath: '/home/user/project',
-        id: 'req-12',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          id: 'req-12',
+        }),
+      );
 
       // If there IS a session_conflict event, its remoteSessions should not include own-session
       const conflicts = findEvents(sent, 'session_conflict');
       for (const conflict of conflicts) {
         const remoteSessions = (conflict as any).remoteSessions ?? [];
-        const ownInRemote = remoteSessions.find(
-          (rs: any) => rs.sessionId === 'own-session',
-        );
+        const ownInRemote = remoteSessions.find((rs: any) => rs.sessionId === 'own-session');
         expect(ownInRemote).toBeUndefined();
       }
     });
@@ -601,11 +600,13 @@ describe('WsHandler', () => {
       // Create the requesting client's handler
       const myCtx = createTestHandler('my-client', { sessions, clientRegistry });
 
-      await myCtx.handler.handleMessage(JSON.stringify({
-        type: 'kill_conflicting_sessions',
-        sessionIds: ['target-session'],
-        id: 'req-13',
-      }));
+      await myCtx.handler.handleMessage(
+        JSON.stringify({
+          type: 'kill_conflicting_sessions',
+          sessionIds: ['target-session'],
+          id: 'req-13',
+        }),
+      );
 
       const resp = findResponse(myCtx.sent, 'req-13');
       expect(resp).toBeDefined();
@@ -628,11 +629,13 @@ describe('WsHandler', () => {
       // Create the requesting client's handler
       const myCtx = createTestHandler('my-client', { sessions, clientRegistry });
 
-      await myCtx.handler.handleMessage(JSON.stringify({
-        type: 'kill_conflicting_sessions',
-        sessionIds: ['target-session'],
-        id: 'req-14',
-      }));
+      await myCtx.handler.handleMessage(
+        JSON.stringify({
+          type: 'kill_conflicting_sessions',
+          sessionIds: ['target-session'],
+          id: 'req-14',
+        }),
+      );
 
       // Other client should receive session_closed with reason 'killed'
       const closedEvents = findEvents(otherCtx.sent, 'session_closed');
@@ -662,11 +665,13 @@ describe('WsHandler', () => {
       const otherCtx = createTestHandler('other-client', { sessions, clientRegistry });
       const myCtx = createTestHandler('my-client', { sessions, clientRegistry });
 
-      await myCtx.handler.handleMessage(JSON.stringify({
-        type: 'kill_conflicting_sessions',
-        sessionIds: ['session-a', 'session-b'],
-        id: 'req-15',
-      }));
+      await myCtx.handler.handleMessage(
+        JSON.stringify({
+          type: 'kill_conflicting_sessions',
+          sessionIds: ['session-a', 'session-b'],
+          id: 'req-15',
+        }),
+      );
 
       const resp = findResponse(myCtx.sent, 'req-15');
       expect(resp).toBeDefined();
@@ -697,11 +702,13 @@ describe('WsHandler', () => {
       const myCtx = createTestHandler('my-client', { sessions, clientRegistry });
 
       // Should not throw — gracefully handles missing client
-      await myCtx.handler.handleMessage(JSON.stringify({
-        type: 'kill_conflicting_sessions',
-        sessionIds: ['orphaned-session'],
-        id: 'req-16',
-      }));
+      await myCtx.handler.handleMessage(
+        JSON.stringify({
+          type: 'kill_conflicting_sessions',
+          sessionIds: ['orphaned-session'],
+          id: 'req-16',
+        }),
+      );
 
       const resp = findResponse(myCtx.sent, 'req-16');
       expect(resp).toBeDefined();
@@ -714,11 +721,13 @@ describe('WsHandler', () => {
 
       const myCtx = createTestHandler('my-client', { sessions, clientRegistry });
 
-      await myCtx.handler.handleMessage(JSON.stringify({
-        type: 'kill_conflicting_sessions',
-        sessionIds: ['does-not-exist'],
-        id: 'req-17',
-      }));
+      await myCtx.handler.handleMessage(
+        JSON.stringify({
+          type: 'kill_conflicting_sessions',
+          sessionIds: ['does-not-exist'],
+          id: 'req-17',
+        }),
+      );
 
       const resp = findResponse(myCtx.sent, 'req-17');
       expect(resp).toBeDefined();
@@ -777,11 +786,13 @@ describe('WsHandler', () => {
         folderIndex,
       });
 
-      await handler.handleMessage(JSON.stringify({
-        type: 'list_sessions',
-        folderPath: '/home/user/project',
-        id: 'req-list',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'list_sessions',
+          folderPath: '/home/user/project',
+          id: 'req-list',
+        }),
+      );
 
       const resp = findResponse(sent, 'req-list');
       expect(resp).toBeDefined();
@@ -831,11 +842,13 @@ describe('WsHandler', () => {
         folderIndex,
       });
 
-      await handler.handleMessage(JSON.stringify({
-        type: 'list_sessions',
-        folderPath: '/home/user/project',
-        id: 'req-list-mine',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'list_sessions',
+          folderPath: '/home/user/project',
+          id: 'req-list-mine',
+        }),
+      );
 
       const resp = findResponse(sent, 'req-list-mine');
       const listedSessions = (resp!.data as any).sessions;
@@ -874,11 +887,13 @@ describe('WsHandler', () => {
         folderIndex,
       });
 
-      await handler.handleMessage(JSON.stringify({
-        type: 'list_sessions',
-        folderPath: '/home/user/project',
-        id: 'req-list-other',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'list_sessions',
+          folderPath: '/home/user/project',
+          id: 'req-list-other',
+        }),
+      );
 
       const resp = findResponse(sent, 'req-list-other');
       const listedSessions = (resp!.data as any).sessions;
@@ -911,11 +926,13 @@ describe('WsHandler', () => {
         folderIndex,
       });
 
-      await handler.handleMessage(JSON.stringify({
-        type: 'list_sessions',
-        folderPath: '/home/user/project',
-        id: 'req-list-inactive',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'list_sessions',
+          folderPath: '/home/user/project',
+          id: 'req-list-inactive',
+        }),
+      );
 
       const resp = findResponse(sent, 'req-list-inactive');
       const listedSessions = (resp!.data as any).sessions;
@@ -937,12 +954,14 @@ describe('WsHandler', () => {
       const { handler } = createTestHandler('client-1', { sessions });
 
       // Subscribe to the session by reconnecting
-      await handler.handleMessage(JSON.stringify({
-        type: 'reconnect',
-        sessionId: 'session-1',
-        lastCursor: 0,
-        id: 'req-cleanup',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'reconnect',
+          sessionId: 'session-1',
+          lastCursor: 0,
+          id: 'req-cleanup',
+        }),
+      );
 
       expect(session.connectedClientId).toBe('client-1');
 
@@ -962,11 +981,13 @@ describe('WsHandler', () => {
       const { handler } = createTestHandler('client-1', { sessions });
 
       // Set viewedSessionId via view_session command
-      await handler.handleMessage(JSON.stringify({
-        type: 'view_session',
-        sessionId: 'session-1',
-        id: 'req-view',
-      }));
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'view_session',
+          sessionId: 'session-1',
+          id: 'req-view',
+        }),
+      );
 
       expect(handler.getViewedSessionId()).toBe('session-1');
 

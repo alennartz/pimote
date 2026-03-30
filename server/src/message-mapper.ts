@@ -61,12 +61,14 @@ export function mapAgentMessage(msg: any): PimoteAgentMessage {
     }
     return {
       role,
-      content: [{
-        type: 'tool_result' as const,
-        toolCallId: msg.toolCallId,
-        toolName: msg.toolName,
-        result: resultContent.length > 0 ? resultContent[0].text : undefined,
-      }],
+      content: [
+        {
+          type: 'tool_result' as const,
+          toolCallId: msg.toolCallId,
+          toolName: msg.toolName,
+          result: resultContent.length > 0 ? resultContent[0].text : undefined,
+        },
+      ],
     };
   }
 

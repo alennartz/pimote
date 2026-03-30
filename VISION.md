@@ -9,6 +9,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 ## What
 
 **Pimote Server** — A Node.js process that:
+
 - Indexes project folders and pi sessions on your machine
 - Embeds AgentSession instances directly via the pi SDK
 - Manages multiple concurrent sessions per client with status tracking
@@ -20,6 +21,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Handles session takeover by killing external processes or conflicting remote sessions
 
 **Pimote Client** — A Svelte 5 PWA that:
+
 - Works on phone (installable) and desktop browser
 - Manages multiple concurrent sessions with fast switching (ActiveSessionBar)
 - Tracks session status (working / idle / needs-attention)

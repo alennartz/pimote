@@ -31,13 +31,13 @@ export async function loadConfig(): Promise<PimoteConfig> {
     if (err && typeof err === 'object' && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new Error(
         `Config file not found at ${CONFIG_PATH}\n\n` +
-        `Create it with at least a "roots" array, e.g.:\n\n` +
-        `  {\n` +
-        `    "roots": ["/path/to/your/project"]\n` +
-        `  }\n\n` +
-        `Optional fields: port (default ${DEFAULTS.port}), ` +
-        `idleTimeout (default ${DEFAULTS.idleTimeout}ms), ` +
-        `bufferSize (default ${DEFAULTS.bufferSize})`
+          `Create it with at least a "roots" array, e.g.:\n\n` +
+          `  {\n` +
+          `    "roots": ["/path/to/your/project"]\n` +
+          `  }\n\n` +
+          `Optional fields: port (default ${DEFAULTS.port}), ` +
+          `idleTimeout (default ${DEFAULTS.idleTimeout}ms), ` +
+          `bufferSize (default ${DEFAULTS.bufferSize})`,
       );
     }
     throw err;
@@ -57,14 +57,8 @@ export async function loadConfig(): Promise<PimoteConfig> {
   const obj = parsed as Record<string, unknown>;
 
   // Validate roots
-  if (
-    !Array.isArray(obj.roots) ||
-    obj.roots.length === 0 ||
-    !obj.roots.every((r): r is string => typeof r === 'string')
-  ) {
-    throw new Error(
-      `Config "roots" must be a non-empty array of strings in ${CONFIG_PATH}`
-    );
+  if (!Array.isArray(obj.roots) || obj.roots.length === 0 || !obj.roots.every((r): r is string => typeof r === 'string')) {
+    throw new Error(`Config "roots" must be a non-empty array of strings in ${CONFIG_PATH}`);
   }
 
   return {

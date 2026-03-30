@@ -1,6 +1,7 @@
 .PHONY: all install build build-shared build-server build-client \
         dev dev-server dev-client \
         start test clean help \
+        format format-check lint check \
         deploy undeploy redeploy logs status
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -55,6 +56,24 @@ dev-client:
 start:
 	$(if $(PORT),PORT=$(PORT) ,)node server/dist/index.js
 
+# ── Lint & Format ─────────────────────────────────────────────────────────────
+
+## Format all files with Prettier
+format:
+	npm run format
+
+## Check formatting without writing
+format-check:
+	npm run format:check
+
+## Run ESLint on all files
+lint:
+	npm run lint
+
+## Run type checking (svelte-check + tsc)
+check:
+	npm run check
+
 # ── Test ──────────────────────────────────────────────────────────────────────
 
 test:
@@ -108,6 +127,12 @@ help:
 	@echo ""
 	@echo "  start          Start production server (port from config.json, or PORT=N to override)"
 	@echo "  test           Run all tests (server + client, single run)"
+	@echo ""
+	@echo "  format         Format all files with Prettier (writes changes)"
+	@echo "  format-check   Check formatting without writing"
+	@echo "  lint           Run ESLint on all files"
+	@echo "  check          Run type checking (svelte-check + tsc)"
+	@echo ""
 	@echo "  clean          Remove all build artifacts"
 	@echo ""
 	@echo "  deploy         Build + (re)start systemd service"

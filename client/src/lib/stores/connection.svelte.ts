@@ -1,10 +1,5 @@
 // ConnectionStore — Svelte 5 runes-based WebSocket connection manager
-import type {
-  PimoteCommand,
-  PimoteResponse,
-  PimoteEvent,
-  PimoteServerMessage,
-} from '@pimote/shared';
+import type { PimoteCommand, PimoteResponse, PimoteEvent, PimoteServerMessage } from '@pimote/shared';
 
 type EventListener = (event: PimoteEvent) => void;
 
@@ -55,23 +50,29 @@ class ConnectionStore {
           type: 'reconnect',
           sessionId,
           lastCursor: this.sessionCursors.get(sessionId) ?? 0,
-        }).then((response) => {
-          if (!response.success) {
-            if (response.error === 'session_owned') {
-              // Another client owns this session — let the registry prompt the user
-              this.onSessionOwned?.(sessionId);
-            } else {
-              // Session expired (server restarted, idle-reaped, etc.) — fire
-              // a synthetic session_closed so the registry cleans up the tab
-              const closedEvent = { type: 'session_closed', sessionId } as PimoteEvent;
-              for (const listener of this.listeners) {
-                try { listener(closedEvent); } catch (e) { console.error('[ConnectionStore] listener error:', e); }
+        })
+          .then((response) => {
+            if (!response.success) {
+              if (response.error === 'session_owned') {
+                // Another client owns this session — let the registry prompt the user
+                this.onSessionOwned?.(sessionId);
+              } else {
+                // Session expired (server restarted, idle-reaped, etc.) — fire
+                // a synthetic session_closed so the registry cleans up the tab
+                const closedEvent = { type: 'session_closed', sessionId } as PimoteEvent;
+                for (const listener of this.listeners) {
+                  try {
+                    listener(closedEvent);
+                  } catch (e) {
+                    console.error('[ConnectionStore] listener error:', e);
+                  }
+                }
               }
             }
-          }
-        }).catch(() => {
-          // WebSocket dropped before response — will retry on next reconnect
-        });
+          })
+          .catch(() => {
+            // WebSocket dropped before response — will retry on next reconnect
+          });
         reconnectPromises.push(p);
       }
 
@@ -89,11 +90,13 @@ class ConnectionStore {
             folderPath,
             sessionId: sid,
             force: true,
-          }).then((response) => {
-            if (response.success) {
-              this.onSessionAdopted?.(sid, folderPath);
-            }
-          }).catch(() => {});
+          })
+            .then((response) => {
+              if (response.success) {
+                this.onSessionAdopted?.(sid, folderPath);
+              }
+            })
+            .catch(() => {});
         }
       });
 

@@ -1,8 +1,48 @@
 import { readdir, readlink, readFile, realpath } from 'node:fs/promises';
 
 /**
+ * Check if `pid` is a descendant (child, grandchild, etc.) of any PID in `ancestorPids`
+ * by walking the ppid chain via /proc/<pid>/stat.
+ * A PID is not considered a descendant of itself.
+ */
+async function isDescendantOfAny(pid: number, ancestorPids: Set<number>): Promise<boolean> {
+  let current = pid;
+  // Walk up to 64 levels to avoid infinite loops on broken /proc data
+  for (let i = 0; i < 64; i++) {
+    let stat: string;
+    try {
+      stat = await readFile(`/proc/${current}/stat`, 'utf-8');
+    } catch {
+      return false;
+    }
+    // /proc/<pid>/stat format: pid (comm) state ppid ...
+    // comm can contain spaces and parens, so find the last ')' first
+    const lastParen = stat.lastIndexOf(')');
+    if (lastParen === -1) return false;
+    const afterComm = stat.slice(lastParen + 2); // skip ') '
+    const fields = afterComm.split(' ');
+    // fields[0] = state, fields[1] = ppid
+    const ppid = Number(fields[1]);
+    if (!Number.isInteger(ppid) || ppid <= 0) return false;
+    if (ancestorPids.has(ppid)) return true;
+    // Reached init — not a descendant
+    if (ppid === 1) return false;
+    current = ppid;
+  }
+  return false;
+}
+
+/**
  * Find external pi processes whose working directory matches `folderPath`.
  * Scans /proc to find processes running pi-coding-agent in the given folder.
+ *
+ * Excludes:
+ * - The current process (pimote server)
+ * - Descendants of the current process (sub-agents spawned by this server)
+ * - Descendants of any other pi process (sub-agents spawned by an external pi)
+ *
+ * Only "root" pi processes — those not parented by another pi process or this
+ * server — are returned as conflicts.
  */
 export async function findExternalPiProcesses(folderPath: string): Promise<number[]> {
   const myPid = process.pid;
@@ -21,7 +61,8 @@ export async function findExternalPiProcesses(folderPath: string): Promise<numbe
     return [];
   }
 
-  const pids: number[] = [];
+  // First pass: collect all pi processes in this folder (excluding ourselves)
+  const allPiPids: number[] = [];
 
   for (const entry of entries) {
     const pid = Number(entry);
@@ -46,7 +87,7 @@ export async function findExternalPiProcesses(folderPath: string): Promise<numbe
 
       if (!isPiProcess(cmdline)) continue;
 
-      pids.push(pid);
+      allPiPids.push(pid);
     } catch (err: unknown) {
       // ENOENT (process exited), EACCES (no permission) — skip
       const code = (err as NodeJS.ErrnoException).code;
@@ -56,7 +97,19 @@ export async function findExternalPiProcesses(folderPath: string): Promise<numbe
     }
   }
 
-  return pids;
+  if (allPiPids.length === 0) return [];
+
+  // Second pass: filter out any pi process that is a descendant of
+  // this server or of another pi process in the set.
+  const ancestorPids = new Set([myPid, ...allPiPids]);
+  const rootPids: number[] = [];
+
+  for (const pid of allPiPids) {
+    if (await isDescendantOfAny(pid, ancestorPids)) continue;
+    rootPids.push(pid);
+  }
+
+  return rootPids;
 }
 
 /**
@@ -80,7 +133,7 @@ function isPiProcess(cmdline: string): boolean {
 export async function killExternalPiProcesses(folderPath: string, targetPids?: number[]): Promise<number> {
   let pids = await findExternalPiProcesses(folderPath);
   if (targetPids && targetPids.length > 0) {
-    pids = pids.filter(pid => targetPids.includes(pid));
+    pids = pids.filter((pid) => targetPids.includes(pid));
   }
   if (pids.length === 0) return 0;
 

@@ -31,6 +31,7 @@ export interface PerSessionState {
   pendingTakeover: boolean;
   gitBranch: string | null;
   contextUsage: { percent: number | null; contextWindow: number } | null;
+  draftText: string;
 }
 
 export class SessionRegistry {
@@ -77,11 +78,14 @@ export class SessionRegistry {
           session.needsAttention = true;
         }
         // Refresh meta (context usage changes after each turn, branch may change)
-        connection.send({ type: 'get_session_meta', sessionId }).then((res) => {
-          if (res.success && res.data) {
-            this.updateMeta(sessionId, (res.data as any).meta);
-          }
-        }).catch(() => {});
+        connection
+          .send({ type: 'get_session_meta', sessionId })
+          .then((res) => {
+            if (res.success && res.data) {
+              this.updateMeta(sessionId, (res.data as any).meta);
+            }
+          })
+          .catch(() => {});
         break;
 
       case 'message_start':
@@ -149,11 +153,14 @@ export class SessionRegistry {
       case 'auto_compaction_end':
         session.isCompacting = false;
         // Context usage changes significantly after compaction
-        connection.send({ type: 'get_session_meta', sessionId }).then((res) => {
-          if (res.success && res.data) {
-            this.updateMeta(sessionId, (res.data as any).meta);
-          }
-        }).catch(() => {});
+        connection
+          .send({ type: 'get_session_meta', sessionId })
+          .then((res) => {
+            if (res.success && res.data) {
+              this.updateMeta(sessionId, (res.data as any).meta);
+            }
+          })
+          .catch(() => {});
         break;
 
       case 'full_resync': {
@@ -207,6 +214,7 @@ export class SessionRegistry {
       pendingTakeover: false,
       gitBranch: null,
       contextUsage: null,
+      draftText: '',
     };
     this.sessions[sessionId] = session;
   }
@@ -274,29 +282,33 @@ connection.onEvent((event) => {
         connection.send({ type: 'get_state', sessionId: event.sessionId }),
         connection.send({ type: 'get_messages', sessionId: event.sessionId }),
         connection.send({ type: 'get_session_meta', sessionId: event.sessionId }),
-      ]).then(([stateRes, msgRes, metaRes]) => {
-        const session = sessionRegistry.sessions[event.sessionId];
-        if (!session) return;
-        if (stateRes.success && stateRes.data) {
-          const state = (stateRes.data as any).state;
-          session.model = state.model;
-          session.thinkingLevel = state.thinkingLevel;
-          session.isStreaming = state.isStreaming;
-          session.isCompacting = state.isCompacting;
-          session.autoCompactionEnabled = state.autoCompactionEnabled;
-          session.messageCount = state.messageCount;
-          session.status = state.isStreaming ? 'working' : 'idle';
-        }
-        if (msgRes.success && msgRes.data) {
-          const messages = (msgRes.data as any).messages;
-          session.messages = messages;
-          session.messageCount = messages.length;
-        }
-        if (metaRes.success && metaRes.data) {
-          const meta = (metaRes.data as any).meta;
-          sessionRegistry.updateMeta(event.sessionId, meta);
-        }
-      });
+      ])
+        .then(([stateRes, msgRes, metaRes]) => {
+          const session = sessionRegistry.sessions[event.sessionId];
+          if (!session) return;
+          if (stateRes.success && stateRes.data) {
+            const state = (stateRes.data as any).state;
+            session.model = state.model;
+            session.thinkingLevel = state.thinkingLevel;
+            session.isStreaming = state.isStreaming;
+            session.isCompacting = state.isCompacting;
+            session.autoCompactionEnabled = state.autoCompactionEnabled;
+            session.messageCount = state.messageCount;
+            session.status = state.isStreaming ? 'working' : 'idle';
+          }
+          if (msgRes.success && msgRes.data) {
+            const messages = (msgRes.data as any).messages;
+            session.messages = messages;
+            session.messageCount = messages.length;
+          }
+          if (metaRes.success && metaRes.data) {
+            const meta = (metaRes.data as any).meta;
+            sessionRegistry.updateMeta(event.sessionId, meta);
+          }
+        })
+        .catch((err) => {
+          console.error('[SessionRegistry] Failed to fetch initial session state:', err);
+        });
       break;
     }
     case 'session_closed': {
@@ -329,11 +341,14 @@ connection.onSessionAdopted = (sessionId, folderPath) => {
   sessionRegistry.switchTo(sessionId);
   connection.send({ type: 'view_session', sessionId }).catch(() => {});
   // Request meta for git branch and context usage
-  connection.send({ type: 'get_session_meta', sessionId }).then((metaRes) => {
-    if (metaRes.success && metaRes.data) {
-      sessionRegistry.updateMeta(sessionId, (metaRes.data as any).meta);
-    }
-  }).catch(() => {});
+  connection
+    .send({ type: 'get_session_meta', sessionId })
+    .then((metaRes) => {
+      if (metaRes.success && metaRes.data) {
+        sessionRegistry.updateMeta(sessionId, (metaRes.data as any).meta);
+      }
+    })
+    .catch(() => {});
 };
 
 // After reconnect completes, restore the correct viewed session on the server
@@ -349,21 +364,24 @@ export function confirmTakeover(sessionId: string): void {
   const session = sessionRegistry.sessions[sessionId];
   if (!session) return;
   session.pendingTakeover = false;
-  connection.send({
-    type: 'open_session',
-    folderPath: session.folderPath,
-    sessionId,
-    force: true,
-  }).then((response) => {
-    if (!response.success) {
-      // Force also failed — give up
+  connection
+    .send({
+      type: 'open_session',
+      folderPath: session.folderPath,
+      sessionId,
+      force: true,
+    })
+    .then((response) => {
+      if (!response.success) {
+        // Force also failed — give up
+        sessionRegistry.removeSession(sessionId);
+        connection.removeSubscribedSession(sessionId);
+      }
+    })
+    .catch(() => {
       sessionRegistry.removeSession(sessionId);
       connection.removeSubscribedSession(sessionId);
-    }
-  }).catch(() => {
-    sessionRegistry.removeSession(sessionId);
-    connection.removeSubscribedSession(sessionId);
-  });
+    });
 }
 
 /** Dismiss takeover — drop the session */

@@ -35,10 +35,7 @@ export class WebPushSender implements PushSender {
     webpush.setVapidDetails('mailto:' + vapidEmail, vapidPublicKey, vapidPrivateKey);
   }
 
-  async sendNotification(
-    subscription: PushSubscriptionRecord,
-    payload: string,
-  ): Promise<{ statusCode: number }> {
+  async sendNotification(subscription: PushSubscriptionRecord, payload: string): Promise<{ statusCode: number }> {
     const response = await webpush.sendNotification(subscription, payload);
     return { statusCode: response.statusCode };
   }

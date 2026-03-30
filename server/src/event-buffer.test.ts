@@ -71,16 +71,7 @@ describe('EventBuffer', () => {
 
       // Should contain: agent_start, turn_start, message_start, message_end,
       //                 tool_execution_start, tool_execution_end, turn_end, agent_end
-      expect(bufferedTypes).toEqual([
-        'agent_start',
-        'turn_start',
-        'message_start',
-        'message_end',
-        'tool_execution_start',
-        'tool_execution_end',
-        'turn_end',
-        'agent_end',
-      ]);
+      expect(bufferedTypes).toEqual(['agent_start', 'turn_start', 'message_start', 'message_end', 'tool_execution_start', 'tool_execution_end', 'turn_end', 'agent_end']);
     });
   });
 
@@ -237,16 +228,8 @@ describe('EventBuffer', () => {
       const sendLive = vi.fn();
 
       buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
-      buffer.onEvent(
-        makeSdkEvent('message_update', { content: { type: 'thinking', text: 'Let me think...' } }),
-        SESSION_ID,
-        sendLive,
-      );
-      buffer.onEvent(
-        makeSdkEvent('message_update', { content: { type: 'text', text: 'The answer is 42' } }),
-        SESSION_ID,
-        sendLive,
-      );
+      buffer.onEvent(makeSdkEvent('message_update', { content: { type: 'thinking', text: 'Let me think...' } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { content: { type: 'text', text: 'The answer is 42' } }), SESSION_ID, sendLive);
       buffer.onEvent(
         makeSdkEvent('message_end', {
           message: { role: 'assistant', content: [{ type: 'text', text: 'The answer is 42' }] },
@@ -267,19 +250,11 @@ describe('EventBuffer', () => {
       const buffer = new EventBuffer(100);
       const sendLive = vi.fn();
 
-      buffer.onEvent(
-        makeSdkEvent('tool_execution_start', { toolName: 'bash', toolCallId: 'tc-1', args: { cmd: 'ls' } }),
-        SESSION_ID,
-        sendLive,
-      );
+      buffer.onEvent(makeSdkEvent('tool_execution_start', { toolName: 'bash', toolCallId: 'tc-1', args: { cmd: 'ls' } }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', content: 'file1\n' }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', content: 'file2\n' }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', content: 'file3\n' }), SESSION_ID, sendLive);
-      buffer.onEvent(
-        makeSdkEvent('tool_execution_end', { toolCallId: 'tc-1', result: 'file1\nfile2\nfile3\n' }),
-        SESSION_ID,
-        sendLive,
-      );
+      buffer.onEvent(makeSdkEvent('tool_execution_end', { toolCallId: 'tc-1', result: 'file1\nfile2\nfile3\n' }), SESSION_ID, sendLive);
 
       expect(sendLive).toHaveBeenCalledTimes(5);
 
@@ -313,11 +288,7 @@ describe('EventBuffer', () => {
       const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
 
       buffer.onEvent(makeSdkEvent('auto_compaction_start', { reason: 'overflow' }), SESSION_ID, sendLive);
-      buffer.onEvent(
-        makeSdkEvent('auto_compaction_end', { result: {}, aborted: false, willRetry: false }),
-        SESSION_ID,
-        sendLive,
-      );
+      buffer.onEvent(makeSdkEvent('auto_compaction_end', { result: {}, aborted: false, willRetry: false }), SESSION_ID, sendLive);
 
       expect(liveEvents[0].type).toBe('auto_compaction_start');
       expect((liveEvents[0] as any).reason).toBe('overflow');
@@ -329,11 +300,7 @@ describe('EventBuffer', () => {
       const liveEvents: PimoteSessionEvent[] = [];
       const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
 
-      buffer.onEvent(
-        makeSdkEvent('auto_retry_start', { attempt: 1, maxAttempts: 3, delayMs: 1000, errorMessage: 'rate limit' }),
-        SESSION_ID,
-        sendLive,
-      );
+      buffer.onEvent(makeSdkEvent('auto_retry_start', { attempt: 1, maxAttempts: 3, delayMs: 1000, errorMessage: 'rate limit' }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('auto_retry_end', { success: true, attempt: 1 }), SESSION_ID, sendLive);
 
       expect(liveEvents[0].type).toBe('auto_retry_start');
@@ -347,11 +314,7 @@ describe('EventBuffer', () => {
       const liveEvents: PimoteSessionEvent[] = [];
       const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
 
-      buffer.onEvent(
-        makeSdkEvent('extension_error', { error: 'ext failed', extensionName: 'my-ext' }),
-        SESSION_ID,
-        sendLive,
-      );
+      buffer.onEvent(makeSdkEvent('extension_error', { error: 'ext failed', extensionName: 'my-ext' }), SESSION_ID, sendLive);
 
       expect(liveEvents[0]).toEqual({
         type: 'extension_error',
@@ -370,11 +333,7 @@ describe('EventBuffer', () => {
       buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
       expect((liveEvents[0] as any).role).toBe('assistant');
 
-      buffer.onEvent(
-        makeSdkEvent('message_update', { content: { type: 'text', text: 'hi' } }),
-        SESSION_ID,
-        sendLive,
-      );
+      buffer.onEvent(makeSdkEvent('message_update', { content: { type: 'text', text: 'hi' } }), SESSION_ID, sendLive);
       expect((liveEvents[1] as any).content).toEqual({ type: 'text', text: 'hi' });
     });
   });
@@ -393,29 +352,16 @@ describe('EventBuffer', () => {
       // First message
       buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_update', { content: { type: 'text', text: 'a' } }), SESSION_ID, sendLive);
-      buffer.onEvent(
-        makeSdkEvent('message_end', { message: { role: 'assistant', content: [{ type: 'text', text: 'a' }] } }),
-        SESSION_ID,
-        sendLive,
-      );
+      buffer.onEvent(makeSdkEvent('message_end', { message: { role: 'assistant', content: [{ type: 'text', text: 'a' }] } }), SESSION_ID, sendLive);
 
       // Second message
       buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_update', { content: { type: 'text', text: 'b' } }), SESSION_ID, sendLive);
-      buffer.onEvent(
-        makeSdkEvent('message_end', { message: { role: 'assistant', content: [{ type: 'text', text: 'b' }] } }),
-        SESSION_ID,
-        sendLive,
-      );
+      buffer.onEvent(makeSdkEvent('message_end', { message: { role: 'assistant', content: [{ type: 'text', text: 'b' }] } }), SESSION_ID, sendLive);
 
       const replayed = buffer.replay(0);
       const types = replayed!.map((e) => e.type);
-      expect(types).toEqual([
-        'message_start',
-        'message_end',
-        'message_start',
-        'message_end',
-      ]);
+      expect(types).toEqual(['message_start', 'message_end', 'message_start', 'message_end']);
     });
   });
 });

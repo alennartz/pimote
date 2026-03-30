@@ -9,7 +9,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '$lib': path.resolve(__dirname, 'src/lib'),
+      $lib: path.resolve(__dirname, 'src/lib'),
       '@pimote/shared': path.resolve(__dirname, '../shared/dist/index.js'),
     },
   },

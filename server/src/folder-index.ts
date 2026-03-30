@@ -98,9 +98,7 @@ export class FolderIndex {
   private async hasProjectMarker(dirPath: string): Promise<boolean> {
     for (const marker of PROJECT_MARKERS) {
       try {
-        const markerPath = marker === '.pi'
-          ? join(dirPath, '.pi', 'sessions')
-          : join(dirPath, marker);
+        const markerPath = marker === '.pi' ? join(dirPath, '.pi', 'sessions') : join(dirPath, marker);
         await stat(markerPath);
         return true;
       } catch {

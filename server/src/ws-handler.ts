@@ -5,7 +5,6 @@ import type {
   PimoteResponse,
   PimoteEvent,
   PimoteSessionEvent,
-
   SessionState,
   SessionMeta,
   BufferedEventsEvent,
@@ -20,10 +19,7 @@ import type { PushNotificationService } from './push-notification.js';
 import { mapAgentMessages } from './message-mapper.js';
 import type { AgentSession, ExtensionCommandContextActions } from '@mariozechner/pi-coding-agent';
 
-function createCommandContextActions(
-  session: AgentSession,
-  onSessionReset?: () => void,
-): ExtensionCommandContextActions {
+function createCommandContextActions(session: AgentSession, onSessionReset?: () => void): ExtensionCommandContextActions {
   return {
     waitForIdle: () => {
       if (!session.isStreaming) return Promise.resolve();
@@ -63,12 +59,14 @@ function createCommandContextActions(
 /** Resolve the current git branch for a directory. Returns null if not a git repo. */
 function getGitBranch(cwd: string): string | null {
   try {
-    return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-      cwd,
-      encoding: 'utf-8',
-      timeout: 2000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim() || null;
+    return (
+      execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+        cwd,
+        encoding: 'utf-8',
+        timeout: 2000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim() || null
+    );
   } catch {
     return null;
   }
@@ -117,13 +115,11 @@ export class WsHandler {
           // Enrich with active session info
           const activeSessions = this.sessionManager.getAllSessions();
           for (const folder of folders) {
-            const folderSessions = activeSessions.filter(
-              (s) => s.folderPath === folder.path,
-            );
+            const folderSessions = activeSessions.filter((s) => s.folderPath === folder.path);
             folder.activeSessionCount = folderSessions.length;
-            if (folderSessions.some(s => s.status === 'working')) {
+            if (folderSessions.some((s) => s.status === 'working')) {
               folder.activeStatus = 'working';
-            } else if (folderSessions.some(s => s.needsAttention)) {
+            } else if (folderSessions.some((s) => s.needsAttention)) {
               folder.activeStatus = 'attention';
             } else if (folderSessions.length > 0) {
               folder.activeStatus = 'idle';
@@ -146,7 +142,7 @@ export class WsHandler {
           }
 
           // Enrich each session with ownership and live status
-          const enriched = sessions.map(s => {
+          const enriched = sessions.map((s) => {
             const ms = managedById.get(s.id);
             return {
               ...s,
@@ -207,10 +203,7 @@ export class WsHandler {
             }
           }
 
-          const sessionId = await this.sessionManager.openSession(
-            command.folderPath,
-            sessionFilePath,
-          );
+          const sessionId = await this.sessionManager.openSession(command.folderPath, sessionFilePath);
 
           const managed = this.sessionManager.getSession(sessionId)!;
           await this.claimSession(sessionId, managed);
@@ -233,14 +226,14 @@ export class WsHandler {
           const openConflictPids = await findExternalPiProcesses(command.folderPath);
           const allSessions = this.sessionManager.getAllSessions();
           const remoteSessions = allSessions
-            .filter(s => s.folderPath === command.folderPath && s.connectedClientId !== null && s.connectedClientId !== this.clientId && s.id !== sessionId)
-            .map(s => ({ sessionId: s.id, status: s.status }));
+            .filter((s) => s.folderPath === command.folderPath && s.connectedClientId !== null && s.connectedClientId !== this.clientId && s.id !== sessionId)
+            .map((s) => ({ sessionId: s.id, status: s.status }));
 
           if (openConflictPids.length > 0 || remoteSessions.length > 0) {
             this.sendEvent({
               type: 'session_conflict',
               sessionId,
-              processes: openConflictPids.map(pid => ({ pid, command: 'pi' })),
+              processes: openConflictPids.map((pid) => ({ pid, command: 'pi' })),
               remoteSessions,
             });
           }
@@ -331,9 +324,7 @@ export class WsHandler {
         case 'takeover_folder': {
           const killedCount = await killExternalPiProcesses(command.folderPath);
 
-          const takeoverSessionId = await this.sessionManager.openSession(
-            command.folderPath,
-          );
+          const takeoverSessionId = await this.sessionManager.openSession(command.folderPath);
 
           const takeoverManaged = this.sessionManager.getSession(takeoverSessionId)!;
           await this.claimSession(takeoverSessionId, takeoverManaged);
@@ -530,9 +521,7 @@ export class WsHandler {
 
       case 'set_model': {
         const models = managed.session.modelRegistry.getAvailable();
-        const model = models.find(
-          (m) => m.provider === command.provider && m.id === command.modelId,
-        );
+        const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
         if (!model) {
           this.sendResponse(id, false, undefined, `Model not found: ${command.provider}/${command.modelId}`);
           break;
@@ -594,9 +583,7 @@ export class WsHandler {
       case 'get_state': {
         const model = session.model;
         const state: SessionState = {
-          model: model
-            ? { provider: model.provider, id: model.id, name: model.name }
-            : null,
+          model: model ? { provider: model.provider, id: model.id, name: model.name } : null,
           thinkingLevel: session.thinkingLevel,
           isStreaming: session.isStreaming,
           isCompacting: session.isCompacting,
@@ -632,9 +619,7 @@ export class WsHandler {
         const contextUsage = session.getContextUsage();
         const meta: SessionMeta = {
           gitBranch: getGitBranch(managed.folderPath),
-          contextUsage: contextUsage
-            ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow }
-            : null,
+          contextUsage: contextUsage ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow } : null,
         };
         this.sendResponse(id, true, { meta });
         break;
@@ -670,7 +655,9 @@ export class WsHandler {
   private async claimSession(sessionId: string, managed: ManagedSession): Promise<void> {
     managed.connectedClientId = this.clientId;
     managed.lastActivity = Date.now();
-    managed.sendLive = (event: PimoteSessionEvent) => { this.sendEvent(event); };
+    managed.sendLive = (event: PimoteSessionEvent) => {
+      this.sendEvent(event);
+    };
     this.subscribedSessions.add(sessionId);
 
     // Bind extension UI bridge with closures pointing to this handler
@@ -751,9 +738,7 @@ export class WsHandler {
     const session = managed.session;
     const model = session.model;
     const state: SessionState = {
-      model: model
-        ? { provider: model.provider, id: model.id, name: model.name }
-        : null,
+      model: model ? { provider: model.provider, id: model.id, name: model.name } : null,
       thinkingLevel: session.thinkingLevel,
       isStreaming: session.isStreaming,
       isCompacting: session.isCompacting,

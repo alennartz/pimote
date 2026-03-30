@@ -9,11 +9,7 @@ import type { PimoteEvent } from '@pimote/shared';
  * for the client to respond. Fire-and-forget methods (notify, setStatus, etc.)
  * send an event without waiting. TUI-only methods are no-ops.
  */
-export function createExtensionUIBridge(
-  sendToClient: (msg: PimoteEvent) => void,
-  waitForResponse: (requestId: string) => Promise<any>,
-): ExtensionUIContext {
-
+export function createExtensionUIBridge(sendToClient: (msg: PimoteEvent) => void, waitForResponse: (requestId: string) => Promise<any>): ExtensionUIContext {
   function sendRequest(sessionId: string, requestId: string, fields: Record<string, unknown>): void {
     sendToClient({
       type: 'extension_ui_request',
@@ -23,11 +19,7 @@ export function createExtensionUIBridge(
     } as PimoteEvent);
   }
 
-  async function dialogWithTimeout<T>(
-    requestId: string,
-    opts: ExtensionUIDialogOptions | undefined,
-    fallback: T,
-  ): Promise<T> {
+  async function dialogWithTimeout<T>(requestId: string, opts: ExtensionUIDialogOptions | undefined, fallback: T): Promise<T> {
     const responsePromise = waitForResponse(requestId);
     if (opts?.timeout) {
       const timer = new Promise<T>((resolve) => setTimeout(() => resolve(fallback), opts.timeout));

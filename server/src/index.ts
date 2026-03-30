@@ -17,14 +17,8 @@ async function main() {
   const folderIndex = new FolderIndex(config.roots);
 
   // Initialize push notification service
-  const pushStore = new FilePushSubscriptionStore(
-    join(homedir(), '.config', 'pimote', 'push-subscriptions.json'),
-  );
-  const pushSender = new WebPushSender(
-    config.vapidPublicKey!,
-    config.vapidPrivateKey!,
-    config.vapidEmail || 'pimote@localhost',
-  );
+  const pushStore = new FilePushSubscriptionStore(join(homedir(), '.config', 'pimote', 'push-subscriptions.json'));
+  const pushSender = new WebPushSender(config.vapidPublicKey!, config.vapidPrivateKey!, config.vapidEmail || 'pimote@localhost');
   const pushNotificationService = new PushNotificationService(pushSender, pushStore);
   await pushNotificationService.initialize();
 
@@ -33,10 +27,7 @@ async function main() {
   const server = createServer(config, sessionManager, folderIndex, pushNotificationService);
 
   // Start idle session reaping with client connectivity check
-  sessionManager.startIdleCheck(
-    config.idleTimeout,
-    (clientId) => server.clientRegistry.has(clientId),
-  );
+  sessionManager.startIdleCheck(config.idleTimeout, (clientId) => server.clientRegistry.has(clientId));
 
   await server.start(port);
 

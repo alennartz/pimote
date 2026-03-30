@@ -1,11 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  PushNotificationService,
-  type PushSubscriptionRecord,
-  type PushSender,
-  type SubscriptionStore,
-  type SessionIdlePayload,
-} from './push-notification.js';
+import { PushNotificationService, type PushSubscriptionRecord, type PushSender, type SubscriptionStore, type SessionIdlePayload } from './push-notification.js';
 
 // --- In-memory test doubles ---
 
@@ -41,9 +35,7 @@ function createMockSender(
   return sender;
 }
 
-function createService(
-  opts: { initial?: PushSubscriptionRecord[]; senderHandler?: (sub: PushSubscriptionRecord, payload: string) => { statusCode: number } } = {},
-) {
+function createService(opts: { initial?: PushSubscriptionRecord[]; senderHandler?: (sub: PushSubscriptionRecord, payload: string) => { statusCode: number } } = {}) {
   const store = createMockStore(opts.initial ?? []);
   const sender = createMockSender(opts.senderHandler);
   const service = new PushNotificationService(sender, store);
@@ -74,10 +66,7 @@ describe('PushNotificationService', () => {
 
       const subs = service.getSubscriptions();
       expect(subs).toHaveLength(2);
-      expect(subs.map((s) => s.endpoint)).toEqual([
-        'https://push.example.com/1',
-        'https://push.example.com/2',
-      ]);
+      expect(subs.map((s) => s.endpoint)).toEqual(['https://push.example.com/1', 'https://push.example.com/2']);
     });
   });
 
