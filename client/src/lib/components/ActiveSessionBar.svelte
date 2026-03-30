@@ -4,7 +4,7 @@
 </script>
 
 {#if sessionRegistry.activeSessions.length > 0}
-  <div class="border-border bg-muted/30 flex shrink-0 items-center gap-1.5 overflow-x-auto border-t px-2 py-1.5">
+  <div class="border-border bg-muted/30 flex shrink-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden border-t px-2 py-1.5">
     {#each sessionRegistry.activeSessions as session (session.sessionId)}
       {@const isViewed = sessionRegistry.viewedSessionId === session.sessionId}
       <button
@@ -25,28 +25,46 @@
           {/if}
         </span>
         <span class="max-w-[80px] truncate">{session.projectName}</span>
-        <!-- Close × : desktop = all chips on hover, mobile = viewed chip only -->
-        <span
-          class="-mr-1 ml-0.5 flex items-center justify-center rounded-full p-0.5 transition-colors
-						{isViewed
-            ? 'hover:bg-primary-foreground/20 text-primary-foreground/70 hover:text-primary-foreground md:opacity-0 md:group-hover/chip:opacity-100'
-            : 'hover:bg-secondary-foreground/20 text-secondary-foreground/50 hover:text-secondary-foreground hidden md:flex md:opacity-0 md:group-hover/chip:opacity-100'}"
-          role="button"
-          tabindex="-1"
-          title="Close session"
-          onclick={(e) => {
-            e.stopPropagation();
-            closeSession(session.sessionId);
-          }}
-          onkeydown={(e) => {
-            if (e.key === 'Enter') {
+        <!-- Close: viewed chip = always-visible "Close" text, others = × on desktop hover -->
+        {#if isViewed}
+          <span
+            class="-mr-0.5 ml-1.5 rounded px-1 py-0.5 text-[11px] leading-none font-medium text-red-300 transition-colors hover:text-red-200"
+            role="button"
+            tabindex="-1"
+            title="Close session"
+            onclick={(e) => {
               e.stopPropagation();
               closeSession(session.sessionId);
-            }
-          }}
-        >
-          <X class="size-3" />
-        </span>
+            }}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') {
+                e.stopPropagation();
+                closeSession(session.sessionId);
+              }
+            }}
+          >
+            Close
+          </span>
+        {:else}
+          <span
+            class="hover:bg-secondary-foreground/20 text-secondary-foreground/50 hover:text-secondary-foreground -mr-1 ml-0.5 hidden items-center justify-center rounded-full p-0.5 transition-colors md:flex md:opacity-0 md:group-hover/chip:opacity-100"
+            role="button"
+            tabindex="-1"
+            title="Close session"
+            onclick={(e) => {
+              e.stopPropagation();
+              closeSession(session.sessionId);
+            }}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') {
+                e.stopPropagation();
+                closeSession(session.sessionId);
+              }
+            }}
+          >
+            <X class="size-3" />
+          </span>
+        {/if}
       </button>
     {/each}
 

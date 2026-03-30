@@ -50,7 +50,7 @@ const marked = new Marked({
       return `<div class="code-block">${langLabel}<pre><code class="hljs${language ? ` language-${language}` : ''}">${highlighted}</code></pre></div>`;
     },
     codespan({ text }: { text: string }) {
-      return `<code class="inline-code">${text}</code>`;
+      return `<code class="inline-code">${escapeHtml(text)}</code>`;
     },
   },
   gfm: true,

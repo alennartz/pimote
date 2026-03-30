@@ -9,9 +9,21 @@ import type { FolderIndex } from './folder-index.js';
 import type { PushNotificationService } from './push-notification.js';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import crypto from 'node:crypto';
+import type { VersionMismatchEvent } from '@pimote/shared';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const CLIENT_DIR = process.env.CLIENT_DIR || join(__dirname, '..', '..', 'client', 'build');
+
+/** Read the SvelteKit build version from _app/version.json. Returns null if unavailable. */
+async function loadClientVersion(): Promise<string | null> {
+  try {
+    const raw = await readFile(join(CLIENT_DIR, '_app', 'version.json'), 'utf-8');
+    const data = JSON.parse(raw);
+    return data.version ?? null;
+  } catch {
+    return null;
+  }
+}
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -86,7 +98,18 @@ export interface PimoteServer {
   close(): Promise<void>;
 }
 
-export function createServer(config: PimoteConfig, sessionManager: PimoteSessionManager, folderIndex: FolderIndex, pushNotificationService: PushNotificationService): PimoteServer {
+export async function createServer(
+  config: PimoteConfig,
+  sessionManager: PimoteSessionManager,
+  folderIndex: FolderIndex,
+  pushNotificationService: PushNotificationService,
+): Promise<PimoteServer> {
+  const clientVersion = await loadClientVersion();
+  if (clientVersion) {
+    console.log(`[pimote] Client build version: ${clientVersion}`);
+  } else {
+    console.warn(`[pimote] Could not read client build version from ${CLIENT_DIR}/_app/version.json`);
+  }
   const httpServer = http.createServer(async (req, res) => {
     // 1. Health check
     if (req.method === 'GET' && req.url === '/health') {
@@ -136,6 +159,16 @@ export function createServer(config: PimoteConfig, sessionManager: PimoteSession
     const url = new URL(req.url ?? '', `http://${req.headers.host}`);
     const clientId = url.searchParams.get('clientId') ?? crypto.randomUUID();
     console.log(`[pimote] WebSocket client connected (clientId=${clientId})`);
+
+    // Version check — if the client's build version doesn't match the server's,
+    // send a version_mismatch event and close. The client will reload.
+    const incomingVersion = url.searchParams.get('version');
+    if (clientVersion && incomingVersion && incomingVersion !== clientVersion) {
+      console.log(`[pimote] Version mismatch: client=${incomingVersion}, server=${clientVersion} — requesting reload`);
+      const event: VersionMismatchEvent = { type: 'version_mismatch', serverVersion: clientVersion };
+      ws.send(JSON.stringify(event), () => ws.close());
+      return;
+    }
 
     // Register new handler first, then close any stale connection.
     // No cleanup() — sessions will be rebound by the new handler's reconnect

@@ -95,12 +95,8 @@
       <div class="flex items-center gap-2">
         <!-- Connection status indicator -->
         <span
-          class="size-2 rounded-full {connection.status === 'connected'
-            ? 'bg-status-connected'
-            : connection.status === 'reconnecting'
-              ? 'bg-status-reconnecting'
-              : 'bg-status-error'}"
-          title={connection.status}
+          class="size-2 rounded-full {connection.phase === 'ready' ? 'bg-status-connected' : connection.phase === 'idle' ? 'bg-status-error' : 'bg-status-reconnecting'}"
+          title={connection.phase === 'ready' ? 'Connected' : connection.phase === 'idle' ? 'Disconnected' : 'Reconnecting'}
         ></span>
         <!-- Close button (mobile only) -->
         <button class="text-muted-foreground hover:text-sidebar-foreground rounded-md p-1 md:hidden" onclick={closeSidebar}>

@@ -11,6 +11,7 @@ export default defineConfig({
     alias: {
       $lib: path.resolve(__dirname, 'src/lib'),
       '@pimote/shared': path.resolve(__dirname, '../shared/dist/index.js'),
+      '$app/environment': path.resolve(__dirname, 'src/test/mocks/app-environment.ts'),
     },
   },
 });

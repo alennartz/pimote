@@ -8,10 +8,28 @@
   import { GitBranch } from '@lucide/svelte';
 
   let connectionLabel = $derived(
-    connection.status === 'connected' ? 'Connected' : connection.status === 'reconnecting' ? 'Reconnecting…' : connection.status === 'connecting' ? 'Connecting…' : 'Disconnected',
+    connection.phase === 'ready'
+      ? 'Connected'
+      : connection.phase === 'syncing'
+        ? connection.syncProgress
+          ? `Syncing ${connection.syncProgress.done}/${connection.syncProgress.total}…`
+          : 'Syncing…'
+        : connection.phase === 'connecting'
+          ? 'Connecting…'
+          : connection.phase === 'backoff'
+            ? `Retry in ${connection.reconnectCountdown}s`
+            : 'Disconnected',
   );
 
-  let connectionColor = $derived(connection.status === 'connected' ? 'bg-emerald-500' : connection.status === 'reconnecting' ? 'bg-amber-500' : 'bg-red-500');
+  let connectionColor = $derived(
+    connection.phase === 'ready'
+      ? 'bg-emerald-500'
+      : connection.phase === 'syncing'
+        ? 'bg-blue-500'
+        : connection.phase === 'backoff' || connection.phase === 'connecting'
+          ? 'bg-amber-500'
+          : 'bg-red-500',
+  );
 
   let contextPercent = $derived(sessionRegistry.viewed?.contextUsage?.percent);
   let contextWindow = $derived(sessionRegistry.viewed?.contextUsage?.contextWindow ?? 0);
@@ -87,6 +105,9 @@
     <!-- Connection status -->
     <div class="flex items-center gap-1.5" title={connectionLabel}>
       <span class="relative flex size-2">
+        {#if connection.phase === 'syncing' || connection.phase === 'connecting'}
+          <span class="absolute inline-flex size-full animate-ping rounded-full {connectionColor} opacity-75"></span>
+        {/if}
         <span class="relative inline-flex size-2 rounded-full {connectionColor}"></span>
       </span>
       <span class="hidden text-xs sm:inline">{connectionLabel}</span>

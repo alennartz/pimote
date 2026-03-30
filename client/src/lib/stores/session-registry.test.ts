@@ -42,7 +42,7 @@ describe('SessionRegistry', () => {
       expect(session!.thinkingLevel).toBe('off');
       expect(session!.streamingText).toBe('');
       expect(session!.streamingThinking).toBe('');
-      expect(Object.keys(session!.activeToolCalls).length).toBe(0);
+      expect(Object.keys(session!.toolExecutions).length).toBe(0);
       expect(session!.autoCompactionEnabled).toBe(false);
       expect(session!.messageCount).toBe(0);
       expect(session!.conflictingProcesses).toEqual([]);
@@ -225,7 +225,7 @@ describe('SessionRegistry', () => {
   // Event Routing — Tool Calls
   // --------------------------------------------------------------------------
   describe('Event Routing — Tool Calls', () => {
-    it('tool_execution_start adds entry to activeToolCalls', () => {
+    it('tool_execution_start adds entry to toolExecutions', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.handleEvent(
         makeSessionEvent('tool_execution_start', 's1', {
@@ -234,11 +234,12 @@ describe('SessionRegistry', () => {
           args: { path: '/foo' },
         }),
       );
-      const calls = registry.sessions['s1'].activeToolCalls;
-      expect(calls['tc1']).toBeDefined();
-      expect(calls['tc1'].name).toBe('read');
-      expect(calls['tc1'].args).toEqual({ path: '/foo' });
-      expect(calls['tc1'].partialResult).toBe('');
+      const execs = registry.sessions['s1'].toolExecutions;
+      expect(execs['tc1']).toBeDefined();
+      expect(execs['tc1'].name).toBe('read');
+      expect(execs['tc1'].args).toEqual({ path: '/foo' });
+      expect(execs['tc1'].partialResult).toBe('');
+      expect(execs['tc1'].status).toBe('running');
     });
 
     it('tool_execution_update appends to partialResult', () => {
@@ -262,10 +263,10 @@ describe('SessionRegistry', () => {
           content: 'result',
         }),
       );
-      expect(registry.sessions['s1'].activeToolCalls['tc1'].partialResult).toBe('partial result');
+      expect(registry.sessions['s1'].toolExecutions['tc1'].partialResult).toBe('partial result');
     });
 
-    it('tool_execution_end removes entry from activeToolCalls', () => {
+    it('tool_execution_end marks entry as completed with result', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.handleEvent(
         makeSessionEvent('tool_execution_start', 's1', {
@@ -280,7 +281,56 @@ describe('SessionRegistry', () => {
           result: 'done',
         }),
       );
-      expect(registry.sessions['s1'].activeToolCalls['tc1']).toBeUndefined();
+      const exec = registry.sessions['s1'].toolExecutions['tc1'];
+      expect(exec).toBeDefined();
+      expect(exec.status).toBe('completed');
+      expect(exec.result).toBe('done');
+    });
+
+    it('toolResult message_end overwrites execution result with canonical data', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_start', 's1', {
+          toolCallId: 'tc1',
+          toolName: 'read',
+          args: { path: '/foo' },
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_end', 's1', {
+          toolCallId: 'tc1',
+          result: 'streaming result',
+        }),
+      );
+      // toolResult message arrives with canonical result
+      registry.handleEvent(
+        makeSessionEvent('message_end', 's1', {
+          message: {
+            role: 'toolResult',
+            content: [{ type: 'tool_result', toolCallId: 'tc1', toolName: 'read', result: 'canonical result' }],
+          },
+        }),
+      );
+      const exec = registry.sessions['s1'].toolExecutions['tc1'];
+      expect(exec.status).toBe('completed');
+      expect(exec.result).toBe('canonical result');
+    });
+
+    it('rebuildToolExecutions populates from message history', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions['s1'];
+      session.messages = [
+        { role: 'assistant', content: [{ type: 'tool_call', toolCallId: 'tc1', toolName: 'bash', args: {} }] },
+        { role: 'toolResult', content: [{ type: 'tool_result', toolCallId: 'tc1', toolName: 'bash', result: 'output' }] },
+        { role: 'assistant', content: [{ type: 'tool_call', toolCallId: 'tc2', toolName: 'read', args: { path: '/x' } }] },
+        { role: 'toolResult', content: [{ type: 'tool_result', toolCallId: 'tc2', toolName: 'read', result: 'file content' }] },
+      ];
+      registry.rebuildToolExecutions(session);
+      expect(session.toolExecutions['tc1']).toBeDefined();
+      expect(session.toolExecutions['tc1'].status).toBe('completed');
+      expect(session.toolExecutions['tc1'].result).toBe('output');
+      expect(session.toolExecutions['tc2']).toBeDefined();
+      expect(session.toolExecutions['tc2'].result).toBe('file content');
     });
   });
 

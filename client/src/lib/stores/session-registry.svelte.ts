@@ -36,7 +36,7 @@ export interface PerSessionState {
   thinkingLevel: string;
   streamingText: string;
   streamingThinking: string;
-  activeToolCalls: Record<string, { name: string; args: unknown; partialResult: string }>;
+  toolExecutions: Record<string, { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown }>;
   autoCompactionEnabled: boolean;
   messageCount: number;
   status: 'idle' | 'working';
@@ -65,7 +65,7 @@ export class SessionRegistry {
 
   /** Route an incoming event to the correct session's state */
   handleEvent(event: PimoteEvent): void {
-    const sessionId = event.sessionId;
+    const sessionId = 'sessionId' in event ? event.sessionId : undefined;
 
     // buffered_events: iterate sub-events
     if (event.type === 'buffered_events') {
@@ -133,22 +133,27 @@ export class SessionRegistry {
             session.firstMessage = textContent.text;
           }
         }
+        // toolResult messages carry the canonical completion data — update toolExecutions
+        if (message.role === 'toolResult') {
+          this.applyToolResults(session, message);
+        }
         break;
       }
 
       case 'tool_execution_start': {
         const start = event as ToolExecutionStartEvent;
-        session.activeToolCalls[start.toolCallId] = {
+        session.toolExecutions[start.toolCallId] = {
           name: start.toolName,
           args: start.args,
           partialResult: '',
+          status: 'running',
         };
         break;
       }
 
       case 'tool_execution_update': {
         const upd = event as ToolExecutionUpdateEvent;
-        const call = session.activeToolCalls[upd.toolCallId];
+        const call = session.toolExecutions[upd.toolCallId];
         if (call) {
           call.partialResult += upd.content;
         }
@@ -157,7 +162,11 @@ export class SessionRegistry {
 
       case 'tool_execution_end': {
         const end = event as ToolExecutionEndEvent;
-        delete session.activeToolCalls[end.toolCallId];
+        const call = session.toolExecutions[end.toolCallId];
+        if (call) {
+          call.status = 'completed';
+          call.result = end.result;
+        }
         break;
       }
 
@@ -192,7 +201,8 @@ export class SessionRegistry {
         session.status = state.isStreaming ? 'working' : 'idle';
         session.streamingText = '';
         session.streamingThinking = '';
-        session.activeToolCalls = {};
+        session.toolExecutions = {};
+        this.rebuildToolExecutions(session);
         break;
       }
 
@@ -219,7 +229,7 @@ export class SessionRegistry {
       thinkingLevel: 'off',
       streamingText: '',
       streamingThinking: '',
-      activeToolCalls: {},
+      toolExecutions: {},
       autoCompactionEnabled: false,
       messageCount: 0,
       status: 'idle',
@@ -270,6 +280,39 @@ export class SessionRegistry {
     }
   }
 
+  /** Apply a toolResult message to toolExecutions — marks the tool as completed with its result */
+  private applyToolResults(session: PerSessionState, message: PimoteAgentMessage): void {
+    for (const block of message.content) {
+      if (block.type === 'tool_result' && block.toolCallId) {
+        const existing = session.toolExecutions[block.toolCallId];
+        if (existing) {
+          // Replace incrementally-accumulated data with canonical result
+          existing.status = 'completed';
+          existing.result = block.result;
+        } else {
+          // Rehydration: no prior execution state, create from the result
+          session.toolExecutions[block.toolCallId] = {
+            name: block.toolName ?? 'unknown',
+            args: undefined,
+            partialResult: '',
+            status: 'completed',
+            result: block.result,
+          };
+        }
+      }
+    }
+  }
+
+  /** Rebuild toolExecutions from a full message history (for rehydration) */
+  rebuildToolExecutions(session: PerSessionState): void {
+    session.toolExecutions = {};
+    for (const message of session.messages) {
+      if (message.role === 'toolResult') {
+        this.applyToolResults(session, message);
+      }
+    }
+  }
+
   /** Clear conflicting processes for a session (after user dismisses or kills them) */
   clearConflict(sessionId: string): void {
     const session = this.sessions[sessionId];
@@ -315,6 +358,7 @@ connection.onEvent((event) => {
             const messages = (msgRes.data as { messages: PimoteAgentMessage[] }).messages;
             session.messages = messages;
             session.messageCount = messages.length;
+            sessionRegistry.rebuildToolExecutions(session);
           }
           if (metaRes.success && metaRes.data) {
             const meta = (metaRes.data as { meta: SessionMeta }).meta;

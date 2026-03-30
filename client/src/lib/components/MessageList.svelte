@@ -4,7 +4,6 @@
   import Message from './Message.svelte';
   import TextBlock from './TextBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
-  import ToolCall from './ToolCall.svelte';
   import StreamingIndicator from './StreamingIndicator.svelte';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
 
@@ -31,7 +30,6 @@
     sessionRegistry.viewed?.messages.length;
     sessionRegistry.viewed?.streamingText;
     sessionRegistry.viewed?.streamingThinking;
-    Object.keys(sessionRegistry.viewed?.activeToolCalls ?? {}).length;
 
     if (autoScrollEnabled && scrollContainer) {
       tick().then(() => {
@@ -51,13 +49,8 @@
 
   // Derived: do we have any streaming content to show?
   let hasStreamingContent = $derived(
-    (sessionRegistry.viewed?.isStreaming ?? false) &&
-      ((sessionRegistry.viewed?.streamingText ?? '').length > 0 ||
-        (sessionRegistry.viewed?.streamingThinking ?? '').length > 0 ||
-        Object.keys(sessionRegistry.viewed?.activeToolCalls ?? {}).length > 0),
+    (sessionRegistry.viewed?.isStreaming ?? false) && ((sessionRegistry.viewed?.streamingText ?? '').length > 0 || (sessionRegistry.viewed?.streamingThinking ?? '').length > 0),
   );
-
-  let activeToolEntries = $derived(Object.entries(sessionRegistry.viewed?.activeToolCalls ?? {}));
 </script>
 
 <div class="message-list-wrapper">
@@ -80,19 +73,6 @@
             {#if sessionRegistry.viewed?.streamingThinking}
               <ThinkingBlock text={sessionRegistry.viewed.streamingThinking} streaming={true} />
             {/if}
-
-            {#each activeToolEntries as [toolCallId, tool] (toolCallId)}
-              <ToolCall
-                content={{
-                  type: 'tool_call',
-                  toolCallId,
-                  toolName: tool.name,
-                  args: tool.args,
-                }}
-                inProgress={true}
-                partialResult={tool.partialResult}
-              />
-            {/each}
 
             {#if sessionRegistry.viewed?.streamingText}
               <TextBlock text={sessionRegistry.viewed.streamingText} streaming={true} />

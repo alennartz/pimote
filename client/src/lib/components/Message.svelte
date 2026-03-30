@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PimoteAgentMessage } from '@pimote/shared';
+  import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import TextBlock from './TextBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import ToolCall from './ToolCall.svelte';
@@ -38,6 +39,7 @@
     </div>
   </div>
 {:else if message.role === 'assistant'}
+  {@const toolExecs = sessionRegistry.viewed?.toolExecutions ?? {}}
   <div class="message assistant-message">
     <div class="message-icon assistant-icon">
       <Bot size={16} />
@@ -49,7 +51,13 @@
         {:else if block.type === 'thinking' && block.text}
           <ThinkingBlock text={block.text} />
         {:else if block.type === 'tool_call'}
-          <ToolCall content={block} />
+          {@const exec = block.toolCallId ? toolExecs[block.toolCallId] : undefined}
+          <ToolCall
+            content={block}
+            inProgress={exec?.status === 'running'}
+            partialResult={exec?.partialResult ?? ''}
+            result={exec?.status === 'completed' ? exec.result : undefined}
+          />
         {:else if block.type === 'tool_result'}
           <ToolCall content={block} />
         {/if}

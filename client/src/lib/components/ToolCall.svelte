@@ -9,16 +9,23 @@
     content,
     inProgress = false,
     partialResult = '',
+    result = undefined,
   }: {
     content: PimoteMessageContent;
     inProgress?: boolean;
     partialResult?: string;
+    result?: unknown;
   } = $props();
 
+  const MAX_COLLAPSED_LINES = 10;
+
   let expanded = $state(false);
+  let argsExpanded = $state(false);
+  let resultExpanded = $state(false);
 
   let toolName = $derived(content.toolName ?? 'unknown');
   let isResult = $derived(content.type === 'tool_result');
+  let isCompleted = $derived(isResult || result !== undefined);
 
   function formatData(data: unknown): string {
     if (data === undefined || data === null) return '';
@@ -31,15 +38,22 @@
   }
 
   let argsText = $derived(formatData(content.args));
-  let resultText = $derived(isResult ? formatData(content.result) : partialResult);
+  let argsLines = $derived(argsText.split('\n'));
+  let argsNeedsCollapse = $derived(argsLines.length > MAX_COLLAPSED_LINES);
+  let argsDisplayText = $derived(argsNeedsCollapse && !argsExpanded ? argsLines.slice(0, MAX_COLLAPSED_LINES).join('\n') : argsText);
+
+  let resultText = $derived(isResult ? formatData(content.result) : result !== undefined ? formatData(result) : partialResult);
+  let resultLines = $derived(resultText.split('\n'));
+  let resultNeedsCollapse = $derived(resultLines.length > MAX_COLLAPSED_LINES);
+  let resultDisplayText = $derived(resultNeedsCollapse && !resultExpanded ? resultLines.slice(0, MAX_COLLAPSED_LINES).join('\n') : resultText);
 </script>
 
-<div class="tool-block" class:tool-result={isResult} class:in-progress={inProgress}>
+<div class="tool-block" class:tool-result={isResult} class:tool-completed={isCompleted} class:in-progress={inProgress}>
   <button class="tool-header" onclick={() => (expanded = !expanded)}>
     <ChevronRight class="shrink-0 transition-transform duration-150 {expanded ? 'rotate-90' : ''}" size={14} />
     {#if inProgress}
       <Loader2 size={14} class="shrink-0 animate-spin" />
-    {:else if isResult}
+    {:else if isCompleted}
       <CheckCircle size={14} class="shrink-0" />
     {:else}
       <Wrench size={14} class="shrink-0" />
@@ -47,24 +61,22 @@
     <span class="tool-name">{toolName}</span>
     {#if inProgress}
       <span class="tool-status">running…</span>
-    {:else if isResult}
+    {:else if isCompleted}
       <span class="tool-status">completed</span>
     {/if}
   </button>
 
   {#if expanded}
     <div class="tool-content">
-      {#if content.type === 'tool_call' && argsText}
+      {#if argsText}
         <div class="tool-section">
           <div class="tool-section-label">Arguments</div>
-          <pre class="tool-data">{argsText}</pre>
-        </div>
-      {/if}
-
-      {#if isResult && resultText}
-        <div class="tool-section">
-          <div class="tool-section-label">Result</div>
-          <pre class="tool-data">{resultText}</pre>
+          <pre class="tool-data" class:scrollable={argsExpanded}>{argsDisplayText}</pre>
+          {#if argsNeedsCollapse}
+            <button class="tool-toggle" onclick={() => (argsExpanded = !argsExpanded)}>
+              {argsExpanded ? 'Show less' : `Show more… (${argsLines.length} lines)`}
+            </button>
+          {/if}
         </div>
       {/if}
 
@@ -72,6 +84,16 @@
         <div class="tool-section">
           <div class="tool-section-label">Output (streaming)</div>
           <pre class="tool-data">{partialResult}</pre>
+        </div>
+      {:else if resultText}
+        <div class="tool-section">
+          <div class="tool-section-label">Result</div>
+          <pre class="tool-data" class:scrollable={resultExpanded}>{resultDisplayText}</pre>
+          {#if resultNeedsCollapse}
+            <button class="tool-toggle" onclick={() => (resultExpanded = !resultExpanded)}>
+              {resultExpanded ? 'Show less' : `Show more… (${resultLines.length} lines)`}
+            </button>
+          {/if}
         </div>
       {/if}
     </div>
@@ -148,15 +170,38 @@
     line-height: 1.5;
     color: var(--foreground);
     font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
-    max-height: 300px;
+  }
+
+  .tool-data.scrollable {
+    max-height: 400px;
     overflow-y: auto;
+  }
+
+  .tool-toggle {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    opacity: 0.8;
+  }
+
+  .tool-toggle:hover {
+    opacity: 1;
+    color: var(--foreground);
   }
 
   .in-progress .tool-header {
     background: oklch(0.18 0.035 258);
   }
 
-  .tool-result .tool-header :global(svg) {
+  .tool-result .tool-header :global(svg),
+  .tool-completed .tool-header :global(svg) {
     color: var(--status-connected, oklch(0.623 0.169 149.2));
   }
 </style>

@@ -24,7 +24,7 @@ async function main() {
 
   const sessionManager = new PimoteSessionManager(config, pushNotificationService);
 
-  const server = createServer(config, sessionManager, folderIndex, pushNotificationService);
+  const server = await createServer(config, sessionManager, folderIndex, pushNotificationService);
 
   // Start idle session reaping with client connectivity check
   sessionManager.startIdleCheck(config.idleTimeout, (clientId) => server.clientRegistry.has(clientId));

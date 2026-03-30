@@ -466,6 +466,13 @@ export interface FullResyncEvent {
   messages: PimoteAgentMessage[];
 }
 
+// -- Version mismatch --
+
+export interface VersionMismatchEvent {
+  type: 'version_mismatch';
+  serverVersion: string;
+}
+
 // -- Discriminated union --
 
 export type PimoteEvent =
@@ -480,7 +487,9 @@ export type PimoteEvent =
   | SessionClosedEvent
   | ConnectionRestoredEvent
   | BufferedEventsEvent
-  | FullResyncEvent;
+  | FullResyncEvent
+  // Version
+  | VersionMismatchEvent;
 
 // ----------------------------------------------------------------------------
 // Server → Client Responses (request/response pattern)

@@ -10,7 +10,8 @@
   let inputText = $state('');
   let textareaEl: HTMLTextAreaElement | undefined = $state();
 
-  const disabled = $derived(sessionRegistry.viewedSessionId === null);
+  const noSession = $derived(sessionRegistry.viewedSessionId === null);
+  const canSend = $derived(!noSession && connection.ready);
 
   // Restore draft text when switching sessions.
   // Tracks viewedSessionId; reads draftText untracked so keystrokes don't re-trigger.
@@ -35,9 +36,12 @@
 
   function autoResize() {
     if (!textareaEl) return;
+    textareaEl.style.overflow = 'hidden';
     textareaEl.style.height = 'auto';
-    // Cap at roughly 8 lines
-    textareaEl.style.height = `${Math.min(textareaEl.scrollHeight, 200)}px`;
+    const capped = Math.min(textareaEl.scrollHeight, 200);
+    textareaEl.style.height = `${capped}px`;
+    // Only allow scrolling when content exceeds the cap
+    textareaEl.style.overflow = textareaEl.scrollHeight > 200 ? 'auto' : 'hidden';
   }
 
   function handleInput() {
@@ -49,7 +53,7 @@
 
   async function sendMessage() {
     const text = inputText.trim();
-    if (!text || disabled) return;
+    if (!text || !canSend) return;
 
     if (sessionRegistry.viewed?.isStreaming) {
       // Steer the current generation
@@ -125,23 +129,23 @@
         bind:value={inputText}
         oninput={handleInput}
         onkeydown={handleKeydown}
-        {disabled}
+        disabled={noSession}
         rows={1}
-        placeholder={disabled ? 'Open a session to start…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
-        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none rounded-xl border px-4 py-3 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        placeholder={noSession ? 'Open a session to start…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
+        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border px-4 py-3 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       ></textarea>
     </div>
 
     <!-- Send / Steer button -->
     <button
       class="mb-1 flex shrink-0 items-center justify-center rounded-xl p-2.5 text-sm font-medium transition-colors
-				{disabled || !inputText.trim()
+				{!canSend || !inputText.trim()
         ? 'bg-secondary text-muted-foreground cursor-not-allowed opacity-50'
         : sessionRegistry.viewed?.isStreaming
           ? 'bg-status-streaming text-primary-foreground hover:bg-status-streaming/80 active:bg-status-streaming/70'
           : 'bg-primary text-primary-foreground hover:bg-primary/80 active:bg-primary/70'}"
       onclick={sendMessage}
-      disabled={disabled || !inputText.trim()}
+      disabled={!canSend || !inputText.trim()}
       title={sessionRegistry.viewed?.isStreaming ? 'Steer' : 'Send'}
     >
       {#if sessionRegistry.viewed?.isStreaming}

@@ -1,6 +1,7 @@
 // ConnectionStore — Svelte 5 runes-based WebSocket connection manager
 import type { PimoteCommand, PimoteResponse, PimoteEvent, PimoteServerMessage } from '@pimote/shared';
 import { SvelteSet } from 'svelte/reactivity';
+import { version } from '$app/environment';
 
 type EventListener = (event: PimoteEvent) => void;
 
@@ -9,6 +10,14 @@ const clientId = crypto.randomUUID();
 
 class ConnectionStore {
   status: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' = $state('disconnected');
+  /** True only after WebSocket is open AND all session reconnects have completed. */
+  ready: boolean = $state(false);
+  /** Detailed reconnection phase for status display. */
+  phase: 'idle' | 'backoff' | 'connecting' | 'syncing' | 'ready' = $state('idle');
+  /** Seconds until next reconnect attempt (ticks down during backoff). */
+  reconnectCountdown: number = $state(0);
+  /** Progress of per-session reconnects during syncing phase. */
+  syncProgress: { done: number; total: number } | null = $state(null);
   private sessionCursors: Map<string, number> = new Map();
   subscribedSessions: Set<string> = $state(new SvelteSet());
 
@@ -16,6 +25,7 @@ class ConnectionStore {
   private pending = new Map<string, { resolve: (r: PimoteResponse) => void; reject: (e: Error) => void }>();
   private listeners = new Set<EventListener>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private countdownInterval: ReturnType<typeof setInterval> | null = null;
   private reconnectDelay = 1000;
   private intentionalClose = false;
 
@@ -36,15 +46,24 @@ class ConnectionStore {
       return;
     }
 
+    this.ready = false;
+    this.clearCountdownInterval();
+    this.phase = 'connecting';
     this.status = this.status === 'disconnected' ? 'connecting' : 'reconnecting';
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    this.ws = new WebSocket(`${protocol}//${location.host}/ws?clientId=${clientId}`);
+    this.ws = new WebSocket(`${protocol}//${location.host}/ws?clientId=${clientId}&version=${encodeURIComponent(version)}`);
 
     this.ws.onopen = () => {
       this.status = 'connected';
       this.reconnectDelay = 1000;
 
       // Reconnect all subscribed sessions with per-session cursors
+      const sessionCount = this.subscribedSessions.size;
+      if (sessionCount > 0) {
+        this.phase = 'syncing';
+        this.syncProgress = { done: 0, total: sessionCount };
+      }
+
       const reconnectPromises: Promise<void>[] = [];
       for (const sessionId of this.subscribedSessions) {
         const p = this.send({
@@ -73,6 +92,11 @@ class ConnectionStore {
           })
           .catch(() => {
             // WebSocket dropped before response — will retry on next reconnect
+          })
+          .finally(() => {
+            if (this.syncProgress) {
+              this.syncProgress = { done: this.syncProgress.done + 1, total: this.syncProgress.total };
+            }
           });
         reconnectPromises.push(p);
       }
@@ -80,6 +104,9 @@ class ConnectionStore {
       // After all reconnects, restore correct viewed session on the server.
       // Import is circular so we use the onReconnected callback instead.
       Promise.all(reconnectPromises).then(() => {
+        this.ready = true;
+        this.phase = 'ready';
+        this.syncProgress = null;
         this.onReconnected?.();
 
         // Adopt session from notification click if pending
@@ -110,6 +137,14 @@ class ConnectionStore {
       try {
         msg = JSON.parse(ev.data as string);
       } catch {
+        return;
+      }
+
+      // Version mismatch — server is serving newer assets than what we're running.
+      // Reload the page to pick up the new client code.
+      if ('type' in msg && msg.type === 'version_mismatch') {
+        console.log(`[ConnectionStore] Version mismatch — reloading (server=${(msg as { serverVersion: string }).serverVersion}, client=${version})`);
+        location.reload();
         return;
       }
 
@@ -144,6 +179,7 @@ class ConnectionStore {
 
     this.ws.onclose = () => {
       this.ws = null;
+      this.ready = false;
       // Reject all pending requests
       for (const [, pending] of this.pending) {
         pending.reject(new Error('WebSocket closed'));
@@ -155,6 +191,7 @@ class ConnectionStore {
         this.scheduleReconnect();
       } else {
         this.status = 'disconnected';
+        this.phase = 'idle';
         this.intentionalClose = false;
       }
     };
@@ -166,6 +203,7 @@ class ConnectionStore {
 
   disconnect(): void {
     this.intentionalClose = true;
+    this.clearCountdownInterval();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -227,8 +265,21 @@ class ConnectionStore {
     }
   }
 
+  private clearCountdownInterval(): void {
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+      this.countdownInterval = null;
+    }
+  }
+
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
+    this.phase = 'backoff';
+    this.reconnectCountdown = Math.ceil(this.reconnectDelay / 1000);
+    this.clearCountdownInterval();
+    this.countdownInterval = setInterval(() => {
+      this.reconnectCountdown = Math.max(0, this.reconnectCountdown - 1);
+    }, 1000);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
