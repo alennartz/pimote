@@ -377,3 +377,15 @@ export function switchToSession(sessionId: string): void {
   sessionRegistry.switchTo(sessionId);
   connection.send({ type: 'view_session', sessionId }).catch(() => {});
 }
+
+/** Close a session — sends close_session command; the session_closed event handler cleans up the registry */
+export function closeSession(sessionId: string): void {
+  connection.send({ type: 'close_session', sessionId }).catch(() => {});
+}
+
+/** Open a new session in the same project as the given session */
+export function newSessionInProject(sessionId: string): void {
+  const session = sessionRegistry.sessions[sessionId];
+  if (!session) return;
+  connection.send({ type: 'open_session', folderPath: session.folderPath }).catch(() => {});
+}
