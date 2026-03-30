@@ -1,15 +1,28 @@
 import type { PimoteAgentMessage, PimoteMessageContent } from '@pimote/shared';
 
 /**
+ * Minimal structural type for SDK messages consumed by the mapper.
+ * Uses an index signature so duck-typed property access works without
+ * importing the full AgentMessage union from the SDK.
+ */
+export interface SdkMessage {
+  role?: string;
+  content?: unknown;
+  customType?: string;
+  toolCallId?: string;
+  toolName?: string;
+}
+
+/**
  * Convert raw pi SDK AgentMessage objects to PimoteAgentMessage format.
  * Used both for bulk message retrieval (get_messages) and for live
  * message_end events so the client always receives a consistent shape.
  */
-export function mapAgentMessages(messages: any[]): PimoteAgentMessage[] {
+export function mapAgentMessages(messages: SdkMessage[]): PimoteAgentMessage[] {
   return messages.map(mapAgentMessage);
 }
 
-export function mapAgentMessage(msg: any): PimoteAgentMessage {
+export function mapAgentMessage(msg: SdkMessage): PimoteAgentMessage {
   const role = msg.role ?? 'unknown';
   const content: PimoteMessageContent[] = [];
 
@@ -46,7 +59,7 @@ export function mapAgentMessage(msg: any): PimoteAgentMessage {
 
   // Handle custom messages — preserve customType for the client
   if (role === 'custom') {
-    return { role, content, customType: (msg as any).customType };
+    return { role, content, customType: msg.customType };
   }
 
   // Handle tool result messages

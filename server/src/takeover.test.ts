@@ -137,7 +137,9 @@ describe('findExternalPiProcesses', () => {
         kill: (sig: string) => {
           try {
             process.kill(pid, sig as any);
-          } catch {}
+          } catch {
+            /* expected */
+          }
         },
       }) as any;
     spawnedProcesses.push(cleanup(parentPid));
@@ -200,7 +202,7 @@ describe('killExternalPiProcesses', () => {
       process.kill(child.pid!, 0);
       alive = true;
     } catch {
-      alive = false;
+      // process not alive
     }
     expect(alive).toBe(true);
   });

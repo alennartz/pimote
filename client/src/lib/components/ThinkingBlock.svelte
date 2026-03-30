@@ -5,12 +5,7 @@
   let { text, streaming = false }: { text: string; streaming?: boolean } = $props();
 
   // Expanded when streaming, collapsed when finalized
-  let expanded = $state(false);
-
-  // Keep in sync: expand while streaming, collapse when done
-  $effect(() => {
-    expanded = streaming;
-  });
+  let expanded = $derived(streaming);
 </script>
 
 <div class="thinking-block">

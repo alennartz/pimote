@@ -6,7 +6,22 @@
 // instances are returned as-is. That means wrapping `new SessionRegistry()`
 // with $state() does nothing. The runes must be on the individual fields.
 
-import type { PimoteEvent, PimoteAgentMessage, SessionState, SessionMeta } from '@pimote/shared';
+import type {
+  PimoteEvent,
+  PimoteAgentMessage,
+  PimoteMessageContent,
+  SessionState,
+  SessionMeta,
+  BufferedEventsEvent,
+  MessageUpdateEvent,
+  MessageEndEvent,
+  ToolExecutionStartEvent,
+  ToolExecutionUpdateEvent,
+  ToolExecutionEndEvent,
+  FullResyncEvent,
+  SessionConflictEvent,
+  SessionOpenedEvent,
+} from '@pimote/shared';
 import { connection } from './connection.svelte.js';
 
 export interface PerSessionState {
@@ -50,11 +65,11 @@ export class SessionRegistry {
 
   /** Route an incoming event to the correct session's state */
   handleEvent(event: PimoteEvent): void {
-    const sessionId = (event as any).sessionId as string | undefined;
+    const sessionId = event.sessionId;
 
     // buffered_events: iterate sub-events
     if (event.type === 'buffered_events') {
-      const buffered = event as any;
+      const buffered = event as BufferedEventsEvent;
       for (const subEvent of buffered.events) {
         this.handleEvent(subEvent);
       }
@@ -82,7 +97,7 @@ export class SessionRegistry {
           .send({ type: 'get_session_meta', sessionId })
           .then((res) => {
             if (res.success && res.data) {
-              this.updateMeta(sessionId, (res.data as any).meta);
+              this.updateMeta(sessionId, (res.data as { meta: SessionMeta }).meta);
             }
           })
           .catch(() => {});
@@ -95,7 +110,7 @@ export class SessionRegistry {
         break;
 
       case 'message_update': {
-        const update = event as any;
+        const update = event as MessageUpdateEvent;
         if (update.content.type === 'text') {
           session.streamingText += update.content.text;
         } else if (update.content.type === 'thinking') {
@@ -105,7 +120,7 @@ export class SessionRegistry {
       }
 
       case 'message_end': {
-        const end = event as any;
+        const end = event as MessageEndEvent;
         const message: PimoteAgentMessage = end.message;
         session.messages = [...session.messages, message];
         session.streamingText = '';
@@ -113,7 +128,7 @@ export class SessionRegistry {
         session.messageCount++;
         // Capture firstMessage from first user message
         if (message.role === 'user' && session.firstMessage === undefined) {
-          const textContent = message.content.find((c: any) => c.type === 'text');
+          const textContent = message.content.find((c: PimoteMessageContent) => c.type === 'text');
           if (textContent && textContent.text) {
             session.firstMessage = textContent.text;
           }
@@ -122,7 +137,7 @@ export class SessionRegistry {
       }
 
       case 'tool_execution_start': {
-        const start = event as any;
+        const start = event as ToolExecutionStartEvent;
         session.activeToolCalls[start.toolCallId] = {
           name: start.toolName,
           args: start.args,
@@ -132,7 +147,7 @@ export class SessionRegistry {
       }
 
       case 'tool_execution_update': {
-        const upd = event as any;
+        const upd = event as ToolExecutionUpdateEvent;
         const call = session.activeToolCalls[upd.toolCallId];
         if (call) {
           call.partialResult += upd.content;
@@ -141,7 +156,7 @@ export class SessionRegistry {
       }
 
       case 'tool_execution_end': {
-        const end = event as any;
+        const end = event as ToolExecutionEndEvent;
         delete session.activeToolCalls[end.toolCallId];
         break;
       }
@@ -157,14 +172,14 @@ export class SessionRegistry {
           .send({ type: 'get_session_meta', sessionId })
           .then((res) => {
             if (res.success && res.data) {
-              this.updateMeta(sessionId, (res.data as any).meta);
+              this.updateMeta(sessionId, (res.data as { meta: SessionMeta }).meta);
             }
           })
           .catch(() => {});
         break;
 
       case 'full_resync': {
-        const resync = event as any;
+        const resync = event as FullResyncEvent;
         const state: SessionState = resync.state;
         const messages: PimoteAgentMessage[] = resync.messages;
         session.model = state.model;
@@ -182,7 +197,7 @@ export class SessionRegistry {
       }
 
       case 'session_conflict': {
-        const conflict = event as any;
+        const conflict = event as SessionConflictEvent;
         session.conflictingProcesses = conflict.processes;
         session.conflictingRemoteSessions = conflict.remoteSessions ?? [];
         break;
@@ -272,7 +287,7 @@ export const sessionRegistry = new SessionRegistry();
 connection.onEvent((event) => {
   switch (event.type) {
     case 'session_opened': {
-      const folder = (event as any).folder;
+      const folder = (event as SessionOpenedEvent).folder;
       const projectName = folder?.name ?? 'Unknown';
       sessionRegistry.addSession(event.sessionId, folder?.path ?? '', projectName);
       connection.addSubscribedSession(event.sessionId);
@@ -287,7 +302,7 @@ connection.onEvent((event) => {
           const session = sessionRegistry.sessions[event.sessionId];
           if (!session) return;
           if (stateRes.success && stateRes.data) {
-            const state = (stateRes.data as any).state;
+            const state = (stateRes.data as { state: SessionState }).state;
             session.model = state.model;
             session.thinkingLevel = state.thinkingLevel;
             session.isStreaming = state.isStreaming;
@@ -297,12 +312,12 @@ connection.onEvent((event) => {
             session.status = state.isStreaming ? 'working' : 'idle';
           }
           if (msgRes.success && msgRes.data) {
-            const messages = (msgRes.data as any).messages;
+            const messages = (msgRes.data as { messages: PimoteAgentMessage[] }).messages;
             session.messages = messages;
             session.messageCount = messages.length;
           }
           if (metaRes.success && metaRes.data) {
-            const meta = (metaRes.data as any).meta;
+            const meta = (metaRes.data as { meta: SessionMeta }).meta;
             sessionRegistry.updateMeta(event.sessionId, meta);
           }
         })
@@ -345,7 +360,7 @@ connection.onSessionAdopted = (sessionId, folderPath) => {
     .send({ type: 'get_session_meta', sessionId })
     .then((metaRes) => {
       if (metaRes.success && metaRes.data) {
-        sessionRegistry.updateMeta(sessionId, (metaRes.data as any).meta);
+        sessionRegistry.updateMeta(sessionId, (metaRes.data as { meta: SessionMeta }).meta);
       }
     })
     .catch(() => {});

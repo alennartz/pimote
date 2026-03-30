@@ -12,6 +12,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import Check from '@lucide/svelte/icons/check';
+  import { SvelteMap } from 'svelte/reactivity';
   import Loader2 from '@lucide/svelte/icons/loader-2';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
@@ -28,7 +29,7 @@
 
   // Group models by provider
   let grouped = $derived.by(() => {
-    const map = new Map<string, AvailableModel[]>();
+    const map = new SvelteMap<string, AvailableModel[]>();
     for (const m of models) {
       const list = map.get(m.provider) ?? [];
       list.push(m);
@@ -55,7 +56,7 @@
       }
       const res = await connection.send({ type: 'get_available_models', sessionId });
       if (res.success && res.data) {
-        const arr = (res.data as any).models;
+        const arr = (res.data as { models?: unknown }).models;
         if (Array.isArray(arr)) {
           models = arr as AvailableModel[];
         }
@@ -92,19 +93,17 @@
 
 <DropdownMenu bind:open>
   <DropdownMenuTrigger>
-    {#snippet children()}
-      <Button
-        variant="ghost"
-        size="xs"
-        class="text-muted-foreground max-w-48 gap-1 truncate"
-        title={sessionRegistry.viewed?.model ? `${sessionRegistry.viewed.model.provider}/${sessionRegistry.viewed.model.name}` : 'No model selected'}
-      >
-        <span class="truncate text-xs">
-          {sessionRegistry.viewed?.model?.name ?? 'No model'}
-        </span>
-        <ChevronDown class="size-3 shrink-0" />
-      </Button>
-    {/snippet}
+    <Button
+      variant="ghost"
+      size="xs"
+      class="text-muted-foreground max-w-48 gap-1 truncate"
+      title={sessionRegistry.viewed?.model ? `${sessionRegistry.viewed.model.provider}/${sessionRegistry.viewed.model.name}` : 'No model selected'}
+    >
+      <span class="truncate text-xs">
+        {sessionRegistry.viewed?.model?.name ?? 'No model'}
+      </span>
+      <ChevronDown class="size-3 shrink-0" />
+    </Button>
   </DropdownMenuTrigger>
   <DropdownMenuContent align="start" class="max-h-72 min-w-52 overflow-y-auto">
     <DropdownMenuLabel>Models</DropdownMenuLabel>
@@ -116,13 +115,13 @@
     {:else if models.length === 0}
       <div class="text-muted-foreground px-2 py-4 text-center text-xs">No models available</div>
     {:else}
-      {#each [...grouped.entries()] as [provider, providerModels], i}
+      {#each [...grouped.entries()] as [provider, providerModels], i (provider)}
         {#if i > 0}
           <DropdownMenuSeparator />
         {/if}
         <DropdownMenuGroup>
           <DropdownMenuGroupHeading>{provider}</DropdownMenuGroupHeading>
-          {#each providerModels as model}
+          {#each providerModels as model (model.id)}
             <DropdownMenuItem onclick={() => selectModel(model)} class="flex items-center justify-between gap-2">
               <span class="truncate">{model.name}</span>
               {#if isSelected(model)}

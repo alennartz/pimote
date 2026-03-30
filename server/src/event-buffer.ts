@@ -1,5 +1,32 @@
 import type { PimoteSessionEvent } from '@pimote/shared';
-import { mapAgentMessage } from './message-mapper.js';
+import { mapAgentMessage, type SdkMessage } from './message-mapper.js';
+
+/**
+ * Structural type for SDK events consumed by the event mapper.
+ * All properties except `type` are optional to accommodate the full
+ * AgentSessionEvent union without importing it.
+ */
+interface SdkEvent {
+  type: string;
+  error?: string;
+  role?: string;
+  content?: string | { type?: string; text?: string };
+  message?: SdkMessage;
+  toolName?: string;
+  toolCallId?: string;
+  args?: unknown;
+  result?: unknown;
+  reason?: string;
+  aborted?: boolean;
+  willRetry?: boolean;
+  errorMessage?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  delayMs?: number;
+  success?: boolean;
+  finalError?: string;
+  extensionName?: string;
+}
 
 interface BufferEntry {
   cursor: number;
@@ -37,7 +64,7 @@ export class EventBuffer {
   /**
    * Process an SDK event: assign cursor, map to PimoteSessionEvent, forward live, and buffer (coalesced).
    */
-  onEvent(sdkEvent: { type: string; [key: string]: any }, sessionId: string, sendLive: (event: PimoteSessionEvent) => void): void {
+  onEvent(sdkEvent: SdkEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void): void {
     this._cursor++;
     const cursor = this._cursor;
 
@@ -87,7 +114,7 @@ export class EventBuffer {
 
   // ---- Private helpers ----
 
-  private mapEvent(sdkEvent: { type: string; [key: string]: any }, sessionId: string, cursor: number): PimoteSessionEvent {
+  private mapEvent(sdkEvent: SdkEvent, sessionId: string, cursor: number): PimoteSessionEvent {
     const base = { sessionId, cursor };
 
     switch (sdkEvent.type) {
@@ -106,15 +133,17 @@ export class EventBuffer {
       case 'message_start':
         return { ...base, type: 'message_start', role: sdkEvent.role ?? 'assistant' };
 
-      case 'message_update':
+      case 'message_update': {
+        const contentObj = typeof sdkEvent.content === 'object' ? sdkEvent.content : undefined;
         return {
           ...base,
           type: 'message_update',
           content: {
-            type: sdkEvent.content?.type ?? 'text',
-            text: sdkEvent.content?.text ?? '',
+            type: (contentObj?.type ?? 'text') as 'text' | 'thinking',
+            text: contentObj?.text ?? '',
           },
         };
+      }
 
       case 'message_end':
         return {
@@ -137,7 +166,7 @@ export class EventBuffer {
           ...base,
           type: 'tool_execution_update',
           toolCallId: sdkEvent.toolCallId ?? '',
-          content: sdkEvent.content ?? '',
+          content: typeof sdkEvent.content === 'string' ? sdkEvent.content : '',
         };
 
       case 'tool_execution_end':
@@ -152,7 +181,7 @@ export class EventBuffer {
         return {
           ...base,
           type: 'auto_compaction_start',
-          reason: sdkEvent.reason ?? 'threshold',
+          reason: (sdkEvent.reason ?? 'threshold') as 'threshold' | 'overflow',
         };
 
       case 'auto_compaction_end':

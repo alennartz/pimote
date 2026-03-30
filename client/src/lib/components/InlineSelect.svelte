@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { getExtensionUiQueue, INLINE_METHODS } from '$lib/stores/extension-ui-queue.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -116,7 +115,6 @@
       const value = typeof o === 'string' ? o : (o.value ?? o.label ?? String(o));
       return { value, parsed: parseOption(str) };
     })}
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div class="inline-select-panel" tabindex="0" role="listbox" bind:this={panelEl} onkeydown={(e) => handleKeydown(e, normalizedOptions)}>
       <div class="panel-header">
         <span class="panel-title">{current.title ?? 'Select'}</span>
@@ -126,7 +124,7 @@
         <div class="panel-description">{current.message}</div>
       {/if}
       <div class="panel-options">
-        {#each normalizedOptions as option, i}
+        {#each normalizedOptions as option, i (option.value)}
           {@const p = option.parsed}
           <button class="select-option" class:highlighted={i === highlightIndex} onclick={() => handleSelect(option.value)} onmouseenter={() => (highlightIndex = i)}>
             <span class="option-number">{i + 1}</span>
@@ -150,7 +148,6 @@
       </div>
     </div>
   {:else if current.method === 'confirm'}
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div class="inline-select-panel" tabindex="0" role="dialog" bind:this={panelEl} onkeydown={(e) => handleKeydown(e, [])}>
       <div class="panel-header">
         <span class="panel-title">{current.title ?? 'Confirm'}</span>

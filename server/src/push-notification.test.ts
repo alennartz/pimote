@@ -48,7 +48,7 @@ describe('PushNotificationService', () => {
   describe('initialization', () => {
     it('loads subscriptions from the store', async () => {
       const sub = makeSubscription('https://push.example.com/1');
-      const { service, store } = createService({ initial: [sub] });
+      const { service, store: _store } = createService({ initial: [sub] });
 
       await service.initialize();
 
@@ -123,7 +123,7 @@ describe('PushNotificationService', () => {
 
     it('removeSubscription() with unknown endpoint does nothing', async () => {
       const sub = makeSubscription('https://push.example.com/1');
-      const { service, store } = createService({ initial: [sub] });
+      const { service, store: _store } = createService({ initial: [sub] });
       await service.initialize();
 
       // Should not throw

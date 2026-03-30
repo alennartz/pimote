@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import { indexStore } from '$lib/stores/index-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import SessionItem from './SessionItem.svelte';
@@ -14,8 +15,8 @@
 
   let { onSessionSelect }: Props = $props();
 
-  let expandedFolders = $state(new Set<string>());
-  let expandedSessionLists = $state(new Set<string>());
+  let expandedFolders = new SvelteSet<string>();
+  let expandedSessionLists = new SvelteSet<string>();
 
   const MAX_SESSIONS_SHOWN = 6;
 
@@ -47,25 +48,21 @@
   });
 
   function toggleFolder(path: string) {
-    const next = new Set(expandedFolders);
-    if (next.has(path)) {
-      next.delete(path);
+    if (expandedFolders.has(path)) {
+      expandedFolders.delete(path);
     } else {
-      next.add(path);
+      expandedFolders.add(path);
       // Load sessions for newly expanded folder
       indexStore.loadSessions(path);
     }
-    expandedFolders = next;
   }
 
   function toggleSessionList(path: string) {
-    const next = new Set(expandedSessionLists);
-    if (next.has(path)) {
-      next.delete(path);
+    if (expandedSessionLists.has(path)) {
+      expandedSessionLists.delete(path);
     } else {
-      next.add(path);
+      expandedSessionLists.add(path);
     }
-    expandedSessionLists = next;
   }
 
   async function newSession(folderPath: string) {

@@ -14,7 +14,7 @@ export class FilePushSubscriptionStore implements SubscriptionStore {
       if (err && typeof err === 'object' && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
         return [];
       }
-      throw new Error('Failed to load push subscriptions');
+      throw new Error('Failed to load push subscriptions', { cause: err });
     }
   }
 

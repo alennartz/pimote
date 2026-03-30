@@ -75,7 +75,7 @@ export class PimoteSessionManager {
 
     // Apply default thinking level from config
     if (!sessionFilePath && this.config.defaultThinkingLevel) {
-      session.setThinkingLevel(this.config.defaultThinkingLevel as any);
+      session.setThinkingLevel(this.config.defaultThinkingLevel as AgentSession['thinkingLevel']);
       console.log(`[pimote] Set default thinking level: ${this.config.defaultThinkingLevel}`);
     }
 
@@ -123,12 +123,13 @@ export class PimoteSessionManager {
   private extractFirstMessage(managed: ManagedSession): string | undefined {
     const messages = managed.session.messages ?? [];
     for (const msg of messages) {
-      if ((msg as any).role !== 'user') continue;
-      const content = (msg as any).content;
+      if (msg.role !== 'user') continue;
+      const { content } = msg;
       if (typeof content === 'string') return content.slice(0, 100);
       if (Array.isArray(content)) {
-        const textItem = content.find((c: any) => c.type === 'text');
-        if (textItem?.text) return textItem.text.slice(0, 100);
+        for (const c of content) {
+          if (c.type === 'text') return c.text.slice(0, 100);
+        }
       }
       break;
     }

@@ -43,7 +43,7 @@
       <Bot size={16} />
     </div>
     <div class="message-body">
-      {#each message.content as block}
+      {#each message.content as block, i (i)}
         {#if block.type === 'text' && block.text}
           <TextBlock text={block.text} />
         {:else if block.type === 'thinking' && block.text}

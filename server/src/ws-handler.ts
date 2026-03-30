@@ -17,7 +17,7 @@ import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import { mapAgentMessages } from './message-mapper.js';
-import type { AgentSession, ExtensionCommandContextActions } from '@mariozechner/pi-coding-agent';
+import type { AgentSession, ExtensionCommandContextActions, PromptOptions } from '@mariozechner/pi-coding-agent';
 
 function createCommandContextActions(session: AgentSession, onSessionReset?: () => void): ExtensionCommandContextActions {
   return {
@@ -76,7 +76,7 @@ function getGitBranch(cwd: string): string | null {
 export type ClientRegistry = Map<string, WsHandler>;
 
 export class WsHandler {
-  private readonly pendingUiResponses = new Map<string, { resolve: (value: any) => void; sessionId: string }>();
+  private readonly pendingUiResponses = new Map<string, { resolve: (value: unknown) => void; sessionId: string }>();
   private subscribedSessions = new Set<string>();
   private viewedSessionId: string | null = null;
   readonly clientId: string;
@@ -463,7 +463,7 @@ export class WsHandler {
         }
 
         default: {
-          this.sendResponse(id, false, undefined, `Unknown command type: ${(command as any).type}`);
+          this.sendResponse(id, false, undefined, `Unknown command type: ${(command as { type: string }).type}`);
         }
       }
     } catch (err) {
@@ -490,7 +490,7 @@ export class WsHandler {
 
     switch (command.type) {
       case 'prompt': {
-        session.prompt(command.message, { images: command.images as any }).catch((err) => {
+        session.prompt(command.message, { images: command.images as unknown as PromptOptions['images'] }).catch((err) => {
           console.error(`[WsHandler] prompt error:`, err);
         });
         this.sendResponse(id, true);
@@ -557,7 +557,7 @@ export class WsHandler {
       }
 
       case 'set_thinking_level': {
-        session.setThinkingLevel(command.level as any);
+        session.setThinkingLevel(command.level as AgentSession['thinkingLevel']);
         this.sendResponse(id, true);
         break;
       }
@@ -661,14 +661,14 @@ export class WsHandler {
     this.subscribedSessions.add(sessionId);
 
     // Bind extension UI bridge with closures pointing to this handler
-    const waitForResponse = (requestId: string): Promise<any> => {
-      return new Promise<any>((resolve) => {
+    const waitForResponse = (requestId: string): Promise<unknown> => {
+      return new Promise<unknown>((resolve) => {
         this.pendingUiResponses.set(requestId, { resolve, sessionId });
       });
     };
     const sendToClient = (event: PimoteEvent): void => {
       if (event.type === 'extension_ui_request' && !event.sessionId) {
-        (event as any).sessionId = sessionId;
+        event.sessionId = sessionId;
       }
       this.sendEvent(event);
     };

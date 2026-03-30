@@ -1,10 +1,11 @@
 // IndexStore — manages folder and session listing
 import type { FolderInfo, SessionInfo } from '@pimote/shared';
 import { connection } from './connection.svelte.js';
+import { SvelteMap } from 'svelte/reactivity';
 
 class IndexStore {
   folders: FolderInfo[] = $state([]);
-  sessions = $state(new Map<string, SessionInfo[]>());
+  sessions = $state(new SvelteMap<string, SessionInfo[]>());
   loading: boolean = $state(false);
 
   async loadFolders(): Promise<void> {
@@ -27,10 +28,7 @@ class IndexStore {
       const response = await connection.send({ type: 'list_sessions', folderPath });
       if (response.success && response.data) {
         const data = response.data as { sessions: SessionInfo[] };
-        // Create a new Map to trigger reactivity
-        const next = new Map(this.sessions);
-        next.set(folderPath, data.sessions);
-        this.sessions = next;
+        this.sessions.set(folderPath, data.sessions);
       }
     } catch (e) {
       console.error('[IndexStore] Failed to load sessions:', e);

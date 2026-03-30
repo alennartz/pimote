@@ -1,6 +1,7 @@
 import { connection } from '$lib/stores/connection.svelte.js';
 import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 import type { ExtensionUiRequestEvent } from '@pimote/shared';
+import { SvelteSet } from 'svelte/reactivity';
 
 /**
  * Shared reactive queue for extension UI requests.
@@ -22,7 +23,7 @@ export interface DialogRequest {
 const FIRE_AND_FORGET = new Set(['setStatus', 'setWidget', 'notify', 'setEditorText', 'setTitle']);
 
 /** Methods rendered inline (not as a modal) */
-export const INLINE_METHODS = new Set(['select', 'confirm']);
+export const INLINE_METHODS = new SvelteSet(['select', 'confirm']);
 
 let queue = $state<DialogRequest[]>([]);
 let _initialized = false;

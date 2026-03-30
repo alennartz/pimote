@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, onMount } from 'svelte';
+  import { tick } from 'svelte';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import Message from './Message.svelte';
   import TextBlock from './TextBlock.svelte';

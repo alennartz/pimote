@@ -11,6 +11,7 @@
   <div class="text-block streaming-text">{text}</div>
 {:else}
   <div class="text-block markdown-content">
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     {@html renderedHtml}
   </div>
 {/if}

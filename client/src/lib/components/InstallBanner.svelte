@@ -6,13 +6,18 @@
 
   let show = $state(false);
   let isIOS = $state(false);
-  let deferredPrompt: any = null;
+  interface BeforeInstallPromptEvent extends Event {
+    prompt(): Promise<void>;
+    userChoice: Promise<{ outcome: string }>;
+  }
+
+  let deferredPrompt: BeforeInstallPromptEvent | null = null;
 
   onMount(() => {
     // Don't show if already installed (standalone mode)
     if (window.matchMedia('(display-mode: standalone)').matches) return;
-    // @ts-ignore — iOS standalone check
-    if ((navigator as any).standalone === true) return;
+    // iOS standalone check (non-standard property)
+    if ((navigator as unknown as { standalone?: boolean }).standalone === true) return;
     // Don't show if previously dismissed
     if (localStorage.getItem('pimote-install-dismissed')) return;
 
@@ -31,7 +36,7 @@
     // Android/Chrome: listen for beforeinstallprompt
     const handler = (e: Event) => {
       e.preventDefault();
-      deferredPrompt = e;
+      deferredPrompt = e as BeforeInstallPromptEvent;
       show = true;
     };
     window.addEventListener('beforeinstallprompt', handler);

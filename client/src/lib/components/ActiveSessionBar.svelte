@@ -26,7 +26,6 @@
         </span>
         <span class="max-w-[80px] truncate">{session.projectName}</span>
         <!-- Close × : desktop = all chips on hover, mobile = viewed chip only -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
         <span
           class="-mr-1 ml-0.5 flex items-center justify-center rounded-full p-0.5 transition-colors
 						{isViewed

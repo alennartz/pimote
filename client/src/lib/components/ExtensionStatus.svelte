@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { setEditorText } from '$lib/stores/input-bar.svelte.js';
   import type { ExtensionUiRequestEvent } from '@pimote/shared';
@@ -8,10 +9,10 @@
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 
   // Status entries: key → text
-  let statuses: Map<string, string> = $state(new Map());
+  let statuses = new SvelteMap<string, string>();
 
   // Widget entries: key → lines
-  let widgets: Map<string, string[]> = $state(new Map());
+  let widgets = new SvelteMap<string, string[]>();
 
   // Notifications with auto-dismiss
   interface Notification {
@@ -42,23 +43,19 @@
       if (req.method === 'setStatus') {
         const key = req.key as string;
         const text = req.text as string | undefined;
-        const next = new Map(statuses);
         if (text) {
-          next.set(key, text);
+          statuses.set(key, text);
         } else {
-          next.delete(key);
+          statuses.delete(key);
         }
-        statuses = next;
       } else if (req.method === 'setWidget') {
         const key = req.key as string;
         const lines = req.lines as string[] | undefined;
-        const next = new Map(widgets);
         if (lines && lines.length > 0) {
-          next.set(key, lines);
+          widgets.set(key, lines);
         } else {
-          next.delete(key);
+          widgets.delete(key);
         }
-        widgets = next;
       } else if (req.method === 'notify') {
         const text = (req.text as string) ?? (req.message as string) ?? '';
         const type = (req.notifyType as 'info' | 'warning' | 'error') ?? (req.notificationType as 'info' | 'warning' | 'error') ?? 'info';
@@ -88,7 +85,7 @@
   <div class="border-border bg-muted/30 flex flex-col gap-2 border-t px-4 py-2">
     {#each widgetEntries as [key, lines] (key)}
       <div class="text-muted-foreground font-mono text-xs">
-        {#each lines as line}
+        {#each lines as line, i (i)}
           <div>{line}</div>
         {/each}
       </div>

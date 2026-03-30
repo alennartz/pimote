@@ -1,5 +1,6 @@
 // ConnectionStore — Svelte 5 runes-based WebSocket connection manager
 import type { PimoteCommand, PimoteResponse, PimoteEvent, PimoteServerMessage } from '@pimote/shared';
+import { SvelteSet } from 'svelte/reactivity';
 
 type EventListener = (event: PimoteEvent) => void;
 
@@ -9,7 +10,7 @@ const clientId = crypto.randomUUID();
 class ConnectionStore {
   status: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' = $state('disconnected');
   private sessionCursors: Map<string, number> = new Map();
-  subscribedSessions: Set<string> = $state(new Set());
+  subscribedSessions: Set<string> = $state(new SvelteSet());
 
   private ws: WebSocket | null = null;
   private pending = new Map<string, { resolve: (r: PimoteResponse) => void; reject: (e: Error) => void }>();
@@ -173,13 +174,11 @@ class ConnectionStore {
   }
 
   addSubscribedSession(id: string): void {
-    this.subscribedSessions = new Set([...this.subscribedSessions, id]);
+    this.subscribedSessions.add(id);
   }
 
   removeSubscribedSession(id: string): void {
-    const next = new Set(this.subscribedSessions);
-    next.delete(id);
-    this.subscribedSessions = next;
+    this.subscribedSessions.delete(id);
     this.sessionCursors.delete(id);
   }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { PimoteSessionManager, ManagedSession } from './session-manager.js';
 import type { FolderIndex } from './folder-index.js';
@@ -317,7 +317,7 @@ describe('WsHandler', () => {
       const clientRegistry: ClientRegistry = new Map();
 
       // Create old client's handler and register in registry
-      const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
+      const _oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
 
       // Create new client's handler
       const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
@@ -352,7 +352,7 @@ describe('WsHandler', () => {
       const sessions = new Map([['session-1', session]]);
       const clientRegistry: ClientRegistry = new Map();
 
-      const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
+      const _oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
       const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
 
       await newCtx.handler.handleMessage(
@@ -385,7 +385,7 @@ describe('WsHandler', () => {
       const sessions = new Map([['session-1', session]]);
       const clientRegistry: ClientRegistry = new Map();
 
-      const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
+      const _oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
       const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
 
       await newCtx.handler.handleMessage(
@@ -490,8 +490,8 @@ describe('WsHandler', () => {
       const sessionManager = createMockSessionManager(sessions);
 
       // Mock openSession to add the new session and return its ID
-      let newSessionId = 'new-session';
-      (sessionManager as any).openSession = async (folderPath: string, sessionFilePath: string | undefined, sendLive: any) => {
+      const newSessionId = 'new-session';
+      (sessionManager as any).openSession = async (folderPath: string, _sessionFilePath: string | undefined, _sendLive: any) => {
         const newSession = createMockManagedSession({
           id: newSessionId,
           folderPath,
@@ -546,7 +546,7 @@ describe('WsHandler', () => {
       const sessions = new Map([['own-session', ownSession]]);
       const sessionManager = createMockSessionManager(sessions);
 
-      let newSessionId = 'new-session';
+      const newSessionId = 'new-session';
       (sessionManager as any).openSession = async (folderPath: string) => {
         const newSession = createMockManagedSession({
           id: newSessionId,
@@ -595,7 +595,7 @@ describe('WsHandler', () => {
       const clientRegistry: ClientRegistry = new Map();
 
       // Create the other client's handler so we can check it receives session_closed
-      const otherCtx = createTestHandler('other-client', { sessions, clientRegistry });
+      const _otherCtx = createTestHandler('other-client', { sessions, clientRegistry });
 
       // Create the requesting client's handler
       const myCtx = createTestHandler('my-client', { sessions, clientRegistry });

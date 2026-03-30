@@ -30,14 +30,8 @@ export async function loadConfig(): Promise<PimoteConfig> {
   } catch (err: unknown) {
     if (err && typeof err === 'object' && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new Error(
-        `Config file not found at ${CONFIG_PATH}\n\n` +
-          `Create it with at least a "roots" array, e.g.:\n\n` +
-          `  {\n` +
-          `    "roots": ["/path/to/your/project"]\n` +
-          `  }\n\n` +
-          `Optional fields: port (default ${DEFAULTS.port}), ` +
-          `idleTimeout (default ${DEFAULTS.idleTimeout}ms), ` +
-          `bufferSize (default ${DEFAULTS.bufferSize})`,
+        `Config file not found at ${CONFIG_PATH}\n\n` + `Create it with at least a "roots" array, e.g.:\n\n` + `  {\n` + `    "roots": ["/path/to/your/project"]\n` + `  }\n\n`,
+        { cause: err } + `Optional fields: port (default ${DEFAULTS.port}), ` + `idleTimeout (default ${DEFAULTS.idleTimeout}ms), ` + `bufferSize (default ${DEFAULTS.bufferSize})`,
       );
     }
     throw err;
