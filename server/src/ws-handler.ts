@@ -10,6 +10,7 @@ import type {
   BufferedEventsEvent,
   ConnectionRestoredEvent,
   FullResyncEvent,
+  SessionStateChangedEvent,
 } from '@pimote/shared';
 import type { PimoteSessionManager, ManagedSession } from './session-manager.js';
 import type { FolderIndex } from './folder-index.js';
@@ -188,6 +189,7 @@ export class WsHandler {
                 },
               });
 
+              WsHandler.broadcastSidebarUpdate(command.sessionId, existing.folderPath, this.sessionManager, this.clientRegistry);
               this.sendResponse(id, true, { sessionId: command.sessionId });
               break;
             }
@@ -221,6 +223,8 @@ export class WsHandler {
               activeStatus: 'idle',
             },
           });
+
+          WsHandler.broadcastSidebarUpdate(sessionId, managed.folderPath, this.sessionManager, this.clientRegistry);
 
           // Check for conflicting external pi processes and remote pimote sessions
           const openConflictPids = await findExternalPiProcesses(command.folderPath);
@@ -317,6 +321,7 @@ export class WsHandler {
           // subscribed sessions in a loop, so the last one would win arbitrarily.
           // The client sends an explicit view_session after reconnect to set this.
 
+          WsHandler.broadcastSidebarUpdate(command.sessionId, managed.folderPath, this.sessionManager, this.clientRegistry);
           this.sendResponse(id, true, { folderPath: managed.folderPath });
           break;
         }
@@ -342,6 +347,7 @@ export class WsHandler {
             },
           });
 
+          WsHandler.broadcastSidebarUpdate(takeoverSessionId, takeoverManaged.folderPath, this.sessionManager, this.clientRegistry);
           this.sendResponse(id, true, { sessionId: takeoverSessionId, killedProcesses: killedCount });
           break;
         }
@@ -756,6 +762,42 @@ export class WsHandler {
       messages,
     };
     this.sendEvent(fullResyncEvent);
+  }
+
+  /** Send an event to this client (public for broadcast use). */
+  sendToClient(event: PimoteEvent): void {
+    this.sendEvent(event);
+  }
+
+  /** Broadcast a session_state_changed event to ALL connected clients. */
+  static broadcastSidebarUpdate(sessionId: string, folderPath: string, sessionManager: PimoteSessionManager, clientRegistry: ClientRegistry): void {
+    const managed = sessionManager.getSession(sessionId);
+
+    // Compute folder aggregates (same logic as list_folders handler)
+    const folderSessions = sessionManager.getAllSessions().filter((s) => s.folderPath === folderPath);
+    const folderActiveSessionCount = folderSessions.length;
+    let folderActiveStatus: 'working' | 'idle' | 'attention' | null = null;
+    if (folderSessions.some((s) => s.status === 'working')) {
+      folderActiveStatus = 'working';
+    } else if (folderSessions.some((s) => s.needsAttention)) {
+      folderActiveStatus = 'attention';
+    } else if (folderSessions.length > 0) {
+      folderActiveStatus = 'idle';
+    }
+
+    const event: SessionStateChangedEvent = {
+      type: 'session_state_changed',
+      sessionId,
+      folderPath,
+      liveStatus: managed ? managed.status : null,
+      connectedClientId: managed ? managed.connectedClientId : null,
+      folderActiveSessionCount,
+      folderActiveStatus,
+    };
+
+    for (const [, handler] of clientRegistry) {
+      handler.sendToClient(event);
+    }
   }
 
   cleanup(): void {

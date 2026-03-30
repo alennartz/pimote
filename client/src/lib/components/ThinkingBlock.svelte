@@ -6,6 +6,20 @@
 
   // Expanded when streaming, collapsed when finalized
   let expanded = $derived(streaming);
+
+  let previewWords = $derived.by(() => {
+    if (!text) return '';
+    return text.trim().split(/\s+/).slice(0, 8).join(' ');
+  });
+
+  let wordCount = $derived.by(() => {
+    if (!text) return 0;
+    const words = text
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w.length > 0);
+    return words.length;
+  });
 </script>
 
 <div class="thinking-block">
@@ -15,6 +29,12 @@
     <span class="thinking-label">
       {streaming ? 'Thinking…' : 'Thought process'}
     </span>
+    {#if previewWords}
+      <span class="thinking-preview">{previewWords}</span>
+    {/if}
+    {#if wordCount > 0}
+      <span class="thinking-word-count">{wordCount.toLocaleString()} words</span>
+    {/if}
     {#if streaming}
       <span class="streaming-dot"></span>
     {/if}
@@ -55,8 +75,26 @@
   }
 
   .thinking-label {
-    flex: 1;
+    flex-shrink: 0;
     font-style: italic;
+  }
+
+  .thinking-preview {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+    opacity: 0.6;
+  }
+
+  .thinking-word-count {
+    flex-shrink: 0;
+    margin-left: auto;
+    font-size: 0.75rem;
+    opacity: 0.7;
   }
 
   .streaming-dot {

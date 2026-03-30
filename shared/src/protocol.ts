@@ -448,6 +448,16 @@ export interface SessionClosedEvent {
   reason?: 'displaced' | 'killed';
 }
 
+export interface SessionStateChangedEvent {
+  type: 'session_state_changed';
+  sessionId: string;
+  folderPath: string;
+  liveStatus: 'working' | 'idle' | null;
+  connectedClientId: string | null;
+  folderActiveSessionCount: number;
+  folderActiveStatus: 'working' | 'idle' | 'attention' | null;
+}
+
 export interface ConnectionRestoredEvent {
   type: 'connection_restored';
   sessionId: string;
@@ -485,6 +495,7 @@ export type PimoteEvent =
   // Server-level
   | SessionOpenedEvent
   | SessionClosedEvent
+  | SessionStateChangedEvent
   | ConnectionRestoredEvent
   | BufferedEventsEvent
   | FullResyncEvent

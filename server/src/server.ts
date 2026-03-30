@@ -141,6 +141,14 @@ export async function createServer(
     res.end(JSON.stringify({ error: 'not found' }));
   });
 
+  // Wire up session manager callbacks for sidebar broadcasts
+  sessionManager.onStatusChange = (sessionId, folderPath) => {
+    WsHandler.broadcastSidebarUpdate(sessionId, folderPath, sessionManager, clientRegistry);
+  };
+  sessionManager.onSessionClosed = (sessionId, folderPath) => {
+    WsHandler.broadcastSidebarUpdate(sessionId, folderPath, sessionManager, clientRegistry);
+  };
+
   const wss = new WebSocketServer({ noServer: true });
   const clientRegistry: ClientRegistry = new Map();
 

@@ -9,6 +9,7 @@ let nextId = 1;
 const clientId = crypto.randomUUID();
 
 class ConnectionStore {
+  readonly clientId: string = clientId;
   status: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' = $state('disconnected');
   /** True only after WebSocket is open AND all session reconnects have completed. */
   ready: boolean = $state(false);

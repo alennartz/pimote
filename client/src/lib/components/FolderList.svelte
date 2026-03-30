@@ -28,12 +28,8 @@
 
     // Also reload when connection status changes to connected
     const unsub = connection.onEvent((event) => {
-      if (event.type === 'session_opened' || event.type === 'session_closed' || event.type === 'agent_start' || event.type === 'agent_end') {
-        indexStore.loadFolders();
-        // Reload sessions for any currently expanded folders
-        for (const path of expandedFolders) {
-          indexStore.loadSessions(path);
-        }
+      if (event.type === 'session_state_changed') {
+        indexStore.applySessionStateChange(event, connection.clientId);
       }
     });
 

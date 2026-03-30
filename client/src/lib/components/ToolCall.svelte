@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PimoteMessageContent } from '@pimote/shared';
+  import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import Wrench from '@lucide/svelte/icons/wrench';
   import CheckCircle from '@lucide/svelte/icons/check-circle-2';
@@ -26,6 +27,41 @@
   let toolName = $derived(content.toolName ?? 'unknown');
   let isResult = $derived(content.type === 'tool_result');
   let isCompleted = $derived(isResult || result !== undefined);
+
+  const PATH_SEGMENT_THRESHOLD = 80;
+
+  function shortenPath(fullPath: string, basePath: string): string {
+    let display = fullPath;
+    const base = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath;
+    if (base && display.startsWith(base + '/')) {
+      display = display.slice(base.length + 1);
+    }
+    if (display.length > PATH_SEGMENT_THRESHOLD) {
+      const segments = display.split('/');
+      while (segments.length > 1 && segments.join('/').length > PATH_SEGMENT_THRESHOLD) {
+        segments.shift();
+      }
+      display = '…/' + segments.join('/');
+    }
+    return display;
+  }
+
+  let toolDetail = $derived.by(() => {
+    const args = content.args;
+    if (!args || typeof args !== 'object') return '';
+    const a = args as Record<string, unknown>;
+    const name = toolName;
+    if ((name === 'read' || name === 'write' || name === 'edit') && typeof a.path === 'string') {
+      return shortenPath(a.path, sessionRegistry.viewed?.folderPath ?? '');
+    }
+    if (name === 'bash' && typeof a.command === 'string') {
+      return a.command
+        .replace(/[\n\r]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+    return '';
+  });
 
   function formatData(data: unknown): string {
     if (data === undefined || data === null) return '';
@@ -59,6 +95,9 @@
       <Wrench size={14} class="shrink-0" />
     {/if}
     <span class="tool-name">{toolName}</span>
+    {#if toolDetail}
+      <span class="tool-detail">{toolDetail}</span>
+    {/if}
     {#if inProgress}
       <span class="tool-status">running…</span>
     {:else if isCompleted}
@@ -128,12 +167,25 @@
   }
 
   .tool-name {
+    flex-shrink: 0;
     font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
     font-weight: 500;
     color: var(--foreground);
   }
 
+  .tool-detail {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+  }
+
   .tool-status {
+    flex-shrink: 0;
     margin-left: auto;
     font-size: 0.75rem;
     font-style: italic;

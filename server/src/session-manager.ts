@@ -23,6 +23,8 @@ export class PimoteSessionManager {
   private readonly modelRegistry: ModelRegistry;
   private readonly sessions = new Map<string, ManagedSession>();
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
+  onStatusChange?: (sessionId: string, folderPath: string) => void;
+  onSessionClosed?: (sessionId: string, folderPath: string) => void;
 
   constructor(
     private readonly config: PimoteConfig,
@@ -97,6 +99,7 @@ export class PimoteSessionManager {
     const unsubscribe = session.subscribe((event) => {
       if (event.type === 'agent_start' && managed.status !== 'working') {
         managed.status = 'working';
+        this.onStatusChange?.(sessionId, folderPath);
       } else if (event.type === 'agent_end' && managed.status !== 'idle') {
         managed.status = 'idle';
         managed.needsAttention = true;
@@ -110,6 +113,7 @@ export class PimoteSessionManager {
             sessionId,
           })
           .catch((err) => console.error('[SessionManager] Push notification error:', err));
+        this.onStatusChange?.(sessionId, folderPath);
       }
       eventBuffer.onEvent(event, sessionId, (e) => managed.sendLive(e));
     });
@@ -140,9 +144,12 @@ export class PimoteSessionManager {
     const managed = this.sessions.get(sessionId);
     if (!managed) return;
 
+    const folderPath = managed.folderPath;
     managed.unsubscribe();
     managed.session.dispose();
     this.sessions.delete(sessionId);
+
+    this.onSessionClosed?.(sessionId, folderPath);
   }
 
   getSession(sessionId: string): ManagedSession | undefined {
