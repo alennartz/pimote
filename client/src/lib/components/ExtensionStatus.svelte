@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { connection } from '$lib/stores/connection.svelte.js';
+	import { setEditorText } from '$lib/stores/input-bar.svelte.js';
 	import type { ExtensionUiRequestEvent } from '@pimote/shared';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import Info from '@lucide/svelte/icons/info';
@@ -60,8 +61,10 @@
 				widgets = next;
 			} else if (req.method === 'notify') {
 				const text = (req.text as string) ?? (req.message as string) ?? '';
-				const type = (req.notificationType as 'info' | 'warning' | 'error') ?? 'info';
+				const type = (req.notifyType as 'info' | 'warning' | 'error') ?? (req.notificationType as 'info' | 'warning' | 'error') ?? 'info';
 				addNotification(text, type);
+			} else if (req.method === 'setEditorText') {
+				setEditorText((req.text as string) ?? '');
 			}
 		});
 		return unsubscribe;

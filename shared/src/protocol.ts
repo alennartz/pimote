@@ -18,7 +18,6 @@ export interface FolderInfo {
 }
 
 export interface SessionInfo {
-  path: string;
   id: string;
   name?: string;
   /** ISO 8601 date string */
@@ -184,7 +183,9 @@ export interface ListSessionsCommand extends CommandBase {
 export interface OpenSessionCommand extends CommandBase {
   type: 'open_session';
   folderPath: string;
-  sessionPath?: string;
+  sessionId?: string;
+  /** Force takeover if the session is owned by another client */
+  force?: boolean;
 }
 
 export interface CloseSessionCommand extends CommandBase {
@@ -200,8 +201,6 @@ export interface ReconnectCommand extends CommandBase {
   type: 'reconnect';
   sessionId: string;
   lastCursor: number;
-  /** Take over even if owned by another live client */
-  force?: boolean;
 }
 
 export interface ViewSessionCommand extends CommandBase {
@@ -441,7 +440,6 @@ export interface SessionOpenedEvent {
   type: 'session_opened';
   sessionId: string;
   folder: FolderInfo;
-  sessionFilePath?: string;
 }
 
 export interface SessionClosedEvent {

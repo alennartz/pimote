@@ -14,7 +14,6 @@ async function main() {
   // Allow PORT env var to override config
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : config.port;
 
-  const sessionManager = new PimoteSessionManager(config);
   const folderIndex = new FolderIndex(config.roots);
 
   // Initialize push notification service
@@ -28,6 +27,8 @@ async function main() {
   );
   const pushNotificationService = new PushNotificationService(pushSender, pushStore);
   await pushNotificationService.initialize();
+
+  const sessionManager = new PimoteSessionManager(config, pushNotificationService);
 
   const server = createServer(config, sessionManager, folderIndex, pushNotificationService);
 

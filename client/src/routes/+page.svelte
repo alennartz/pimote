@@ -27,9 +27,11 @@
 	}
 </script>
 
+<NotificationBanner />
+
 {#if sessionRegistry.viewedSessionId}
 	<!-- Active session view -->
-	<div class="flex h-full flex-col">
+	<div class="flex flex-1 min-h-0 flex-col">
 		<StatusBar />
 		{#if sessionRegistry.viewed?.pendingTakeover}
 			<div class="flex items-center gap-2 bg-warning/10 border-b border-warning/30 px-4 py-2 text-sm text-warning">
@@ -59,8 +61,7 @@
 	</div>
 {:else}
 	<!-- Landing / folder browser -->
-	<div class="flex h-full flex-col">
-		<NotificationBanner />
+	<div class="flex flex-1 min-h-0 flex-col">
 		<div class="flex flex-1 flex-col items-center justify-center p-8">
 		<h1 class="mb-2 text-2xl font-bold text-foreground">Pimote</h1>
 		<p class="mb-8 text-sm text-muted-foreground">Select a folder and session from the sidebar to get started.</p>

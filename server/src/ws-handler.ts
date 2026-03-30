@@ -18,6 +18,47 @@ import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import { mapAgentMessages } from './message-mapper.js';
+import type { AgentSession, ExtensionCommandContextActions } from '@mariozechner/pi-coding-agent';
+
+function createCommandContextActions(
+  session: AgentSession,
+  onSessionReset?: () => void,
+): ExtensionCommandContextActions {
+  return {
+    waitForIdle: () => {
+      if (!session.isStreaming) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        const unsubscribe = session.subscribe((event) => {
+          if (event.type === 'agent_end') {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
+    },
+    newSession: async (options) => {
+      const result = await session.newSession(options);
+      if (result) onSessionReset?.();
+      return { cancelled: !result };
+    },
+    fork: async (entryId) => {
+      const result = await session.fork(entryId);
+      if (!result.cancelled) onSessionReset?.();
+      return { cancelled: result.cancelled };
+    },
+    navigateTree: async (targetId, options) => {
+      const result = await session.navigateTree(targetId, options);
+      if (!result.cancelled) onSessionReset?.();
+      return { cancelled: result.cancelled };
+    },
+    switchSession: async (sessionPath) => {
+      const result = await session.switchSession(sessionPath);
+      if (result) onSessionReset?.();
+      return { cancelled: !result };
+    },
+    reload: () => session.reload(),
+  };
+}
 
 /** Resolve the current git branch for a directory. Returns null if not a git repo. */
 function getGitBranch(cwd: string): string | null {
@@ -97,19 +138,16 @@ export class WsHandler {
         case 'list_sessions': {
           const sessions = await this.folderIndex.listSessions(command.folderPath);
 
-          // Build lookup from session file path to managed session for ownership enrichment
+          // Build lookup from session ID to managed session for ownership enrichment
           const activeSessions = this.sessionManager.getAllSessions();
-          const managedByPath = new Map<string, ManagedSession>();
+          const managedById = new Map<string, ManagedSession>();
           for (const ms of activeSessions) {
-            const filePath = ms.sessionFilePath ?? ms.session.sessionFile;
-            if (filePath) {
-              managedByPath.set(filePath, ms);
-            }
+            managedById.set(ms.id, ms);
           }
 
           // Enrich each session with ownership and live status
           const enriched = sessions.map(s => {
-            const ms = managedByPath.get(s.path);
+            const ms = managedById.get(s.id);
             return {
               ...s,
               isOwnedByMe: ms ? ms.connectedClientId === this.clientId : false,
@@ -122,47 +160,66 @@ export class WsHandler {
         }
 
         case 'open_session': {
-          const sendLive = (event: PimoteSessionEvent): void => {
-            this.sendEvent(event);
-          };
+          // Check if this session is already loaded in memory (only when resuming by ID)
+          if (command.sessionId) {
+            const existing = this.sessionManager.getSession(command.sessionId);
+            if (existing) {
+              // Session already loaded — check ownership
+              if (existing.connectedClientId && existing.connectedClientId !== this.clientId) {
+                const oldHandler = this.clientRegistry.get(existing.connectedClientId);
+                if (oldHandler && !command.force) {
+                  // Another live client owns it — ask user to confirm takeover
+                  this.sendResponse(id, false, undefined, 'session_owned');
+                  break;
+                }
+                // Force takeover or old client disconnected — displace and reclaim
+                this.displaceOwner(command.sessionId, existing);
+              }
 
-          const onStatusChange = this.createStatusChangeCallback();
+              // Reclaim the existing managed session
+              await this.claimSession(command.sessionId, existing);
+              this.viewedSessionId = command.sessionId;
+
+              this.sendEvent({
+                type: 'session_opened',
+                sessionId: command.sessionId,
+                folder: {
+                  path: existing.folderPath,
+                  name: existing.folderPath.split('/').pop() ?? existing.folderPath,
+                  activeSessionCount: 1,
+                  externalProcessCount: 0,
+                  activeStatus: 'idle',
+                },
+              });
+
+              this.sendResponse(id, true, { sessionId: command.sessionId });
+              break;
+            }
+          }
+
+          // Session not loaded — resolve ID to file path and create a new managed session
+          let sessionFilePath: string | undefined;
+          if (command.sessionId) {
+            sessionFilePath = await this.folderIndex.resolveSessionPath(command.folderPath, command.sessionId);
+            if (!sessionFilePath) {
+              this.sendResponse(id, false, undefined, `Session not found: ${command.sessionId}`);
+              break;
+            }
+          }
 
           const sessionId = await this.sessionManager.openSession(
             command.folderPath,
-            command.sessionPath,
-            sendLive,
-            onStatusChange,
+            sessionFilePath,
           );
 
           const managed = this.sessionManager.getSession(sessionId)!;
-          managed.connectedClientId = this.clientId;
-          this.subscribedSessions.add(sessionId);
+          await this.claimSession(sessionId, managed);
           this.viewedSessionId = sessionId;
-
-          // Bind extension UI bridge
-          const waitForResponse = (requestId: string): Promise<any> => {
-            return new Promise<any>((resolve) => {
-              this.pendingUiResponses.set(requestId, { resolve, sessionId });
-            });
-          };
-
-          const sendToClient = (event: PimoteEvent): void => {
-            // Enrich extension UI events with the session ID
-            if (event.type === 'extension_ui_request' && !event.sessionId) {
-              (event as any).sessionId = sessionId;
-            }
-            this.sendEvent(event);
-          };
-
-          const uiContext = createExtensionUIBridge(sendToClient, waitForResponse);
-          await managed.session.bindExtensions({ uiContext });
 
           // Send session_opened event
           this.sendEvent({
             type: 'session_opened',
             sessionId,
-            sessionFilePath: managed.session.sessionFile,
             folder: {
               path: managed.folderPath,
               name: managed.folderPath.split('/').pop() ?? managed.folderPath,
@@ -230,19 +287,15 @@ export class WsHandler {
             break;
           }
 
-          // Displacement check: different client owns this session?
+          // Ownership check: different client owns this session?
           if (managed.connectedClientId && managed.connectedClientId !== this.clientId) {
             const oldHandler = this.clientRegistry.get(managed.connectedClientId);
             if (oldHandler) {
-              // Old client is still connected
-              if (!command.force) {
-                this.sendResponse(id, false, undefined, 'session_owned');
-                break;
-              }
-              // Force takeover — notify old client of displacement
-              oldHandler.sendDisplacedEvent(command.sessionId);
+              // Another live client owns it — reject (use open_session with force to takeover)
+              this.sendResponse(id, false, undefined, 'session_owned');
+              break;
             }
-            // If old client not in registry, they disconnected — silent rebind
+            // Old client no longer connected — silent rebind
           }
 
           const replayResult = managed.eventBuffer.replay(command.lastCursor);
@@ -262,88 +315,30 @@ export class WsHandler {
             };
             this.sendEvent(connectionRestoredEvent);
           } else {
-            // Cursor too old — full resync required
-            const session = managed.session;
-            const model = session.model;
-            const state: SessionState = {
-              model: model
-                ? { provider: model.provider, id: model.id, name: model.name }
-                : null,
-              thinkingLevel: session.thinkingLevel,
-              isStreaming: session.isStreaming,
-              isCompacting: session.isCompacting,
-              sessionFile: session.sessionFile,
-              sessionId: session.sessionId,
-              sessionName: session.sessionName,
-              autoCompactionEnabled: session.autoCompactionEnabled,
-              messageCount: session.messages.length,
-            };
-
-            const messages = mapAgentMessages(session.messages);
-
-            const fullResyncEvent: FullResyncEvent = {
-              type: 'full_resync',
-              sessionId: command.sessionId,
-              state,
-              messages,
-            };
-            this.sendEvent(fullResyncEvent);
+            this.sendFullResyncForSession(command.sessionId, managed);
           }
 
-          // Re-attach WebSocket and update mutable callbacks to use this WsHandler
-          managed.connectedClientId = this.clientId;
-          managed.lastActivity = Date.now();
-          managed.sendLive = (event: PimoteSessionEvent) => { this.sendEvent(event); };
-          managed.onStatusChange = this.createStatusChangeCallback();
-          this.subscribedSessions.add(command.sessionId);
+          // Claim session — rebinds ownership, sendLive, and extension UI bridge
+          await this.claimSession(command.sessionId, managed);
           // Don't overwrite viewedSessionId here — the client reconnects ALL
           // subscribed sessions in a loop, so the last one would win arbitrarily.
           // The client sends an explicit view_session after reconnect to set this.
 
-          this.sendResponse(id, true);
+          this.sendResponse(id, true, { folderPath: managed.folderPath });
           break;
         }
 
         case 'takeover_folder': {
           const killedCount = await killExternalPiProcesses(command.folderPath);
 
-          // Now open a session for that folder (same logic as open_session)
-          const takeoverSendLive = (event: PimoteSessionEvent): void => {
-            this.sendEvent(event);
-          };
-
-          const takeoverOnStatusChange = this.createStatusChangeCallback();
-
           const takeoverSessionId = await this.sessionManager.openSession(
             command.folderPath,
-            undefined,
-            takeoverSendLive,
-            takeoverOnStatusChange,
           );
 
           const takeoverManaged = this.sessionManager.getSession(takeoverSessionId)!;
-          takeoverManaged.connectedClientId = this.clientId;
-          this.subscribedSessions.add(takeoverSessionId);
+          await this.claimSession(takeoverSessionId, takeoverManaged);
           this.viewedSessionId = takeoverSessionId;
 
-          // Bind extension UI bridge
-          const takeoverWaitForResponse = (requestId: string): Promise<any> => {
-            return new Promise<any>((resolve) => {
-              this.pendingUiResponses.set(requestId, { resolve, sessionId: takeoverSessionId });
-            });
-          };
-
-          const takeoverSendToClient = (event: PimoteEvent): void => {
-            if (event.type === 'extension_ui_request' && !event.sessionId) {
-              (event as any).sessionId = takeoverSessionId;
-            }
-            this.sendEvent(event);
-          };
-
-          const takeoverUiContext = createExtensionUIBridge(takeoverSendToClient, takeoverWaitForResponse);
-          await takeoverManaged.session.bindExtensions({ uiContext: takeoverUiContext });
-
-          // Send session_opened event
           this.sendEvent({
             type: 'session_opened',
             sessionId: takeoverSessionId,
@@ -469,6 +464,7 @@ export class WsHandler {
         case 'get_messages':
         case 'new_session':
         case 'get_session_stats':
+        case 'get_session_meta':
         case 'get_commands':
         case 'set_session_name': {
           await this.handleSessionCommand(command, id);
@@ -658,43 +654,42 @@ export class WsHandler {
     }
   }
 
-  /**
-   * Create a status change callback that uses this WsHandler's current state.
-   * Stored on ManagedSession so it can be replaced on reconnect.
-   */
-  private createStatusChangeCallback(): (sid: string, status: 'idle' | 'working') => void {
-    return (sid: string, status: 'idle' | 'working') => {
-      if (status === 'idle') {
-        const managed = this.sessionManager.getSession(sid);
-        if (managed && this.viewedSessionId !== sid) {
-          managed.needsAttention = true;
-          const firstMessage = this.extractFirstMessage(managed);
-          this.pushNotificationService.notifySessionIdle({
-            projectName: managed.folderPath.split('/').pop() ?? 'Unknown',
-            firstMessage,
-            sessionId: sid,
-          }).catch(err => console.error('[WsHandler] Push notification error:', err));
-        }
+  /** Notify the old owner that they've been displaced from a session.
+   *  No-op if the session is unowned or owned by this client. */
+  private displaceOwner(sessionId: string, managed: ManagedSession): void {
+    if (managed.connectedClientId && managed.connectedClientId !== this.clientId) {
+      const oldHandler = this.clientRegistry.get(managed.connectedClientId);
+      if (oldHandler) {
+        oldHandler.sendDisplacedEvent(sessionId);
       }
-    };
+    }
   }
 
-  /**
-   * Extract the first user message's text from a session for push notification context.
-   */
-  private extractFirstMessage(managed: ManagedSession): string | undefined {
-    const messages = managed.session.messages ?? [];
-    for (const msg of messages) {
-      if ((msg as any).role !== 'user') continue;
-      const content = (msg as any).content;
-      if (typeof content === 'string') return content.slice(0, 100);
-      if (Array.isArray(content)) {
-        const textItem = content.find((c: any) => c.type === 'text');
-        if (textItem?.text) return textItem.text.slice(0, 100);
+  /** Bind a managed session to this client — sets ownership, live event routing,
+   *  extension UI bridge, and subscribes to events. */
+  private async claimSession(sessionId: string, managed: ManagedSession): Promise<void> {
+    managed.connectedClientId = this.clientId;
+    managed.lastActivity = Date.now();
+    managed.sendLive = (event: PimoteSessionEvent) => { this.sendEvent(event); };
+    this.subscribedSessions.add(sessionId);
+
+    // Bind extension UI bridge with closures pointing to this handler
+    const waitForResponse = (requestId: string): Promise<any> => {
+      return new Promise<any>((resolve) => {
+        this.pendingUiResponses.set(requestId, { resolve, sessionId });
+      });
+    };
+    const sendToClient = (event: PimoteEvent): void => {
+      if (event.type === 'extension_ui_request' && !event.sessionId) {
+        (event as any).sessionId = sessionId;
       }
-      break;
-    }
-    return undefined;
+      this.sendEvent(event);
+    };
+    const uiContext = createExtensionUIBridge(sendToClient, waitForResponse);
+    const commandContextActions = createCommandContextActions(managed.session, () => {
+      this.sendFullResyncForSession(sessionId, managed);
+    });
+    await managed.session.bindExtensions({ uiContext, commandContextActions });
   }
 
   /** Close this handler's WebSocket connection. */
@@ -750,13 +745,40 @@ export class WsHandler {
     }
   }
 
+  /** Send a full_resync event to the client for the given managed session.
+   *  Used when the underlying pi session is reset (newSession, switchSession, fork, navigateTree). */
+  private sendFullResyncForSession(pimoteSessionId: string, managed: ManagedSession): void {
+    const session = managed.session;
+    const model = session.model;
+    const state: SessionState = {
+      model: model
+        ? { provider: model.provider, id: model.id, name: model.name }
+        : null,
+      thinkingLevel: session.thinkingLevel,
+      isStreaming: session.isStreaming,
+      isCompacting: session.isCompacting,
+      sessionFile: session.sessionFile,
+      sessionId: session.sessionId,
+      sessionName: session.sessionName,
+      autoCompactionEnabled: session.autoCompactionEnabled,
+      messageCount: session.messages.length,
+    };
+    const messages = mapAgentMessages(session.messages);
+    const fullResyncEvent: FullResyncEvent = {
+      type: 'full_resync',
+      sessionId: pimoteSessionId,
+      state,
+      messages,
+    };
+    this.sendEvent(fullResyncEvent);
+  }
+
   cleanup(): void {
     for (const sid of this.subscribedSessions) {
       const managed = this.sessionManager.getSession(sid);
       if (managed) {
         managed.connectedClientId = null;
         managed.sendLive = () => {};
-        managed.onStatusChange = null;
         managed.lastActivity = Date.now();
       }
     }

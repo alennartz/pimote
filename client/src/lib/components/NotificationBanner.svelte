@@ -1,24 +1,18 @@
 <script lang="ts">
 	import { connection } from '$lib/stores/connection.svelte.js';
-	import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 	import Bell from '@lucide/svelte/icons/bell';
 	import X from '@lucide/svelte/icons/x';
+	import { onMount } from 'svelte';
 
 	let show = $state(false);
-	let hasPrompted = $state(false);
 
-	// Show banner after first session is opened, if not already dismissed/granted
-	$effect(() => {
+	onMount(() => {
 		if (
-			sessionRegistry.activeSessions.length > 0 &&
-			!hasPrompted &&
-			typeof window !== 'undefined' &&
-			!localStorage.getItem('pimote-push-dismissed') &&
 			'Notification' in window &&
-			Notification.permission === 'default'
+			Notification.permission === 'default' &&
+			!localStorage.getItem('pimote-push-dismissed')
 		) {
 			show = true;
-			hasPrompted = true;
 		}
 	});
 

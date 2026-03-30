@@ -15,7 +15,9 @@ export default defineConfig({
 			injectRegister: false,
 			outDir: '.svelte-kit/output/client',
 			injectManifest: {
-				globPatterns: ['**/*.{js,css,html,svg,png,woff,woff2}'],
+				// No precaching — the app requires a network connection.
+				// Keep injecting so workbox compiles the SW, but match nothing.
+				globPatterns: [],
 			},
 			devOptions: {
 				enabled: false

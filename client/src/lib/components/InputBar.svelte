@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 	import { connection } from '$lib/stores/connection.svelte.js';
+	import { editorTextRequest } from '$lib/stores/input-bar.svelte.js';
 	import Send from '@lucide/svelte/icons/send';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import OctagonX from '@lucide/svelte/icons/octagon-x';
@@ -9,6 +10,16 @@
 	let textareaEl: HTMLTextAreaElement | undefined = $state();
 
 	const disabled = $derived(sessionRegistry.viewedSessionId === null);
+
+	let lastSeq = 0;
+	$effect(() => {
+		const { text, seq } = editorTextRequest;
+		if (seq !== lastSeq) {
+			lastSeq = seq;
+			inputText = text;
+			autoResize();
+		}
+	});
 
 	function autoResize() {
 		if (!textareaEl) return;
@@ -75,7 +86,7 @@
 	}
 </script>
 
-<div class="shrink-0 border-t border-border bg-background px-3 pb-[max(env(safe-area-inset-bottom),16px)] pt-2">
+<div class="shrink-0 border-t border-border bg-background px-3 pb-[max(env(safe-area-inset-bottom),8px)] pt-2">
 	<div class="mx-auto flex max-w-3xl items-end gap-2">
 		<!-- Abort button (visible only when streaming) -->
 		{#if sessionRegistry.viewed?.isStreaming}

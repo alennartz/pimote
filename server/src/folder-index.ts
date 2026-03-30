@@ -68,7 +68,6 @@ export class FolderIndex {
     }
 
     return piSessions.map((s) => ({
-      path: s.path,
       id: s.id,
       name: s.name,
       created: s.created.toISOString(),
@@ -76,6 +75,21 @@ export class FolderIndex {
       messageCount: s.messageCount,
       firstMessage: s.firstMessage || undefined,
     }));
+  }
+
+  /**
+   * Resolve a session ID to its file path within a folder.
+   * Returns undefined if the session is not found.
+   */
+  async resolveSessionPath(folderPath: string, sessionId: string): Promise<string | undefined> {
+    let piSessions: PiSessionInfo[];
+    try {
+      piSessions = await SessionManager.list(folderPath);
+    } catch {
+      return undefined;
+    }
+    const match = piSessions.find((s) => s.id === sessionId);
+    return match?.path;
   }
 
   /**

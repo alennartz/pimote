@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import {
   createAgentSession,
   AuthStorage,
@@ -10,19 +9,18 @@ import type { AgentSession } from '@mariozechner/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
 import type { PimoteSessionEvent } from '@pimote/shared';
+import type { PushNotificationService } from './push-notification.js';
 
 export interface ManagedSession {
   id: string;
   session: AgentSession;
   folderPath: string;
-  sessionFilePath: string | undefined;
   eventBuffer: EventBuffer;
   connectedClientId: string | null;
   lastActivity: number; // Date.now()
   status: 'idle' | 'working';
   needsAttention: boolean;
   sendLive: (event: PimoteSessionEvent) => void;
-  onStatusChange: ((sessionId: string, status: 'idle' | 'working') => void) | null;
   unsubscribe: () => void;
 }
 
@@ -32,34 +30,36 @@ export class PimoteSessionManager {
   private readonly sessions = new Map<string, ManagedSession>();
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly config: PimoteConfig) {
+  constructor(
+    private readonly config: PimoteConfig,
+    private readonly pushNotificationService: PushNotificationService,
+  ) {
     this.authStorage = AuthStorage.create();
     this.modelRegistry = new ModelRegistry(this.authStorage);
   }
 
   async openSession(
     folderPath: string,
-    sessionPath?: string,
+    sessionFilePath?: string,
     sendLive?: (event: PimoteSessionEvent) => void,
-    onStatusChange?: (sessionId: string, status: 'idle' | 'working') => void,
   ): Promise<string> {
-    const sessionId = crypto.randomUUID();
-
     const loader = new DefaultResourceLoader({ cwd: folderPath });
     await loader.reload();
 
     const { session } = await createAgentSession({
       cwd: folderPath,
       resourceLoader: loader,
-      sessionManager: sessionPath
-        ? PiSessionManager.open(sessionPath)
+      sessionManager: sessionFilePath
+        ? PiSessionManager.open(sessionFilePath)
         : PiSessionManager.create(folderPath),
       authStorage: this.authStorage,
       modelRegistry: this.modelRegistry,
     });
 
+    const sessionId = session.sessionId;
+
     // Apply default model from config (only for new sessions without an existing model preference)
-    if (!sessionPath && this.config.defaultProvider && this.config.defaultModel) {
+    if (!sessionFilePath && this.config.defaultProvider && this.config.defaultModel) {
       const models = this.modelRegistry.getAvailable();
       const defaultModel = models.find(
         (m) => m.provider === this.config.defaultProvider && m.id === this.config.defaultModel,
@@ -73,7 +73,7 @@ export class PimoteSessionManager {
     }
 
     // Apply default thinking level from config
-    if (!sessionPath && this.config.defaultThinkingLevel) {
+    if (!sessionFilePath && this.config.defaultThinkingLevel) {
       session.setThinkingLevel(this.config.defaultThinkingLevel as any);
       console.log(`[pimote] Set default thinking level: ${this.config.defaultThinkingLevel}`);
     }
@@ -84,24 +84,29 @@ export class PimoteSessionManager {
       id: sessionId,
       session,
       folderPath,
-      sessionFilePath: sessionPath,
       eventBuffer,
       connectedClientId: null,
       lastActivity: Date.now(),
       status: 'idle',
       needsAttention: false,
       sendLive: sendLive ?? (() => {}),
-      onStatusChange: onStatusChange ?? null,
       unsubscribe: () => {},
     };
 
     const unsubscribe = session.subscribe((event) => {
       if (event.type === 'agent_start' && managed.status !== 'working') {
         managed.status = 'working';
-        managed.onStatusChange?.(sessionId, 'working');
       } else if (event.type === 'agent_end' && managed.status !== 'idle') {
         managed.status = 'idle';
-        managed.onStatusChange?.(sessionId, 'idle');
+        managed.needsAttention = true;
+        const projectName = folderPath.split('/').pop() ?? 'Unknown';
+        const firstMessage = this.extractFirstMessage(managed);
+        this.pushNotificationService.notifySessionIdle({
+          projectName,
+          folderPath,
+          firstMessage,
+          sessionId,
+        }).catch(err => console.error('[SessionManager] Push notification error:', err));
       }
       eventBuffer.onEvent(event, sessionId, (e) => managed.sendLive(e));
     });
@@ -110,6 +115,21 @@ export class PimoteSessionManager {
 
     this.sessions.set(sessionId, managed);
     return sessionId;
+  }
+
+  private extractFirstMessage(managed: ManagedSession): string | undefined {
+    const messages = managed.session.messages ?? [];
+    for (const msg of messages) {
+      if ((msg as any).role !== 'user') continue;
+      const content = (msg as any).content;
+      if (typeof content === 'string') return content.slice(0, 100);
+      if (Array.isArray(content)) {
+        const textItem = content.find((c: any) => c.type === 'text');
+        if (textItem?.text) return textItem.text.slice(0, 100);
+      }
+      break;
+    }
+    return undefined;
   }
 
   async closeSession(sessionId: string): Promise<void> {

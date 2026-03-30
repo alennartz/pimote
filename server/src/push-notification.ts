@@ -19,6 +19,7 @@ export interface SubscriptionStore {
 
 export interface SessionIdlePayload {
   projectName: string;
+  folderPath: string;
   firstMessage: string | undefined;
   sessionId: string;
 }

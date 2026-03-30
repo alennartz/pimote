@@ -28,6 +28,7 @@
 		}
 
 		// Android/Chrome: listen for beforeinstallprompt
+		// Android/Chrome: listen for beforeinstallprompt
 		const handler = (e: Event) => {
 			e.preventDefault();
 			deferredPrompt = e;

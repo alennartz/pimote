@@ -2,15 +2,18 @@
 	import type { SessionInfo } from '@pimote/shared';
 	import { connection } from '$lib/stores/connection.svelte.js';
 	import { sessionRegistry, switchToSession } from '$lib/stores/session-registry.svelte.js';
+	import Monitor from '@lucide/svelte/icons/monitor';
 
 	interface Props {
 		session: SessionInfo;
 		folderPath: string;
+		onSessionSelect?: () => void;
 	}
 
-	let { session, folderPath }: Props = $props();
+	let { session, folderPath, onSessionSelect }: Props = $props();
 
-	const isActive = $derived(sessionRegistry.isActiveSessionPath(session.path));
+	const isActive = $derived(sessionRegistry.isActiveSession(session.id));
+	const isRemoteActive = $derived(session.liveStatus != null && !session.isOwnedByMe);
 
 	function formatRelativeTime(dateStr: string): string {
 		const date = new Date(dateStr);
@@ -40,11 +43,23 @@
 
 	async function openSession() {
 		try {
-			await connection.send({
+			onSessionSelect?.();
+			if (isActive) {
+				switchToSession(session.id);
+				return;
+			}
+			const response = await connection.send({
 				type: 'open_session',
 				folderPath,
-				sessionPath: session.path,
+				sessionId: session.id,
 			});
+			if (!response.success && response.error === 'session_owned') {
+				// Session is claimed by another client — show takeover prompt
+				const projectName = folderPath.split('/').pop() || 'Unknown';
+				sessionRegistry.addSession(session.id, folderPath, projectName);
+				sessionRegistry.sessions[session.id].pendingTakeover = true;
+				sessionRegistry.switchTo(session.id);
+			}
 		} catch (e) {
 			console.error('Failed to open session:', e);
 		}
@@ -68,6 +83,8 @@
 		</div>
 		{#if isActive}
 			<div class="size-2 shrink-0 rounded-full bg-status-connected"></div>
+		{:else if isRemoteActive}
+			<Monitor class="size-3.5 shrink-0 text-muted-foreground" />
 		{/if}
 	</div>
 </button>

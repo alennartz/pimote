@@ -152,6 +152,7 @@ describe('PushNotificationService', () => {
       await service.initialize();
 
       const payload: SessionIdlePayload = {
+        folderPath: '/home/user/project',
         projectName: 'my-project',
         firstMessage: 'Hello world',
         sessionId: 'session-123',
@@ -169,6 +170,7 @@ describe('PushNotificationService', () => {
       await service.initialize();
 
       const payload: SessionIdlePayload = {
+        folderPath: '/home/user/project',
         projectName: 'my-project',
         firstMessage: undefined,
         sessionId: 'session-456',
@@ -195,6 +197,7 @@ describe('PushNotificationService', () => {
       await service.initialize();
 
       const payload: SessionIdlePayload = {
+        folderPath: '/home/user/project',
         projectName: 'test',
         firstMessage: 'hi',
         sessionId: 'session-789',
@@ -230,6 +233,7 @@ describe('PushNotificationService', () => {
       await service.initialize();
 
       const payload: SessionIdlePayload = {
+        folderPath: '/home/user/project',
         projectName: 'test',
         firstMessage: 'hello',
         sessionId: 'session-err',
@@ -248,6 +252,7 @@ describe('PushNotificationService', () => {
       await service.initialize();
 
       const payload: SessionIdlePayload = {
+        folderPath: '/home/user/project',
         projectName: 'pimote',
         firstMessage: 'Fix the bug',
         sessionId: 'session-abc',

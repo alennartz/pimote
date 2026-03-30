@@ -46,7 +46,19 @@ async function serveStatic(
       const ext = extname(filePath);
       const mime = MIME_TYPES[ext] || 'application/octet-stream';
       const content = await readFile(filePath);
-      res.writeHead(200, { 'Content-Type': mime });
+      const headers: Record<string, string> = { 'Content-Type': mime };
+
+      // HTML, SW, and manifest must not be cached by CDN/proxies.
+      // Immutable hashed assets (_app/immutable/) are safe to cache.
+      if (urlPath === '/sw.js' || urlPath === '/manifest.json' || ext === '.html') {
+        headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+        headers['CDN-Cache-Control'] = 'no-store';
+        headers['Cloudflare-CDN-Cache-Control'] = 'no-store';
+      } else if (urlPath.startsWith('/_app/immutable/')) {
+        headers['Cache-Control'] = 'public, max-age=31536000, immutable';
+      }
+
+      res.writeHead(200, headers);
       res.end(content);
       return true;
     }

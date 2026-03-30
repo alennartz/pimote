@@ -161,7 +161,6 @@ describe('FolderIndex.listSessions()', () => {
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toEqual({
-      path: '/tmp/session-1.jsonl',
       id: 'abc-123',
       name: 'Test Session',
       created: '2025-06-15T10:30:00.000Z',

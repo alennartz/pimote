@@ -1,6 +1,6 @@
 <script lang="ts">
 	import './layout.css';
-	import favicon from '$lib/assets/favicon.svg';
+
 	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 	import FolderList from '$lib/components/FolderList.svelte';
 	import ExtensionDialog from '$lib/components/ExtensionDialog.svelte';
@@ -18,6 +18,15 @@
 	onMount(() => {
 		connection.connect();
 
+		// Handle ?sessionId=xxx&folderPath=xxx from notification click (app was closed)
+		const urlParams = new URLSearchParams(window.location.search);
+		const notificationSessionId = urlParams.get('sessionId');
+		const notificationFolderPath = urlParams.get('folderPath');
+		if (notificationSessionId && notificationFolderPath) {
+			window.history.replaceState({}, '', window.location.pathname);
+			connection.pendingAdopt = { sessionId: notificationSessionId, folderPath: notificationFolderPath };
+		}
+
 		// Register service worker for push notifications and PWA
 		if ('serviceWorker' in navigator) {
 			navigator.serviceWorker
@@ -25,14 +34,32 @@
 				.then((reg) => console.log('[pimote] Service worker registered:', reg))
 				.catch((err) => console.warn('[pimote] Service worker registration failed:', err));
 
-			// Handle in-app push messages from service worker
-			navigator.serviceWorker.addEventListener('message', (event) => {
+			// Handle messages from service worker
+			navigator.serviceWorker.addEventListener('message', async (event) => {
 				if (event.data?.type === 'push_notification') {
 					const sid = event.data.sessionId;
 					if (sid) {
 						const session = sessionRegistry.sessions[sid];
 						if (session) {
 							session.needsAttention = true;
+						}
+					}
+				} else if (event.data?.type === 'notification_click') {
+					const sid = event.data.sessionId;
+					const fp = event.data.folderPath;
+					if (sid) {
+						const { switchToSession, sessionRegistry: reg } = await import('$lib/stores/session-registry.svelte.js');
+						if (reg.sessions[sid]) {
+							// Already open — just switch to it
+							switchToSession(sid);
+						} else if (fp) {
+							// Not open — adopt via open_session
+							connection.send({
+								type: 'open_session',
+								folderPath: fp,
+								sessionId: sid,
+								force: true,
+							}).catch(() => {});
 						}
 					}
 				}
@@ -46,8 +73,6 @@
 		sidebarOpen = false;
 	}
 </script>
-
-<svelte:head><link rel="icon" href={favicon} /></svelte:head>
 
 <div class="flex h-dvh overflow-hidden bg-background">
 	<!-- Mobile overlay -->
@@ -91,7 +116,7 @@
 
 		<!-- Sidebar content -->
 		<ScrollArea class="flex-1">
-			<FolderList />
+			<FolderList onSessionSelect={closeSidebar} />
 		</ScrollArea>
 	</aside>
 
@@ -109,7 +134,7 @@
 		</header>
 
 		<!-- Page content -->
-		<main class="flex-1 overflow-auto">
+		<main class="flex flex-1 flex-col overflow-hidden">
 			{@render children()}
 		</main>
 

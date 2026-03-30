@@ -13,7 +13,6 @@ export interface PerSessionState {
   sessionId: string;
   folderPath: string;
   projectName: string;
-  sessionFilePath: string | undefined;
   firstMessage: string | undefined;
   messages: PimoteAgentMessage[];
   isStreaming: boolean;
@@ -184,13 +183,12 @@ export class SessionRegistry {
     }
   }
 
-  /** Add a session to the registry */
-  addSession(sessionId: string, folderPath: string, projectName: string, sessionFilePath?: string): void {
+  /** Add a session to the registry. If it already exists (e.g. takeover placeholder), resets it. */
+  addSession(sessionId: string, folderPath: string, projectName: string): void {
     const session: PerSessionState = {
       sessionId,
       folderPath,
       projectName,
-      sessionFilePath,
       firstMessage: undefined,
       messages: [],
       isStreaming: false,
@@ -235,9 +233,9 @@ export class SessionRegistry {
     }
   }
 
-  /** Check if a given session file path is currently active */
-  isActiveSessionPath(filePath: string): boolean {
-    return Object.values(this.sessions).some((s) => s.sessionFilePath === filePath);
+  /** Check if a session ID is currently active */
+  isActiveSession(sessionId: string): boolean {
+    return sessionId in this.sessions;
   }
 
   /** Update session meta (git branch, context usage) */
@@ -268,8 +266,7 @@ connection.onEvent((event) => {
     case 'session_opened': {
       const folder = (event as any).folder;
       const projectName = folder?.name ?? 'Unknown';
-      const sessionFilePath = (event as any).sessionFilePath as string | undefined;
-      sessionRegistry.addSession(event.sessionId, folder?.path ?? '', projectName, sessionFilePath);
+      sessionRegistry.addSession(event.sessionId, folder?.path ?? '', projectName);
       connection.addSubscribedSession(event.sessionId);
       sessionRegistry.switchTo(event.sessionId);
       // Request initial state, messages, and meta atomically to avoid race conditions
@@ -325,6 +322,20 @@ connection.onSessionOwned = (sessionId) => {
   }
 };
 
+// When a session is adopted via notification click, add it to the registry and switch to it
+connection.onSessionAdopted = (sessionId, folderPath) => {
+  const projectName = folderPath.split('/').pop() || 'Unknown';
+  sessionRegistry.addSession(sessionId, folderPath, projectName);
+  sessionRegistry.switchTo(sessionId);
+  connection.send({ type: 'view_session', sessionId }).catch(() => {});
+  // Request meta for git branch and context usage
+  connection.send({ type: 'get_session_meta', sessionId }).then((metaRes) => {
+    if (metaRes.success && metaRes.data) {
+      sessionRegistry.updateMeta(sessionId, (metaRes.data as any).meta);
+    }
+  }).catch(() => {});
+};
+
 // After reconnect completes, restore the correct viewed session on the server
 connection.onReconnected = () => {
   const viewedId = sessionRegistry.viewedSessionId;
@@ -333,13 +344,17 @@ connection.onReconnected = () => {
   }
 };
 
-/** Confirm takeover — retry reconnect with force:true */
+/** Confirm takeover — resend open_session with force:true */
 export function confirmTakeover(sessionId: string): void {
   const session = sessionRegistry.sessions[sessionId];
-  if (session) {
-    session.pendingTakeover = false;
-  }
-  connection.forceReconnect(sessionId).then((response) => {
+  if (!session) return;
+  session.pendingTakeover = false;
+  connection.send({
+    type: 'open_session',
+    folderPath: session.folderPath,
+    sessionId,
+    force: true,
+  }).then((response) => {
     if (!response.success) {
       // Force also failed — give up
       sessionRegistry.removeSession(sessionId);

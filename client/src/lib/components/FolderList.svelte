@@ -8,6 +8,12 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import Loader2 from '@lucide/svelte/icons/loader-2';
 
+	interface Props {
+		onSessionSelect?: () => void;
+	}
+
+	let { onSessionSelect }: Props = $props();
+
 	let expandedFolders = $state(new Set<string>());
 	let expandedSessionLists = $state(new Set<string>());
 
@@ -28,6 +34,10 @@
 				event.type === 'agent_end'
 			) {
 				indexStore.loadFolders();
+				// Reload sessions for any currently expanded folders
+				for (const path of expandedFolders) {
+					indexStore.loadSessions(path);
+				}
 			}
 		});
 
@@ -65,6 +75,7 @@
 
 	async function newSession(folderPath: string) {
 		try {
+			onSessionSelect?.();
 			await connection.send({
 				type: 'open_session',
 				folderPath,
@@ -134,7 +145,7 @@
 							{@const hiddenCount = Math.max(0, sessions.length - MAX_SESSIONS_SHOWN)}
 
 							{#each visibleSessions as session (session.id)}
-								<SessionItem {session} folderPath={folder.path} />
+								<SessionItem {session} folderPath={folder.path} {onSessionSelect} />
 							{/each}
 
 							{#if hiddenCount > 0 && !showAll}

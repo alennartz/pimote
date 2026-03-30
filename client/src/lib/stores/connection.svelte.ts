@@ -29,6 +29,12 @@ class ConnectionStore {
   /** Called when a reconnect is rejected with session_owned (another client owns it). */
   onSessionOwned: ((sessionId: string) => void) | null = null;
 
+  /** Called when a session is adopted via notification click (includes folderPath from server). */
+  onSessionAdopted: ((sessionId: string, folderPath: string) => void) | null = null;
+
+  /** Session to adopt after next successful connection (set from notification URL param or click). */
+  pendingAdopt: { sessionId: string; folderPath: string } | null = null;
+
   connect(): void {
     if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
       return;
@@ -73,7 +79,26 @@ class ConnectionStore {
       // Import is circular so we use the onReconnected callback instead.
       Promise.all(reconnectPromises).then(() => {
         this.onReconnected?.();
+
+        // Adopt session from notification click if pending
+        if (this.pendingAdopt) {
+          const { sessionId: sid, folderPath } = this.pendingAdopt;
+          this.pendingAdopt = null;
+          this.send({
+            type: 'open_session',
+            folderPath,
+            sessionId: sid,
+            force: true,
+          }).then((response) => {
+            if (response.success) {
+              this.onSessionAdopted?.(sid, folderPath);
+            }
+          }).catch(() => {});
+        }
       });
+
+      // Re-register push subscription on every connect
+      this.reregisterPushSubscription();
     };
 
     this.ws.onmessage = (ev) => {
@@ -155,15 +180,6 @@ class ConnectionStore {
     this.sessionCursors.delete(id);
   }
 
-  forceReconnect(sessionId: string): Promise<PimoteResponse> {
-    return this.send({
-      type: 'reconnect',
-      sessionId,
-      lastCursor: this.sessionCursors.get(sessionId) ?? 0,
-      force: true,
-    });
-  }
-
   send(command: PimoteCommand): Promise<PimoteResponse> {
     const id = command.id ?? `cmd-${nextId++}`;
     const withId = { ...command, id };
@@ -183,6 +199,30 @@ class ConnectionStore {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  private async reregisterPushSubscription(): Promise<void> {
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+      if (Notification.permission !== 'granted') return;
+      const reg = await navigator.serviceWorker.ready;
+      const subscription = await reg.pushManager.getSubscription();
+      if (!subscription) return;
+      const sub = subscription.toJSON();
+      if (!sub.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) return;
+      await this.send({
+        type: 'register_push',
+        subscription: {
+          endpoint: sub.endpoint,
+          keys: {
+            p256dh: sub.keys.p256dh,
+            auth: sub.keys.auth,
+          },
+        },
+      });
+    } catch {
+      // Best-effort — don't break connection flow
+    }
   }
 
   private scheduleReconnect(): void {

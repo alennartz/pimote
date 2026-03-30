@@ -35,14 +35,12 @@ function createMockManagedSession(overrides: Partial<ManagedSession> = {}): Mana
       modelRegistry: { getAvailable: () => [] },
     } as any,
     folderPath: overrides.folderPath ?? '/home/user/project',
-    sessionFilePath: undefined,
     eventBuffer: overrides.eventBuffer ?? createMockEventBuffer(),
     connectedClientId: overrides.connectedClientId ?? null,
     lastActivity: overrides.lastActivity ?? Date.now(),
     status: overrides.status ?? 'idle',
     needsAttention: overrides.needsAttention ?? false,
     sendLive: overrides.sendLive ?? (() => {}),
-    onStatusChange: overrides.onStatusChange ?? null,
     unsubscribe: overrides.unsubscribe ?? (() => {}),
     ...overrides,
   };
@@ -334,8 +332,8 @@ describe('WsHandler', () => {
     });
   });
 
-  describe('reconnect — different client ID, old client still connected, force: true', () => {
-    it('rebinds ownership to new client', async () => {
+  describe('reconnect — different client ID, old client still connected, force: true (legacy)', () => {
+    it('rejects with session_owned even with force (force removed from reconnect)', async () => {
       const session = createMockManagedSession({
         id: 'session-1',
         connectedClientId: 'old-client',
@@ -345,10 +343,7 @@ describe('WsHandler', () => {
       const sessions = new Map([['session-1', session]]);
       const clientRegistry: ClientRegistry = new Map();
 
-      // Create old client handler (in registry)
       const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
-
-      // Create new client handler
       const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
 
       await newCtx.handler.handleMessage(JSON.stringify({
@@ -361,65 +356,106 @@ describe('WsHandler', () => {
 
       const resp = findResponse(newCtx.sent, 'req-8');
       expect(resp).toBeDefined();
-      expect(resp!.success).toBe(true);
-      expect(session.connectedClientId).toBe('new-client');
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toBe('session_owned');
+      // Ownership unchanged
+      expect(session.connectedClientId).toBe('old-client');
     });
+  });
 
-    it('sends session_closed with reason displaced to old client', async () => {
+  describe('open_session — takeover of already-loaded session', () => {
+    it('returns session_owned when session is loaded and owned by another client', async () => {
       const session = createMockManagedSession({
         id: 'session-1',
         connectedClientId: 'old-client',
-        eventBuffer: createMockEventBuffer({ replayResult: [] }),
+        folderPath: '/home/user/project',
       });
 
       const sessions = new Map([['session-1', session]]);
       const clientRegistry: ClientRegistry = new Map();
 
-      // Create old client handler (in registry)
       const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
-
-      // Create new client handler
       const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
 
       await newCtx.handler.handleMessage(JSON.stringify({
-        type: 'reconnect',
+        type: 'open_session',
+        folderPath: '/home/user/project',
         sessionId: 'session-1',
-        lastCursor: 0,
-        force: true,
         id: 'req-9',
       }));
 
-      // Old client should receive session_closed with reason 'displaced'
+      const resp = findResponse(newCtx.sent, 'req-9');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toBe('session_owned');
+      expect(session.connectedClientId).toBe('old-client');
+    });
+
+    it('displaces old client and reclaims session with force: true', async () => {
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'old-client',
+        folderPath: '/home/user/project',
+      });
+
+      const sessions = new Map([['session-1', session]]);
+      const clientRegistry: ClientRegistry = new Map();
+
+      const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
+      const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
+
+      await newCtx.handler.handleMessage(JSON.stringify({
+        type: 'open_session',
+        folderPath: '/home/user/project',
+        sessionId: 'session-1',
+        force: true,
+        id: 'req-10',
+      }));
+
+      // New client gets success + session_opened
+      const resp = findResponse(newCtx.sent, 'req-10');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect(session.connectedClientId).toBe('new-client');
+
+      const openedEvents = findEvents(newCtx.sent, 'session_opened');
+      expect(openedEvents).toHaveLength(1);
+      expect((openedEvents[0] as any).sessionId).toBe('session-1');
+
+      // Old client gets session_closed with displaced
       const oldClosedEvents = findEvents(oldCtx.sent, 'session_closed');
       expect(oldClosedEvents).toHaveLength(1);
       expect((oldClosedEvents[0] as any).sessionId).toBe('session-1');
       expect((oldClosedEvents[0] as any).reason).toBe('displaced');
     });
 
-    it('does not send displaced event to new client', async () => {
+    it('reclaims session already owned by same client without displacement', async () => {
       const session = createMockManagedSession({
         id: 'session-1',
-        connectedClientId: 'old-client',
-        eventBuffer: createMockEventBuffer({ replayResult: [] }),
+        connectedClientId: 'my-client',
+        folderPath: '/home/user/project',
       });
 
       const sessions = new Map([['session-1', session]]);
       const clientRegistry: ClientRegistry = new Map();
 
-      const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
-      const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
+      const ctx = createTestHandler('my-client', { sessions, clientRegistry });
 
-      await newCtx.handler.handleMessage(JSON.stringify({
-        type: 'reconnect',
+      await ctx.handler.handleMessage(JSON.stringify({
+        type: 'open_session',
+        folderPath: '/home/user/project',
         sessionId: 'session-1',
-        lastCursor: 0,
-        force: true,
-        id: 'req-10',
+        id: 'req-11-same',
       }));
 
-      // New client should NOT get session_closed events
-      const newClosedEvents = findEvents(newCtx.sent, 'session_closed');
-      expect(newClosedEvents).toHaveLength(0);
+      const resp = findResponse(ctx.sent, 'req-11-same');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect(session.connectedClientId).toBe('my-client');
+
+      // No displaced events
+      const closedEvents = findEvents(ctx.sent, 'session_closed');
+      expect(closedEvents).toHaveLength(0);
     });
   });
 
@@ -440,9 +476,8 @@ describe('WsHandler', () => {
       let newSessionId = 'new-session';
       (sessionManager as any).openSession = async (
         folderPath: string,
-        sessionPath: string | undefined,
+        sessionFilePath: string | undefined,
         sendLive: any,
-        onStatusChange: any,
       ) => {
         const newSession = createMockManagedSession({
           id: newSessionId,
@@ -717,7 +752,6 @@ describe('WsHandler', () => {
         scan: async () => [],
         listSessions: async (_folderPath: string) => [
           {
-            path: '/home/user/project/.pi/sessions/a.json',
             id: 'file-session-a',
             name: undefined,
             created: '2025-01-01T00:00:00.000Z',
@@ -726,7 +760,6 @@ describe('WsHandler', () => {
             firstMessage: 'Hello',
           },
           {
-            path: '/home/user/project/.pi/sessions/b.json',
             id: 'file-session-b',
             name: undefined,
             created: '2025-01-01T00:00:00.000Z',
@@ -759,8 +792,8 @@ describe('WsHandler', () => {
 
       // Each listed session should have isOwnedByMe and liveStatus fields.
       // The enrichment cross-references file sessions with active managed sessions
-      // by matching session file paths. These file sessions don't match active
-      // sessions (different IDs/paths), so they should report no ownership.
+      // by matching session IDs. These file sessions don't match active
+      // sessions (different IDs), so they should report no ownership.
       for (const s of listedSessions) {
         expect(s).toHaveProperty('isOwnedByMe');
         expect(s).toHaveProperty('liveStatus');
@@ -768,23 +801,21 @@ describe('WsHandler', () => {
     });
 
     it('marks active sessions owned by requesting client with isOwnedByMe=true', async () => {
-      // Active session owned by the requesting client
+      // Active session owned by the requesting client — ID matches listed session
       const mySession = createMockManagedSession({
-        id: 'active-1',
+        id: 'session-a',
         connectedClientId: 'my-client',
         folderPath: '/home/user/project',
         status: 'working',
-        sessionFilePath: '/home/user/project/.pi/sessions/a.json',
-      } as any);
+      });
 
-      const sessions = new Map([['active-1', mySession]]);
+      const sessions = new Map([['session-a', mySession]]);
 
       const folderIndex = {
         scan: async () => [],
         listSessions: async () => [
           {
-            path: '/home/user/project/.pi/sessions/a.json',
-            id: 'a',
+            id: 'session-a',
             name: undefined,
             created: '2025-01-01T00:00:00.000Z',
             modified: '2025-01-02T00:00:00.000Z',
@@ -815,21 +846,19 @@ describe('WsHandler', () => {
 
     it('marks active sessions owned by another client with isOwnedByMe=false', async () => {
       const otherSession = createMockManagedSession({
-        id: 'active-2',
+        id: 'session-b',
         connectedClientId: 'other-client',
         folderPath: '/home/user/project',
         status: 'idle',
-        sessionFilePath: '/home/user/project/.pi/sessions/b.json',
-      } as any);
+      });
 
-      const sessions = new Map([['active-2', otherSession]]);
+      const sessions = new Map([['session-b', otherSession]]);
 
       const folderIndex = {
         scan: async () => [],
         listSessions: async () => [
           {
-            path: '/home/user/project/.pi/sessions/b.json',
-            id: 'b',
+            id: 'session-b',
             name: undefined,
             created: '2025-01-01T00:00:00.000Z',
             modified: '2025-01-02T00:00:00.000Z',
@@ -866,7 +895,6 @@ describe('WsHandler', () => {
         scan: async () => [],
         listSessions: async () => [
           {
-            path: '/home/user/project/.pi/sessions/c.json',
             id: 'c',
             name: undefined,
             created: '2025-01-01T00:00:00.000Z',
