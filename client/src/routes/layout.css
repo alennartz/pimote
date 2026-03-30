@@ -130,15 +130,19 @@
 	* {
 		@apply border-border outline-ring/50;
 	}
+	html {
+		@apply font-sans;
+		height: 100%;
+		overflow: hidden;
+		color-scheme: dark;
+	}
 	body {
 		@apply bg-background text-foreground;
+		height: 100%;
+		overflow: hidden;
 		-webkit-font-smoothing: antialiased;
 		-moz-osx-font-smoothing: grayscale;
 		overscroll-behavior: none;
-	}
-	html {
-		@apply font-sans;
-		color-scheme: dark;
 	}
 }
 
