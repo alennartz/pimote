@@ -23,14 +23,14 @@
 
   let lastSeq = 0;
   $effect(() => {
-    const { text, seq } = editorTextRequest;
+    const { sessionId, text, seq } = editorTextRequest;
     if (seq !== lastSeq) {
       lastSeq = seq;
-      inputText = text;
-      if (sessionRegistry.viewed) {
-        sessionRegistry.viewed.draftText = text;
+      // Only update the live textarea if the request targets the currently viewed session
+      if (sessionId === sessionRegistry.viewedSessionId) {
+        inputText = text;
+        autoResize();
       }
-      autoResize();
     }
   });
 
@@ -114,6 +114,7 @@
     {#if sessionRegistry.viewed?.isStreaming}
       <button
         class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 mb-1 flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors"
+        onpointerdown={(e) => e.preventDefault()}
         onclick={handleAbort}
         title="Abort"
       >
@@ -144,6 +145,7 @@
         : sessionRegistry.viewed?.isStreaming
           ? 'bg-status-streaming text-primary-foreground hover:bg-status-streaming/80 active:bg-status-streaming/70'
           : 'bg-primary text-primary-foreground hover:bg-primary/80 active:bg-primary/70'}"
+      onpointerdown={(e) => e.preventDefault()}
       onclick={sendMessage}
       disabled={!canSend || !inputText.trim()}
       title={sessionRegistry.viewed?.isStreaming ? 'Steer' : 'Send'}

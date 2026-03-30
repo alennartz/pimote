@@ -1,6 +1,7 @@
-export const editorTextRequest = $state({ text: '', seq: 0 });
+export const editorTextRequest = $state({ sessionId: '', text: '', seq: 0 });
 
-export function setEditorText(text: string) {
+export function setEditorText(sessionId: string, text: string) {
+  editorTextRequest.sessionId = sessionId;
   editorTextRequest.text = text;
   editorTextRequest.seq++;
 }

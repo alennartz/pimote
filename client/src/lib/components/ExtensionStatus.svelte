@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { connection } from '$lib/stores/connection.svelte.js';
+  import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { setEditorText } from '$lib/stores/input-bar.svelte.js';
   import type { ExtensionUiRequestEvent } from '@pimote/shared';
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
@@ -61,7 +62,16 @@
         const type = (req.notifyType as 'info' | 'warning' | 'error') ?? (req.notificationType as 'info' | 'warning' | 'error') ?? 'info';
         addNotification(text, type);
       } else if (req.method === 'setEditorText') {
-        setEditorText((req.text as string) ?? '');
+        const text = (req.text as string) ?? '';
+        const targetSessionId = req.sessionId as string | undefined;
+        if (targetSessionId) {
+          const session = sessionRegistry.sessions[targetSessionId];
+          if (session) {
+            session.draftText = text;
+          }
+          // Fire reactive signal so InputBar updates if this is the viewed session
+          setEditorText(targetSessionId, text);
+        }
       }
     });
     return unsubscribe;
@@ -95,7 +105,7 @@
 
 <!-- Toast notifications -->
 {#if notifications.length > 0}
-  <div class="pointer-events-none fixed right-4 bottom-4 z-50 flex flex-col gap-2">
+  <div class="pointer-events-none fixed top-4 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
     {#each notifications as notif (notif.id)}
       <button
         class="pointer-events-auto flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm shadow-lg transition-opacity
