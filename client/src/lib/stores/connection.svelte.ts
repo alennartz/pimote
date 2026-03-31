@@ -163,8 +163,20 @@ class ConnectionStore {
       // Event
       const event = msg as PimoteEvent;
 
-      // Track per-session cursor
-      if ('cursor' in event && typeof event.cursor === 'number' && 'sessionId' in event && typeof event.sessionId === 'string') {
+      // Track per-session cursor.
+      // For buffered_events envelopes (which have no cursor of their own),
+      // advance to the highest cursor among the sub-events so that a
+      // subsequent reconnect doesn't replay the same events again.
+      if (event.type === 'buffered_events' && 'events' in event && 'sessionId' in event) {
+        const buffered = event as { sessionId: string; events: Array<{ cursor?: number }> };
+        let max = this.sessionCursors.get(buffered.sessionId) ?? 0;
+        for (const sub of buffered.events) {
+          if (typeof sub.cursor === 'number' && sub.cursor > max) {
+            max = sub.cursor;
+          }
+        }
+        this.sessionCursors.set(buffered.sessionId, max);
+      } else if ('cursor' in event && typeof event.cursor === 'number' && 'sessionId' in event && typeof event.sessionId === 'string') {
         this.sessionCursors.set(event.sessionId, event.cursor);
       }
 
