@@ -124,7 +124,7 @@ export class SessionRegistry {
         const update = event as MessageUpdateEvent;
         if (!session.streamingMessage) break;
         if (update.subtype === 'start') {
-          const block: PimoteMessageContent = { type: update.content.type, text: '' };
+          const block: PimoteMessageContent = { type: update.content.type, text: '', streaming: true };
           if (update.content.type === 'tool_call') {
             block.toolCallId = update.toolCallId;
             block.toolName = update.toolName;
@@ -135,8 +135,12 @@ export class SessionRegistry {
           if (block) {
             block.text = (block.text ?? '') + update.content.text;
           }
+        } else if (update.subtype === 'end') {
+          const block = session.streamingMessage.content[update.contentIndex];
+          if (block) {
+            block.streaming = false;
+          }
         }
-        // subtype 'end' is a no-op
         break;
       }
 

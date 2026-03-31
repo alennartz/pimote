@@ -55,6 +55,8 @@ export interface PimoteMessageContent {
   toolName?: string;
   args?: unknown;
   result?: unknown;
+  /** True while this content block is still receiving streaming deltas. Only set on StreamingMessage blocks. */
+  streaming?: boolean;
 }
 
 export interface PimoteAgentMessage {

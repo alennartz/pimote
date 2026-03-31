@@ -72,7 +72,7 @@
     }
   }
 
-  let argsText = $derived(formatData(content.args));
+  let argsText = $derived(streaming && !content.args ? (content.text ?? '') : formatData(content.args));
   let resultText = $derived(isResult ? formatData(content.result) : result !== undefined ? formatData(result) : partialResult);
 </script>
 

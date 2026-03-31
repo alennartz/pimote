@@ -47,15 +47,16 @@
     </div>
     <div class="message-body">
       {#each message.content as block, i (i)}
+        {@const blockStreaming = block.streaming ?? false}
         {#if block.type === 'text'}
-          <TextBlock text={block.text ?? ''} {streaming} />
+          <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
         {:else if block.type === 'thinking'}
-          <ThinkingBlock text={block.text ?? ''} {streaming} />
+          <ThinkingBlock text={block.text ?? ''} streaming={blockStreaming} />
         {:else if block.type === 'tool_call'}
           {@const exec = block.toolCallId ? toolExecs[block.toolCallId] : undefined}
           <ToolCall
-            content={streaming ? { ...block, args: undefined } : block}
-            {streaming}
+            content={block}
+            streaming={blockStreaming}
             inProgress={exec?.status === 'running'}
             partialResult={exec?.partialResult ?? ''}
             result={exec?.status === 'completed' ? exec.result : undefined}
