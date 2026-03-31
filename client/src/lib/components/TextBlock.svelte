@@ -1,14 +1,49 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { renderMarkdown } from '$lib/markdown.js';
   import '$lib/highlight-theme.css';
 
   let { text, streaming = false }: { text: string; streaming?: boolean } = $props();
 
   let renderedHtml = $derived(streaming ? '' : renderMarkdown(text));
+
+  // Debounced streaming markdown state
+  let streamingHtml = $state('');
+  let renderedUpTo = $state(0);
+
+  $effect(() => {
+    if (!streaming) {
+      // Reset streaming state when not streaming
+      streamingHtml = '';
+      renderedUpTo = 0;
+      return;
+    }
+
+    // Immediate first render without tracking `text` (avoid re-running effect on every text change)
+    untrack(() => {
+      streamingHtml = renderMarkdown(text);
+      renderedUpTo = text.length;
+    });
+
+    const interval = setInterval(() => {
+      streamingHtml = renderMarkdown(text);
+      renderedUpTo = text.length;
+    }, 150);
+
+    return () => {
+      clearInterval(interval);
+    };
+  });
 </script>
 
 {#if streaming}
-  <div class="text-block streaming-text">{text}</div>
+  <div class="text-block markdown-content">
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+    {@html streamingHtml}
+  </div>
+  {#if text.length > renderedUpTo}
+    <pre class="text-block streaming-tail">{text.slice(renderedUpTo)}</pre>
+  {/if}
 {:else}
   <div class="text-block markdown-content">
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
@@ -23,9 +58,11 @@
     overflow-wrap: break-word;
   }
 
-  .streaming-text {
+  .streaming-tail {
     white-space: pre-wrap;
     font-family: inherit;
+    margin: 0;
+    padding: 0;
   }
 
   /* Markdown content styles */

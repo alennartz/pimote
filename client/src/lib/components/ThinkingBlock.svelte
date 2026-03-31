@@ -4,8 +4,25 @@
 
   let { text, streaming = false }: { text: string; streaming?: boolean } = $props();
 
-  // Expanded when streaming, collapsed when finalized
-  let expanded = $derived(streaming);
+  // $state instead of $derived so manual toggle during streaming isn't snapped back
+  let expanded = $state(false);
+
+  // Auto-expand when streaming starts, auto-collapse when it ends
+  $effect(() => {
+    if (streaming) {
+      expanded = true;
+    } else {
+      expanded = false;
+    }
+  });
+
+  // Auto-scroll content to bottom during streaming
+  let contentEl: HTMLDivElement | undefined = $state();
+  $effect(() => {
+    if (streaming && text && contentEl) {
+      contentEl.scrollTop = contentEl.scrollHeight;
+    }
+  });
 
   let previewWords = $derived.by(() => {
     if (!text) return '';
@@ -41,7 +58,7 @@
   </button>
 
   {#if expanded}
-    <div class="thinking-content">
+    <div class="thinking-content" bind:this={contentEl}>
       <pre class="thinking-text">{text}</pre>
     </div>
   {/if}
