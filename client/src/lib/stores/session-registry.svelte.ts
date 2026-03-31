@@ -58,6 +58,11 @@ export class SessionRegistry {
   viewedSessionId: string | null = $state(null);
   private _nextMessageKey: number = 0;
 
+  /** Generate stable keys for a batch of messages (used on initial load and resync) */
+  generateMessageKeys(count: number): string[] {
+    return Array.from({ length: count }, () => 'msg-' + this._nextMessageKey++);
+  }
+
   /** Get the currently viewed session's state */
   get viewed(): PerSessionState | null {
     return this.sessions[this.viewedSessionId!] ?? null;
@@ -231,7 +236,7 @@ export class SessionRegistry {
         session.status = state.isStreaming ? 'working' : 'idle';
         session.streamingMessage = null;
         session.streamingKey = null;
-        session.messageKeys = messages.map(() => 'msg-' + this._nextMessageKey++);
+        session.messageKeys = this.generateMessageKeys(messages.length);
         session.toolExecutions = {};
         this.rebuildToolExecutions(session);
         break;
@@ -390,6 +395,7 @@ connection.onEvent((event) => {
           if (msgRes.success && msgRes.data) {
             const messages = (msgRes.data as { messages: PimoteAgentMessage[] }).messages;
             session.messages = messages;
+            session.messageKeys = sessionRegistry.generateMessageKeys(messages.length);
             session.messageCount = messages.length;
             sessionRegistry.rebuildToolExecutions(session);
           }

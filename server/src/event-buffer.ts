@@ -62,12 +62,6 @@ export class EventBuffer {
   private count = 0;
   private _cursor = 0;
 
-  // Accumulator state for coalescing streaming deltas
-  // message_update: per-contentIndex accumulation
-  private messageAccumulator: Map<number, { type: string; text: string }> = new Map();
-  // tool_execution_update: keyed by toolCallId
-  private toolAccumulator: Map<string, string> = new Map();
-
   constructor(private readonly capacity: number) {
     this.buffer = new Array(capacity);
   }
@@ -277,53 +271,13 @@ export class EventBuffer {
 
   private coalesceAndBuffer(event: PimoteSessionEvent): void {
     switch (event.type) {
-      case 'message_start':
-        // Buffer directly and clear per-contentIndex accumulators
-        this.pushToBuffer(event);
-        this.messageAccumulator.clear();
-        break;
-
       case 'message_update':
-        // Accumulate per contentIndex but don't buffer individual deltas
-        {
-          const idx = event.contentIndex;
-          const existing = this.messageAccumulator.get(idx);
-          if (existing) {
-            existing.text += event.content.text;
-          } else {
-            this.messageAccumulator.set(idx, { type: event.content.type, text: event.content.text });
-          }
-        }
-        break;
-
-      case 'message_end':
-        // Buffer directly, clear accumulators
-        this.pushToBuffer(event);
-        this.messageAccumulator.clear();
-        break;
-
-      case 'tool_execution_start':
-        // Buffer directly and initialize accumulator
-        this.pushToBuffer(event);
-        this.toolAccumulator.set(event.toolCallId, '');
-        break;
-
       case 'tool_execution_update':
-        // Accumulate but don't buffer individual deltas
-        {
-          const existing = this.toolAccumulator.get(event.toolCallId) ?? '';
-          this.toolAccumulator.set(event.toolCallId, existing + event.content);
-        }
-        break;
-
-      case 'tool_execution_end':
-        // Buffer directly, clear accumulator
-        this.pushToBuffer(event);
-        this.toolAccumulator.delete(event.toolCallId);
+        // Streaming deltas are forwarded live but not stored in the replay buffer.
+        // Only start/end bookends are buffered — reconnect replays the finalized state.
         break;
 
       default:
-        // All other events: buffer directly
         this.pushToBuffer(event);
         break;
     }
