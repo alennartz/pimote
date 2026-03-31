@@ -444,7 +444,7 @@ The InputBar sends `prompt` when idle and `steer` when streaming. There is no se
 - **[S]** Observe MessageList
 - **[E]** Text appears incrementally as `message_update` events arrive with `contentIndex` and `subtype` fields
 - **[E]** Text accumulates in ordered content blocks within `streamingMessage` (indexed by `contentIndex`)
-- **[E]** Markdown rendering is debounced during streaming (not re-rendered on every delta)
+- **[E]** Markdown is rendered incrementally via streaming-markdown (smd) — each delta appends DOM nodes without re-parsing
 
 ### TC-07.02 — Thinking block streaming 🟠
 
@@ -1273,7 +1273,7 @@ The InputBar sends `prompt` when idle and `steer` when streaming. There is no se
 
 9. **Textarea auto-resize cap**: The InputBar textarea caps at 200px height (~8 lines). Very long pasted content will require scrolling within the textarea. This is intentional but should be verified on mobile where screen real estate is limited.
 
-10. **Markdown XSS protection**: The markdown renderer uses DOMPurify to sanitize output. Verify that malicious markdown (e.g., `<img onerror=...>`, `<script>` tags) is properly sanitized in rendered assistant messages.
+10. **Markdown XSS protection**: The markdown renderer (streaming-markdown / smd) builds DOM via createElement/createTextNode (no innerHTML), with URL sanitization in the custom renderer's `set_attr` hook to block `javascript:` and other dangerous URI schemes. Verify that malicious markdown (e.g., `[click](javascript:alert(1))`, `<img onerror=...>`) is properly handled in rendered assistant messages.
 
 11. **Session displacement race conditions**: The displacement flow (reconnect → `session_owned` → force reconnect → displaced event) involves multiple round trips. If both clients attempt force reconnects simultaneously, the last one wins. The `pendingTakeover` state is client-local, so server restarts between the initial reject and the force retry will silently succeed (session no longer owned).
 
