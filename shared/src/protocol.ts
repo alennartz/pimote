@@ -329,7 +329,24 @@ export interface MessageStartEvent extends SessionEventBase {
 
 export interface MessageUpdateEvent extends SessionEventBase {
   type: 'message_update';
-  content: { type: 'text' | 'thinking'; text: string };
+  contentIndex: number;
+  subtype: 'start' | 'delta' | 'end';
+  content: { type: 'text' | 'thinking' | 'tool_call'; text: string };
+  /** Present only on tool_call start */
+  toolCallId?: string;
+  /** Present only on tool_call start */
+  toolName?: string;
+}
+
+/**
+ * Shape shared by both streaming (in-progress) and finalized messages.
+ * The streaming message uses this during accumulation; on message_end
+ * the finalized PimoteAgentMessage replaces it.
+ */
+export interface StreamingMessage {
+  role: string;
+  content: PimoteMessageContent[];
+  customType?: string;
 }
 
 export interface MessageEndEvent extends SessionEventBase {

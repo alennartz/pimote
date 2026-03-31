@@ -22,9 +22,9 @@ describe('EventBuffer', () => {
         makeSdkEvent('agent_start'),
         makeSdkEvent('turn_start'),
         makeSdkEvent('message_start', { role: 'assistant' }),
-        makeSdkEvent('message_update', { content: { type: 'text', text: 'Hello ' } }),
-        makeSdkEvent('message_update', { content: { type: 'text', text: 'world' } }),
-        makeSdkEvent('message_update', { content: { type: 'text', text: '!' } }),
+        makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'Hello ', contentIndex: 0 } }),
+        makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'world', contentIndex: 0 } }),
+        makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: '!', contentIndex: 0 } }),
         makeSdkEvent('message_end', {
           message: { role: 'assistant', content: [{ type: 'text', text: 'Hello world!' }] },
         }),
@@ -33,8 +33,8 @@ describe('EventBuffer', () => {
           toolCallId: 'tc-1',
           args: { path: '/foo' },
         }),
-        makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', content: 'line 1\n' }),
-        makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', content: 'line 2\n' }),
+        makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', partialResult: 'line 1\n' }),
+        makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', partialResult: 'line 2\n' }),
         makeSdkEvent('tool_execution_end', { toolCallId: 'tc-1', result: 'done' }),
         makeSdkEvent('turn_end'),
         makeSdkEvent('agent_end'),
@@ -93,7 +93,7 @@ describe('EventBuffer', () => {
 
       // message_update also increments cursor (it's forwarded live, just not buffered)
       buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
-      buffer.onEvent(makeSdkEvent('message_update', { content: { type: 'text', text: 'hi' } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'hi', contentIndex: 0 } }), SESSION_ID, sendLive);
       expect(buffer.currentCursor).toBe(4);
     });
   });
@@ -228,8 +228,8 @@ describe('EventBuffer', () => {
       const sendLive = vi.fn();
 
       buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
-      buffer.onEvent(makeSdkEvent('message_update', { content: { type: 'thinking', text: 'Let me think...' } }), SESSION_ID, sendLive);
-      buffer.onEvent(makeSdkEvent('message_update', { content: { type: 'text', text: 'The answer is 42' } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_delta', delta: 'Let me think...', contentIndex: 0 } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'The answer is 42', contentIndex: 1 } }), SESSION_ID, sendLive);
       buffer.onEvent(
         makeSdkEvent('message_end', {
           message: { role: 'assistant', content: [{ type: 'text', text: 'The answer is 42' }] },
@@ -251,9 +251,9 @@ describe('EventBuffer', () => {
       const sendLive = vi.fn();
 
       buffer.onEvent(makeSdkEvent('tool_execution_start', { toolName: 'bash', toolCallId: 'tc-1', args: { cmd: 'ls' } }), SESSION_ID, sendLive);
-      buffer.onEvent(makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', content: 'file1\n' }), SESSION_ID, sendLive);
-      buffer.onEvent(makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', content: 'file2\n' }), SESSION_ID, sendLive);
-      buffer.onEvent(makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', content: 'file3\n' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', partialResult: 'file1\n' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', partialResult: 'file2\n' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', partialResult: 'file3\n' }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('tool_execution_end', { toolCallId: 'tc-1', result: 'file1\nfile2\nfile3\n' }), SESSION_ID, sendLive);
 
       expect(sendLive).toHaveBeenCalledTimes(5);
@@ -325,7 +325,7 @@ describe('EventBuffer', () => {
       });
     });
 
-    it('maps message events with correct content', () => {
+    it('maps text_delta with contentIndex and subtype', () => {
       const buffer = new EventBuffer(10);
       const liveEvents: PimoteSessionEvent[] = [];
       const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
@@ -333,8 +333,137 @@ describe('EventBuffer', () => {
       buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
       expect((liveEvents[0] as any).role).toBe('assistant');
 
-      buffer.onEvent(makeSdkEvent('message_update', { content: { type: 'text', text: 'hi' } }), SESSION_ID, sendLive);
-      expect((liveEvents[1] as any).content).toEqual({ type: 'text', text: 'hi' });
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'hi', contentIndex: 0 } }), SESSION_ID, sendLive);
+      const update = liveEvents[1] as any;
+      expect(update.content).toEqual({ type: 'text', text: 'hi' });
+      expect(update.contentIndex).toBe(0);
+      expect(update.subtype).toBe('delta');
+    });
+
+    it('maps thinking_delta with contentIndex and subtype', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_delta', delta: 'Let me reason...', contentIndex: 0 } }), SESSION_ID, sendLive);
+      const update = liveEvents[1] as any;
+      expect(update.content).toEqual({ type: 'thinking', text: 'Let me reason...' });
+      expect(update.contentIndex).toBe(0);
+      expect(update.subtype).toBe('delta');
+    });
+
+    it('maps tool_execution_update with partialResult', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(makeSdkEvent('tool_execution_update', { toolCallId: 'tc-1', partialResult: 'output line\n' }), SESSION_ID, sendLive);
+      expect((liveEvents[0] as any).content).toBe('output line\n');
+    });
+
+    it('maps text_start with subtype start', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_start', contentIndex: 0 } }), SESSION_ID, sendLive);
+      const update = liveEvents[0] as any;
+      expect(update.subtype).toBe('start');
+      expect(update.content).toEqual({ type: 'text', text: '' });
+      expect(update.contentIndex).toBe(0);
+    });
+
+    it('maps text_end with subtype end', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_end', contentIndex: 0 } }), SESSION_ID, sendLive);
+      const update = liveEvents[0] as any;
+      expect(update.subtype).toBe('end');
+      expect(update.content).toEqual({ type: 'text', text: '' });
+    });
+
+    it('maps thinking_start and thinking_end with correct subtypes', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 } }), SESSION_ID, sendLive);
+      expect((liveEvents[0] as any).subtype).toBe('start');
+      expect((liveEvents[0] as any).content).toEqual({ type: 'thinking', text: '' });
+
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_end', contentIndex: 0 } }), SESSION_ID, sendLive);
+      expect((liveEvents[1] as any).subtype).toBe('end');
+      expect((liveEvents[1] as any).content).toEqual({ type: 'thinking', text: '' });
+    });
+
+    it('maps toolcall_start with tool metadata from partial message', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(
+        makeSdkEvent('message_update', {
+          assistantMessageEvent: {
+            type: 'toolcall_start',
+            contentIndex: 1,
+            partial: {
+              content: [{ type: 'text' }, { type: 'toolCall', id: 'tc-42', name: 'bash' }],
+            },
+          },
+        }),
+        SESSION_ID,
+        sendLive,
+      );
+
+      const update = liveEvents[0] as any;
+      expect(update.subtype).toBe('start');
+      expect(update.contentIndex).toBe(1);
+      expect(update.content).toEqual({ type: 'tool_call', text: '' });
+      expect(update.toolCallId).toBe('tc-42');
+      expect(update.toolName).toBe('bash');
+    });
+
+    it('maps toolcall_delta with tool_call content type', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(
+        makeSdkEvent('message_update', {
+          assistantMessageEvent: { type: 'toolcall_delta', delta: '{"command":', contentIndex: 1 },
+        }),
+        SESSION_ID,
+        sendLive,
+      );
+
+      const update = liveEvents[0] as any;
+      expect(update.subtype).toBe('delta');
+      expect(update.contentIndex).toBe(1);
+      expect(update.content).toEqual({ type: 'tool_call', text: '{"command":' });
+      expect(update.toolCallId).toBeUndefined();
+      expect(update.toolName).toBeUndefined();
+    });
+
+    it('maps toolcall_end with tool_call content type', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(
+        makeSdkEvent('message_update', {
+          assistantMessageEvent: { type: 'toolcall_end', contentIndex: 1 },
+        }),
+        SESSION_ID,
+        sendLive,
+      );
+
+      const update = liveEvents[0] as any;
+      expect(update.subtype).toBe('end');
+      expect(update.contentIndex).toBe(1);
+      expect(update.content).toEqual({ type: 'tool_call', text: '' });
     });
   });
 
@@ -351,17 +480,167 @@ describe('EventBuffer', () => {
 
       // First message
       buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
-      buffer.onEvent(makeSdkEvent('message_update', { content: { type: 'text', text: 'a' } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'a', contentIndex: 0 } }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_end', { message: { role: 'assistant', content: [{ type: 'text', text: 'a' }] } }), SESSION_ID, sendLive);
 
       // Second message
       buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
-      buffer.onEvent(makeSdkEvent('message_update', { content: { type: 'text', text: 'b' } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'b', contentIndex: 0 } }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_end', { message: { role: 'assistant', content: [{ type: 'text', text: 'b' }] } }), SESSION_ID, sendLive);
 
       const replayed = buffer.replay(0);
       const types = replayed!.map((e) => e.type);
       expect(types).toEqual(['message_start', 'message_end', 'message_start', 'message_end']);
+    });
+  });
+
+  describe('interleaved content blocks', () => {
+    it('forwards interleaved thinking, text, and tool_call blocks with correct contentIndex', () => {
+      const buffer = new EventBuffer(100);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      // Simulate: thinking (index 0) → text (index 1) → tool_call (index 2)
+      buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
+
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_delta', delta: 'Hmm...', contentIndex: 0 } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_end', contentIndex: 0 } }), SESSION_ID, sendLive);
+
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_start', contentIndex: 1 } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'Let me read that file.', contentIndex: 1 } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_end', contentIndex: 1 } }), SESSION_ID, sendLive);
+
+      buffer.onEvent(
+        makeSdkEvent('message_update', {
+          assistantMessageEvent: {
+            type: 'toolcall_start',
+            contentIndex: 2,
+            partial: { content: [{ type: 'thinking' }, { type: 'text' }, { type: 'toolCall', id: 'tc-1', name: 'read' }] },
+          },
+        }),
+        SESSION_ID,
+        sendLive,
+      );
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'toolcall_delta', delta: '{"path":"/foo"}', contentIndex: 2 } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'toolcall_end', contentIndex: 2 } }), SESSION_ID, sendLive);
+
+      buffer.onEvent(
+        makeSdkEvent('message_end', {
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', text: 'Hmm...' },
+              { type: 'text', text: 'Let me read that file.' },
+              { type: 'tool_call', toolCallId: 'tc-1', toolName: 'read', args: { path: '/foo' } },
+            ],
+          },
+        }),
+        SESSION_ID,
+        sendLive,
+      );
+
+      // 1 message_start + 9 message_update + 1 message_end = 11
+      expect(liveEvents).toHaveLength(11);
+
+      // Verify contentIndex is correct on each update
+      const updates = liveEvents.filter((e) => e.type === 'message_update') as any[];
+      expect(updates).toHaveLength(9);
+
+      // Thinking block at index 0
+      expect(updates[0].contentIndex).toBe(0);
+      expect(updates[0].content.type).toBe('thinking');
+      expect(updates[0].subtype).toBe('start');
+
+      expect(updates[1].contentIndex).toBe(0);
+      expect(updates[1].content.type).toBe('thinking');
+      expect(updates[1].subtype).toBe('delta');
+      expect(updates[1].content.text).toBe('Hmm...');
+
+      expect(updates[2].contentIndex).toBe(0);
+      expect(updates[2].subtype).toBe('end');
+
+      // Text block at index 1
+      expect(updates[3].contentIndex).toBe(1);
+      expect(updates[3].content.type).toBe('text');
+      expect(updates[3].subtype).toBe('start');
+
+      expect(updates[4].contentIndex).toBe(1);
+      expect(updates[4].content.type).toBe('text');
+      expect(updates[4].content.text).toBe('Let me read that file.');
+
+      // Tool call at index 2
+      expect(updates[6].contentIndex).toBe(2);
+      expect(updates[6].content.type).toBe('tool_call');
+      expect(updates[6].subtype).toBe('start');
+      expect(updates[6].toolCallId).toBe('tc-1');
+      expect(updates[6].toolName).toBe('read');
+
+      expect(updates[7].contentIndex).toBe(2);
+      expect(updates[7].content.type).toBe('tool_call');
+      expect(updates[7].content.text).toBe('{"path":"/foo"}');
+
+      // Buffer should only contain message_start and message_end
+      const replayed = buffer.replay(0);
+      const types = replayed!.map((e) => e.type);
+      expect(types).toEqual(['message_start', 'message_end']);
+    });
+
+    it('coalesces per contentIndex across interleaved blocks', () => {
+      const buffer = new EventBuffer(100);
+      const sendLive = vi.fn();
+
+      buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
+
+      // Thinking at index 0
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_delta', delta: 'part1 ', contentIndex: 0 } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_delta', delta: 'part2', contentIndex: 0 } }), SESSION_ID, sendLive);
+
+      // Text at index 1
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'hello ', contentIndex: 1 } }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'world', contentIndex: 1 } }), SESSION_ID, sendLive);
+
+      buffer.onEvent(
+        makeSdkEvent('message_end', {
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', text: 'part1 part2' },
+              { type: 'text', text: 'hello world' },
+            ],
+          },
+        }),
+        SESSION_ID,
+        sendLive,
+      );
+
+      // All deltas sent live
+      expect(sendLive).toHaveBeenCalledTimes(6);
+
+      // Only message_start and message_end in replay buffer
+      const replayed = buffer.replay(0);
+      expect(replayed!.map((e) => e.type)).toEqual(['message_start', 'message_end']);
+    });
+
+    it('defaults contentIndex to 0 when assistantMessageEvent lacks it', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'hi' } }), SESSION_ID, sendLive);
+      expect((liveEvents[0] as any).contentIndex).toBe(0);
+    });
+
+    it('defaults to text type and delta subtype when assistantMessageEvent is missing', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(makeSdkEvent('message_update', {}), SESSION_ID, sendLive);
+      const update = liveEvents[0] as any;
+      expect(update.contentIndex).toBe(0);
+      expect(update.subtype).toBe('delta');
+      expect(update.content).toEqual({ type: 'text', text: '' });
     });
   });
 });

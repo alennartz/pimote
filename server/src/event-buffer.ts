@@ -6,16 +6,31 @@ import { mapAgentMessage, type SdkMessage } from './message-mapper.js';
  * All properties except `type` are optional to accommodate the full
  * AgentSessionEvent union without importing it.
  */
+/**
+ * Structural type for the pi-ai AssistantMessageEvent carried
+ * on message_update events. Only the fields we need are listed.
+ */
+interface SdkAssistantMessageEvent {
+  type: string;
+  contentIndex?: number;
+  delta?: string;
+  /** The partial AssistantMessage — used to extract tool call metadata on toolcall_start */
+  partial?: { content?: Array<{ type?: string; id?: string; name?: string }> };
+}
+
 interface SdkEvent {
   type: string;
   error?: string;
   role?: string;
-  content?: string | { type?: string; text?: string };
   message?: SdkMessage;
+  /** pi-ai AssistantMessageEvent carried on message_update events */
+  assistantMessageEvent?: SdkAssistantMessageEvent;
   toolName?: string;
   toolCallId?: string;
   args?: unknown;
   result?: unknown;
+  /** Partial result from tool execution updates */
+  partialResult?: unknown;
   reason?: string;
   aborted?: boolean;
   willRetry?: boolean;
@@ -48,8 +63,8 @@ export class EventBuffer {
   private _cursor = 0;
 
   // Accumulator state for coalescing streaming deltas
-  // message_update: keyed by "role" (there's only one in-progress message at a time)
-  private messageAccumulator: Map<string, { text: string; thinkingText: string }> = new Map();
+  // message_update: per-contentIndex accumulation
+  private messageAccumulator: Map<number, { type: string; text: string }> = new Map();
   // tool_execution_update: keyed by toolCallId
   private toolAccumulator: Map<string, string> = new Map();
 
@@ -134,15 +149,48 @@ export class EventBuffer {
         return { ...base, type: 'message_start', role: sdkEvent.role ?? 'assistant' };
 
       case 'message_update': {
-        const contentObj = typeof sdkEvent.content === 'object' ? sdkEvent.content : undefined;
-        return {
+        const ame = sdkEvent.assistantMessageEvent;
+        const contentIndex = ame?.contentIndex ?? 0;
+
+        // Determine content type from the sub-event
+        let contentType: 'text' | 'thinking' | 'tool_call' = 'text';
+        if (ame?.type?.startsWith('thinking_')) {
+          contentType = 'thinking';
+        } else if (ame?.type?.startsWith('toolcall_')) {
+          contentType = 'tool_call';
+        }
+
+        // Determine subtype from the sub-event suffix
+        let subtype: 'start' | 'delta' | 'end' = 'delta';
+        if (ame?.type?.endsWith('_start')) {
+          subtype = 'start';
+        } else if (ame?.type?.endsWith('_end')) {
+          subtype = 'end';
+        }
+
+        const delta = ame?.delta ?? '';
+
+        const result: PimoteSessionEvent & { type: 'message_update' } = {
           ...base,
           type: 'message_update',
+          contentIndex,
+          subtype,
           content: {
-            type: (contentObj?.type ?? 'text') as 'text' | 'thinking',
-            text: contentObj?.text ?? '',
+            type: contentType,
+            text: delta,
           },
         };
+
+        // Extract tool call metadata on toolcall_start from the partial message
+        if (contentType === 'tool_call' && subtype === 'start' && ame?.partial?.content) {
+          const block = ame.partial.content[contentIndex];
+          if (block && block.type === 'toolCall') {
+            result.toolCallId = block.id;
+            result.toolName = block.name;
+          }
+        }
+
+        return result;
       }
 
       case 'message_end':
@@ -166,7 +214,7 @@ export class EventBuffer {
           ...base,
           type: 'tool_execution_update',
           toolCallId: sdkEvent.toolCallId ?? '',
-          content: typeof sdkEvent.content === 'string' ? sdkEvent.content : '',
+          content: typeof sdkEvent.partialResult === 'string' ? sdkEvent.partialResult : '',
         };
 
       case 'tool_execution_end':
@@ -230,29 +278,28 @@ export class EventBuffer {
   private coalesceAndBuffer(event: PimoteSessionEvent): void {
     switch (event.type) {
       case 'message_start':
-        // Buffer directly and initialize accumulator
+        // Buffer directly and clear per-contentIndex accumulators
         this.pushToBuffer(event);
-        this.messageAccumulator.set('current', { text: '', thinkingText: '' });
+        this.messageAccumulator.clear();
         break;
 
       case 'message_update':
-        // Accumulate but don't buffer individual deltas
+        // Accumulate per contentIndex but don't buffer individual deltas
         {
-          const acc = this.messageAccumulator.get('current');
-          if (acc) {
-            if (event.content.type === 'thinking') {
-              acc.thinkingText += event.content.text;
-            } else {
-              acc.text += event.content.text;
-            }
+          const idx = event.contentIndex;
+          const existing = this.messageAccumulator.get(idx);
+          if (existing) {
+            existing.text += event.content.text;
+          } else {
+            this.messageAccumulator.set(idx, { type: event.content.type, text: event.content.text });
           }
         }
         break;
 
       case 'message_end':
-        // Buffer directly, clear accumulator
+        // Buffer directly, clear accumulators
         this.pushToBuffer(event);
-        this.messageAccumulator.delete('current');
+        this.messageAccumulator.clear();
         break;
 
       case 'tool_execution_start':
