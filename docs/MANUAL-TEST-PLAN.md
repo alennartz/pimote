@@ -442,23 +442,34 @@ The InputBar sends `prompt` when idle and `steer` when streaming. There is no se
 
 - **[P]** Agent is responding
 - **[S]** Observe MessageList
-- **[E]** Text appears incrementally as `message_update` events arrive
-- **[E]** `streamingText` accumulates; displayed at the end of the message list
+- **[E]** Text appears incrementally as `message_update` events arrive with `contentIndex` and `subtype` fields
+- **[E]** Text accumulates in ordered content blocks within `streamingMessage` (indexed by `contentIndex`)
+- **[E]** Markdown rendering is debounced during streaming (not re-rendered on every delta)
 
 ### TC-07.02 — Thinking block streaming 🟠
 
 - **[P]** Thinking level is set to a non-"off" value; agent responds
 - **[S]** Observe conversation
-- **[E]** Thinking text appears in a collapsible ThinkingBlock (labeled "Thinking...")
-- **[E]** Thinking content accumulates in `streamingThinking`
+- **[E]** Thinking text appears in an expanded ThinkingBlock (labeled "Thinking..." with pulsing dot)
+- **[E]** Thinking content accumulates in the `streamingMessage.content` array at the correct `contentIndex`
+- **[E]** ThinkingBlock auto-scrolls to bottom as content arrives
+- **[E]** ThinkingBlock auto-collapses on `message_end` (labeled "Thought process")
+
+### TC-07.02a — Interleaved content block ordering 🟠
+
+- **[P]** Agent response produces interleaved content (e.g., thinking → text → tool call)
+- **[S]** Observe conversation during streaming
+- **[E]** Content blocks appear in correct order during streaming, matching the final message layout
+- **[E]** Each block is indexed by `contentIndex` and rendered via the same component loop used for finalized messages
 
 ### TC-07.03 — Message finalized on message_end 🔴
 
 - **[P]** Agent finishes a message
 - **[S]** Observe when `message_end` arrives
-- **[E]** `streamingText` and `streamingThinking` cleared
+- **[E]** `streamingMessage` cleared (set to `null`)
 - **[E]** Complete message added to `messages` array
 - **[E]** Rendered with full markdown formatting
+- **[E]** Transition from streaming to finalized is seamless (unified component rendering with stable keys)
 
 ### TC-07.04 — Markdown rendering 🟠
 
@@ -528,6 +539,22 @@ The InputBar sends `prompt` when idle and `steer` when streaming. There is no se
 - **[S]** Click on tool call args section
 - **[E]** Toggles expanded/collapsed view of JSON arguments
 - **[S]** Same for result section
+
+### TC-08.06 — Tool call appears in streaming content blocks 🟠
+
+- **[P]** Agent is streaming and invokes a tool
+- **[S]** Observe MessageList during streaming
+- **[E]** Tool call appears as a content block in the streaming message at the correct position (ordered by `contentIndex`)
+- **[E]** Tool call widget appears collapsed by default; user can expand to watch args stream in
+- **[E]** Expanded/collapsed state survives the streaming→finalized transition on `message_end`
+
+### TC-08.07 — Show-more collapsible for long tool content 🟡
+
+- **[P]** Tool call or tool result produces output longer than the line cutoff (~10 lines)
+- **[S]** Observe the ToolCall component
+- **[E]** Content renders up to the line cutoff, then shows a "show more" control
+- **[S]** Click "show more"
+- **[E]** Content expands to a scrollable view with auto-scroll as new content arrives
 
 ---
 
@@ -632,7 +659,7 @@ The InputBar sends `prompt` when idle and `steer` when streaming. There is no se
 ### TC-10.08 — Per-session state isolation 🔴
 
 - **[S]** Open 2 sessions; send different prompts to each
-- **[E]** Each session has its own: messages, streamingText, model, thinkingLevel, status, activeToolCalls
+- **[E]** Each session has its own: messages, streamingMessage, model, thinkingLevel, status, activeToolCalls
 - **[E]** Switching between them shows the correct conversation for each
 
 ### TC-10.09 — Events routed to correct session 🔴
