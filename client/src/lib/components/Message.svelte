@@ -1,9 +1,10 @@
 <script lang="ts">
-  import type { PimoteAgentMessage } from '@pimote/shared';
+  import type { PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import TextBlock from './TextBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import ToolCall from './ToolCall.svelte';
+  import StreamingCollapsible from './StreamingCollapsible.svelte';
   import User from '@lucide/svelte/icons/user';
   import Bot from '@lucide/svelte/icons/bot';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -11,10 +12,10 @@
 
   const MAX_COLLAPSED_LINES = 10;
 
-  let { message }: { message: PimoteAgentMessage } = $props();
+  let { message, streaming = false }: { message: PimoteAgentMessage | StreamingMessage; streaming?: boolean } = $props();
   let customExpanded = $state(false);
 
-  function getUserText(msg: PimoteAgentMessage): string {
+  function getUserText(msg: PimoteAgentMessage | StreamingMessage): string {
     return msg.content
       .filter((c) => c.type === 'text' && c.text)
       .map((c) => c.text!)
@@ -46,14 +47,15 @@
     </div>
     <div class="message-body">
       {#each message.content as block, i (i)}
-        {#if block.type === 'text' && block.text}
-          <TextBlock text={block.text} />
-        {:else if block.type === 'thinking' && block.text}
-          <ThinkingBlock text={block.text} />
+        {#if block.type === 'text'}
+          <TextBlock text={block.text ?? ''} {streaming} />
+        {:else if block.type === 'thinking'}
+          <ThinkingBlock text={block.text ?? ''} {streaming} />
         {:else if block.type === 'tool_call'}
           {@const exec = block.toolCallId ? toolExecs[block.toolCallId] : undefined}
           <ToolCall
-            content={block}
+            content={streaming ? { ...block, args: undefined } : block}
+            {streaming}
             inProgress={exec?.status === 'running'}
             partialResult={exec?.partialResult ?? ''}
             result={exec?.status === 'completed' ? exec.result : undefined}
@@ -68,27 +70,36 @@
   <!-- Custom message (extension-injected, e.g. subagent results) -->
   <div class="message custom-message">
     <div class="custom-body">
-      <button class="custom-header" onclick={() => (customExpanded = !customExpanded)}>
-        {#if customNeedsCollapse}
-          {#if customExpanded}
-            <ChevronDown size={14} />
-          {:else}
-            <ChevronRight size={14} />
+      {#if streaming}
+        <div class="custom-header">
+          <span class="custom-label">[custom]</span>
+        </div>
+        <div class="custom-content">
+          <StreamingCollapsible text={customText} {streaming} accent="purple" />
+        </div>
+      {:else}
+        <button class="custom-header" onclick={() => (customExpanded = !customExpanded)}>
+          {#if customNeedsCollapse}
+            {#if customExpanded}
+              <ChevronDown size={14} />
+            {:else}
+              <ChevronRight size={14} />
+            {/if}
           {/if}
-        {/if}
-        <span class="custom-label">[{message.customType ?? 'custom'}]</span>
-        {#if customNeedsCollapse}
-          <span class="custom-line-count">{customLines.length} lines</span>
-        {/if}
-      </button>
-      <div class="custom-content">
-        <TextBlock text={customDisplayText} />
-        {#if customNeedsCollapse && !customExpanded}
-          <button class="custom-toggle" onclick={() => (customExpanded = true)}> Show more… </button>
-        {:else if customNeedsCollapse && customExpanded}
-          <button class="custom-toggle" onclick={() => (customExpanded = false)}> Show less </button>
-        {/if}
-      </div>
+          <span class="custom-label">[{'customType' in message ? (message.customType ?? 'custom') : 'custom'}]</span>
+          {#if customNeedsCollapse}
+            <span class="custom-line-count">{customLines.length} lines</span>
+          {/if}
+        </button>
+        <div class="custom-content">
+          <TextBlock text={customDisplayText} />
+          {#if customNeedsCollapse && !customExpanded}
+            <button class="custom-toggle" onclick={() => (customExpanded = true)}> Show more… </button>
+          {:else if customNeedsCollapse && customExpanded}
+            <button class="custom-toggle" onclick={() => (customExpanded = false)}> Show less </button>
+          {/if}
+        </div>
+      {/if}
     </div>
   </div>
 {:else}

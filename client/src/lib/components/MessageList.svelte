@@ -1,9 +1,8 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import type { PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import Message from './Message.svelte';
-  import TextBlock from './TextBlock.svelte';
-  import ThinkingBlock from './ThinkingBlock.svelte';
   import StreamingIndicator from './StreamingIndicator.svelte';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
 
@@ -22,16 +21,43 @@
     autoScrollEnabled = atBottom;
   }
 
+  // Unified display entries: finalized messages + streaming message
+  let displayEntries = $derived.by(() => {
+    const session = sessionRegistry.viewed;
+    if (!session) return [];
+    const entries: { key: string; message: PimoteAgentMessage | StreamingMessage; streaming: boolean }[] = session.messages.map((msg, i) => ({
+      key: session.messageKeys[i] ?? `fallback-${i}`,
+      message: msg as PimoteAgentMessage | StreamingMessage,
+      streaming: false,
+    }));
+    if (session.streamingMessage && session.streamingKey) {
+      entries.push({
+        key: session.streamingKey,
+        message: session.streamingMessage,
+        streaming: true,
+      });
+    }
+    return entries;
+  });
+
+  // Show streaming indicator when streaming but no content yet
+  let showStreamingIndicator = $derived.by(() => {
+    const session = sessionRegistry.viewed;
+    if (!session?.isStreaming) return false;
+    return !session.streamingMessage || session.streamingMessage.content.length === 0;
+  });
+
   // Auto-scroll when new content arrives
   $effect(() => {
-    // Access reactive deps to trigger on changes.
-    // Read .length / Object.keys so Svelte tracks array/object mutations,
-    // not just property-reference changes.
-    sessionRegistry.viewed?.messages.length;
-    sessionRegistry.viewed?.streamingMessage?.content.length;
-    // Track text changes in the last streaming block for auto-scroll
-    const sm = sessionRegistry.viewed?.streamingMessage;
-    if (sm && sm.content.length > 0) sm.content[sm.content.length - 1].text;
+    // Track display entries changes
+    displayEntries.length;
+    // Track streaming content changes for auto-scroll
+    const session = sessionRegistry.viewed;
+    const sm = session?.streamingMessage;
+    if (sm && sm.content.length > 0) {
+      sm.content.length;
+      sm.content[sm.content.length - 1].text;
+    }
 
     if (autoScrollEnabled && scrollContainer) {
       tick().then(() => {
@@ -48,58 +74,23 @@
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
     }
   }
-
-  // Derived: do we have any streaming content to show?
-  // Derive streaming text and thinking from streamingMessage for rendering
-  let streamingText = $derived.by(() => {
-    const sm = sessionRegistry.viewed?.streamingMessage;
-    if (!sm) return '';
-    return sm.content
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text ?? '')
-      .join('');
-  });
-  let streamingThinking = $derived.by(() => {
-    const sm = sessionRegistry.viewed?.streamingMessage;
-    if (!sm) return '';
-    return sm.content
-      .filter((b) => b.type === 'thinking')
-      .map((b) => b.text ?? '')
-      .join('');
-  });
-  let hasStreamingContent = $derived((sessionRegistry.viewed?.isStreaming ?? false) && (streamingText.length > 0 || streamingThinking.length > 0));
 </script>
 
 <div class="message-list-wrapper">
   <div class="message-list" bind:this={scrollContainer} onscroll={onScroll}>
     <div class="message-list-inner">
-      {#if (sessionRegistry.viewed?.messages ?? []).length === 0 && !sessionRegistry.viewed?.isStreaming}
+      {#if displayEntries.length === 0 && !sessionRegistry.viewed?.isStreaming}
         <div class="empty-state">
           <p>No messages yet</p>
         </div>
       {/if}
 
-      {#each sessionRegistry.viewed?.messages ?? [] as message, i (i)}
-        <Message {message} />
+      {#each displayEntries as entry (entry.key)}
+        <Message message={entry.message} streaming={entry.streaming} />
       {/each}
 
-      <!-- Streaming content (in-progress) -->
-      {#if hasStreamingContent}
-        <div class="message assistant-message streaming">
-          <div class="streaming-body">
-            {#if streamingThinking}
-              <ThinkingBlock text={streamingThinking} streaming={true} />
-            {/if}
-
-            {#if streamingText}
-              <TextBlock text={streamingText} streaming={true} />
-            {/if}
-          </div>
-        </div>
-      {/if}
-
       <!-- Streaming indicator (agent is working but no content yet) -->
-      {#if sessionRegistry.viewed?.isStreaming && !hasStreamingContent}
+      {#if showStreamingIndicator}
         <div class="streaming-indicator-row">
           <StreamingIndicator />
         </div>
@@ -144,20 +135,6 @@
     padding: 48px 16px;
     color: var(--muted-foreground);
     font-size: 0.9rem;
-  }
-
-  .streaming {
-    display: flex;
-    gap: 10px;
-    padding: 12px 0;
-  }
-
-  .streaming-body {
-    flex: 1;
-    min-width: 0;
-    font-size: 0.9rem;
-    /* Give left margin to align with assistant message bodies (icon width + gap) */
-    margin-left: 38px;
   }
 
   .streaming-indicator-row {
