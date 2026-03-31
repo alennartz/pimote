@@ -41,7 +41,7 @@
       <div class="bg-warning/10 border-warning/30 text-warning flex items-center gap-2 border-b px-4 py-2 text-sm">
         <span>This session is owned by another client. Take it over?</span>
         <button
-          class="bg-warning text-primary-foreground hover:bg-warning/80 ml-auto rounded px-3 py-1 text-xs font-medium"
+          class="bg-warning text-warning-foreground hover:bg-warning/80 ml-auto rounded px-3 py-1 text-xs font-medium"
           onclick={() => confirmTakeover(sessionRegistry.viewedSessionId!)}
         >
           Take Over
