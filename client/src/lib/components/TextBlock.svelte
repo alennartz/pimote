@@ -15,6 +15,13 @@
     let writtenLength = 0;
     let ended = false;
 
+    // Note: after ended=true, this effect returns before reading `text` or `streaming`,
+    // leaving it with no reactive deps — it never re-runs. This means the component
+    // cannot handle new props after its parser has ended (it would silently render nothing).
+    // This is fine because content blocks are append-only during streaming and immutable
+    // after finalization — TextBlock never receives new text after ending. If the message
+    // model changes to allow prop reuse (e.g., block replacement or index-based recycling),
+    // this would need restructuring to recreate the parser on prop changes.
     $effect(() => {
       if (ended) return;
 
