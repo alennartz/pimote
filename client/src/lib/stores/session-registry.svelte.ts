@@ -10,9 +10,11 @@ import type {
   PimoteEvent,
   PimoteAgentMessage,
   PimoteMessageContent,
+  StreamingMessage,
   SessionState,
   SessionMeta,
   BufferedEventsEvent,
+  MessageStartEvent,
   MessageUpdateEvent,
   MessageEndEvent,
   ToolExecutionStartEvent,
@@ -34,8 +36,9 @@ export interface PerSessionState {
   isCompacting: boolean;
   model: { provider: string; id: string; name: string } | null;
   thinkingLevel: string;
-  streamingText: string;
-  streamingThinking: string;
+  streamingMessage: StreamingMessage | null;
+  streamingKey: string | null;
+  messageKeys: string[];
   toolExecutions: Record<string, { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown }>;
   autoCompactionEnabled: boolean;
   messageCount: number;
@@ -53,6 +56,7 @@ export interface PerSessionState {
 export class SessionRegistry {
   sessions: Record<string, PerSessionState> = $state({});
   viewedSessionId: string | null = $state(null);
+  private _nextMessageKey: number = 0;
 
   /** Get the currently viewed session's state */
   get viewed(): PerSessionState | null {
@@ -104,19 +108,30 @@ export class SessionRegistry {
           .catch(() => {});
         break;
 
-      case 'message_start':
-        // Reset streaming accumulators for the new message within a turn
-        session.streamingText = '';
-        session.streamingThinking = '';
+      case 'message_start': {
+        const start = event as MessageStartEvent;
+        session.streamingKey = 'msg-' + this._nextMessageKey++;
+        session.streamingMessage = { role: start.role, content: [] };
         break;
+      }
 
       case 'message_update': {
         const update = event as MessageUpdateEvent;
-        if (update.content.type === 'text') {
-          session.streamingText += update.content.text;
-        } else if (update.content.type === 'thinking') {
-          session.streamingThinking += update.content.text;
+        if (!session.streamingMessage) break;
+        if (update.subtype === 'start') {
+          const block: PimoteMessageContent = { type: update.content.type, text: '' };
+          if (update.content.type === 'tool_call') {
+            block.toolCallId = update.toolCallId;
+            block.toolName = update.toolName;
+          }
+          session.streamingMessage.content[update.contentIndex] = block;
+        } else if (update.subtype === 'delta') {
+          const block = session.streamingMessage.content[update.contentIndex];
+          if (block) {
+            block.text = (block.text ?? '') + update.content.text;
+          }
         }
+        // subtype 'end' is a no-op
         break;
       }
 
@@ -124,8 +139,11 @@ export class SessionRegistry {
         const end = event as MessageEndEvent;
         const message: PimoteAgentMessage = end.message;
         session.messages = [...session.messages, message];
-        session.streamingText = '';
-        session.streamingThinking = '';
+        if (session.streamingKey) {
+          session.messageKeys = [...session.messageKeys, session.streamingKey];
+        }
+        session.streamingMessage = null;
+        session.streamingKey = null;
         session.messageCount++;
         // Capture firstMessage from first user message
         if (message.role === 'user' && session.firstMessage === undefined) {
@@ -211,8 +229,9 @@ export class SessionRegistry {
         session.messageCount = state.messageCount;
         session.messages = messages;
         session.status = state.isStreaming ? 'working' : 'idle';
-        session.streamingText = '';
-        session.streamingThinking = '';
+        session.streamingMessage = null;
+        session.streamingKey = null;
+        session.messageKeys = messages.map(() => 'msg-' + this._nextMessageKey++);
         session.toolExecutions = {};
         this.rebuildToolExecutions(session);
         break;
@@ -239,8 +258,9 @@ export class SessionRegistry {
       isCompacting: false,
       model: null,
       thinkingLevel: 'off',
-      streamingText: '',
-      streamingThinking: '',
+      streamingMessage: null,
+      streamingKey: null,
+      messageKeys: [],
       toolExecutions: {},
       autoCompactionEnabled: false,
       messageCount: 0,

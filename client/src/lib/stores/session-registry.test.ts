@@ -40,8 +40,9 @@ describe('SessionRegistry', () => {
       expect(session!.firstMessage).toBeUndefined();
       expect(session!.model).toBeNull();
       expect(session!.thinkingLevel).toBe('off');
-      expect(session!.streamingText).toBe('');
-      expect(session!.streamingThinking).toBe('');
+      expect(session!.streamingMessage).toBeNull();
+      expect(session!.streamingKey).toBeNull();
+      expect(session!.messageKeys).toEqual([]);
       expect(Object.keys(session!.toolExecutions).length).toBe(0);
       expect(session!.autoCompactionEnabled).toBe(false);
       expect(session!.messageCount).toBe(0);
@@ -159,46 +160,116 @@ describe('SessionRegistry', () => {
   // Event Routing — Messages
   // --------------------------------------------------------------------------
   describe('Event Routing — Messages', () => {
-    it('message_update with text content appends to streamingText', () => {
+    it('message_start creates streamingMessage with role and empty content', () => {
       registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
+      const session = registry.sessions['s1'];
+      expect(session.streamingMessage).toEqual({ role: 'assistant', content: [] });
+      expect(session.streamingKey).toMatch(/^msg-\d+$/);
+    });
+
+    it('message_update subtype start creates content block at contentIndex', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
       registry.handleEvent(
         makeSessionEvent('message_update', 's1', {
+          contentIndex: 0,
+          subtype: 'start',
+          content: { type: 'text', text: '' },
+        }),
+      );
+      const sm = registry.sessions['s1'].streamingMessage!;
+      expect(sm.content[0]).toEqual({ type: 'text', text: '' });
+    });
+
+    it('message_update subtype delta appends text to existing block', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          contentIndex: 0,
+          subtype: 'start',
+          content: { type: 'text', text: '' },
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          contentIndex: 0,
+          subtype: 'delta',
           content: { type: 'text', text: 'Hello ' },
         }),
       );
       registry.handleEvent(
         makeSessionEvent('message_update', 's1', {
+          contentIndex: 0,
+          subtype: 'delta',
           content: { type: 'text', text: 'world' },
         }),
       );
-      expect(registry.sessions['s1'].streamingText).toBe('Hello world');
+      expect(registry.sessions['s1'].streamingMessage!.content[0].text).toBe('Hello world');
     });
 
-    it('message_update with thinking content appends to streamingThinking', () => {
+    it('message_update subtype start for tool_call sets toolCallId and toolName', () => {
       registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
       registry.handleEvent(
         makeSessionEvent('message_update', 's1', {
+          contentIndex: 0,
+          subtype: 'start',
+          content: { type: 'tool_call', text: '' },
+          toolCallId: 'tc1',
+          toolName: 'bash',
+        }),
+      );
+      const block = registry.sessions['s1'].streamingMessage!.content[0];
+      expect(block.type).toBe('tool_call');
+      expect(block.toolCallId).toBe('tc1');
+      expect(block.toolName).toBe('bash');
+    });
+
+    it('message_update with thinking content accumulates via delta', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          contentIndex: 0,
+          subtype: 'start',
+          content: { type: 'thinking', text: '' },
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          contentIndex: 0,
+          subtype: 'delta',
           content: { type: 'thinking', text: 'Let me ' },
         }),
       );
       registry.handleEvent(
         makeSessionEvent('message_update', 's1', {
+          contentIndex: 0,
+          subtype: 'delta',
           content: { type: 'thinking', text: 'think...' },
         }),
       );
-      expect(registry.sessions['s1'].streamingThinking).toBe('Let me think...');
+      expect(registry.sessions['s1'].streamingMessage!.content[0].text).toBe('Let me think...');
     });
 
-    it('message_end appends message to messages array and clears streaming text', () => {
+    it('message_end appends message, pushes streamingKey to messageKeys, and clears streaming state', () => {
       registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
+      const streamingKey = registry.sessions['s1'].streamingKey;
       registry.handleEvent(
         makeSessionEvent('message_update', 's1', {
-          content: { type: 'text', text: 'streaming...' },
+          contentIndex: 0,
+          subtype: 'start',
+          content: { type: 'text', text: '' },
         }),
       );
       registry.handleEvent(
         makeSessionEvent('message_update', 's1', {
-          content: { type: 'thinking', text: 'thinking...' },
+          contentIndex: 0,
+          subtype: 'delta',
+          content: { type: 'text', text: 'streaming...' },
         }),
       );
       const msg = makeAssistantMessage('Final answer');
@@ -206,8 +277,9 @@ describe('SessionRegistry', () => {
       const session = registry.sessions['s1'];
       expect(session.messages).toHaveLength(1);
       expect(session.messages[0]).toEqual(msg);
-      expect(session.streamingText).toBe('');
-      expect(session.streamingThinking).toBe('');
+      expect(session.streamingMessage).toBeNull();
+      expect(session.streamingKey).toBeNull();
+      expect(session.messageKeys).toEqual([streamingKey]);
     });
 
     it('message_end increments messageCount', () => {

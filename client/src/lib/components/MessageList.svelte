@@ -28,8 +28,10 @@
     // Read .length / Object.keys so Svelte tracks array/object mutations,
     // not just property-reference changes.
     sessionRegistry.viewed?.messages.length;
-    sessionRegistry.viewed?.streamingText;
-    sessionRegistry.viewed?.streamingThinking;
+    sessionRegistry.viewed?.streamingMessage?.content.length;
+    // Track text changes in the last streaming block for auto-scroll
+    const sm = sessionRegistry.viewed?.streamingMessage;
+    if (sm && sm.content.length > 0) sm.content[sm.content.length - 1].text;
 
     if (autoScrollEnabled && scrollContainer) {
       tick().then(() => {
@@ -48,9 +50,24 @@
   }
 
   // Derived: do we have any streaming content to show?
-  let hasStreamingContent = $derived(
-    (sessionRegistry.viewed?.isStreaming ?? false) && ((sessionRegistry.viewed?.streamingText ?? '').length > 0 || (sessionRegistry.viewed?.streamingThinking ?? '').length > 0),
-  );
+  // Derive streaming text and thinking from streamingMessage for rendering
+  let streamingText = $derived.by(() => {
+    const sm = sessionRegistry.viewed?.streamingMessage;
+    if (!sm) return '';
+    return sm.content
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text ?? '')
+      .join('');
+  });
+  let streamingThinking = $derived.by(() => {
+    const sm = sessionRegistry.viewed?.streamingMessage;
+    if (!sm) return '';
+    return sm.content
+      .filter((b) => b.type === 'thinking')
+      .map((b) => b.text ?? '')
+      .join('');
+  });
+  let hasStreamingContent = $derived((sessionRegistry.viewed?.isStreaming ?? false) && (streamingText.length > 0 || streamingThinking.length > 0));
 </script>
 
 <div class="message-list-wrapper">
@@ -70,12 +87,12 @@
       {#if hasStreamingContent}
         <div class="message assistant-message streaming">
           <div class="streaming-body">
-            {#if sessionRegistry.viewed?.streamingThinking}
-              <ThinkingBlock text={sessionRegistry.viewed.streamingThinking} streaming={true} />
+            {#if streamingThinking}
+              <ThinkingBlock text={streamingThinking} streaming={true} />
             {/if}
 
-            {#if sessionRegistry.viewed?.streamingText}
-              <TextBlock text={sessionRegistry.viewed.streamingText} streaming={true} />
+            {#if streamingText}
+              <TextBlock text={streamingText} streaming={true} />
             {/if}
           </div>
         </div>
