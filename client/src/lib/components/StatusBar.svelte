@@ -47,6 +47,16 @@
   let contextColor = $derived(
     contextPercent != null && contextPercent > 90 ? 'text-red-400' : contextPercent != null && contextPercent > 70 ? 'text-amber-400' : 'text-muted-foreground',
   );
+
+  let sessionDisplayName = $derived.by(() => {
+    const viewed = sessionRegistry.viewed;
+    if (!viewed) return null;
+    if (viewed.sessionName) return viewed.sessionName;
+    if (viewed.firstMessage) {
+      return viewed.firstMessage.length > 60 ? viewed.firstMessage.slice(0, 60) + '…' : viewed.firstMessage;
+    }
+    return null;
+  });
 </script>
 
 <div class="border-border bg-muted/30 text-muted-foreground shrink-0 border-b text-xs">
@@ -61,10 +71,10 @@
     <ThinkingPicker />
 
     <!-- Session name (desktop: centered in spacer area) -->
-    {#if sessionRegistry.viewed?.sessionName}
+    {#if sessionDisplayName}
       <Separator orientation="vertical" class="mx-0.5 hidden h-4 md:block" />
-      <span class="text-muted-foreground hidden max-w-[16rem] truncate text-xs md:inline" title={sessionRegistry.viewed.sessionName}>
-        {sessionRegistry.viewed.sessionName}
+      <span class="text-muted-foreground hidden max-w-[16rem] truncate text-xs md:inline" title={sessionDisplayName}>
+        {sessionDisplayName}
       </span>
     {/if}
 
@@ -123,29 +133,23 @@
   </div>
 
   <!-- Row 2: session name + git branch + context usage (mobile only) -->
-  {#if sessionRegistry.viewed?.sessionName || sessionRegistry.viewed?.gitBranch || contextDisplay}
+  {#if sessionDisplayName || sessionRegistry.viewed?.gitBranch || contextDisplay}
     <div class="border-border/50 flex h-7 items-center gap-2 border-t px-2 md:hidden">
-      {#if sessionRegistry.viewed?.sessionName}
-        <span class="text-muted-foreground max-w-[10rem] truncate" title={sessionRegistry.viewed.sessionName}>
-          {sessionRegistry.viewed.sessionName}
-        </span>
-        {#if sessionRegistry.viewed?.gitBranch || contextDisplay}
-          <Separator orientation="vertical" class="mx-0.5 h-3" />
-        {/if}
-      {/if}
-      {#if sessionRegistry.viewed?.gitBranch}
-        <span class="text-muted-foreground flex items-center gap-1" title="Git branch">
-          <GitBranch class="size-3" />
-          <span class="max-w-[10rem] truncate">{sessionRegistry.viewed.gitBranch}</span>
+      {#if sessionDisplayName}
+        <span class="text-muted-foreground min-w-0 flex-1 truncate" title={sessionDisplayName}>
+          {sessionDisplayName}
         </span>
       {/if}
 
-      {#if sessionRegistry.viewed?.gitBranch && contextDisplay}
-        <Separator orientation="vertical" class="mx-0.5 h-3" />
+      {#if sessionRegistry.viewed?.gitBranch}
+        <span class="text-muted-foreground flex shrink-0 items-center gap-1" title="Git branch">
+          <GitBranch class="size-3" />
+          <span class="max-w-[6rem] truncate">{sessionRegistry.viewed.gitBranch}</span>
+        </span>
       {/if}
 
       {#if contextDisplay}
-        <span class="flex items-center gap-1 {contextColor}" title="Context window usage">
+        <span class="flex shrink-0 items-center gap-1 {contextColor}" title="Context window usage">
           {contextDisplay}
         </span>
       {/if}
