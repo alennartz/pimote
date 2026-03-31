@@ -55,6 +55,16 @@ export function mapAgentMessage(msg: SdkMessage): PimoteAgentMessage {
           break;
       }
     }
+  } else if (msg.content !== undefined && msg.content !== null) {
+    // Unexpected content type — log and convert to text
+    console.warn('[message-mapper] Unexpected content type:', typeof msg.content, 'role:', role);
+    console.warn('[message-mapper] Content value:', msg.content);
+    content.push({ type: 'text', text: `[Unexpected content type: ${typeof msg.content}]` });
+  }
+
+  // Log empty content for debugging
+  if (content.length === 0) {
+    console.warn('[message-mapper] Empty content array for message:', { role, content: msg.content });
   }
 
   // Handle custom messages — preserve customType for the client

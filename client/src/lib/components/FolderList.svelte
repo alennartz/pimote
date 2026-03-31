@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { indexStore } from '$lib/stores/index-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
@@ -20,13 +20,9 @@
 
   const MAX_SESSIONS_SHOWN = 6;
 
-  onMount(() => {
-    // Load folders when connected
-    if (connection.status === 'connected') {
-      indexStore.loadFolders();
-    }
+  let loadedFoldersForCurrentConnection = false;
 
-    // Also reload when connection status changes to connected
+  onMount(() => {
     const unsub = connection.onEvent((event) => {
       if (event.type === 'session_state_changed') {
         indexStore.applySessionStateChange(event, connection.clientId);
@@ -36,11 +32,23 @@
     return unsub;
   });
 
-  // Reload folders when connection becomes active
+  // Load folders once per connected period.
+  // untrack prevents this effect from accidentally subscribing to IndexStore reads
+  // inside loadFolders(), which can create a rerun loop.
   $effect(() => {
-    if (connection.status === 'connected') {
-      indexStore.loadFolders();
+    const status = connection.status;
+
+    if (status === 'connected') {
+      if (!loadedFoldersForCurrentConnection) {
+        loadedFoldersForCurrentConnection = true;
+        untrack(() => {
+          void indexStore.loadFolders();
+        });
+      }
+      return;
     }
+
+    loadedFoldersForCurrentConnection = false;
   });
 
   function toggleFolder(path: string) {

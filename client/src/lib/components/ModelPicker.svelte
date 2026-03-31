@@ -14,6 +14,7 @@
   import Check from '@lucide/svelte/icons/check';
   import { SvelteMap } from 'svelte/reactivity';
   import Loader2 from '@lucide/svelte/icons/loader-2';
+  import { untrack } from 'svelte';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
 
@@ -41,7 +42,7 @@
   // Fetch models when dropdown opens
   $effect(() => {
     if (open) {
-      fetchModels();
+      untrack(() => fetchModels());
     }
   });
 

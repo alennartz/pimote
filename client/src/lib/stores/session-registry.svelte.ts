@@ -49,6 +49,7 @@ export interface PerSessionState {
   conflictingRemoteSessions: Array<{ sessionId: string; status: 'working' | 'idle' }>;
   pendingTakeover: boolean;
   gitBranch: string | null;
+  sessionName: string | null;
   contextUsage: { percent: number | null; contextWindow: number } | null;
   draftText: string;
   pendingSteeringMessages: string[];
@@ -237,6 +238,7 @@ export class SessionRegistry {
         session.isCompacting = state.isCompacting;
         session.autoCompactionEnabled = state.autoCompactionEnabled;
         session.messageCount = state.messageCount;
+        session.sessionName = state.sessionName ?? null;
         session.messages = messages;
         session.status = state.isStreaming ? 'working' : 'idle';
         session.streamingMessage = null;
@@ -279,6 +281,7 @@ export class SessionRegistry {
       conflictingProcesses: [],
       conflictingRemoteSessions: [],
       pendingTakeover: false,
+      sessionName: null,
       gitBranch: null,
       contextUsage: null,
       draftText: '',
@@ -329,6 +332,7 @@ export class SessionRegistry {
       conflictingProcesses: [],
       conflictingRemoteSessions: [],
       pendingTakeover: false,
+      sessionName: null,
       gitBranch: old.gitBranch,
       contextUsage: null,
       draftText: '',
@@ -437,6 +441,7 @@ connection.onEvent((event) => {
             session.isCompacting = state.isCompacting;
             session.autoCompactionEnabled = state.autoCompactionEnabled;
             session.messageCount = state.messageCount;
+            session.sessionName = state.sessionName ?? null;
             session.status = state.isStreaming ? 'working' : 'idle';
           }
           if (msgRes.success && msgRes.data) {
@@ -485,6 +490,7 @@ connection.onEvent((event) => {
             session.isCompacting = state.isCompacting;
             session.autoCompactionEnabled = state.autoCompactionEnabled;
             session.messageCount = state.messageCount;
+            session.sessionName = state.sessionName ?? null;
             session.status = state.isStreaming ? 'working' : 'idle';
           }
           if (msgRes.success && msgRes.data) {

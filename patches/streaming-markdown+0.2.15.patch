@@ -1,0 +1,40 @@
+diff --git a/node_modules/streaming-markdown/smd.js b/node_modules/streaming-markdown/smd.js
+index f7ad270..50a1d2f 100644
+--- a/node_modules/streaming-markdown/smd.js
++++ b/node_modules/streaming-markdown/smd.js
+@@ -1030,6 +1030,9 @@ export function parser_write(p, chunk) {
+                        ^
+                 */
+                 else {
++                    if (symbol === '_' && is_alnum(char.charCodeAt(0))) {
++                        break
++                    }
+                     add_text(p)
+                     end_token(p)
+                     p.pending = char
+@@ -1322,6 +1325,12 @@ export function parser_write(p, chunk) {
+                 /* *Em*
+                     ^
+                 */
++                if (symbol === '_' &&
++                    p.text.length > 0 &&
++                    is_alnum(p.text.charCodeAt(p.text.length-1)) &&
++                    is_alnum(char.charCodeAt(0))) {
++                    break
++                }
+                 if (' ' !== char && '\n' !== char) {
+                     add_text(p)
+                     add_token(p, italic)
+@@ -1342,6 +1351,12 @@ export function parser_write(p, chunk) {
+                 /* **Strong**
+                      ^
+                 */
++                if (symbol === '_' &&
++                    p.text.length > 0 &&
++                    is_alnum(p.text.charCodeAt(p.text.length-1)) &&
++                    is_alnum(char.charCodeAt(0))) {
++                    break
++                }
+                 if (' ' !== char && '\n' !== char) {
+                     add_text(p)
+                     add_token(p, strong)

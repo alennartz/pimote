@@ -3,6 +3,7 @@ import type { AgentSession } from '@mariozechner/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
 import type { PimoteSessionEvent } from '@pimote/shared';
+import type { SdkMessage } from './message-mapper.js';
 import type { PushNotificationService } from './push-notification.js';
 
 export interface ManagedSession {
@@ -97,6 +98,15 @@ export class PimoteSessionManager {
     };
 
     const unsubscribe = session.subscribe((event) => {
+      // DEBUG: Log message_end events to understand provider differences
+      if (event.type === 'message_end') {
+        console.log('[DEBUG message_end] Raw SDK event:', JSON.stringify(event, null, 2));
+        console.log('[DEBUG message_end] session.messages.length:', session.messages.length);
+        if (session.messages.length > 0) {
+          const lastMsg = session.messages[session.messages.length - 1];
+          console.log('[DEBUG message_end] Last message in session.messages:', JSON.stringify(lastMsg, null, 2).slice(0, 500));
+        }
+      }
       if (event.type === 'agent_start' && managed.status !== 'working') {
         managed.status = 'working';
         this.onStatusChange?.(sessionId, folderPath);
@@ -115,7 +125,12 @@ export class PimoteSessionManager {
           .catch((err) => console.error('[SessionManager] Push notification error:', err));
         this.onStatusChange?.(sessionId, folderPath);
       }
-      eventBuffer.onEvent(event, sessionId, (e) => managed.sendLive(e));
+      eventBuffer.onEvent(
+        event,
+        sessionId,
+        (e) => managed.sendLive(e),
+        () => session.messages[session.messages.length - 1] as SdkMessage,
+      );
     });
 
     managed.unsubscribe = unsubscribe;
@@ -202,7 +217,12 @@ export class PimoteSessionManager {
           .catch((err) => console.error('[SessionManager] Push notification error:', err));
         this.onStatusChange?.(managed.id, folderPath);
       }
-      eventBuffer.onEvent(event, managed.id, (e) => managed.sendLive(e));
+      eventBuffer.onEvent(
+        event,
+        managed.id,
+        (e) => managed.sendLive(e),
+        () => session.messages[session.messages.length - 1] as SdkMessage,
+      );
     });
 
     managed.unsubscribe = unsubscribe;

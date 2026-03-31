@@ -60,6 +60,14 @@
     <!-- Thinking level picker -->
     <ThinkingPicker />
 
+    <!-- Session name (desktop: centered in spacer area) -->
+    {#if sessionRegistry.viewed?.sessionName}
+      <Separator orientation="vertical" class="mx-0.5 hidden h-4 md:block" />
+      <span class="text-muted-foreground hidden max-w-[16rem] truncate text-xs md:inline" title={sessionRegistry.viewed.sessionName}>
+        {sessionRegistry.viewed.sessionName}
+      </span>
+    {/if}
+
     <!-- Spacer -->
     <div class="flex-1"></div>
 
@@ -114,9 +122,17 @@
     </div>
   </div>
 
-  <!-- Row 2: git branch + context usage (mobile only) -->
-  {#if sessionRegistry.viewed?.gitBranch || contextDisplay}
+  <!-- Row 2: session name + git branch + context usage (mobile only) -->
+  {#if sessionRegistry.viewed?.sessionName || sessionRegistry.viewed?.gitBranch || contextDisplay}
     <div class="border-border/50 flex h-7 items-center gap-2 border-t px-2 md:hidden">
+      {#if sessionRegistry.viewed?.sessionName}
+        <span class="text-muted-foreground max-w-[10rem] truncate" title={sessionRegistry.viewed.sessionName}>
+          {sessionRegistry.viewed.sessionName}
+        </span>
+        {#if sessionRegistry.viewed?.gitBranch || contextDisplay}
+          <Separator orientation="vertical" class="mx-0.5 h-3" />
+        {/if}
+      {/if}
       {#if sessionRegistry.viewed?.gitBranch}
         <span class="text-muted-foreground flex items-center gap-1" title="Git branch">
           <GitBranch class="size-3" />

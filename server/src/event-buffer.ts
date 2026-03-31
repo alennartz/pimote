@@ -73,11 +73,11 @@ export class EventBuffer {
   /**
    * Process an SDK event: assign cursor, map to PimoteSessionEvent, forward live, and buffer (coalesced).
    */
-  onEvent(sdkEvent: SdkEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void): void {
+  onEvent(sdkEvent: SdkEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void, getLastMessage?: () => SdkMessage | undefined): void {
     this._cursor++;
     const cursor = this._cursor;
 
-    const pimoteEvent = this.mapEvent(sdkEvent, sessionId, cursor);
+    const pimoteEvent = this.mapEvent(sdkEvent, sessionId, cursor, getLastMessage);
     sendLive(pimoteEvent);
     this.coalesceAndBuffer(pimoteEvent);
   }
@@ -123,7 +123,7 @@ export class EventBuffer {
 
   // ---- Private helpers ----
 
-  private mapEvent(sdkEvent: SdkEvent, sessionId: string, cursor: number): PimoteSessionEvent {
+  private mapEvent(sdkEvent: SdkEvent, sessionId: string, cursor: number, getLastMessage?: () => SdkMessage | undefined): PimoteSessionEvent {
     const base = { sessionId, cursor };
 
     switch (sdkEvent.type) {
@@ -187,12 +187,19 @@ export class EventBuffer {
         return result;
       }
 
-      case 'message_end':
+      case 'message_end': {
+        // Some providers (e.g. OpenAI) send message_end with empty content — the actual
+        // message is only available in session.messages. Use getLastMessage() fallback.
+        let message = sdkEvent.message;
+        if ((!message || !message.content || (Array.isArray(message.content) && message.content.length === 0)) && getLastMessage) {
+          message = getLastMessage();
+        }
         return {
           ...base,
           type: 'message_end',
-          message: sdkEvent.message ? mapAgentMessage(sdkEvent.message) : { role: 'assistant', content: [] },
+          message: message ? mapAgentMessage(message) : { role: 'assistant', content: [] },
         };
+      }
 
       case 'tool_execution_start':
         return {

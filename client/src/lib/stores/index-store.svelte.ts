@@ -7,22 +7,31 @@ class IndexStore {
   folders: FolderInfo[] = $state([]);
   sessions = $state(new SvelteMap<string, SessionInfo[]>());
   loading: boolean = $state(false);
+  private foldersLoadInFlight: Promise<void> | null = null;
 
   async loadFolders(): Promise<void> {
-    // Only show loading spinner on initial load when we have no data yet
-    const isInitialLoad = this.folders.length === 0;
-    if (isInitialLoad) this.loading = true;
-    try {
-      const response = await connection.send({ type: 'list_folders' });
-      if (response.success && response.data) {
-        const data = response.data as { folders: FolderInfo[] };
-        this.folders = data.folders;
+    if (this.foldersLoadInFlight) return this.foldersLoadInFlight;
+
+    this.foldersLoadInFlight = (async () => {
+      // Only show loading spinner on initial load when we have no data yet
+      const isInitialLoad = this.folders.length === 0;
+      if (isInitialLoad) this.loading = true;
+      try {
+        const response = await connection.send({ type: 'list_folders' });
+        if (response.success && response.data) {
+          const data = response.data as { folders: FolderInfo[] };
+          this.folders = data.folders;
+        }
+      } catch (e) {
+        console.error('[IndexStore] Failed to load folders:', e);
+      } finally {
+        if (isInitialLoad) this.loading = false;
       }
-    } catch (e) {
-      console.error('[IndexStore] Failed to load folders:', e);
-    } finally {
-      if (isInitialLoad) this.loading = false;
-    }
+    })().finally(() => {
+      this.foldersLoadInFlight = null;
+    });
+
+    return this.foldersLoadInFlight;
   }
 
   applySessionStateChange(event: SessionStateChangedEvent, myClientId: string): void {

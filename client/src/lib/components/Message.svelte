@@ -25,7 +25,6 @@
   let customText = $derived(getUserText(message));
   let customLines = $derived(customText.split('\n'));
   let customNeedsCollapse = $derived(customLines.length > MAX_COLLAPSED_LINES);
-  let customDisplayText = $derived(customNeedsCollapse && !customExpanded ? customLines.slice(0, MAX_COLLAPSED_LINES).join('\n') : customText);
 </script>
 
 {#if message.role === 'toolResult'}
@@ -93,7 +92,13 @@
           {/if}
         </button>
         <div class="custom-content">
-          <TextBlock text={customDisplayText} />
+          <div
+            class="custom-text-container"
+            class:custom-text-collapsed={customNeedsCollapse && !customExpanded}
+            class:custom-text-expanded={customNeedsCollapse && customExpanded}
+          >
+            <TextBlock text={customText} />
+          </div>
           {#if customNeedsCollapse && !customExpanded}
             <button class="custom-toggle" onclick={() => (customExpanded = true)}> Show more… </button>
           {:else if customNeedsCollapse && customExpanded}
@@ -218,6 +223,31 @@
   .custom-content {
     padding: 0 10px 8px;
     font-size: 0.85rem;
+  }
+
+  .custom-text-container {
+    position: relative;
+  }
+
+  .custom-text-collapsed {
+    max-height: 200px;
+    overflow: hidden;
+  }
+
+  .custom-text-collapsed::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 48px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, oklch(0.2 0.02 270 / 0), oklch(0.2 0.02 270 / 0.95));
+  }
+
+  .custom-text-expanded {
+    max-height: 500px;
+    overflow-y: auto;
   }
 
   .custom-toggle {
