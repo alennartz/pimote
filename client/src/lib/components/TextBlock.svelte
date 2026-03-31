@@ -28,7 +28,7 @@
     const interval = setInterval(() => {
       streamingHtml = renderMarkdown(text);
       renderedUpTo = text.length;
-    }, 150);
+    }, 400);
 
     return () => {
       clearInterval(interval);
