@@ -57,6 +57,7 @@
 
     if (sessionRegistry.viewed?.isStreaming) {
       // Steer the current generation
+      sessionRegistry.viewed.pendingSteeringMessages.push(text);
       try {
         await connection.send({
           type: 'steer',

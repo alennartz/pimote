@@ -2,6 +2,7 @@
   import FolderList from '$lib/components/FolderList.svelte';
   import MessageList from '$lib/components/MessageList.svelte';
   import InlineSelect from '$lib/components/InlineSelect.svelte';
+  import PendingSteeringMessages from '$lib/components/PendingSteeringMessages.svelte';
   import InputBar from '$lib/components/InputBar.svelte';
   import StatusBar from '$lib/components/StatusBar.svelte';
   import ActiveSessionBar from '$lib/components/ActiveSessionBar.svelte';
@@ -61,6 +62,7 @@
     {/if}
     <MessageList />
     <InlineSelect />
+    <PendingSteeringMessages />
     <ActiveSessionBar />
     <InputBar />
   </div>
