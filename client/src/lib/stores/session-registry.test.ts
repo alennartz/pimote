@@ -869,4 +869,86 @@ describe('SessionRegistry', () => {
       expect(session.pendingSteeringMessages).toEqual(['pending message']);
     });
   });
+
+  describe('Session Replacement', () => {
+    it('replaceSession re-keys the session entry with clean state', () => {
+      registry.addSession('old-id', '/home/user/project', 'project');
+      const old = registry.sessions['old-id']!;
+      old.model = { provider: 'test', id: 'model-1', name: 'Test Model' };
+      old.thinkingLevel = 'high';
+      old.autoCompactionEnabled = true;
+      old.gitBranch = 'main';
+      old.messages = [makeUserMessage('hello'), makeAssistantMessage('hi')];
+      old.messageKeys = ['msg-0', 'msg-1'];
+      old.firstMessage = 'hello';
+      old.messageCount = 2;
+      old.status = 'working';
+
+      registry.replaceSession('old-id', 'new-id', '/home/user/project', 'project');
+
+      // Old entry should be gone
+      expect(registry.sessions['old-id']).toBeUndefined();
+
+      // New entry should exist with clean state
+      const newSession = registry.sessions['new-id']!;
+      expect(newSession).toBeDefined();
+      expect(newSession.sessionId).toBe('new-id');
+      expect(newSession.folderPath).toBe('/home/user/project');
+      expect(newSession.projectName).toBe('project');
+      // Clean state
+      expect(newSession.messages).toEqual([]);
+      expect(newSession.messageKeys).toEqual([]);
+      expect(newSession.firstMessage).toBeUndefined();
+      expect(newSession.messageCount).toBe(0);
+      expect(newSession.status).toBe('idle');
+      expect(newSession.toolExecutions).toEqual({});
+      expect(newSession.streamingMessage).toBeNull();
+      expect(newSession.draftText).toBe('');
+      expect(newSession.pendingSteeringMessages).toEqual([]);
+      // Preserved from old session
+      expect(newSession.model).toEqual({ provider: 'test', id: 'model-1', name: 'Test Model' });
+      expect(newSession.thinkingLevel).toBe('high');
+      expect(newSession.autoCompactionEnabled).toBe(true);
+      expect(newSession.gitBranch).toBe('main');
+    });
+
+    it('replaceSession updates viewedSessionId when old session was viewed', () => {
+      registry.addSession('old-id', '/home/user/project', 'project');
+      registry.switchTo('old-id');
+      expect(registry.viewedSessionId).toBe('old-id');
+
+      registry.replaceSession('old-id', 'new-id', '/home/user/project', 'project');
+
+      expect(registry.viewedSessionId).toBe('new-id');
+    });
+
+    it('replaceSession does not change viewedSessionId when old session was not viewed', () => {
+      registry.addSession('other', '/home/user/other', 'other');
+      registry.addSession('old-id', '/home/user/project', 'project');
+      registry.switchTo('other');
+
+      registry.replaceSession('old-id', 'new-id', '/home/user/project', 'project');
+
+      expect(registry.viewedSessionId).toBe('other');
+    });
+
+    it('replaceSession is a no-op for unknown old session ID', () => {
+      registry.addSession('existing', '/home/user/project', 'project');
+      registry.replaceSession('nonexistent', 'new-id', '/home/user/project', 'project');
+
+      // Nothing changed
+      expect(registry.sessions['existing']).toBeDefined();
+      expect(registry.sessions['new-id']).toBeUndefined();
+    });
+
+    it('isActiveSession reflects the new ID after replacement', () => {
+      registry.addSession('old-id', '/home/user/project', 'project');
+      expect(registry.isActiveSession('old-id')).toBe(true);
+
+      registry.replaceSession('old-id', 'new-id', '/home/user/project', 'project');
+
+      expect(registry.isActiveSession('old-id')).toBe(false);
+      expect(registry.isActiveSession('new-id')).toBe(true);
+    });
+  });
 });

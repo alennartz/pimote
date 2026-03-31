@@ -1227,4 +1227,180 @@ describe('WsHandler', () => {
       });
     });
   });
+
+  describe('handleSessionReset — session replacement via extension commands', () => {
+    it('sends session_replaced and broadcasts sidebar updates when session ID changes', async () => {
+      // Track the onSessionReset callback that claimSession passes to bindExtensions
+      let capturedOnReset: (() => void) | undefined;
+      const mockAgentSession = {
+        sessionId: 'old-session',
+        subscribe: () => () => {},
+        dispose: () => {},
+        messages: [],
+        model: null,
+        thinkingLevel: 'default',
+        isStreaming: false,
+        isCompacting: false,
+        sessionFile: undefined,
+        sessionName: undefined,
+        autoCompactionEnabled: false,
+        bindExtensions: async (bindings: any) => {
+          // Extract the onSessionReset from the commandContextActions' newSession wrapper.
+          // createCommandContextActions wraps session.newSession and calls onSessionReset on success.
+          // We capture it by introspecting the wrapper — but since we can't easily, we'll
+          // capture the whole commandContextActions and call newSession ourselves.
+          if (bindings.commandContextActions) {
+            // Store a reference so we can simulate the reset
+            capturedOnReset = async () => {
+              // Simulate what happens: session.sessionId changes, then the callback fires
+              mockAgentSession.sessionId = 'new-session';
+              // Call newSession which triggers the onSessionReset callback
+              await bindings.commandContextActions.newSession();
+            };
+            // Mock the session's newSession to just return true (success)
+            mockAgentSession.newSession = async () => true;
+          }
+        },
+        modelRegistry: { getAvailable: () => [] },
+        clearQueue: () => ({ steering: [], followUp: [] }),
+        newSession: async () => true,
+      } as any;
+
+      const managed = createMockManagedSession({
+        id: 'old-session',
+        session: mockAgentSession,
+        folderPath: '/home/user/project',
+        connectedClientId: null,
+      });
+
+      const sessions = new Map([['old-session', managed]]);
+      const sessionManager = createMockSessionManager(sessions);
+
+      // Mock detachSession and adoptSession
+      (sessionManager as any).detachSession = (id: string) => {
+        sessions.delete(id);
+      };
+      (sessionManager as any).adoptSession = (agentSess: any, folderPath: string) => {
+        const newId = agentSess.sessionId;
+        const newManaged = createMockManagedSession({
+          id: newId,
+          session: agentSess,
+          folderPath,
+          connectedClientId: null,
+        });
+        sessions.set(newId, newManaged);
+        return newId;
+      };
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { ws, sent } = createMockWs();
+      const folderIndex = createMockFolderIndex();
+      const pushService = createMockPushService();
+
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, 'my-client', clientRegistry);
+      clientRegistry.set('my-client', handler);
+
+      // Open the session to trigger claimSession
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'old-session',
+          id: 'req-open',
+        }),
+      );
+
+      // Clear sent messages so we only see the reset events
+      sent.length = 0;
+
+      // Trigger the session reset (simulates extension calling newSession)
+      expect(capturedOnReset).toBeDefined();
+      await capturedOnReset!();
+
+      // Should have sent session_replaced event
+      const replaced = findEvents(sent, 'session_replaced');
+      expect(replaced).toHaveLength(1);
+      expect((replaced[0] as any).oldSessionId).toBe('old-session');
+      expect((replaced[0] as any).newSessionId).toBe('new-session');
+      expect((replaced[0] as any).folder.path).toBe('/home/user/project');
+
+      // Should have broadcast session_state_changed for both old and new
+      const stateChanges = findEvents(sent, 'session_state_changed');
+      const oldChange = stateChanges.find((e: any) => e.sessionId === 'old-session');
+      const newChange = stateChanges.find((e: any) => e.sessionId === 'new-session');
+      expect(oldChange).toBeDefined();
+      expect(newChange).toBeDefined();
+      // Old session is no longer in the map, so liveStatus should be null
+      expect((oldChange as any).liveStatus).toBeNull();
+
+      // The old session should be removed from the map
+      expect(sessions.has('old-session')).toBe(false);
+      // The new session should be in the map
+      expect(sessions.has('new-session')).toBe(true);
+    });
+
+    it('sends full_resync (not session_replaced) when session ID stays the same (navigateTree)', async () => {
+      let capturedBindings: any;
+      const mockAgentSession = {
+        sessionId: 'same-session',
+        subscribe: () => () => {},
+        dispose: () => {},
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+        model: { provider: 'test', id: 'test-model', name: 'Test' },
+        thinkingLevel: 'default',
+        isStreaming: false,
+        isCompacting: false,
+        sessionFile: '/tmp/session.json',
+        sessionName: undefined,
+        autoCompactionEnabled: false,
+        bindExtensions: async (bindings: any) => {
+          capturedBindings = bindings;
+        },
+        modelRegistry: { getAvailable: () => [] },
+        clearQueue: () => ({ steering: [], followUp: [] }),
+        navigateTree: async () => ({ cancelled: false }),
+      } as any;
+
+      const managed = createMockManagedSession({
+        id: 'same-session',
+        session: mockAgentSession,
+        folderPath: '/home/user/project',
+        connectedClientId: null,
+      });
+
+      const sessions = new Map([['same-session', managed]]);
+      const sessionManager = createMockSessionManager(sessions);
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { ws, sent } = createMockWs();
+      const folderIndex = createMockFolderIndex();
+      const pushService = createMockPushService();
+
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, 'my-client', clientRegistry);
+      clientRegistry.set('my-client', handler);
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'same-session',
+          id: 'req-open',
+        }),
+      );
+
+      sent.length = 0;
+
+      // navigateTree doesn't change session ID — trigger the callback
+      // sessionId stays 'same-session'
+      await capturedBindings.commandContextActions.navigateTree('entry-123');
+
+      // Should get full_resync, NOT session_replaced
+      const replaced = findEvents(sent, 'session_replaced');
+      expect(replaced).toHaveLength(0);
+
+      const resync = findEvents(sent, 'full_resync');
+      expect(resync).toHaveLength(1);
+      expect((resync[0] as any).sessionId).toBe('same-session');
+    });
+  });
 });

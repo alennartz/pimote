@@ -152,6 +152,64 @@ export class PimoteSessionManager {
     this.onSessionClosed?.(sessionId, folderPath);
   }
 
+  /** Remove a session from management without disposing the underlying AgentSession.
+   *  Used when the pi SDK resets the session (newSession, fork, switchSession) —
+   *  the AgentSession object is reused by the new session. */
+  detachSession(sessionId: string): void {
+    const managed = this.sessions.get(sessionId);
+    if (!managed) return;
+
+    managed.unsubscribe();
+    this.sessions.delete(sessionId);
+    this.onSessionClosed?.(sessionId, managed.folderPath);
+  }
+
+  /** Wrap an existing AgentSession in a new ManagedSession.
+   *  Used after detachSession when the pi SDK has reset the session to a new ID. */
+  adoptSession(session: AgentSession, folderPath: string): string {
+    const sessionId = session.sessionId;
+    const eventBuffer = new EventBuffer(this.config.bufferSize);
+
+    const managed: ManagedSession = {
+      id: sessionId,
+      session,
+      folderPath,
+      eventBuffer,
+      connectedClientId: null,
+      lastActivity: Date.now(),
+      status: session.isStreaming ? 'working' : 'idle',
+      needsAttention: false,
+      sendLive: () => {},
+      unsubscribe: () => {},
+    };
+
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === 'agent_start' && managed.status !== 'working') {
+        managed.status = 'working';
+        this.onStatusChange?.(managed.id, folderPath);
+      } else if (event.type === 'agent_end' && managed.status !== 'idle') {
+        managed.status = 'idle';
+        managed.needsAttention = true;
+        const projectName = folderPath.split('/').pop() ?? 'Unknown';
+        const firstMessage = this.extractFirstMessage(managed);
+        this.pushNotificationService
+          .notifySessionIdle({
+            projectName,
+            folderPath,
+            firstMessage,
+            sessionId: managed.id,
+          })
+          .catch((err) => console.error('[SessionManager] Push notification error:', err));
+        this.onStatusChange?.(managed.id, folderPath);
+      }
+      eventBuffer.onEvent(event, managed.id, (e) => managed.sendLive(e));
+    });
+
+    managed.unsubscribe = unsubscribe;
+    this.sessions.set(sessionId, managed);
+    return sessionId;
+  }
+
   getSession(sessionId: string): ManagedSession | undefined {
     return this.sessions.get(sessionId);
   }

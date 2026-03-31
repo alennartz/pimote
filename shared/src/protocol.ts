@@ -469,7 +469,14 @@ export interface SessionOpenedEvent {
 export interface SessionClosedEvent {
   type: 'session_closed';
   sessionId: string;
-  reason?: 'displaced' | 'killed';
+  reason?: 'displaced' | 'killed' | 'replaced';
+}
+
+export interface SessionReplacedEvent {
+  type: 'session_replaced';
+  oldSessionId: string;
+  newSessionId: string;
+  folder: FolderInfo;
 }
 
 export interface SessionStateChangedEvent {
@@ -519,6 +526,7 @@ export type PimoteEvent =
   // Server-level
   | SessionOpenedEvent
   | SessionClosedEvent
+  | SessionReplacedEvent
   | SessionStateChangedEvent
   | ConnectionRestoredEvent
   | BufferedEventsEvent

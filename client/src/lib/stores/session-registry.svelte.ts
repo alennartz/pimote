@@ -23,6 +23,7 @@ import type {
   FullResyncEvent,
   SessionConflictEvent,
   SessionOpenedEvent,
+  SessionReplacedEvent,
 } from '@pimote/shared';
 import { connection } from './connection.svelte.js';
 
@@ -299,6 +300,48 @@ export class SessionRegistry {
     }
   }
 
+  /** Replace a session in-place — same slot in the registry, new session ID.
+   *  Used when the underlying pi session resets (newSession, fork, switchSession). */
+  replaceSession(oldSessionId: string, newSessionId: string, folderPath: string, projectName: string): void {
+    const old = this.sessions[oldSessionId];
+    if (!old) return;
+
+    // Remove old entry, add new entry with clean state but same slot identity
+    const { [oldSessionId]: _, ...rest } = this.sessions;
+    rest[newSessionId] = {
+      sessionId: newSessionId,
+      folderPath,
+      projectName,
+      firstMessage: undefined,
+      messages: [],
+      isStreaming: false,
+      isCompacting: false,
+      model: old.model,
+      thinkingLevel: old.thinkingLevel,
+      streamingMessage: null,
+      streamingKey: null,
+      messageKeys: [],
+      toolExecutions: {},
+      autoCompactionEnabled: old.autoCompactionEnabled,
+      messageCount: 0,
+      status: 'idle',
+      needsAttention: false,
+      conflictingProcesses: [],
+      conflictingRemoteSessions: [],
+      pendingTakeover: false,
+      gitBranch: old.gitBranch,
+      contextUsage: null,
+      draftText: '',
+      pendingSteeringMessages: [],
+    };
+    this.sessions = rest;
+
+    // If the old session was being viewed, view the new one
+    if (this.viewedSessionId === oldSessionId) {
+      this.viewedSessionId = newSessionId;
+    }
+  }
+
   /** Switch viewed session, clears needsAttention for target */
   switchTo(sessionId: string): void {
     this.viewedSessionId = sessionId;
@@ -416,6 +459,49 @@ connection.onEvent((event) => {
     case 'session_closed': {
       sessionRegistry.removeSession(event.sessionId);
       connection.removeSubscribedSession(event.sessionId);
+      break;
+    }
+    case 'session_replaced': {
+      const replaced = event as SessionReplacedEvent;
+      const folder = replaced.folder;
+      const projectName = folder?.name ?? 'Unknown';
+      sessionRegistry.replaceSession(replaced.oldSessionId, replaced.newSessionId, folder?.path ?? '', projectName);
+      connection.removeSubscribedSession(replaced.oldSessionId);
+      connection.addSubscribedSession(replaced.newSessionId);
+      // Fetch state for the new session
+      Promise.all([
+        connection.send({ type: 'get_state', sessionId: replaced.newSessionId }),
+        connection.send({ type: 'get_messages', sessionId: replaced.newSessionId }),
+        connection.send({ type: 'get_session_meta', sessionId: replaced.newSessionId }),
+      ])
+        .then(([stateRes, msgRes, metaRes]) => {
+          const session = sessionRegistry.sessions[replaced.newSessionId];
+          if (!session) return;
+          if (stateRes.success && stateRes.data) {
+            const state = (stateRes.data as { state: SessionState }).state;
+            session.model = state.model;
+            session.thinkingLevel = state.thinkingLevel;
+            session.isStreaming = state.isStreaming;
+            session.isCompacting = state.isCompacting;
+            session.autoCompactionEnabled = state.autoCompactionEnabled;
+            session.messageCount = state.messageCount;
+            session.status = state.isStreaming ? 'working' : 'idle';
+          }
+          if (msgRes.success && msgRes.data) {
+            const messages = (msgRes.data as { messages: PimoteAgentMessage[] }).messages;
+            session.messages = messages;
+            session.messageKeys = sessionRegistry.generateMessageKeys(messages.length);
+            session.messageCount = messages.length;
+            sessionRegistry.rebuildToolExecutions(session);
+          }
+          if (metaRes.success && metaRes.data) {
+            const meta = (metaRes.data as { meta: SessionMeta }).meta;
+            sessionRegistry.updateMeta(replaced.newSessionId, meta);
+          }
+        })
+        .catch((err) => {
+          console.error('[SessionRegistry] Failed to fetch replaced session state:', err);
+        });
       break;
     }
     default: {

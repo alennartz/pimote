@@ -40,6 +40,9 @@ class IndexStore {
       if (session) {
         session.liveStatus = event.liveStatus;
         session.isOwnedByMe = event.connectedClientId === myClientId;
+      } else if (event.liveStatus !== null) {
+        // Unknown active session (e.g. created by newSession/fork/switchSession) — reload the list
+        this.loadSessions(event.folderPath);
       }
     }
   }

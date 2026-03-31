@@ -62,6 +62,120 @@ function createFakeSession(overrides: Partial<ManagedSession> = {}): ManagedSess
 
 // --- Tests ---
 
+describe('PimoteSessionManager — detachSession', () => {
+  it('removes session from map without disposing AgentSession', () => {
+    const config = createTestConfig();
+    const manager = new PimoteSessionManager(config, createMockPushService());
+    const disposeFn = vi.fn();
+    const unsubFn = vi.fn();
+    const session = createFakeSession({
+      id: 'detach-1',
+      session: { dispose: disposeFn, subscribe: () => () => {}, messages: [] } as any,
+      unsubscribe: unsubFn,
+    });
+
+    injectSession(manager, session);
+    expect(manager.getSession('detach-1')).toBeDefined();
+
+    manager.detachSession('detach-1');
+
+    expect(manager.getSession('detach-1')).toBeUndefined();
+    expect(unsubFn).toHaveBeenCalled();
+    expect(disposeFn).not.toHaveBeenCalled();
+  });
+
+  it('fires onSessionClosed callback', () => {
+    const config = createTestConfig();
+    const manager = new PimoteSessionManager(config, createMockPushService());
+    const closedCallback = vi.fn();
+    manager.onSessionClosed = closedCallback;
+
+    const session = createFakeSession({ id: 'detach-2', folderPath: '/home/user/proj' });
+    injectSession(manager, session);
+
+    manager.detachSession('detach-2');
+
+    expect(closedCallback).toHaveBeenCalledWith('detach-2', '/home/user/proj');
+  });
+
+  it('is a no-op for unknown session IDs', () => {
+    const config = createTestConfig();
+    const manager = new PimoteSessionManager(config, createMockPushService());
+    // Should not throw
+    manager.detachSession('nonexistent');
+  });
+});
+
+describe('PimoteSessionManager — adoptSession', () => {
+  it('creates a new managed session wrapping the given AgentSession', () => {
+    const config = createTestConfig();
+    const manager = new PimoteSessionManager(config, createMockPushService());
+    const mockAgentSession = {
+      sessionId: 'adopted-1',
+      isStreaming: false,
+      subscribe: () => () => {},
+      messages: [],
+    } as any;
+
+    const returnedId = manager.adoptSession(mockAgentSession, '/home/user/proj');
+
+    expect(returnedId).toBe('adopted-1');
+    const managed = manager.getSession('adopted-1');
+    expect(managed).toBeDefined();
+    expect(managed!.session).toBe(mockAgentSession);
+    expect(managed!.folderPath).toBe('/home/user/proj');
+    expect(managed!.connectedClientId).toBeNull();
+    expect(managed!.status).toBe('idle');
+  });
+
+  it('sets status to working if AgentSession is streaming', () => {
+    const config = createTestConfig();
+    const manager = new PimoteSessionManager(config, createMockPushService());
+    const mockAgentSession = {
+      sessionId: 'adopted-streaming',
+      isStreaming: true,
+      subscribe: () => () => {},
+      messages: [],
+    } as any;
+
+    manager.adoptSession(mockAgentSession, '/home/user/proj');
+
+    const managed = manager.getSession('adopted-streaming');
+    expect(managed!.status).toBe('working');
+  });
+
+  it('subscribes to events and fires onStatusChange on agent_start/agent_end', () => {
+    const config = createTestConfig();
+    const manager = new PimoteSessionManager(config, createMockPushService());
+    const statusCallback = vi.fn();
+    manager.onStatusChange = statusCallback;
+
+    let subscribedCallback: ((event: any) => void) | null = null;
+    const mockAgentSession = {
+      sessionId: 'adopted-events',
+      isStreaming: false,
+      subscribe: (cb: any) => {
+        subscribedCallback = cb;
+        return () => {};
+      },
+      messages: [],
+    } as any;
+
+    manager.adoptSession(mockAgentSession, '/home/user/proj');
+    expect(subscribedCallback).not.toBeNull();
+
+    // Simulate agent_start
+    subscribedCallback!({ type: 'agent_start' });
+    expect(statusCallback).toHaveBeenCalledWith('adopted-events', '/home/user/proj');
+
+    statusCallback.mockClear();
+
+    // Simulate agent_end
+    subscribedCallback!({ type: 'agent_end' });
+    expect(statusCallback).toHaveBeenCalledWith('adopted-events', '/home/user/proj');
+  });
+});
+
 describe('PimoteSessionManager — idle reaper', () => {
   beforeEach(() => {
     vi.useFakeTimers();

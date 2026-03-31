@@ -725,10 +725,68 @@ export class WsHandler {
       this.sendEvent(event);
     };
     const uiContext = createExtensionUIBridge(sendToClient, waitForResponse);
-    const commandContextActions = createCommandContextActions(managed.session, () => {
-      this.sendFullResyncForSession(sessionId, managed);
+    // Capture the stable AgentSession reference — not the mutable sessionId or managed.
+    // handleSessionReset does a fresh lookup from the session manager each time it fires.
+    const agentSession = managed.session;
+    const commandContextActions = createCommandContextActions(agentSession, () => {
+      this.handleSessionReset(agentSession);
     });
     await managed.session.bindExtensions({ uiContext, commandContextActions });
+  }
+
+  /** Handle a session reset (newSession, fork, switchSession).
+   *  Looks up current state from the session manager — no captured mutable references. */
+  private async handleSessionReset(agentSession: AgentSession): Promise<void> {
+    const newSessionId = agentSession.sessionId;
+
+    // Find the current managed session that wraps this AgentSession
+    const oldManaged = this.sessionManager.getAllSessions().find((m) => m.session === agentSession);
+    if (!oldManaged) return;
+
+    const oldSessionId = oldManaged.id;
+
+    // navigateTree stays in the same file — same session ID, just resync
+    if (newSessionId === oldSessionId) {
+      this.sendFullResyncForSession(oldSessionId, oldManaged);
+      return;
+    }
+
+    // Session ID changed — detach old managed session, adopt as new
+    const folderPath = oldManaged.folderPath;
+    this.sessionManager.detachSession(oldSessionId);
+    this.sessionManager.adoptSession(agentSession, folderPath);
+
+    const newManaged = this.sessionManager.getSession(newSessionId)!;
+
+    // Update handler bookkeeping
+    this.subscribedSessions.delete(oldSessionId);
+    if (this.viewedSessionId === oldSessionId) {
+      this.viewedSessionId = newSessionId;
+    }
+
+    // Resolve pending UI responses for the old session
+    this.resolvePendingUiForSession(oldSessionId);
+
+    // Claim the new managed session (sets ownership, binds extensions)
+    await this.claimSession(newSessionId, newManaged);
+
+    // Notify owning client: session replaced (client re-keys in place)
+    this.sendEvent({
+      type: 'session_replaced',
+      oldSessionId,
+      newSessionId,
+      folder: {
+        path: folderPath,
+        name: folderPath.split('/').pop() ?? folderPath,
+        activeSessionCount: this.sessionManager.getAllSessions().filter((s) => s.folderPath === folderPath).length,
+        externalProcessCount: 0,
+        activeStatus: 'idle',
+      },
+    });
+
+    // Broadcast sidebar updates for both old (now inactive) and new (now active)
+    WsHandler.broadcastSidebarUpdate(oldSessionId, folderPath, this.sessionManager, this.clientRegistry);
+    WsHandler.broadcastSidebarUpdate(newSessionId, folderPath, this.sessionManager, this.clientRegistry);
   }
 
   /** Close this handler's WebSocket connection. */
