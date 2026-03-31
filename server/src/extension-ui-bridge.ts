@@ -21,11 +21,23 @@ export function createExtensionUIBridge(sendToClient: (msg: PimoteEvent) => void
 
   async function dialogWithTimeout<T>(requestId: string, opts: ExtensionUIDialogOptions | undefined, fallback: T): Promise<T> {
     const responsePromise = waitForResponse(requestId) as Promise<T>;
+
+    const racers: Promise<T>[] = [responsePromise];
+
     if (opts?.timeout) {
-      const timer = new Promise<T>((resolve) => setTimeout(() => resolve(fallback), opts.timeout));
-      return Promise.race([responsePromise, timer]);
+      racers.push(new Promise<T>((resolve) => setTimeout(() => resolve(fallback), opts.timeout)));
     }
-    return responsePromise;
+
+    if (opts?.signal) {
+      if (opts.signal.aborted) return fallback;
+      racers.push(
+        new Promise<T>((resolve) => {
+          opts.signal!.addEventListener('abort', () => resolve(fallback), { once: true });
+        }),
+      );
+    }
+
+    return racers.length === 1 ? responsePromise : Promise.race(racers);
   }
 
   // We use a fixed sessionId placeholder — the actual sessionId is set by the

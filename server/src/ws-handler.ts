@@ -315,8 +315,28 @@ export class WsHandler {
             this.sendFullResyncForSession(command.sessionId, managed);
           }
 
+          // Capture the buffer cursor before claimSession. Events emitted between
+          // the replay above and claimSession restoring sendLive (e.g. from a
+          // pending select resolved by cleanup) are buffered but missed both the
+          // replay and the live path. A catch-up replay after claim closes this gap.
+          const cursorBeforeClaim = managed.eventBuffer.currentCursor;
+
           // Claim session — rebinds ownership, sendLive, and extension UI bridge
           await this.claimSession(command.sessionId, managed);
+
+          // Catch-up: replay any events that were buffered between the initial
+          // replay and the completion of claimSession (sendLive restoration).
+          if (replayResult !== null) {
+            const catchUp = managed.eventBuffer.replay(cursorBeforeClaim);
+            if (catchUp && catchUp.length > 0) {
+              this.sendEvent({
+                type: 'buffered_events',
+                sessionId: command.sessionId,
+                events: catchUp,
+              } as BufferedEventsEvent);
+            }
+          }
+
           // Don't overwrite viewedSessionId here — the client reconnects ALL
           // subscribed sessions in a loop, so the last one would win arbitrarily.
           // The client sends an explicit view_session after reconnect to set this.
@@ -663,9 +683,28 @@ export class WsHandler {
     }
   }
 
+  /** Resolve all pending UI responses for a specific session with undefined. */
+  resolvePendingUiForSession(sessionId: string): void {
+    for (const [key, pending] of this.pendingUiResponses) {
+      if (pending.sessionId === sessionId) {
+        pending.resolve(undefined);
+        this.pendingUiResponses.delete(key);
+      }
+    }
+  }
+
   /** Bind a managed session to this client — sets ownership, live event routing,
    *  extension UI bridge, and subscribes to events. */
   private async claimSession(sessionId: string, managed: ManagedSession): Promise<void> {
+    // Resolve any pending UI responses from the previous owner so the pi SDK
+    // doesn't hang forever awaiting a promise that no client will ever answer.
+    if (managed.connectedClientId && managed.connectedClientId !== this.clientId) {
+      const oldHandler = this.clientRegistry.get(managed.connectedClientId);
+      if (oldHandler) {
+        oldHandler.resolvePendingUiForSession(sessionId);
+      }
+    }
+
     managed.connectedClientId = this.clientId;
     managed.lastActivity = Date.now();
     managed.sendLive = (event: PimoteSessionEvent) => {

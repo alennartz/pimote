@@ -119,6 +119,79 @@ describe('createExtensionUIBridge', () => {
     });
   });
 
+  describe('abort signal handling', () => {
+    it('should resolve to undefined immediately when signal is already aborted', async () => {
+      waitForResponse.mockReturnValue(new Promise(() => {}));
+      const controller = new AbortController();
+      controller.abort();
+
+      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const result = await ui.select('Pick one', ['a', 'b'], { signal: controller.signal });
+
+      expect(result).toBeUndefined();
+    });
+
+    it('should resolve to false immediately when confirm signal is already aborted', async () => {
+      waitForResponse.mockReturnValue(new Promise(() => {}));
+      const controller = new AbortController();
+      controller.abort();
+
+      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const result = await ui.confirm('Sure?', 'Really?', { signal: controller.signal });
+
+      expect(result).toBe(false);
+    });
+
+    it('should resolve to undefined when select signal is aborted after call', async () => {
+      waitForResponse.mockReturnValue(new Promise(() => {}));
+      const controller = new AbortController();
+
+      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const promise = ui.select('Pick one', ['a', 'b'], { signal: controller.signal });
+
+      controller.abort();
+      const result = await promise;
+
+      expect(result).toBeUndefined();
+    });
+
+    it('should resolve to false when confirm signal is aborted after call', async () => {
+      waitForResponse.mockReturnValue(new Promise(() => {}));
+      const controller = new AbortController();
+
+      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const promise = ui.confirm('Sure?', 'Really?', { signal: controller.signal });
+
+      controller.abort();
+      const result = await promise;
+
+      expect(result).toBe(false);
+    });
+
+    it('should resolve to undefined when input signal is aborted after call', async () => {
+      waitForResponse.mockReturnValue(new Promise(() => {}));
+      const controller = new AbortController();
+
+      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const promise = ui.input('Name?', 'placeholder', { signal: controller.signal });
+
+      controller.abort();
+      const result = await promise;
+
+      expect(result).toBeUndefined();
+    });
+
+    it('should resolve with value if response arrives before abort', async () => {
+      waitForResponse.mockResolvedValue('fast-response');
+      const controller = new AbortController();
+
+      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const result = await ui.select('Pick one', ['a', 'b'], { signal: controller.signal });
+
+      expect(result).toBe('fast-response');
+    });
+  });
+
   describe('fire-and-forget methods', () => {
     it('notify() should send event without waiting', () => {
       const ui = createExtensionUIBridge(sendToClient, waitForResponse);

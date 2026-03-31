@@ -178,14 +178,17 @@ export async function createServer(
       return;
     }
 
-    // Register new handler first, then close any stale connection.
-    // No cleanup() — sessions will be rebound by the new handler's reconnect
-    // commands. The close handler skips cleanup when the registry already
-    // points to a different handler.
+    // Register new handler first, then clean up and close any stale connection.
+    // cleanup() resolves orphaned pending UI responses (e.g. an in-flight select)
+    // so the pi SDK doesn't hang forever. Sessions are briefly unbound but the
+    // new handler's reconnect commands will reclaim them via claimSession().
+    // The close handler skips cleanup when the registry already points to a
+    // different handler, so this is the only place it runs.
     const existing = clientRegistry.get(clientId);
     const handler = new WsHandler(sessionManager, folderIndex, ws, pushNotificationService, clientId, clientRegistry);
     clientRegistry.set(clientId, handler);
     if (existing) {
+      existing.cleanup();
       existing.closeWebSocket();
     }
 

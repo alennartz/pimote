@@ -9,9 +9,18 @@ import type { PimoteEvent, PimoteResponse, PimoteSessionEvent } from '@pimote/sh
 // --- Mock factories ---
 
 function createMockEventBuffer(opts?: { replayResult?: PimoteSessionEvent[] | null }): EventBuffer {
+  const events = opts?.replayResult;
+  // Derive currentCursor from the highest cursor in the replay events
+  const maxCursor = events && events.length > 0 ? Math.max(...events.map((e) => e.cursor)) : 0;
   return {
-    replay: () => (opts?.replayResult !== undefined ? opts.replayResult : []),
-    currentCursor: 0,
+    replay: (fromCursor: number) => {
+      if (events === null) return null;
+      if (events === undefined) return [];
+      // Filter to only events after fromCursor (matches real EventBuffer behavior)
+      const filtered = events.filter((e) => e.cursor > fromCursor);
+      return filtered;
+    },
+    currentCursor: maxCursor,
     onEvent: () => {},
   } as unknown as EventBuffer;
 }
@@ -940,6 +949,138 @@ describe('WsHandler', () => {
       expect(listedSessions).toHaveLength(1);
       expect(listedSessions[0].isOwnedByMe).toBe(false);
       expect(listedSessions[0].liveStatus).toBeNull();
+    });
+  });
+
+  describe('reconnect — catch-up replay after claimSession', () => {
+    it('sends catch-up events buffered between initial replay and claimSession', async () => {
+      // Simulate events appearing in the buffer during claimSession (e.g. from
+      // a pending select resolved by cleanup). The first replay returns the
+      // initial set; the second replay (catch-up) returns the new events.
+      let replayCallCount = 0;
+      const initialEvents: PimoteSessionEvent[] = [
+        { type: 'agent_start', sessionId: 'session-1', cursor: 1 },
+        { type: 'tool_execution_start', sessionId: 'session-1', cursor: 2, toolName: 'ask_user', toolCallId: 'tc-1', args: {} },
+      ];
+      const catchUpEvents: PimoteSessionEvent[] = [{ type: 'tool_execution_end', sessionId: 'session-1', cursor: 3, toolCallId: 'tc-1', result: 'cancelled' }];
+
+      const eventBuffer = {
+        replay: (fromCursor: number) => {
+          replayCallCount++;
+          if (replayCallCount === 1) {
+            // Initial replay — return events since client's lastCursor
+            return initialEvents;
+          }
+          // Catch-up replay — return events buffered during claimSession
+          return fromCursor >= 2 ? catchUpEvents : [...initialEvents, ...catchUpEvents];
+        },
+        currentCursor: 2, // will be updated by the test
+        onEvent: () => {},
+      } as unknown as EventBuffer;
+
+      // Make currentCursor advance to 3 when claimSession reads it, simulating
+      // an event buffered between the first replay and claimSession
+      Object.defineProperty(eventBuffer, 'currentCursor', {
+        get: () => (replayCallCount >= 1 ? 3 : 2),
+      });
+
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+        eventBuffer,
+      });
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'reconnect',
+          sessionId: 'session-1',
+          lastCursor: 0,
+          id: 'req-catchup',
+        }),
+      );
+
+      // Should have two buffered_events: initial replay + catch-up
+      const bufferedEvents = findEvents(sent, 'buffered_events');
+      expect(bufferedEvents).toHaveLength(2);
+
+      // First batch: initial events
+      expect((bufferedEvents[0] as any).events).toEqual(initialEvents);
+
+      // Second batch: catch-up events (tool_execution_end that arrived during claimSession)
+      expect((bufferedEvents[1] as any).events).toEqual(catchUpEvents);
+
+      const resp = findResponse(sent, 'req-catchup');
+      expect(resp!.success).toBe(true);
+    });
+
+    it('does not send catch-up when no new events were buffered', async () => {
+      const bufferedEvents: PimoteSessionEvent[] = [{ type: 'agent_start', sessionId: 'session-1', cursor: 5 }];
+
+      const eventBuffer = {
+        replay: () => bufferedEvents,
+        currentCursor: 5,
+        onEvent: () => {},
+      } as unknown as EventBuffer;
+
+      // After first replay, catch-up replay returns empty (no new events)
+      let callCount = 0;
+      (eventBuffer as any).replay = (_fromCursor: number) => {
+        callCount++;
+        if (callCount === 1) return bufferedEvents;
+        return []; // no catch-up events
+      };
+
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+        eventBuffer,
+      });
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'reconnect',
+          sessionId: 'session-1',
+          lastCursor: 4,
+          id: 'req-no-catchup',
+        }),
+      );
+
+      // Only ONE buffered_events (initial replay), no catch-up
+      const buffered = findEvents(sent, 'buffered_events');
+      expect(buffered).toHaveLength(1);
+    });
+
+    it('skips catch-up when initial replay was full_resync', async () => {
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+        eventBuffer: createMockEventBuffer({ replayResult: null }), // triggers full_resync
+      });
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'reconnect',
+          sessionId: 'session-1',
+          lastCursor: 0,
+          id: 'req-resync',
+        }),
+      );
+
+      // full_resync, no buffered_events at all
+      const resync = findEvents(sent, 'full_resync');
+      expect(resync).toHaveLength(1);
+
+      const buffered = findEvents(sent, 'buffered_events');
+      expect(buffered).toHaveLength(0);
     });
   });
 
