@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { editorTextRequest } from '$lib/stores/input-bar.svelte.js';
+  import { editorTextRequest, setEditorText } from '$lib/stores/input-bar.svelte.js';
   import Send from '@lucide/svelte/icons/send';
   import MessageSquare from '@lucide/svelte/icons/message-square';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
@@ -90,14 +90,36 @@
   }
 
   async function handleAbort() {
-    if (!sessionRegistry.viewed?.sessionId) return;
+    const session = sessionRegistry.viewed;
+    if (!session?.sessionId) return;
     try {
       await connection.send({
         type: 'abort',
-        sessionId: sessionRegistry.viewed.sessionId,
+        sessionId: session.sessionId,
       });
     } catch (e) {
       console.error('Failed to send abort:', e);
+    }
+
+    // Restore any queued steering/follow-up messages to the editor (matches TUI behavior).
+    // Without this, queued messages stay in the SDK and get silently sent with the next prompt.
+    if (session.pendingSteeringMessages.length > 0) {
+      try {
+        const res = await connection.send({
+          type: 'dequeue_steering',
+          sessionId: session.sessionId,
+        });
+        if (res.success && res.data) {
+          const { steering, followUp } = res.data as { steering: string[]; followUp: string[] };
+          const allQueued = [...steering, ...followUp];
+          if (allQueued.length > 0) {
+            setEditorText(session.sessionId, allQueued.join('\n'));
+          }
+        }
+      } catch (e) {
+        console.error('Failed to dequeue steering messages after abort:', e);
+      }
+      session.pendingSteeringMessages = [];
     }
   }
 
