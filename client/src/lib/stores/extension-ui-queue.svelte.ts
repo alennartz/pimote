@@ -54,6 +54,9 @@ export function getExtensionUiQueue() {
       const viewedId = sessionRegistry.viewedSessionId;
       return queue.find((r) => !INLINE_METHODS.has(r.method) && r.sessionId === viewedId) ?? null;
     },
+    hasRequestForSession(sessionId: string): boolean {
+      return queue.some((r) => r.sessionId === sessionId);
+    },
     sendResponse(requestId: string, sessionId: string, data: { value?: string; confirmed?: boolean; cancelled?: boolean }) {
       connection.send({
         type: 'extension_ui_response',
