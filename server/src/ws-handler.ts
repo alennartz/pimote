@@ -523,6 +523,19 @@ export class WsHandler {
 
     switch (command.type) {
       case 'prompt': {
+        // Intercept pimote built-in slash commands
+        const trimmed = command.message.trim();
+        if (trimmed === '/new') {
+          const success = await session.newSession();
+          this.sendResponse(id, true, { success });
+          break;
+        }
+        if (trimmed === '/reload') {
+          session.reload();
+          this.sendResponse(id, true);
+          break;
+        }
+
         session.prompt(command.message, { images: command.images as unknown as PromptOptions['images'] }).catch((err) => {
           console.error(`[WsHandler] prompt error:`, err);
         });
@@ -697,6 +710,12 @@ export class WsHandler {
             hasArgCompletions: !!cmd.getArgumentCompletions,
           });
         }
+
+        // Pimote built-in commands
+        commands.push(
+          { name: 'new', description: 'Start a new session', hasArgCompletions: false },
+          { name: 'reload', description: 'Reload extensions and skills', hasArgCompletions: false },
+        );
 
         this.sendResponse(id, true, { commands });
         break;
