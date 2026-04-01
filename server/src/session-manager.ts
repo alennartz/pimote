@@ -240,8 +240,10 @@ export class PimoteSessionManager {
   }
 
   /** Wrap an existing AgentSession in a new ManagedSession.
-   *  Used after detachSession when the pi SDK has reset the session to a new ID. */
-  adoptSession(session: AgentSession, folderPath: string): string {
+   *  Used after detachSession when the pi SDK has reset the session to a new ID.
+   *  Pass `extensionsBound: true` when the underlying AgentSession already has
+   *  extensions bound (e.g. after a session reset that reuses the same object). */
+  adoptSession(session: AgentSession, folderPath: string, opts?: { extensionsBound?: boolean }): string {
     const sessionId = session.sessionId;
     const eventBuffer = new EventBuffer(this.config.bufferSize);
 
@@ -257,7 +259,7 @@ export class PimoteSessionManager {
       unsubscribe: () => {},
       ws: null,
       pendingUiResponses: new Map(),
-      extensionsBound: false,
+      extensionsBound: opts?.extensionsBound ?? false,
       onSessionReset: null,
     };
 

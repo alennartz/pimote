@@ -25,6 +25,7 @@
   // Args mode: server-fetched completion items
   let argsItems: AutocompleteResponseItem[] = $state([]);
   let argsDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let argsRequestSeq = 0;
 
   // Fetch arg completions on query change in args mode
   $effect(() => {
@@ -35,6 +36,7 @@
 
     clearTimeout(argsDebounceTimer);
     argsDebounceTimer = setTimeout(async () => {
+      const seq = ++argsRequestSeq;
       try {
         const res = await connection.send({
           type: 'complete_args',
@@ -42,6 +44,8 @@
           commandName: currentCommandName,
           prefix: currentQuery,
         });
+        // Discard stale responses — a newer request has been sent
+        if (seq !== argsRequestSeq) return;
         if (res.success && res.data) {
           const result = (res.data as { items: AutocompleteResponseItem[] | null }).items;
           argsItems = result ?? [];
@@ -49,6 +53,7 @@
           argsItems = [];
         }
       } catch {
+        if (seq !== argsRequestSeq) return;
         argsItems = [];
       }
     }, 200);

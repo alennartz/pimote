@@ -771,10 +771,12 @@ export class WsHandler {
       return;
     }
 
-    // Session ID changed — detach old managed session, adopt as new
+    // Session ID changed — detach old managed session, adopt as new.
+    // Carry over extensionsBound — the underlying AgentSession is the same object.
     const folderPath = oldManaged.folderPath;
+    const extensionsBound = oldManaged.extensionsBound;
     this.sessionManager.detachSession(oldSessionId);
-    this.sessionManager.adoptSession(oldManaged.session, folderPath);
+    this.sessionManager.adoptSession(oldManaged.session, folderPath, { extensionsBound });
 
     const newManaged = this.sessionManager.getSession(newSessionId)!;
 
