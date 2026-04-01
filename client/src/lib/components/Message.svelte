@@ -11,9 +11,11 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
 
   const MAX_COLLAPSED_LINES = 10;
+  const SKILL_COLLAPSED_LINES = 3;
 
   let { message, streaming = false }: { message: PimoteAgentMessage | StreamingMessage; streaming?: boolean } = $props();
   let customExpanded = $state(false);
+  let skillExpanded = $state(false);
 
   function getUserText(msg: PimoteAgentMessage | StreamingMessage): string {
     return msg.content
@@ -21,6 +23,18 @@
       .map((c) => c.text!)
       .join('\n');
   }
+
+  /** Parse a skill block from user message text. Returns null if no skill block found. */
+  function parseSkillBlock(text: string): { name: string; body: string; after: string } | null {
+    const match = text.match(/^<skill\s+name="([^"]+)"[^>]*>\n?([\s\S]*?)\n?<\/skill>\s*([\s\S]*)$/);
+    if (!match) return null;
+    return { name: match[1], body: match[2], after: match[3].trim() };
+  }
+
+  let userText = $derived(getUserText(message));
+  let skillBlock = $derived(message.role === 'user' ? parseSkillBlock(userText) : null);
+  let skillLines = $derived(skillBlock ? skillBlock.body.split('\n') : []);
+  let skillNeedsCollapse = $derived(skillLines.length > SKILL_COLLAPSED_LINES);
 
   let customText = $derived(getUserText(message));
   let customLines = $derived(customText.split('\n'));
@@ -34,8 +48,44 @@
     <div class="message-icon user-icon">
       <User size={16} />
     </div>
-    <div class="message-body user-body">
-      <div class="user-text">{getUserText(message)}</div>
+    <div class="message-body">
+      {#if skillBlock}
+        <!-- Skill-expanded user message: collapsible skill block + optional user text -->
+        <div class="skill-body">
+          <button class="skill-header" onclick={() => (skillExpanded = !skillExpanded)}>
+            {#if skillNeedsCollapse}
+              {#if skillExpanded}
+                <ChevronDown size={14} />
+              {:else}
+                <ChevronRight size={14} />
+              {/if}
+            {/if}
+            <span class="skill-label">[skill: {skillBlock.name}]</span>
+            {#if skillNeedsCollapse}
+              <span class="skill-line-count">{skillLines.length} lines</span>
+            {/if}
+          </button>
+          <div class="skill-content">
+            <div class="skill-text-container" class:skill-text-collapsed={skillNeedsCollapse && !skillExpanded} class:skill-text-expanded={skillNeedsCollapse && skillExpanded}>
+              <TextBlock text={skillBlock.body} />
+            </div>
+            {#if skillNeedsCollapse && !skillExpanded}
+              <button class="skill-toggle" onclick={() => (skillExpanded = true)}>Show more…</button>
+            {:else if skillNeedsCollapse && skillExpanded}
+              <button class="skill-toggle" onclick={() => (skillExpanded = false)}>Show less</button>
+            {/if}
+          </div>
+        </div>
+        {#if skillBlock.after}
+          <div class="user-body skill-after">
+            <div class="user-text">{skillBlock.after}</div>
+          </div>
+        {/if}
+      {:else}
+        <div class="user-body">
+          <div class="user-text">{userText}</div>
+        </div>
+      {/if}
     </div>
   </div>
 {:else if message.role === 'assistant'}
@@ -178,6 +228,96 @@
     color: var(--muted-foreground);
     font-style: italic;
   }
+
+  /* ---- Skill block (inside user messages) ---- */
+
+  .skill-body {
+    border-left: 3px solid oklch(0.55 0.12 170);
+    background: oklch(0.2 0.02 170 / 0.5);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .skill-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: oklch(0.7 0.12 170);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .skill-header:hover {
+    background: oklch(0.25 0.02 170 / 0.5);
+  }
+
+  .skill-label {
+    font-family: var(--font-mono, monospace);
+  }
+
+  .skill-line-count {
+    color: var(--muted-foreground);
+    font-weight: 400;
+  }
+
+  .skill-content {
+    padding: 0 10px 8px;
+    font-size: 0.85rem;
+  }
+
+  .skill-text-container {
+    position: relative;
+  }
+
+  .skill-text-collapsed {
+    max-height: 65px;
+    overflow: hidden;
+  }
+
+  .skill-text-collapsed::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 32px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, oklch(0.2 0.02 170 / 0), oklch(0.2 0.02 170 / 0.95));
+  }
+
+  .skill-text-expanded {
+    max-height: 500px;
+    overflow-y: auto;
+  }
+
+  .skill-toggle {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: oklch(0.65 0.12 170);
+    font-size: 0.75rem;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .skill-toggle:hover {
+    color: oklch(0.75 0.12 170);
+  }
+
+  .skill-after {
+    margin-top: 6px;
+  }
+
+  /* ---- Custom messages ---- */
 
   .custom-message {
     flex-direction: column;
