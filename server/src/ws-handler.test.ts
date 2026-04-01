@@ -1403,4 +1403,478 @@ describe('WsHandler', () => {
       expect((resync[0] as any).sessionId).toBe('same-session');
     });
   });
+
+  describe('get_commands', () => {
+    function createSessionWithSources(opts: {
+      skills?: Array<{ name: string; description: string }>;
+      promptTemplates?: Array<{ name: string; description: string }>;
+      extensionCommands?: Array<{
+        name: string;
+        description?: string;
+        getArgumentCompletions?: (prefix: string) => any;
+      }>;
+    }) {
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+      });
+
+      // Add resourceLoader with skills
+      (session.session as any).resourceLoader = {
+        getSkills: () => ({
+          skills: (opts.skills ?? []).map((s) => ({
+            name: s.name,
+            description: s.description,
+            filePath: '/fake',
+            baseDir: '/fake',
+            source: 'test',
+            disableModelInvocation: false,
+          })),
+          diagnostics: [],
+        }),
+      };
+
+      // Add promptTemplates
+      (session.session as any).promptTemplates = (opts.promptTemplates ?? []).map((t) => ({
+        name: t.name,
+        description: t.description,
+        content: '',
+        source: 'test',
+        filePath: '/fake',
+      }));
+
+      // Add extensionRunner
+      if (opts.extensionCommands) {
+        (session.session as any).extensionRunner = {
+          getRegisteredCommands: () =>
+            opts.extensionCommands!.map((cmd) => ({
+              name: cmd.name,
+              description: cmd.description,
+              getArgumentCompletions: cmd.getArgumentCompletions,
+              handler: async () => {},
+            })),
+          getCommand: (name: string) => {
+            const found = opts.extensionCommands!.find((c) => c.name === name);
+            if (!found) return undefined;
+            return {
+              name: found.name,
+              description: found.description,
+              getArgumentCompletions: found.getArgumentCompletions,
+              handler: async () => {},
+            };
+          },
+        };
+      }
+
+      return session;
+    }
+
+    it('returns empty commands when session has no skills, templates, or extension commands', async () => {
+      const session = createSessionWithSources({});
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'get_commands',
+          sessionId: 'session-1',
+          id: 'req-cmds-1',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-cmds-1');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).commands).toEqual([]);
+    });
+
+    it('returns skills as "skill:<name>" commands with hasArgCompletions=false', async () => {
+      const session = createSessionWithSources({
+        skills: [
+          { name: 'brainstorm', description: 'Brainstorm ideas' },
+          { name: 'code-review', description: 'Review code' },
+        ],
+      });
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'get_commands',
+          sessionId: 'session-1',
+          id: 'req-cmds-2',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-cmds-2');
+      const commands = (resp!.data as any).commands;
+      expect(commands).toHaveLength(2);
+      expect(commands[0]).toEqual({
+        name: 'skill:brainstorm',
+        description: 'Brainstorm ideas',
+        hasArgCompletions: false,
+      });
+      expect(commands[1]).toEqual({
+        name: 'skill:code-review',
+        description: 'Review code',
+        hasArgCompletions: false,
+      });
+    });
+
+    it('returns prompt templates as commands with hasArgCompletions=false', async () => {
+      const session = createSessionWithSources({
+        promptTemplates: [{ name: 'fix-bug', description: 'Fix a bug' }],
+      });
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'get_commands',
+          sessionId: 'session-1',
+          id: 'req-cmds-3',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-cmds-3');
+      const commands = (resp!.data as any).commands;
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toEqual({
+        name: 'fix-bug',
+        description: 'Fix a bug',
+        hasArgCompletions: false,
+      });
+    });
+
+    it('returns extension commands with correct hasArgCompletions', async () => {
+      const session = createSessionWithSources({
+        extensionCommands: [
+          { name: 'deploy', description: 'Deploy to production', getArgumentCompletions: () => [] },
+          { name: 'reload', description: undefined },
+        ],
+      });
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'get_commands',
+          sessionId: 'session-1',
+          id: 'req-cmds-4',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-cmds-4');
+      const commands = (resp!.data as any).commands;
+      expect(commands).toHaveLength(2);
+      expect(commands[0]).toEqual({
+        name: 'deploy',
+        description: 'Deploy to production',
+        hasArgCompletions: true,
+      });
+      expect(commands[1]).toEqual({
+        name: 'reload',
+        description: '',
+        hasArgCompletions: false,
+      });
+    });
+
+    it('combines all three sources in order: skills, templates, extension commands', async () => {
+      const session = createSessionWithSources({
+        skills: [{ name: 'brainstorm', description: 'Brainstorm' }],
+        promptTemplates: [{ name: 'fix-bug', description: 'Fix a bug' }],
+        extensionCommands: [{ name: 'deploy', description: 'Deploy' }],
+      });
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'get_commands',
+          sessionId: 'session-1',
+          id: 'req-cmds-5',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-cmds-5');
+      const commands = (resp!.data as any).commands;
+      expect(commands).toHaveLength(3);
+      expect(commands[0].name).toBe('skill:brainstorm');
+      expect(commands[1].name).toBe('fix-bug');
+      expect(commands[2].name).toBe('deploy');
+    });
+
+    it('handles missing extensionRunner gracefully', async () => {
+      const session = createSessionWithSources({
+        skills: [{ name: 'test', description: 'Test' }],
+      });
+      // Explicitly remove extensionRunner
+      (session.session as any).extensionRunner = undefined;
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'get_commands',
+          sessionId: 'session-1',
+          id: 'req-cmds-6',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-cmds-6');
+      expect(resp!.success).toBe(true);
+      // Should still return the skill
+      expect((resp!.data as any).commands).toHaveLength(1);
+    });
+  });
+
+  describe('complete_args', () => {
+    it('returns items from extension command with argument completions', async () => {
+      const completionItems = [
+        { value: 'staging', label: 'staging', description: 'Staging environment' },
+        { value: 'production', label: 'production', description: 'Production environment' },
+      ];
+
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+      });
+
+      (session.session as any).resourceLoader = {
+        getSkills: () => ({ skills: [], diagnostics: [] }),
+      };
+      (session.session as any).promptTemplates = [];
+      (session.session as any).extensionRunner = {
+        getRegisteredCommands: () => [],
+        getCommand: (name: string) => {
+          if (name === 'deploy') {
+            return {
+              name: 'deploy',
+              description: 'Deploy',
+              getArgumentCompletions: (prefix: string) => completionItems.filter((i) => i.value.startsWith(prefix)),
+              handler: async () => {},
+            };
+          }
+          return undefined;
+        },
+      };
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'complete_args',
+          sessionId: 'session-1',
+          commandName: 'deploy',
+          prefix: 'sta',
+          id: 'req-args-1',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-args-1');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).items).toEqual([{ value: 'staging', label: 'staging', description: 'Staging environment' }]);
+    });
+
+    it('returns null when command does not exist', async () => {
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+      });
+
+      (session.session as any).resourceLoader = {
+        getSkills: () => ({ skills: [], diagnostics: [] }),
+      };
+      (session.session as any).promptTemplates = [];
+      (session.session as any).extensionRunner = {
+        getRegisteredCommands: () => [],
+        getCommand: () => undefined,
+      };
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'complete_args',
+          sessionId: 'session-1',
+          commandName: 'nonexistent',
+          prefix: '',
+          id: 'req-args-2',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-args-2');
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).items).toBeNull();
+    });
+
+    it('returns null when command exists but has no getArgumentCompletions', async () => {
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+      });
+
+      (session.session as any).resourceLoader = {
+        getSkills: () => ({ skills: [], diagnostics: [] }),
+      };
+      (session.session as any).promptTemplates = [];
+      (session.session as any).extensionRunner = {
+        getRegisteredCommands: () => [],
+        getCommand: (name: string) => {
+          if (name === 'reload') {
+            return {
+              name: 'reload',
+              description: 'Reload',
+              handler: async () => {},
+              // no getArgumentCompletions
+            };
+          }
+          return undefined;
+        },
+      };
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'complete_args',
+          sessionId: 'session-1',
+          commandName: 'reload',
+          prefix: '',
+          id: 'req-args-3',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-args-3');
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).items).toBeNull();
+    });
+
+    it('returns null when extensionRunner is not available', async () => {
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+      });
+
+      (session.session as any).resourceLoader = {
+        getSkills: () => ({ skills: [], diagnostics: [] }),
+      };
+      (session.session as any).promptTemplates = [];
+      (session.session as any).extensionRunner = undefined;
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'complete_args',
+          sessionId: 'session-1',
+          commandName: 'anything',
+          prefix: '',
+          id: 'req-args-4',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-args-4');
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).items).toBeNull();
+    });
+
+    it('passes prefix through to getArgumentCompletions', async () => {
+      let receivedPrefix: string | undefined;
+
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+      });
+
+      (session.session as any).resourceLoader = {
+        getSkills: () => ({ skills: [], diagnostics: [] }),
+      };
+      (session.session as any).promptTemplates = [];
+      (session.session as any).extensionRunner = {
+        getRegisteredCommands: () => [],
+        getCommand: (name: string) => {
+          if (name === 'deploy') {
+            return {
+              name: 'deploy',
+              getArgumentCompletions: (prefix: string) => {
+                receivedPrefix = prefix;
+                return [];
+              },
+              handler: async () => {},
+            };
+          }
+          return undefined;
+        },
+      };
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'complete_args',
+          sessionId: 'session-1',
+          commandName: 'deploy',
+          prefix: 'prod',
+          id: 'req-args-5',
+        }),
+      );
+
+      expect(receivedPrefix).toBe('prod');
+    });
+
+    it('normalizes null return from getArgumentCompletions', async () => {
+      const session = createMockManagedSession({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+      });
+
+      (session.session as any).resourceLoader = {
+        getSkills: () => ({ skills: [], diagnostics: [] }),
+      };
+      (session.session as any).promptTemplates = [];
+      (session.session as any).extensionRunner = {
+        getRegisteredCommands: () => [],
+        getCommand: (name: string) => {
+          if (name === 'deploy') {
+            return {
+              name: 'deploy',
+              getArgumentCompletions: () => null,
+              handler: async () => {},
+            };
+          }
+          return undefined;
+        },
+      };
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'complete_args',
+          sessionId: 'session-1',
+          commandName: 'deploy',
+          prefix: '',
+          id: 'req-args-6',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-args-6');
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).items).toBeNull();
+    });
+  });
 });

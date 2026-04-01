@@ -483,6 +483,7 @@ export class WsHandler {
         case 'get_session_stats':
         case 'get_session_meta':
         case 'get_commands':
+        case 'complete_args':
         case 'set_session_name':
         case 'dequeue_steering': {
           await this.handleSessionCommand(command, id);
@@ -659,8 +660,54 @@ export class WsHandler {
       }
 
       case 'get_commands': {
-        // Placeholder — will be implemented later
-        this.sendResponse(id, true, { commands: [] });
+        const commands: import('@pimote/shared').CommandInfo[] = [];
+
+        // Skills
+        const { skills } = session.resourceLoader.getSkills();
+        for (const skill of skills) {
+          commands.push({
+            name: `skill:${skill.name}`,
+            description: skill.description,
+            hasArgCompletions: false,
+          });
+        }
+
+        // Prompt templates
+        for (const template of session.promptTemplates) {
+          commands.push({
+            name: template.name,
+            description: template.description,
+            hasArgCompletions: false,
+          });
+        }
+
+        // Extension commands
+        const extensionCommands = session.extensionRunner?.getRegisteredCommands() ?? [];
+        for (const cmd of extensionCommands) {
+          commands.push({
+            name: cmd.name,
+            description: cmd.description ?? '',
+            hasArgCompletions: !!cmd.getArgumentCompletions,
+          });
+        }
+
+        this.sendResponse(id, true, { commands });
+        break;
+      }
+
+      case 'complete_args': {
+        const runner = session.extensionRunner;
+        if (!runner) {
+          this.sendResponse(id, true, { items: null });
+          break;
+        }
+        const cmd = runner.getCommand(command.commandName);
+        if (!cmd || !cmd.getArgumentCompletions) {
+          this.sendResponse(id, true, { items: null });
+          break;
+        }
+        const items = cmd.getArgumentCompletions(command.prefix);
+        this.sendResponse(id, true, { items: items ?? null });
         break;
       }
 

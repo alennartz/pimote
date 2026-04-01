@@ -166,6 +166,26 @@ export interface GetCommandsCommand extends CommandBase {
   type: 'get_commands';
 }
 
+export interface CompleteArgsCommand extends CommandBase {
+  type: 'complete_args';
+  commandName: string;
+  prefix: string;
+}
+
+// -- Command / autocomplete response shapes --
+
+export interface CommandInfo {
+  name: string;
+  description: string;
+  hasArgCompletions: boolean;
+}
+
+export interface AutocompleteResponseItem {
+  value: string;
+  label: string;
+  description?: string;
+}
+
 export interface SetSessionNameCommand extends CommandBase {
   type: 'set_session_name';
   name: string;
@@ -273,6 +293,7 @@ export type PimoteCommand =
   | GetSessionStatsCommand
   | GetSessionMetaCommand
   | GetCommandsCommand
+  | CompleteArgsCommand
   | SetSessionNameCommand
   | DequeueSteeringCommand
   // Server-level
