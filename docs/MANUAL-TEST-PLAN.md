@@ -19,17 +19,18 @@
 8. [TP-07: Real-Time Streaming & Message Rendering](#tp-07-real-time-streaming--message-rendering)
 9. [TP-08: Tool Call Visualization](#tp-08-tool-call-visualization)
 10. [TP-09: Model & Thinking Level Controls](#tp-09-model--thinking-level-controls)
-11. [TP-10: Multi-Session Management](#tp-10-multi-session-management)
-12. [TP-11: Reconnect & Event Replay](#tp-11-reconnect--event-replay)
-13. [TP-12: Session Conflict Detection & Takeover](#tp-12-session-conflict-detection--takeover)
-14. [TP-13: Extension UI Bridging](#tp-13-extension-ui-bridging)
-15. [TP-14: Push Notifications (VAPID / Web Push)](#tp-14-push-notifications-vapid--web-push)
-16. [TP-15: PWA Installation & Service Worker](#tp-15-pwa-installation--service-worker)
-17. [TP-16: Responsive Layout & Mobile UX](#tp-16-responsive-layout--mobile-ux)
-18. [TP-17: Auto-Compaction & Auto-Retry Events](#tp-17-auto-compaction--auto-retry-events)
-19. [TP-18: Error Handling & Edge Cases](#tp-18-error-handling--edge-cases)
-20. [TP-19: Security](#tp-19-security)
-21. [TP-20: Performance & Stability](#tp-20-performance--stability)
+11. [TP-09a: Slash Command Autocomplete](#tp-09a-slash-command-autocomplete)
+12. [TP-10: Multi-Session Management](#tp-10-multi-session-management)
+13. [TP-11: Reconnect & Event Replay](#tp-11-reconnect--event-replay)
+14. [TP-12: Session Conflict Detection & Takeover](#tp-12-session-conflict-detection--takeover)
+15. [TP-13: Extension UI Bridging](#tp-13-extension-ui-bridging)
+16. [TP-14: Push Notifications (VAPID / Web Push)](#tp-14-push-notifications-vapid--web-push)
+17. [TP-15: PWA Installation & Service Worker](#tp-15-pwa-installation--service-worker)
+18. [TP-16: Responsive Layout & Mobile UX](#tp-16-responsive-layout--mobile-ux)
+19. [TP-17: Auto-Compaction & Auto-Retry Events](#tp-17-auto-compaction--auto-retry-events)
+20. [TP-18: Error Handling & Edge Cases](#tp-18-error-handling--edge-cases)
+21. [TP-19: Security](#tp-19-security)
+22. [TP-20: Performance & Stability](#tp-20-performance--stability)
 
 ---
 
@@ -424,6 +425,8 @@ Verify InputBar shows the correct mode:
 
 The InputBar sends `prompt` when idle and `steer` when streaming. There is no separate `follow_up` mode in the UI.
 
+Additionally, typing `/` as the first character triggers slash command autocomplete — see [TP-09a](#tp-09a-slash-command-autocomplete) for full coverage.
+
 ### TC-06.07 — Empty prompt prevented 🟡
 
 - **[S]** Click Send with empty input
@@ -605,6 +608,81 @@ The InputBar sends `prompt` when idle and `steer` when streaming. There is no se
 
 - **[S]** (Via raw WS) Send `cycle_thinking_level`
 - **[E]** Response includes new level; level cycles through available options
+
+---
+
+## TP-09a: Slash Command Autocomplete
+
+### TC-09a.01 — Typing `/` opens command dropdown 🟠
+
+- **[P]** Session is open and idle; InputBar is focused
+- **[S]** Type `/` as the first character in the InputBar
+- **[E]** Autocomplete dropdown appears above the InputBar
+- **[E]** Dropdown lists available commands (skills, extension commands, prompt templates)
+- **[E]** Each item shows the command name and description
+
+### TC-09a.02 — Fuzzy filtering narrows results 🟠
+
+- **[P]** Autocomplete dropdown is visible after typing `/`
+- **[S]** Continue typing characters after `/` (e.g., `/bra`)
+- **[E]** Dropdown filters to matching commands using fuzzy matching
+- **[E]** Non-matching commands are hidden; best matches appear first
+
+### TC-09a.03 — Keyboard navigation and selection 🟠
+
+- **[P]** Autocomplete dropdown is visible with multiple items
+- **[S]** Press Arrow Down / Arrow Up to navigate items
+- **[E]** Highlighted item changes with each keypress
+- **[S]** Press Enter or Tab to select the highlighted item
+- **[E]** Command name is filled into the InputBar (replacing the typed `/` prefix)
+- **[E]** Dropdown closes (unless command has argument completions)
+
+### TC-09a.04 — Dismiss autocomplete with Escape 🟡
+
+- **[P]** Autocomplete dropdown is visible
+- **[S]** Press Escape
+- **[E]** Dropdown closes; InputBar text is preserved
+
+### TC-09a.05 — Dismiss autocomplete by clearing `/` prefix 🟡
+
+- **[P]** Autocomplete dropdown is visible
+- **[S]** Backspace to remove the `/` character
+- **[E]** Dropdown closes
+
+### TC-09a.06 — Extension command argument completions (second phase) 🟠
+
+- **[P]** Autocomplete dropdown is visible; an extension command with `hasArgCompletions: true` exists
+- **[S]** Select the extension command
+- **[E]** Command name fills into InputBar
+- **[E]** Autocomplete transitions to argument completion mode
+- **[E]** Dropdown shows argument completions fetched from the server via `complete_args`
+- **[S]** Select an argument completion
+- **[E]** Argument fills into InputBar after the command name; dropdown closes
+
+### TC-09a.07 — Commands fetched per session 🟡
+
+- **[P]** Two sessions open for different projects
+- **[S]** Switch between sessions and type `/` in each
+- **[E]** Each session may show different commands (project-level prompts/extensions differ)
+- **[E]** Commands are cached per session (no redundant fetches)
+
+### TC-09a.08 — No autocomplete when `/` is not first character 🟡
+
+- **[S]** Type `hello /` in the InputBar
+- **[E]** No autocomplete dropdown appears (slash must be at position 0)
+
+### TC-09a.09 — Autocomplete during streaming (steer mode) 🟡
+
+- **[P]** Agent is streaming (InputBar in steer mode)
+- **[S]** Type `/` in the InputBar
+- **[E]** Autocomplete dropdown appears and functions normally
+- **[E]** Selecting a command sends it as a steer (or prompt, depending on command type)
+
+### TC-09a.10 — Empty command list 🟡
+
+- **[P]** Session has no registered commands (no skills, extensions, or prompt templates)
+- **[S]** Type `/`
+- **[E]** Dropdown shows empty state or does not appear; no error
 
 ---
 

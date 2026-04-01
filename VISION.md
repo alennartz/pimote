@@ -28,6 +28,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Streams conversations in real time with independent scrolling
 - Browses folders and sessions across projects
 - Sends prompts, steers, aborts, switches models
+- Slash command autocomplete — typing `/` shows a fuzzy-filtered dropdown of available commands (skills, extension commands, prompt templates) with argument completion for extension commands
 - Handles extension UI dialogs (select, confirm, input)
 - Receives push notifications when background sessions finish working
 - Reconnects transparently with gap replay and session displacement handling
