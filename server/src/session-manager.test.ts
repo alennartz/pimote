@@ -54,8 +54,11 @@ function createFakeSession(overrides: Partial<ManagedSession> = {}): ManagedSess
     lastActivity: overrides.lastActivity ?? Date.now(),
     status: overrides.status ?? 'idle',
     needsAttention: overrides.needsAttention ?? false,
-    sendLive: overrides.sendLive ?? (() => {}),
     unsubscribe: overrides.unsubscribe ?? vi.fn(),
+    ws: overrides.ws ?? null,
+    pendingUiResponses: overrides.pendingUiResponses ?? new Map(),
+    extensionsBound: overrides.extensionsBound ?? false,
+    onSessionReset: overrides.onSessionReset ?? null,
     ...overrides,
   };
 }

@@ -1,5 +1,7 @@
 import type { ExtensionUIContext, ExtensionUIDialogOptions, ExtensionWidgetOptions } from '@mariozechner/pi-coding-agent';
 import type { PimoteEvent } from '@pimote/shared';
+import type { ManagedSession } from './session-manager.js';
+import { sendManagedEvent, waitForManagedUiResponse } from './session-manager.js';
 
 /**
  * Creates an ExtensionUIContext implementation that bridges pi extension UI calls
@@ -8,19 +10,26 @@ import type { PimoteEvent } from '@pimote/shared';
  * Dialog methods (select, confirm, input, editor) send a request event and wait
  * for the client to respond. Fire-and-forget methods (notify, setStatus, etc.)
  * send an event without waiting. TUI-only methods are no-ops.
+ *
+ * The bridge references the ManagedSession directly — no closures over transient
+ * handler instances. When the handler changes (reconnect), the managed session's
+ * ws field is updated and the bridge automatically routes to the new connection.
+ * Pending UI promises survive reconnects and are replayed to the new client.
  */
-export function createExtensionUIBridge(sendToClient: (msg: PimoteEvent) => void, waitForResponse: (requestId: string) => Promise<unknown>): ExtensionUIContext {
-  function sendRequest(sessionId: string, requestId: string, fields: Record<string, unknown>): void {
-    sendToClient({
+export function createExtensionUIBridge(managed: ManagedSession): ExtensionUIContext {
+  function sendRequest(requestId: string, fields: Record<string, unknown>): PimoteEvent {
+    const event = {
       type: 'extension_ui_request',
-      sessionId,
+      sessionId: managed.id,
       requestId,
       ...fields,
-    } as PimoteEvent);
+    } as PimoteEvent;
+    sendManagedEvent(managed, event);
+    return event;
   }
 
-  async function dialogWithTimeout<T>(requestId: string, opts: ExtensionUIDialogOptions | undefined, fallback: T): Promise<T> {
-    const responsePromise = waitForResponse(requestId) as Promise<T>;
+  async function dialogWithTimeout<T>(requestId: string, requestEvent: PimoteEvent, opts: ExtensionUIDialogOptions | undefined, fallback: T): Promise<T> {
+    const responsePromise = waitForManagedUiResponse(managed, requestId, requestEvent) as Promise<T>;
 
     const racers: Promise<T>[] = [responsePromise];
 
@@ -40,55 +49,49 @@ export function createExtensionUIBridge(sendToClient: (msg: PimoteEvent) => void
     return racers.length === 1 ? responsePromise : Promise.race(racers);
   }
 
-  // We use a fixed sessionId placeholder — the actual sessionId is set by the
-  // caller's infrastructure when the event is dispatched. The bridge itself
-  // doesn't know the session ID; the sendToClient callback is expected to
-  // enrich events with the correct sessionId when needed.
-  const SESSION_ID = '';
-
   const ui: ExtensionUIContext = {
     // ---- Dialog methods (send + wait for response) ----
 
     async select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined> {
       const requestId = crypto.randomUUID();
-      sendRequest(SESSION_ID, requestId, { method: 'select', title, options });
-      return dialogWithTimeout(requestId, opts, undefined);
+      const event = sendRequest(requestId, { method: 'select', title, options });
+      return dialogWithTimeout(requestId, event, opts, undefined);
     },
 
     async confirm(title: string, message: string, opts?: ExtensionUIDialogOptions): Promise<boolean> {
       const requestId = crypto.randomUUID();
-      sendRequest(SESSION_ID, requestId, { method: 'confirm', title, message });
-      return dialogWithTimeout(requestId, opts, false);
+      const event = sendRequest(requestId, { method: 'confirm', title, message });
+      return dialogWithTimeout(requestId, event, opts, false);
     },
 
     async input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined> {
       const requestId = crypto.randomUUID();
-      sendRequest(SESSION_ID, requestId, { method: 'input', title, placeholder });
-      return dialogWithTimeout(requestId, opts, undefined);
+      const event = sendRequest(requestId, { method: 'input', title, placeholder });
+      return dialogWithTimeout(requestId, event, opts, undefined);
     },
 
     async editor(title: string, prefill?: string): Promise<string | undefined> {
       const requestId = crypto.randomUUID();
-      sendRequest(SESSION_ID, requestId, { method: 'editor', title, prefill });
-      return waitForResponse(requestId) as Promise<string | undefined>;
+      const event = sendRequest(requestId, { method: 'editor', title, prefill });
+      return waitForManagedUiResponse(managed, requestId, event) as Promise<string | undefined>;
     },
 
     // ---- Fire-and-forget methods ----
 
     notify(message: string, type?: 'info' | 'warning' | 'error'): void {
       const requestId = crypto.randomUUID();
-      sendRequest(SESSION_ID, requestId, { method: 'notify', message, notifyType: type });
+      sendRequest(requestId, { method: 'notify', message, notifyType: type });
     },
 
     setStatus(key: string, text: string | undefined): void {
       const requestId = crypto.randomUUID();
-      sendRequest(SESSION_ID, requestId, { method: 'setStatus', key, text });
+      sendRequest(requestId, { method: 'setStatus', key, text });
     },
 
     setWidget(key: string, content: unknown, options?: ExtensionWidgetOptions): void {
       if (Array.isArray(content) || content === undefined) {
         const requestId = crypto.randomUUID();
-        sendRequest(SESSION_ID, requestId, {
+        sendRequest(requestId, {
           method: 'setWidget',
           key,
           lines: content,
@@ -100,12 +103,12 @@ export function createExtensionUIBridge(sendToClient: (msg: PimoteEvent) => void
 
     setTitle(title: string): void {
       const requestId = crypto.randomUUID();
-      sendRequest(SESSION_ID, requestId, { method: 'setTitle', title });
+      sendRequest(requestId, { method: 'setTitle', title });
     },
 
     setEditorText(text: string): void {
       const requestId = crypto.randomUUID();
-      sendRequest(SESSION_ID, requestId, { method: 'setEditorText', text });
+      sendRequest(requestId, { method: 'setEditorText', text });
     },
 
     // ---- No-op methods (TUI-only, can't bridge to web) ----

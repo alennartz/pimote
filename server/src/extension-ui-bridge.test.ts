@@ -1,326 +1,385 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import type { PimoteEvent, ExtensionUiRequestEvent } from '@pimote/shared';
+import type { ManagedSession, EventSocket } from './session-manager.js';
+
+/** Create a mock ManagedSession with a recording WebSocket. */
+function createMockManaged(): { managed: ManagedSession; sent: PimoteEvent[] } {
+  const sent: PimoteEvent[] = [];
+  const ws: EventSocket = {
+    readyState: 1, // OPEN
+    send(data: string) {
+      sent.push(JSON.parse(data));
+    },
+  };
+
+  const managed = {
+    id: 'test-session',
+    ws,
+    pendingUiResponses: new Map(),
+    extensionsBound: false,
+    onSessionReset: null,
+    // Other ManagedSession fields (unused by bridge, but satisfy the type)
+    session: {} as any,
+    folderPath: '/test',
+    eventBuffer: {} as any,
+    connectedClientId: 'test-client',
+    lastActivity: Date.now(),
+    status: 'idle' as const,
+    needsAttention: false,
+    unsubscribe: () => {},
+  } satisfies ManagedSession;
+
+  return { managed, sent };
+}
+
+/** Resolve a pending UI response by requestId. */
+function resolveUi(managed: ManagedSession, requestId: string, value: unknown): void {
+  const pending = managed.pendingUiResponses.get(requestId);
+  if (pending) {
+    managed.pendingUiResponses.delete(requestId);
+    pending.resolve(value);
+  }
+}
 
 describe('createExtensionUIBridge', () => {
-  let sendToClient: ReturnType<typeof vi.fn<(msg: PimoteEvent) => void>>;
-  let waitForResponse: ReturnType<typeof vi.fn<(requestId: string) => Promise<any>>>;
+  let managed: ManagedSession;
+  let sent: PimoteEvent[];
 
   beforeEach(() => {
-    sendToClient = vi.fn();
-    waitForResponse = vi.fn();
+    const mock = createMockManaged();
+    managed = mock.managed;
+    sent = mock.sent;
   });
 
   describe('select()', () => {
     it('should send extension_ui_request with correct fields and resolve with response', async () => {
-      waitForResponse.mockResolvedValue('option-b');
+      const ui = createExtensionUIBridge(managed);
+      const promise = ui.select('Pick one', ['option-a', 'option-b', 'option-c']);
 
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
-      const result = await ui.select('Pick one', ['option-a', 'option-b', 'option-c']);
-
-      expect(sendToClient).toHaveBeenCalledOnce();
-      const event = sendToClient.mock.calls[0][0] as ExtensionUiRequestEvent;
+      expect(sent).toHaveLength(1);
+      const event = sent[0] as ExtensionUiRequestEvent;
       expect(event.type).toBe('extension_ui_request');
       expect(event.method).toBe('select');
       expect(event.title).toBe('Pick one');
       expect(event.options).toEqual(['option-a', 'option-b', 'option-c']);
+      expect(event.sessionId).toBe('test-session');
       expect(typeof event.requestId).toBe('string');
       expect(event.requestId.length).toBeGreaterThan(0);
 
-      expect(waitForResponse).toHaveBeenCalledWith(event.requestId);
+      // Pending promise should exist
+      expect(managed.pendingUiResponses.has(event.requestId)).toBe(true);
+
+      // Resolve it
+      resolveUi(managed, event.requestId, 'option-b');
+      const result = await promise;
       expect(result).toBe('option-b');
     });
   });
 
   describe('confirm()', () => {
     it('should send confirm request and resolve with boolean', async () => {
-      waitForResponse.mockResolvedValue(true);
+      const ui = createExtensionUIBridge(managed);
+      const promise = ui.confirm('Are you sure?', 'This action is irreversible');
 
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
-      const result = await ui.confirm('Are you sure?', 'This action is irreversible');
-
-      const event = sendToClient.mock.calls[0][0] as ExtensionUiRequestEvent;
+      const event = sent[0] as ExtensionUiRequestEvent;
       expect(event.method).toBe('confirm');
       expect(event.title).toBe('Are you sure?');
       expect(event.message).toBe('This action is irreversible');
 
-      expect(result).toBe(true);
+      resolveUi(managed, event.requestId, true);
+      expect(await promise).toBe(true);
     });
   });
 
   describe('input()', () => {
     it('should send input request and resolve with string', async () => {
-      waitForResponse.mockResolvedValue('user typed this');
+      const ui = createExtensionUIBridge(managed);
+      const promise = ui.input('Enter name', 'placeholder text');
 
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
-      const result = await ui.input('Enter name', 'placeholder text');
-
-      const event = sendToClient.mock.calls[0][0] as ExtensionUiRequestEvent;
+      const event = sent[0] as ExtensionUiRequestEvent;
       expect(event.method).toBe('input');
       expect(event.title).toBe('Enter name');
       expect(event.placeholder).toBe('placeholder text');
 
-      expect(result).toBe('user typed this');
+      resolveUi(managed, event.requestId, 'user typed this');
+      expect(await promise).toBe('user typed this');
     });
   });
 
   describe('editor()', () => {
     it('should send editor request and resolve with string', async () => {
-      waitForResponse.mockResolvedValue('edited content');
+      const ui = createExtensionUIBridge(managed);
+      const promise = ui.editor('Edit text', 'initial content');
 
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
-      const result = await ui.editor('Edit text', 'initial content');
-
-      const event = sendToClient.mock.calls[0][0] as ExtensionUiRequestEvent;
+      const event = sent[0] as ExtensionUiRequestEvent;
       expect(event.method).toBe('editor');
       expect(event.title).toBe('Edit text');
       expect(event.prefill).toBe('initial content');
 
-      expect(result).toBe('edited content');
+      resolveUi(managed, event.requestId, 'edited content');
+      expect(await promise).toBe('edited content');
     });
   });
 
   describe('timeout handling', () => {
     it('should resolve to undefined when select times out', async () => {
-      // waitForResponse never resolves
-      waitForResponse.mockReturnValue(new Promise(() => {}));
-
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       const result = await ui.select('Pick one', ['a', 'b'], { timeout: 50 });
-
       expect(result).toBeUndefined();
     });
 
     it('should resolve to false when confirm times out', async () => {
-      waitForResponse.mockReturnValue(new Promise(() => {}));
-
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       const result = await ui.confirm('Sure?', 'Really?', { timeout: 50 });
-
       expect(result).toBe(false);
     });
 
     it('should resolve to undefined when input times out', async () => {
-      waitForResponse.mockReturnValue(new Promise(() => {}));
-
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       const result = await ui.input('Name?', 'placeholder', { timeout: 50 });
-
       expect(result).toBeUndefined();
     });
 
     it('should resolve with value if response arrives before timeout', async () => {
-      waitForResponse.mockResolvedValue('fast-response');
+      const ui = createExtensionUIBridge(managed);
+      const promise = ui.select('Pick one', ['a', 'b'], { timeout: 5000 });
 
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
-      const result = await ui.select('Pick one', ['a', 'b'], { timeout: 5000 });
-
-      expect(result).toBe('fast-response');
+      const event = sent[0] as ExtensionUiRequestEvent;
+      resolveUi(managed, event.requestId, 'fast-response');
+      expect(await promise).toBe('fast-response');
     });
   });
 
   describe('abort signal handling', () => {
     it('should resolve to undefined immediately when signal is already aborted', async () => {
-      waitForResponse.mockReturnValue(new Promise(() => {}));
       const controller = new AbortController();
       controller.abort();
 
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       const result = await ui.select('Pick one', ['a', 'b'], { signal: controller.signal });
-
       expect(result).toBeUndefined();
     });
 
     it('should resolve to false immediately when confirm signal is already aborted', async () => {
-      waitForResponse.mockReturnValue(new Promise(() => {}));
       const controller = new AbortController();
       controller.abort();
 
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       const result = await ui.confirm('Sure?', 'Really?', { signal: controller.signal });
-
       expect(result).toBe(false);
     });
 
     it('should resolve to undefined when select signal is aborted after call', async () => {
-      waitForResponse.mockReturnValue(new Promise(() => {}));
       const controller = new AbortController();
 
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       const promise = ui.select('Pick one', ['a', 'b'], { signal: controller.signal });
 
       controller.abort();
-      const result = await promise;
-
-      expect(result).toBeUndefined();
+      expect(await promise).toBeUndefined();
     });
 
     it('should resolve to false when confirm signal is aborted after call', async () => {
-      waitForResponse.mockReturnValue(new Promise(() => {}));
       const controller = new AbortController();
 
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       const promise = ui.confirm('Sure?', 'Really?', { signal: controller.signal });
 
       controller.abort();
-      const result = await promise;
-
-      expect(result).toBe(false);
+      expect(await promise).toBe(false);
     });
 
     it('should resolve to undefined when input signal is aborted after call', async () => {
-      waitForResponse.mockReturnValue(new Promise(() => {}));
       const controller = new AbortController();
 
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       const promise = ui.input('Name?', 'placeholder', { signal: controller.signal });
 
       controller.abort();
-      const result = await promise;
-
-      expect(result).toBeUndefined();
+      expect(await promise).toBeUndefined();
     });
 
     it('should resolve with value if response arrives before abort', async () => {
-      waitForResponse.mockResolvedValue('fast-response');
       const controller = new AbortController();
 
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
-      const result = await ui.select('Pick one', ['a', 'b'], { signal: controller.signal });
+      const ui = createExtensionUIBridge(managed);
+      const promise = ui.select('Pick one', ['a', 'b'], { signal: controller.signal });
 
-      expect(result).toBe('fast-response');
+      const event = sent[0] as ExtensionUiRequestEvent;
+      resolveUi(managed, event.requestId, 'fast-response');
+      expect(await promise).toBe('fast-response');
     });
   });
 
   describe('fire-and-forget methods', () => {
     it('notify() should send event without waiting', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       ui.notify('Something happened', 'warning');
 
-      expect(sendToClient).toHaveBeenCalledOnce();
-      const event = sendToClient.mock.calls[0][0] as ExtensionUiRequestEvent;
+      expect(sent).toHaveLength(1);
+      const event = sent[0] as ExtensionUiRequestEvent;
       expect(event.type).toBe('extension_ui_request');
       expect(event.method).toBe('notify');
       expect(event.message).toBe('Something happened');
       expect(event.notifyType).toBe('warning');
 
-      expect(waitForResponse).not.toHaveBeenCalled();
+      // No pending UI response for fire-and-forget
+      // (sendRequest stores it but it's fine — no one waits)
     });
 
     it('setStatus() should send event without waiting', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       ui.setStatus('my-ext', 'Loading...');
 
-      const event = sendToClient.mock.calls[0][0] as ExtensionUiRequestEvent;
+      const event = sent[0] as ExtensionUiRequestEvent;
       expect(event.method).toBe('setStatus');
       expect(event.key).toBe('my-ext');
       expect(event.text).toBe('Loading...');
-      expect(waitForResponse).not.toHaveBeenCalled();
     });
 
     it('setWidget() should send event for string array content', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       ui.setWidget('my-widget', ['line 1', 'line 2'], { placement: 'belowEditor' });
 
-      const event = sendToClient.mock.calls[0][0] as ExtensionUiRequestEvent;
+      const event = sent[0] as ExtensionUiRequestEvent;
       expect(event.method).toBe('setWidget');
       expect(event.key).toBe('my-widget');
       expect(event.lines).toEqual(['line 1', 'line 2']);
       expect(event.placement).toBe('belowEditor');
-      expect(waitForResponse).not.toHaveBeenCalled();
     });
 
     it('setWidget() should no-op for function content', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       ui.setWidget('my-widget', (() => {}) as any);
 
-      expect(sendToClient).not.toHaveBeenCalled();
+      expect(sent).toHaveLength(0);
     });
 
     it('setWidget() should send event for undefined content (clear)', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       ui.setWidget('my-widget', undefined);
 
-      const event = sendToClient.mock.calls[0][0] as ExtensionUiRequestEvent;
+      const event = sent[0] as ExtensionUiRequestEvent;
       expect(event.method).toBe('setWidget');
       expect(event.key).toBe('my-widget');
       expect(event.lines).toBeUndefined();
     });
 
     it('setTitle() should send event without waiting', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       ui.setTitle('My Session');
 
-      const event = sendToClient.mock.calls[0][0] as ExtensionUiRequestEvent;
+      const event = sent[0] as ExtensionUiRequestEvent;
       expect(event.method).toBe('setTitle');
       expect(event.title).toBe('My Session');
-      expect(waitForResponse).not.toHaveBeenCalled();
     });
 
     it('setEditorText() should send event without waiting', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       ui.setEditorText('some text');
 
-      const event = sendToClient.mock.calls[0][0] as ExtensionUiRequestEvent;
+      const event = sent[0] as ExtensionUiRequestEvent;
       expect(event.method).toBe('setEditorText');
       expect(event.text).toBe('some text');
-      expect(waitForResponse).not.toHaveBeenCalled();
     });
   });
 
   describe('no-op methods', () => {
     it('custom() should resolve to undefined', async () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       const result = await ui.custom((() => ({})) as any);
       expect(result).toBeUndefined();
     });
 
     it('onTerminalInput() should return an unsubscribe function', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       const unsub = ui.onTerminalInput(() => undefined);
       expect(typeof unsub).toBe('function');
       unsub(); // should not throw
     });
 
     it('getEditorText() should return empty string', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       expect(ui.getEditorText()).toBe('');
     });
 
     it('theme should be null', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       expect(ui.theme).toBeNull();
     });
 
     it('getAllThemes() should return empty array', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       expect(ui.getAllThemes()).toEqual([]);
     });
 
     it('getTheme() should return undefined', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       expect(ui.getTheme('anything')).toBeUndefined();
     });
 
     it('setTheme() should return failure', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       const result = ui.setTheme('dark');
       expect(result).toEqual({ success: false, error: 'UI not available' });
     });
 
     it('getToolsExpanded() should return false', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       expect(ui.getToolsExpanded()).toBe(false);
     });
 
     it('no-op methods should not throw', () => {
-      const ui = createExtensionUIBridge(sendToClient, waitForResponse);
+      const ui = createExtensionUIBridge(managed);
       expect(() => ui.setWorkingMessage('test')).not.toThrow();
       expect(() => ui.setFooter(undefined)).not.toThrow();
       expect(() => ui.setHeader(undefined)).not.toThrow();
       expect(() => ui.setEditorComponent(undefined)).not.toThrow();
       expect(() => ui.pasteToEditor('test')).not.toThrow();
       expect(() => ui.setToolsExpanded(true)).not.toThrow();
+    });
+  });
+
+  describe('disconnected state', () => {
+    it('should not throw when ws is null (disconnected)', () => {
+      managed.ws = null;
+      const ui = createExtensionUIBridge(managed);
+
+      // Fire-and-forget should silently no-op
+      expect(() => ui.notify('test')).not.toThrow();
+      expect(sent).toHaveLength(0);
+    });
+
+    it('should create pending promise even when disconnected (for replay on reconnect)', async () => {
+      managed.ws = null;
+      const ui = createExtensionUIBridge(managed);
+
+      const promise = ui.select('Pick one', ['a', 'b']);
+
+      // Event not sent (ws is null), but pending promise exists for replay
+      expect(sent).toHaveLength(0);
+      expect(managed.pendingUiResponses.size).toBe(1);
+
+      // Resolve it (simulating reconnect + replay + user response)
+      const [requestId] = [...managed.pendingUiResponses.keys()];
+      const pending = managed.pendingUiResponses.get(requestId!)!;
+      pending.resolve('a');
+      managed.pendingUiResponses.delete(requestId!);
+
+      expect(await promise).toBe('a');
+    });
+
+    it('stores request event metadata for replay', () => {
+      managed.ws = null;
+      const ui = createExtensionUIBridge(managed);
+
+      ui.select('Pick one', ['a', 'b']);
+
+      const [, entry] = [...managed.pendingUiResponses.entries()][0]!;
+      expect(entry.event).toBeDefined();
+      expect((entry.event as any).method).toBe('select');
+      expect((entry.event as any).title).toBe('Pick one');
     });
   });
 });

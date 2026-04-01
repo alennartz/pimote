@@ -4,7 +4,6 @@ import type {
   PimoteCommand,
   PimoteResponse,
   PimoteEvent,
-  PimoteSessionEvent,
   SessionState,
   SessionMeta,
   BufferedEventsEvent,
@@ -13,6 +12,7 @@ import type {
   SessionStateChangedEvent,
 } from '@pimote/shared';
 import type { PimoteSessionManager, ManagedSession } from './session-manager.js';
+import { resolveAllManagedPendingUi, resolveManagedPendingUi, replayManagedPendingUiRequests } from './session-manager.js';
 import type { FolderIndex } from './folder-index.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
@@ -20,7 +20,14 @@ import type { PushNotificationService } from './push-notification.js';
 import { mapAgentMessages } from './message-mapper.js';
 import type { AgentSession, ExtensionCommandContextActions, PromptOptions } from '@mariozechner/pi-coding-agent';
 
-function createCommandContextActions(session: AgentSession, onSessionReset?: () => void): ExtensionCommandContextActions {
+/**
+ * Create command context actions for extension commands.
+ * Captures the ManagedSession (stable lifetime), not a transient handler.
+ * Session resets are routed through managed.onSessionReset which the
+ * current handler sets on claim and clears on cleanup.
+ */
+function createCommandContextActions(managed: ManagedSession): ExtensionCommandContextActions {
+  const session = managed.session;
   return {
     waitForIdle: () => {
       if (!session.isStreaming) return Promise.resolve();
@@ -35,22 +42,22 @@ function createCommandContextActions(session: AgentSession, onSessionReset?: () 
     },
     newSession: async (options) => {
       const result = await session.newSession(options);
-      if (result) onSessionReset?.();
+      if (result) await managed.onSessionReset?.(managed);
       return { cancelled: !result };
     },
     fork: async (entryId) => {
       const result = await session.fork(entryId);
-      if (!result.cancelled) onSessionReset?.();
+      if (!result.cancelled) await managed.onSessionReset?.(managed);
       return { cancelled: result.cancelled };
     },
     navigateTree: async (targetId, options) => {
       const result = await session.navigateTree(targetId, options);
-      if (!result.cancelled) onSessionReset?.();
+      if (!result.cancelled) await managed.onSessionReset?.(managed);
       return { cancelled: result.cancelled };
     },
     switchSession: async (sessionPath) => {
       const result = await session.switchSession(sessionPath);
-      if (result) onSessionReset?.();
+      if (result) await managed.onSessionReset?.(managed);
       return { cancelled: !result };
     },
     reload: () => session.reload(),
@@ -77,7 +84,6 @@ function getGitBranch(cwd: string): string | null {
 export type ClientRegistry = Map<string, WsHandler>;
 
 export class WsHandler {
-  private readonly pendingUiResponses = new Map<string, { resolve: (value: unknown) => void; sessionId: string }>();
   private subscribedSessions = new Set<string>();
   private viewedSessionId: string | null = null;
   readonly clientId: string;
@@ -253,12 +259,10 @@ export class WsHandler {
             break;
           }
 
-          // Resolve only pending extension UI responses for the closed session
-          for (const [key, pending] of this.pendingUiResponses) {
-            if (pending.sessionId === closeSessionId) {
-              pending.resolve(undefined);
-              this.pendingUiResponses.delete(key);
-            }
+          // Resolve pending extension UI responses so tools don't hang
+          const closingManaged = this.sessionManager.getSession(closeSessionId);
+          if (closingManaged) {
+            resolveAllManagedPendingUi(closingManaged);
           }
 
           await this.sessionManager.closeSession(closeSessionId);
@@ -374,18 +378,19 @@ export class WsHandler {
 
         // ---- Extension UI ----
         case 'extension_ui_response': {
-          const pending = this.pendingUiResponses.get(command.requestId);
-          if (pending) {
-            this.pendingUiResponses.delete(command.requestId);
+          const uiManaged = command.sessionId ? this.sessionManager.getSession(command.sessionId) : undefined;
+          if (uiManaged) {
+            let value: unknown;
             if (command.cancelled) {
-              pending.resolve(undefined);
+              value = undefined;
             } else if (typeof command.confirmed === 'boolean') {
-              pending.resolve(command.confirmed);
+              value = command.confirmed;
             } else if (command.value !== undefined) {
-              pending.resolve(command.value);
+              value = command.value;
             } else {
-              pending.resolve(undefined);
+              value = undefined;
             }
+            resolveManagedPendingUi(uiManaged, command.requestId, value);
           }
           this.sendResponse(id, true);
           break;
@@ -548,6 +553,8 @@ export class WsHandler {
       }
 
       case 'abort': {
+        // Resolve pending UI responses first so stuck dialogs unblock
+        resolveAllManagedPendingUi(managed);
         await session.abort();
         this.sendResponse(id, true);
         break;
@@ -730,66 +737,32 @@ export class WsHandler {
     }
   }
 
-  /** Resolve all pending UI responses for a specific session with undefined. */
-  resolvePendingUiForSession(sessionId: string): void {
-    for (const [key, pending] of this.pendingUiResponses) {
-      if (pending.sessionId === sessionId) {
-        pending.resolve(undefined);
-        this.pendingUiResponses.delete(key);
-      }
-    }
-  }
-
-  /** Bind a managed session to this client — sets ownership, live event routing,
-   *  extension UI bridge, and subscribes to events. */
+  /** Bind a managed session to this client — sets ownership, WebSocket routing,
+   *  and subscribes to events. Extensions are bound once on first claim. */
   private async claimSession(sessionId: string, managed: ManagedSession): Promise<void> {
-    // Resolve any pending UI responses from the previous owner so the pi SDK
-    // doesn't hang forever awaiting a promise that no client will ever answer.
-    if (managed.connectedClientId && managed.connectedClientId !== this.clientId) {
-      const oldHandler = this.clientRegistry.get(managed.connectedClientId);
-      if (oldHandler) {
-        oldHandler.resolvePendingUiForSession(sessionId);
-      }
-    }
-
     managed.connectedClientId = this.clientId;
     managed.lastActivity = Date.now();
-    managed.sendLive = (event: PimoteSessionEvent) => {
-      this.sendEvent(event);
-    };
+    managed.ws = this.ws;
+    managed.onSessionReset = (m) => this.handleSessionReset(m);
     this.subscribedSessions.add(sessionId);
 
-    // Bind extension UI bridge with closures pointing to this handler
-    const waitForResponse = (requestId: string): Promise<unknown> => {
-      return new Promise<unknown>((resolve) => {
-        this.pendingUiResponses.set(requestId, { resolve, sessionId });
-      });
-    };
-    const sendToClient = (event: PimoteEvent): void => {
-      if (event.type === 'extension_ui_request' && !event.sessionId) {
-        event.sessionId = sessionId;
-      }
-      this.sendEvent(event);
-    };
-    const uiContext = createExtensionUIBridge(sendToClient, waitForResponse);
-    // Capture the stable AgentSession reference — not the mutable sessionId or managed.
-    // handleSessionReset does a fresh lookup from the session manager each time it fires.
-    const agentSession = managed.session;
-    const commandContextActions = createCommandContextActions(agentSession, () => {
-      this.handleSessionReset(agentSession);
-    });
-    await managed.session.bindExtensions({ uiContext, commandContextActions });
+    // Bind extensions once — the bridge references the ManagedSession (stable),
+    // not the handler (transient), so it doesn't need to be recreated on reconnect.
+    if (!managed.extensionsBound) {
+      const uiContext = createExtensionUIBridge(managed);
+      const commandContextActions = createCommandContextActions(managed);
+      await managed.session.bindExtensions({ uiContext, commandContextActions });
+      managed.extensionsBound = true;
+    }
+
+    // Re-deliver any pending UI requests to the new client (recovers lost dialogs)
+    replayManagedPendingUiRequests(managed);
   }
 
   /** Handle a session reset (newSession, fork, switchSession).
-   *  Looks up current state from the session manager — no captured mutable references. */
-  private async handleSessionReset(agentSession: AgentSession): Promise<void> {
-    const newSessionId = agentSession.sessionId;
-
-    // Find the current managed session that wraps this AgentSession
-    const oldManaged = this.sessionManager.getAllSessions().find((m) => m.session === agentSession);
-    if (!oldManaged) return;
-
+   *  Called via managed.onSessionReset — receives the managed session directly. */
+  private async handleSessionReset(oldManaged: ManagedSession): Promise<void> {
+    const newSessionId = oldManaged.session.sessionId;
     const oldSessionId = oldManaged.id;
 
     // navigateTree stays in the same file — same session ID, just resync
@@ -801,7 +774,7 @@ export class WsHandler {
     // Session ID changed — detach old managed session, adopt as new
     const folderPath = oldManaged.folderPath;
     this.sessionManager.detachSession(oldSessionId);
-    this.sessionManager.adoptSession(agentSession, folderPath);
+    this.sessionManager.adoptSession(oldManaged.session, folderPath);
 
     const newManaged = this.sessionManager.getSession(newSessionId)!;
 
@@ -812,9 +785,9 @@ export class WsHandler {
     }
 
     // Resolve pending UI responses for the old session
-    this.resolvePendingUiForSession(oldSessionId);
+    resolveAllManagedPendingUi(oldManaged);
 
-    // Claim the new managed session (sets ownership, binds extensions)
+    // Claim the new managed session (sets ownership, routes WebSocket)
     await this.claimSession(newSessionId, newManaged);
 
     // Notify owning client: session replaced (client re-keys in place)
@@ -956,17 +929,14 @@ export class WsHandler {
       const managed = this.sessionManager.getSession(sid);
       if (managed) {
         managed.connectedClientId = null;
-        managed.sendLive = () => {};
+        managed.ws = null;
+        managed.onSessionReset = null;
         managed.lastActivity = Date.now();
+        // Note: pending UI responses are NOT resolved here — they survive
+        // for replay on reconnect. They are resolved on session close or abort.
       }
     }
     this.subscribedSessions.clear();
     this.viewedSessionId = null;
-
-    // Resolve all pending UI responses with undefined
-    for (const [, pending] of this.pendingUiResponses) {
-      pending.resolve(undefined);
-    }
-    this.pendingUiResponses.clear();
   }
 }

@@ -2,9 +2,22 @@ import { createAgentSession, AuthStorage, ModelRegistry, DefaultResourceLoader, 
 import type { AgentSession } from '@mariozechner/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
-import type { PimoteSessionEvent } from '@pimote/shared';
+import type { PimoteEvent } from '@pimote/shared';
 import type { SdkMessage } from './message-mapper.js';
 import type { PushNotificationService } from './push-notification.js';
+
+/** Narrow interface for the WebSocket used for event routing.
+ *  Avoids importing the `ws` package type in session-manager. */
+export interface EventSocket {
+  send(data: string, cb?: (err?: Error) => void): void;
+  readonly readyState: number;
+}
+
+export interface PendingUiEntry {
+  resolve: (value: unknown) => void;
+  /** The original request event, stored so it can be re-sent on reconnect. */
+  event: PimoteEvent;
+}
 
 export interface ManagedSession {
   id: string;
@@ -15,8 +28,59 @@ export interface ManagedSession {
   lastActivity: number; // Date.now()
   status: 'idle' | 'working';
   needsAttention: boolean;
-  sendLive: (event: PimoteSessionEvent) => void;
   unsubscribe: () => void;
+
+  /** Current WebSocket for sending events. Null when no client is connected. */
+  ws: EventSocket | null;
+  /** Pending extension UI dialog promises. Keyed by requestId. Session-scoped, survives reconnects. */
+  pendingUiResponses: Map<string, PendingUiEntry>;
+  /** Whether bindExtensions has been called (only done once per session). */
+  extensionsBound: boolean;
+  /** Callback for session resets (newSession, fork, etc.). Set by the claiming handler. */
+  onSessionReset: ((managed: ManagedSession) => Promise<void>) | null;
+}
+
+// ---- Managed session helpers (closure-free, operate on stable ManagedSession reference) ----
+
+/** Send an event to the client connected to this session. No-op if disconnected. */
+export function sendManagedEvent(managed: ManagedSession, event: PimoteEvent): void {
+  if (!managed.ws || managed.ws.readyState !== 1) return;
+  try {
+    managed.ws.send(JSON.stringify(event));
+  } catch {
+    // WebSocket send failed — ignore (client disconnecting)
+  }
+}
+
+/** Create a pending promise for a UI dialog response. Stores the request event for replay on reconnect. */
+export function waitForManagedUiResponse(managed: ManagedSession, requestId: string, requestEvent: PimoteEvent): Promise<unknown> {
+  return new Promise<unknown>((resolve) => {
+    managed.pendingUiResponses.set(requestId, { resolve, event: requestEvent });
+  });
+}
+
+/** Resolve a specific pending UI response by requestId. */
+export function resolveManagedPendingUi(managed: ManagedSession, requestId: string, value: unknown): void {
+  const pending = managed.pendingUiResponses.get(requestId);
+  if (pending) {
+    managed.pendingUiResponses.delete(requestId);
+    pending.resolve(value);
+  }
+}
+
+/** Resolve all pending UI responses with undefined. Used on abort, session close, or session reset. */
+export function resolveAllManagedPendingUi(managed: ManagedSession): void {
+  for (const [, pending] of managed.pendingUiResponses) {
+    pending.resolve(undefined);
+  }
+  managed.pendingUiResponses.clear();
+}
+
+/** Re-send all pending UI request events to the current client. Called on reconnect to recover lost dialogs. */
+export function replayManagedPendingUiRequests(managed: ManagedSession): void {
+  for (const [, pending] of managed.pendingUiResponses) {
+    sendManagedEvent(managed, pending.event);
+  }
 }
 
 export class PimoteSessionManager {
@@ -35,7 +99,7 @@ export class PimoteSessionManager {
     this.modelRegistry = new ModelRegistry(this.authStorage);
   }
 
-  async openSession(folderPath: string, sessionFilePath?: string, sendLive?: (event: PimoteSessionEvent) => void): Promise<string> {
+  async openSession(folderPath: string, sessionFilePath?: string): Promise<string> {
     const loader = new DefaultResourceLoader({ cwd: folderPath });
     await loader.reload();
 
@@ -93,20 +157,14 @@ export class PimoteSessionManager {
       lastActivity: Date.now(),
       status: 'idle',
       needsAttention: false,
-      sendLive: sendLive ?? (() => {}),
       unsubscribe: () => {},
+      ws: null,
+      pendingUiResponses: new Map(),
+      extensionsBound: false,
+      onSessionReset: null,
     };
 
     const unsubscribe = session.subscribe((event) => {
-      // DEBUG: Log message_end events to understand provider differences
-      if (event.type === 'message_end') {
-        console.log('[DEBUG message_end] Raw SDK event:', JSON.stringify(event, null, 2));
-        console.log('[DEBUG message_end] session.messages.length:', session.messages.length);
-        if (session.messages.length > 0) {
-          const lastMsg = session.messages[session.messages.length - 1];
-          console.log('[DEBUG message_end] Last message in session.messages:', JSON.stringify(lastMsg, null, 2).slice(0, 500));
-        }
-      }
       if (event.type === 'agent_start' && managed.status !== 'working') {
         managed.status = 'working';
         this.onStatusChange?.(sessionId, folderPath);
@@ -128,7 +186,7 @@ export class PimoteSessionManager {
       eventBuffer.onEvent(
         event,
         sessionId,
-        (e) => managed.sendLive(e),
+        (e) => sendManagedEvent(managed, e),
         () => session.messages[session.messages.length - 1] as SdkMessage,
       );
     });
@@ -194,8 +252,11 @@ export class PimoteSessionManager {
       lastActivity: Date.now(),
       status: session.isStreaming ? 'working' : 'idle',
       needsAttention: false,
-      sendLive: () => {},
       unsubscribe: () => {},
+      ws: null,
+      pendingUiResponses: new Map(),
+      extensionsBound: false,
+      onSessionReset: null,
     };
 
     const unsubscribe = session.subscribe((event) => {
@@ -220,7 +281,7 @@ export class PimoteSessionManager {
       eventBuffer.onEvent(
         event,
         managed.id,
-        (e) => managed.sendLive(e),
+        (e) => sendManagedEvent(managed, e),
         () => session.messages[session.messages.length - 1] as SdkMessage,
       );
     });

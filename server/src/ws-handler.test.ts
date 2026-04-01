@@ -50,8 +50,11 @@ function createMockManagedSession(overrides: Partial<ManagedSession> = {}): Mana
     lastActivity: overrides.lastActivity ?? Date.now(),
     status: overrides.status ?? 'idle',
     needsAttention: overrides.needsAttention ?? false,
-    sendLive: overrides.sendLive ?? (() => {}),
     unsubscribe: overrides.unsubscribe ?? (() => {}),
+    ws: overrides.ws ?? null,
+    pendingUiResponses: overrides.pendingUiResponses ?? new Map(),
+    extensionsBound: overrides.extensionsBound ?? false,
+    onSessionReset: overrides.onSessionReset ?? null,
     ...overrides,
   };
 }
@@ -501,7 +504,7 @@ describe('WsHandler', () => {
 
       // Mock openSession to add the new session and return its ID
       const newSessionId = 'new-session';
-      (sessionManager as any).openSession = async (folderPath: string, _sessionFilePath: string | undefined, _sendLive: any) => {
+      (sessionManager as any).openSession = async (folderPath: string) => {
         const newSession = createMockManagedSession({
           id: newSessionId,
           folderPath,

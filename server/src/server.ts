@@ -179,9 +179,9 @@ export async function createServer(
     }
 
     // Register new handler first, then clean up and close any stale connection.
-    // cleanup() resolves orphaned pending UI responses (e.g. an in-flight select)
-    // so the pi SDK doesn't hang forever. Sessions are briefly unbound but the
-    // new handler's reconnect commands will reclaim them via claimSession().
+    // cleanup() disconnects the old handler's WebSocket routing (sets managed.ws = null).
+    // Pending UI responses survive on the ManagedSession for replay when the new
+    // handler's reconnect commands reclaim sessions via claimSession().
     // The close handler skips cleanup when the registry already points to a
     // different handler, so this is the only place it runs.
     const existing = clientRegistry.get(clientId);
