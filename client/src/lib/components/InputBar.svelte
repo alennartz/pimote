@@ -2,16 +2,41 @@
   import { untrack } from 'svelte';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
+  import { commandStore } from '$lib/stores/command-store.svelte.js';
   import { editorTextRequest, setEditorText } from '$lib/stores/input-bar.svelte.js';
+  import CommandAutocomplete from './CommandAutocomplete.svelte';
+  import type { CommandInfo } from '@pimote/shared';
   import Send from '@lucide/svelte/icons/send';
   import MessageSquare from '@lucide/svelte/icons/message-square';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
 
   let inputText = $state('');
   let textareaEl: HTMLTextAreaElement | undefined = $state();
+  let autocompleteRef: CommandAutocomplete | undefined = $state();
 
   const noSession = $derived(sessionRegistry.viewedSessionId === null);
   const canSend = $derived(!noSession && connection.ready);
+
+  // Autocomplete state
+  let autocompleteVisible = $state(false);
+  let autocompleteMode: 'command' | 'args' = $state('command');
+  let selectedCommand: CommandInfo | null = $state(null);
+
+  const commandItems = $derived(commandStore.getCommands(sessionRegistry.viewedSessionId ?? ''));
+
+  const autocompleteQuery = $derived.by(() => {
+    if (!autocompleteVisible) return '';
+    const text = inputText;
+    if (!text.startsWith('/')) return '';
+    const afterSlash = text.slice(1);
+    const spaceIndex = afterSlash.indexOf(' ');
+    if (spaceIndex === -1) {
+      // No space — command mode
+      return afterSlash;
+    }
+    // Space present — args mode (query is text after space)
+    return afterSlash.slice(spaceIndex + 1);
+  });
 
   // Restore draft text when switching sessions.
   // Tracks viewedSessionId; reads draftText untracked so keystrokes don't re-trigger.
@@ -48,6 +73,34 @@
     if (sessionRegistry.viewed) {
       sessionRegistry.viewed.draftText = inputText;
     }
+
+    // Slash detection
+    if (inputText.startsWith('/')) {
+      if (!autocompleteVisible) {
+        autocompleteVisible = true;
+        autocompleteMode = 'command';
+        selectedCommand = null;
+      }
+
+      // Parse mode from input text
+      const afterSlash = inputText.slice(1);
+      const spaceIndex = afterSlash.indexOf(' ');
+      if (spaceIndex === -1) {
+        // No space — command mode
+        autocompleteMode = 'command';
+      } else if (selectedCommand?.hasArgCompletions) {
+        // Space present and selected command has arg completions — args mode
+        autocompleteMode = 'args';
+      } else {
+        // Space present but no arg completions — dismiss
+        autocompleteVisible = false;
+        selectedCommand = null;
+      }
+    } else {
+      autocompleteVisible = false;
+      selectedCommand = null;
+    }
+
     autoResize();
   }
 
@@ -123,7 +176,58 @@
     }
   }
 
+  function handleAutocompleteSelect(item: { name: string; value?: string; label?: string; description?: string }) {
+    if (autocompleteMode === 'command') {
+      inputText = '/' + item.name + ' ';
+      selectedCommand = commandItems.find((c) => c.name === item.name) ?? null;
+      if (selectedCommand?.hasArgCompletions) {
+        autocompleteVisible = true;
+        autocompleteMode = 'args';
+      } else {
+        autocompleteVisible = false;
+      }
+    } else {
+      // Args mode
+      inputText = '/' + (selectedCommand?.name ?? '') + ' ' + (item.value ?? item.name);
+      autocompleteVisible = false;
+      selectedCommand = null;
+    }
+    if (sessionRegistry.viewed) {
+      sessionRegistry.viewed.draftText = inputText;
+    }
+    autoResize();
+  }
+
+  function handleAutocompleteDismiss() {
+    autocompleteVisible = false;
+    selectedCommand = null;
+  }
+
   function handleKeydown(e: KeyboardEvent) {
+    // Intercept keys when autocomplete is visible
+    if (autocompleteVisible && autocompleteRef) {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        autocompleteRef.moveUp();
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        autocompleteRef.moveDown();
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault();
+        autocompleteRef.accept();
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        autocompleteRef.dismiss();
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -146,8 +250,19 @@
       </button>
     {/if}
 
-    <!-- Textarea -->
+    <!-- Textarea with autocomplete -->
     <div class="relative flex-1">
+      <CommandAutocomplete
+        bind:this={autocompleteRef}
+        items={commandItems}
+        query={autocompleteQuery}
+        visible={autocompleteVisible}
+        mode={autocompleteMode}
+        sessionId={sessionRegistry.viewedSessionId ?? ''}
+        commandName={selectedCommand?.name ?? ''}
+        onselect={handleAutocompleteSelect}
+        ondismiss={handleAutocompleteDismiss}
+      />
       <textarea
         bind:this={textareaEl}
         bind:value={inputText}
