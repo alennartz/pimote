@@ -217,6 +217,8 @@ export class PimoteSessionManager {
     const managed = this.sessions.get(sessionId);
     if (!managed) return;
 
+    resolveAllManagedPendingUi(managed);
+
     const folderPath = managed.folderPath;
     managed.unsubscribe();
     managed.session.dispose();

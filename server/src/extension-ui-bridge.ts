@@ -38,7 +38,11 @@ export function createExtensionUIBridge(managed: ManagedSession): ExtensionUICon
     }
 
     if (opts?.signal) {
-      if (opts.signal.aborted) return fallback;
+      if (opts.signal.aborted) {
+        // Remove the pending entry we just created — no one will respond to it
+        managed.pendingUiResponses.delete(requestId);
+        return fallback;
+      }
       racers.push(
         new Promise<T>((resolve) => {
           opts.signal!.addEventListener('abort', () => resolve(fallback), { once: true });
@@ -46,7 +50,17 @@ export function createExtensionUIBridge(managed: ManagedSession): ExtensionUICon
       );
     }
 
-    return racers.length === 1 ? responsePromise : Promise.race(racers);
+    if (racers.length === 1) return responsePromise;
+
+    const result = await Promise.race(racers);
+
+    // If timeout or abort won the race, the pending entry is stale — the server
+    // has already moved on. Remove it so it won't be replayed on reconnect.
+    if (managed.pendingUiResponses.has(requestId)) {
+      managed.pendingUiResponses.delete(requestId);
+    }
+
+    return result;
   }
 
   const ui: ExtensionUIContext = {

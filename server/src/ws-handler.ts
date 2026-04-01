@@ -713,7 +713,7 @@ export class WsHandler {
           this.sendResponse(id, true, { items: null });
           break;
         }
-        const items = cmd.getArgumentCompletions(command.prefix);
+        const items = await cmd.getArgumentCompletions(command.prefix);
         this.sendResponse(id, true, { items: items ?? null });
         break;
       }
