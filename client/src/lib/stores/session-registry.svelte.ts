@@ -26,6 +26,7 @@ import type {
   SessionReplacedEvent,
 } from '@pimote/shared';
 import { connection } from './connection.svelte.js';
+import { commandStore } from './command-store.svelte.js';
 
 export interface PerSessionState {
   sessionId: string;
@@ -424,13 +425,14 @@ connection.onEvent((event) => {
       sessionRegistry.addSession(event.sessionId, folder?.path ?? '', projectName);
       connection.addSubscribedSession(event.sessionId);
       sessionRegistry.switchTo(event.sessionId);
-      // Request initial state, messages, and meta atomically to avoid race conditions
+      // Request initial state, messages, meta, and commands atomically to avoid race conditions
       Promise.all([
         connection.send({ type: 'get_state', sessionId: event.sessionId }),
         connection.send({ type: 'get_messages', sessionId: event.sessionId }),
         connection.send({ type: 'get_session_meta', sessionId: event.sessionId }),
+        connection.send({ type: 'get_commands', sessionId: event.sessionId }),
       ])
-        .then(([stateRes, msgRes, metaRes]) => {
+        .then(([stateRes, msgRes, metaRes, cmdsRes]) => {
           const session = sessionRegistry.sessions[event.sessionId];
           if (!session) return;
           if (stateRes.success && stateRes.data) {
@@ -455,6 +457,10 @@ connection.onEvent((event) => {
             const meta = (metaRes.data as { meta: SessionMeta }).meta;
             sessionRegistry.updateMeta(event.sessionId, meta);
           }
+          if (cmdsRes.success && cmdsRes.data) {
+            const commands = (cmdsRes.data as { commands: import('@pimote/shared').CommandInfo[] }).commands;
+            commandStore.setCommands(event.sessionId, commands);
+          }
         })
         .catch((err) => {
           console.error('[SessionRegistry] Failed to fetch initial session state:', err);
@@ -464,6 +470,7 @@ connection.onEvent((event) => {
     case 'session_closed': {
       sessionRegistry.removeSession(event.sessionId);
       connection.removeSubscribedSession(event.sessionId);
+      commandStore.removeSession(event.sessionId);
       break;
     }
     case 'session_replaced': {
@@ -473,13 +480,15 @@ connection.onEvent((event) => {
       sessionRegistry.replaceSession(replaced.oldSessionId, replaced.newSessionId, folder?.path ?? '', projectName);
       connection.removeSubscribedSession(replaced.oldSessionId);
       connection.addSubscribedSession(replaced.newSessionId);
+      commandStore.removeSession(replaced.oldSessionId);
       // Fetch state for the new session
       Promise.all([
         connection.send({ type: 'get_state', sessionId: replaced.newSessionId }),
         connection.send({ type: 'get_messages', sessionId: replaced.newSessionId }),
         connection.send({ type: 'get_session_meta', sessionId: replaced.newSessionId }),
+        connection.send({ type: 'get_commands', sessionId: replaced.newSessionId }),
       ])
-        .then(([stateRes, msgRes, metaRes]) => {
+        .then(([stateRes, msgRes, metaRes, cmdsRes]) => {
           const session = sessionRegistry.sessions[replaced.newSessionId];
           if (!session) return;
           if (stateRes.success && stateRes.data) {
@@ -503,6 +512,10 @@ connection.onEvent((event) => {
           if (metaRes.success && metaRes.data) {
             const meta = (metaRes.data as { meta: SessionMeta }).meta;
             sessionRegistry.updateMeta(replaced.newSessionId, meta);
+          }
+          if (cmdsRes.success && cmdsRes.data) {
+            const commands = (cmdsRes.data as { commands: import('@pimote/shared').CommandInfo[] }).commands;
+            commandStore.setCommands(replaced.newSessionId, commands);
           }
         })
         .catch((err) => {

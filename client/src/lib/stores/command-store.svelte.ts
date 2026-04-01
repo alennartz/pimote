@@ -44,3 +44,6 @@ export function createCommandStore(): CommandStore {
     },
   };
 }
+
+/** Singleton command store for the app. */
+export const commandStore = createCommandStore();
