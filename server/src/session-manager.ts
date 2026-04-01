@@ -173,12 +173,16 @@ export class PimoteSessionManager {
         managed.needsAttention = true;
         const projectName = folderPath.split('/').pop() ?? 'Unknown';
         const firstMessage = this.extractFirstMessage(managed);
+        const lastAgentMessage = this.extractLastAgentMessage(managed);
         this.pushNotificationService
-          .notifySessionIdle({
+          .notify({
             projectName,
             folderPath,
-            firstMessage,
             sessionId,
+            sessionName: managed.session.sessionName,
+            firstMessage,
+            reason: 'idle',
+            lastAgentMessage,
           })
           .catch((err) => console.error('[SessionManager] Push notification error:', err));
         this.onStatusChange?.(sessionId, folderPath);
@@ -195,6 +199,21 @@ export class PimoteSessionManager {
 
     this.sessions.set(sessionId, managed);
     return sessionId;
+  }
+
+  private extractLastAgentMessage(managed: ManagedSession): string | undefined {
+    const messages = managed.session.messages ?? [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role !== 'assistant') continue;
+      const text = msg.content
+        .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+        .map((c) => c.text)
+        .join('');
+      if (text) return text.slice(0, 200);
+      break;
+    }
+    return undefined;
   }
 
   private extractFirstMessage(managed: ManagedSession): string | undefined {
@@ -272,12 +291,16 @@ export class PimoteSessionManager {
         managed.needsAttention = true;
         const projectName = folderPath.split('/').pop() ?? 'Unknown';
         const firstMessage = this.extractFirstMessage(managed);
+        const lastAgentMessage = this.extractLastAgentMessage(managed);
         this.pushNotificationService
-          .notifySessionIdle({
+          .notify({
             projectName,
             folderPath,
-            firstMessage,
             sessionId: managed.id,
+            sessionName: managed.session.sessionName,
+            firstMessage,
+            reason: 'idle',
+            lastAgentMessage,
           })
           .catch((err) => console.error('[SessionManager] Push notification error:', err));
         this.onStatusChange?.(managed.id, folderPath);

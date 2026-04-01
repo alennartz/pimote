@@ -24,8 +24,22 @@ self.addEventListener('push', (event) => {
     data = { projectName: 'Pimote', sessionId: '' };
   }
 
-  const title = data.projectName || 'Pimote';
-  const body = data.firstMessage ? `Session finished: ${data.firstMessage}` : 'Session has finished working';
+  const title = data.sessionName || data.firstMessage || data.projectName || 'Pimote';
+
+  let body: string;
+  if (data.reason === 'interaction' && data.interaction) {
+    const { method, title: interactionTitle, options, message: interactionMessage } = data.interaction;
+    if (method === 'select' && options?.length) {
+      body = `${interactionTitle}\n${options.map((o: string, i: number) => `${i + 1}. ${o}`).join('\n')}`;
+    } else if (method === 'confirm' && interactionMessage) {
+      body = `${interactionTitle}: ${interactionMessage}`;
+    } else {
+      body = interactionTitle;
+    }
+  } else {
+    // idle
+    body = data.lastAgentMessage || (data.firstMessage ? `Session idle: ${data.firstMessage}` : 'Session has finished working');
+  }
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
@@ -38,6 +52,8 @@ self.addEventListener('push', (event) => {
           body,
           sessionId: data.sessionId,
           folderPath: data.folderPath,
+          reason: data.reason,
+          interaction: data.interaction,
         });
       } else {
         // Out-of-app: show OS notification
@@ -45,6 +61,8 @@ self.addEventListener('push', (event) => {
           body,
           data: { sessionId: data.sessionId, folderPath: data.folderPath },
           icon: '/icon-192.png',
+          tag: `pimote-${data.sessionId}`,
+          renotify: true,
         });
       }
     }),

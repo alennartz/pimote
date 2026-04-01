@@ -68,8 +68,9 @@
   </div>
 {:else}
   <!-- Landing / folder browser -->
-  <div class="flex min-h-0 flex-1 flex-col">
-    <div class="flex flex-1 flex-col items-center justify-center p-8">
+  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
+    <div class="my-auto flex flex-col items-center p-8">
+      <img src="/icon-192.png" alt="Pimote" class="mb-4 size-16" />
       <h1 class="text-foreground mb-2 text-2xl font-bold">Pimote</h1>
       <p class="text-muted-foreground mb-8 text-sm">Select a folder and session from the sidebar to get started.</p>
 

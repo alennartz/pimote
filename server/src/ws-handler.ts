@@ -749,7 +749,7 @@ export class WsHandler {
     // Bind extensions once — the bridge references the ManagedSession (stable),
     // not the handler (transient), so it doesn't need to be recreated on reconnect.
     if (!managed.extensionsBound) {
-      const uiContext = createExtensionUIBridge(managed);
+      const uiContext = createExtensionUIBridge(managed, this.pushNotificationService);
       const commandContextActions = createCommandContextActions(managed);
       await managed.session.bindExtensions({ uiContext, commandContextActions });
       managed.extensionsBound = true;

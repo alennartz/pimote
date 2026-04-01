@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import type { PimoteEvent, ExtensionUiRequestEvent } from '@pimote/shared';
 import type { ManagedSession, EventSocket } from './session-manager.js';
+import type { PushNotificationService, PushNotificationPayload } from './push-notification.js';
 
 /** Create a mock ManagedSession with a recording WebSocket. */
 function createMockManaged(): { managed: ManagedSession; sent: PimoteEvent[] } {
@@ -40,6 +41,20 @@ function resolveUi(managed: ManagedSession, requestId: string, value: unknown): 
     managed.pendingUiResponses.delete(requestId);
     pending.resolve(value);
   }
+}
+
+function createMockPushService(): PushNotificationService & { notified: PushNotificationPayload[] } {
+  const notified: PushNotificationPayload[] = [];
+  return {
+    notified,
+    async notify(payload: PushNotificationPayload) {
+      notified.push(payload);
+    },
+    async initialize() {},
+    async addSubscription() {},
+    async removeSubscription() {},
+    getSubscriptions: () => [],
+  } as unknown as PushNotificationService & { notified: PushNotificationPayload[] };
 }
 
 describe('createExtensionUIBridge', () => {
@@ -338,6 +353,95 @@ describe('createExtensionUIBridge', () => {
       expect(() => ui.setEditorComponent(undefined)).not.toThrow();
       expect(() => ui.pasteToEditor('test')).not.toThrow();
       expect(() => ui.setToolsExpanded(true)).not.toThrow();
+    });
+  });
+
+  describe('push notifications for interactions', () => {
+    it('select() triggers push notification with correct payload', async () => {
+      const pushService = createMockPushService();
+      const ui = createExtensionUIBridge(managed, pushService);
+      const promise = ui.select('Pick one', ['a', 'b']);
+
+      expect(pushService.notified).toHaveLength(1);
+      expect(pushService.notified[0].reason).toBe('interaction');
+      expect(pushService.notified[0].interaction).toEqual({
+        method: 'select',
+        title: 'Pick one',
+        options: ['a', 'b'],
+        message: undefined,
+      });
+      expect(pushService.notified[0].sessionId).toBe('test-session');
+      expect(pushService.notified[0].folderPath).toBe('/test');
+      expect(pushService.notified[0].projectName).toBe('test');
+
+      // Resolve to avoid dangling promise
+      const event = sent[0] as ExtensionUiRequestEvent;
+      resolveUi(managed, event.requestId, 'a');
+      await promise;
+    });
+
+    it('confirm() triggers push notification', async () => {
+      const pushService = createMockPushService();
+      const ui = createExtensionUIBridge(managed, pushService);
+      const promise = ui.confirm('Sure?', 'This is dangerous');
+
+      expect(pushService.notified).toHaveLength(1);
+      expect(pushService.notified[0].interaction).toEqual({
+        method: 'confirm',
+        title: 'Sure?',
+        options: undefined,
+        message: 'This is dangerous',
+      });
+
+      const event = sent[0] as ExtensionUiRequestEvent;
+      resolveUi(managed, event.requestId, true);
+      await promise;
+    });
+
+    it('input() triggers push notification', async () => {
+      const pushService = createMockPushService();
+      const ui = createExtensionUIBridge(managed, pushService);
+      const promise = ui.input('Enter name');
+
+      expect(pushService.notified).toHaveLength(1);
+      expect(pushService.notified[0].interaction).toEqual({
+        method: 'input',
+        title: 'Enter name',
+        options: undefined,
+        message: undefined,
+      });
+
+      const event = sent[0] as ExtensionUiRequestEvent;
+      resolveUi(managed, event.requestId, 'typed');
+      await promise;
+    });
+
+    it('editor() triggers push notification', async () => {
+      const pushService = createMockPushService();
+      const ui = createExtensionUIBridge(managed, pushService);
+      const promise = ui.editor('Edit text');
+
+      expect(pushService.notified).toHaveLength(1);
+      expect(pushService.notified[0].interaction).toEqual({
+        method: 'editor',
+        title: 'Edit text',
+        options: undefined,
+        message: undefined,
+      });
+
+      const event = sent[0] as ExtensionUiRequestEvent;
+      resolveUi(managed, event.requestId, 'edited');
+      await promise;
+    });
+
+    it('does not send push notification when pushNotificationService is undefined', async () => {
+      const ui = createExtensionUIBridge(managed);
+      const promise = ui.select('Pick one', ['a', 'b']);
+
+      // No error should occur — just no push sent
+      const event = sent[0] as ExtensionUiRequestEvent;
+      resolveUi(managed, event.requestId, 'a');
+      await promise;
     });
   });
 

@@ -93,7 +93,7 @@ function createMockWs(): { ws: any; sent: Array<PimoteEvent | PimoteResponse> } 
 
 function createMockPushService(): PushNotificationService {
   return {
-    notifySessionIdle: async () => {},
+    notify: async () => {},
     initialize: async () => {},
     addSubscription: async () => {},
     removeSubscription: async () => {},

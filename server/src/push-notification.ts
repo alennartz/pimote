@@ -14,11 +14,22 @@ export interface SubscriptionStore {
   save(subscriptions: PushSubscriptionRecord[]): Promise<void>;
 }
 
-export interface SessionIdlePayload {
+export interface PushNotificationPayload {
   projectName: string;
   folderPath: string;
-  firstMessage: string | undefined;
   sessionId: string;
+  sessionName?: string;
+  firstMessage?: string;
+  reason: 'idle' | 'interaction';
+  // For idle:
+  lastAgentMessage?: string;
+  // For interaction:
+  interaction?: {
+    method: string; // 'select' | 'confirm' | 'input' | 'editor'
+    title: string;
+    options?: string[];
+    message?: string; // for confirm
+  };
 }
 
 export class PushNotificationService {
@@ -59,8 +70,8 @@ export class PushNotificationService {
     return [...this.subscriptions];
   }
 
-  /** Send push notification to all subscriptions when a session goes idle */
-  async notifySessionIdle(payload: SessionIdlePayload): Promise<void> {
+  /** Send push notification to all subscriptions */
+  async notify(payload: PushNotificationPayload): Promise<void> {
     const expiredEndpoints: string[] = [];
     const payloadStr = JSON.stringify(payload);
 

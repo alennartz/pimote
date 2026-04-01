@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PushNotificationService, type PushSubscriptionRecord, type PushSender, type SubscriptionStore, type SessionIdlePayload } from './push-notification.js';
+import { PushNotificationService, type PushSubscriptionRecord, type PushSender, type SubscriptionStore, type PushNotificationPayload } from './push-notification.js';
 
 // --- In-memory test doubles ---
 
@@ -134,44 +134,46 @@ describe('PushNotificationService', () => {
   });
 
   describe('notification delivery', () => {
-    it('notifySessionIdle() sends push to all subscriptions with correct payload shape', async () => {
+    it('notify() sends push to all subscriptions with correct payload shape', async () => {
       const sub1 = makeSubscription('https://push.example.com/1');
       const sub2 = makeSubscription('https://push.example.com/2');
       const { service, sender } = createService({ initial: [sub1, sub2] });
       await service.initialize();
 
-      const payload: SessionIdlePayload = {
+      const payload: PushNotificationPayload = {
         folderPath: '/home/user/project',
         projectName: 'my-project',
         firstMessage: 'Hello world',
         sessionId: 'session-123',
+        reason: 'idle',
       };
 
-      await service.notifySessionIdle(payload);
+      await service.notify(payload);
 
       expect(sender.calls).toHaveLength(2);
       expect(sender.calls[0].subscription.endpoint).toBe('https://push.example.com/1');
       expect(sender.calls[1].subscription.endpoint).toBe('https://push.example.com/2');
     });
 
-    it('notifySessionIdle() with no subscriptions succeeds silently', async () => {
+    it('notify() with no subscriptions succeeds silently', async () => {
       const { service, sender } = createService();
       await service.initialize();
 
-      const payload: SessionIdlePayload = {
+      const payload: PushNotificationPayload = {
         folderPath: '/home/user/project',
         projectName: 'my-project',
         firstMessage: undefined,
         sessionId: 'session-456',
+        reason: 'idle',
       };
 
       // Should not throw
-      await service.notifySessionIdle(payload);
+      await service.notify(payload);
 
       expect(sender.calls).toHaveLength(0);
     });
 
-    it('notifySessionIdle() removes subscriptions that get 410 response (expired) and persists', async () => {
+    it('notify() removes subscriptions that get 410 response (expired) and persists', async () => {
       const sub1 = makeSubscription('https://push.example.com/active');
       const sub2 = makeSubscription('https://push.example.com/expired');
       const { service, store } = createService({
@@ -185,14 +187,15 @@ describe('PushNotificationService', () => {
       });
       await service.initialize();
 
-      const payload: SessionIdlePayload = {
+      const payload: PushNotificationPayload = {
         folderPath: '/home/user/project',
         projectName: 'test',
         firstMessage: 'hi',
         sessionId: 'session-789',
+        reason: 'idle',
       };
 
-      await service.notifySessionIdle(payload);
+      await service.notify(payload);
 
       // Expired subscription should be removed
       const subs = service.getSubscriptions();
@@ -205,7 +208,7 @@ describe('PushNotificationService', () => {
       expect(lastSave[0].endpoint).toBe('https://push.example.com/active');
     });
 
-    it('notifySessionIdle() handles sender errors gracefully', async () => {
+    it('notify() handles sender errors gracefully', async () => {
       const sub1 = makeSubscription('https://push.example.com/1');
       const sub2 = makeSubscription('https://push.example.com/2');
       let callCount = 0;
@@ -221,39 +224,73 @@ describe('PushNotificationService', () => {
       });
       await service.initialize();
 
-      const payload: SessionIdlePayload = {
+      const payload: PushNotificationPayload = {
         folderPath: '/home/user/project',
         projectName: 'test',
         firstMessage: 'hello',
         sessionId: 'session-err',
+        reason: 'idle',
       };
 
       // Should not throw despite first subscription failing
-      await service.notifySessionIdle(payload);
+      await service.notify(payload);
 
       // Should have attempted both subscriptions
       expect(sender.calls).toHaveLength(2);
     });
 
-    it('payload JSON includes projectName, firstMessage, and sessionId', async () => {
+    it('payload JSON includes projectName, firstMessage, sessionId, and reason', async () => {
       const sub = makeSubscription('https://push.example.com/1');
       const { service, sender } = createService({ initial: [sub] });
       await service.initialize();
 
-      const payload: SessionIdlePayload = {
+      const payload: PushNotificationPayload = {
         folderPath: '/home/user/project',
         projectName: 'pimote',
         firstMessage: 'Fix the bug',
         sessionId: 'session-abc',
+        reason: 'idle',
       };
 
-      await service.notifySessionIdle(payload);
+      await service.notify(payload);
 
       expect(sender.calls).toHaveLength(1);
       const sentPayload = JSON.parse(sender.calls[0].payload);
       expect(sentPayload.projectName).toBe('pimote');
       expect(sentPayload.firstMessage).toBe('Fix the bug');
       expect(sentPayload.sessionId).toBe('session-abc');
+      expect(sentPayload.reason).toBe('idle');
+    });
+
+    it('notify() sends interaction payload correctly', async () => {
+      const sub = makeSubscription('https://push.example.com/1');
+      const { service, sender } = createService({ initial: [sub] });
+      await service.initialize();
+
+      const payload: PushNotificationPayload = {
+        projectName: 'pimote',
+        folderPath: '/home/user/project',
+        sessionId: 'session-int',
+        sessionName: 'My Session',
+        reason: 'interaction',
+        interaction: {
+          method: 'select',
+          title: 'Pick one',
+          options: ['a', 'b', 'c'],
+        },
+      };
+
+      await service.notify(payload);
+
+      expect(sender.calls).toHaveLength(1);
+      const sentPayload = JSON.parse(sender.calls[0].payload);
+      expect(sentPayload.reason).toBe('interaction');
+      expect(sentPayload.sessionName).toBe('My Session');
+      expect(sentPayload.interaction).toEqual({
+        method: 'select',
+        title: 'Pick one',
+        options: ['a', 'b', 'c'],
+      });
     });
   });
 });

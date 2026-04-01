@@ -8,7 +8,7 @@ import type { PushNotificationService } from './push-notification.js';
 
 function createMockPushService(): PushNotificationService {
   return {
-    notifySessionIdle: async () => {},
+    notify: async () => {},
     initialize: async () => {},
     addSubscription: async () => {},
     removeSubscription: async () => {},

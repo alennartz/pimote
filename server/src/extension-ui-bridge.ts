@@ -2,6 +2,7 @@ import type { ExtensionUIContext, ExtensionUIDialogOptions, ExtensionWidgetOptio
 import type { PimoteEvent } from '@pimote/shared';
 import type { ManagedSession } from './session-manager.js';
 import { sendManagedEvent, waitForManagedUiResponse } from './session-manager.js';
+import type { PushNotificationService } from './push-notification.js';
 
 /**
  * Creates an ExtensionUIContext implementation that bridges pi extension UI calls
@@ -16,7 +17,27 @@ import { sendManagedEvent, waitForManagedUiResponse } from './session-manager.js
  * ws field is updated and the bridge automatically routes to the new connection.
  * Pending UI promises survive reconnects and are replayed to the new client.
  */
-export function createExtensionUIBridge(managed: ManagedSession): ExtensionUIContext {
+export function createExtensionUIBridge(managed: ManagedSession, pushNotificationService?: PushNotificationService): ExtensionUIContext {
+  function notifyInteraction(method: string, fields: Record<string, unknown>): void {
+    if (!pushNotificationService) return;
+    const projectName = managed.folderPath.split('/').pop() ?? 'Unknown';
+    pushNotificationService
+      .notify({
+        projectName,
+        folderPath: managed.folderPath,
+        sessionId: managed.id,
+        sessionName: managed.session?.sessionName,
+        reason: 'interaction',
+        interaction: {
+          method,
+          title: fields.title as string,
+          options: fields.options as string[] | undefined,
+          message: fields.message as string | undefined,
+        },
+      })
+      .catch((err: unknown) => console.warn('[ExtensionUIBridge] Push notification error:', (err as Error).message ?? err));
+  }
+
   function sendRequest(requestId: string, fields: Record<string, unknown>): PimoteEvent {
     const event = {
       type: 'extension_ui_request',
@@ -69,24 +90,28 @@ export function createExtensionUIBridge(managed: ManagedSession): ExtensionUICon
     async select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined> {
       const requestId = crypto.randomUUID();
       const event = sendRequest(requestId, { method: 'select', title, options });
+      notifyInteraction('select', { title, options });
       return dialogWithTimeout(requestId, event, opts, undefined);
     },
 
     async confirm(title: string, message: string, opts?: ExtensionUIDialogOptions): Promise<boolean> {
       const requestId = crypto.randomUUID();
       const event = sendRequest(requestId, { method: 'confirm', title, message });
+      notifyInteraction('confirm', { title, message });
       return dialogWithTimeout(requestId, event, opts, false);
     },
 
     async input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined> {
       const requestId = crypto.randomUUID();
       const event = sendRequest(requestId, { method: 'input', title, placeholder });
+      notifyInteraction('input', { title });
       return dialogWithTimeout(requestId, event, opts, undefined);
     },
 
     async editor(title: string, prefill?: string): Promise<string | undefined> {
       const requestId = crypto.randomUUID();
       const event = sendRequest(requestId, { method: 'editor', title, prefill });
+      notifyInteraction('editor', { title });
       return waitForManagedUiResponse(managed, requestId, event) as Promise<string | undefined>;
     },
 

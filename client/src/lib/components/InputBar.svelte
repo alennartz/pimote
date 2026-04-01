@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { untrack, tick } from 'svelte';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { commandStore } from '$lib/stores/command-store.svelte.js';
@@ -203,6 +203,21 @@
     selectedCommand = null;
   }
 
+  function insertSlash() {
+    if (!textareaEl) return;
+    inputText = '/';
+    if (sessionRegistry.viewed) {
+      sessionRegistry.viewed.draftText = inputText;
+    }
+    handleInput();
+    autoResize();
+    textareaEl.focus();
+    // Place cursor after the slash
+    tick().then(() => {
+      textareaEl!.selectionStart = textareaEl!.selectionEnd = 1;
+    });
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     // Intercept keys when autocomplete is visible
     if (autocompleteVisible && autocompleteRef) {
@@ -247,6 +262,18 @@
       >
         <OctagonX class="size-4" />
         <span class="hidden sm:inline">Abort</span>
+      </button>
+    {/if}
+
+    <!-- Slash shortcut button (mobile only) -->
+    {#if !noSession && !inputText.startsWith('/')}
+      <button
+        class="text-muted-foreground bg-secondary border-border hover:bg-accent active:bg-accent/70 mb-1 shrink-0 rounded-lg border px-2.5 py-2.5 transition-colors md:hidden"
+        onpointerdown={(e) => e.preventDefault()}
+        onclick={insertSlash}
+        title="Slash commands"
+      >
+        <span class="text-sm font-bold">/</span>
       </button>
     {/if}
 
