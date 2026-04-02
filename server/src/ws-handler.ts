@@ -281,6 +281,54 @@ export class WsHandler {
           break;
         }
 
+        case 'delete_session': {
+          const deleteSessionId = command.sessionId;
+          const deleteFolderPath = command.folderPath;
+          if (!deleteSessionId || !deleteFolderPath) {
+            this.sendResponse(id, false, undefined, 'sessionId and folderPath are required');
+            break;
+          }
+
+          // If the session is active in memory, close it first
+          const deleteManaged = this.sessionManager.getSession(deleteSessionId);
+          if (deleteManaged) {
+            // Notify the owning client if it's a different client
+            if (deleteManaged.connectedClientId && deleteManaged.connectedClientId !== this.clientId) {
+              const ownerHandler = this.clientRegistry.get(deleteManaged.connectedClientId);
+              if (ownerHandler) {
+                ownerHandler.sendKilledEvent(deleteSessionId);
+              }
+            }
+            resolveAllManagedPendingUi(deleteManaged);
+            await this.sessionManager.closeSession(deleteSessionId);
+          }
+
+          // Delete the file from disk
+          const deleted = await this.folderIndex.deleteSession(deleteFolderPath, deleteSessionId);
+          if (!deleted) {
+            this.sendResponse(id, false, undefined, `Session not found: ${deleteSessionId}`);
+            break;
+          }
+
+          // Broadcast deletion to all clients so sidebar lists update
+          const deleteEvent = {
+            type: 'session_deleted' as const,
+            sessionId: deleteSessionId,
+            folderPath: deleteFolderPath,
+          };
+          for (const [, handler] of this.clientRegistry) {
+            handler.sendToClient(deleteEvent);
+          }
+
+          this.subscribedSessions.delete(deleteSessionId);
+          if (this.viewedSessionId === deleteSessionId) {
+            this.viewedSessionId = null;
+          }
+
+          this.sendResponse(id, true);
+          break;
+        }
+
         case 'reconnect': {
           const managed = this.sessionManager.getSession(command.sessionId);
           if (!managed) {

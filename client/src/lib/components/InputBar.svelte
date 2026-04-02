@@ -243,6 +243,12 @@
       }
     }
 
+    if (e.key === 'Escape' && sessionRegistry.viewed?.isStreaming) {
+      e.preventDefault();
+      handleAbort();
+      return;
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -250,12 +256,24 @@
   }
 </script>
 
-<div class="border-border bg-background shrink-0 border-t px-3 pt-2 pb-[max(env(safe-area-inset-bottom),8px)]">
+<div class="border-border bg-background relative shrink-0 border-t px-3 pt-2 pb-[max(env(safe-area-inset-bottom),8px)]">
+  <!-- Floating abort button (mobile only, above input bar) -->
+  {#if sessionRegistry.viewed?.isStreaming}
+    <button
+      class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 absolute bottom-full left-3 z-10 mb-3 flex items-center justify-center rounded-full p-3 shadow-lg transition-colors md:hidden"
+      onpointerdown={(e) => e.preventDefault()}
+      onclick={handleAbort}
+      title="Abort"
+    >
+      <OctagonX class="size-5" />
+    </button>
+  {/if}
+
   <div class="mx-auto flex max-w-3xl items-end gap-2">
-    <!-- Abort button (visible only when streaming) -->
+    <!-- Abort button (desktop only, visible when streaming) -->
     {#if sessionRegistry.viewed?.isStreaming}
       <button
-        class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 mb-1 flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors"
+        class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 mb-1 hidden shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors md:flex"
         onpointerdown={(e) => e.preventDefault()}
         onclick={handleAbort}
         title="Abort"
@@ -268,12 +286,12 @@
     <!-- Slash shortcut button (mobile only) -->
     {#if !noSession && !inputText.startsWith('/')}
       <button
-        class="text-muted-foreground bg-secondary border-border hover:bg-accent active:bg-accent/70 mb-1 shrink-0 rounded-lg border px-2.5 py-2.5 transition-colors md:hidden"
+        class="text-muted-foreground bg-secondary border-border hover:bg-accent active:bg-accent/70 flex shrink-0 items-center justify-center rounded-lg border px-3 py-3 transition-colors md:hidden"
         onpointerdown={(e) => e.preventDefault()}
         onclick={insertSlash}
         title="Slash commands"
       >
-        <span class="text-sm font-bold">/</span>
+        <span class="text-sm leading-5 font-bold">/</span>
       </button>
     {/if}
 
@@ -298,28 +316,28 @@
         disabled={noSession}
         rows={1}
         placeholder={noSession ? 'Open a session to start…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
-        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border px-4 py-3 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       ></textarea>
-    </div>
 
-    <!-- Send / Steer button -->
-    <button
-      class="mb-1 flex shrink-0 items-center justify-center rounded-xl p-2.5 text-sm font-medium transition-colors
-				{!canSend || !inputText.trim()
-        ? 'bg-secondary text-muted-foreground cursor-not-allowed opacity-50'
-        : sessionRegistry.viewed?.isStreaming
-          ? 'bg-status-streaming text-primary-foreground hover:bg-status-streaming/80 active:bg-status-streaming/70'
-          : 'bg-primary text-primary-foreground hover:bg-primary/80 active:bg-primary/70'}"
-      onpointerdown={(e) => e.preventDefault()}
-      onclick={sendMessage}
-      disabled={!canSend || !inputText.trim()}
-      title={sessionRegistry.viewed?.isStreaming ? 'Steer' : 'Send'}
-    >
-      {#if sessionRegistry.viewed?.isStreaming}
-        <MessageSquare class="size-5" />
-      {:else}
-        <Send class="size-5" />
-      {/if}
-    </button>
+      <!-- Send / Steer button (inset in textarea) -->
+      <button
+        class="absolute right-1.5 bottom-1.5 flex items-center justify-center rounded-lg p-1.5 text-sm font-medium transition-colors
+          {!canSend || !inputText.trim()
+          ? 'text-muted-foreground cursor-not-allowed opacity-50'
+          : sessionRegistry.viewed?.isStreaming
+            ? 'bg-status-streaming text-primary-foreground hover:bg-status-streaming/80 active:bg-status-streaming/70'
+            : 'bg-primary text-primary-foreground hover:bg-primary/80 active:bg-primary/70'}"
+        onpointerdown={(e) => e.preventDefault()}
+        onclick={sendMessage}
+        disabled={!canSend || !inputText.trim()}
+        title={sessionRegistry.viewed?.isStreaming ? 'Steer' : 'Send'}
+      >
+        {#if sessionRegistry.viewed?.isStreaming}
+          <MessageSquare class="size-5" />
+        {:else}
+          <Send class="size-5" />
+        {/if}
+      </button>
+    </div>
   </div>
 </div>

@@ -218,6 +218,12 @@ export interface CloseSessionCommand extends CommandBase {
   type: 'close_session';
 }
 
+export interface DeleteSessionCommand extends CommandBase {
+  type: 'delete_session';
+  folderPath: string;
+  sessionId: string;
+}
+
 export interface TakeoverFolderCommand extends CommandBase {
   type: 'takeover_folder';
   folderPath: string;
@@ -301,6 +307,7 @@ export type PimoteCommand =
   | ListSessionsCommand
   | OpenSessionCommand
   | CloseSessionCommand
+  | DeleteSessionCommand
   | TakeoverFolderCommand
   | ReconnectCommand
   | ViewSessionCommand
@@ -493,6 +500,12 @@ export interface SessionClosedEvent {
   reason?: 'displaced' | 'killed' | 'replaced';
 }
 
+export interface SessionDeletedEvent {
+  type: 'session_deleted';
+  sessionId: string;
+  folderPath: string;
+}
+
 export interface SessionReplacedEvent {
   type: 'session_replaced';
   oldSessionId: string;
@@ -547,6 +560,7 @@ export type PimoteEvent =
   // Server-level
   | SessionOpenedEvent
   | SessionClosedEvent
+  | SessionDeletedEvent
   | SessionReplacedEvent
   | SessionStateChangedEvent
   | ConnectionRestoredEvent

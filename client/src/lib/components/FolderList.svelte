@@ -26,6 +26,8 @@
     const unsub = connection.onEvent((event) => {
       if (event.type === 'session_state_changed') {
         indexStore.applySessionStateChange(event, connection.clientId);
+      } else if (event.type === 'session_deleted') {
+        indexStore.applySessionDeleted(event);
       }
     });
 

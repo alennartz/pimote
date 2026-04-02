@@ -1,5 +1,5 @@
 // IndexStore — manages folder and session listing
-import type { FolderInfo, SessionInfo, SessionStateChangedEvent } from '@pimote/shared';
+import type { FolderInfo, SessionInfo, SessionStateChangedEvent, SessionDeletedEvent } from '@pimote/shared';
 import { connection } from './connection.svelte.js';
 import { SvelteMap } from 'svelte/reactivity';
 
@@ -53,6 +53,14 @@ class IndexStore {
         // Unknown active session (e.g. created by newSession/fork/switchSession) — reload the list
         this.loadSessions(event.folderPath);
       }
+    }
+  }
+
+  applySessionDeleted(event: SessionDeletedEvent): void {
+    const folderSessions = this.sessions.get(event.folderPath);
+    if (folderSessions) {
+      const filtered = folderSessions.filter((s) => s.id !== event.sessionId);
+      this.sessions.set(event.folderPath, filtered);
     }
   }
 

@@ -1,4 +1,4 @@
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, stat, unlink } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { SessionManager, type SessionInfo as PiSessionInfo } from '@mariozechner/pi-coding-agent';
 import type { FolderInfo, SessionInfo as PimoteSessionInfo } from '@pimote/shared';
@@ -90,6 +90,17 @@ export class FolderIndex {
     }
     const match = piSessions.find((s) => s.id === sessionId);
     return match?.path;
+  }
+
+  /**
+   * Delete a session file from disk.
+   * Returns true if deleted, false if the session was not found.
+   */
+  async deleteSession(folderPath: string, sessionId: string): Promise<boolean> {
+    const sessionPath = await this.resolveSessionPath(folderPath, sessionId);
+    if (!sessionPath) return false;
+    await unlink(sessionPath);
+    return true;
   }
 
   /**
