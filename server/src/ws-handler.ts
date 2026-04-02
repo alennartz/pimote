@@ -813,8 +813,10 @@ export class WsHandler {
     managed.onSessionReset = (m) => this.handleSessionReset(m);
     this.subscribedSessions.add(sessionId);
 
-    // Bind extensions once — the bridge references the ManagedSession (stable),
-    // not the handler (transient), so it doesn't need to be recreated on reconnect.
+    // Bind extensions when needed. The bridge holds a direct reference to this
+    // ManagedSession — on reconnect (same ManagedSession) we skip rebinding,
+    // but on session reset (new ManagedSession) we must rebind so the bridge
+    // points at the new instance. bindExtensions is safe to call multiple times.
     if (!managed.extensionsBound) {
       const uiContext = createExtensionUIBridge(managed, this.pushNotificationService);
       const commandContextActions = createCommandContextActions(managed);
@@ -839,11 +841,13 @@ export class WsHandler {
     }
 
     // Session ID changed — detach old managed session, adopt as new.
-    // Carry over extensionsBound — the underlying AgentSession is the same object.
+    // Do NOT carry over extensionsBound — the extension UI bridge holds a reference
+    // to the old ManagedSession. A new ManagedSession needs a fresh bridge bound
+    // to it, so claimSession must re-run bindExtensions (which is safe to call
+    // multiple times — it overwrites the previous bindings on the AgentSession).
     const folderPath = oldManaged.folderPath;
-    const extensionsBound = oldManaged.extensionsBound;
     this.sessionManager.detachSession(oldSessionId);
-    this.sessionManager.adoptSession(oldManaged.session, folderPath, { extensionsBound });
+    this.sessionManager.adoptSession(oldManaged.session, folderPath);
 
     const newManaged = this.sessionManager.getSession(newSessionId)!;
 
