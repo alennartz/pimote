@@ -14,6 +14,21 @@ clientsClaim();
 // Workbox injectManifest requires this token to exist; precacheAndRoute is a no-op with an empty manifest.
 precacheAndRoute(self.__WB_MANIFEST);
 
+// --- Client focus tracking (Windows workaround) ---
+// On desktop Chrome (Windows), WindowClient.focused is unreliable in push
+// event handlers — it returns false even when the tab is active and focused.
+// The client sends focus_state messages on focus/blur/visibilitychange so the
+// SW has an accurate picture. Default to false (show notification) if the SW
+// restarts and loses state — that's the safe fallback.
+const isWindows = /Windows/.test(self.navigator.userAgent);
+let clientHasFocus = false;
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'focus_state') {
+    clientHasFocus = event.data.hasFocus === true;
+  }
+});
+
 // --- Push notifications ---
 
 self.addEventListener('push', (event) => {
@@ -43,10 +58,15 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      const focused = clients.find((c) => c.focused);
-      if (focused) {
+      // On Windows, use the client-reported focus state (client.focused is
+      // broken in push handlers on desktop Chrome). On other platforms,
+      // use the native client.focused which works correctly.
+      const appInFocus = isWindows ? clientHasFocus : clients.some((c) => c.focused);
+
+      if (appInFocus && clients.length > 0) {
         // In-app: post message to client for in-app handling
-        focused.postMessage({
+        const target = clients.find((c) => c.focused) ?? clients[0];
+        target.postMessage({
           type: 'push_notification',
           title,
           body,

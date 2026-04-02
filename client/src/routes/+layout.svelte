@@ -15,6 +15,15 @@
   let { children } = $props();
   let sidebarOpen = $state(false);
 
+  // Report focus state to SW so it can suppress notifications when app is focused.
+  // Workaround for desktop Chrome where WindowClient.focused is unreliable in push handlers.
+  function sendFocusState() {
+    navigator.serviceWorker?.controller?.postMessage({
+      type: 'focus_state',
+      hasFocus: document.hasFocus(),
+    });
+  }
+
   onMount(() => {
     connection.connect();
 
@@ -33,6 +42,12 @@
         .register('/sw.js')
         .then((reg) => console.log('[pimote] Service worker registered:', reg))
         .catch((err) => console.warn('[pimote] Service worker registration failed:', err));
+
+      window.addEventListener('focus', sendFocusState);
+      window.addEventListener('blur', sendFocusState);
+      document.addEventListener('visibilitychange', sendFocusState);
+      // Send initial state once SW is ready
+      navigator.serviceWorker.ready.then(() => sendFocusState());
 
       // Handle messages from service worker
       navigator.serviceWorker.addEventListener('message', async (event) => {
@@ -68,7 +83,12 @@
       });
     }
 
-    return () => connection.disconnect();
+    return () => {
+      connection.disconnect();
+      window.removeEventListener('focus', sendFocusState);
+      window.removeEventListener('blur', sendFocusState);
+      document.removeEventListener('visibilitychange', sendFocusState);
+    };
   });
 
   function closeSidebar() {
