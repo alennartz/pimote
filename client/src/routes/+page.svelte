@@ -70,7 +70,7 @@
   <!-- Landing / folder browser -->
   <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
     <div class="my-auto flex flex-col items-center p-8">
-      <img src="/icon-512.png" alt="Pimote" class="mb-6 size-32" />
+      <img src="/pwa/icon-512.png" alt="Pimote" class="mb-6 size-32" />
       <h1 class="text-foreground mb-2 text-2xl font-bold">Pimote</h1>
       <p class="text-muted-foreground mb-8 text-sm">Select a folder and session from the sidebar to get started.</p>
 
