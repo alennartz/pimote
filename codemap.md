@@ -132,5 +132,5 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/routes/+layout.ts`, `client/src/routes/layout.css` — layout config and styles
 - `client/src/app.html`, `client/src/app.d.ts` — SvelteKit app shell
 - `client/src/test/mocks/app-environment.ts` — test mock
-- `client/static/**` — PWA assets (manifest, icons, robots.txt)
+- `client/static/**` — Static assets (PWA manifest & icons, robots.txt)
 - `client/svelte.config.js`, `client/vite.config.ts`, `client/vitest.config.ts` — build config
