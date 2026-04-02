@@ -1489,7 +1489,10 @@ describe('WsHandler', () => {
       const resp = findResponse(sent, 'req-cmds-1');
       expect(resp).toBeDefined();
       expect(resp!.success).toBe(true);
-      expect((resp!.data as any).commands).toEqual([]);
+      expect((resp!.data as any).commands).toEqual([
+        { name: 'new', description: 'Start a new session', hasArgCompletions: false },
+        { name: 'reload', description: 'Reload extensions and skills', hasArgCompletions: false },
+      ]);
     });
 
     it('returns skills as "skill:<name>" commands with hasArgCompletions=false', async () => {
@@ -1513,7 +1516,7 @@ describe('WsHandler', () => {
 
       const resp = findResponse(sent, 'req-cmds-2');
       const commands = (resp!.data as any).commands;
-      expect(commands).toHaveLength(2);
+      expect(commands).toHaveLength(4);
       expect(commands[0]).toEqual({
         name: 'skill:brainstorm',
         description: 'Brainstorm ideas',
@@ -1522,6 +1525,16 @@ describe('WsHandler', () => {
       expect(commands[1]).toEqual({
         name: 'skill:code-review',
         description: 'Review code',
+        hasArgCompletions: false,
+      });
+      expect(commands[2]).toEqual({
+        name: 'new',
+        description: 'Start a new session',
+        hasArgCompletions: false,
+      });
+      expect(commands[3]).toEqual({
+        name: 'reload',
+        description: 'Reload extensions and skills',
         hasArgCompletions: false,
       });
     });
@@ -1544,10 +1557,20 @@ describe('WsHandler', () => {
 
       const resp = findResponse(sent, 'req-cmds-3');
       const commands = (resp!.data as any).commands;
-      expect(commands).toHaveLength(1);
+      expect(commands).toHaveLength(3);
       expect(commands[0]).toEqual({
         name: 'fix-bug',
         description: 'Fix a bug',
+        hasArgCompletions: false,
+      });
+      expect(commands[1]).toEqual({
+        name: 'new',
+        description: 'Start a new session',
+        hasArgCompletions: false,
+      });
+      expect(commands[2]).toEqual({
+        name: 'reload',
+        description: 'Reload extensions and skills',
         hasArgCompletions: false,
       });
     });
@@ -1573,7 +1596,7 @@ describe('WsHandler', () => {
 
       const resp = findResponse(sent, 'req-cmds-4');
       const commands = (resp!.data as any).commands;
-      expect(commands).toHaveLength(2);
+      expect(commands).toHaveLength(4);
       expect(commands[0]).toEqual({
         name: 'deploy',
         description: 'Deploy to production',
@@ -1582,6 +1605,16 @@ describe('WsHandler', () => {
       expect(commands[1]).toEqual({
         name: 'reload',
         description: '',
+        hasArgCompletions: false,
+      });
+      expect(commands[2]).toEqual({
+        name: 'new',
+        description: 'Start a new session',
+        hasArgCompletions: false,
+      });
+      expect(commands[3]).toEqual({
+        name: 'reload',
+        description: 'Reload extensions and skills',
         hasArgCompletions: false,
       });
     });
@@ -1606,10 +1639,12 @@ describe('WsHandler', () => {
 
       const resp = findResponse(sent, 'req-cmds-5');
       const commands = (resp!.data as any).commands;
-      expect(commands).toHaveLength(3);
+      expect(commands).toHaveLength(5);
       expect(commands[0].name).toBe('skill:brainstorm');
       expect(commands[1].name).toBe('fix-bug');
       expect(commands[2].name).toBe('deploy');
+      expect(commands[3].name).toBe('new');
+      expect(commands[4].name).toBe('reload');
     });
 
     it('handles missing extensionRunner gracefully', async () => {
@@ -1632,8 +1667,8 @@ describe('WsHandler', () => {
 
       const resp = findResponse(sent, 'req-cmds-6');
       expect(resp!.success).toBe(true);
-      // Should still return the skill
-      expect((resp!.data as any).commands).toHaveLength(1);
+      // Should still return the skill + built-in commands
+      expect((resp!.data as any).commands).toHaveLength(3);
     });
   });
 

@@ -179,7 +179,7 @@ describe('SessionRegistry', () => {
         }),
       );
       const sm = registry.sessions['s1'].streamingMessage!;
-      expect(sm.content[0]).toEqual({ type: 'text', text: '' });
+      expect(sm.content[0]).toEqual({ type: 'text', text: '', streaming: true });
     });
 
     it('message_update subtype delta appends text to existing block', () => {
