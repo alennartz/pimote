@@ -55,7 +55,7 @@
           </button>
           <!-- Mobile red close zone (hidden on desktop) -->
           <button
-            class="flex items-center justify-center bg-red-600/80 pr-2.5 pl-1.5 transition-colors hover:bg-red-500/80 active:bg-red-400/80 md:hidden"
+            class="flex items-center justify-center bg-red-600/80 py-1 pr-2.5 pl-1.5 transition-colors hover:bg-red-500/80 active:bg-red-400/80 md:hidden"
             title="Close session"
             onclick={() => closeSession(session.sessionId)}
           >
