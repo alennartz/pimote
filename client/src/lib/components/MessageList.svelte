@@ -2,9 +2,44 @@
   import { tick } from 'svelte';
   import type { PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { connection } from '$lib/stores/connection.svelte.js';
+  import { setEditorText } from '$lib/stores/input-bar.svelte.js';
   import Message from './Message.svelte';
   import StreamingIndicator from './StreamingIndicator.svelte';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
+  import OctagonX from '@lucide/svelte/icons/octagon-x';
+
+  async function handleAbort() {
+    const session = sessionRegistry.viewed;
+    if (!session?.sessionId) return;
+    try {
+      await connection.send({
+        type: 'abort',
+        sessionId: session.sessionId,
+      });
+    } catch (e) {
+      console.error('Failed to send abort:', e);
+    }
+
+    if (session.pendingSteeringMessages.length > 0) {
+      try {
+        const res = await connection.send({
+          type: 'dequeue_steering',
+          sessionId: session.sessionId,
+        });
+        if (res.success && res.data) {
+          const { steering, followUp } = res.data as { steering: string[]; followUp: string[] };
+          const allQueued = [...steering, ...followUp];
+          if (allQueued.length > 0) {
+            setEditorText(session.sessionId, allQueued.join('\n'));
+          }
+        }
+      } catch (e) {
+        console.error('Failed to dequeue steering messages after abort:', e);
+      }
+      session.pendingSteeringMessages = [];
+    }
+  }
 
   let scrollContainer: HTMLDivElement | undefined = $state();
   let userScrolledUp = $state(false);
@@ -97,6 +132,18 @@
       {/if}
     </div>
   </div>
+
+  <!-- Floating abort button (mobile only) -->
+  {#if sessionRegistry.viewed?.isStreaming}
+    <button
+      class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 absolute right-3 bottom-3 z-10 flex items-center justify-center rounded-full p-3 shadow-lg transition-colors md:hidden"
+      onpointerdown={(e) => e.preventDefault()}
+      onclick={handleAbort}
+      title="Abort"
+    >
+      <OctagonX class="size-5" />
+    </button>
+  {/if}
 
   <!-- Scroll to bottom button -->
   {#if userScrolledUp}

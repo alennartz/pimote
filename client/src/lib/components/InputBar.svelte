@@ -257,18 +257,6 @@
 </script>
 
 <div class="border-border bg-background relative shrink-0 border-t px-3 pt-2 pb-[max(env(safe-area-inset-bottom),8px)]">
-  <!-- Floating abort button (mobile only, above input bar) -->
-  {#if sessionRegistry.viewed?.isStreaming}
-    <button
-      class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 absolute bottom-full left-3 z-10 mb-3 flex items-center justify-center rounded-full p-3 shadow-lg transition-colors md:hidden"
-      onpointerdown={(e) => e.preventDefault()}
-      onclick={handleAbort}
-      title="Abort"
-    >
-      <OctagonX class="size-5" />
-    </button>
-  {/if}
-
   <div class="mx-auto flex max-w-3xl items-end gap-2">
     <!-- Abort button (desktop only, visible when streaming) -->
     {#if sessionRegistry.viewed?.isStreaming}

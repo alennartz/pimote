@@ -13,7 +13,7 @@
       {@const hasPendingUi = uiQueue.hasRequestForSession(session.sessionId)}
       {#if isViewed}
         <!-- Active chip: split pill with red close zone on mobile, hover X on desktop -->
-        <div class="group/chip flex items-center overflow-hidden rounded-full">
+        <div class="group/chip flex items-stretch overflow-hidden rounded-full">
           <button
             class="bg-primary text-primary-foreground flex items-center gap-1.5 py-1 pr-3 pl-3 text-xs font-medium transition-colors md:rounded-r-full md:pr-3"
             onclick={() => switchToSession(session.sessionId)}
@@ -55,7 +55,7 @@
           </button>
           <!-- Mobile red close zone (hidden on desktop) -->
           <button
-            class="flex items-center justify-center bg-red-600/80 py-1 pr-2.5 pl-1.5 transition-colors hover:bg-red-500/80 active:bg-red-400/80 md:hidden"
+            class="flex items-center justify-center bg-red-600/80 pr-2.5 pl-1.5 transition-colors hover:bg-red-500/80 active:bg-red-400/80 md:hidden"
             title="Close session"
             onclick={() => closeSession(session.sessionId)}
           >

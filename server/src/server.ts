@@ -59,7 +59,7 @@ async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse):
 
       // HTML, SW, and manifest must not be cached by CDN/proxies.
       // Immutable hashed assets (_app/immutable/) are safe to cache.
-      if (urlPath === '/sw.js' || urlPath === '/manifest.json' || ext === '.html') {
+      if (urlPath === '/sw.js' || urlPath === '/pwa/manifest.json' || ext === '.html') {
         headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
         headers['CDN-Cache-Control'] = 'no-store';
         headers['Cloudflare-CDN-Cache-Control'] = 'no-store';

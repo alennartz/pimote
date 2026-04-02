@@ -92,7 +92,7 @@
     <!-- Sidebar header -->
     <div class="border-sidebar-border flex h-12 shrink-0 items-center justify-between border-b px-4">
       <div class="flex items-center gap-2">
-        <img src="/icon-192.png" alt="" class="size-5" />
+        <img src="/pwa/icon-192.png" alt="" class="size-5" />
         <span class="text-sidebar-foreground text-sm font-semibold">Pimote</span>
       </div>
       <div class="flex items-center gap-2">
@@ -121,7 +121,7 @@
       <button class="text-muted-foreground hover:text-foreground rounded-md p-1" onclick={() => (sidebarOpen = true)}>
         <Menu class="size-5" />
       </button>
-      <img src="/icon-192.png" alt="" class="ml-3 size-5" />
+      <img src="/pwa/icon-192.png" alt="" class="ml-3 size-5" />
       <span class="text-foreground ml-1.5 text-sm font-semibold">Pimote</span>
     </header>
 

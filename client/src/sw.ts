@@ -60,7 +60,7 @@ self.addEventListener('push', (event) => {
         return self.registration.showNotification(title, {
           body,
           data: { sessionId: data.sessionId, folderPath: data.folderPath },
-          icon: '/icon-192.png',
+          icon: '/pwa/icon-192.png',
           tag: `pimote-${data.sessionId}`,
           renotify: true,
         });
