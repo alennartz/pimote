@@ -203,7 +203,7 @@
 - **[S]** Open client in browser
 - **[E]** Sidebar shows green connection status dot
 - **[E]** `connection.status` transitions: `disconnected` → `connecting` → `connected`
-- **[E]** WebSocket URL includes `?clientId=<uuid>` query parameter (stable per tab, generated via `crypto.randomUUID()`)
+- **[E]** WebSocket URL includes `?clientId=<uuid>` query parameter (persisted in localStorage; generated via `crypto.randomUUID()` on first visit, reused on subsequent visits)
 
 ### TC-03.02 — Intentional disconnect 🟡
 
@@ -239,18 +239,60 @@
 - **[S]** Attempt `connection.send(...)` from console
 - **[E]** Immediately rejects with `WebSocket not connected`
 
-### TC-03.07 — Client identity stable across reconnects 🟡
+### TC-03.07 — Client identity stable across reconnects and app restarts 🟡
 
 - **[P]** Client connected with clientId X
 - **[S]** Disconnect and reconnect (e.g., server restart)
 - **[E]** Same `clientId` used in the new WebSocket URL
 - **[E]** Server recognizes the stale connection, registers the new handler, closes the old WebSocket without cleanup (sessions preserved for rebinding)
+- **[S]** Close the browser tab entirely, then reopen the app
+- **[E]** Same `clientId` persisted from localStorage; reconnects with same identity
 
 ### TC-03.08 — Reconnect backoff cap 🟡
 
 - **[P]** Server is unreachable
 - **[S]** Observe reconnect attempts
 - **[E]** Delay doubles each attempt: 1s, 2s, 4s, 8s, 16s, 30s, 30s, 30s... (caps at 30s)
+
+### TC-03.09 — Session tabs restored on app reopen 🔴
+
+- **[P]** Client has 2–3 active sessions open in ActiveSessionBar; one is currently viewed
+- **[S]** Close the browser tab entirely
+- **[S]** Reopen the app in a new tab
+- **[E]** Same `clientId` used (from localStorage)
+- **[E]** ActiveSessionBar restores the same session tabs (hydrated from localStorage)
+- **[E]** Previously viewed session is restored as the active view
+- **[E]** Each session reconnects via the normal reconnect flow (`buffered_events` or `full_resync`)
+- **[E]** Conversation history visible after reconnect completes
+
+### TC-03.10 — Session persistence updated on mutations 🟡
+
+- **[P]** App is open with persisted sessions
+- **[S]** Open a new session
+- **[E]** localStorage updated to include the new session
+- **[S]** Close a session
+- **[E]** localStorage updated to remove the closed session
+- **[S]** Switch viewed session
+- **[E]** localStorage updated with new viewed session ID
+
+### TC-03.11 — Expired sessions handled gracefully on restore 🟠
+
+- **[P]** Client has sessions persisted in localStorage
+- **[S]** Stop the server, wait for idle reap timeout (or manually clear server state), restart server
+- **[S]** Reopen the app
+- **[E]** Client attempts to reconnect persisted sessions
+- **[E]** Server responds `session_expired` for each
+- **[E]** Expired sessions removed from UI and localStorage
+- **[E]** No crash or stuck state
+
+### TC-03.12 — Multi-tab not supported 🟡
+
+- **[P]** App open in Tab A with active sessions
+- **[S]** Open the app in Tab B (same browser)
+- **[E]** Both tabs share the same `clientId` from localStorage
+- **[E]** Tab B’s WebSocket connection displaces Tab A’s on the server (same clientId, new connection replaces old)
+- **[E]** Tab A loses its connection; Tab B takes over
+- **Note:** This is a known limitation, not a bug. Multi-tab usage in the same browser is not supported because both tabs share localStorage state.
 
 ---
 

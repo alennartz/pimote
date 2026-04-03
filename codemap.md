@@ -86,14 +86,16 @@ Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges
 
 SvelteKit PWA rendering pi conversations in real time with session/folder browsing, model/thinking controls, extension UI, and push notifications.
 
-**Responsibilities:** WebSocket connection with auto-reconnect (backoff→connecting→syncing→ready), per-session cursor tracking, stable client identity, multi-session state management (SessionRegistry with $state() runes), streaming message accumulation with stable DOM keying, folder/session index browsing, streaming markdown rendering (smd + highlight.js), tool call visualization, model/thinking pickers, extension UI queue (inline select/confirm + modal input/editor), input bar with prompt/steer/follow-up/abort modes + slash command autocomplete, per-session draft persistence, fuzzy matching, service worker for push notifications, PWA install prompt, active session bar with status indicators, text-to-speech playback with swipe-to-reveal gesture, panel card display (desktop side panel + mobile overlay with toggle FAB)
+**Responsibilities:** WebSocket connection with auto-reconnect (backoff→connecting→syncing→ready), per-session cursor tracking, stable client identity (localStorage-persisted), multi-session state management (SessionRegistry with $state() runes), localStorage persistence of active sessions and viewed session for cross-restart restoration, streaming message accumulation with stable DOM keying, folder/session index browsing, streaming markdown rendering (smd + highlight.js), tool call visualization, model/thinking pickers, extension UI queue (inline select/confirm + modal input/editor), input bar with prompt/steer/follow-up/abort modes + slash command autocomplete, per-session draft persistence, fuzzy matching, service worker for push notifications, PWA install prompt, active session bar with status indicators, text-to-speech playback with swipe-to-reveal gesture, panel card display (desktop side panel + mobile overlay with toggle FAB)
 
 **Dependencies:** Protocol (wire format types), Server (WebSocket API)
 
 **Files:**
 
-- `client/src/lib/stores/connection.svelte.ts` — WebSocket lifecycle, reconnect phases, cursor tracking, push re-registration
-- `client/src/lib/stores/session-registry.svelte.ts` — SessionRegistry class, event routing, streaming message accumulation, session lifecycle helpers
+- `client/src/lib/stores/persistence.ts` — localStorage helpers for client state (clientId, active sessions, viewedSessionId) with typed read/write functions, centralized key naming, and silent error handling
+- `client/src/lib/stores/persistence.test.ts` — tests
+- `client/src/lib/stores/connection.svelte.ts` — WebSocket lifecycle, reconnect phases, cursor tracking, push re-registration, clientId hydration from persistence
+- `client/src/lib/stores/session-registry.svelte.ts` — SessionRegistry class, event routing, streaming message accumulation, session lifecycle helpers, active-session hydration and persistence on mutation
 - `client/src/lib/stores/session-registry.test.ts` — tests
 - `client/src/lib/stores/index-store.svelte.ts` — folder/session index browsing state
 - `client/src/lib/stores/command-store.svelte.ts` — per-session command cache

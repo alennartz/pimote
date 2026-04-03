@@ -32,7 +32,9 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Handles extension UI dialogs (select, confirm, input)
 - Displays live panel cards pushed by extensions (subagent progress, custom dashboards) in a responsive side panel (desktop) or overlay (mobile)
 - Receives push notifications when background sessions finish working
+- Persists client identity and active sessions in localStorage — reopening the app restores session tabs and reconnects automatically
 - Reconnects transparently with gap replay and session displacement handling
+- Single-tab per browser (multi-tab not supported — shared localStorage would cause conflicts)
 
 **`@pimote/panels`** — A workspace package (`packages/panels/`) that extensions import to push structured card data into the web UI. Provides `detect()` for pimote detection and `PanelHandle` for updating/clearing cards via the pi EventBus. Cards flow through the server (throttled) to the client panel.
 
