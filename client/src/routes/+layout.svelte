@@ -6,14 +6,18 @@
   import ExtensionDialog from '$lib/components/ExtensionDialog.svelte';
   import ExtensionStatus from '$lib/components/ExtensionStatus.svelte';
   import InstallBanner from '$lib/components/InstallBanner.svelte';
+  import Panel from '$lib/components/Panel.svelte';
   import Menu from '@lucide/svelte/icons/menu';
   import X from '@lucide/svelte/icons/x';
+  import PanelRight from '@lucide/svelte/icons/panel-right';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { panelStore } from '$lib/stores/panel-store.svelte.js';
   import { onMount } from 'svelte';
 
   let { children } = $props();
   let sidebarOpen = $state(false);
+  let panelOpen = $state(false);
 
   // Report focus state to SW so it can suppress notifications when app is focused.
   // Workaround for desktop Chrome where WindowClient.focused is unreliable in push handlers.
@@ -153,6 +157,33 @@
     <!-- Extension status bar & widgets -->
     <ExtensionStatus />
   </div>
+
+  <!-- Desktop panel (flex sibling of main content) -->
+  {#if panelStore.hasCards}
+    <div class="hidden md:flex">
+      <Panel />
+    </div>
+  {/if}
+
+  <!-- Mobile panel overlay -->
+  {#if panelStore.hasCards && panelOpen}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="fixed inset-0 z-30 bg-black/50 md:hidden" onclick={() => (panelOpen = false)} onkeydown={(e) => e.key === 'Escape' && (panelOpen = false)}></div>
+    <div class="fixed inset-y-0 right-0 z-40 md:hidden">
+      <Panel />
+    </div>
+  {/if}
+
+  <!-- Mobile panel indicator -->
+  {#if panelStore.hasCards && !panelOpen}
+    <button
+      class="bg-primary text-primary-foreground fixed right-4 bottom-20 z-20 flex items-center gap-1.5 rounded-full px-3 py-2 shadow-lg md:hidden"
+      onclick={() => (panelOpen = true)}
+    >
+      <PanelRight class="size-4" />
+      <span class="text-xs font-medium">{panelStore.cards.length}</span>
+    </button>
+  {/if}
 
   <!-- Extension UI dialogs (global overlay) -->
   <ExtensionDialog />
