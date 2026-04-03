@@ -127,7 +127,7 @@
     padding: 0.15em 0.4em;
     border-radius: 4px;
     font-size: 0.9em;
-    font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
   }
 
   /* Code blocks — smd renders <pre><code>...</code></pre> */
@@ -147,7 +147,7 @@
     padding: 0;
     border-radius: 0;
     font-size: 0.875em;
-    font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     line-height: 1.5;
   }
 

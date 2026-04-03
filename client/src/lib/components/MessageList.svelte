@@ -281,20 +281,22 @@
   }
 
   .tts-action-btn {
+    position: sticky;
+    top: calc(67vh - 20px);
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    margin: 0 auto;
     border: none;
-    background: var(--secondary);
+    border-radius: 50%;
+    background: none;
     color: var(--secondary-foreground);
     cursor: pointer;
-    transition: background-color 0.15s;
   }
 
   .tts-action-btn:active {
-    background: var(--accent);
+    opacity: 0.7;
   }
 </style>

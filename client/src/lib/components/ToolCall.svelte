@@ -145,7 +145,7 @@
 
   .tool-name {
     flex-shrink: 0;
-    font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-weight: 500;
     color: var(--foreground);
   }
@@ -156,7 +156,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.75rem;
     color: var(--muted-foreground);
   }

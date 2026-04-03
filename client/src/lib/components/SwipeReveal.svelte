@@ -129,23 +129,23 @@
 
 <style>
   .swipe-container {
-    position: relative;
-    overflow: hidden;
+    display: grid;
+    overflow-x: clip;
   }
 
   .swipe-actions {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
+    grid-row: 1;
+    grid-column: 1;
+    justify-self: end;
     width: 72px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    background: var(--secondary);
   }
 
   .swipe-content {
-    position: relative;
+    grid-row: 1;
+    grid-column: 1;
+    z-index: 1;
+    background: var(--background);
     will-change: transform;
   }
 </style>

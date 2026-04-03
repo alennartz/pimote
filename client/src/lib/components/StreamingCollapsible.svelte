@@ -55,7 +55,7 @@
     font-size: 0.8rem;
     line-height: 1.5;
     color: var(--foreground);
-    font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
   }
 
   .collapsible-text.scrollable {
