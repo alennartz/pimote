@@ -19,7 +19,17 @@ import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import { mapAgentMessages } from './message-mapper.js';
-import type { AgentSession, ExtensionCommandContextActions, PromptOptions } from '@mariozechner/pi-coding-agent';
+import type { AgentSession, ExtensionCommandContextActions } from '@mariozechner/pi-coding-agent';
+
+/** Parse data-URL encoded images into the shape the pi SDK expects. */
+function parseDataUrlImages(images?: string[]): { type: 'image'; data: string; mimeType: string }[] | undefined {
+  if (!images || images.length === 0) return undefined;
+  return images.map((url) => {
+    const match = url.match(/^data:(image\/[^;]+);base64,(.+)$/s);
+    if (!match) throw new Error('Invalid image data URL');
+    return { type: 'image' as const, data: match[2], mimeType: match[1] };
+  });
+}
 
 /**
  * Create command context actions for extension commands.
@@ -594,7 +604,7 @@ export class WsHandler {
           break;
         }
 
-        session.prompt(command.message, { images: command.images as unknown as PromptOptions['images'] }).catch((err) => {
+        session.prompt(command.message, { images: parseDataUrlImages(command.images) }).catch((err) => {
           console.error(`[WsHandler] prompt error:`, err);
         });
         this.sendResponse(id, true);

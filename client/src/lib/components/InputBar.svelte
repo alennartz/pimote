@@ -9,13 +9,19 @@
   import Send from '@lucide/svelte/icons/send';
   import MessageSquare from '@lucide/svelte/icons/message-square';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
+  import X from '@lucide/svelte/icons/x';
 
   let inputText = $state('');
   let textareaEl: HTMLTextAreaElement | undefined = $state();
   let autocompleteRef: CommandAutocomplete | undefined = $state();
 
+  // Image attachment state
+  let stagedImages = $state<string[]>([]);
+  let dragOver = $state(false);
+
   const noSession = $derived(sessionRegistry.viewedSessionId === null);
   const canSend = $derived(!noSession && connection.ready);
+  const hasContent = $derived(inputText.trim().length > 0 || stagedImages.length > 0);
 
   // Autocomplete state
   let autocompleteVisible = $state(false);
@@ -43,6 +49,7 @@
   $effect(() => {
     const _sessionId = sessionRegistry.viewedSessionId;
     inputText = untrack(() => sessionRegistry.viewed?.draftText ?? '');
+    stagedImages = [];
     tick().then(() => autoResize());
   });
 
@@ -67,6 +74,69 @@
     textareaEl.style.height = `${capped}px`;
     // Only allow scrolling when content exceeds the cap
     textareaEl.style.overflow = textareaEl.scrollHeight > 200 ? 'auto' : 'hidden';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Image paste / drag-and-drop
+  // ---------------------------------------------------------------------------
+
+  function addImageFiles(files: Iterable<File>) {
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        stagedImages = [...stagedImages, reader.result as string];
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function removeImage(index: number) {
+    stagedImages = stagedImages.filter((_, i) => i !== index);
+  }
+
+  function handlePaste(e: ClipboardEvent) {
+    if (!canSend) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const imageFiles: File[] = [];
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+
+    if (imageFiles.length > 0) {
+      addImageFiles(imageFiles);
+      // Prevent default only when clipboard has images but no text —
+      // e.g. a screenshot paste. If text is also present, let it insert normally.
+      if (!e.clipboardData?.types.includes('text/plain')) {
+        e.preventDefault();
+      }
+    }
+  }
+
+  function handleDrop(e: DragEvent) {
+    e.preventDefault();
+    dragOver = false;
+    if (!canSend) return;
+    const files = e.dataTransfer?.files;
+    if (files) addImageFiles(Array.from(files));
+  }
+
+  function handleDragOver(e: DragEvent) {
+    e.preventDefault();
+    if (canSend) dragOver = true;
+  }
+
+  function handleDragLeave(e: DragEvent) {
+    // Only clear when actually leaving the drop zone, not when entering a child element
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    if (e.clientX <= rect.left || e.clientX >= rect.right || e.clientY <= rect.top || e.clientY >= rect.bottom) {
+      dragOver = false;
+    }
   }
 
   function handleInput() {
@@ -106,10 +176,13 @@
 
   async function sendMessage() {
     const text = inputText.trim();
-    if (!text || !canSend) return;
+    if (!canSend) return;
+
+    let sent = false;
 
     if (sessionRegistry.viewed?.isStreaming) {
-      // Steer the current generation
+      // Steer the current generation (text only, no images)
+      if (!text) return;
       sessionRegistry.viewed.pendingSteeringMessages.push(text);
       try {
         await connection.send({
@@ -117,23 +190,30 @@
           sessionId: sessionRegistry.viewed.sessionId,
           message: text,
         });
+        sent = true;
       } catch (e) {
         console.error('Failed to send steer:', e);
       }
     } else {
-      // Send a new prompt
+      // Send a new prompt (text and/or images)
+      if (!text && stagedImages.length === 0) return;
       try {
         await connection.send({
           type: 'prompt',
           sessionId: sessionRegistry.viewed!.sessionId,
           message: text,
+          ...(stagedImages.length > 0 ? { images: stagedImages } : {}),
         });
+        sent = true;
       } catch (e) {
         console.error('Failed to send prompt:', e);
       }
     }
 
+    if (!sent) return;
+
     inputText = '';
+    stagedImages = [];
     if (sessionRegistry.viewed) {
       sessionRegistry.viewed.draftText = '';
     }
@@ -283,8 +363,9 @@
       </button>
     {/if}
 
-    <!-- Textarea with autocomplete -->
-    <div class="relative flex-1">
+    <!-- Textarea with autocomplete + image drop zone -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="relative flex-1" ondragover={handleDragOver} ondragleave={handleDragLeave} ondrop={handleDrop}>
       <CommandAutocomplete
         bind:this={autocompleteRef}
         items={commandItems}
@@ -296,28 +377,49 @@
         onselect={handleAutocompleteSelect}
         ondismiss={handleAutocompleteDismiss}
       />
+
+      <!-- Staged image previews -->
+      {#if stagedImages.length > 0}
+        <div class="mb-1 flex flex-wrap gap-1.5">
+          {#each stagedImages as src, i (i)}
+            <div class="group relative">
+              <img {src} alt="Staged" class="border-border h-16 w-16 rounded-lg border object-cover" />
+              <button
+                class="bg-background/80 text-foreground hover:bg-destructive hover:text-destructive-foreground border-border absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full border shadow-sm transition-colors"
+                onclick={() => removeImage(i)}
+                title="Remove image"
+              >
+                <X class="size-3" />
+              </button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
       <textarea
         bind:this={textareaEl}
         bind:value={inputText}
         oninput={handleInput}
         onkeydown={handleKeydown}
+        onpaste={handlePaste}
         disabled={noSession}
         rows={1}
         placeholder={noSession ? 'Open a session to start…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
-        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
+          {dragOver ? 'ring-ring ring-2' : ''}"
       ></textarea>
 
       <!-- Send / Steer button (inset in textarea) -->
       <button
         class="absolute right-1.5 bottom-1.5 flex items-center justify-center rounded-lg p-1.5 text-sm font-medium transition-colors
-          {!canSend || !inputText.trim()
+          {!canSend || (sessionRegistry.viewed?.isStreaming ? !inputText.trim() : !hasContent)
           ? 'text-muted-foreground cursor-not-allowed opacity-50'
           : sessionRegistry.viewed?.isStreaming
             ? 'bg-status-streaming text-primary-foreground hover:bg-status-streaming/80 active:bg-status-streaming/70'
             : 'bg-primary text-primary-foreground hover:bg-primary/80 active:bg-primary/70'}"
         onpointerdown={(e) => e.preventDefault()}
         onclick={sendMessage}
-        disabled={!canSend || !inputText.trim()}
+        disabled={!canSend || (sessionRegistry.viewed?.isStreaming ? !inputText.trim() : !hasContent)}
         title={sessionRegistry.viewed?.isStreaming ? 'Steer' : 'Send'}
       >
         {#if sessionRegistry.viewed?.isStreaming}
