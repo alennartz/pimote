@@ -456,6 +456,10 @@ export class WsHandler {
           const viewedManaged = this.sessionManager.getSession(command.sessionId);
           if (viewedManaged) {
             viewedManaged.needsAttention = false;
+            // Send current panel state so the client shows panels after switching sessions
+            if (viewedManaged.panelState.size > 0) {
+              this.sendEvent({ type: 'panel_update', sessionId: command.sessionId, cards: getMergedPanelCards(viewedManaged.panelState) });
+            }
           }
           this.sendResponse(id, true);
           break;

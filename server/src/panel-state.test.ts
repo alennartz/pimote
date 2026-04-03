@@ -86,24 +86,24 @@ describe('Panel State', () => {
       expect(getMergedPanelCards(panelState)).toEqual([]);
     });
 
-    it('returns cards from a single namespace', () => {
+    it('returns cards from a single namespace with prefixed IDs', () => {
       panelState.set('agents', [makeCard('a1', 'Agent 1'), makeCard('a2', 'Agent 2')]);
 
-      expect(getMergedPanelCards(panelState)).toEqual([makeCard('a1', 'Agent 1'), makeCard('a2', 'Agent 2')]);
+      expect(getMergedPanelCards(panelState)).toEqual([makeCard('agents:a1', 'Agent 1'), makeCard('agents:a2', 'Agent 2')]);
     });
 
-    it('merges cards from multiple namespaces in insertion order', () => {
+    it('merges cards from multiple namespaces in insertion order with prefixed IDs', () => {
       panelState.set('agents', [makeCard('a1', 'Agent')]);
       panelState.set('metrics', [makeCard('m1', 'Metric')]);
 
-      expect(getMergedPanelCards(panelState)).toEqual([makeCard('a1', 'Agent'), makeCard('m1', 'Metric')]);
+      expect(getMergedPanelCards(panelState)).toEqual([makeCard('agents:a1', 'Agent'), makeCard('metrics:m1', 'Metric')]);
     });
 
     it('preserves card order within each namespace', () => {
       panelState.set('agents', [makeCard('a1', 'First'), makeCard('a2', 'Second'), makeCard('a3', 'Third')]);
 
       const merged = getMergedPanelCards(panelState);
-      expect(merged.map((c) => c.id)).toEqual(['a1', 'a2', 'a3']);
+      expect(merged.map((c) => c.id)).toEqual(['agents:a1', 'agents:a2', 'agents:a3']);
     });
 
     it('returns empty array after all namespaces are cleared', () => {
@@ -118,7 +118,7 @@ describe('Panel State', () => {
       panelState.set('filled', [makeCard('f1', 'Filled')]);
 
       const merged = getMergedPanelCards(panelState);
-      expect(merged).toEqual([makeCard('f1', 'Filled')]);
+      expect(merged).toEqual([makeCard('filled:f1', 'Filled')]);
     });
   });
 });

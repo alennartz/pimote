@@ -46,6 +46,8 @@ export interface ManagedSession {
   panelThrottleTimer: ReturnType<typeof setTimeout> | null;
   /** EventBus for extension communication (panels, detect). Survives session resets. */
   eventBus: EventBusController | null;
+  /** Unsubscribe functions for EventBus panel listeners. Called on detach to prevent stale handlers. */
+  panelListenerUnsubs: (() => void)[];
 }
 
 // ---- Managed session helpers (closure-free, operate on stable ManagedSession reference) ----
@@ -91,15 +93,17 @@ export function replayManagedPendingUiRequests(managed: ManagedSession): void {
   }
 }
 
-/** Register panel detection and data listeners on an EventBus for a managed session. */
-function setupPanelListeners(eventBus: EventBusController, managed: ManagedSession): void {
-  eventBus.on('pimote:detect:request', () => {
+/** Register panel detection and data listeners on an EventBus for a managed session.
+ *  Returns unsubscribe functions so listeners can be removed on detach. */
+function setupPanelListeners(eventBus: EventBusController, managed: ManagedSession): (() => void)[] {
+  const unsub1 = eventBus.on('pimote:detect:request', () => {
     eventBus.emit('pimote:detect:response', { detected: true });
   });
-  eventBus.on('pimote:panels', (data) => {
+  const unsub2 = eventBus.on('pimote:panels', (data) => {
     applyPanelMessage(managed.panelState, data as PanelBusMessage);
     schedulePanelPush(managed);
   });
+  return [unsub1, unsub2];
 }
 
 /** Schedule a throttled panel push (~200ms). Merges all namespaces and sends to the client. */
@@ -195,9 +199,10 @@ export class PimoteSessionManager {
       panelState: new Map(),
       panelThrottleTimer: null,
       eventBus,
+      panelListenerUnsubs: [],
     };
 
-    setupPanelListeners(eventBus, managed);
+    managed.panelListenerUnsubs = setupPanelListeners(eventBus, managed);
 
     const unsubscribe = session.subscribe((event) => {
       if (event.type === 'agent_start' && managed.status !== 'working') {
@@ -291,6 +296,10 @@ export class PimoteSessionManager {
     if (!managed) return;
 
     if (managed.panelThrottleTimer) clearTimeout(managed.panelThrottleTimer);
+    // Remove old panel listeners so they don't fire on the detached managed session.
+    // The EventBus itself survives — adoptSession will re-register on the new managed session.
+    for (const unsub of managed.panelListenerUnsubs) unsub();
+    managed.panelListenerUnsubs = [];
     managed.unsubscribe();
     this.sessions.delete(sessionId);
     this.onSessionClosed?.(sessionId, managed.folderPath);
@@ -322,9 +331,10 @@ export class PimoteSessionManager {
       panelState: new Map(),
       panelThrottleTimer: null,
       eventBus,
+      panelListenerUnsubs: [],
     };
 
-    if (eventBus) setupPanelListeners(eventBus, managed);
+    if (eventBus) managed.panelListenerUnsubs = setupPanelListeners(eventBus, managed);
 
     const unsubscribe = session.subscribe((event) => {
       if (event.type === 'agent_start' && managed.status !== 'working') {

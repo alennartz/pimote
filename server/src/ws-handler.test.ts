@@ -58,6 +58,7 @@ function createMockManagedSession(overrides: Partial<ManagedSession> = {}): Mana
     panelState: overrides.panelState ?? new Map(),
     panelThrottleTimer: overrides.panelThrottleTimer ?? null,
     eventBus: overrides.eventBus ?? null,
+    panelListenerUnsubs: overrides.panelListenerUnsubs ?? [],
     ...overrides,
   };
 }

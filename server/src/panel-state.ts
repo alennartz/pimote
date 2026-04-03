@@ -20,12 +20,13 @@ export function applyPanelMessage(panelState: Map<string, Card[]>, message: Pane
  * Merge all namespaces into a flat card list for sending to the client.
  * Order: namespaces in insertion order, cards within each namespace in array order.
  * Skips namespaces with empty card arrays.
+ * Card IDs are prefixed with the namespace to prevent collisions across extensions.
  */
 export function getMergedPanelCards(panelState: Map<string, Card[]>): Card[] {
   const result: Card[] = [];
-  for (const cards of panelState.values()) {
-    if (cards.length > 0) {
-      result.push(...cards);
+  for (const [namespace, cards] of panelState.entries()) {
+    for (const card of cards) {
+      result.push({ ...card, id: `${namespace}:${card.id}` });
     }
   }
   return result;
