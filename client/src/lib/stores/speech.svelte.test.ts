@@ -270,6 +270,11 @@ describe('speech store', () => {
       speak('', 'msg-1');
       expect(mockSpeechSynthesis.speak).not.toHaveBeenCalled();
     });
+
+    it('does not set playingKey', () => {
+      speak('', 'msg-1');
+      expect(getPlayingKey()).toBeNull();
+    });
   });
 
   // --------------------------------------------------------------------------

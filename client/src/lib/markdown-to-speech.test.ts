@@ -84,6 +84,15 @@ describe('markdownToSpeech', () => {
     it('strips bold-italic markers', () => {
       expect(markdownToSpeech('***bold italic***')).toBe('bold italic');
     });
+
+    it('strips inline code backticks', () => {
+      expect(markdownToSpeech('Use the `forEach` method')).toBe('Use the forEach method');
+    });
+
+    it('strips inline code backticks with multiple instances', () => {
+      const result = markdownToSpeech('Call `foo()` then `bar()`');
+      expect(result).toBe('Call foo() then bar()');
+    });
   });
 
   describe('headers', () => {
