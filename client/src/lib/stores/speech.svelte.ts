@@ -42,7 +42,7 @@ export function speak(text: string, messageKey: string): void {
 
     utterance.onerror = () => {
       if (currentGen !== generation) return;
-      playingKey = null;
+      stop();
     };
 
     speechSynthesis.speak(utterance);

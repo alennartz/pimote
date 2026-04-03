@@ -26,8 +26,6 @@
   let startY = 0;
   let startTime = 0;
   let directionLocked: 'horizontal' | 'vertical' | null = null;
-  let contentEl: HTMLDivElement | undefined = $state();
-
   export function close() {
     if (!open && translateX === 0) return;
     snapTo(0);
@@ -118,10 +116,10 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="swipe-content"
-    bind:this={contentEl}
     ontouchstart={handleTouchStart}
     ontouchmove={handleTouchMove}
     ontouchend={handleTouchEnd}
+    ontouchcancel={handleTouchEnd}
     ontransitionend={handleTransitionEnd}
     style="transform: translateX(-{translateX}px);{animating ? ' transition: transform 200ms ease-out;' : ''}"
   >
