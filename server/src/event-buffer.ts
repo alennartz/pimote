@@ -124,7 +124,7 @@ export class EventBuffer {
   // ---- Private helpers ----
 
   private mapEvent(sdkEvent: SdkEvent, sessionId: string, cursor: number, getLastMessage?: () => SdkMessage | undefined): PimoteSessionEvent {
-    const base = { sessionId, cursor };
+    const base = { sessionId, cursor, timestamp: new Date().toISOString() };
 
     switch (sdkEvent.type) {
       case 'agent_start':

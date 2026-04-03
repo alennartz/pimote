@@ -352,6 +352,8 @@ interface SessionEventBase {
   sessionId: string;
   /** Monotonically increasing cursor for reconnect replay */
   cursor: number;
+  /** ISO 8601 server-side timestamp */
+  timestamp?: string;
 }
 
 // -- Agent lifecycle events --

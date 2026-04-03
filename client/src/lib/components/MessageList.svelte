@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, onDestroy } from 'svelte';
+  import { formatRelativeTime } from '$lib/format-relative-time.js';
   import type { PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
@@ -155,6 +156,23 @@
       stop();
     }
   }
+
+  // Last bot activity display — auto-updates every 15 seconds
+  let now = $state(Date.now());
+  const activityInterval = setInterval(() => {
+    now = Date.now();
+  }, 15_000);
+  onDestroy(() => clearInterval(activityInterval));
+
+  let lastActivityText = $derived.by(() => {
+    // Touch `now` to re-evaluate on timer ticks
+    void now;
+    const session = sessionRegistry.viewed;
+    if (!session?.lastBotActivityTimestamp) return null;
+    // Don't show during active streaming — the streaming indicator is enough
+    if (session.isStreaming) return null;
+    return formatRelativeTime(session.lastBotActivityTimestamp);
+  });
 </script>
 
 <div class="message-list-wrapper">
@@ -189,6 +207,12 @@
       {#if showStreamingIndicator}
         <div class="streaming-indicator-row">
           <StreamingIndicator />
+        </div>
+      {/if}
+
+      {#if lastActivityText}
+        <div class="last-activity">
+          {lastActivityText}
         </div>
       {/if}
     </div>
@@ -278,6 +302,14 @@
 
   .scroll-to-bottom:active {
     transform: translateX(-50%) scale(0.95);
+  }
+
+  .last-activity {
+    text-align: right;
+    font-size: 0.7rem;
+    color: var(--muted-foreground);
+    opacity: 0.6;
+    padding: 4px 4px 0;
   }
 
   .tts-action-btn {

@@ -54,6 +54,7 @@ export interface PerSessionState {
   contextUsage: { percent: number | null; contextWindow: number } | null;
   draftText: string;
   pendingSteeringMessages: string[];
+  lastBotActivityTimestamp: string | null;
 }
 
 export class SessionRegistry {
@@ -257,6 +258,11 @@ export class SessionRegistry {
         break;
       }
     }
+
+    // Update last bot activity timestamp from server-side timestamp
+    if ('timestamp' in event && typeof (event as Record<string, unknown>).timestamp === 'string') {
+      session.lastBotActivityTimestamp = (event as Record<string, unknown>).timestamp as string;
+    }
   }
 
   /** Add a session to the registry. If it already exists (e.g. takeover placeholder), resets it. */
@@ -287,6 +293,7 @@ export class SessionRegistry {
       contextUsage: null,
       draftText: '',
       pendingSteeringMessages: [],
+      lastBotActivityTimestamp: null,
     };
     this.sessions[sessionId] = session;
   }
@@ -338,6 +345,7 @@ export class SessionRegistry {
       contextUsage: null,
       draftText: '',
       pendingSteeringMessages: [],
+      lastBotActivityTimestamp: null,
     };
     this.sessions = rest;
 

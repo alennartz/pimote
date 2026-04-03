@@ -7,6 +7,7 @@
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { formatRelativeTime } from '$lib/format-relative-time.js';
 
   interface Props {
     session: SessionInfo;
@@ -20,22 +21,6 @@
   const isRemoteActive = $derived(session.liveStatus != null && !session.isOwnedByMe);
 
   let showDeleteDialog = $state(false);
-
-  function formatRelativeTime(dateStr: string): string {
-    const date = new Date(dateStr);
-    const now = Date.now();
-    const diffMs = now - date.getTime();
-    const diffSec = Math.floor(diffMs / 1000);
-    const diffMin = Math.floor(diffSec / 60);
-    const diffHr = Math.floor(diffMin / 60);
-    const diffDay = Math.floor(diffHr / 24);
-
-    if (diffSec < 60) return 'just now';
-    if (diffMin < 60) return `${diffMin}m ago`;
-    if (diffHr < 24) return `${diffHr}h ago`;
-    if (diffDay < 30) return `${diffDay}d ago`;
-    return date.toLocaleDateString();
-  }
 
   function displayName(): string {
     if (session.name) return session.name;
