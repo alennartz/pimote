@@ -5,9 +5,14 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import { setEditorText } from '$lib/stores/input-bar.svelte.js';
   import Message from './Message.svelte';
+  import SwipeReveal from './SwipeReveal.svelte';
   import StreamingIndicator from './StreamingIndicator.svelte';
+  import { speak, stop, playingKey } from '$lib/stores/speech.svelte.js';
+  import { markdownToSpeech } from '$lib/markdown-to-speech.js';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
+  import Volume2 from '@lucide/svelte/icons/volume-2';
+  import Square from '@lucide/svelte/icons/square';
 
   async function handleAbort() {
     const session = sessionRegistry.viewed;
@@ -109,6 +114,47 @@
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
     }
   }
+
+  // --- TTS swipe-to-reveal ---
+
+  // Track which SwipeReveal is currently open (only one at a time)
+  let openSwipeKey: string | null = $state(null);
+  let swipeRefs: Record<string, SwipeReveal | undefined> = {};
+
+  function isSwipeable(entry: (typeof displayEntries)[number]): boolean {
+    return entry.message.role === 'assistant' && !entry.streaming && entry.message.content.some((c) => c.type === 'text' && c.text);
+  }
+
+  function handleTtsToggle(entry: (typeof displayEntries)[number]) {
+    if (playingKey === entry.key) {
+      stop();
+    } else {
+      const textContent = entry.message.content
+        .filter((c) => c.type === 'text' && c.text)
+        .map((c) => c.text!)
+        .join('\n\n');
+      const speakable = markdownToSpeech(textContent);
+      if (speakable) {
+        speak(speakable, entry.key);
+      }
+    }
+  }
+
+  function handleSwipeOpen(key: string) {
+    if (openSwipeKey && openSwipeKey !== key) {
+      swipeRefs[openSwipeKey]?.close();
+    }
+    openSwipeKey = key;
+  }
+
+  function handleSwipeClose(key: string) {
+    if (openSwipeKey === key) {
+      openSwipeKey = null;
+    }
+    if (playingKey === key) {
+      stop();
+    }
+  }
 </script>
 
 <div class="message-list-wrapper">
@@ -121,7 +167,22 @@
       {/if}
 
       {#each displayEntries as entry (entry.key)}
-        <Message message={entry.message} streaming={entry.streaming} />
+        {#if isSwipeable(entry)}
+          <SwipeReveal bind:this={swipeRefs[entry.key]} onopen={() => handleSwipeOpen(entry.key)} onclose={() => handleSwipeClose(entry.key)}>
+            {#snippet action()}
+              <button class="tts-action-btn" onclick={() => handleTtsToggle(entry)}>
+                {#if playingKey === entry.key}
+                  <Square size={20} />
+                {:else}
+                  <Volume2 size={20} />
+                {/if}
+              </button>
+            {/snippet}
+            <Message message={entry.message} streaming={entry.streaming} />
+          </SwipeReveal>
+        {:else}
+          <Message message={entry.message} streaming={entry.streaming} />
+        {/if}
       {/each}
 
       <!-- Streaming indicator (agent is working but no content yet) -->
@@ -217,5 +278,23 @@
 
   .scroll-to-bottom:active {
     transform: translateX(-50%) scale(0.95);
+  }
+
+  .tts-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: none;
+    background: var(--secondary);
+    color: var(--secondary-foreground);
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  .tts-action-btn:active {
+    background: var(--accent);
   }
 </style>

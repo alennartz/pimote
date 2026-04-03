@@ -8,10 +8,12 @@
   let {
     action,
     children,
+    onopen,
     onclose,
   }: {
     action: Snippet;
     children: Snippet;
+    onopen?: () => void;
     onclose?: () => void;
   } = $props();
 
@@ -36,7 +38,9 @@
   function snapTo(target: number) {
     animating = true;
     translateX = target;
+    const wasOpen = open;
     open = target !== 0;
+    if (open && !wasOpen) onopen?.();
   }
 
   function handleTouchStart(e: TouchEvent) {
