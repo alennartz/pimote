@@ -22,6 +22,7 @@ function createMockManaged(): { managed: ManagedSession; sent: PimoteEvent[] } {
     onSessionReset: null,
     panelState: new Map(),
     panelThrottleTimer: null,
+    eventBus: null,
     // Other ManagedSession fields (unused by bridge, but satisfy the type)
     session: {} as any,
     folderPath: '/test',

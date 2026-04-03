@@ -1,10 +1,12 @@
-import { createAgentSession, AuthStorage, ModelRegistry, DefaultResourceLoader, SessionManager as PiSessionManager } from '@mariozechner/pi-coding-agent';
-import type { AgentSession } from '@mariozechner/pi-coding-agent';
+import { createAgentSession, createEventBus, AuthStorage, ModelRegistry, DefaultResourceLoader, SessionManager as PiSessionManager } from '@mariozechner/pi-coding-agent';
+import type { AgentSession, EventBusController } from '@mariozechner/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
 import type { PimoteEvent, Card } from '@pimote/shared';
 import type { SdkMessage } from './message-mapper.js';
 import type { PushNotificationService } from './push-notification.js';
+import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
+import type { PanelBusMessage } from './panel-state.js';
 
 /** Narrow interface for the WebSocket used for event routing.
  *  Avoids importing the `ws` package type in session-manager. */
@@ -42,6 +44,8 @@ export interface ManagedSession {
   panelState: Map<string, Card[]>;
   /** Timer handle for throttled panel pushes. */
   panelThrottleTimer: ReturnType<typeof setTimeout> | null;
+  /** EventBus for extension communication (panels, detect). Survives session resets. */
+  eventBus: EventBusController | null;
 }
 
 // ---- Managed session helpers (closure-free, operate on stable ManagedSession reference) ----
@@ -87,6 +91,27 @@ export function replayManagedPendingUiRequests(managed: ManagedSession): void {
   }
 }
 
+/** Register panel detection and data listeners on an EventBus for a managed session. */
+function setupPanelListeners(eventBus: EventBusController, managed: ManagedSession): void {
+  eventBus.on('pimote:detect:request', () => {
+    eventBus.emit('pimote:detect:response', { detected: true });
+  });
+  eventBus.on('pimote:panels', (data) => {
+    applyPanelMessage(managed.panelState, data as PanelBusMessage);
+    schedulePanelPush(managed);
+  });
+}
+
+/** Schedule a throttled panel push (~200ms). Merges all namespaces and sends to the client. */
+function schedulePanelPush(managed: ManagedSession): void {
+  if (managed.panelThrottleTimer !== null) return;
+  managed.panelThrottleTimer = setTimeout(() => {
+    managed.panelThrottleTimer = null;
+    const cards = getMergedPanelCards(managed.panelState);
+    sendManagedEvent(managed, { type: 'panel_update', sessionId: managed.id, cards });
+  }, 200);
+}
+
 export class PimoteSessionManager {
   private readonly authStorage: AuthStorage;
   private readonly modelRegistry: ModelRegistry;
@@ -104,7 +129,8 @@ export class PimoteSessionManager {
   }
 
   async openSession(folderPath: string, sessionFilePath?: string): Promise<string> {
-    const loader = new DefaultResourceLoader({ cwd: folderPath });
+    const eventBus = createEventBus();
+    const loader = new DefaultResourceLoader({ cwd: folderPath, eventBus });
     await loader.reload();
 
     // Flush extension provider registrations so extension-provided models are
@@ -168,7 +194,10 @@ export class PimoteSessionManager {
       onSessionReset: null,
       panelState: new Map(),
       panelThrottleTimer: null,
+      eventBus,
     };
+
+    setupPanelListeners(eventBus, managed);
 
     const unsubscribe = session.subscribe((event) => {
       if (event.type === 'agent_start' && managed.status !== 'working') {
@@ -243,6 +272,8 @@ export class PimoteSessionManager {
     if (!managed) return;
 
     resolveAllManagedPendingUi(managed);
+    if (managed.panelThrottleTimer) clearTimeout(managed.panelThrottleTimer);
+    managed.eventBus?.clear();
 
     const folderPath = managed.folderPath;
     managed.unsubscribe();
@@ -259,6 +290,7 @@ export class PimoteSessionManager {
     const managed = this.sessions.get(sessionId);
     if (!managed) return;
 
+    if (managed.panelThrottleTimer) clearTimeout(managed.panelThrottleTimer);
     managed.unsubscribe();
     this.sessions.delete(sessionId);
     this.onSessionClosed?.(sessionId, managed.folderPath);
@@ -268,9 +300,10 @@ export class PimoteSessionManager {
    *  Used after detachSession when the pi SDK has reset the session to a new ID.
    *  Pass `extensionsBound: true` when the underlying AgentSession already has
    *  extensions bound (e.g. after a session reset that reuses the same object). */
-  adoptSession(session: AgentSession, folderPath: string, opts?: { extensionsBound?: boolean }): string {
+  adoptSession(session: AgentSession, folderPath: string, opts?: { extensionsBound?: boolean; eventBus?: EventBusController }): string {
     const sessionId = session.sessionId;
     const eventBuffer = new EventBuffer(this.config.bufferSize);
+    const eventBus = opts?.eventBus ?? null;
 
     const managed: ManagedSession = {
       id: sessionId,
@@ -288,7 +321,10 @@ export class PimoteSessionManager {
       onSessionReset: null,
       panelState: new Map(),
       panelThrottleTimer: null,
+      eventBus,
     };
+
+    if (eventBus) setupPanelListeners(eventBus, managed);
 
     const unsubscribe = session.subscribe((event) => {
       if (event.type === 'agent_start' && managed.status !== 'working') {

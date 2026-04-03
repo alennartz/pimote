@@ -61,6 +61,7 @@ function createFakeSession(overrides: Partial<ManagedSession> = {}): ManagedSess
     onSessionReset: overrides.onSessionReset ?? null,
     panelState: overrides.panelState ?? new Map(),
     panelThrottleTimer: overrides.panelThrottleTimer ?? null,
+    eventBus: overrides.eventBus ?? null,
     ...overrides,
   };
 }

@@ -847,7 +847,7 @@ export class WsHandler {
     // multiple times — it overwrites the previous bindings on the AgentSession).
     const folderPath = oldManaged.folderPath;
     this.sessionManager.detachSession(oldSessionId);
-    this.sessionManager.adoptSession(oldManaged.session, folderPath);
+    this.sessionManager.adoptSession(oldManaged.session, folderPath, { extensionsBound: false, eventBus: oldManaged.eventBus ?? undefined });
 
     const newManaged = this.sessionManager.getSession(newSessionId)!;
 
