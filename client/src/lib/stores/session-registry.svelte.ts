@@ -24,9 +24,11 @@ import type {
   SessionConflictEvent,
   SessionOpenedEvent,
   SessionReplacedEvent,
+  PanelUpdateEvent,
 } from '@pimote/shared';
 import { connection } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
+import { panelStore } from './panel-store.svelte.js';
 
 export interface PerSessionState {
   sessionId: string;
@@ -257,6 +259,13 @@ export class SessionRegistry {
         session.conflictingRemoteSessions = conflict.remoteSessions ?? [];
         break;
       }
+
+      case 'panel_update': {
+        if (sessionId === this.viewedSessionId) {
+          panelStore.handlePanelUpdate((event as PanelUpdateEvent).cards);
+        }
+        break;
+      }
     }
 
     // Update last bot activity timestamp from server-side timestamp
@@ -358,6 +367,7 @@ export class SessionRegistry {
   /** Switch viewed session, clears needsAttention for target */
   switchTo(sessionId: string): void {
     this.viewedSessionId = sessionId;
+    panelStore.reset();
     const session = this.sessions[sessionId];
     if (session) {
       session.needsAttention = false;
