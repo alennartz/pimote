@@ -13,6 +13,7 @@ import type {
 } from '@pimote/shared';
 import type { PimoteSessionManager, ManagedSession } from './session-manager.js';
 import { resolveAllManagedPendingUi, resolveManagedPendingUi, replayManagedPendingUiRequests } from './session-manager.js';
+import { getMergedPanelCards } from './panel-state.js';
 import type { FolderIndex } from './folder-index.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
@@ -387,6 +388,11 @@ export class WsHandler {
                 events: catchUp,
               } as BufferedEventsEvent);
             }
+          }
+
+          // Send panel snapshot if panels are active
+          if (managed.panelState.size > 0) {
+            this.sendEvent({ type: 'panel_update', sessionId: command.sessionId, cards: getMergedPanelCards(managed.panelState) });
           }
 
           // Don't overwrite viewedSessionId here — the client reconnects ALL
@@ -959,6 +965,11 @@ export class WsHandler {
       messages,
     };
     this.sendEvent(fullResyncEvent);
+
+    // Send panel snapshot if panels are active
+    if (managed.panelState.size > 0) {
+      this.sendEvent({ type: 'panel_update', sessionId: pimoteSessionId, cards: getMergedPanelCards(managed.panelState) });
+    }
   }
 
   /** Send an event to this client (public for broadcast use). */
