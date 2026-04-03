@@ -2,11 +2,18 @@
 import type { PimoteCommand, PimoteResponse, PimoteEvent, PimoteServerMessage } from '@pimote/shared';
 import { SvelteSet } from 'svelte/reactivity';
 import { version } from '$app/environment';
+import { getClientId, setClientId } from './persistence.js';
 
 type EventListener = (event: PimoteEvent) => void;
 
 let nextId = 1;
-const clientId = crypto.randomUUID();
+const clientId =
+  getClientId() ??
+  (() => {
+    const id = crypto.randomUUID();
+    setClientId(id);
+    return id;
+  })();
 
 class ConnectionStore {
   readonly clientId: string = clientId;

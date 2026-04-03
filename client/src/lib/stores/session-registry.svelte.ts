@@ -29,6 +29,7 @@ import type {
 import { connection } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
 import { panelStore } from './panel-store.svelte.js';
+import { getActiveSessions, setActiveSessions, getViewedSessionId, setViewedSessionId } from './persistence.js';
 
 export interface PerSessionState {
   sessionId: string;
@@ -77,6 +78,14 @@ export class SessionRegistry {
   /** List all active sessions */
   get activeSessions(): PerSessionState[] {
     return Object.values(this.sessions);
+  }
+
+  private persistSessions(): void {
+    setActiveSessions(Object.values(this.sessions).map((s) => ({ sessionId: s.sessionId, folderPath: s.folderPath })));
+  }
+
+  private persistViewedSession(): void {
+    setViewedSessionId(this.viewedSessionId);
   }
 
   /** Route an incoming event to the correct session's state */
@@ -305,6 +314,7 @@ export class SessionRegistry {
       lastBotActivityTimestamp: null,
     };
     this.sessions[sessionId] = session;
+    this.persistSessions();
   }
 
   /** Remove a session from the registry */
@@ -318,6 +328,8 @@ export class SessionRegistry {
       const remaining = Object.keys(this.sessions);
       this.viewedSessionId = remaining.length > 0 ? remaining[0] : null;
     }
+    this.persistSessions();
+    this.persistViewedSession();
   }
 
   /** Replace a session in-place — same slot in the registry, new session ID.
@@ -362,6 +374,8 @@ export class SessionRegistry {
     if (this.viewedSessionId === oldSessionId) {
       this.viewedSessionId = newSessionId;
     }
+    this.persistSessions();
+    this.persistViewedSession();
   }
 
   /** Switch viewed session, clears needsAttention for target */
@@ -372,6 +386,7 @@ export class SessionRegistry {
     if (session) {
       session.needsAttention = false;
     }
+    this.persistViewedSession();
   }
 
   /** Check if a session ID is currently active */
@@ -583,6 +598,20 @@ connection.onReconnected = () => {
     connection.send({ type: 'view_session', sessionId: viewedId }).catch(() => {});
   }
 };
+
+// Hydrate persisted sessions before first connection
+const persistedSessions = getActiveSessions();
+const persistedViewedId = getViewedSessionId();
+
+for (const { sessionId, folderPath } of persistedSessions) {
+  const projectName = folderPath.split('/').pop() || 'Unknown';
+  sessionRegistry.addSession(sessionId, folderPath, projectName);
+  connection.addSubscribedSession(sessionId);
+}
+
+if (persistedViewedId && sessionRegistry.sessions[persistedViewedId]) {
+  sessionRegistry.viewedSessionId = persistedViewedId;
+}
 
 /** Confirm takeover — resend open_session with force:true */
 export function confirmTakeover(sessionId: string): void {
