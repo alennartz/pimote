@@ -84,7 +84,7 @@ Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges
 
 SvelteKit PWA rendering pi conversations in real time with session/folder browsing, model/thinking controls, extension UI, and push notifications.
 
-**Responsibilities:** WebSocket connection with auto-reconnect (backoff→connecting→syncing→ready), per-session cursor tracking, stable client identity, multi-session state management (SessionRegistry with $state() runes), streaming message accumulation with stable DOM keying, folder/session index browsing, streaming markdown rendering (smd + highlight.js), tool call visualization, model/thinking pickers, extension UI queue (inline select/confirm + modal input/editor), input bar with prompt/steer/follow-up/abort modes + slash command autocomplete, per-session draft persistence, fuzzy matching, service worker for push notifications, PWA install prompt, active session bar with status indicators
+**Responsibilities:** WebSocket connection with auto-reconnect (backoff→connecting→syncing→ready), per-session cursor tracking, stable client identity, multi-session state management (SessionRegistry with $state() runes), streaming message accumulation with stable DOM keying, folder/session index browsing, streaming markdown rendering (smd + highlight.js), tool call visualization, model/thinking pickers, extension UI queue (inline select/confirm + modal input/editor), input bar with prompt/steer/follow-up/abort modes + slash command autocomplete, per-session draft persistence, fuzzy matching, service worker for push notifications, PWA install prompt, active session bar with status indicators, text-to-speech playback with swipe-to-reveal gesture
 
 **Dependencies:** Protocol (wire format types), Server (WebSocket API)
 
@@ -98,7 +98,10 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/stores/command-store.test.ts` — tests
 - `client/src/lib/stores/extension-ui-queue.svelte.ts` — extension UI request queue, inline vs modal routing
 - `client/src/lib/stores/input-bar.svelte.ts` — editorTextRequest store for extension setEditorText
-- `client/src/lib/components/MessageList.svelte` — scrollable message list with unified display entries and auto-scroll
+- `client/src/lib/stores/speech.svelte.ts` — singleton speech playback state (speak/stop/playingKey)
+- `client/src/lib/stores/speech.svelte.test.ts` — tests
+- `client/src/lib/components/MessageList.svelte` — scrollable message list with unified display entries, auto-scroll, and swipe-to-reveal TTS
+- `client/src/lib/components/SwipeReveal.svelte` — swipe-to-reveal gesture wrapper component
 - `client/src/lib/components/Message.svelte` — message rendering (user, assistant, custom, system)
 - `client/src/lib/components/TextBlock.svelte` — streaming markdown rendering via smd
 - `client/src/lib/components/ThinkingBlock.svelte` — collapsible thinking block
@@ -120,6 +123,8 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/components/InstallBanner.svelte` — PWA install prompt
 - `client/src/lib/components/PendingSteeringMessages.svelte` — pending steering message display
 - `client/src/lib/components/ui/**` — shadcn-svelte primitives (button, badge, dialog, dropdown-menu, input, scroll-area, separator)
+- `client/src/lib/markdown-to-speech.ts` — pure function converting markdown to speakable plain text
+- `client/src/lib/markdown-to-speech.test.ts` — tests
 - `client/src/lib/smd-renderer.ts` — streaming-markdown renderer with highlight.js and URL scheme allowlisting
 - `client/src/lib/smd-renderer.test.ts`, `client/src/lib/smd-underscore-fix.test.ts` — tests
 - `client/src/lib/fuzzy.ts` — fuzzy matching utility
