@@ -59,6 +59,8 @@ function createFakeSession(overrides: Partial<ManagedSession> = {}): ManagedSess
     pendingUiResponses: overrides.pendingUiResponses ?? new Map(),
     extensionsBound: overrides.extensionsBound ?? false,
     onSessionReset: overrides.onSessionReset ?? null,
+    panelState: overrides.panelState ?? new Map(),
+    panelThrottleTimer: overrides.panelThrottleTimer ?? null,
     ...overrides,
   };
 }

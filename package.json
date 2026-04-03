@@ -5,7 +5,8 @@
   "workspaces": [
     "shared",
     "server",
-    "client"
+    "client",
+    "packages/panels"
   ],
   "scripts": {
     "format": "prettier --write .",

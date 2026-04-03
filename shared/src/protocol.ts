@@ -68,6 +68,29 @@ export interface PimoteAgentMessage {
 }
 
 // ----------------------------------------------------------------------------
+// Panel / Card Types
+// ----------------------------------------------------------------------------
+
+export type CardColor = 'accent' | 'success' | 'warning' | 'error' | 'muted';
+export type BodySectionStyle = 'text' | 'code' | 'secondary';
+
+export interface BodySection {
+  content: string;
+  style: BodySectionStyle;
+}
+
+export interface Card {
+  id: string;
+  color?: CardColor;
+  header: {
+    title: string;
+    tag?: string;
+  };
+  body?: BodySection[];
+  footer?: string[];
+}
+
+// ----------------------------------------------------------------------------
 // Client → Server Commands
 // ----------------------------------------------------------------------------
 
@@ -541,6 +564,14 @@ export interface FullResyncEvent {
   messages: PimoteAgentMessage[];
 }
 
+// -- Panel events --
+
+export interface PanelUpdateEvent {
+  type: 'panel_update';
+  sessionId: string;
+  cards: Card[];
+}
+
 // -- Version mismatch --
 
 export interface VersionMismatchEvent {
@@ -566,6 +597,8 @@ export type PimoteEvent =
   | ConnectionRestoredEvent
   | BufferedEventsEvent
   | FullResyncEvent
+  // Panel
+  | PanelUpdateEvent
   // Version
   | VersionMismatchEvent;
 

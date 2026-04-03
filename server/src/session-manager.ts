@@ -2,7 +2,7 @@ import { createAgentSession, AuthStorage, ModelRegistry, DefaultResourceLoader, 
 import type { AgentSession } from '@mariozechner/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
-import type { PimoteEvent } from '@pimote/shared';
+import type { PimoteEvent, Card } from '@pimote/shared';
 import type { SdkMessage } from './message-mapper.js';
 import type { PushNotificationService } from './push-notification.js';
 
@@ -38,6 +38,10 @@ export interface ManagedSession {
   extensionsBound: boolean;
   /** Callback for session resets (newSession, fork, etc.). Set by the claiming handler. */
   onSessionReset: ((managed: ManagedSession) => Promise<void>) | null;
+  /** Panel card state, keyed by namespace. */
+  panelState: Map<string, Card[]>;
+  /** Timer handle for throttled panel pushes. */
+  panelThrottleTimer: ReturnType<typeof setTimeout> | null;
 }
 
 // ---- Managed session helpers (closure-free, operate on stable ManagedSession reference) ----
@@ -162,6 +166,8 @@ export class PimoteSessionManager {
       pendingUiResponses: new Map(),
       extensionsBound: false,
       onSessionReset: null,
+      panelState: new Map(),
+      panelThrottleTimer: null,
     };
 
     const unsubscribe = session.subscribe((event) => {
@@ -280,6 +286,8 @@ export class PimoteSessionManager {
       pendingUiResponses: new Map(),
       extensionsBound: opts?.extensionsBound ?? false,
       onSessionReset: null,
+      panelState: new Map(),
+      panelThrottleTimer: null,
     };
 
     const unsubscribe = session.subscribe((event) => {
