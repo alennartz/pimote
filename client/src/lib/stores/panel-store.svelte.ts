@@ -12,13 +12,13 @@ export class PanelStore {
   }
 
   /** Replace the card list with new data from a panel_update event. */
-  handlePanelUpdate(_cards: Card[]): void {
-    throw new Error('not implemented');
+  handlePanelUpdate(cards: Card[]): void {
+    this.cards = cards;
   }
 
   /** Clear all cards (e.g., when active session changes). */
   reset(): void {
-    throw new Error('not implemented');
+    this.cards = [];
   }
 }
 
