@@ -43,7 +43,7 @@
   $effect(() => {
     const _sessionId = sessionRegistry.viewedSessionId;
     inputText = untrack(() => sessionRegistry.viewed?.draftText ?? '');
-    autoResize();
+    tick().then(() => autoResize());
   });
 
   let lastSeq = 0;
@@ -54,7 +54,7 @@
       // Only update the live textarea if the request targets the currently viewed session
       if (sessionId === sessionRegistry.viewedSessionId) {
         inputText = text;
-        autoResize();
+        tick().then(() => autoResize());
       }
     }
   });
