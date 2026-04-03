@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { speak, stop, playingKey } from './speech.svelte.js';
+import { speak, stop, speechState } from './speech.svelte.js';
 
 // ---------------------------------------------------------------------------
 // Mock Setup — speechSynthesis & SpeechSynthesisUtterance
@@ -20,6 +20,7 @@ let createdUtterances: MockUtterance[];
 
 beforeEach(() => {
   createdUtterances = [];
+  speechState.playingKey = null;
 
   mockSpeechSynthesis = {
     speak: vi.fn(),
@@ -41,15 +42,13 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Helper: import the module's reactive playingKey
+// Helper: read the reactive playingKey from speechState
 // ---------------------------------------------------------------------------
-// playingKey is a $state export — Svelte compiles it to a getter. We import
-// it directly and read it where needed. For assertions inside effects, we
-// just read the imported binding.
+// speechState is a $state() object — property reads go through Svelte's
+// reactive proxy. In tests we read it directly for assertions.
 
 function getPlayingKey(): string | null {
-  // Re-import reads the live getter each time
-  return playingKey;
+  return speechState.playingKey;
 }
 
 // ---------------------------------------------------------------------------

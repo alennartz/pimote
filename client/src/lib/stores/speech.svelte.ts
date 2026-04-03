@@ -1,6 +1,7 @@
-/** The message key currently being read, or null. */
-// eslint-disable-next-line prefer-const
-export let playingKey: string | null = null;
+/** Reactive speech playback state. Uses an object with $state() so property
+ *  mutations go through Svelte 5's reactive proxy — exported let bindings
+ *  that are reassigned can't use $state() directly (state_invalid_export). */
+export const speechState = $state({ playingKey: null as string | null });
 
 /** Monotonic generation counter — incremented on each speak()/stop() call.
  *  Callbacks from stale generations are ignored. */
@@ -13,7 +14,7 @@ export function speak(text: string, messageKey: string): void {
   // Always cancel previous playback
   speechSynthesis.cancel();
   generation++;
-  playingKey = null;
+  speechState.playingKey = null;
 
   // Split into paragraph chunks, trim, discard empty
   const chunks = text
@@ -23,7 +24,7 @@ export function speak(text: string, messageKey: string): void {
 
   if (chunks.length === 0) return;
 
-  playingKey = messageKey;
+  speechState.playingKey = messageKey;
 
   const currentGen = generation;
   const totalChunks = chunks.length;
@@ -36,7 +37,7 @@ export function speak(text: string, messageKey: string): void {
       if (currentGen !== generation) return;
       // Only reset when the last chunk finishes
       if (i === totalChunks - 1) {
-        playingKey = null;
+        speechState.playingKey = null;
       }
     };
 
@@ -53,5 +54,5 @@ export function speak(text: string, messageKey: string): void {
 export function stop(): void {
   speechSynthesis.cancel();
   generation++;
-  playingKey = null;
+  speechState.playingKey = null;
 }

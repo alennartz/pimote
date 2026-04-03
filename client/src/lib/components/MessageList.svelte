@@ -7,7 +7,7 @@
   import Message from './Message.svelte';
   import SwipeReveal from './SwipeReveal.svelte';
   import StreamingIndicator from './StreamingIndicator.svelte';
-  import { speak, stop, playingKey } from '$lib/stores/speech.svelte.js';
+  import { speak, stop, speechState } from '$lib/stores/speech.svelte.js';
   import { markdownToSpeech } from '$lib/markdown-to-speech.js';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
@@ -126,7 +126,7 @@
   }
 
   function handleTtsToggle(entry: (typeof displayEntries)[number]) {
-    if (playingKey === entry.key) {
+    if (speechState.playingKey === entry.key) {
       stop();
     } else {
       const textContent = entry.message.content
@@ -151,7 +151,7 @@
     if (openSwipeKey === key) {
       openSwipeKey = null;
     }
-    if (playingKey === key) {
+    if (speechState.playingKey === key) {
       stop();
     }
   }
@@ -171,7 +171,7 @@
           <SwipeReveal bind:this={swipeRefs[entry.key]} onopen={() => handleSwipeOpen(entry.key)} onclose={() => handleSwipeClose(entry.key)}>
             {#snippet action()}
               <button class="tts-action-btn" onclick={() => handleTtsToggle(entry)}>
-                {#if playingKey === entry.key}
+                {#if speechState.playingKey === entry.key}
                   <Square size={20} />
                 {:else}
                   <Volume2 size={20} />
