@@ -8,14 +8,25 @@ export type PanelBusMessage = { type: 'cards'; namespace: string; cards: Card[] 
  * - 'cards' messages replace the card list for that namespace.
  * - 'clear' messages remove the namespace entirely.
  */
-export function applyPanelMessage(_panelState: Map<string, Card[]>, _message: PanelBusMessage): void {
-  throw new Error('not implemented');
+export function applyPanelMessage(panelState: Map<string, Card[]>, message: PanelBusMessage): void {
+  if (message.type === 'cards') {
+    panelState.set(message.namespace, message.cards);
+  } else if (message.type === 'clear') {
+    panelState.delete(message.namespace);
+  }
 }
 
 /**
  * Merge all namespaces into a flat card list for sending to the client.
  * Order: namespaces in insertion order, cards within each namespace in array order.
+ * Skips namespaces with empty card arrays.
  */
-export function getMergedPanelCards(_panelState: Map<string, Card[]>): Card[] {
-  throw new Error('not implemented');
+export function getMergedPanelCards(panelState: Map<string, Card[]>): Card[] {
+  const result: Card[] = [];
+  for (const cards of panelState.values()) {
+    if (cards.length > 0) {
+      result.push(...cards);
+    }
+  }
+  return result;
 }
