@@ -1,7 +1,7 @@
 # Pimote — Comprehensive Manual Test Plan
 
-**Version:** 1.0
-**Date:** 2026-03-28
+**Version:** 1.1
+**Date:** 2026-04-03
 **System Under Test:** Pimote (PWA client + Node.js server for remote pi coding-agent access)
 **Author:** QA
 
@@ -27,10 +27,11 @@
 16. [TP-14: Push Notifications (VAPID / Web Push)](#tp-14-push-notifications-vapid--web-push)
 17. [TP-15: PWA Installation & Service Worker](#tp-15-pwa-installation--service-worker)
 18. [TP-16: Responsive Layout & Mobile UX](#tp-16-responsive-layout--mobile-ux)
-19. [TP-17: Auto-Compaction & Auto-Retry Events](#tp-17-auto-compaction--auto-retry-events)
-20. [TP-18: Error Handling & Edge Cases](#tp-18-error-handling--edge-cases)
-21. [TP-19: Security](#tp-19-security)
-22. [TP-20: Performance & Stability](#tp-20-performance--stability)
+19. [TP-16a: Extension Panel System](#tp-16a-extension-panel-system)
+20. [TP-17: Auto-Compaction & Auto-Retry Events](#tp-17-auto-compaction--auto-retry-events)
+21. [TP-18: Error Handling & Edge Cases](#tp-18-error-handling--edge-cases)
+22. [TP-19: Security](#tp-19-security)
+23. [TP-20: Performance & Stability](#tp-20-performance--stability)
 
 ---
 
@@ -758,6 +759,7 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[E]** Server responds with `buffered_events` containing missed events
 - **[E]** Followed by `connection_restored` event
 - **[E]** Conversation state is seamlessly restored (no duplicate or missing messages)
+- **[E]** If session had active panel cards, a `panel_update` event is received after replay; panel re-appears
 
 ### TC-11.02 — Reconnect with cursor up to date 🟡
 
@@ -771,6 +773,7 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[S]** Reconnect
 - **[E]** Server returns `full_resync` with complete `SessionState` and all `messages`
 - **[E]** Client rebuilds conversation from scratch — no missing data
+- **[E]** If session had active panel cards, a `panel_update` event follows the resync; panel re-appears
 
 ### TC-11.04 — Event buffer coalescing 🟠
 
@@ -1112,7 +1115,7 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[S]** Open on desktop browser (>768px width)
 - **[E]** Sidebar permanently visible on left
 - **[E]** No mobile hamburger menu
-- **[E]** Conversation fills remaining width
+- **[E]** Conversation fills remaining width (unless an extension panel is active — see [TP-16a](#tp-16a-extension-panel-system))
 
 ### TC-16.02 — Mobile layout 🟠
 
@@ -1146,6 +1149,93 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[E]** Virtual keyboard appears; input field focused
 - **[S]** Type and send
 - **[E]** Works correctly; layout doesn't break with keyboard open
+
+---
+
+## TP-16a: Extension Panel System
+
+The panel system allows pi extensions to push structured card data into the pimote web UI via the `@pimote/panels` package and the pi EventBus. Cards are rendered in a side panel (desktop) or overlay (mobile).
+
+### TC-16a.01 — Panel appears when extension pushes cards 🟠
+
+- **[P]** Session open; extension uses `@pimote/panels` `detect()` + `PanelHandle.updateCards()` to push cards
+- **[E]** On desktop (≥md), a side panel appears right of the main content showing the cards
+- **[E]** Panel has a fixed width (~280px), border-left separator, scrollable if cards overflow
+- **[E]** Main conversation content area narrows to accommodate the panel
+
+### TC-16a.02 — Panel hides when cards are cleared 🟠
+
+- **[P]** Panel is visible with cards
+- **[S]** Extension calls `PanelHandle.clear()` or sends empty card list
+- **[E]** Panel disappears; main content returns to full width
+
+### TC-16a.03 — Card rendering — all fields 🟠
+
+- **[P]** Extension pushes cards with all optional fields (color, header.tag, body sections, footer)
+- **[E]** Card shows:
+  - Colored left border matching `card.color` (accent/success/warning/error/muted)
+  - Header with title and tag badge
+  - Body sections with correct styling: `text` (normal), `code` (monospace), `secondary` (muted)
+  - Footer items joined with `·` separator
+
+### TC-16a.04 — Card rendering — minimal fields 🟡
+
+- **[P]** Extension pushes cards with only required fields (`id`, `header.title`)
+- **[E]** Card renders with title only; no errors from missing optional fields
+
+### TC-16a.05 — Multiple namespaces merge correctly 🟡
+
+- **[P]** Two extensions (different keys) each push cards via separate `detect()` calls
+- **[E]** Panel shows cards from both namespaces
+- **[E]** Updating one namespace does not affect the other's cards
+
+### TC-16a.06 — Panel updates are throttled 🟡
+
+- **[P]** Extension rapidly updates cards (e.g., every 50ms)
+- **[S]** Observe WebSocket traffic in Network tab
+- **[E]** `panel_update` events arrive at ~200ms intervals (throttled), not on every extension update
+
+### TC-16a.07 — Panel state survives reconnect 🟠
+
+- **[P]** Panel showing cards; agent is working
+- **[S]** Disconnect client briefly (toggle network), then reconnect
+- **[E]** After reconnect, panel re-appears with current card state
+- **[E]** `panel_update` event received after buffered events replay
+
+### TC-16a.08 — Panel state survives full resync 🟡
+
+- **[P]** Panel showing cards; client disconnected long enough for cursor to be too old
+- **[S]** Reconnect
+- **[E]** After `full_resync`, panel re-appears with current card state
+
+### TC-16a.09 — Panel resets on session switch 🟠
+
+- **[P]** Viewing session A with panel cards; session B open with no cards
+- **[S]** Switch to session B via ActiveSessionBar
+- **[E]** Panel disappears (session B has no cards)
+- **[S]** Switch back to session A
+- **[E]** Panel re-appears if session A receives a new `panel_update`
+
+### TC-16a.10 — Mobile panel overlay 🟠
+
+- **[P]** Mobile viewport (<md); extension pushes cards
+- **[E]** No side panel visible; a floating indicator badge appears (bottom-right, above InputBar) showing card count
+- **[S]** Tap the indicator badge
+- **[E]** Panel opens as a fixed overlay (right side) with backdrop
+- **[S]** Tap backdrop or press Escape
+- **[E]** Overlay closes
+
+### TC-16a.11 — detect() returns null outside pimote 🟡
+
+- **[P]** Extension calls `detect(pi, key)` in a non-pimote environment (e.g., pi TUI)
+- **[E]** Returns `null`; extension continues without panel functionality
+
+### TC-16a.12 — Handle deactivation on re-detect 🟡
+
+- **[P]** Extension calls `detect(pi, 'mykey')` twice
+- **[E]** First handle is deactivated (methods become no-ops)
+- **[E]** Second handle works normally
+- **[E]** No duplicate cards from stale handle
 
 ---
 
