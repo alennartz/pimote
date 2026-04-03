@@ -13,7 +13,7 @@
       {@const hasPendingUi = uiQueue.hasRequestForSession(session.sessionId)}
       {#if isViewed}
         <!-- Active chip: split pill with red close zone on mobile, hover X on desktop -->
-        <div class="group/chip flex items-stretch overflow-hidden rounded-full">
+        <div class="group/chip flex shrink-0 items-stretch overflow-hidden rounded-full">
           <button
             class="bg-primary text-primary-foreground flex items-center gap-1.5 py-1 pr-3 pl-3 text-xs font-medium transition-colors md:rounded-r-full md:pr-3"
             onclick={() => switchToSession(session.sessionId)}
@@ -65,7 +65,7 @@
       {:else}
         <!-- Inactive chip -->
         <button
-          class="group/chip bg-secondary text-secondary-foreground hover:bg-secondary/80 flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors"
+          class="group/chip bg-secondary text-secondary-foreground hover:bg-secondary/80 flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors"
           onclick={() => switchToSession(session.sessionId)}
           title={session.projectName}
         >
@@ -108,7 +108,7 @@
     <!-- New session ghost chip -->
     {#if sessionRegistry.viewedSessionId}
       <button
-        class="border-muted-foreground/30 text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground flex items-center gap-1 rounded-full border border-dashed px-2.5 py-1 text-xs transition-colors"
+        class="border-muted-foreground/30 text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground flex shrink-0 items-center gap-1 rounded-full border border-dashed px-2.5 py-1 text-xs transition-colors"
         title="New session in {sessionRegistry.viewed?.projectName}"
         onclick={() => newSessionInProject(sessionRegistry.viewedSessionId!)}
       >
