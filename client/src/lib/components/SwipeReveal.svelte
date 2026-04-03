@@ -56,11 +56,11 @@
     const dy = touch.clientY - startY;
 
     if (!directionLocked) {
-      if (Math.abs(dx) > 10) {
-        directionLocked = 'horizontal';
-      } else if (Math.abs(dy) > 10) {
-        directionLocked = 'vertical';
-        return;
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+      const threshold = 15;
+      if (absDx > threshold || absDy > threshold) {
+        directionLocked = absDx > absDy * 1.5 ? 'horizontal' : 'vertical';
       } else {
         return;
       }
@@ -145,6 +145,8 @@
     grid-row: 1;
     grid-column: 1;
     z-index: 1;
+    min-width: 0;
+    overflow: hidden;
     background: var(--background);
     will-change: transform;
   }

@@ -81,6 +81,7 @@ self.addEventListener('push', (event) => {
           body,
           data: { sessionId: data.sessionId, folderPath: data.folderPath },
           icon: '/pwa/icon-192.png',
+          badge: '/pwa/badge-96.png',
           tag: `pimote-${data.sessionId}`,
           renotify: true,
         });

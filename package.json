@@ -34,6 +34,7 @@
     "typescript-eslint": "^8.57.2"
   },
   "dependencies": {
-    "@fontsource-variable/jetbrains-mono": "^5.2.8"
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@mariozechner/pi-coding-agent": "^0.64.0"
   }
 }

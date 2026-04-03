@@ -1,21 +1,44 @@
 {
   "name": "@pimote/panels",
   "version": "0.0.1",
-  "private": true,
+  "description": "Push structured card data from pi extensions to the pimote web client",
   "type": "module",
+  "license": "MIT",
+  "author": "Antoine Lennartz <alennartz@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alennartz/pimote.git",
+    "directory": "packages/panels"
+  },
+  "homepage": "https://github.com/alennartz/pimote/tree/main/packages/panels#readme",
+  "bugs": "https://github.com/alennartz/pimote/issues",
+  "keywords": [
+    "pi",
+    "pimote",
+    "extension",
+    "panels",
+    "cards"
+  ],
   "exports": {
     ".": "./dist/index.js"
   },
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "vitest"
+    "test": "vitest",
+    "prepublishOnly": "npm run build"
   },
-  "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.61.0"
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.64.0"
   },
   "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.64.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }
