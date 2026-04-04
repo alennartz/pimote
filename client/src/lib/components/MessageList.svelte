@@ -66,11 +66,17 @@
   let displayEntries = $derived.by(() => {
     const session = sessionRegistry.viewed;
     if (!session) return [];
-    const entries: { key: string; message: PimoteAgentMessage | StreamingMessage; streaming: boolean }[] = session.messages.map((msg, i) => ({
-      key: session.messageKeys[i] ?? `fallback-${i}`,
-      message: msg as PimoteAgentMessage | StreamingMessage,
-      streaming: false,
-    }));
+    const entries: { key: string; message: PimoteAgentMessage | StreamingMessage; streaming: boolean }[] = [];
+    for (let i = 0; i < session.messages.length; i++) {
+      const msg = session.messages[i];
+      // Hide custom messages with display: false
+      if (msg.display === false) continue;
+      entries.push({
+        key: session.messageKeys[i] ?? `fallback-${i}`,
+        message: msg as PimoteAgentMessage | StreamingMessage,
+        streaming: false,
+      });
+    }
     if (session.streamingMessage && session.streamingKey) {
       entries.push({
         key: session.streamingKey,

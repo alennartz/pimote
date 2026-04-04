@@ -64,6 +64,8 @@ export interface PimoteAgentMessage {
   content: PimoteMessageContent[];
   /** Present when role === 'custom' — the extension-defined message type (e.g. 'agent-complete') */
   customType?: string;
+  /** For custom messages: if false, the message should be hidden from the UI */
+  display?: boolean;
   [key: string]: unknown;
 }
 

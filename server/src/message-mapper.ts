@@ -9,6 +9,7 @@ export interface SdkMessage {
   role?: string;
   content?: unknown;
   customType?: string;
+  display?: boolean;
   toolCallId?: string;
   toolName?: string;
 }
@@ -67,9 +68,9 @@ export function mapAgentMessage(msg: SdkMessage): PimoteAgentMessage {
     console.warn('[message-mapper] Empty content array for message:', { role, content: msg.content });
   }
 
-  // Handle custom messages — preserve customType for the client
+  // Handle custom messages — preserve customType and display flag for the client
   if (role === 'custom') {
-    return { role, content, customType: msg.customType };
+    return { role, content, customType: msg.customType, display: msg.display ?? true };
   }
 
   // Handle tool result messages
