@@ -1,5 +1,13 @@
 /// <reference lib="webworker" />
 
+// `renotify` is part of the Notification spec but missing from TypeScript's DOM lib.
+// Augment NotificationOptions so showNotification() accepts it without error.
+declare global {
+  interface NotificationOptions {
+    renotify?: boolean;
+  }
+}
+
 import { clientsClaim } from 'workbox-core';
 import { precacheAndRoute } from 'workbox-precaching';
 
