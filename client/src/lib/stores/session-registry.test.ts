@@ -453,9 +453,16 @@ describe('SessionRegistry', () => {
       expect(session.isStreaming).toBe(false);
     });
 
-    it('full_resync replaces session state entirely', () => {
+    it('full_resync replaces canonical session state and resets transient runtime fields', () => {
       registry.addSession('s1', '/path', 'proj');
-      // Set some initial state
+      const before = registry.sessions['s1'];
+      before.draftText = 'keep my unsent text';
+      before.needsAttention = true;
+      before.pendingTakeover = true;
+      before.pendingSteeringMessages.push('pending');
+      before.conflictingProcesses = [{ pid: 1234, command: 'pi' }];
+      before.conflictingRemoteSessions = [{ sessionId: 'remote', status: 'working' }];
+      before.lastBotActivityTimestamp = '2026-04-04T12:00:00.000Z';
       registry.handleEvent(makeSessionEvent('agent_start', 's1'));
       expect(registry.sessions['s1'].isStreaming).toBe(true);
 
@@ -483,6 +490,14 @@ describe('SessionRegistry', () => {
       expect(session.autoCompactionEnabled).toBe(true);
       expect(session.messageCount).toBe(2);
       expect(session.messages).toEqual(messages);
+      expect(session.firstMessage).toBe('Hello');
+      expect(session.draftText).toBe('keep my unsent text');
+      expect(session.needsAttention).toBe(false);
+      expect(session.pendingTakeover).toBe(false);
+      expect(session.pendingSteeringMessages).toEqual([]);
+      expect(session.conflictingProcesses).toEqual([]);
+      expect(session.conflictingRemoteSessions).toEqual([]);
+      expect(session.lastBotActivityTimestamp).toBeNull();
     });
   });
 
@@ -845,7 +860,7 @@ describe('SessionRegistry', () => {
       expect(session.pendingSteeringMessages).toEqual([]);
     });
 
-    it('full_resync does not affect pendingSteeringMessages (optimistic state preserved)', () => {
+    it('full_resync clears pendingSteeringMessages as transient runtime state', () => {
       registry.addSession('s1', '/path', 'proj');
       const session = registry.sessions['s1'];
       session.pendingSteeringMessages.push('pending message');
@@ -866,7 +881,7 @@ describe('SessionRegistry', () => {
         messages: [],
       });
 
-      expect(session.pendingSteeringMessages).toEqual(['pending message']);
+      expect(registry.sessions['s1'].pendingSteeringMessages).toEqual([]);
     });
   });
 

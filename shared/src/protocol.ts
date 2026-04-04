@@ -235,6 +235,8 @@ export interface OpenSessionCommand extends CommandBase {
   type: 'open_session';
   folderPath: string;
   sessionId?: string;
+  /** Last cursor seen by the client; when present the server may attempt incremental replay. */
+  lastCursor?: number;
   /** Force takeover if the session is owned by another client */
   force?: boolean;
 }
@@ -252,12 +254,6 @@ export interface DeleteSessionCommand extends CommandBase {
 export interface TakeoverFolderCommand extends CommandBase {
   type: 'takeover_folder';
   folderPath: string;
-}
-
-export interface ReconnectCommand extends CommandBase {
-  type: 'reconnect';
-  sessionId: string;
-  lastCursor: number;
 }
 
 export interface ViewSessionCommand extends CommandBase {
@@ -334,7 +330,6 @@ export type PimoteCommand =
   | CloseSessionCommand
   | DeleteSessionCommand
   | TakeoverFolderCommand
-  | ReconnectCommand
   | ViewSessionCommand
   // Push notifications
   | RegisterPushCommand

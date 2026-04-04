@@ -273,13 +273,23 @@ describe('EventBuffer', () => {
       buffer.onEvent(makeSdkEvent('agent_start'), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('agent_end', { error: 'something failed' }), SESSION_ID, sendLive);
 
-      expect(liveEvents[0]).toEqual({ type: 'agent_start', sessionId: SESSION_ID, cursor: 1 });
-      expect(liveEvents[1]).toEqual({
-        type: 'agent_end',
-        sessionId: SESSION_ID,
-        cursor: 2,
-        error: 'something failed',
-      });
+      expect(liveEvents[0]).toEqual(
+        expect.objectContaining({
+          type: 'agent_start',
+          sessionId: SESSION_ID,
+          cursor: 1,
+        }),
+      );
+      expect(typeof (liveEvents[0] as any).timestamp).toBe('string');
+      expect(liveEvents[1]).toEqual(
+        expect.objectContaining({
+          type: 'agent_end',
+          sessionId: SESSION_ID,
+          cursor: 2,
+          error: 'something failed',
+        }),
+      );
+      expect(typeof (liveEvents[1] as any).timestamp).toBe('string');
     });
 
     it('maps auto_compaction events correctly', () => {
@@ -316,13 +326,16 @@ describe('EventBuffer', () => {
 
       buffer.onEvent(makeSdkEvent('extension_error', { error: 'ext failed', extensionName: 'my-ext' }), SESSION_ID, sendLive);
 
-      expect(liveEvents[0]).toEqual({
-        type: 'extension_error',
-        sessionId: SESSION_ID,
-        cursor: 1,
-        error: 'ext failed',
-        extensionName: 'my-ext',
-      });
+      expect(liveEvents[0]).toEqual(
+        expect.objectContaining({
+          type: 'extension_error',
+          sessionId: SESSION_ID,
+          cursor: 1,
+          error: 'ext failed',
+          extensionName: 'my-ext',
+        }),
+      );
+      expect(typeof (liveEvents[0] as any).timestamp).toBe('string');
     });
 
     it('maps text_delta with contentIndex and subtype', () => {

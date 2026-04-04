@@ -80,6 +80,46 @@ export class SessionRegistry {
     return Object.values(this.sessions);
   }
 
+  private createSessionState(sessionId: string, folderPath: string, projectName: string): PerSessionState {
+    return {
+      sessionId,
+      folderPath,
+      projectName,
+      firstMessage: undefined,
+      messages: [],
+      isStreaming: false,
+      isCompacting: false,
+      model: null,
+      thinkingLevel: 'off',
+      streamingMessage: null,
+      streamingKey: null,
+      messageKeys: [],
+      toolExecutions: {},
+      autoCompactionEnabled: false,
+      messageCount: 0,
+      status: 'idle',
+      needsAttention: false,
+      conflictingProcesses: [],
+      conflictingRemoteSessions: [],
+      pendingTakeover: false,
+      sessionName: null,
+      gitBranch: null,
+      contextUsage: null,
+      draftText: '',
+      pendingSteeringMessages: [],
+      lastBotActivityTimestamp: null,
+    };
+  }
+
+  firstUserMessage(messages: PimoteAgentMessage[]): string | undefined {
+    for (const message of messages) {
+      if (message.role !== 'user') continue;
+      const textContent = message.content.find((c: PimoteMessageContent) => c.type === 'text');
+      if (textContent?.text) return textContent.text;
+    }
+    return undefined;
+  }
+
   private persistSessions(): void {
     setActiveSessions(Object.values(this.sessions).map((s) => ({ sessionId: s.sessionId, folderPath: s.folderPath })));
   }
@@ -245,20 +285,21 @@ export class SessionRegistry {
         const resync = event as FullResyncEvent;
         const state: SessionState = resync.state;
         const messages: PimoteAgentMessage[] = resync.messages;
-        session.model = state.model;
-        session.thinkingLevel = state.thinkingLevel;
-        session.isStreaming = state.isStreaming;
-        session.isCompacting = state.isCompacting;
-        session.autoCompactionEnabled = state.autoCompactionEnabled;
-        session.messageCount = state.messageCount;
-        session.sessionName = state.sessionName ?? null;
-        session.messages = messages;
-        session.status = state.isStreaming ? 'working' : 'idle';
-        session.streamingMessage = null;
-        session.streamingKey = null;
-        session.messageKeys = this.generateMessageKeys(messages.length);
-        session.toolExecutions = {};
-        this.rebuildToolExecutions(session);
+        const rebuilt = this.createSessionState(session.sessionId, session.folderPath, session.projectName);
+        rebuilt.draftText = session.draftText;
+        rebuilt.model = state.model;
+        rebuilt.thinkingLevel = state.thinkingLevel;
+        rebuilt.isStreaming = state.isStreaming;
+        rebuilt.isCompacting = state.isCompacting;
+        rebuilt.autoCompactionEnabled = state.autoCompactionEnabled;
+        rebuilt.messageCount = state.messageCount;
+        rebuilt.sessionName = state.sessionName ?? null;
+        rebuilt.messages = messages;
+        rebuilt.firstMessage = this.firstUserMessage(messages);
+        rebuilt.status = state.isStreaming ? 'working' : 'idle';
+        rebuilt.messageKeys = this.generateMessageKeys(messages.length);
+        this.rebuildToolExecutions(rebuilt);
+        this.sessions[sessionId] = rebuilt;
         break;
       }
 
@@ -285,35 +326,7 @@ export class SessionRegistry {
 
   /** Add a session to the registry. If it already exists (e.g. takeover placeholder), resets it. */
   addSession(sessionId: string, folderPath: string, projectName: string): void {
-    const session: PerSessionState = {
-      sessionId,
-      folderPath,
-      projectName,
-      firstMessage: undefined,
-      messages: [],
-      isStreaming: false,
-      isCompacting: false,
-      model: null,
-      thinkingLevel: 'off',
-      streamingMessage: null,
-      streamingKey: null,
-      messageKeys: [],
-      toolExecutions: {},
-      autoCompactionEnabled: false,
-      messageCount: 0,
-      status: 'idle',
-      needsAttention: false,
-      conflictingProcesses: [],
-      conflictingRemoteSessions: [],
-      pendingTakeover: false,
-      sessionName: null,
-      gitBranch: null,
-      contextUsage: null,
-      draftText: '',
-      pendingSteeringMessages: [],
-      lastBotActivityTimestamp: null,
-    };
-    this.sessions[sessionId] = session;
+    this.sessions[sessionId] = this.createSessionState(sessionId, folderPath, projectName);
     this.persistSessions();
   }
 
@@ -340,34 +353,12 @@ export class SessionRegistry {
 
     // Remove old entry, add new entry with clean state but same slot identity
     const { [oldSessionId]: _, ...rest } = this.sessions;
-    rest[newSessionId] = {
-      sessionId: newSessionId,
-      folderPath,
-      projectName,
-      firstMessage: undefined,
-      messages: [],
-      isStreaming: false,
-      isCompacting: false,
-      model: old.model,
-      thinkingLevel: old.thinkingLevel,
-      streamingMessage: null,
-      streamingKey: null,
-      messageKeys: [],
-      toolExecutions: {},
-      autoCompactionEnabled: old.autoCompactionEnabled,
-      messageCount: 0,
-      status: 'idle',
-      needsAttention: false,
-      conflictingProcesses: [],
-      conflictingRemoteSessions: [],
-      pendingTakeover: false,
-      sessionName: null,
-      gitBranch: old.gitBranch,
-      contextUsage: null,
-      draftText: '',
-      pendingSteeringMessages: [],
-      lastBotActivityTimestamp: null,
-    };
+    const next = this.createSessionState(newSessionId, folderPath, projectName);
+    next.model = old.model;
+    next.thinkingLevel = old.thinkingLevel;
+    next.autoCompactionEnabled = old.autoCompactionEnabled;
+    next.gitBranch = old.gitBranch;
+    rest[newSessionId] = next;
     this.sessions = rest;
 
     // If the old session was being viewed, view the new one
@@ -449,6 +440,118 @@ export class SessionRegistry {
 // Create singleton instance — fields are reactive via $state() runes above
 export const sessionRegistry = new SessionRegistry();
 
+async function fetchFullSessionData(sessionId: string): Promise<void> {
+  try {
+    const [stateRes, msgRes, metaRes, cmdsRes] = await Promise.all([
+      connection.send({ type: 'get_state', sessionId }),
+      connection.send({ type: 'get_messages', sessionId }),
+      connection.send({ type: 'get_session_meta', sessionId }),
+      connection.send({ type: 'get_commands', sessionId }),
+    ]);
+
+    const session = sessionRegistry.sessions[sessionId];
+    if (!session) return;
+
+    if (stateRes.success && stateRes.data) {
+      const state = (stateRes.data as { state: SessionState }).state;
+      session.model = state.model;
+      session.thinkingLevel = state.thinkingLevel;
+      session.isStreaming = state.isStreaming;
+      session.isCompacting = state.isCompacting;
+      session.autoCompactionEnabled = state.autoCompactionEnabled;
+      session.messageCount = state.messageCount;
+      session.sessionName = state.sessionName ?? null;
+      session.status = state.isStreaming ? 'working' : 'idle';
+    }
+
+    if (msgRes.success && msgRes.data) {
+      const messages = (msgRes.data as { messages: PimoteAgentMessage[] }).messages;
+      session.messages = messages;
+      session.messageKeys = sessionRegistry.generateMessageKeys(messages.length);
+      session.messageCount = messages.length;
+      session.firstMessage = sessionRegistry.firstUserMessage(messages);
+      sessionRegistry.rebuildToolExecutions(session);
+    }
+
+    if (metaRes.success && metaRes.data) {
+      const meta = (metaRes.data as { meta: SessionMeta }).meta;
+      sessionRegistry.updateMeta(sessionId, meta);
+    }
+
+    if (cmdsRes.success && cmdsRes.data) {
+      const commands = (cmdsRes.data as { commands: import('@pimote/shared').CommandInfo[] }).commands;
+      commandStore.setCommands(sessionId, commands);
+    }
+  } catch (err) {
+    console.error('[SessionRegistry] Failed to fetch full session data:', err);
+  }
+}
+
+async function refreshSessionMetaAndCommands(sessionId: string): Promise<void> {
+  try {
+    const [metaRes, cmdsRes] = await Promise.all([connection.send({ type: 'get_session_meta', sessionId }), connection.send({ type: 'get_commands', sessionId })]);
+
+    if (metaRes.success && metaRes.data) {
+      sessionRegistry.updateMeta(sessionId, (metaRes.data as { meta: SessionMeta }).meta);
+    }
+
+    if (cmdsRes.success && cmdsRes.data) {
+      const commands = (cmdsRes.data as { commands: import('@pimote/shared').CommandInfo[] }).commands;
+      commandStore.setCommands(sessionId, commands);
+    }
+  } catch (err) {
+    console.error('[SessionRegistry] Failed to refresh session meta/commands:', err);
+  }
+}
+
+export async function openExistingSession(sessionId: string, folderPath: string, opts?: { force?: boolean; switchTo?: boolean }): Promise<boolean> {
+  const projectName = folderPath.split('/').pop() || 'Unknown';
+  const shouldSwitch = opts?.switchTo !== false;
+  const alreadyTracked = !!sessionRegistry.sessions[sessionId];
+
+  if (!alreadyTracked) {
+    sessionRegistry.addSession(sessionId, folderPath, projectName);
+  }
+  connection.addSubscribedSession(sessionId, folderPath);
+
+  if (shouldSwitch) {
+    sessionRegistry.switchTo(sessionId);
+  }
+
+  try {
+    const response = await connection.send({
+      type: 'open_session',
+      folderPath,
+      sessionId,
+      ...(opts?.force ? { force: true } : {}),
+    });
+
+    if (!response.success) {
+      if (response.error === 'session_owned') {
+        const session = sessionRegistry.sessions[sessionId];
+        if (session) session.pendingTakeover = true;
+        return false;
+      }
+      sessionRegistry.removeSession(sessionId);
+      connection.removeSubscribedSession(sessionId);
+      commandStore.removeSession(sessionId);
+      return false;
+    }
+
+    await refreshSessionMetaAndCommands(sessionId);
+    if (shouldSwitch) {
+      connection.send({ type: 'view_session', sessionId }).catch(() => {});
+    }
+    return true;
+  } catch (err) {
+    console.error('[SessionRegistry] Failed to open existing session:', err);
+    sessionRegistry.removeSession(sessionId);
+    connection.removeSubscribedSession(sessionId);
+    commandStore.removeSession(sessionId);
+    return false;
+  }
+}
+
 // Subscribe to connection events and route to the registry
 connection.onEvent((event) => {
   switch (event.type) {
@@ -456,48 +559,9 @@ connection.onEvent((event) => {
       const folder = (event as SessionOpenedEvent).folder;
       const projectName = folder?.name ?? 'Unknown';
       sessionRegistry.addSession(event.sessionId, folder?.path ?? '', projectName);
-      connection.addSubscribedSession(event.sessionId);
+      connection.addSubscribedSession(event.sessionId, folder?.path ?? '');
       sessionRegistry.switchTo(event.sessionId);
-      // Request initial state, messages, meta, and commands atomically to avoid race conditions
-      Promise.all([
-        connection.send({ type: 'get_state', sessionId: event.sessionId }),
-        connection.send({ type: 'get_messages', sessionId: event.sessionId }),
-        connection.send({ type: 'get_session_meta', sessionId: event.sessionId }),
-        connection.send({ type: 'get_commands', sessionId: event.sessionId }),
-      ])
-        .then(([stateRes, msgRes, metaRes, cmdsRes]) => {
-          const session = sessionRegistry.sessions[event.sessionId];
-          if (!session) return;
-          if (stateRes.success && stateRes.data) {
-            const state = (stateRes.data as { state: SessionState }).state;
-            session.model = state.model;
-            session.thinkingLevel = state.thinkingLevel;
-            session.isStreaming = state.isStreaming;
-            session.isCompacting = state.isCompacting;
-            session.autoCompactionEnabled = state.autoCompactionEnabled;
-            session.messageCount = state.messageCount;
-            session.sessionName = state.sessionName ?? null;
-            session.status = state.isStreaming ? 'working' : 'idle';
-          }
-          if (msgRes.success && msgRes.data) {
-            const messages = (msgRes.data as { messages: PimoteAgentMessage[] }).messages;
-            session.messages = messages;
-            session.messageKeys = sessionRegistry.generateMessageKeys(messages.length);
-            session.messageCount = messages.length;
-            sessionRegistry.rebuildToolExecutions(session);
-          }
-          if (metaRes.success && metaRes.data) {
-            const meta = (metaRes.data as { meta: SessionMeta }).meta;
-            sessionRegistry.updateMeta(event.sessionId, meta);
-          }
-          if (cmdsRes.success && cmdsRes.data) {
-            const commands = (cmdsRes.data as { commands: import('@pimote/shared').CommandInfo[] }).commands;
-            commandStore.setCommands(event.sessionId, commands);
-          }
-        })
-        .catch((err) => {
-          console.error('[SessionRegistry] Failed to fetch initial session state:', err);
-        });
+      fetchFullSessionData(event.sessionId);
       break;
     }
     case 'session_closed': {
@@ -512,48 +576,9 @@ connection.onEvent((event) => {
       const projectName = folder?.name ?? 'Unknown';
       sessionRegistry.replaceSession(replaced.oldSessionId, replaced.newSessionId, folder?.path ?? '', projectName);
       connection.removeSubscribedSession(replaced.oldSessionId);
-      connection.addSubscribedSession(replaced.newSessionId);
+      connection.addSubscribedSession(replaced.newSessionId, folder?.path ?? '');
       commandStore.removeSession(replaced.oldSessionId);
-      // Fetch state for the new session
-      Promise.all([
-        connection.send({ type: 'get_state', sessionId: replaced.newSessionId }),
-        connection.send({ type: 'get_messages', sessionId: replaced.newSessionId }),
-        connection.send({ type: 'get_session_meta', sessionId: replaced.newSessionId }),
-        connection.send({ type: 'get_commands', sessionId: replaced.newSessionId }),
-      ])
-        .then(([stateRes, msgRes, metaRes, cmdsRes]) => {
-          const session = sessionRegistry.sessions[replaced.newSessionId];
-          if (!session) return;
-          if (stateRes.success && stateRes.data) {
-            const state = (stateRes.data as { state: SessionState }).state;
-            session.model = state.model;
-            session.thinkingLevel = state.thinkingLevel;
-            session.isStreaming = state.isStreaming;
-            session.isCompacting = state.isCompacting;
-            session.autoCompactionEnabled = state.autoCompactionEnabled;
-            session.messageCount = state.messageCount;
-            session.sessionName = state.sessionName ?? null;
-            session.status = state.isStreaming ? 'working' : 'idle';
-          }
-          if (msgRes.success && msgRes.data) {
-            const messages = (msgRes.data as { messages: PimoteAgentMessage[] }).messages;
-            session.messages = messages;
-            session.messageKeys = sessionRegistry.generateMessageKeys(messages.length);
-            session.messageCount = messages.length;
-            sessionRegistry.rebuildToolExecutions(session);
-          }
-          if (metaRes.success && metaRes.data) {
-            const meta = (metaRes.data as { meta: SessionMeta }).meta;
-            sessionRegistry.updateMeta(replaced.newSessionId, meta);
-          }
-          if (cmdsRes.success && cmdsRes.data) {
-            const commands = (cmdsRes.data as { commands: import('@pimote/shared').CommandInfo[] }).commands;
-            commandStore.setCommands(replaced.newSessionId, commands);
-          }
-        })
-        .catch((err) => {
-          console.error('[SessionRegistry] Failed to fetch replaced session state:', err);
-        });
+      fetchFullSessionData(replaced.newSessionId);
       break;
     }
     default: {
@@ -566,7 +591,7 @@ connection.onEvent((event) => {
   }
 });
 
-// When a reconnect is rejected because another client owns the session, prompt user
+// When restoring/opening is rejected because another client owns the session, prompt user
 connection.onSessionOwned = (sessionId) => {
   const session = sessionRegistry.sessions[sessionId];
   if (session) {
@@ -574,25 +599,16 @@ connection.onSessionOwned = (sessionId) => {
   }
 };
 
-// When a session is adopted via notification click, add it to the registry and switch to it
-connection.onSessionAdopted = (sessionId, folderPath) => {
-  const projectName = folderPath.split('/').pop() || 'Unknown';
-  sessionRegistry.addSession(sessionId, folderPath, projectName);
-  sessionRegistry.switchTo(sessionId);
-  connection.send({ type: 'view_session', sessionId }).catch(() => {});
-  // Request meta for git branch and context usage
-  connection
-    .send({ type: 'get_session_meta', sessionId })
-    .then((metaRes) => {
-      if (metaRes.success && metaRes.data) {
-        sessionRegistry.updateMeta(sessionId, (metaRes.data as { meta: SessionMeta }).meta);
-      }
-    })
-    .catch(() => {});
+connection.onPendingAdopt = (sessionId, folderPath) => {
+  void openExistingSession(sessionId, folderPath, { force: true, switchTo: true });
 };
 
-// After reconnect completes, restore the correct viewed session on the server
+// After restore completes, refresh per-session supplemental data and restore
+// the correct viewed session on the server.
 connection.onReconnected = () => {
+  for (const session of sessionRegistry.activeSessions) {
+    void refreshSessionMetaAndCommands(session.sessionId);
+  }
   const viewedId = sessionRegistry.viewedSessionId;
   if (viewedId) {
     connection.send({ type: 'view_session', sessionId: viewedId }).catch(() => {});
@@ -606,7 +622,7 @@ const persistedViewedId = getViewedSessionId();
 for (const { sessionId, folderPath } of persistedSessions) {
   const projectName = folderPath.split('/').pop() || 'Unknown';
   sessionRegistry.addSession(sessionId, folderPath, projectName);
-  connection.addSubscribedSession(sessionId);
+  connection.addSubscribedSession(sessionId, folderPath);
 }
 
 if (persistedViewedId && sessionRegistry.sessions[persistedViewedId]) {
@@ -618,24 +634,7 @@ export function confirmTakeover(sessionId: string): void {
   const session = sessionRegistry.sessions[sessionId];
   if (!session) return;
   session.pendingTakeover = false;
-  connection
-    .send({
-      type: 'open_session',
-      folderPath: session.folderPath,
-      sessionId,
-      force: true,
-    })
-    .then((response) => {
-      if (!response.success) {
-        // Force also failed — give up
-        sessionRegistry.removeSession(sessionId);
-        connection.removeSubscribedSession(sessionId);
-      }
-    })
-    .catch(() => {
-      sessionRegistry.removeSession(sessionId);
-      connection.removeSubscribedSession(sessionId);
-    });
+  void openExistingSession(sessionId, session.folderPath, { force: true, switchTo: true });
 }
 
 /** Dismiss takeover — drop the session */

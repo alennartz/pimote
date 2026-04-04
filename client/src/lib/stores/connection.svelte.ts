@@ -1,6 +1,6 @@
 // ConnectionStore — Svelte 5 runes-based WebSocket connection manager
 import type { PimoteCommand, PimoteResponse, PimoteEvent, PimoteServerMessage } from '@pimote/shared';
-import { SvelteSet } from 'svelte/reactivity';
+import { SvelteMap } from 'svelte/reactivity';
 import { version } from '$app/environment';
 import { getClientId, setClientId } from './persistence.js';
 
@@ -24,10 +24,10 @@ class ConnectionStore {
   phase: 'idle' | 'backoff' | 'connecting' | 'syncing' | 'ready' = $state('idle');
   /** Seconds until next reconnect attempt (ticks down during backoff). */
   reconnectCountdown: number = $state(0);
-  /** Progress of per-session reconnects during syncing phase. */
+  /** Progress of per-session restore/open commands during syncing phase. */
   syncProgress: { done: number; total: number } | null = $state(null);
   private sessionCursors: Map<string, number> = new Map();
-  subscribedSessions: Set<string> = $state(new SvelteSet());
+  subscribedSessions: Map<string, string> = $state(new SvelteMap());
 
   private ws: WebSocket | null = null;
   private pending = new Map<string, { resolve: (r: PimoteResponse) => void; reject: (e: Error) => void }>();
@@ -37,14 +37,14 @@ class ConnectionStore {
   private reconnectDelay = 1000;
   private intentionalClose = false;
 
-  /** Called after all session reconnects complete. Set by session-registry to restore viewed session. */
+  /** Called after all session restore/open commands complete. Set by session-registry to restore viewed session. */
   onReconnected: (() => void) | null = null;
 
-  /** Called when a reconnect is rejected with session_owned (another client owns it). */
+  /** Called when restoring/opening a session is rejected with session_owned (another client owns it). */
   onSessionOwned: ((sessionId: string) => void) | null = null;
 
-  /** Called when a session is adopted via notification click (includes folderPath from server). */
-  onSessionAdopted: ((sessionId: string, folderPath: string) => void) | null = null;
+  /** Called after connection restore when a notification-driven adopt should begin. */
+  onPendingAdopt: ((sessionId: string, folderPath: string) => void) | null = null;
 
   /** Session to adopt after next successful connection (set from notification URL param or click). */
   pendingAdopt: { sessionId: string; folderPath: string } | null = null;
@@ -65,28 +65,29 @@ class ConnectionStore {
       this.status = 'connected';
       this.reconnectDelay = 1000;
 
-      // Reconnect all subscribed sessions with per-session cursors
+      // Restore all subscribed sessions. When we still have an in-page cursor,
+      // ask the server for incremental replay; otherwise let it fall back to a
+      // full resync (live in-memory or disk-backed).
       const sessionCount = this.subscribedSessions.size;
       if (sessionCount > 0) {
         this.phase = 'syncing';
         this.syncProgress = { done: 0, total: sessionCount };
       }
 
-      const reconnectPromises: Promise<void>[] = [];
-      for (const sessionId of this.subscribedSessions) {
+      const restorePromises: Promise<void>[] = [];
+      for (const [sessionId, folderPath] of this.subscribedSessions) {
+        const lastCursor = this.sessionCursors.get(sessionId);
         const p = this.send({
-          type: 'reconnect',
+          type: 'open_session',
+          folderPath,
           sessionId,
-          lastCursor: this.sessionCursors.get(sessionId) ?? 0,
+          ...(lastCursor !== undefined ? { lastCursor } : {}),
         })
           .then((response) => {
             if (!response.success) {
               if (response.error === 'session_owned') {
-                // Another client owns this session — let the registry prompt the user
                 this.onSessionOwned?.(sessionId);
               } else {
-                // Session expired (server restarted, idle-reaped, etc.) — fire
-                // a synthetic session_closed so the registry cleans up the tab
                 const closedEvent = { type: 'session_closed', sessionId } as PimoteEvent;
                 for (const listener of this.listeners) {
                   try {
@@ -106,33 +107,21 @@ class ConnectionStore {
               this.syncProgress = { done: this.syncProgress.done + 1, total: this.syncProgress.total };
             }
           });
-        reconnectPromises.push(p);
+        restorePromises.push(p);
       }
 
-      // After all reconnects, restore correct viewed session on the server.
+      // After all restores, restore correct viewed session on the server.
       // Import is circular so we use the onReconnected callback instead.
-      Promise.all(reconnectPromises).then(() => {
+      Promise.all(restorePromises).then(() => {
         this.ready = true;
         this.phase = 'ready';
         this.syncProgress = null;
         this.onReconnected?.();
 
-        // Adopt session from notification click if pending
         if (this.pendingAdopt) {
           const { sessionId: sid, folderPath } = this.pendingAdopt;
           this.pendingAdopt = null;
-          this.send({
-            type: 'open_session',
-            folderPath,
-            sessionId: sid,
-            force: true,
-          })
-            .then((response) => {
-              if (response.success) {
-                this.onSessionAdopted?.(sid, folderPath);
-              }
-            })
-            .catch(() => {});
+          this.onPendingAdopt?.(sid, folderPath);
         }
       });
 
@@ -231,8 +220,8 @@ class ConnectionStore {
     this.ws?.close();
   }
 
-  addSubscribedSession(id: string): void {
-    this.subscribedSessions.add(id);
+  addSubscribedSession(id: string, folderPath: string): void {
+    this.subscribedSessions.set(id, folderPath);
   }
 
   removeSubscribedSession(id: string): void {

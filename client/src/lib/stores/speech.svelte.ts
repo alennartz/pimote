@@ -1,3 +1,5 @@
+import { markdownToSpeech } from '$lib/markdown-to-speech.js';
+
 /** Reactive speech playback state. Uses an object with $state() so property
  *  mutations go through Svelte 5's reactive proxy — exported let bindings
  *  that are reassigned can't use $state() directly (state_invalid_export). */
@@ -55,4 +57,16 @@ export function stop(): void {
   speechSynthesis.cancel();
   generation++;
   speechState.playingKey = null;
+}
+
+/** Toggle TTS for a message — stop if already playing, otherwise convert and speak. */
+export function toggleTts(messageKey: string, markdownText: string): void {
+  if (speechState.playingKey === messageKey) {
+    stop();
+  } else {
+    const speakable = markdownToSpeech(markdownText);
+    if (speakable) {
+      speak(speakable, messageKey);
+    }
+  }
 }

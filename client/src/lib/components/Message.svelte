@@ -5,6 +5,7 @@
   import ThinkingBlock from './ThinkingBlock.svelte';
   import ToolCall from './ToolCall.svelte';
   import StreamingCollapsible from './StreamingCollapsible.svelte';
+  import TtsButton from './TtsButton.svelte';
   import User from '@lucide/svelte/icons/user';
   import Bot from '@lucide/svelte/icons/bot';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -13,9 +14,19 @@
   const MAX_COLLAPSED_LINES = 10;
   const SKILL_COLLAPSED_LINES = 3;
 
-  let { message, streaming = false }: { message: PimoteAgentMessage | StreamingMessage; streaming?: boolean } = $props();
+  let { message, streaming = false, messageKey = '' }: { message: PimoteAgentMessage | StreamingMessage; streaming?: boolean; messageKey?: string } = $props();
   let customExpanded = $state(false);
   let skillExpanded = $state(false);
+  let toolMenuOpen = $state(false);
+
+  let hasSpeakableText = $derived(message.role === 'assistant' && !streaming && message.content.some((c) => c.type === 'text' && c.text));
+
+  let textContent = $derived(
+    message.content
+      .filter((c) => c.type === 'text' && c.text)
+      .map((c) => c.text!)
+      .join('\n\n'),
+  );
 
   function getUserText(msg: PimoteAgentMessage | StreamingMessage): string {
     return msg.content
@@ -91,8 +102,21 @@
 {:else if message.role === 'assistant'}
   {@const toolExecs = sessionRegistry.viewed?.toolExecutions ?? {}}
   <div class="message assistant-message">
-    <div class="message-icon assistant-icon">
-      <Bot size={16} />
+    <div class="assistant-icon-col">
+      {#if hasSpeakableText}
+        <button class="message-icon assistant-icon" onclick={() => (toolMenuOpen = !toolMenuOpen)}>
+          <Bot size={16} />
+        </button>
+        {#if toolMenuOpen}
+          <div class="tool-menu">
+            <TtsButton {messageKey} {textContent} />
+          </div>
+        {/if}
+      {:else}
+        <div class="message-icon assistant-icon">
+          <Bot size={16} />
+        </div>
+      {/if}
     </div>
     <div class="message-body">
       {#each message.content as block, i (i)}
@@ -182,10 +206,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-top: 2px;
   }
 
   .user-icon {
+    margin-top: 2px;
     background: oklch(0.35 0.08 250);
     color: oklch(0.85 0.05 250);
   }
@@ -193,6 +217,32 @@
   .assistant-icon {
     background: oklch(0.28 0.04 260);
     color: var(--foreground);
+  }
+
+  button.assistant-icon {
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  button.assistant-icon:active {
+    background: oklch(0.35 0.04 260);
+  }
+
+  .assistant-icon-col {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+  }
+
+  .tool-menu {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
   }
 
   .message-body {

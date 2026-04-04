@@ -67,20 +67,13 @@
           const sid = event.data.sessionId;
           const fp = event.data.folderPath;
           if (sid) {
-            const { switchToSession, sessionRegistry: reg } = await import('$lib/stores/session-registry.svelte.js');
+            const { switchToSession, sessionRegistry: reg, openExistingSession } = await import('$lib/stores/session-registry.svelte.js');
             if (reg.sessions[sid]) {
               // Already open — just switch to it
               switchToSession(sid);
             } else if (fp) {
-              // Not open — adopt via open_session
-              connection
-                .send({
-                  type: 'open_session',
-                  folderPath: fp,
-                  sessionId: sid,
-                  force: true,
-                })
-                .catch(() => {});
+              // Not open — adopt via unified open path
+              void openExistingSession(sid, fp, { force: true, switchTo: true });
             }
           }
         }

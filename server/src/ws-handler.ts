@@ -174,92 +174,56 @@ export class WsHandler {
         }
 
         case 'open_session': {
-          // Check if this session is already loaded in memory (only when resuming by ID)
-          if (command.sessionId) {
-            const existing = this.sessionManager.getSession(command.sessionId);
-            if (existing) {
-              // Session already loaded — check ownership
-              if (existing.connectedClientId && existing.connectedClientId !== this.clientId) {
-                const oldHandler = this.clientRegistry.get(existing.connectedClientId);
-                if (oldHandler && !command.force) {
-                  // Another live client owns it — ask user to confirm takeover
-                  this.sendResponse(id, false, undefined, 'session_owned');
-                  break;
-                }
-                // Force takeover or old client disconnected — displace and reclaim
-                this.displaceOwner(command.sessionId, existing);
-              }
+          // New session creation
+          if (!command.sessionId) {
+            const sessionId = await this.sessionManager.openSession(command.folderPath);
+            const managed = this.sessionManager.getSession(sessionId)!;
+            await this.claimSession(sessionId, managed);
+            this.viewedSessionId = sessionId;
 
-              // Reclaim the existing managed session
-              await this.claimSession(command.sessionId, existing);
-              this.viewedSessionId = command.sessionId;
+            this.sendEvent({
+              type: 'session_opened',
+              sessionId,
+              folder: this.buildFolderInfo(managed.folderPath),
+            });
 
-              this.sendEvent({
-                type: 'session_opened',
-                sessionId: command.sessionId,
-                folder: {
-                  path: existing.folderPath,
-                  name: existing.folderPath.split('/').pop() ?? existing.folderPath,
-                  activeSessionCount: 1,
-                  externalProcessCount: 0,
-                  activeStatus: 'idle',
-                },
-              });
-
-              WsHandler.broadcastSidebarUpdate(command.sessionId, existing.folderPath, this.sessionManager, this.clientRegistry);
-              this.sendResponse(id, true, { sessionId: command.sessionId });
-              break;
-            }
+            WsHandler.broadcastSidebarUpdate(sessionId, managed.folderPath, this.sessionManager, this.clientRegistry);
+            await this.sendConflictEventIfNeeded(sessionId, managed.folderPath);
+            this.sendResponse(id, true, { sessionId });
+            break;
           }
 
-          // Session not loaded — resolve ID to file path and create a new managed session
-          let sessionFilePath: string | undefined;
-          if (command.sessionId) {
-            sessionFilePath = await this.folderIndex.resolveSessionPath(command.folderPath, command.sessionId);
-            if (!sessionFilePath) {
-              this.sendResponse(id, false, undefined, `Session not found: ${command.sessionId}`);
-              break;
+          // Existing session: reclaim live in-memory runtime if possible, otherwise reopen from disk.
+          const requestedSessionId = command.sessionId;
+          const existing = this.sessionManager.getSession(requestedSessionId);
+          if (existing) {
+            if (existing.connectedClientId && existing.connectedClientId !== this.clientId) {
+              const oldHandler = this.clientRegistry.get(existing.connectedClientId);
+              if (oldHandler && !command.force) {
+                this.sendResponse(id, false, undefined, 'session_owned');
+                break;
+              }
+              this.displaceOwner(requestedSessionId, existing);
             }
+
+            await this.syncSessionToClient(requestedSessionId, existing, command.lastCursor);
+            WsHandler.broadcastSidebarUpdate(requestedSessionId, existing.folderPath, this.sessionManager, this.clientRegistry);
+            this.sendResponse(id, true, { sessionId: requestedSessionId, folderPath: existing.folderPath });
+            break;
+          }
+
+          const sessionFilePath = await this.folderIndex.resolveSessionPath(command.folderPath, requestedSessionId);
+          if (!sessionFilePath) {
+            this.sendResponse(id, false, undefined, 'session_expired');
+            break;
           }
 
           const sessionId = await this.sessionManager.openSession(command.folderPath, sessionFilePath);
-
           const managed = this.sessionManager.getSession(sessionId)!;
-          await this.claimSession(sessionId, managed);
-          this.viewedSessionId = sessionId;
-
-          // Send session_opened event
-          this.sendEvent({
-            type: 'session_opened',
-            sessionId,
-            folder: {
-              path: managed.folderPath,
-              name: managed.folderPath.split('/').pop() ?? managed.folderPath,
-              activeSessionCount: 1,
-              externalProcessCount: 0,
-              activeStatus: 'idle',
-            },
-          });
-
+          await this.syncSessionToClient(sessionId, managed);
           WsHandler.broadcastSidebarUpdate(sessionId, managed.folderPath, this.sessionManager, this.clientRegistry);
-
-          // Check for conflicting external pi processes and remote pimote sessions
-          const openConflictPids = await findExternalPiProcesses(command.folderPath);
-          const allSessions = this.sessionManager.getAllSessions();
-          const remoteSessions = allSessions
-            .filter((s) => s.folderPath === command.folderPath && s.connectedClientId !== null && s.connectedClientId !== this.clientId && s.id !== sessionId)
-            .map((s) => ({ sessionId: s.id, status: s.status }));
-
-          if (openConflictPids.length > 0 || remoteSessions.length > 0) {
-            this.sendEvent({
-              type: 'session_conflict',
-              sessionId,
-              processes: openConflictPids.map((pid) => ({ pid, command: 'pi' })),
-              remoteSessions,
-            });
-          }
-
-          this.sendResponse(id, true, { sessionId });
+          await this.sendConflictEventIfNeeded(sessionId, managed.folderPath);
+          this.sendResponse(id, true, { sessionId, folderPath: managed.folderPath });
           break;
         }
 
@@ -337,80 +301,6 @@ export class WsHandler {
           }
 
           this.sendResponse(id, true);
-          break;
-        }
-
-        case 'reconnect': {
-          const managed = this.sessionManager.getSession(command.sessionId);
-          if (!managed) {
-            this.sendResponse(id, false, undefined, 'session_expired');
-            break;
-          }
-
-          // Ownership check: different client owns this session?
-          if (managed.connectedClientId && managed.connectedClientId !== this.clientId) {
-            const oldHandler = this.clientRegistry.get(managed.connectedClientId);
-            if (oldHandler) {
-              // Another live client owns it — reject (use open_session with force to takeover)
-              this.sendResponse(id, false, undefined, 'session_owned');
-              break;
-            }
-            // Old client no longer connected — silent rebind
-          }
-
-          const replayResult = managed.eventBuffer.replay(command.lastCursor);
-
-          if (replayResult !== null) {
-            // Incremental replay — send buffered events then connection_restored
-            const bufferedEventsEvent: BufferedEventsEvent = {
-              type: 'buffered_events',
-              sessionId: command.sessionId,
-              events: replayResult,
-            };
-            this.sendEvent(bufferedEventsEvent);
-
-            const connectionRestoredEvent: ConnectionRestoredEvent = {
-              type: 'connection_restored',
-              sessionId: command.sessionId,
-            };
-            this.sendEvent(connectionRestoredEvent);
-          } else {
-            this.sendFullResyncForSession(command.sessionId, managed);
-          }
-
-          // Capture the buffer cursor before claimSession. Events emitted between
-          // the replay above and claimSession restoring sendLive (e.g. from a
-          // pending select resolved by cleanup) are buffered but missed both the
-          // replay and the live path. A catch-up replay after claim closes this gap.
-          const cursorBeforeClaim = managed.eventBuffer.currentCursor;
-
-          // Claim session — rebinds ownership, sendLive, and extension UI bridge
-          await this.claimSession(command.sessionId, managed);
-
-          // Catch-up: replay any events that were buffered between the initial
-          // replay and the completion of claimSession (sendLive restoration).
-          if (replayResult !== null) {
-            const catchUp = managed.eventBuffer.replay(cursorBeforeClaim);
-            if (catchUp && catchUp.length > 0) {
-              this.sendEvent({
-                type: 'buffered_events',
-                sessionId: command.sessionId,
-                events: catchUp,
-              } as BufferedEventsEvent);
-            }
-          }
-
-          // Send panel snapshot if panels are active
-          if (managed.panelState.size > 0) {
-            this.sendEvent({ type: 'panel_update', sessionId: command.sessionId, cards: getMergedPanelCards(managed.panelState) });
-          }
-
-          // Don't overwrite viewedSessionId here — the client reconnects ALL
-          // subscribed sessions in a loop, so the last one would win arbitrarily.
-          // The client sends an explicit view_session after reconnect to set this.
-
-          WsHandler.broadcastSidebarUpdate(command.sessionId, managed.folderPath, this.sessionManager, this.clientRegistry);
-          this.sendResponse(id, true, { folderPath: managed.folderPath });
           break;
         }
 
@@ -900,6 +790,75 @@ export class WsHandler {
     // Broadcast sidebar updates for both old (now inactive) and new (now active)
     WsHandler.broadcastSidebarUpdate(oldSessionId, folderPath, this.sessionManager, this.clientRegistry);
     WsHandler.broadcastSidebarUpdate(newSessionId, folderPath, this.sessionManager, this.clientRegistry);
+  }
+
+  private buildFolderInfo(folderPath: string) {
+    return {
+      path: folderPath,
+      name: folderPath.split('/').pop() ?? folderPath,
+      activeSessionCount: 1,
+      externalProcessCount: 0,
+      activeStatus: 'idle' as const,
+    };
+  }
+
+  private async sendConflictEventIfNeeded(sessionId: string, folderPath: string): Promise<void> {
+    const openConflictPids = await findExternalPiProcesses(folderPath);
+    const allSessions = this.sessionManager.getAllSessions();
+    const remoteSessions = allSessions
+      .filter((s) => s.folderPath === folderPath && s.connectedClientId !== null && s.connectedClientId !== this.clientId && s.id !== sessionId)
+      .map((s) => ({ sessionId: s.id, status: s.status }));
+
+    if (openConflictPids.length > 0 || remoteSessions.length > 0) {
+      this.sendEvent({
+        type: 'session_conflict',
+        sessionId,
+        processes: openConflictPids.map((pid) => ({ pid, command: 'pi' })),
+        remoteSessions,
+      });
+    }
+  }
+
+  private async syncSessionToClient(sessionId: string, managed: ManagedSession, lastCursor?: number): Promise<void> {
+    let replayResult: ReturnType<ManagedSession['eventBuffer']['replay']> | null = null;
+    let cursorBeforeClaim: number | null = null;
+
+    if (lastCursor !== undefined) {
+      replayResult = managed.eventBuffer.replay(lastCursor);
+      if (replayResult !== null) {
+        this.sendEvent({
+          type: 'buffered_events',
+          sessionId,
+          events: replayResult,
+        } as BufferedEventsEvent);
+        this.sendEvent({
+          type: 'connection_restored',
+          sessionId,
+        } as ConnectionRestoredEvent);
+        cursorBeforeClaim = managed.eventBuffer.currentCursor;
+      } else {
+        this.sendFullResyncForSession(sessionId, managed);
+      }
+    } else {
+      this.sendFullResyncForSession(sessionId, managed);
+    }
+
+    await this.claimSession(sessionId, managed);
+
+    if (replayResult !== null && cursorBeforeClaim !== null) {
+      const catchUp = managed.eventBuffer.replay(cursorBeforeClaim);
+      if (catchUp && catchUp.length > 0) {
+        this.sendEvent({
+          type: 'buffered_events',
+          sessionId,
+          events: catchUp,
+        } as BufferedEventsEvent);
+      }
+    }
+
+    if (replayResult !== null && managed.panelState.size > 0) {
+      this.sendEvent({ type: 'panel_update', sessionId, cards: getMergedPanelCards(managed.panelState) });
+    }
   }
 
   /** Close this handler's WebSocket connection. */

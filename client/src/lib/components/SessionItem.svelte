@@ -2,7 +2,7 @@
   import { ContextMenu } from 'bits-ui';
   import type { SessionInfo } from '@pimote/shared';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { sessionRegistry, switchToSession, closeSession } from '$lib/stores/session-registry.svelte.js';
+  import { sessionRegistry, switchToSession, closeSession, openExistingSession } from '$lib/stores/session-registry.svelte.js';
   import Monitor from '@lucide/svelte/icons/monitor';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -37,17 +37,7 @@
         switchToSession(session.id);
         return;
       }
-      const response = await connection.send({
-        type: 'open_session',
-        folderPath,
-        sessionId: session.id,
-      });
-      if (!response.success && response.error === 'session_owned') {
-        const projectName = folderPath.split('/').pop() || 'Unknown';
-        sessionRegistry.addSession(session.id, folderPath, projectName);
-        sessionRegistry.sessions[session.id].pendingTakeover = true;
-        sessionRegistry.switchTo(session.id);
-      }
+      await openExistingSession(session.id, folderPath, { switchTo: true });
     } catch (e) {
       console.error('Failed to open session:', e);
     }
