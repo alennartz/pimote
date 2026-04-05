@@ -1,5 +1,6 @@
 node_modules/
 dist/
+tsconfig.tsbuildinfo
 
 # Client build output handled by client/.gitignore
 
