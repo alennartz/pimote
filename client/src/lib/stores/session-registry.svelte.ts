@@ -45,7 +45,7 @@ export interface PerSessionState {
   streamingMessage: StreamingMessage | null;
   streamingKey: string | null;
   messageKeys: string[];
-  toolExecutions: Record<string, { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown }>;
+  toolExecutions: Record<string, { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown; isError?: boolean }>;
   autoCompactionEnabled: boolean;
   messageCount: number;
   status: 'idle' | 'working';
@@ -267,6 +267,7 @@ export class SessionRegistry {
         if (call) {
           call.status = 'completed';
           call.result = end.result;
+          call.isError = end.isError;
         }
         break;
       }

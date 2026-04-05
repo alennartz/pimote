@@ -5,6 +5,7 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import Wrench from '@lucide/svelte/icons/wrench';
   import CheckCircle from '@lucide/svelte/icons/check-circle-2';
+  import XCircle from '@lucide/svelte/icons/x-circle';
   import Loader2 from '@lucide/svelte/icons/loader-2';
 
   let {
@@ -13,12 +14,14 @@
     inProgress = false,
     partialResult = '',
     result = undefined,
+    isError = false,
   }: {
     content: PimoteMessageContent;
     streaming?: boolean;
     inProgress?: boolean;
     partialResult?: string;
     result?: unknown;
+    isError?: boolean;
   } = $props();
 
   let expanded = $state(false);
@@ -81,6 +84,8 @@
     <ChevronRight class="shrink-0 transition-transform duration-150 {expanded ? 'rotate-90' : ''}" size={14} />
     {#if inProgress}
       <Loader2 size={14} class="shrink-0 animate-spin" />
+    {:else if isCompleted && isError}
+      <XCircle size={14} class="tool-icon-error shrink-0" />
     {:else if isCompleted}
       <CheckCircle size={14} class="shrink-0" />
     {:else}
@@ -198,5 +203,9 @@
   .tool-result .tool-header :global(svg),
   .tool-completed .tool-header :global(svg) {
     color: var(--status-connected, oklch(0.623 0.169 149.2));
+  }
+
+  .tool-header :global(.tool-icon-error) {
+    color: var(--destructive, oklch(0.577 0.245 27.325));
   }
 </style>

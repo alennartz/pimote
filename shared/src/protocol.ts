@@ -425,6 +425,7 @@ export interface ToolExecutionEndEvent extends SessionEventBase {
   type: 'tool_execution_end';
   toolCallId: string;
   result: unknown;
+  isError?: boolean;
 }
 
 // -- Auto-compaction events --

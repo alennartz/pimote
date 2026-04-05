@@ -29,6 +29,7 @@ interface SdkEvent {
   toolCallId?: string;
   args?: unknown;
   result?: unknown;
+  isError?: boolean;
   /** Partial result from tool execution updates */
   partialResult?: unknown;
   reason?: string;
@@ -224,6 +225,7 @@ export class EventBuffer {
           type: 'tool_execution_end',
           toolCallId: sdkEvent.toolCallId ?? '',
           result: sdkEvent.result,
+          isError: sdkEvent.isError || undefined,
         };
 
       case 'auto_compaction_start':

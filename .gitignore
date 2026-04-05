@@ -2,3 +2,6 @@ node_modules/
 dist/
 
 # Client build output handled by client/.gitignore
+
+# Local deployment/hosting details
+.pi/agent/Deployment.md
