@@ -160,6 +160,10 @@ export function createExtensionUIBridge(managed: ManagedSession, pushNotificatio
       // no-op
     },
 
+    setHiddenThinkingLabel(): void {
+      // no-op
+    },
+
     setFooter(): void {
       // no-op
     },

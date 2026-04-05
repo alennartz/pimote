@@ -134,7 +134,7 @@ export class PimoteSessionManager {
     private readonly pushNotificationService: PushNotificationService,
   ) {
     this.authStorage = AuthStorage.create();
-    this.modelRegistry = new ModelRegistry(this.authStorage);
+    this.modelRegistry = ModelRegistry.create(this.authStorage);
   }
 
   /** Ensure extension-provided model providers are registered for a folder.
