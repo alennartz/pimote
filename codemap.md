@@ -61,7 +61,7 @@ Shared TypeScript types defining the WebSocket wire format between client and se
 
 Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges them to remote clients.
 
-**Responsibilities:** HTTP static serving + SPA fallback, WebSocket upgrade + message routing, client identity registry, session lifecycle (open/close/resume/idle-reap/takeover), pi SDK session creation + event subscription, event buffering with delta coalescing for reconnect replay, folder/session filesystem discovery, extension UI bridging (dialog→WebSocket round-trips, fire-and-forget→events, TUI-only→no-ops), extension command context actions, SDK message mapping, session conflict detection (external pi processes via /proc + remote pimote sessions), config loading + VAPID key management, Web Push notification delivery, git branch detection, slash command/autocomplete handling, client version mismatch detection, EventBus creation + panel channel wiring (detect/data listeners), per-session panel state tracking with throttled pushes, panel snapshot delivery on reconnect/session-switch
+**Responsibilities:** HTTP static serving + SPA fallback, WebSocket upgrade + message routing, client identity registry, three-layer session model (ManagedSlot wrapping AgentSessionRuntime + ClientConnection + SessionState), runtime factory pattern for pi SDK session creation, session state lifecycle helpers (create/teardown/rebuild), session open/close/resume/idle-reap/takeover, event buffering with delta coalescing for reconnect replay, folder/session filesystem discovery, extension UI bridging (dialog→WebSocket round-trips, fire-and-forget→events, TUI-only→no-ops), extension command context actions, SDK message mapping, session conflict detection (external pi processes via /proc + remote pimote sessions), config loading + VAPID key management, Web Push notification delivery, git branch detection, slash command/autocomplete handling, client version mismatch detection, EventBus creation + panel channel wiring (detect/data listeners), per-session panel state tracking with throttled pushes, panel snapshot delivery on reconnect/session-switch
 
 **Dependencies:** Protocol (wire format types)
 
@@ -70,8 +70,8 @@ Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges
 - `server/src/index.ts` — entry point
 - `server/src/config.ts` — config loading, VAPID key auto-generation
 - `server/src/server.ts` — HTTP server, static files, WebSocket upgrade, client registry, version checking
-- `server/src/ws-handler.ts` — per-connection command handler, multi-session routing, session ownership/displacement, conflict detection
-- `server/src/session-manager.ts` — ManagedSession lifecycle, status tracking, event subscription, idle reaping, EventBus creation + panel listener wiring, throttled panel push scheduling, pending extension UI resolution helpers
+- `server/src/ws-handler.ts` — per-connection command handler, multi-session routing, session ownership/displacement, conflict detection, in-place session reset via slot.runtime (newSession/fork/switchSession with rebuildSessionState + reKey)
+- `server/src/session-manager.ts` — ManagedSlot/ClientConnection/SessionState types, slot-based event + UI helpers (send, wait, resolve, replay), AgentSessionRuntime factory for session creation, session state lifecycle (createSessionState/teardownSessionState/rebuildSessionState), reKeySession for session replacement, idle reaping, EventBus creation + panel listener wiring, throttled panel push scheduling
 - `server/src/event-buffer.ts` — ring buffer, SDK→wire event mapping, streaming delta coalescing
 - `server/src/message-mapper.ts` — SDK AgentMessage → PimoteAgentMessage conversion
 - `server/src/extension-ui-bridge.ts` — extension UI calls → WebSocket events
