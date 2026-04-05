@@ -79,7 +79,7 @@
   let resultText = $derived(isResult ? formatData(content.result) : result !== undefined ? formatData(result) : partialResult);
 </script>
 
-<div class="tool-block" class:tool-result={isResult} class:tool-completed={isCompleted} class:in-progress={inProgress}>
+<div class="tool-block" class:tool-result={isResult} class:tool-completed={isCompleted} class:tool-error={isError} class:in-progress={inProgress}>
   <button class="tool-header" onclick={() => (expanded = !expanded)}>
     <ChevronRight class="shrink-0 transition-transform duration-150 {expanded ? 'rotate-90' : ''}" size={14} />
     {#if inProgress}
@@ -200,13 +200,13 @@
     background: oklch(0.18 0.035 258);
   }
 
-  .tool-result .tool-header :global(svg),
-  .tool-completed .tool-header :global(svg) {
+  .tool-result:not(.tool-error) .tool-header :global(svg),
+  .tool-completed:not(.tool-error) .tool-header :global(svg) {
     color: var(--status-connected, oklch(0.623 0.169 149.2));
   }
 
-  .tool-result .tool-header :global(.tool-icon-error),
-  .tool-completed .tool-header :global(.tool-icon-error) {
+  .tool-result.tool-error .tool-header :global(svg),
+  .tool-completed.tool-error .tool-header :global(svg) {
     color: var(--destructive, oklch(0.577 0.245 27.325));
   }
 </style>
