@@ -165,7 +165,19 @@
     }
   }
 
-  function handleInput() {
+  function handleInput(e?: Event) {
+    // When / is typed as the first char with existing text after it, insert a space separator
+    if (e && textareaEl) {
+      const ie = e as InputEvent;
+      if (ie.inputType === 'insertText' && ie.data === '/' && textareaEl.selectionStart === 1 && inputText.length > 1 && inputText[1] !== ' ') {
+        inputText = '/ ' + inputText.slice(1);
+        if (sessionRegistry.viewed) sessionRegistry.viewed.draftText = inputText;
+        tick().then(() => {
+          textareaEl!.selectionStart = textareaEl!.selectionEnd = 1;
+        });
+      }
+    }
+
     if (sessionRegistry.viewed) {
       sessionRegistry.viewed.draftText = inputText;
     }
@@ -286,7 +298,9 @@
     if (!textareaEl) return;
     const start = textareaEl.selectionStart ?? inputText.length;
     const end = textareaEl.selectionEnd ?? start;
-    inputText = inputText.slice(0, start) + '/' + inputText.slice(end);
+    const after = inputText.slice(end);
+    const needsSpace = start === 0 && after.length > 0 && after[0] !== ' ';
+    inputText = inputText.slice(0, start) + '/' + (needsSpace ? ' ' : '') + after;
     const cursorPos = start + 1;
     if (sessionRegistry.viewed) {
       sessionRegistry.viewed.draftText = inputText;
