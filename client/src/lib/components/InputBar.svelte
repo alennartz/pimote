@@ -3,7 +3,7 @@
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { commandStore } from '$lib/stores/command-store.svelte.js';
-  import { editorTextRequest, setEditorText } from '$lib/stores/input-bar.svelte.js';
+  import { editorTextRequest, setEditorText, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
   import CommandAutocomplete from './CommandAutocomplete.svelte';
   import type { CommandInfo } from '@pimote/shared';
   import Send from '@lucide/svelte/icons/send';
@@ -63,6 +63,18 @@
       if (sessionId === sessionRegistry.viewedSessionId) {
         inputText = text;
         tick().then(() => autoResize());
+      }
+    }
+  });
+
+  // Pick up images from Web Share Target
+  let lastSharedSeq = 0;
+  $effect(() => {
+    const { images, seq } = sharedImagesRequest;
+    if (seq !== lastSharedSeq) {
+      lastSharedSeq = seq;
+      if (images.length > 0) {
+        stagedImages = [...stagedImages, ...images];
       }
     }
   });

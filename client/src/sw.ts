@@ -37,6 +37,78 @@ self.addEventListener('message', (event) => {
   }
 });
 
+// --- Web Share Target ---
+// When the OS shares files to Pimote, it POSTs to /_share.
+// We intercept here, stash images in a temporary cache, and either
+// post them to an existing client or redirect so the app picks them up on load.
+
+const SHARE_CACHE = 'pimote-share-target';
+
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (url.pathname === '/_share' && event.request.method === 'POST') {
+    event.respondWith(handleShareTarget(event.request));
+  }
+});
+
+async function handleShareTarget(request: Request): Promise<Response> {
+  const formData = await request.formData();
+  const files = formData.getAll('images') as File[];
+
+  if (files.length === 0) {
+    return Response.redirect('/', 303);
+  }
+
+  // Try to post directly to an already-open client
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  if (clients.length > 0) {
+    // Convert files to base64 data URIs in the SW
+    const dataUris: string[] = [];
+    for (const file of files) {
+      const buffer = await file.arrayBuffer();
+      const base64 = arrayBufferToBase64(buffer);
+      dataUris.push(`data:${file.type};base64,${base64}`);
+    }
+
+    const target = clients.find((c) => c.focused) ?? clients[0];
+    target.postMessage({ type: 'share_images', images: dataUris });
+
+    // Focus the existing client instead of opening a new tab
+    if ('focus' in target) {
+      await (target as WindowClient).focus();
+    }
+    // Return a minimal response — the OS will close the share sheet.
+    // A redirect here would open a duplicate tab on some browsers.
+    return new Response('', { status: 204 });
+  }
+
+  // No client open — stash in cache and redirect to the app
+  const cache = await caches.open(SHARE_CACHE);
+  const dataUris: string[] = [];
+  for (const file of files) {
+    const buffer = await file.arrayBuffer();
+    const base64 = arrayBufferToBase64(buffer);
+    dataUris.push(`data:${file.type};base64,${base64}`);
+  }
+  await cache.put(
+    '/_share/pending',
+    new Response(JSON.stringify(dataUris), {
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  );
+
+  return Response.redirect('/?share=pending', 303);
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 // --- Push notifications ---
 
 self.addEventListener('push', (event) => {

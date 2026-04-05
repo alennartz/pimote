@@ -15,6 +15,7 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
+  import { pushSharedImages } from '$lib/stores/input-bar.svelte.js';
   import { onMount } from 'svelte';
 
   let { children } = $props();
@@ -42,6 +43,21 @@
       connection.pendingAdopt = { sessionId: notificationSessionId, folderPath: notificationFolderPath };
     }
 
+    // Handle ?share=pending from Web Share Target (app was not open)
+    if (urlParams.get('share') === 'pending') {
+      window.history.replaceState({}, '', window.location.pathname);
+      caches.open('pimote-share-target').then(async (cache) => {
+        const response = await cache.match('/_share/pending');
+        if (response) {
+          const images: string[] = await response.json();
+          await cache.delete('/_share/pending');
+          if (images.length > 0) {
+            pushSharedImages(images);
+          }
+        }
+      });
+    }
+
     // Register service worker for push notifications and PWA
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker
@@ -64,6 +80,11 @@
             if (session) {
               session.needsAttention = true;
             }
+          }
+        } else if (event.data?.type === 'share_images') {
+          const images: string[] = event.data.images;
+          if (images?.length > 0) {
+            pushSharedImages(images);
           }
         } else if (event.data?.type === 'notification_click') {
           const sid = event.data.sessionId;

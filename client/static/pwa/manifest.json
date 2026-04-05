@@ -15,6 +15,19 @@
     { "src": "/pwa/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
     { "src": "/pwa/badge-96.png", "sizes": "96x96", "type": "image/png", "purpose": "monochrome" }
   ],
+  "share_target": {
+    "action": "/_share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "images",
+          "accept": ["image/*"]
+        }
+      ]
+    }
+  },
   "screenshots": [
     {
       "src": "/pwa/icon-192.png",
