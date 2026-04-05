@@ -1,0 +1,24 @@
+diff --git a/node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session-runtime.js b/node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session-runtime.js
+index 9ab786e..6f89829 100644
+--- a/node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session-runtime.js
++++ b/node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session-runtime.js
+@@ -74,9 +74,6 @@ export class AgentSessionRuntime {
+         this.session.dispose();
+     }
+     apply(result) {
+-        if (process.cwd() !== result.services.cwd) {
+-            process.chdir(result.services.cwd);
+-        }
+         this._session = result.session;
+         this._services = result.services;
+         this._diagnostics = result.diagnostics;
+@@ -223,9 +220,6 @@ export class AgentSessionRuntime {
+  */
+ export async function createAgentSessionRuntime(createRuntime, options) {
+     const result = await createRuntime(options);
+-    if (process.cwd() !== result.services.cwd) {
+-        process.chdir(result.services.cwd);
+-    }
+     return new AgentSessionRuntime(result.session, result.services, createRuntime, result.diagnostics, result.modelFallbackMessage);
+ }
+ export { createAgentSessionFromServices, createAgentSessionServices, } from "./agent-session-services.js";
