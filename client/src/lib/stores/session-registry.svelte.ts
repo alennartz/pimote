@@ -26,7 +26,9 @@ import type {
   SessionRenamedEvent,
   SessionReplacedEvent,
   PanelUpdateEvent,
+  SessionRestoreEvent,
   Card,
+  RestoreMode,
 } from '@pimote/shared';
 import { connection } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
@@ -57,12 +59,15 @@ export interface PerSessionState {
   gitBranch: string | null;
   sessionName: string | null;
   extensionTitle: string | null;
+  restoreMode: RestoreMode | null;
+  isRestoring: boolean;
   panelCards: Card[];
   widgetCards: Record<string, Card>;
   contextUsage: { percent: number | null; contextWindow: number } | null;
   draftText: string;
   pendingSteeringMessages: string[];
   lastBotActivityTimestamp: string | null;
+  optimisticMessageKey: string | null;
 }
 
 export class SessionRegistry {
@@ -109,6 +114,8 @@ export class SessionRegistry {
       pendingTakeover: false,
       sessionName: null,
       extensionTitle: null,
+      restoreMode: null,
+      isRestoring: false,
       panelCards: [],
       widgetCards: {},
       gitBranch: null,
@@ -116,6 +123,7 @@ export class SessionRegistry {
       draftText: '',
       pendingSteeringMessages: [],
       lastBotActivityTimestamp: null,
+      optimisticMessageKey: null,
     };
   }
 
@@ -134,6 +142,23 @@ export class SessionRegistry {
 
   private persistViewedSession(): void {
     setViewedSessionId(this.viewedSessionId);
+  }
+
+  /** Add an optimistic user message so it renders immediately before the server round-trip */
+  addOptimisticUserMessage(sessionId: string, text: string, _images?: string[]): void {
+    const session = this.sessions[sessionId];
+    if (!session) return;
+
+    const content: PimoteMessageContent[] = [];
+    if (text) {
+      content.push({ type: 'text', text });
+    }
+
+    const message: PimoteAgentMessage = { role: 'user', content };
+    const key = 'msg-' + this._nextMessageKey++;
+    session.messages = [...session.messages, message];
+    session.messageKeys = [...session.messageKeys, key];
+    session.optimisticMessageKey = key;
   }
 
   /** Route an incoming event to the correct session's state */
@@ -178,6 +203,10 @@ export class SessionRegistry {
 
       case 'message_start': {
         const start = event as MessageStartEvent;
+        // Skip streaming placeholder when we already have an optimistic user message displayed
+        if (start.role === 'user' && session.optimisticMessageKey) {
+          break;
+        }
         session.streamingKey = 'msg-' + this._nextMessageKey++;
         session.streamingMessage = { role: start.role, content: [] };
         break;
@@ -210,12 +239,26 @@ export class SessionRegistry {
       case 'message_end': {
         const end = event as MessageEndEvent;
         const message: PimoteAgentMessage = end.message;
-        session.messages = [...session.messages, message];
-        if (session.streamingKey) {
-          session.messageKeys = [...session.messageKeys, session.streamingKey];
+
+        if (message.role === 'user' && session.optimisticMessageKey) {
+          // Replace the optimistic message with the real server message
+          const idx = session.messageKeys.indexOf(session.optimisticMessageKey);
+          if (idx !== -1) {
+            const newMessages = [...session.messages];
+            newMessages[idx] = message;
+            session.messages = newMessages;
+          }
+          session.optimisticMessageKey = null;
+          session.streamingMessage = null;
+          session.streamingKey = null;
+        } else {
+          session.messages = [...session.messages, message];
+          if (session.streamingKey) {
+            session.messageKeys = [...session.messageKeys, session.streamingKey];
+          }
+          session.streamingMessage = null;
+          session.streamingKey = null;
         }
-        session.streamingMessage = null;
-        session.streamingKey = null;
         session.messageCount++;
         // Capture firstMessage from first user message
         if (message.role === 'user' && session.firstMessage === undefined) {
@@ -297,6 +340,8 @@ export class SessionRegistry {
         const rebuilt = this.createSessionState(session.sessionId, session.folderPath, session.projectName);
         rebuilt.draftText = session.draftText;
         rebuilt.extensionTitle = session.extensionTitle;
+        rebuilt.restoreMode = session.restoreMode;
+        rebuilt.isRestoring = session.isRestoring;
         // Don't carry over panelCards — server will send panel_update if panels are active.
         // Carrying over stale cards causes ghost panels after agent teardown + reconnect.
         rebuilt.widgetCards = session.widgetCards;
@@ -313,6 +358,13 @@ export class SessionRegistry {
         rebuilt.messageKeys = this.generateMessageKeys(messages.length);
         this.rebuildToolExecutions(rebuilt);
         this.sessions[sessionId] = rebuilt;
+        break;
+      }
+
+      case 'session_restore': {
+        const restore = event as SessionRestoreEvent;
+        session.restoreMode = restore.status === 'started' ? restore.mode : null;
+        session.isRestoring = restore.status === 'started';
         break;
       }
 

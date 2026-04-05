@@ -216,6 +216,8 @@
           ...(stagedImages.length > 0 ? { images: stagedImages } : {}),
         });
         sent = true;
+        // Show the user message immediately instead of waiting for the server event
+        sessionRegistry.addOptimisticUserMessage(sessionRegistry.viewed!.sessionId, text);
       } catch (e) {
         console.error('Failed to send prompt:', e);
       }
