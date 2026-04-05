@@ -443,10 +443,8 @@ export class WsHandler {
           const viewedSlot = this.sessionManager.getSession(command.sessionId);
           if (viewedSlot) {
             viewedSlot.sessionState.needsAttention = false;
-            // Send current panel state so the client shows panels after switching sessions
-            if (viewedSlot.sessionState.panelState.size > 0) {
-              this.sendEvent({ type: 'panel_update', sessionId: command.sessionId, cards: getMergedPanelCards(viewedSlot.sessionState.panelState) });
-            }
+            // Always send current panel state so the client syncs after switching sessions
+            this.sendEvent({ type: 'panel_update', sessionId: command.sessionId, cards: getMergedPanelCards(viewedSlot.sessionState.panelState) });
           }
           this.sendResponse(id, true);
           break;
@@ -948,7 +946,8 @@ export class WsHandler {
       }
     }
 
-    if (replayResult !== null && slot.sessionState.panelState.size > 0) {
+    if (replayResult !== null) {
+      // Always send panel state after reconnect so the client clears stale cards
       this.sendEvent({ type: 'panel_update', sessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
     }
   }
@@ -1043,10 +1042,8 @@ export class WsHandler {
     };
     this.sendEvent(fullResyncEvent);
 
-    // Send panel snapshot if panels are active
-    if (slot.sessionState.panelState.size > 0) {
-      this.sendEvent({ type: 'panel_update', sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
-    }
+    // Always send panel snapshot so the client clears stale cards after reconnect
+    this.sendEvent({ type: 'panel_update', sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
   }
 
   /** Send an event to this client (public for broadcast use). */

@@ -205,7 +205,8 @@
     color: var(--status-connected, oklch(0.623 0.169 149.2));
   }
 
-  .tool-header :global(.tool-icon-error) {
+  .tool-result .tool-header :global(.tool-icon-error),
+  .tool-completed .tool-header :global(.tool-icon-error) {
     color: var(--destructive, oklch(0.577 0.245 27.325));
   }
 </style>

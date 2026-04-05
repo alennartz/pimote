@@ -297,7 +297,8 @@ export class SessionRegistry {
         const rebuilt = this.createSessionState(session.sessionId, session.folderPath, session.projectName);
         rebuilt.draftText = session.draftText;
         rebuilt.extensionTitle = session.extensionTitle;
-        rebuilt.panelCards = session.panelCards;
+        // Don't carry over panelCards — server will send panel_update if panels are active.
+        // Carrying over stale cards causes ghost panels after agent teardown + reconnect.
         rebuilt.widgetCards = session.widgetCards;
         rebuilt.model = state.model;
         rebuilt.thinkingLevel = state.thinkingLevel;
