@@ -17,6 +17,12 @@
           <button
             class="bg-primary text-primary-foreground flex items-center gap-1.5 py-1 pr-3 pl-3 text-xs font-medium transition-colors md:rounded-r-full md:pr-3"
             onclick={() => switchToSession(session.sessionId)}
+            onauxclick={(e) => {
+              if (e.button === 1) {
+                e.preventDefault();
+                closeSession(session.sessionId);
+              }
+            }}
             title={session.projectName}
           >
             <!-- Status dot -->
@@ -67,6 +73,12 @@
         <button
           class="group/chip bg-secondary text-secondary-foreground hover:bg-secondary/80 flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors"
           onclick={() => switchToSession(session.sessionId)}
+          onauxclick={(e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              closeSession(session.sessionId);
+            }
+          }}
           title={session.projectName}
         >
           <!-- Status dot -->
