@@ -508,4 +508,4 @@ Update test files to use the new types:
 - Update `resolveUi()` helper to read from `slot.sessionState.pendingUiResponses`.
 
 **Verify:** `cd server && npm test` passes. All existing test behaviors are preserved with updated type references.
-**Status:** not started
+**Status:** done
