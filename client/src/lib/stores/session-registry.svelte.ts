@@ -145,7 +145,7 @@ export class SessionRegistry {
   }
 
   /** Add an optimistic user message so it renders immediately before the server round-trip */
-  addOptimisticUserMessage(sessionId: string, text: string, _images?: string[]): void {
+  addOptimisticUserMessage(sessionId: string, text: string): void {
     const session = this.sessions[sessionId];
     if (!session) return;
 
