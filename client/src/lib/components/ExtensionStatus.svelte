@@ -4,6 +4,7 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { setEditorText } from '$lib/stores/input-bar.svelte.js';
+  import { widgetLinesToCard } from '$lib/widget-cards.js';
   import type { ExtensionUiRequestEvent } from '@pimote/shared';
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
   import Info from '@lucide/svelte/icons/info';
@@ -11,9 +12,6 @@
 
   // Status entries: key → text
   let statuses = new SvelteMap<string, string>();
-
-  // Widget entries: key → lines
-  let widgets = new SvelteMap<string, string[]>();
 
   // Notifications with auto-dismiss
   interface Notification {
@@ -52,10 +50,19 @@
       } else if (req.method === 'setWidget') {
         const key = req.key as string;
         const lines = req.lines as string[] | undefined;
-        if (lines && lines.length > 0) {
-          widgets.set(key, lines);
-        } else {
-          widgets.delete(key);
+        const targetSessionId = req.sessionId as string | undefined;
+        if (targetSessionId) {
+          const session = sessionRegistry.sessions[targetSessionId];
+          if (session) {
+            if (lines && lines.length > 0) {
+              session.widgetCards[key] = widgetLinesToCard(key, lines);
+            } else {
+              delete session.widgetCards[key];
+            }
+            if (targetSessionId === sessionRegistry.viewedSessionId) {
+              sessionRegistry.syncViewedPanelStore();
+            }
+          }
         }
       } else if (req.method === 'notify') {
         const text = (req.text as string) ?? (req.message as string) ?? '';
@@ -72,13 +79,21 @@
           // Fire reactive signal so InputBar updates if this is the viewed session
           setEditorText(targetSessionId, text);
         }
+      } else if (req.method === 'setTitle') {
+        const title = (req.title as string) ?? '';
+        const targetSessionId = req.sessionId as string | undefined;
+        if (targetSessionId) {
+          const session = sessionRegistry.sessions[targetSessionId];
+          if (session) {
+            session.extensionTitle = title || null;
+          }
+        }
       }
     });
     return unsubscribe;
   });
 
   const statusEntries = $derived([...statuses.entries()]);
-  const widgetEntries = $derived([...widgets.entries()]);
 </script>
 
 <!-- Status bar -->
@@ -86,19 +101,6 @@
   <div class="border-border bg-muted/50 text-muted-foreground flex items-center gap-3 border-t px-4 py-1.5 text-xs">
     {#each statusEntries as [key, text] (key)}
       <span class="truncate">{text}</span>
-    {/each}
-  </div>
-{/if}
-
-<!-- Widgets -->
-{#if widgetEntries.length > 0}
-  <div class="border-border bg-muted/30 flex flex-col gap-2 border-t px-4 py-2">
-    {#each widgetEntries as [key, lines] (key)}
-      <div class="text-muted-foreground font-mono text-xs">
-        {#each lines as line, i (i)}
-          <div>{line}</div>
-        {/each}
-      </div>
     {/each}
   </div>
 {/if}

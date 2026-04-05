@@ -91,6 +91,15 @@
   function closeSidebar() {
     sidebarOpen = false;
   }
+
+  let browserTitle = $derived.by(() => {
+    const extensionTitle = sessionRegistry.viewed?.extensionTitle ?? null;
+    return extensionTitle ? `Pimote — ${extensionTitle}` : 'Pimote';
+  });
+
+  $effect(() => {
+    document.title = browserTitle;
+  });
 </script>
 
 <div class="bg-background flex h-dvh overflow-hidden">
@@ -140,6 +149,17 @@
       </button>
       <img src="/pwa/icon-192.png" alt="" class="ml-3 size-5" />
       <span class="text-foreground ml-1.5 text-sm font-semibold">Pimote</span>
+      <div class="flex-1"></div>
+      {#if panelStore.hasCards}
+        <button
+          class="text-muted-foreground hover:text-foreground border-border bg-background flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5"
+          onclick={() => (panelOpen = true)}
+          title="Open panel"
+        >
+          <PanelRight class="size-4" />
+          <span class="text-xs font-medium">{panelStore.cards.length}</span>
+        </button>
+      {/if}
     </header>
 
     <!-- Page content -->
@@ -167,16 +187,7 @@
     </div>
   {/if}
 
-  <!-- Mobile panel indicator -->
-  {#if panelStore.hasCards && !panelOpen}
-    <button
-      class="bg-primary text-primary-foreground fixed right-4 bottom-20 z-20 flex items-center gap-1.5 rounded-full px-3 py-2 shadow-lg md:hidden"
-      onclick={() => (panelOpen = true)}
-    >
-      <PanelRight class="size-4" />
-      <span class="text-xs font-medium">{panelStore.cards.length}</span>
-    </button>
-  {/if}
+  <!-- Mobile panel opener now lives in the mobile header to avoid bottom-right control collisions. -->
 
   <!-- Extension UI dialogs (global overlay) -->
   <ExtensionDialog />

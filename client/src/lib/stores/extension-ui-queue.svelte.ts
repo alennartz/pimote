@@ -16,6 +16,7 @@ export interface DialogRequest {
   message?: string;
   options?: { label: string; value: string }[];
   placeholder?: string;
+  prefill?: string;
   content?: string;
   [key: string]: unknown;
 }

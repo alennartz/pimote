@@ -19,7 +19,7 @@
         <div class="flex items-center gap-1.5">
           <span class="truncate text-sm font-medium">{card.header.title}</span>
           {#if card.header.tag}
-            <span class="bg-muted text-muted-foreground shrink-0 rounded px-1 text-xs">{card.header.tag}</span>
+            <span class="bg-muted text-muted-foreground ml-auto shrink-0 rounded px-1 text-xs">{card.header.tag}</span>
           {/if}
         </div>
 
@@ -28,11 +28,11 @@
           <div class="mt-1.5 flex flex-col gap-0.5">
             {#each card.body as section, i (i)}
               {#if section.style === 'code'}
-                <span class="bg-muted rounded px-1 font-mono text-xs">{section.content}</span>
+                <span class="bg-muted rounded px-1 font-mono text-xs break-words whitespace-pre-wrap">{section.content}</span>
               {:else if section.style === 'secondary'}
-                <span class="text-muted-foreground text-xs">{section.content}</span>
+                <span class="text-muted-foreground text-xs break-words whitespace-pre-wrap">{section.content}</span>
               {:else}
-                <span class="text-foreground text-xs">{section.content}</span>
+                <span class="text-foreground text-xs break-words whitespace-pre-wrap">{section.content}</span>
               {/if}
             {/each}
           </div>

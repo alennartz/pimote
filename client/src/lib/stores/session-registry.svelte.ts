@@ -25,6 +25,7 @@ import type {
   SessionOpenedEvent,
   SessionReplacedEvent,
   PanelUpdateEvent,
+  Card,
 } from '@pimote/shared';
 import { connection } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
@@ -54,6 +55,9 @@ export interface PerSessionState {
   pendingTakeover: boolean;
   gitBranch: string | null;
   sessionName: string | null;
+  extensionTitle: string | null;
+  panelCards: Card[];
+  widgetCards: Record<string, Card>;
   contextUsage: { percent: number | null; contextWindow: number } | null;
   draftText: string;
   pendingSteeringMessages: string[];
@@ -103,6 +107,9 @@ export class SessionRegistry {
       conflictingRemoteSessions: [],
       pendingTakeover: false,
       sessionName: null,
+      extensionTitle: null,
+      panelCards: [],
+      widgetCards: {},
       gitBranch: null,
       contextUsage: null,
       draftText: '',
@@ -287,6 +294,9 @@ export class SessionRegistry {
         const messages: PimoteAgentMessage[] = resync.messages;
         const rebuilt = this.createSessionState(session.sessionId, session.folderPath, session.projectName);
         rebuilt.draftText = session.draftText;
+        rebuilt.extensionTitle = session.extensionTitle;
+        rebuilt.panelCards = session.panelCards;
+        rebuilt.widgetCards = session.widgetCards;
         rebuilt.model = state.model;
         rebuilt.thinkingLevel = state.thinkingLevel;
         rebuilt.isStreaming = state.isStreaming;
@@ -311,8 +321,9 @@ export class SessionRegistry {
       }
 
       case 'panel_update': {
+        session.panelCards = (event as PanelUpdateEvent).cards;
         if (sessionId === this.viewedSessionId) {
-          panelStore.handlePanelUpdate((event as PanelUpdateEvent).cards);
+          this.syncViewedPanelStore();
         }
         break;
       }
@@ -322,6 +333,15 @@ export class SessionRegistry {
     if ('timestamp' in event && typeof (event as Record<string, unknown>).timestamp === 'string') {
       session.lastBotActivityTimestamp = (event as Record<string, unknown>).timestamp as string;
     }
+  }
+
+  private combinedPanelCards(session: PerSessionState | null): Card[] {
+    if (!session) return [];
+    return [...session.panelCards, ...Object.values(session.widgetCards)];
+  }
+
+  syncViewedPanelStore(): void {
+    panelStore.handlePanelUpdate(this.combinedPanelCards(this.viewed));
   }
 
   /** Add a session to the registry. If it already exists (e.g. takeover placeholder), resets it. */
@@ -340,6 +360,7 @@ export class SessionRegistry {
       // Switch to another active session if one exists, otherwise go to landing
       const remaining = Object.keys(this.sessions);
       this.viewedSessionId = remaining.length > 0 ? remaining[0] : null;
+      this.syncViewedPanelStore();
     }
     this.persistSessions();
     this.persistViewedSession();
@@ -364,6 +385,7 @@ export class SessionRegistry {
     // If the old session was being viewed, view the new one
     if (this.viewedSessionId === oldSessionId) {
       this.viewedSessionId = newSessionId;
+      this.syncViewedPanelStore();
     }
     this.persistSessions();
     this.persistViewedSession();
@@ -372,11 +394,11 @@ export class SessionRegistry {
   /** Switch viewed session, clears needsAttention for target */
   switchTo(sessionId: string): void {
     this.viewedSessionId = sessionId;
-    panelStore.reset();
     const session = this.sessions[sessionId];
     if (session) {
       session.needsAttention = false;
     }
+    this.syncViewedPanelStore();
     this.persistViewedSession();
   }
 

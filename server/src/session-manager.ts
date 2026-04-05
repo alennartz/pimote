@@ -121,6 +121,11 @@ export class PimoteSessionManager {
   private readonly modelRegistry: ModelRegistry;
   private readonly sessions = new Map<string, ManagedSession>();
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
+  /** Per-folder lazy-init promises for extension provider registration.
+   *  First openSession for a folder triggers extension loading + provider
+   *  registration on the shared ModelRegistry. Concurrent callers for the
+   *  same folder await the same promise instead of racing. */
+  private readonly providerInitByFolder = new Map<string, Promise<void>>();
   onStatusChange?: (sessionId: string, folderPath: string) => void;
   onSessionClosed?: (sessionId: string, folderPath: string) => void;
 
@@ -132,25 +137,46 @@ export class PimoteSessionManager {
     this.modelRegistry = new ModelRegistry(this.authStorage);
   }
 
+  /** Ensure extension-provided model providers are registered for a folder.
+   *  First caller triggers the work; concurrent callers await the same promise. */
+  private ensureProviders(folderPath: string): Promise<void> {
+    const existing = this.providerInitByFolder.get(folderPath);
+    if (existing) return existing;
+
+    const promise = (async () => {
+      // Use a throwaway loader (no eventBus needed) — we only need extensions metadata.
+      const loader = new DefaultResourceLoader({ cwd: folderPath });
+      await loader.reload();
+      const extensionsResult = loader.getExtensions();
+      for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
+        try {
+          this.modelRegistry.registerProvider(name, config);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[pimote] Extension "${extensionPath}" provider registration error: ${message}`);
+        }
+      }
+    })();
+
+    this.providerInitByFolder.set(folderPath, promise);
+
+    // On failure, remove the cached promise so the next attempt retries.
+    promise.catch(() => {
+      this.providerInitByFolder.delete(folderPath);
+    });
+
+    return promise;
+  }
+
   async openSession(folderPath: string, sessionFilePath?: string): Promise<string> {
+    // Ensure extension-provided models are registered before session creation.
+    // Shared once per folder — concurrent openSession calls for the same folder
+    // await the same promise instead of racing on ModelRegistry mutations.
+    await this.ensureProviders(folderPath);
+
     const eventBus = createEventBus();
     const loader = new DefaultResourceLoader({ cwd: folderPath, eventBus });
     await loader.reload();
-
-    // Flush extension provider registrations so extension-provided models are
-    // available for model resolution before AgentSession is created.
-    // Without this, extension models (e.g. azure-foundry) aren't in the registry
-    // when findInitialModel() runs inside createAgentSession, causing the first
-    // session after restart to get model: null.
-    const extensionsResult = loader.getExtensions();
-    for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
-      try {
-        this.modelRegistry.registerProvider(name, config);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[pimote] Extension "${extensionPath}" provider registration error: ${message}`);
-      }
-    }
 
     const { session } = await createAgentSession({
       cwd: folderPath,

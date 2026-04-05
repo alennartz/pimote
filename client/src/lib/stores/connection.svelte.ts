@@ -88,14 +88,11 @@ class ConnectionStore {
               if (response.error === 'session_owned') {
                 this.onSessionOwned?.(sessionId);
               } else {
-                const closedEvent = { type: 'session_closed', sessionId } as PimoteEvent;
-                for (const listener of this.listeners) {
-                  try {
-                    listener(closedEvent);
-                  } catch (e) {
-                    console.error('[ConnectionStore] listener error:', e);
-                  }
-                }
+                // Don't fabricate session_closed — a failed restore is not a
+                // server-initiated close.  The session stays in the registry
+                // with its last-known state and will be retried on the next
+                // reconnect cycle.
+                console.warn(`[ConnectionStore] Failed to restore session ${sessionId}: ${response.error ?? 'unknown error'}`);
               }
             }
           })

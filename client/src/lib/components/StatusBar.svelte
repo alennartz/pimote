@@ -51,6 +51,7 @@
   let sessionDisplayName = $derived.by(() => {
     const viewed = sessionRegistry.viewed;
     if (!viewed) return null;
+    if (viewed.extensionTitle) return viewed.extensionTitle;
     if (viewed.sessionName) return viewed.sessionName;
     if (viewed.firstMessage) {
       return viewed.firstMessage.length > 60 ? viewed.firstMessage.slice(0, 60) + '…' : viewed.firstMessage;
@@ -70,16 +71,18 @@
     <!-- Thinking level picker -->
     <ThinkingPicker />
 
-    <!-- Session name (desktop: centered in spacer area) -->
+    <!-- Session name (desktop: flexes into actual available space) -->
     {#if sessionDisplayName}
       <Separator orientation="vertical" class="mx-0.5 hidden h-4 md:block" />
-      <span class="text-muted-foreground hidden max-w-[16rem] truncate text-xs md:inline" title={sessionDisplayName}>
-        {sessionDisplayName}
-      </span>
+      <div class="hidden min-w-0 flex-1 md:flex">
+        <span class="text-muted-foreground min-w-0 truncate text-xs" title={sessionDisplayName}>
+          {sessionDisplayName}
+        </span>
+      </div>
+    {:else}
+      <!-- Spacer -->
+      <div class="flex-1"></div>
     {/if}
-
-    <!-- Spacer -->
-    <div class="flex-1"></div>
 
     <!-- Context usage (desktop only — shown in row 2 on mobile) -->
     {#if contextDisplay}
