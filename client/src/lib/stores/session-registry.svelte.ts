@@ -73,6 +73,8 @@ export interface PerSessionState {
 export class SessionRegistry {
   sessions: Record<string, PerSessionState> = $state({});
   viewedSessionId: string | null = $state(null);
+  /** Temporary ID of an optimistic "new session" placeholder awaiting server confirmation. */
+  pendingNewSession: string | null = $state(null);
   private _nextMessageKey: number = 0;
 
   /** Generate stable keys for a batch of messages (used on initial load and resync) */
@@ -137,10 +139,16 @@ export class SessionRegistry {
   }
 
   private persistSessions(): void {
-    setActiveSessions(Object.values(this.sessions).map((s) => ({ sessionId: s.sessionId, folderPath: s.folderPath })));
+    setActiveSessions(
+      Object.values(this.sessions)
+        .filter((s) => !s.sessionId.startsWith('pending-'))
+        .map((s) => ({ sessionId: s.sessionId, folderPath: s.folderPath })),
+    );
   }
 
   private persistViewedSession(): void {
+    // Don't persist a pending optimistic session as the viewed session
+    if (this.viewedSessionId?.startsWith('pending-')) return;
     setViewedSessionId(this.viewedSessionId);
   }
 
@@ -640,9 +648,18 @@ connection.onEvent((event) => {
     case 'session_opened': {
       const folder = (event as SessionOpenedEvent).folder;
       const projectName = folder?.name ?? 'Unknown';
-      sessionRegistry.addSession(event.sessionId, folder?.path ?? '', projectName);
+
+      // Reconcile optimistic session: replace the temp placeholder with the real ID
+      const pendingId = sessionRegistry.pendingNewSession;
+      if (pendingId && sessionRegistry.sessions[pendingId]) {
+        sessionRegistry.pendingNewSession = null;
+        sessionRegistry.replaceSession(pendingId, event.sessionId, folder?.path ?? '', projectName);
+      } else {
+        sessionRegistry.addSession(event.sessionId, folder?.path ?? '', projectName);
+        sessionRegistry.switchTo(event.sessionId);
+      }
+
       connection.addSubscribedSession(event.sessionId, folder?.path ?? '');
-      sessionRegistry.switchTo(event.sessionId);
       fetchFullSessionData(event.sessionId);
       break;
     }
@@ -689,10 +706,11 @@ connection.onPendingAdopt = (sessionId, folderPath) => {
 // the correct viewed session on the server.
 connection.onReconnected = () => {
   for (const session of sessionRegistry.activeSessions) {
+    if (session.sessionId.startsWith('pending-')) continue;
     void refreshSessionMetaAndCommands(session.sessionId);
   }
   const viewedId = sessionRegistry.viewedSessionId;
-  if (viewedId) {
+  if (viewedId && !viewedId.startsWith('pending-')) {
     connection.send({ type: 'view_session', sessionId: viewedId }).catch(() => {});
   }
 };
@@ -740,5 +758,34 @@ export function closeSession(sessionId: string): void {
 export function newSessionInProject(sessionId: string): void {
   const session = sessionRegistry.sessions[sessionId];
   if (!session) return;
-  connection.send({ type: 'open_session', folderPath: session.folderPath }).catch(() => {});
+  // Guard: ignore if there's already a pending optimistic session
+  if (sessionRegistry.pendingNewSession) return;
+
+  // Optimistic UI: create a placeholder session and switch to it immediately
+  // so the user sees an empty chat window without waiting for the server.
+  const tempId = `pending-${crypto.randomUUID()}`;
+  sessionRegistry.addSession(tempId, session.folderPath, session.projectName);
+  sessionRegistry.switchTo(tempId);
+  sessionRegistry.pendingNewSession = tempId;
+
+  connection
+    .send({ type: 'open_session', folderPath: session.folderPath })
+    .then((response) => {
+      if (!response.success) {
+        // Server rejected — clean up the placeholder
+        if (sessionRegistry.pendingNewSession === tempId) {
+          sessionRegistry.pendingNewSession = null;
+        }
+        sessionRegistry.removeSession(tempId);
+      }
+      // On success the session_opened event (which arrives before this response)
+      // has already reconciled the placeholder — nothing more to do here.
+    })
+    .catch(() => {
+      // WebSocket error — clean up the placeholder
+      if (sessionRegistry.pendingNewSession === tempId) {
+        sessionRegistry.pendingNewSession = null;
+      }
+      sessionRegistry.removeSession(tempId);
+    });
 }

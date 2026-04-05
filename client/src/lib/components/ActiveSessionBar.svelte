@@ -238,8 +238,9 @@
 
       {#if sessionRegistry.viewedSessionId}
         <button
-          class="border-muted-foreground/30 text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground flex shrink-0 items-center gap-1 rounded-full border border-dashed px-2.5 py-1 text-xs transition-colors"
+          class="border-muted-foreground/30 text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground flex shrink-0 items-center gap-1 rounded-full border border-dashed px-2.5 py-1 text-xs transition-colors disabled:pointer-events-none disabled:opacity-40"
           title="New session in {sessionRegistry.viewed?.projectName}"
+          disabled={!!sessionRegistry.pendingNewSession}
           onclick={() => newSessionInProject(sessionRegistry.viewedSessionId!)}
         >
           <Plus class="size-3" />

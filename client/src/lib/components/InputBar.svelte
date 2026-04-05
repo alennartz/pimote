@@ -20,7 +20,8 @@
   let dragOver = $state(false);
 
   const noSession = $derived(sessionRegistry.viewedSessionId === null);
-  const canSend = $derived(!noSession && connection.ready);
+  const isPending = $derived(sessionRegistry.viewedSessionId?.startsWith('pending-') ?? false);
+  const canSend = $derived(!noSession && !isPending && connection.ready);
   const hasContent = $derived(inputText.trim().length > 0 || stagedImages.length > 0);
 
   // Autocomplete state
@@ -421,9 +422,9 @@
         onkeydown={handleKeydown}
         onclick={updateAutocomplete}
         onpaste={handlePaste}
-        disabled={noSession}
+        disabled={noSession || isPending}
         rows={1}
-        placeholder={noSession ? 'Open a session to start…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
+        placeholder={noSession ? 'Open a session to start…' : isPending ? 'Starting session…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
         class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
           {dragOver ? 'ring-ring ring-2' : ''}"
       ></textarea>
