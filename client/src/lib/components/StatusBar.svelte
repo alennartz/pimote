@@ -5,6 +5,7 @@
   import { Separator } from '$lib/components/ui/separator/index.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
+  import { statusRowSpacerClass } from './status-bar-layout.js';
   import { GitBranch } from '@lucide/svelte';
 
   let connectionLabel = $derived(
@@ -72,6 +73,8 @@
     <ThinkingPicker />
 
     <!-- Session name (desktop: flexes into actual available space) -->
+    <div class={statusRowSpacerClass(!!sessionDisplayName)}></div>
+
     {#if sessionDisplayName}
       <Separator orientation="vertical" class="mx-0.5 hidden h-4 md:block" />
       <div class="hidden min-w-0 flex-1 md:flex">
@@ -79,9 +82,6 @@
           {sessionDisplayName}
         </span>
       </div>
-    {:else}
-      <!-- Spacer -->
-      <div class="flex-1"></div>
     {/if}
 
     <!-- Context usage (desktop only — shown in row 2 on mobile) -->

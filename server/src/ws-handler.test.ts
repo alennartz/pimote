@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { PimoteSessionManager, ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
 import type { FolderIndex } from './folder-index.js';
@@ -112,7 +112,10 @@ function createMockFolderIndex(): FolderIndex {
   return {
     scan: async () => [],
     listSessions: async () => [],
+    listSessionRecords: async () => [],
     resolveSessionPath: async () => undefined,
+    renameSession: async () => false,
+    deleteSession: async () => false,
   } as unknown as FolderIndex;
 }
 
@@ -137,6 +140,22 @@ function createMockPushService(): PushNotificationService {
   } as unknown as PushNotificationService;
 }
 
+function createMockSessionMetadataStore(initialArchived: string[] = []) {
+  const archived = new Set(initialArchived);
+  return {
+    get: (path: string) => (archived.has(path) ? { archived: true, archivedAt: '2026-04-05T00:00:00.000Z' } : undefined),
+    isArchived: (path: string) => archived.has(path),
+    getArchivedLookup: (paths: string[]) => new Map(paths.map((path) => [path, archived.has(path)])),
+    setArchived: async (path: string, next: boolean) => {
+      if (next) archived.add(path);
+      else archived.delete(path);
+    },
+    delete: async (path: string) => {
+      archived.delete(path);
+    },
+  };
+}
+
 interface TestContext {
   handler: WsHandler;
   ws: any;
@@ -144,6 +163,7 @@ interface TestContext {
   sessions: Map<string, ManagedSlot>;
   sessionManager: PimoteSessionManager;
   clientRegistry: ClientRegistry;
+  sessionMetadataStore: ReturnType<typeof createMockSessionMetadataStore>;
 }
 
 function createTestHandler(
@@ -152,6 +172,7 @@ function createTestHandler(
     sessions?: Map<string, ManagedSlot>;
     clientRegistry?: ClientRegistry;
     folderIndex?: FolderIndex;
+    sessionMetadataStore?: ReturnType<typeof createMockSessionMetadataStore>;
   },
 ): TestContext {
   const sessions = opts?.sessions ?? new Map();
@@ -160,12 +181,13 @@ function createTestHandler(
   const { ws, sent } = createMockWs();
   const folderIndex = opts?.folderIndex ?? createMockFolderIndex();
   const pushService = createMockPushService();
+  const sessionMetadataStore = opts?.sessionMetadataStore ?? createMockSessionMetadataStore();
 
-  const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, clientId, clientRegistry);
+  const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, sessionMetadataStore as any, clientId, clientRegistry);
 
   clientRegistry.set(clientId, handler);
 
-  return { handler, ws, sent, sessions, sessionManager, clientRegistry };
+  return { handler, ws, sent, sessions, sessionManager, clientRegistry, sessionMetadataStore };
 }
 
 // --- Helpers ---
@@ -553,7 +575,7 @@ describe('WsHandler', () => {
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
       const pushService = createMockPushService();
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, 'client-1', clientRegistry);
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       await handler.handleMessage(
@@ -602,7 +624,7 @@ describe('WsHandler', () => {
       const folderIndex = createMockFolderIndex();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, 'my-client', clientRegistry);
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       await handler.handleMessage(
@@ -653,7 +675,7 @@ describe('WsHandler', () => {
       const folderIndex = createMockFolderIndex();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, 'my-client', clientRegistry);
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       await handler.handleMessage(
@@ -831,22 +853,28 @@ describe('WsHandler', () => {
 
       const folderIndex = {
         scan: async () => [],
-        listSessions: async (_folderPath: string) => [
+        listSessionRecords: async (_folderPath: string) => [
           {
+            path: '/tmp/file-session-a.jsonl',
             id: 'file-session-a',
+            cwd: '/home/user/project',
             name: undefined,
-            created: '2025-01-01T00:00:00.000Z',
-            modified: '2025-01-02T00:00:00.000Z',
+            created: new Date('2025-01-01T00:00:00.000Z'),
+            modified: new Date('2025-01-02T00:00:00.000Z'),
             messageCount: 5,
             firstMessage: 'Hello',
+            allMessagesText: 'Hello',
           },
           {
+            path: '/tmp/file-session-b.jsonl',
             id: 'file-session-b',
+            cwd: '/home/user/project',
             name: undefined,
-            created: '2025-01-01T00:00:00.000Z',
-            modified: '2025-01-02T00:00:00.000Z',
+            created: new Date('2025-01-01T00:00:00.000Z'),
+            modified: new Date('2025-01-02T00:00:00.000Z'),
             messageCount: 3,
-            firstMessage: undefined,
+            firstMessage: '',
+            allMessagesText: '',
           },
         ],
       } as unknown as FolderIndex;
@@ -890,13 +918,17 @@ describe('WsHandler', () => {
 
       const folderIndex = {
         scan: async () => [],
-        listSessions: async () => [
+        listSessionRecords: async () => [
           {
+            path: '/tmp/session-a.jsonl',
             id: 'session-a',
+            cwd: '/home/user/project',
             name: undefined,
-            created: '2025-01-01T00:00:00.000Z',
-            modified: '2025-01-02T00:00:00.000Z',
+            created: new Date('2025-01-01T00:00:00.000Z'),
+            modified: new Date('2025-01-02T00:00:00.000Z'),
             messageCount: 5,
+            firstMessage: '',
+            allMessagesText: '',
           },
         ],
       } as unknown as FolderIndex;
@@ -934,13 +966,17 @@ describe('WsHandler', () => {
 
       const folderIndex = {
         scan: async () => [],
-        listSessions: async () => [
+        listSessionRecords: async () => [
           {
+            path: '/tmp/session-b.jsonl',
             id: 'session-b',
+            cwd: '/home/user/project',
             name: undefined,
-            created: '2025-01-01T00:00:00.000Z',
-            modified: '2025-01-02T00:00:00.000Z',
+            created: new Date('2025-01-01T00:00:00.000Z'),
+            modified: new Date('2025-01-02T00:00:00.000Z'),
             messageCount: 3,
+            firstMessage: '',
+            allMessagesText: '',
           },
         ],
       } as unknown as FolderIndex;
@@ -972,13 +1008,17 @@ describe('WsHandler', () => {
 
       const folderIndex = {
         scan: async () => [],
-        listSessions: async () => [
+        listSessionRecords: async () => [
           {
+            path: '/tmp/c.jsonl',
             id: 'c',
+            cwd: '/home/user/project',
             name: undefined,
-            created: '2025-01-01T00:00:00.000Z',
-            modified: '2025-01-02T00:00:00.000Z',
+            created: new Date('2025-01-01T00:00:00.000Z'),
+            modified: new Date('2025-01-02T00:00:00.000Z'),
             messageCount: 1,
+            firstMessage: '',
+            allMessagesText: '',
           },
         ],
       } as unknown as FolderIndex;
@@ -1003,6 +1043,149 @@ describe('WsHandler', () => {
       expect(listedSessions).toHaveLength(1);
       expect(listedSessions[0].isOwnedByMe).toBe(false);
       expect(listedSessions[0].liveStatus).toBeNull();
+    });
+  });
+
+  describe('archive_session and archived listings', () => {
+    it('hides archived sessions from list_sessions by default', async () => {
+      const folderIndex = {
+        scan: async () => [],
+        listSessionRecords: async () => [
+          {
+            path: '/tmp/visible.jsonl',
+            id: 'visible',
+            cwd: '/home/user/project',
+            name: undefined,
+            created: new Date('2025-01-01T00:00:00.000Z'),
+            modified: new Date('2025-01-02T00:00:00.000Z'),
+            messageCount: 1,
+            firstMessage: '',
+            allMessagesText: '',
+          },
+          {
+            path: '/tmp/archived.jsonl',
+            id: 'archived',
+            cwd: '/home/user/project',
+            name: undefined,
+            created: new Date('2025-01-01T00:00:00.000Z'),
+            modified: new Date('2025-01-02T00:00:00.000Z'),
+            messageCount: 2,
+            firstMessage: '',
+            allMessagesText: '',
+          },
+        ],
+      } as unknown as FolderIndex;
+
+      const { handler, sent } = createTestHandler('client-1', {
+        folderIndex,
+        sessionMetadataStore: createMockSessionMetadataStore(['/tmp/archived.jsonl']),
+      });
+
+      await handler.handleMessage(JSON.stringify({ type: 'list_sessions', folderPath: '/home/user/project', id: 'req-archived-default' }));
+
+      expect((findResponse(sent, 'req-archived-default')!.data as any).sessions).toEqual([expect.objectContaining({ id: 'visible', archived: false })]);
+    });
+
+    it('includes archived sessions when includeArchived=true', async () => {
+      const folderIndex = {
+        scan: async () => [],
+        listSessionRecords: async () => [
+          {
+            path: '/tmp/archived.jsonl',
+            id: 'archived',
+            cwd: '/home/user/project',
+            name: undefined,
+            created: new Date('2025-01-01T00:00:00.000Z'),
+            modified: new Date('2025-01-02T00:00:00.000Z'),
+            messageCount: 2,
+            firstMessage: '',
+            allMessagesText: '',
+          },
+        ],
+      } as unknown as FolderIndex;
+
+      const { handler, sent } = createTestHandler('client-1', {
+        folderIndex,
+        sessionMetadataStore: createMockSessionMetadataStore(['/tmp/archived.jsonl']),
+      });
+
+      await handler.handleMessage(JSON.stringify({ type: 'list_sessions', folderPath: '/home/user/project', includeArchived: true, id: 'req-archived-all' }));
+
+      expect((findResponse(sent, 'req-archived-all')!.data as any).sessions).toEqual([expect.objectContaining({ id: 'archived', archived: true })]);
+    });
+
+    it('archives a session and broadcasts session_archived', async () => {
+      const folderIndex = {
+        ...createMockFolderIndex(),
+        resolveSessionPath: async () => '/tmp/archive-me.jsonl',
+      } as unknown as FolderIndex;
+      const sessionMetadataStore = createMockSessionMetadataStore();
+      const { handler, sent } = createTestHandler('client-1', { folderIndex, sessionMetadataStore });
+
+      await handler.handleMessage(JSON.stringify({ type: 'archive_session', folderPath: '/home/user/project', sessionId: 'archive-me', archived: true, id: 'req-archive' }));
+
+      expect(sessionMetadataStore.isArchived('/tmp/archive-me.jsonl')).toBe(true);
+      expect(findEvents(sent, 'session_archived')).toEqual([
+        {
+          type: 'session_archived',
+          sessionId: 'archive-me',
+          folderPath: '/home/user/project',
+          archived: true,
+        },
+      ]);
+    });
+
+    it('unarchives a persisted session when it is reopened', async () => {
+      const reopenedSessionId = 'archived-session';
+      const sessionPath = '/tmp/archived-session.jsonl';
+      const sessions = new Map<string, ManagedSlot>();
+      const sessionManager = createMockSessionManager(sessions);
+      (sessionManager as any).openSession = async (_folderPath: string, sessionFilePath?: string) => {
+        const reopened = createMockSlot({
+          id: reopenedSessionId,
+          session: {
+            subscribe: () => () => {},
+            dispose: () => {},
+            messages: [],
+            model: null,
+            thinkingLevel: 'off',
+            isStreaming: false,
+            isCompacting: false,
+            sessionFile: sessionFilePath,
+            sessionId: reopenedSessionId,
+            sessionName: undefined,
+            autoCompactionEnabled: false,
+            bindExtensions: async () => {},
+            modelRegistry: { getAvailable: () => [] },
+            clearQueue: () => ({ steering: [], followUp: [] }),
+          } as any,
+        });
+        sessions.set(reopenedSessionId, reopened);
+        return reopenedSessionId;
+      };
+
+      const folderIndex = {
+        ...createMockFolderIndex(),
+        resolveSessionPath: async () => sessionPath,
+      } as unknown as FolderIndex;
+      const clientRegistry: ClientRegistry = new Map();
+      const { ws, sent } = createMockWs();
+      const pushService = createMockPushService();
+      const sessionMetadataStore = createMockSessionMetadataStore([sessionPath]);
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, sessionMetadataStore as any, 'client-1', clientRegistry);
+      clientRegistry.set('client-1', handler);
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/project', sessionId: reopenedSessionId, id: 'req-open-archived' }));
+
+      expect(sessionMetadataStore.isArchived(sessionPath)).toBe(false);
+      expect(findEvents(sent, 'session_archived')).toEqual([
+        {
+          type: 'session_archived',
+          sessionId: reopenedSessionId,
+          folderPath: '/home/user/project',
+          archived: false,
+        },
+      ]);
     });
   });
 
@@ -1321,7 +1504,7 @@ describe('WsHandler', () => {
       const folderIndex = createMockFolderIndex();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, 'my-client', clientRegistry);
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       await handler.handleMessage(
@@ -1391,7 +1574,7 @@ describe('WsHandler', () => {
       const folderIndex = createMockFolderIndex();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, 'my-client', clientRegistry);
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       await handler.handleMessage(
@@ -1413,6 +1596,84 @@ describe('WsHandler', () => {
       const resync = findEvents(sent, 'full_resync');
       expect(resync).toHaveLength(1);
       expect((resync[0] as any).sessionId).toBe('same-session');
+    });
+  });
+
+  describe('rename_session', () => {
+    it('renames an active session via the live AgentSession', async () => {
+      const setSessionName = vi.fn();
+      const session = createMockSlot({
+        id: 'session-1',
+        session: {
+          subscribe: () => () => {},
+          setSessionName,
+          messages: [],
+          model: null,
+          thinkingLevel: 'default',
+          isStreaming: false,
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 'session-1',
+          sessionName: undefined,
+          autoCompactionEnabled: false,
+          bindExtensions: async () => {},
+          modelRegistry: { getAvailable: () => [] },
+          clearQueue: () => ({ steering: [], followUp: [] }),
+        },
+      });
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'rename_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-1',
+          name: '  Renamed Session  ',
+          id: 'req-rename-1',
+        }),
+      );
+
+      expect(setSessionName).toHaveBeenCalledWith('Renamed Session');
+      expect(findEvents(sent, 'session_renamed')).toEqual([
+        {
+          type: 'session_renamed',
+          sessionId: 'session-1',
+          folderPath: '/home/user/project',
+          name: 'Renamed Session',
+        },
+      ]);
+      expect(findResponse(sent, 'req-rename-1')).toMatchObject({ success: true, data: { name: 'Renamed Session' } });
+    });
+
+    it('renames an inactive persisted session via FolderIndex', async () => {
+      const renameSession = vi.fn().mockResolvedValue(true);
+      const folderIndex = {
+        ...createMockFolderIndex(),
+        renameSession,
+      } as unknown as FolderIndex;
+      const { handler, sent } = createTestHandler('client-1', { folderIndex });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'rename_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-2',
+          name: 'Renamed Persisted Session',
+          id: 'req-rename-2',
+        }),
+      );
+
+      expect(renameSession).toHaveBeenCalledWith('/home/user/project', 'session-2', 'Renamed Persisted Session');
+      expect(findEvents(sent, 'session_renamed')).toEqual([
+        {
+          type: 'session_renamed',
+          sessionId: 'session-2',
+          folderPath: '/home/user/project',
+          name: 'Renamed Persisted Session',
+        },
+      ]);
+      expect(findResponse(sent, 'req-rename-2')).toMatchObject({ success: true, data: { name: 'Renamed Persisted Session' } });
     });
   });
 

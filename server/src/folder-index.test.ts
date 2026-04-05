@@ -44,17 +44,6 @@ describe('FolderIndex.scan()', () => {
     expect(folders[0].name).toBe('npm-project');
   });
 
-  it('detects directories with .pi/sessions marker', async () => {
-    const projectDir = join(tempDir, 'pi-project');
-    await mkdir(join(projectDir, '.pi', 'sessions'), { recursive: true });
-
-    const index = new FolderIndex([tempDir]);
-    const folders = await index.scan();
-
-    expect(folders).toHaveLength(1);
-    expect(folders[0].name).toBe('pi-project');
-  });
-
   it('excludes directories without project markers', async () => {
     // Project dir with marker
     const projectDir = join(tempDir, 'real-project');
@@ -198,5 +187,42 @@ describe('FolderIndex.listSessions()', () => {
     expect(sessions[0].firstMessage).toBeUndefined();
 
     listSpy.mockRestore();
+  });
+});
+
+describe('FolderIndex.renameSession()', () => {
+  it('appends session info when the session file exists', async () => {
+    const { SessionManager } = await import('@mariozechner/pi-coding-agent');
+
+    const openSpy = vi.spyOn(SessionManager, 'open').mockReturnValue({
+      appendSessionInfo: vi.fn(),
+    } as any);
+
+    const index = new FolderIndex([]);
+    const resolveSpy = vi.spyOn(index, 'resolveSessionPath').mockResolvedValue('/tmp/session-1.jsonl');
+
+    const renamed = await index.renameSession('/home/user/project', 'session-1', 'Renamed Session');
+
+    expect(renamed).toBe(true);
+    expect(resolveSpy).toHaveBeenCalledWith('/home/user/project', 'session-1');
+    expect(openSpy).toHaveBeenCalledWith('/tmp/session-1.jsonl');
+    expect(openSpy.mock.results[0]?.value.appendSessionInfo).toHaveBeenCalledWith('Renamed Session');
+
+    openSpy.mockRestore();
+  });
+
+  it('returns false when the session file cannot be found', async () => {
+    const { SessionManager } = await import('@mariozechner/pi-coding-agent');
+
+    const openSpy = vi.spyOn(SessionManager, 'open');
+    const index = new FolderIndex([]);
+    vi.spyOn(index, 'resolveSessionPath').mockResolvedValue(undefined);
+
+    const renamed = await index.renameSession('/home/user/project', 'missing', 'Renamed Session');
+
+    expect(renamed).toBe(false);
+    expect(openSpy).not.toHaveBeenCalled();
+
+    openSpy.mockRestore();
   });
 });

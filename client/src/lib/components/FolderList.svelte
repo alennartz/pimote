@@ -28,6 +28,10 @@
         indexStore.applySessionStateChange(event, connection.clientId);
       } else if (event.type === 'session_deleted') {
         indexStore.applySessionDeleted(event);
+      } else if (event.type === 'session_renamed') {
+        indexStore.applySessionRenamed(event);
+      } else if (event.type === 'session_archived') {
+        indexStore.applySessionArchived(event);
       }
     });
 
@@ -85,6 +89,10 @@
 </script>
 
 <div class="flex flex-col gap-1 p-2">
+  <label class="text-muted-foreground hover:text-sidebar-foreground mb-1 flex items-center gap-2 px-2 py-1 text-xs">
+    <input type="checkbox" checked={indexStore.showArchived} onchange={(e) => indexStore.setShowArchived((e.currentTarget as HTMLInputElement).checked)} />
+    <span>Show archived</span>
+  </label>
   {#if indexStore.loading}
     <div class="text-muted-foreground flex items-center justify-center py-8">
       <Loader2 class="size-5 animate-spin" />

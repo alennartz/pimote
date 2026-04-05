@@ -1,11 +1,11 @@
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { loadConfig, ensureVapidKeys } from './config.js';
 import { createServer } from './server.js';
 import { PimoteSessionManager } from './session-manager.js';
 import { FolderIndex } from './folder-index.js';
 import { PushNotificationService } from './push-notification.js';
-import { FilePushSubscriptionStore, WebPushSender } from './push-infrastructure.js';
+import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore } from './push-infrastructure.js';
+import { LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_SESSION_METADATA_PATH } from './paths.js';
+import { FileSessionMetadataStore } from './session-metadata.js';
 
 async function main() {
   let config = await loadConfig();
@@ -17,14 +17,18 @@ async function main() {
   const folderIndex = new FolderIndex(config.roots);
 
   // Initialize push notification service
-  const pushStore = new FilePushSubscriptionStore(join(homedir(), '.config', 'pimote', 'push-subscriptions.json'));
+  await migratePushSubscriptionStore(LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_PUSH_SUBSCRIPTIONS_PATH);
+  const pushStore = new FilePushSubscriptionStore(PIMOTE_PUSH_SUBSCRIPTIONS_PATH);
   const pushSender = new WebPushSender(config.vapidPublicKey!, config.vapidPrivateKey!, config.vapidEmail || 'pimote@localhost');
   const pushNotificationService = new PushNotificationService(pushSender, pushStore);
   await pushNotificationService.initialize();
 
+  const sessionMetadataStore = new FileSessionMetadataStore(PIMOTE_SESSION_METADATA_PATH);
+  await sessionMetadataStore.initialize();
+
   const sessionManager = new PimoteSessionManager(config, pushNotificationService);
 
-  const server = await createServer(config, sessionManager, folderIndex, pushNotificationService);
+  const server = await createServer(config, sessionManager, folderIndex, pushNotificationService, sessionMetadataStore);
 
   // Start idle session reaping with client connectivity check
   sessionManager.startIdleCheck(config.idleTimeout, (clientId) => server.clientRegistry.has(clientId));

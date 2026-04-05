@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { dirname } from 'node:path';
+import { PIMOTE_CONFIG_PATH } from './paths.js';
 
 export interface PimoteConfig {
   roots: string[];
@@ -15,7 +15,7 @@ export interface PimoteConfig {
   vapidEmail?: string;
 }
 
-export const CONFIG_PATH = join(homedir(), '.config', 'pimote', 'config.json');
+export const CONFIG_PATH = PIMOTE_CONFIG_PATH;
 
 const DEFAULTS = {
   idleTimeout: 1_800_000, // 30 minutes

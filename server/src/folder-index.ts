@@ -4,7 +4,7 @@ import { SessionManager, type SessionInfo as PiSessionInfo } from '@mariozechner
 import type { FolderInfo, SessionInfo as PimoteSessionInfo } from '@pimote/shared';
 
 /** Project marker files/directories that identify a folder as a project. */
-const PROJECT_MARKERS = ['.git', 'package.json', '.pi'] as const;
+const PROJECT_MARKERS = ['.git', 'package.json'] as const;
 
 /**
  * Scans configured root directories for project folders and lists their sessions.
@@ -14,7 +14,7 @@ export class FolderIndex {
 
   /**
    * Scan all roots one level deep for project directories.
-   * A subdirectory is a "project" if it contains .git, package.json, or .pi/sessions.
+   * A subdirectory is a "project" if it contains .git or package.json.
    */
   async scan(): Promise<FolderInfo[]> {
     const folders: FolderInfo[] = [];
@@ -55,17 +55,23 @@ export class FolderIndex {
   }
 
   /**
-   * List sessions for a given folder path.
-   * Calls the pi SDK's SessionManager.list() and maps results to the shared SessionInfo type.
+   * List raw pi session records for a given folder path.
    */
-  async listSessions(folderPath: string): Promise<PimoteSessionInfo[]> {
-    let piSessions: PiSessionInfo[];
+  async listSessionRecords(folderPath: string): Promise<PiSessionInfo[]> {
     try {
-      piSessions = await SessionManager.list(folderPath);
+      return await SessionManager.list(folderPath);
     } catch (err) {
       console.warn(`[FolderIndex] Failed to list sessions for ${folderPath}:`, err);
       return [];
     }
+  }
+
+  /**
+   * List sessions for a given folder path.
+   * Calls the pi SDK's SessionManager.list() and maps results to the shared SessionInfo type.
+   */
+  async listSessions(folderPath: string): Promise<PimoteSessionInfo[]> {
+    const piSessions = await this.listSessionRecords(folderPath);
 
     return piSessions.map((s) => ({
       id: s.id,
@@ -82,14 +88,20 @@ export class FolderIndex {
    * Returns undefined if the session is not found.
    */
   async resolveSessionPath(folderPath: string, sessionId: string): Promise<string | undefined> {
-    let piSessions: PiSessionInfo[];
-    try {
-      piSessions = await SessionManager.list(folderPath);
-    } catch {
-      return undefined;
-    }
+    const piSessions = await this.listSessionRecords(folderPath);
     const match = piSessions.find((s) => s.id === sessionId);
     return match?.path;
+  }
+
+  /**
+   * Persist a new display name for a session on disk.
+   * Returns true if renamed, false if the session was not found.
+   */
+  async renameSession(folderPath: string, sessionId: string, name: string): Promise<boolean> {
+    const sessionPath = await this.resolveSessionPath(folderPath, sessionId);
+    if (!sessionPath) return false;
+    SessionManager.open(sessionPath).appendSessionInfo(name);
+    return true;
   }
 
   /**
@@ -109,8 +121,7 @@ export class FolderIndex {
   private async hasProjectMarker(dirPath: string): Promise<boolean> {
     for (const marker of PROJECT_MARKERS) {
       try {
-        const markerPath = marker === '.pi' ? join(dirPath, '.pi', 'sessions') : join(dirPath, marker);
-        await stat(markerPath);
+        await stat(join(dirPath, marker));
         return true;
       } catch {
         // Marker doesn't exist, try next

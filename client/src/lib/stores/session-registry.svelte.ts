@@ -23,6 +23,7 @@ import type {
   FullResyncEvent,
   SessionConflictEvent,
   SessionOpenedEvent,
+  SessionRenamedEvent,
   SessionReplacedEvent,
   PanelUpdateEvent,
   Card,
@@ -318,6 +319,11 @@ export class SessionRegistry {
         const conflict = event as SessionConflictEvent;
         session.conflictingProcesses = conflict.processes;
         session.conflictingRemoteSessions = conflict.remoteSessions ?? [];
+        break;
+      }
+
+      case 'session_renamed': {
+        session.sessionName = (event as SessionRenamedEvent).name;
         break;
       }
 

@@ -42,7 +42,18 @@ afterEach(() => {
 // Dynamic import to pick up the stubbed localStorage each time.
 // The module is pure functions that reference `localStorage` at call time,
 // so a static import works fine.
-const { getClientId, setClientId, getActiveSessions, setActiveSessions, getViewedSessionId, setViewedSessionId } = await import('./persistence.js');
+const {
+  getClientId,
+  setClientId,
+  getActiveSessions,
+  setActiveSessions,
+  getViewedSessionId,
+  setViewedSessionId,
+  getShowArchived,
+  setShowArchived,
+  getSessionPillSwipeHintShown,
+  setSessionPillSwipeHintShown,
+} = await import('./persistence.js');
 
 describe('Persistence — Client ID', () => {
   it('returns null when no clientId has been stored', () => {
@@ -177,5 +188,29 @@ describe('Persistence — Viewed Session ID', () => {
       throw new Error('SecurityError');
     });
     expect(() => setViewedSessionId(null)).not.toThrow();
+  });
+});
+
+describe('Persistence — Sidebar Preferences', () => {
+  it('defaults showArchived to false', () => {
+    expect(getShowArchived()).toBe(false);
+  });
+
+  it('round-trips showArchived through localStorage', () => {
+    setShowArchived(true);
+    expect(getShowArchived()).toBe(true);
+    setShowArchived(false);
+    expect(getShowArchived()).toBe(false);
+  });
+
+  it('defaults swipe hint shown to false', () => {
+    expect(getSessionPillSwipeHintShown()).toBe(false);
+  });
+
+  it('round-trips swipe hint state through localStorage', () => {
+    setSessionPillSwipeHintShown(true);
+    expect(getSessionPillSwipeHintShown()).toBe(true);
+    setSessionPillSwipeHintShown(false);
+    expect(getSessionPillSwipeHintShown()).toBe(false);
   });
 });

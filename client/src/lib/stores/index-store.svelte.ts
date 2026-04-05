@@ -1,12 +1,14 @@
 // IndexStore — manages folder and session listing
-import type { FolderInfo, SessionInfo, SessionStateChangedEvent, SessionDeletedEvent } from '@pimote/shared';
+import type { FolderInfo, SessionInfo, SessionStateChangedEvent, SessionDeletedEvent, SessionRenamedEvent, SessionArchivedEvent } from '@pimote/shared';
 import { connection } from './connection.svelte.js';
 import { SvelteMap } from 'svelte/reactivity';
+import { getShowArchived, setShowArchived } from './persistence.js';
 
 class IndexStore {
   folders: FolderInfo[] = $state([]);
   sessions = $state(new SvelteMap<string, SessionInfo[]>());
   loading: boolean = $state(false);
+  showArchived: boolean = $state(getShowArchived());
   private foldersLoadInFlight: Promise<void> | null = null;
 
   async loadFolders(): Promise<void> {
@@ -64,9 +66,31 @@ class IndexStore {
     }
   }
 
+  applySessionRenamed(event: SessionRenamedEvent): void {
+    const folderSessions = this.sessions.get(event.folderPath);
+    const session = folderSessions?.find((s) => s.id === event.sessionId);
+    if (session) {
+      session.name = event.name;
+    }
+  }
+
+  applySessionArchived(event: SessionArchivedEvent): void {
+    if (this.sessions.has(event.folderPath)) {
+      void this.loadSessions(event.folderPath);
+    }
+  }
+
+  setShowArchived(show: boolean): void {
+    this.showArchived = show;
+    setShowArchived(show);
+    for (const folderPath of this.sessions.keys()) {
+      void this.loadSessions(folderPath);
+    }
+  }
+
   async loadSessions(folderPath: string): Promise<void> {
     try {
-      const response = await connection.send({ type: 'list_sessions', folderPath });
+      const response = await connection.send({ type: 'list_sessions', folderPath, includeArchived: this.showArchived });
       if (response.success && response.data) {
         const data = response.data as { sessions: SessionInfo[] };
         this.sessions.set(folderPath, data.sessions);

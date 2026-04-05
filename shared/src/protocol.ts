@@ -26,6 +26,7 @@ export interface SessionInfo {
   modified: string;
   messageCount: number;
   firstMessage?: string;
+  archived?: boolean;
   /** Whether this session is owned by the requesting client */
   isOwnedByMe?: boolean;
   /** Live status if this is an active in-memory session, null otherwise */
@@ -216,6 +217,13 @@ export interface SetSessionNameCommand extends CommandBase {
   name: string;
 }
 
+export interface RenameSessionCommand extends CommandBase {
+  type: 'rename_session';
+  folderPath: string;
+  sessionId: string;
+  name: string;
+}
+
 export interface DequeueSteeringCommand extends CommandBase {
   type: 'dequeue_steering';
 }
@@ -229,6 +237,7 @@ export interface ListFoldersCommand extends CommandBase {
 export interface ListSessionsCommand extends CommandBase {
   type: 'list_sessions';
   folderPath: string;
+  includeArchived?: boolean;
 }
 
 export interface OpenSessionCommand extends CommandBase {
@@ -249,6 +258,13 @@ export interface DeleteSessionCommand extends CommandBase {
   type: 'delete_session';
   folderPath: string;
   sessionId: string;
+}
+
+export interface ArchiveSessionCommand extends CommandBase {
+  type: 'archive_session';
+  folderPath: string;
+  sessionId: string;
+  archived: boolean;
 }
 
 export interface TakeoverFolderCommand extends CommandBase {
@@ -324,11 +340,13 @@ export type PimoteCommand =
   | SetSessionNameCommand
   | DequeueSteeringCommand
   // Server-level
+  | RenameSessionCommand
   | ListFoldersCommand
   | ListSessionsCommand
   | OpenSessionCommand
   | CloseSessionCommand
   | DeleteSessionCommand
+  | ArchiveSessionCommand
   | TakeoverFolderCommand
   | ViewSessionCommand
   // Push notifications
@@ -529,6 +547,20 @@ export interface SessionDeletedEvent {
   folderPath: string;
 }
 
+export interface SessionRenamedEvent {
+  type: 'session_renamed';
+  sessionId: string;
+  folderPath: string;
+  name: string;
+}
+
+export interface SessionArchivedEvent {
+  type: 'session_archived';
+  sessionId: string;
+  folderPath: string;
+  archived: boolean;
+}
+
 export interface SessionReplacedEvent {
   type: 'session_replaced';
   oldSessionId: string;
@@ -592,6 +624,8 @@ export type PimoteEvent =
   | SessionOpenedEvent
   | SessionClosedEvent
   | SessionDeletedEvent
+  | SessionRenamedEvent
+  | SessionArchivedEvent
   | SessionReplacedEvent
   | SessionStateChangedEvent
   | ConnectionRestoredEvent

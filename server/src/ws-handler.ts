@@ -18,6 +18,7 @@ import type { FolderIndex } from './folder-index.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
+import type { FileSessionMetadataStore } from './session-metadata.js';
 import { mapAgentMessages } from './message-mapper.js';
 import type { AgentSession, ExtensionCommandContextActions } from '@mariozechner/pi-coding-agent';
 
@@ -103,6 +104,7 @@ export class WsHandler {
     private readonly folderIndex: FolderIndex,
     private readonly ws: WebSocket,
     private readonly pushNotificationService: PushNotificationService,
+    private readonly sessionMetadataStore: FileSessionMetadataStore,
     clientId: string,
     private readonly clientRegistry: ClientRegistry,
   ) {
@@ -149,7 +151,8 @@ export class WsHandler {
         }
 
         case 'list_sessions': {
-          const sessions = await this.folderIndex.listSessions(command.folderPath);
+          const sessions = await this.folderIndex.listSessionRecords(command.folderPath);
+          const archivedLookup = this.sessionMetadataStore.getArchivedLookup(sessions.map((s) => s.path));
 
           // Build lookup from session ID to managed session for ownership enrichment
           const activeSessions = this.sessionManager.getAllSessions();
@@ -158,15 +161,23 @@ export class WsHandler {
             slotById.set(s.sessionState.id, s);
           }
 
-          // Enrich each session with ownership and live status
-          const enriched = sessions.map((s) => {
-            const sl = slotById.get(s.id);
-            return {
-              ...s,
-              isOwnedByMe: sl ? sl.connection?.connectedClientId === this.clientId : false,
-              liveStatus: sl ? sl.sessionState.status : null,
-            };
-          });
+          // Enrich each session with ownership, live status, and archived state
+          const enriched = sessions
+            .map((s) => {
+              const sl = slotById.get(s.id);
+              return {
+                id: s.id,
+                name: s.name,
+                created: s.created.toISOString(),
+                modified: s.modified.toISOString(),
+                messageCount: s.messageCount,
+                firstMessage: s.firstMessage || undefined,
+                archived: archivedLookup.get(s.path) === true,
+                isOwnedByMe: sl ? sl.connection?.connectedClientId === this.clientId : false,
+                liveStatus: sl ? sl.sessionState.status : null,
+              };
+            })
+            .filter((s) => command.includeArchived || !s.archived);
 
           this.sendResponse(id, true, { sessions: enriched });
           break;
@@ -205,6 +216,12 @@ export class WsHandler {
               this.displaceOwner(requestedSessionId, existing);
             }
 
+            const existingSessionPath = existing.session.sessionFile;
+            if (existingSessionPath && this.sessionMetadataStore.isArchived(existingSessionPath)) {
+              await this.sessionMetadataStore.setArchived(existingSessionPath, false);
+              this.broadcastSessionArchived(requestedSessionId, existing.folderPath, false);
+            }
+
             await this.syncSessionToClient(requestedSessionId, existing, command.lastCursor);
             WsHandler.broadcastSidebarUpdate(requestedSessionId, existing.folderPath, this.sessionManager, this.clientRegistry);
             this.sendResponse(id, true, { sessionId: requestedSessionId, folderPath: existing.folderPath });
@@ -215,6 +232,11 @@ export class WsHandler {
           if (!sessionFilePath) {
             this.sendResponse(id, false, undefined, 'session_expired');
             break;
+          }
+
+          if (this.sessionMetadataStore.isArchived(sessionFilePath)) {
+            await this.sessionMetadataStore.setArchived(sessionFilePath, false);
+            this.broadcastSessionArchived(requestedSessionId, command.folderPath, false);
           }
 
           const sessionId = await this.sessionManager.openSession(command.folderPath, sessionFilePath);
@@ -263,8 +285,10 @@ export class WsHandler {
             break;
           }
 
-          // If the session is active in memory, close it first
           const deleteSlot = this.sessionManager.getSession(deleteSessionId);
+          const deleteSessionPath = deleteSlot?.session.sessionFile ?? (await this.folderIndex.resolveSessionPath(deleteFolderPath, deleteSessionId));
+
+          // If the session is active in memory, close it first
           if (deleteSlot) {
             // Notify the owning client if it's a different client
             if (deleteSlot.connection?.connectedClientId && deleteSlot.connection.connectedClientId !== this.clientId) {
@@ -284,6 +308,10 @@ export class WsHandler {
             break;
           }
 
+          if (deleteSessionPath) {
+            await this.sessionMetadataStore.delete(deleteSessionPath);
+          }
+
           // Broadcast deletion to all clients so sidebar lists update
           const deleteEvent = {
             type: 'session_deleted' as const,
@@ -300,6 +328,66 @@ export class WsHandler {
           }
 
           this.sendResponse(id, true);
+          break;
+        }
+
+        case 'archive_session': {
+          const archiveSessionId = command.sessionId;
+          const archiveFolderPath = command.folderPath;
+          if (!archiveSessionId || !archiveFolderPath) {
+            this.sendResponse(id, false, undefined, 'sessionId and folderPath are required');
+            break;
+          }
+
+          const archiveSlot = this.sessionManager.getSession(archiveSessionId);
+          const archiveSessionPath = archiveSlot?.session.sessionFile ?? (await this.folderIndex.resolveSessionPath(archiveFolderPath, archiveSessionId));
+          if (!archiveSessionPath) {
+            this.sendResponse(id, false, undefined, `Session not found: ${archiveSessionId}`);
+            break;
+          }
+
+          await this.sessionMetadataStore.setArchived(archiveSessionPath, command.archived);
+          this.broadcastSessionArchived(archiveSessionId, archiveFolderPath, command.archived);
+
+          this.sendResponse(id, true, { archived: command.archived });
+          break;
+        }
+
+        case 'rename_session': {
+          const renameSessionId = command.sessionId;
+          const renameFolderPath = command.folderPath;
+          const renameName = command.name.trim();
+          if (!renameSessionId || !renameFolderPath) {
+            this.sendResponse(id, false, undefined, 'sessionId and folderPath are required');
+            break;
+          }
+          if (!renameName) {
+            this.sendResponse(id, false, undefined, 'name is required');
+            break;
+          }
+
+          const renameSlot = this.sessionManager.getSession(renameSessionId);
+          if (renameSlot) {
+            renameSlot.session.setSessionName(renameName);
+          } else {
+            const renamed = await this.folderIndex.renameSession(renameFolderPath, renameSessionId, renameName);
+            if (!renamed) {
+              this.sendResponse(id, false, undefined, `Session not found: ${renameSessionId}`);
+              break;
+            }
+          }
+
+          const renameEvent = {
+            type: 'session_renamed' as const,
+            sessionId: renameSessionId,
+            folderPath: renameFolderPath,
+            name: renameName,
+          };
+          for (const [, handler] of this.clientRegistry) {
+            handler.sendToClient(renameEvent);
+          }
+
+          this.sendResponse(id, true, { name: renameName });
           break;
         }
 
@@ -896,6 +984,18 @@ export class WsHandler {
       sessionId,
       reason: 'killed',
     });
+  }
+
+  private broadcastSessionArchived(sessionId: string, folderPath: string, archived: boolean): void {
+    const event = {
+      type: 'session_archived' as const,
+      sessionId,
+      folderPath,
+      archived,
+    };
+    for (const [, handler] of this.clientRegistry) {
+      handler.sendToClient(event);
+    }
   }
 
   private sendResponse(id: string, success: boolean, data?: unknown, error?: string): void {

@@ -5,6 +5,8 @@
 const KEY_CLIENT_ID = 'pimote:clientId';
 const KEY_ACTIVE_SESSIONS = 'pimote:activeSessions';
 const KEY_VIEWED_SESSION_ID = 'pimote:viewedSessionId';
+const KEY_SHOW_ARCHIVED = 'pimote:showArchived';
+const KEY_SESSION_PILL_SWIPE_HINT_SHOWN = 'pimote:sessionPillSwipeHintShown';
 
 /** Minimal data needed to rehydrate a session tab. */
 export interface PersistedSession {
@@ -82,6 +84,42 @@ export function setViewedSessionId(id: string | null): void {
     } else {
       localStorage.setItem(KEY_VIEWED_SESSION_ID, id);
     }
+  } catch {
+    // best-effort
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar preferences
+// ---------------------------------------------------------------------------
+
+export function getShowArchived(): boolean {
+  try {
+    return localStorage.getItem(KEY_SHOW_ARCHIVED) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setShowArchived(show: boolean): void {
+  try {
+    localStorage.setItem(KEY_SHOW_ARCHIVED, String(show));
+  } catch {
+    // best-effort
+  }
+}
+
+export function getSessionPillSwipeHintShown(): boolean {
+  try {
+    return localStorage.getItem(KEY_SESSION_PILL_SWIPE_HINT_SHOWN) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setSessionPillSwipeHintShown(shown: boolean): void {
+  try {
+    localStorage.setItem(KEY_SESSION_PILL_SWIPE_HINT_SHOWN, String(shown));
   } catch {
     // best-effort
   }

@@ -7,6 +7,7 @@ import type { PimoteConfig } from './config.js';
 import type { PimoteSessionManager } from './session-manager.js';
 import type { FolderIndex } from './folder-index.js';
 import type { PushNotificationService } from './push-notification.js';
+import type { FileSessionMetadataStore } from './session-metadata.js';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import crypto from 'node:crypto';
 import type { VersionMismatchEvent } from '@pimote/shared';
@@ -103,6 +104,7 @@ export async function createServer(
   sessionManager: PimoteSessionManager,
   folderIndex: FolderIndex,
   pushNotificationService: PushNotificationService,
+  sessionMetadataStore: FileSessionMetadataStore,
 ): Promise<PimoteServer> {
   const clientVersion = await loadClientVersion();
   if (clientVersion) {
@@ -185,7 +187,7 @@ export async function createServer(
     // The close handler skips cleanup when the registry already points to a
     // different handler, so this is the only place it runs.
     const existing = clientRegistry.get(clientId);
-    const handler = new WsHandler(sessionManager, folderIndex, ws, pushNotificationService, clientId, clientRegistry);
+    const handler = new WsHandler(sessionManager, folderIndex, ws, pushNotificationService, sessionMetadataStore, clientId, clientRegistry);
     clientRegistry.set(clientId, handler);
     if (existing) {
       existing.cleanup();

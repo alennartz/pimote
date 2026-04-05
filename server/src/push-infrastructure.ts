@@ -1,7 +1,38 @@
-import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, copyFile, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import webpush from 'web-push';
 import type { PushSubscriptionRecord, SubscriptionStore, PushSender } from './push-notification.js';
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await readFile(path);
+    return true;
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return false;
+    }
+    throw err;
+  }
+}
+
+export async function migratePushSubscriptionStore(oldPath: string, newPath: string): Promise<void> {
+  if (oldPath === newPath) return;
+  if (await exists(newPath)) return;
+  if (!(await exists(oldPath))) return;
+
+  await mkdir(dirname(newPath), { recursive: true });
+
+  try {
+    await rename(oldPath, newPath);
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'code' in err && (err as NodeJS.ErrnoException).code === 'EXDEV') {
+      await copyFile(oldPath, newPath);
+      await unlink(oldPath);
+      return;
+    }
+    throw new Error('Failed to migrate push subscriptions', { cause: err });
+  }
+}
 
 export class FilePushSubscriptionStore implements SubscriptionStore {
   constructor(private readonly filePath: string) {}

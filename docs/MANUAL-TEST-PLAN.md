@@ -300,7 +300,7 @@
 
 ### TC-04.01 — Folder list loads on connection 🔴
 
-- **[P]** Roots contain projects with `.git`, `package.json`, or `.pi/sessions`
+- **[P]** Roots contain projects with `.git` or `package.json`
 - **[S]** Open client; observe sidebar / landing page
 - **[E]** Folder list populates with project names from all configured roots
 - **[E]** Each folder shows its `name` (directory basename)
@@ -319,7 +319,7 @@
 
 ### TC-04.04 — Non-project directories filtered out 🟡
 
-- **[P]** Root contains subdirectories without `.git`, `package.json`, or `.pi/sessions`
+- **[P]** Root contains subdirectories without `.git` or `package.json`
 - **[S]** Load folder list
 - **[E]** Those subdirectories do not appear
 
@@ -347,7 +347,7 @@
 
 ### TC-04.08 — Session list for folder with no sessions 🟡
 
-- **[P]** Project exists but has no `.pi/sessions`
+- **[P]** Project exists but has no pi sessions
 - **[S]** Click/expand folder
 - **[E]** Empty session list; no error
 
