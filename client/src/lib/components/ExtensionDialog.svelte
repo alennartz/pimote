@@ -6,8 +6,7 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { getExtensionDialogInitialValue } from '$lib/extension-dialog-state.js';
-  import { resolveEditorLanguage } from '$lib/editor-language.js';
-  import ExtensionCodeEditor from '$lib/components/ExtensionCodeEditor.svelte';
+  import type { ResolvedEditorLanguage } from '$lib/editor-language.js';
 
   const uiQueue = getExtensionUiQueue();
 
@@ -20,9 +19,23 @@
     return uiQueue.all.find((r) => !INLINE_METHODS.has(r.method) && r.sessionId === viewedId) ?? null;
   });
 
-  let editorLanguage = $derived.by(() => {
-    if (!current || current.method !== 'editor') return null;
-    return resolveEditorLanguage(current.title, current.prefill as string | undefined);
+  // Lazy-loaded editor deps (CodeMirror + highlight.js) — only fetched when editor dialog opens
+  let editorModule: typeof import('$lib/components/ExtensionCodeEditor.svelte') | null = $state(null);
+  let editorLanguage: ResolvedEditorLanguage | null = $state(null);
+
+  $effect(() => {
+    if (current?.method === 'editor') {
+      // Kick off both lazy loads in parallel
+      const title = current.title;
+      const prefill = current.prefill as string | undefined;
+      Promise.all([import('$lib/components/ExtensionCodeEditor.svelte'), import('$lib/editor-language.js')]).then(([mod, langMod]) => {
+        editorModule = mod;
+        editorLanguage = langMod.resolveEditorLanguage(title, prefill);
+      });
+    } else {
+      editorModule = null;
+      editorLanguage = null;
+    }
   });
 
   $effect(() => {
@@ -112,7 +125,13 @@
         </header>
 
         <div class="min-h-0 flex-1 overflow-hidden">
-          <ExtensionCodeEditor bind:value={inputValue} language={editorLanguage?.id ?? null} />
+          {#if editorModule}
+            <editorModule.default bind:value={inputValue} language={editorLanguage?.id ?? null} />
+          {:else}
+            <div class="flex h-full items-center justify-center">
+              <span class="text-muted-foreground text-sm">Loading editor…</span>
+            </div>
+          {/if}
         </div>
 
         <div

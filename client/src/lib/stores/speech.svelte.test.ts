@@ -27,14 +27,11 @@ beforeEach(() => {
     cancel: vi.fn(),
   };
 
-  const MockUtteranceConstructor = vi.fn((text: string) => {
-    const utterance: MockUtterance = {
-      text,
-      onend: null,
-      onerror: null,
-    };
-    createdUtterances.push(utterance);
-    return utterance;
+  const MockUtteranceConstructor = vi.fn(function (this: MockUtterance, text: string) {
+    this.text = text;
+    this.onend = null;
+    this.onerror = null;
+    createdUtterances.push(this);
   });
 
   vi.stubGlobal('speechSynthesis', mockSpeechSynthesis);

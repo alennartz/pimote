@@ -24,6 +24,11 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    // The CodeMirror + highlight.js lazy chunk exceeds 500KB but is only
+    // loaded on demand when the extension editor dialog opens.
+    chunkSizeWarningLimit: 750,
+  },
   server: {
     host: true, // bind to 0.0.0.0 so LAN and localhost both work
     proxy: {
