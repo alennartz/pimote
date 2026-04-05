@@ -179,8 +179,8 @@ export async function createServer(
     }
 
     // Register new handler first, then clean up and close any stale connection.
-    // cleanup() disconnects the old handler's WebSocket routing (sets managed.ws = null).
-    // Pending UI responses survive on the ManagedSession for replay when the new
+    // cleanup() disconnects the old handler's WebSocket routing (sets slot.connection = null).
+    // Pending UI responses survive on the ManagedSlot for replay when the new
     // handler's reconnect commands reclaim sessions via claimSession().
     // The close handler skips cleanup when the registry already points to a
     // different handler, so this is the only place it runs.

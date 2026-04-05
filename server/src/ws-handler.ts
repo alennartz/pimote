@@ -11,8 +11,8 @@ import type {
   FullResyncEvent,
   SessionStateChangedEvent,
 } from '@pimote/shared';
-import type { PimoteSessionManager, ManagedSession } from './session-manager.js';
-import { resolveAllManagedPendingUi, resolveManagedPendingUi, replayManagedPendingUiRequests } from './session-manager.js';
+import type { PimoteSessionManager, ManagedSlot } from './session-manager.js';
+import { resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests, sendSlotEvent } from './session-manager.js';
 import { getMergedPanelCards } from './panel-state.js';
 import type { FolderIndex } from './folder-index.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
@@ -33,17 +33,16 @@ function parseDataUrlImages(images?: string[]): { type: 'image'; data: string; m
 
 /**
  * Create command context actions for extension commands.
- * Captures the ManagedSession (stable lifetime), not a transient handler.
- * Session resets are routed through managed.onSessionReset which the
+ * Captures the ManagedSlot (stable lifetime), not a transient handler.
+ * Session resets are routed through slot.connection.onSessionReset which the
  * current handler sets on claim and clears on cleanup.
  */
-function createCommandContextActions(managed: ManagedSession): ExtensionCommandContextActions {
-  const session = managed.session;
+function createCommandContextActions(slot: ManagedSlot): ExtensionCommandContextActions {
   return {
     waitForIdle: () => {
-      if (!session.isStreaming) return Promise.resolve();
+      if (!slot.session.isStreaming) return Promise.resolve();
       return new Promise<void>((resolve) => {
-        const unsubscribe = session.subscribe((event) => {
+        const unsubscribe = slot.session.subscribe((event: { type: string }) => {
           if (event.type === 'agent_end') {
             unsubscribe();
             resolve();
@@ -52,26 +51,26 @@ function createCommandContextActions(managed: ManagedSession): ExtensionCommandC
       });
     },
     newSession: async (options) => {
-      const result = await session.newSession(options);
-      if (result) await managed.onSessionReset?.(managed);
-      return { cancelled: !result };
+      const result = await slot.runtime.newSession(options);
+      if (!result.cancelled) await slot.connection?.onSessionReset?.(slot);
+      return { cancelled: result.cancelled };
     },
     fork: async (entryId) => {
-      const result = await session.fork(entryId);
-      if (!result.cancelled) await managed.onSessionReset?.(managed);
+      const result = await slot.runtime.fork(entryId);
+      if (!result.cancelled) await slot.connection?.onSessionReset?.(slot);
       return { cancelled: result.cancelled };
     },
     navigateTree: async (targetId, options) => {
-      const result = await session.navigateTree(targetId, options);
-      if (!result.cancelled) await managed.onSessionReset?.(managed);
+      const result = await slot.session.navigateTree(targetId, options);
+      if (!result.cancelled) await slot.connection?.onSessionReset?.(slot);
       return { cancelled: result.cancelled };
     },
     switchSession: async (sessionPath) => {
-      const result = await session.switchSession(sessionPath);
-      if (result) await managed.onSessionReset?.(managed);
-      return { cancelled: !result };
+      const result = await slot.runtime.switchSession(sessionPath);
+      if (!result.cancelled) await slot.connection?.onSessionReset?.(slot);
+      return { cancelled: result.cancelled };
     },
-    reload: () => session.reload(),
+    reload: () => slot.session.reload(),
   };
 }
 
@@ -135,9 +134,9 @@ export class WsHandler {
           for (const folder of folders) {
             const folderSessions = activeSessions.filter((s) => s.folderPath === folder.path);
             folder.activeSessionCount = folderSessions.length;
-            if (folderSessions.some((s) => s.status === 'working')) {
+            if (folderSessions.some((s) => s.sessionState.status === 'working')) {
               folder.activeStatus = 'working';
-            } else if (folderSessions.some((s) => s.needsAttention)) {
+            } else if (folderSessions.some((s) => s.sessionState.needsAttention)) {
               folder.activeStatus = 'attention';
             } else if (folderSessions.length > 0) {
               folder.activeStatus = 'idle';
@@ -154,18 +153,18 @@ export class WsHandler {
 
           // Build lookup from session ID to managed session for ownership enrichment
           const activeSessions = this.sessionManager.getAllSessions();
-          const managedById = new Map<string, ManagedSession>();
-          for (const ms of activeSessions) {
-            managedById.set(ms.id, ms);
+          const slotById = new Map<string, ManagedSlot>();
+          for (const s of activeSessions) {
+            slotById.set(s.sessionState.id, s);
           }
 
           // Enrich each session with ownership and live status
           const enriched = sessions.map((s) => {
-            const ms = managedById.get(s.id);
+            const sl = slotById.get(s.id);
             return {
               ...s,
-              isOwnedByMe: ms ? ms.connectedClientId === this.clientId : false,
-              liveStatus: ms ? ms.status : null,
+              isOwnedByMe: sl ? sl.connection?.connectedClientId === this.clientId : false,
+              liveStatus: sl ? sl.sessionState.status : null,
             };
           });
 
@@ -177,18 +176,18 @@ export class WsHandler {
           // New session creation
           if (!command.sessionId) {
             const sessionId = await this.sessionManager.openSession(command.folderPath);
-            const managed = this.sessionManager.getSession(sessionId)!;
-            await this.claimSession(sessionId, managed);
+            const newSlot = this.sessionManager.getSession(sessionId)!;
+            await this.claimSession(sessionId, newSlot);
             this.viewedSessionId = sessionId;
 
             this.sendEvent({
               type: 'session_opened',
               sessionId,
-              folder: this.buildFolderInfo(managed.folderPath),
+              folder: this.buildFolderInfo(newSlot.folderPath),
             });
 
-            WsHandler.broadcastSidebarUpdate(sessionId, managed.folderPath, this.sessionManager, this.clientRegistry);
-            await this.sendConflictEventIfNeeded(sessionId, managed.folderPath);
+            WsHandler.broadcastSidebarUpdate(sessionId, newSlot.folderPath, this.sessionManager, this.clientRegistry);
+            await this.sendConflictEventIfNeeded(sessionId, newSlot.folderPath);
             this.sendResponse(id, true, { sessionId });
             break;
           }
@@ -197,8 +196,8 @@ export class WsHandler {
           const requestedSessionId = command.sessionId;
           const existing = this.sessionManager.getSession(requestedSessionId);
           if (existing) {
-            if (existing.connectedClientId && existing.connectedClientId !== this.clientId) {
-              const oldHandler = this.clientRegistry.get(existing.connectedClientId);
+            if (existing.connection?.connectedClientId && existing.connection.connectedClientId !== this.clientId) {
+              const oldHandler = this.clientRegistry.get(existing.connection.connectedClientId);
               if (oldHandler && !command.force) {
                 this.sendResponse(id, false, undefined, 'session_owned');
                 break;
@@ -219,11 +218,11 @@ export class WsHandler {
           }
 
           const sessionId = await this.sessionManager.openSession(command.folderPath, sessionFilePath);
-          const managed = this.sessionManager.getSession(sessionId)!;
-          await this.syncSessionToClient(sessionId, managed);
-          WsHandler.broadcastSidebarUpdate(sessionId, managed.folderPath, this.sessionManager, this.clientRegistry);
-          await this.sendConflictEventIfNeeded(sessionId, managed.folderPath);
-          this.sendResponse(id, true, { sessionId, folderPath: managed.folderPath });
+          const reopenedSlot = this.sessionManager.getSession(sessionId)!;
+          await this.syncSessionToClient(sessionId, reopenedSlot);
+          WsHandler.broadcastSidebarUpdate(sessionId, reopenedSlot.folderPath, this.sessionManager, this.clientRegistry);
+          await this.sendConflictEventIfNeeded(sessionId, reopenedSlot.folderPath);
+          this.sendResponse(id, true, { sessionId, folderPath: reopenedSlot.folderPath });
           break;
         }
 
@@ -235,9 +234,9 @@ export class WsHandler {
           }
 
           // Resolve pending extension UI responses so tools don't hang
-          const closingManaged = this.sessionManager.getSession(closeSessionId);
-          if (closingManaged) {
-            resolveAllManagedPendingUi(closingManaged);
+          const closingSlot = this.sessionManager.getSession(closeSessionId);
+          if (closingSlot) {
+            resolveAllSlotPendingUi(closingSlot);
           }
 
           await this.sessionManager.closeSession(closeSessionId);
@@ -265,16 +264,16 @@ export class WsHandler {
           }
 
           // If the session is active in memory, close it first
-          const deleteManaged = this.sessionManager.getSession(deleteSessionId);
-          if (deleteManaged) {
+          const deleteSlot = this.sessionManager.getSession(deleteSessionId);
+          if (deleteSlot) {
             // Notify the owning client if it's a different client
-            if (deleteManaged.connectedClientId && deleteManaged.connectedClientId !== this.clientId) {
-              const ownerHandler = this.clientRegistry.get(deleteManaged.connectedClientId);
+            if (deleteSlot.connection?.connectedClientId && deleteSlot.connection.connectedClientId !== this.clientId) {
+              const ownerHandler = this.clientRegistry.get(deleteSlot.connection.connectedClientId);
               if (ownerHandler) {
                 ownerHandler.sendKilledEvent(deleteSessionId);
               }
             }
-            resolveAllManagedPendingUi(deleteManaged);
+            resolveAllSlotPendingUi(deleteSlot);
             await this.sessionManager.closeSession(deleteSessionId);
           }
 
@@ -309,31 +308,31 @@ export class WsHandler {
 
           const takeoverSessionId = await this.sessionManager.openSession(command.folderPath);
 
-          const takeoverManaged = this.sessionManager.getSession(takeoverSessionId)!;
-          await this.claimSession(takeoverSessionId, takeoverManaged);
+          const takeoverSlot = this.sessionManager.getSession(takeoverSessionId)!;
+          await this.claimSession(takeoverSessionId, takeoverSlot);
           this.viewedSessionId = takeoverSessionId;
 
           this.sendEvent({
             type: 'session_opened',
             sessionId: takeoverSessionId,
             folder: {
-              path: takeoverManaged.folderPath,
-              name: takeoverManaged.folderPath.split('/').pop() ?? takeoverManaged.folderPath,
+              path: takeoverSlot.folderPath,
+              name: takeoverSlot.folderPath.split('/').pop() ?? takeoverSlot.folderPath,
               activeSessionCount: 1,
               externalProcessCount: 0,
               activeStatus: 'idle',
             },
           });
 
-          WsHandler.broadcastSidebarUpdate(takeoverSessionId, takeoverManaged.folderPath, this.sessionManager, this.clientRegistry);
+          WsHandler.broadcastSidebarUpdate(takeoverSessionId, takeoverSlot.folderPath, this.sessionManager, this.clientRegistry);
           this.sendResponse(id, true, { sessionId: takeoverSessionId, killedProcesses: killedCount });
           break;
         }
 
         // ---- Extension UI ----
         case 'extension_ui_response': {
-          const uiManaged = command.sessionId ? this.sessionManager.getSession(command.sessionId) : undefined;
-          if (uiManaged) {
+          const uiSlot = command.sessionId ? this.sessionManager.getSession(command.sessionId) : undefined;
+          if (uiSlot) {
             let value: unknown;
             if (command.cancelled) {
               value = undefined;
@@ -344,7 +343,7 @@ export class WsHandler {
             } else {
               value = undefined;
             }
-            resolveManagedPendingUi(uiManaged, command.requestId, value);
+            resolveSlotPendingUi(uiSlot, command.requestId, value);
           }
           this.sendResponse(id, true);
           break;
@@ -353,12 +352,12 @@ export class WsHandler {
         // ---- Multi-session & push commands ----
         case 'view_session': {
           this.viewedSessionId = command.sessionId;
-          const viewedManaged = this.sessionManager.getSession(command.sessionId);
-          if (viewedManaged) {
-            viewedManaged.needsAttention = false;
+          const viewedSlot = this.sessionManager.getSession(command.sessionId);
+          if (viewedSlot) {
+            viewedSlot.sessionState.needsAttention = false;
             // Send current panel state so the client shows panels after switching sessions
-            if (viewedManaged.panelState.size > 0) {
-              this.sendEvent({ type: 'panel_update', sessionId: command.sessionId, cards: getMergedPanelCards(viewedManaged.panelState) });
+            if (viewedSlot.sessionState.panelState.size > 0) {
+              this.sendEvent({ type: 'panel_update', sessionId: command.sessionId, cards: getMergedPanelCards(viewedSlot.sessionState.panelState) });
             }
           }
           this.sendResponse(id, true);
@@ -400,12 +399,12 @@ export class WsHandler {
 
         case 'kill_conflicting_sessions': {
           for (const targetSessionId of command.sessionIds) {
-            const targetManaged = this.sessionManager.getSession(targetSessionId);
-            if (!targetManaged) continue;
+            const targetSlot = this.sessionManager.getSession(targetSessionId);
+            if (!targetSlot) continue;
 
             // Notify the owning client if still connected
-            if (targetManaged.connectedClientId) {
-              const ownerHandler = this.clientRegistry.get(targetManaged.connectedClientId);
+            if (targetSlot.connection?.connectedClientId) {
+              const ownerHandler = this.clientRegistry.get(targetSlot.connection.connectedClientId);
               if (ownerHandler) {
                 ownerHandler.sendKilledEvent(targetSessionId);
               }
@@ -471,21 +470,22 @@ export class WsHandler {
       return;
     }
 
-    const managed = this.sessionManager.getSession(sessionId);
-    if (!managed) {
+    const slot = this.sessionManager.getSession(sessionId);
+    if (!slot) {
       this.sendResponse(id, false, undefined, `Session not found: ${sessionId}`);
       return;
     }
 
-    const session = managed.session;
+    const session = slot.session;
 
     switch (command.type) {
       case 'prompt': {
         // Intercept pimote built-in slash commands
         const trimmed = command.message.trim();
         if (trimmed === '/new') {
-          const success = await session.newSession();
-          this.sendResponse(id, true, { success });
+          const result = await slot.runtime.newSession();
+          if (!result.cancelled) await slot.connection?.onSessionReset?.(slot);
+          this.sendResponse(id, true, { success: !result.cancelled });
           break;
         }
         if (trimmed === '/reload') {
@@ -525,14 +525,14 @@ export class WsHandler {
 
       case 'abort': {
         // Resolve pending UI responses first so stuck dialogs unblock
-        resolveAllManagedPendingUi(managed);
+        resolveAllSlotPendingUi(slot);
         await session.abort();
         this.sendResponse(id, true);
         break;
       }
 
       case 'set_model': {
-        const models = managed.session.modelRegistry.getAvailable();
+        const models = slot.session.modelRegistry.getAvailable();
         const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
         if (!model) {
           this.sendResponse(id, false, undefined, `Model not found: ${command.provider}/${command.modelId}`);
@@ -558,7 +558,7 @@ export class WsHandler {
       }
 
       case 'get_available_models': {
-        const models = managed.session.modelRegistry.getAvailable();
+        const models = slot.session.modelRegistry.getAvailable();
         const mapped = models.map((m) => ({
           provider: m.provider,
           id: m.id,
@@ -616,8 +616,9 @@ export class WsHandler {
       }
 
       case 'new_session': {
-        const success = await session.newSession();
-        this.sendResponse(id, true, { success });
+        const result = await slot.runtime.newSession();
+        if (!result.cancelled) await slot.connection?.onSessionReset?.(slot);
+        this.sendResponse(id, true, { success: !result.cancelled });
         break;
       }
 
@@ -630,7 +631,7 @@ export class WsHandler {
       case 'get_session_meta': {
         const contextUsage = session.getContextUsage();
         const meta: SessionMeta = {
-          gitBranch: getGitBranch(managed.folderPath),
+          gitBranch: getGitBranch(slot.folderPath),
           contextUsage: contextUsage ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow } : null,
         };
         this.sendResponse(id, true, { meta });
@@ -705,73 +706,74 @@ export class WsHandler {
 
   /** Notify the old owner that they've been displaced from a session.
    *  No-op if the session is unowned or owned by this client. */
-  private displaceOwner(sessionId: string, managed: ManagedSession): void {
-    if (managed.connectedClientId && managed.connectedClientId !== this.clientId) {
-      const oldHandler = this.clientRegistry.get(managed.connectedClientId);
+  private displaceOwner(sessionId: string, slot: ManagedSlot): void {
+    if (slot.connection?.connectedClientId && slot.connection.connectedClientId !== this.clientId) {
+      const oldHandler = this.clientRegistry.get(slot.connection.connectedClientId);
       if (oldHandler) {
         oldHandler.sendDisplacedEvent(sessionId);
       }
     }
   }
 
-  /** Bind a managed session to this client — sets ownership, WebSocket routing,
+  /** Bind a slot to this client — sets ownership, WebSocket routing,
    *  and subscribes to events. Extensions are bound once on first claim. */
-  private async claimSession(sessionId: string, managed: ManagedSession): Promise<void> {
-    managed.connectedClientId = this.clientId;
-    managed.lastActivity = Date.now();
-    managed.ws = this.ws;
-    managed.onSessionReset = (m) => this.handleSessionReset(m);
+  private async claimSession(sessionId: string, slot: ManagedSlot): Promise<void> {
+    const connection: import('./session-manager.js').ClientConnection = {
+      ws: this.ws as import('./session-manager.js').EventSocket,
+      connectedClientId: this.clientId,
+      onSessionReset: (s) => this.handleSessionReset(s),
+    };
+    slot.connection = connection;
+    slot.sessionState.lastActivity = Date.now();
     this.subscribedSessions.add(sessionId);
 
     // Bind extensions when needed. The bridge holds a direct reference to this
-    // ManagedSession — on reconnect (same ManagedSession) we skip rebinding,
-    // but on session reset (new ManagedSession) we must rebind so the bridge
-    // points at the new instance. bindExtensions is safe to call multiple times.
-    if (!managed.extensionsBound) {
-      const uiContext = createExtensionUIBridge(managed, this.pushNotificationService);
-      const commandContextActions = createCommandContextActions(managed);
-      await managed.session.bindExtensions({ uiContext, commandContextActions });
-      managed.extensionsBound = true;
+    // ManagedSlot — on reconnect we skip rebinding, but on session reset
+    // we must rebind so the bridge points at the new session state.
+    if (!slot.sessionState.extensionsBound) {
+      const uiContext = createExtensionUIBridge(slot, this.pushNotificationService);
+      const commandContextActions = createCommandContextActions(slot);
+      await slot.session.bindExtensions({ uiContext, commandContextActions });
+      slot.sessionState.extensionsBound = true;
     }
 
     // Re-deliver any pending UI requests to the new client (recovers lost dialogs)
-    replayManagedPendingUiRequests(managed);
+    replaySlotPendingUiRequests(slot);
   }
 
   /** Handle a session reset (newSession, fork, switchSession).
-   *  Called via managed.onSessionReset — receives the managed session directly. */
-  private async handleSessionReset(oldManaged: ManagedSession): Promise<void> {
-    const newSessionId = oldManaged.session.sessionId;
-    const oldSessionId = oldManaged.id;
+   *  Called via slot.connection.onSessionReset after the runtime has replaced the session. */
+  private async handleSessionReset(slot: ManagedSlot): Promise<void> {
+    const newSessionId = slot.runtime.session.sessionId;
+    const oldSessionId = slot.sessionState.id;
 
     // navigateTree stays in the same file — same session ID, just resync
     if (newSessionId === oldSessionId) {
-      this.sendFullResyncForSession(oldSessionId, oldManaged);
+      this.sendFullResyncForSession(oldSessionId, slot);
       return;
     }
 
-    // Session ID changed — detach old managed session, adopt as new.
-    // Do NOT carry over extensionsBound — the extension UI bridge holds a reference
-    // to the old ManagedSession. A new ManagedSession needs a fresh bridge bound
-    // to it, so claimSession must re-run bindExtensions (which is safe to call
-    // multiple times — it overwrites the previous bindings on the AgentSession).
-    const folderPath = oldManaged.folderPath;
-    this.sessionManager.detachSession(oldSessionId);
-    this.sessionManager.adoptSession(oldManaged.session, folderPath, { extensionsBound: false, eventBus: oldManaged.eventBus ?? undefined });
+    // Session ID changed — rebuild session state in-place on the same slot.
+    const folderPath = slot.folderPath;
 
-    const newManaged = this.sessionManager.getSession(newSessionId)!;
+    // Rebuild session state (tears down old, creates new from runtime.session)
+    this.sessionManager.rebuildSessionState(slot);
+
+    // Re-key the session map
+    this.sessionManager.reKeySession(slot, oldSessionId, newSessionId);
 
     // Update handler bookkeeping
     this.subscribedSessions.delete(oldSessionId);
+    this.subscribedSessions.add(newSessionId);
     if (this.viewedSessionId === oldSessionId) {
       this.viewedSessionId = newSessionId;
     }
 
-    // Resolve pending UI responses for the old session
-    resolveAllManagedPendingUi(oldManaged);
-
-    // Claim the new managed session (sets ownership, routes WebSocket)
-    await this.claimSession(newSessionId, newManaged);
+    // Rebind extension UI bridge (new session state for dialog routing)
+    const uiContext = createExtensionUIBridge(slot, this.pushNotificationService);
+    const commandContextActions = createCommandContextActions(slot);
+    await slot.session.bindExtensions({ uiContext, commandContextActions });
+    slot.sessionState.extensionsBound = true;
 
     // Notify owning client: session replaced (client re-keys in place)
     this.sendEvent({
@@ -806,8 +808,8 @@ export class WsHandler {
     const openConflictPids = await findExternalPiProcesses(folderPath);
     const allSessions = this.sessionManager.getAllSessions();
     const remoteSessions = allSessions
-      .filter((s) => s.folderPath === folderPath && s.connectedClientId !== null && s.connectedClientId !== this.clientId && s.id !== sessionId)
-      .map((s) => ({ sessionId: s.id, status: s.status }));
+      .filter((s) => s.folderPath === folderPath && s.connection?.connectedClientId !== null && s.connection?.connectedClientId !== this.clientId && s.sessionState.id !== sessionId)
+      .map((s) => ({ sessionId: s.sessionState.id, status: s.sessionState.status }));
 
     if (openConflictPids.length > 0 || remoteSessions.length > 0) {
       this.sendEvent({
@@ -819,12 +821,12 @@ export class WsHandler {
     }
   }
 
-  private async syncSessionToClient(sessionId: string, managed: ManagedSession, lastCursor?: number): Promise<void> {
-    let replayResult: ReturnType<ManagedSession['eventBuffer']['replay']> | null = null;
+  private async syncSessionToClient(sessionId: string, slot: ManagedSlot, lastCursor?: number): Promise<void> {
+    let replayResult: ReturnType<import('./event-buffer.js').EventBuffer['replay']> | null = null;
     let cursorBeforeClaim: number | null = null;
 
     if (lastCursor !== undefined) {
-      replayResult = managed.eventBuffer.replay(lastCursor);
+      replayResult = slot.sessionState.eventBuffer.replay(lastCursor);
       if (replayResult !== null) {
         this.sendEvent({
           type: 'buffered_events',
@@ -835,18 +837,18 @@ export class WsHandler {
           type: 'connection_restored',
           sessionId,
         } as ConnectionRestoredEvent);
-        cursorBeforeClaim = managed.eventBuffer.currentCursor;
+        cursorBeforeClaim = slot.sessionState.eventBuffer.currentCursor;
       } else {
-        this.sendFullResyncForSession(sessionId, managed);
+        this.sendFullResyncForSession(sessionId, slot);
       }
     } else {
-      this.sendFullResyncForSession(sessionId, managed);
+      this.sendFullResyncForSession(sessionId, slot);
     }
 
-    await this.claimSession(sessionId, managed);
+    await this.claimSession(sessionId, slot);
 
     if (replayResult !== null && cursorBeforeClaim !== null) {
-      const catchUp = managed.eventBuffer.replay(cursorBeforeClaim);
+      const catchUp = slot.sessionState.eventBuffer.replay(cursorBeforeClaim);
       if (catchUp && catchUp.length > 0) {
         this.sendEvent({
           type: 'buffered_events',
@@ -856,8 +858,8 @@ export class WsHandler {
       }
     }
 
-    if (replayResult !== null && managed.panelState.size > 0) {
-      this.sendEvent({ type: 'panel_update', sessionId, cards: getMergedPanelCards(managed.panelState) });
+    if (replayResult !== null && slot.sessionState.panelState.size > 0) {
+      this.sendEvent({ type: 'panel_update', sessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
     }
   }
 
@@ -916,8 +918,8 @@ export class WsHandler {
 
   /** Send a full_resync event to the client for the given managed session.
    *  Used when the underlying pi session is reset (newSession, switchSession, fork, navigateTree). */
-  private sendFullResyncForSession(pimoteSessionId: string, managed: ManagedSession): void {
-    const session = managed.session;
+  private sendFullResyncForSession(pimoteSessionId: string, slot: ManagedSlot): void {
+    const session = slot.session;
     const model = session.model;
     const state: SessionState = {
       model: model ? { provider: model.provider, id: model.id, name: model.name } : null,
@@ -940,8 +942,8 @@ export class WsHandler {
     this.sendEvent(fullResyncEvent);
 
     // Send panel snapshot if panels are active
-    if (managed.panelState.size > 0) {
-      this.sendEvent({ type: 'panel_update', sessionId: pimoteSessionId, cards: getMergedPanelCards(managed.panelState) });
+    if (slot.sessionState.panelState.size > 0) {
+      this.sendEvent({ type: 'panel_update', sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
     }
   }
 
@@ -952,15 +954,15 @@ export class WsHandler {
 
   /** Broadcast a session_state_changed event to ALL connected clients. */
   static broadcastSidebarUpdate(sessionId: string, folderPath: string, sessionManager: PimoteSessionManager, clientRegistry: ClientRegistry): void {
-    const managed = sessionManager.getSession(sessionId);
+    const slot = sessionManager.getSession(sessionId);
 
     // Compute folder aggregates (same logic as list_folders handler)
     const folderSessions = sessionManager.getAllSessions().filter((s) => s.folderPath === folderPath);
     const folderActiveSessionCount = folderSessions.length;
     let folderActiveStatus: 'working' | 'idle' | 'attention' | null = null;
-    if (folderSessions.some((s) => s.status === 'working')) {
+    if (folderSessions.some((s) => s.sessionState.status === 'working')) {
       folderActiveStatus = 'working';
-    } else if (folderSessions.some((s) => s.needsAttention)) {
+    } else if (folderSessions.some((s) => s.sessionState.needsAttention)) {
       folderActiveStatus = 'attention';
     } else if (folderSessions.length > 0) {
       folderActiveStatus = 'idle';
@@ -970,8 +972,8 @@ export class WsHandler {
       type: 'session_state_changed',
       sessionId,
       folderPath,
-      liveStatus: managed ? managed.status : null,
-      connectedClientId: managed ? managed.connectedClientId : null,
+      liveStatus: slot ? slot.sessionState.status : null,
+      connectedClientId: slot ? slot.connection?.connectedClientId ?? null : null,
       folderActiveSessionCount,
       folderActiveStatus,
     };
@@ -983,12 +985,10 @@ export class WsHandler {
 
   cleanup(): void {
     for (const sid of this.subscribedSessions) {
-      const managed = this.sessionManager.getSession(sid);
-      if (managed) {
-        managed.connectedClientId = null;
-        managed.ws = null;
-        managed.onSessionReset = null;
-        managed.lastActivity = Date.now();
+      const slot = this.sessionManager.getSession(sid);
+      if (slot) {
+        slot.connection = null;
+        slot.sessionState.lastActivity = Date.now();
         // Note: pending UI responses are NOT resolved here — they survive
         // for replay on reconnect. They are resolved on session close or abort.
       }

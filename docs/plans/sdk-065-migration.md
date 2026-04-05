@@ -378,7 +378,7 @@ In `server/src/extension-ui-bridge.ts`:
 - Import `sendSlotEvent` and `waitForSlotUiResponse` from session-manager.
 
 **Verify:** `grep -n 'ManagedSession' server/src/extension-ui-bridge.ts` returns nothing. `grep -n 'ManagedSlot' server/src/extension-ui-bridge.ts` shows the new type.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Update createCommandContextActions for ManagedSlot and runtime
 
@@ -396,7 +396,7 @@ In `server/src/ws-handler.ts`, rewrite `createCommandContextActions`:
 Note the return type change: the old code's `session.newSession()` returned `boolean` (success), the old `session.switchSession()` returned `boolean`. The runtime's versions all return `{ cancelled: boolean }`. The `createCommandContextActions` return type (`ExtensionCommandContextActions`) already expects `{ cancelled: boolean }` — verify this matches.
 
 **Verify:** `grep -n 'session\.newSession\|session\.fork\|session\.switchSession' server/src/ws-handler.ts` returns nothing (all moved to `slot.runtime.*`). `grep -n 'slot\.runtime\.newSession\|slot\.runtime\.fork\|slot\.runtime\.switchSession' server/src/ws-handler.ts` shows the new calls.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Rewrite handleSessionReset for in-place slot update
 
@@ -421,7 +421,7 @@ The method now takes a `ManagedSlot` (the stable slot, not an "old managed sessi
 This replaces the old detach → adopt → claimSession flow entirely.
 
 **Verify:** `grep -n 'detachSession\|adoptSession' server/src/ws-handler.ts` returns nothing. The `handleSessionReset` method no longer creates new `ManagedSession` objects.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Update remaining WsHandler methods for ManagedSlot
 
@@ -478,7 +478,7 @@ In `server/src/ws-handler.ts`, update all remaining references from `ManagedSess
 **Update the comment in `server/src/server.ts`** (line 183) to reference `ManagedSlot` instead of `ManagedSession`.
 
 **Verify:** `grep -rn 'ManagedSession' server/src/ --include='*.ts' | grep -v test | grep -v node_modules` returns nothing (only comment updates remain, if any). `cd server && npx tsc --noEmit` passes.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Update tests
 

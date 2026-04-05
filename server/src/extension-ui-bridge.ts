@@ -1,7 +1,7 @@
 import type { ExtensionUIContext, ExtensionUIDialogOptions, ExtensionWidgetOptions } from '@mariozechner/pi-coding-agent';
 import type { PimoteEvent } from '@pimote/shared';
-import type { ManagedSession } from './session-manager.js';
-import { sendManagedEvent, waitForManagedUiResponse } from './session-manager.js';
+import type { ManagedSlot } from './session-manager.js';
+import { sendSlotEvent, waitForSlotUiResponse } from './session-manager.js';
 import type { PushNotificationService } from './push-notification.js';
 
 /**
@@ -12,21 +12,21 @@ import type { PushNotificationService } from './push-notification.js';
  * for the client to respond. Fire-and-forget methods (notify, setStatus, etc.)
  * send an event without waiting. TUI-only methods are no-ops.
  *
- * The bridge references the ManagedSession directly — no closures over transient
- * handler instances. When the handler changes (reconnect), the managed session's
- * ws field is updated and the bridge automatically routes to the new connection.
+ * The bridge references the ManagedSlot directly — no closures over transient
+ * handler instances. When the handler changes (reconnect), the slot's connection
+ * is updated and the bridge automatically routes to the new connection.
  * Pending UI promises survive reconnects and are replayed to the new client.
  */
-export function createExtensionUIBridge(managed: ManagedSession, pushNotificationService?: PushNotificationService): ExtensionUIContext {
+export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationService?: PushNotificationService): ExtensionUIContext {
   function notifyInteraction(method: string, fields: Record<string, unknown>): void {
     if (!pushNotificationService) return;
-    const projectName = managed.folderPath.split('/').pop() ?? 'Unknown';
+    const projectName = slot.folderPath.split('/').pop() ?? 'Unknown';
     pushNotificationService
       .notify({
         projectName,
-        folderPath: managed.folderPath,
-        sessionId: managed.id,
-        sessionName: managed.session?.sessionName,
+        folderPath: slot.folderPath,
+        sessionId: slot.sessionState.id,
+        sessionName: slot.session?.sessionName,
         reason: 'interaction',
         interaction: {
           method,
@@ -41,16 +41,16 @@ export function createExtensionUIBridge(managed: ManagedSession, pushNotificatio
   function sendRequest(requestId: string, fields: Record<string, unknown>): PimoteEvent {
     const event = {
       type: 'extension_ui_request',
-      sessionId: managed.id,
+      sessionId: slot.sessionState.id,
       requestId,
       ...fields,
     } as PimoteEvent;
-    sendManagedEvent(managed, event);
+    sendSlotEvent(slot, event);
     return event;
   }
 
   async function dialogWithTimeout<T>(requestId: string, requestEvent: PimoteEvent, opts: ExtensionUIDialogOptions | undefined, fallback: T): Promise<T> {
-    const responsePromise = waitForManagedUiResponse(managed, requestId, requestEvent) as Promise<T>;
+    const responsePromise = waitForSlotUiResponse(slot, requestId, requestEvent) as Promise<T>;
 
     const racers: Promise<T>[] = [responsePromise];
 
@@ -61,7 +61,7 @@ export function createExtensionUIBridge(managed: ManagedSession, pushNotificatio
     if (opts?.signal) {
       if (opts.signal.aborted) {
         // Remove the pending entry we just created — no one will respond to it
-        managed.pendingUiResponses.delete(requestId);
+        slot.sessionState.pendingUiResponses.delete(requestId);
         return fallback;
       }
       racers.push(
@@ -77,8 +77,8 @@ export function createExtensionUIBridge(managed: ManagedSession, pushNotificatio
 
     // If timeout or abort won the race, the pending entry is stale — the server
     // has already moved on. Remove it so it won't be replayed on reconnect.
-    if (managed.pendingUiResponses.has(requestId)) {
-      managed.pendingUiResponses.delete(requestId);
+    if (slot.sessionState.pendingUiResponses.has(requestId)) {
+      slot.sessionState.pendingUiResponses.delete(requestId);
     }
 
     return result;
@@ -112,7 +112,7 @@ export function createExtensionUIBridge(managed: ManagedSession, pushNotificatio
       const requestId = crypto.randomUUID();
       const event = sendRequest(requestId, { method: 'editor', title, prefill });
       notifyInteraction('editor', { title });
-      return waitForManagedUiResponse(managed, requestId, event) as Promise<string | undefined>;
+      return waitForSlotUiResponse(slot, requestId, event) as Promise<string | undefined>;
     },
 
     // ---- Fire-and-forget methods ----
