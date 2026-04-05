@@ -12,7 +12,7 @@ import type {
   SessionStateChangedEvent,
 } from '@pimote/shared';
 import type { PimoteSessionManager, ManagedSlot } from './session-manager.js';
-import { resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests, sendSlotEvent } from './session-manager.js';
+import { resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests } from './session-manager.js';
 import { getMergedPanelCards } from './panel-state.js';
 import type { FolderIndex } from './folder-index.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
@@ -808,7 +808,9 @@ export class WsHandler {
     const openConflictPids = await findExternalPiProcesses(folderPath);
     const allSessions = this.sessionManager.getAllSessions();
     const remoteSessions = allSessions
-      .filter((s) => s.folderPath === folderPath && s.connection?.connectedClientId !== null && s.connection?.connectedClientId !== this.clientId && s.sessionState.id !== sessionId)
+      .filter(
+        (s) => s.folderPath === folderPath && s.connection?.connectedClientId !== null && s.connection?.connectedClientId !== this.clientId && s.sessionState.id !== sessionId,
+      )
       .map((s) => ({ sessionId: s.sessionState.id, status: s.sessionState.status }));
 
     if (openConflictPids.length > 0 || remoteSessions.length > 0) {
@@ -973,7 +975,7 @@ export class WsHandler {
       sessionId,
       folderPath,
       liveStatus: slot ? slot.sessionState.status : null,
-      connectedClientId: slot ? slot.connection?.connectedClientId ?? null : null,
+      connectedClientId: slot ? (slot.connection?.connectedClientId ?? null) : null,
       folderActiveSessionCount,
       folderActiveStatus,
     };

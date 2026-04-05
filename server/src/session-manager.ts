@@ -360,7 +360,7 @@ export class PimoteSessionManager {
     slot.eventBusRef.current?.clear();
 
     const folderPath = slot.folderPath;
-    slot.session.dispose();
+    await slot.runtime.dispose();
     this.sessions.delete(sessionId);
 
     this.onSessionClosed?.(sessionId, folderPath);
@@ -370,6 +370,26 @@ export class PimoteSessionManager {
   reKeySession(slot: ManagedSlot, oldId: string, newId: string): void {
     this.sessions.delete(oldId);
     this.sessions.set(newId, slot);
+  }
+
+  /** Rebuild a slot's SessionState after session replacement.
+   *  Tears down the old state and creates a new one from the current runtime.session. */
+  rebuildSessionState(slot: ManagedSlot): void {
+    teardownSessionState(slot.sessionState);
+
+    const slotRef = { slot: slot as ManagedSlot | null };
+    slot.sessionState = createSessionState(
+      slot.runtime.session,
+      slot.eventBusRef.current!,
+      this.config,
+      {
+        onStatusChange: (sid, fp) => this.onStatusChange?.(sid, fp),
+        onAgentEnd: (sid, s) => this.handleAgentEnd(sid, s),
+        sendEvent: (e) => sendSlotEvent(slot, e),
+      },
+      slotRef,
+      slot.folderPath,
+    );
   }
 
   getSession(sessionId: string): ManagedSlot | undefined {

@@ -15,7 +15,7 @@ The plan was implemented faithfully across all 9 steps. The three-layer data mod
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `server/src/session-manager.ts:363`
-- **Status:** open
+- **Status:** resolved
 
 `closeSession` calls `slot.session.dispose()` (synchronous `AgentSession.dispose()`). The SDK 0.65.0 `AgentSessionRuntime.dispose()` is async and does two things: (1) `await emitSessionShutdownEvent(this.session.extensionRunner)` to notify extensions, then (2) `this.session.dispose()`. By calling `session.dispose()` directly, extensions never receive their shutdown lifecycle event when a session is closed or idle-reaped. This also affects `PimoteSessionManager.dispose()` which delegates to `closeSession`. Fix: replace `slot.session.dispose()` with `await slot.runtime.dispose()`.
 
@@ -24,7 +24,7 @@ The plan was implemented faithfully across all 9 steps. The three-layer data mod
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `server/src/ws-handler.test.ts` (deleted sections)
-- **Status:** open
+- **Status:** resolved
 
 The plan Step 9 states "All existing test behaviors are preserved with updated type references." However, five test cases were removed that are unrelated to the SDK migration: `returns extension commands with correct hasArgCompletions`, `handles missing extensionRunner gracefully`, `returns null when command exists but has no getArgumentCompletions`, `passes prefix through to getArgumentCompletions`, and `normalizes null return from getArgumentCompletions`. These covered edge cases for `get_commands` and `complete_args` functionality. The production code for these features is unchanged, so the tests should still pass with type updates applied.
 
@@ -33,7 +33,7 @@ The plan Step 9 states "All existing test behaviors are preserved with updated t
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/ws-handler.ts:15`
-- **Status:** open
+- **Status:** resolved
 
 `sendSlotEvent` is imported from `session-manager.js` but never used in ws-handler.ts. The only occurrence is the import line itself. Likely left over from an earlier iteration. Should be removed.
 

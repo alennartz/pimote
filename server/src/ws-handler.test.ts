@@ -25,19 +25,21 @@ function createMockEventBuffer(opts?: { replayResult?: PimoteSessionEvent[] | nu
   } as unknown as EventBuffer;
 }
 
-function createMockSlot(overrides: Partial<{
-  id: string;
-  folderPath: string;
-  connectedClientId: string | null;
-  lastActivity: number;
-  status: 'idle' | 'working';
-  needsAttention: boolean;
-  unsubscribe: () => void;
-  eventBuffer: EventBuffer;
-  extensionsBound: boolean;
-  session: any;
-  panelState: Map<string, any>;
-}> = {}): ManagedSlot {
+function createMockSlot(
+  overrides: Partial<{
+    id: string;
+    folderPath: string;
+    connectedClientId: string | null;
+    lastActivity: number;
+    status: 'idle' | 'working';
+    needsAttention: boolean;
+    unsubscribe: () => void;
+    eventBuffer: EventBuffer;
+    extensionsBound: boolean;
+    session: any;
+    panelState: Map<string, any>;
+  }> = {},
+): ManagedSlot {
   const id = overrides.id ?? 'session-1';
   const mockSession = overrides.session ?? {
     subscribe: () => () => {},
@@ -70,9 +72,8 @@ function createMockSlot(overrides: Partial<{
     panelThrottleTimer: null,
   };
 
-  const connection: ClientConnection | null = overrides.connectedClientId != null
-    ? { ws: null as any, connectedClientId: overrides.connectedClientId, onSessionReset: null }
-    : null;
+  const connection: ClientConnection | null =
+    overrides.connectedClientId != null ? { ws: null as any, connectedClientId: overrides.connectedClientId, onSessionReset: null } : null;
 
   const slot: ManagedSlot = {
     runtime: { session: mockSession } as any,
@@ -587,7 +588,7 @@ describe('WsHandler', () => {
       const sessionManager = createMockSessionManager(sessions);
 
       const newSessionId = 'new-session';
-      (sessionManager as any).openSession = async (folderPath: string) => {
+      (sessionManager as any).openSession = async (_folderPath: string) => {
         const newSession = createMockSlot({
           id: newSessionId,
           connectedClientId: null,
@@ -638,7 +639,7 @@ describe('WsHandler', () => {
       const sessionManager = createMockSessionManager(sessions);
 
       const newSessionId = 'new-session';
-      (sessionManager as any).openSession = async (folderPath: string) => {
+      (sessionManager as any).openSession = async (_folderPath: string) => {
         const newSession = createMockSlot({
           id: newSessionId,
           connectedClientId: null,
@@ -1542,6 +1543,50 @@ describe('WsHandler', () => {
       expect(commands[0]).toEqual({ name: 'fix-bug', description: 'Fix a bug', hasArgCompletions: false });
     });
 
+    it('returns extension commands with correct hasArgCompletions', async () => {
+      const session = createSessionWithSources({
+        extensionCommands: [
+          { name: 'deploy', description: 'Deploy to production', getArgumentCompletions: () => [] },
+          { name: 'reload', description: undefined },
+        ],
+      });
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'get_commands',
+          sessionId: 'session-1',
+          id: 'req-cmds-4',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-cmds-4');
+      const commands = (resp!.data as any).commands;
+      expect(commands).toHaveLength(4);
+      expect(commands[0]).toEqual({
+        name: 'deploy',
+        description: 'Deploy to production',
+        hasArgCompletions: true,
+      });
+      expect(commands[1]).toEqual({
+        name: 'reload',
+        description: '',
+        hasArgCompletions: false,
+      });
+      expect(commands[2]).toEqual({
+        name: 'new',
+        description: 'Start a new session',
+        hasArgCompletions: false,
+      });
+      expect(commands[3]).toEqual({
+        name: 'reload',
+        description: 'Reload extensions and skills',
+        hasArgCompletions: false,
+      });
+    });
+
     it('combines all three sources in order: skills, templates, extension commands', async () => {
       const session = createSessionWithSources({
         skills: [{ name: 'brainstorm', description: 'Brainstorm' }],
@@ -1562,6 +1607,30 @@ describe('WsHandler', () => {
       expect(commands[2].name).toBe('deploy');
       expect(commands[3].name).toBe('new');
       expect(commands[4].name).toBe('reload');
+    });
+
+    it('handles missing extensionRunner gracefully', async () => {
+      const session = createSessionWithSources({
+        skills: [{ name: 'test', description: 'Test' }],
+      });
+      // Explicitly remove extensionRunner
+      (session.session as any).extensionRunner = undefined;
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'get_commands',
+          sessionId: 'session-1',
+          id: 'req-cmds-6',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-cmds-6');
+      expect(resp!.success).toBe(true);
+      // Should still return the skill + built-in commands
+      expect((resp!.data as any).commands).toHaveLength(3);
     });
   });
 
@@ -1616,6 +1685,35 @@ describe('WsHandler', () => {
       expect((resp!.data as any).items).toBeNull();
     });
 
+    it('returns null when command exists but has no getArgumentCompletions', async () => {
+      const session = createMockSlot({ id: 'session-1', connectedClientId: 'client-1' });
+      (session.session as any).resourceLoader = { getSkills: () => ({ skills: [], diagnostics: [] }) };
+      (session.session as any).promptTemplates = [];
+      (session.session as any).extensionRunner = {
+        getRegisteredCommands: () => [],
+        getCommand: (name: string) => {
+          if (name === 'reload') {
+            return {
+              name: 'reload',
+              description: 'Reload',
+              handler: async () => {},
+              // no getArgumentCompletions
+            };
+          }
+          return undefined;
+        },
+      };
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(JSON.stringify({ type: 'complete_args', sessionId: 'session-1', commandName: 'reload', prefix: '', id: 'req-args-3' }));
+
+      const resp = findResponse(sent, 'req-args-3');
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).items).toBeNull();
+    });
+
     it('returns null when extensionRunner is not available', async () => {
       const session = createMockSlot({ id: 'session-1', connectedClientId: 'client-1' });
       (session.session as any).resourceLoader = { getSkills: () => ({ skills: [], diagnostics: [] }) };
@@ -1628,6 +1726,65 @@ describe('WsHandler', () => {
       await handler.handleMessage(JSON.stringify({ type: 'complete_args', sessionId: 'session-1', commandName: 'anything', prefix: '', id: 'req-args-4' }));
 
       const resp = findResponse(sent, 'req-args-4');
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).items).toBeNull();
+    });
+
+    it('passes prefix through to getArgumentCompletions', async () => {
+      let receivedPrefix: string | undefined;
+
+      const session = createMockSlot({ id: 'session-1', connectedClientId: 'client-1' });
+      (session.session as any).resourceLoader = { getSkills: () => ({ skills: [], diagnostics: [] }) };
+      (session.session as any).promptTemplates = [];
+      (session.session as any).extensionRunner = {
+        getRegisteredCommands: () => [],
+        getCommand: (name: string) => {
+          if (name === 'deploy') {
+            return {
+              name: 'deploy',
+              getArgumentCompletions: (prefix: string) => {
+                receivedPrefix = prefix;
+                return [];
+              },
+              handler: async () => {},
+            };
+          }
+          return undefined;
+        },
+      };
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(JSON.stringify({ type: 'complete_args', sessionId: 'session-1', commandName: 'deploy', prefix: 'prod', id: 'req-args-5' }));
+
+      expect(receivedPrefix).toBe('prod');
+    });
+
+    it('normalizes null return from getArgumentCompletions', async () => {
+      const session = createMockSlot({ id: 'session-1', connectedClientId: 'client-1' });
+      (session.session as any).resourceLoader = { getSkills: () => ({ skills: [], diagnostics: [] }) };
+      (session.session as any).promptTemplates = [];
+      (session.session as any).extensionRunner = {
+        getRegisteredCommands: () => [],
+        getCommand: (name: string) => {
+          if (name === 'deploy') {
+            return {
+              name: 'deploy',
+              getArgumentCompletions: () => null,
+              handler: async () => {},
+            };
+          }
+          return undefined;
+        },
+      };
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(JSON.stringify({ type: 'complete_args', sessionId: 'session-1', commandName: 'deploy', prefix: '', id: 'req-args-6' }));
+
+      const resp = findResponse(sent, 'req-args-6');
       expect(resp!.success).toBe(true);
       expect((resp!.data as any).items).toBeNull();
     });
