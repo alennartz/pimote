@@ -71,7 +71,7 @@ Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges
 - `server/src/config.ts` — config loading, VAPID key auto-generation
 - `server/src/server.ts` — HTTP server, static files, WebSocket upgrade, client registry, version checking
 - `server/src/ws-handler.ts` — per-connection command handler, multi-session routing, session ownership/displacement, conflict detection
-- `server/src/session-manager.ts` — ManagedSession lifecycle, status tracking, event subscription, idle reaping, EventBus creation + panel listener wiring, throttled panel push scheduling
+- `server/src/session-manager.ts` — ManagedSession lifecycle, status tracking, event subscription, idle reaping, EventBus creation + panel listener wiring, throttled panel push scheduling, pending extension UI resolution helpers
 - `server/src/event-buffer.ts` — ring buffer, SDK→wire event mapping, streaming delta coalescing
 - `server/src/message-mapper.ts` — SDK AgentMessage → PimoteAgentMessage conversion
 - `server/src/extension-ui-bridge.ts` — extension UI calls → WebSocket events
@@ -86,7 +86,7 @@ Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges
 
 SvelteKit PWA rendering pi conversations in real time with session/folder browsing, model/thinking controls, extension UI, and push notifications.
 
-**Responsibilities:** WebSocket connection with auto-reconnect (backoff→connecting→syncing→ready), per-session cursor tracking, stable client identity (localStorage-persisted), multi-session state management (SessionRegistry with $state() runes), localStorage persistence of active sessions and viewed session for cross-restart restoration, streaming message accumulation with stable DOM keying, folder/session index browsing, streaming markdown rendering (smd + highlight.js), tool call visualization, model/thinking pickers, extension UI queue (inline select/confirm + modal input/editor), input bar with prompt/steer/follow-up/abort modes + slash command autocomplete, per-session draft persistence, fuzzy matching, service worker for push notifications, PWA install prompt, active session bar with status indicators, text-to-speech playback via per-message TTS button, panel card display (desktop side panel + mobile overlay with toggle FAB)
+**Responsibilities:** WebSocket connection with auto-reconnect (backoff→connecting→syncing→ready), per-session cursor tracking, stable client identity (localStorage-persisted), multi-session state management (SessionRegistry with $state() runes), localStorage persistence of active sessions and viewed session for cross-restart restoration, streaming message accumulation with stable DOM keying, folder/session index browsing, streaming markdown rendering (smd + highlight.js), tool call visualization, model/thinking pickers, extension UI queue (inline select/confirm + modal input/editor with CodeMirror code editor), input bar with prompt/steer/follow-up/abort modes + slash command autocomplete, pending steering message display with dequeue-to-edit recall, per-session draft persistence, fuzzy matching, service worker for push notifications, PWA install prompt, active session bar with status indicators, text-to-speech playback via per-message TTS button, panel card display (desktop side panel + mobile overlay with toggle FAB)
 
 **Dependencies:** Protocol (wire format types), Server (WebSocket API)
 
@@ -95,7 +95,7 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/stores/persistence.ts` — localStorage helpers for client state (clientId, active sessions, viewedSessionId) with typed read/write functions, centralized key naming, and silent error handling
 - `client/src/lib/stores/persistence.test.ts` — tests
 - `client/src/lib/stores/connection.svelte.ts` — WebSocket lifecycle, reconnect phases, cursor tracking, push re-registration, clientId hydration from persistence
-- `client/src/lib/stores/session-registry.svelte.ts` — SessionRegistry class, event routing, streaming message accumulation, session lifecycle helpers, active-session hydration and persistence on mutation
+- `client/src/lib/stores/session-registry.svelte.ts` — SessionRegistry class, event routing, streaming message accumulation, session lifecycle helpers, active-session hydration and persistence on mutation, pending steering message reconciliation
 - `client/src/lib/stores/session-registry.test.ts` — tests
 - `client/src/lib/stores/index-store.svelte.ts` — folder/session index browsing state
 - `client/src/lib/stores/command-store.svelte.ts` — per-session command cache
@@ -118,7 +118,8 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/components/InputBar.svelte` — prompt input with slash command integration
 - `client/src/lib/components/CommandAutocomplete.svelte` — slash command autocomplete popup
 - `client/src/lib/components/InlineSelect.svelte` — inline extension UI (select with 1-9/arrows, confirm with Y/N)
-- `client/src/lib/components/ExtensionDialog.svelte` — modal extension UI (input, editor)
+- `client/src/lib/components/ExtensionCodeEditor.svelte` — CodeMirror-based code editor for extension UI editor dialogs with language detection and dark theme
+- `client/src/lib/components/ExtensionDialog.svelte` — modal extension UI (input, editor with CodeMirror)
 - `client/src/lib/components/ExtensionStatus.svelte` — extension status display
 - `client/src/lib/components/StatusBar.svelte` — session status header
 - `client/src/lib/components/ActiveSessionBar.svelte` — session tab bar with status dots
@@ -134,6 +135,15 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/markdown-to-speech.test.ts` — tests
 - `client/src/lib/smd-renderer.ts` — streaming-markdown renderer with highlight.js and URL scheme allowlisting
 - `client/src/lib/smd-renderer.test.ts`, `client/src/lib/smd-underscore-fix.test.ts` — tests
+- `client/src/lib/syntax-highlighter.ts` — highlight.js language registration (lazy-loaded subset)
+- `client/src/lib/codemirror-language.ts` — CodeMirror language extension loader
+- `client/src/lib/codemirror-theme.ts` — CodeMirror dark editor theme
+- `client/src/lib/editor-language.ts` — language detection for extension editor dialogs (from title/content heuristics)
+- `client/src/lib/editor-language.test.ts` — tests
+- `client/src/lib/extension-dialog-state.ts` — extension dialog initial value logic (input vs editor prefill)
+- `client/src/lib/extension-dialog-state.test.ts` — tests
+- `client/src/lib/widget-cards.ts` — converts extension widget string-lines to panel Card objects
+- `client/src/lib/widget-cards.test.ts` — tests
 - `client/src/lib/format-relative-time.ts` — relative time formatting (e.g. "5m ago")
 - `client/src/lib/fuzzy.ts` — fuzzy matching utility
 - `client/src/lib/fuzzy.test.ts` — tests
@@ -147,6 +157,22 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/test/mocks/app-environment.ts` — test mock
 - `client/static/**` — Static assets (PWA manifest & icons, robots.txt)
 - `client/svelte.config.js`, `client/vite.config.ts`, `client/vitest.config.ts` — build config
+
+### Tools
+
+Standalone diagnostic and debugging scripts for stream/API analysis.
+
+**Responsibilities:** APIM SSE diagnostics, stream timing measurement, comparative stream analysis
+
+**Dependencies:** none
+
+**Files:**
+
+- `tools/apim-diagnose.ts` — APIM SSE diagnostic tool
+- `tools/stream-compare.ts` — comparative stream timing (proxy vs direct)
+- `tools/stream-timing.ts` — stream timing tool
+- `tools/stream-timing-fetch.ts` — raw fetch stream timing (Accept-Encoding effects)
+- `tools/stream-timing-raw.ts` — raw Anthropic stream timing
 
 ### Panels
 

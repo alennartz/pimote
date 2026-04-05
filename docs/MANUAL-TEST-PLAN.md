@@ -440,6 +440,39 @@
 - **[E]** `steer` command sent; InputBar mode is "steer" during streaming
 - **[E]** Agent adjusts behavior based on steering message
 
+### TC-06.03a — Pending steering messages shown before consumption 🟠
+
+- **[P]** Agent is streaming (status: working)
+- **[S]** Send a steering message via InputBar
+- **[E]** The `PendingSteeringMessages` bar appears above the InputBar showing the steering text (truncated if long)
+- **[E]** The pending message is tracked optimistically in `pendingSteeringMessages` on the per-session state
+- **[S]** Send a second steering message
+- **[E]** Both messages appear in the pending bar, one per line
+- **[S]** Wait for the agent to consume the first steering message (a user-role message appears in the conversation with matching text)
+- **[E]** The consumed message is removed from the pending bar via reconciliation (text match against `message_end` events)
+
+### TC-06.03b — Dequeue pending steering messages for editing 🟠
+
+- **[P]** Agent is streaming; one or more pending steering messages shown in the `PendingSteeringMessages` bar
+- **[S]** Tap/click the pending messages bar ("tap to edit" hint visible)
+- **[E]** `dequeue_steering` command sent to server with the session ID
+- **[E]** Server calls `session.clearQueue()` and returns the cleared steering messages
+- **[E]** Returned steering text is joined with newlines and placed into the InputBar (via `setEditorText`)
+- **[E]** Pending messages bar disappears (local `pendingSteeringMessages` cleared)
+- **[E]** User can edit the text and re-send as a new steer
+
+### TC-06.03c — Pending steering messages cleared on abort 🟡
+
+- **[P]** Agent is streaming; pending steering messages visible
+- **[S]** Click Abort
+- **[E]** Agent stops; pending steering messages are restored to InputBar for editing (existing behavior from commit 7169189)
+- **[E]** Pending messages bar disappears
+
+### TC-06.03d — No pending bar when no steers queued 🔵
+
+- **[P]** Agent is streaming; no steering messages sent yet
+- **[E]** `PendingSteeringMessages` bar is not visible (hidden when `pendingSteeringMessages` is empty)
+
 ### TC-06.04 — Send prompt after agent finishes (follow-up pattern) 🟠
 
 - **[P]** Agent has finished (status: idle), conversation has messages
@@ -1471,20 +1504,18 @@ The panel system allows pi extensions to push structured card data into the pimo
 
 3. **Session takeover PID filtering**: The `kill_conflicting_processes` command accepts client-supplied PIDs. While it cross-checks against actual pi processes in the folder, the flow is: client sends PIDs → server validates they're pi processes in that folder → kills. This is sound, but worth verifying the validation is tight.
 
-4. **Legacy SessionStore**: `session.svelte.ts` is retained but its event subscription is removed. Dead code that could confuse future maintenance.
+4. **Event buffer coalescing discards streaming deltas on reconnect**: If a client reconnects during mid-message streaming, it won't receive the accumulated text deltas (they were coalesced away). The `message_end` event contains the full message, so the final state is correct, but there may be a brief gap in the streaming display after reconnect until the message completes.
 
-5. **Event buffer coalescing discards streaming deltas on reconnect**: If a client reconnects during mid-message streaming, it won't receive the accumulated text deltas (they were coalesced away). The `message_end` event contains the full message, so the final state is correct, but there may be a brief gap in the streaming display after reconnect until the message completes.
+5. **No rate limiting on WebSocket commands**: A malicious or buggy client could flood the server with commands.
 
-6. **No rate limiting on WebSocket commands**: A malicious or buggy client could flood the server with commands.
+6. **Select dialog options format mismatch**: The extension bridge sends the `options` parameter from `ui.select()` as a raw string array, but `ExtensionDialog.svelte` renders `option.label` and sends `option.value`. If the options arrive as plain strings rather than `{label, value}` objects, the dialog may render blank labels. This should be tested carefully.
 
-7. **Select dialog options format mismatch**: The extension bridge sends the `options` parameter from `ui.select()` as a raw string array, but `ExtensionDialog.svelte` renders `option.label` and sends `option.value`. If the options arrive as plain strings rather than `{label, value}` objects, the dialog may render blank labels. This should be tested carefully.
+7. **InputBar doesn't use `follow_up` command**: The protocol defines `follow_up` as a separate command, but the InputBar UI always sends `prompt` when not streaming. The `follow_up` semantic pathway exists on the server but is unreachable from the current UI. If `follow_up` has different behavior than `prompt` in the pi SDK, that difference is not being utilized.
 
-8. **InputBar doesn't use `follow_up` command**: The protocol defines `follow_up` as a separate command, but the InputBar UI always sends `prompt` when not streaming. The `follow_up` semantic pathway exists on the server but is unreachable from the current UI. If `follow_up` has different behavior than `prompt` in the pi SDK, that difference is not being utilized.
+8. **Textarea auto-resize cap**: The InputBar textarea caps at 200px height (~8 lines). Very long pasted content will require scrolling within the textarea. This is intentional but should be verified on mobile where screen real estate is limited.
 
-9. **Textarea auto-resize cap**: The InputBar textarea caps at 200px height (~8 lines). Very long pasted content will require scrolling within the textarea. This is intentional but should be verified on mobile where screen real estate is limited.
+9. **Markdown XSS protection**: The markdown renderer (streaming-markdown / smd) builds DOM via createElement/createTextNode (no innerHTML), with URL sanitization in the custom renderer's `set_attr` hook to block `javascript:` and other dangerous URI schemes. Verify that malicious markdown (e.g., `[click](javascript:alert(1))`, `<img onerror=...>`) is properly handled in rendered assistant messages.
 
-10. **Markdown XSS protection**: The markdown renderer (streaming-markdown / smd) builds DOM via createElement/createTextNode (no innerHTML), with URL sanitization in the custom renderer's `set_attr` hook to block `javascript:` and other dangerous URI schemes. Verify that malicious markdown (e.g., `[click](javascript:alert(1))`, `<img onerror=...>`) is properly handled in rendered assistant messages.
+10. **Session displacement race conditions**: The displacement flow (reconnect → `session_owned` → force reconnect → displaced event) involves multiple round trips. If both clients attempt force reconnects simultaneously, the last one wins. The `pendingTakeover` state is client-local, so server restarts between the initial reject and the force retry will silently succeed (session no longer owned).
 
-11. **Session displacement race conditions**: The displacement flow (reconnect → `session_owned` → force reconnect → displaced event) involves multiple round trips. If both clients attempt force reconnects simultaneously, the last one wins. The `pendingTakeover` state is client-local, so server restarts between the initial reject and the force retry will silently succeed (session no longer owned).
-
-12. **`kill_conflicting_sessions` authorization**: Any connected client can send `kill_conflicting_sessions` with arbitrary session IDs. The server closes those sessions without checking whether the requesting client has any relationship to them. A malicious client could kill any active session.
+11. **`kill_conflicting_sessions` authorization**: Any connected client can send `kill_conflicting_sessions` with arbitrary session IDs. The server closes those sessions without checking whether the requesting client has any relationship to them. A malicious client could kill any active session.
