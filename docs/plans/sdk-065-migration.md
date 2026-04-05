@@ -196,6 +196,8 @@ No new dependencies. The migration uses new APIs from the same `@mariozechner/pi
 
 ## Steps
 
+**Pre-implementation commit:** `171c41fb61b29b73f31ce0a72b1f6267f6550468`
+
 ### Step 1: Define the three-layer data model types
 
 In `server/src/session-manager.ts`, replace the `ManagedSession` interface with three new interfaces and remove the old export:
@@ -253,7 +255,7 @@ import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgent
 Remove the `ManagedSession` interface export. The `EventSocket` and `PendingUiEntry` interfaces remain unchanged.
 
 **Verify:** `grep -n 'interface ManagedSession' server/src/session-manager.ts` returns nothing. `grep -n 'ClientConnection\|ManagedSlot\|SessionState' server/src/session-manager.ts` shows the three new interfaces.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement session state lifecycle helpers
 
@@ -287,7 +289,7 @@ function teardownSessionState(state: SessionState): void;
 Inside: calls `resolveAllPendingUi(state)`, clears `panelThrottleTimer`, calls all `panelListenerUnsubs`, calls `state.unsubscribe()`.
 
 **Verify:** Both functions exist and are callable. `grep -n 'function createSessionState\|function teardownSessionState' server/src/session-manager.ts` shows both.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Update session-manager helper functions for new types
 
@@ -304,7 +306,7 @@ Update `setupPanelListeners(eventBus, slot)` and `schedulePanelPush(slot)` — p
 These renames propagate to `extension-ui-bridge.ts` and `ws-handler.ts` (steps 5 and 7), but the function signatures are established here.
 
 **Verify:** `grep -n 'ManagedSession' server/src/session-manager.ts` returns nothing (only the three new types remain). All helper functions compile with the new parameter types.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Rewrite PimoteSessionManager with runtime factory
 
@@ -357,7 +359,7 @@ Import `getAgentDir` from the SDK: `import { getAgentDir } from '@mariozechner/p
 **Update `extractFirstMessage` / `extractLastAgentMessage`** — takes `ManagedSlot` (reads `slot.session.messages`).
 
 **Verify:** `npx tsc --noEmit 2>&1 | grep session-manager` shows no errors in session-manager.ts (other files may still error). `grep -n 'ensureProviders\|providerInitByFolder\|detachSession\|adoptSession' server/src/session-manager.ts` returns nothing.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Update extension-ui-bridge for ManagedSlot
 

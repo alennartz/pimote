@@ -1,5 +1,14 @@
-import { createAgentSession, createEventBus, AuthStorage, ModelRegistry, DefaultResourceLoader, SessionManager as PiSessionManager } from '@mariozechner/pi-coding-agent';
-import type { AgentSession, EventBusController } from '@mariozechner/pi-coding-agent';
+import {
+  createAgentSessionRuntime,
+  createAgentSessionServices,
+  createAgentSessionFromServices,
+  createEventBus,
+  AuthStorage,
+  ModelRegistry,
+  getAgentDir,
+  SessionManager as PiSessionManager,
+} from '@mariozechner/pi-coding-agent';
+import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory } from '@mariozechner/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
 import type { PimoteEvent, Card } from '@pimote/shared';
@@ -21,111 +30,185 @@ export interface PendingUiEntry {
   event: PimoteEvent;
 }
 
-export interface ManagedSession {
-  id: string;
-  session: AgentSession;
-  folderPath: string;
-  eventBuffer: EventBuffer;
-  connectedClientId: string | null;
-  lastActivity: number; // Date.now()
-  status: 'idle' | 'working';
-  needsAttention: boolean;
-  unsubscribe: () => void;
-
-  /** Current WebSocket for sending events. Null when no client is connected. */
-  ws: EventSocket | null;
-  /** Pending extension UI dialog promises. Keyed by requestId. Session-scoped, survives reconnects. */
-  pendingUiResponses: Map<string, PendingUiEntry>;
-  /** Whether bindExtensions has been called (only done once per session). */
-  extensionsBound: boolean;
-  /** Callback for session resets (newSession, fork, etc.). Set by the claiming handler. */
-  onSessionReset: ((managed: ManagedSession) => Promise<void>) | null;
-  /** Panel card state, keyed by namespace. */
-  panelState: Map<string, Card[]>;
-  /** Timer handle for throttled panel pushes. */
-  panelThrottleTimer: ReturnType<typeof setTimeout> | null;
-  /** EventBus for extension communication (panels, detect). Survives session resets. */
-  eventBus: EventBusController | null;
-  /** Unsubscribe functions for EventBus panel listeners. Called on detach to prevent stale handlers. */
-  panelListenerUnsubs: (() => void)[];
+export interface ClientConnection {
+  ws: EventSocket;
+  connectedClientId: string;
+  onSessionReset: ((slot: ManagedSlot) => Promise<void>) | null;
 }
 
-// ---- Managed session helpers (closure-free, operate on stable ManagedSession reference) ----
+export interface SessionState {
+  id: string;
+  eventBuffer: EventBuffer;
+  status: 'idle' | 'working';
+  needsAttention: boolean;
+  lastActivity: number;
+  unsubscribe: () => void;
+  pendingUiResponses: Map<string, PendingUiEntry>;
+  extensionsBound: boolean;
+  panelState: Map<string, Card[]>;
+  panelListenerUnsubs: (() => void)[];
+  panelThrottleTimer: ReturnType<typeof setTimeout> | null;
+}
 
-/** Send an event to the client connected to this session. No-op if disconnected. */
-export function sendManagedEvent(managed: ManagedSession, event: PimoteEvent): void {
-  if (!managed.ws || managed.ws.readyState !== 1) return;
+export interface ManagedSlot {
+  runtime: AgentSessionRuntime;
+  folderPath: string;
+  eventBusRef: { current: EventBusController | null };
+  connection: ClientConnection | null;
+  sessionState: SessionState;
+  get session(): AgentSession;
+}
+
+// ---- Slot-based helpers (operate on ManagedSlot) ----
+
+/** Send an event to the client connected to this slot. No-op if disconnected. */
+export function sendSlotEvent(slot: ManagedSlot, event: PimoteEvent): void {
+  const ws = slot.connection?.ws;
+  if (!ws || ws.readyState !== 1) return;
   try {
-    managed.ws.send(JSON.stringify(event));
+    ws.send(JSON.stringify(event));
   } catch {
     // WebSocket send failed — ignore (client disconnecting)
   }
 }
 
 /** Create a pending promise for a UI dialog response. Stores the request event for replay on reconnect. */
-export function waitForManagedUiResponse(managed: ManagedSession, requestId: string, requestEvent: PimoteEvent): Promise<unknown> {
+export function waitForSlotUiResponse(slot: ManagedSlot, requestId: string, requestEvent: PimoteEvent): Promise<unknown> {
   return new Promise<unknown>((resolve) => {
-    managed.pendingUiResponses.set(requestId, { resolve, event: requestEvent });
+    slot.sessionState.pendingUiResponses.set(requestId, { resolve, event: requestEvent });
   });
 }
 
 /** Resolve a specific pending UI response by requestId. */
-export function resolveManagedPendingUi(managed: ManagedSession, requestId: string, value: unknown): void {
-  const pending = managed.pendingUiResponses.get(requestId);
+export function resolveSlotPendingUi(slot: ManagedSlot, requestId: string, value: unknown): void {
+  const pending = slot.sessionState.pendingUiResponses.get(requestId);
   if (pending) {
-    managed.pendingUiResponses.delete(requestId);
+    slot.sessionState.pendingUiResponses.delete(requestId);
     pending.resolve(value);
   }
 }
 
 /** Resolve all pending UI responses with undefined. Used on abort, session close, or session reset. */
-export function resolveAllManagedPendingUi(managed: ManagedSession): void {
-  for (const [, pending] of managed.pendingUiResponses) {
+export function resolveAllSlotPendingUi(slot: ManagedSlot): void {
+  for (const [, pending] of slot.sessionState.pendingUiResponses) {
     pending.resolve(undefined);
   }
-  managed.pendingUiResponses.clear();
+  slot.sessionState.pendingUiResponses.clear();
 }
 
 /** Re-send all pending UI request events to the current client. Called on reconnect to recover lost dialogs. */
-export function replayManagedPendingUiRequests(managed: ManagedSession): void {
-  for (const [, pending] of managed.pendingUiResponses) {
-    sendManagedEvent(managed, pending.event);
+export function replaySlotPendingUiRequests(slot: ManagedSlot): void {
+  for (const [, pending] of slot.sessionState.pendingUiResponses) {
+    sendSlotEvent(slot, pending.event);
   }
 }
 
-/** Register panel detection and data listeners on an EventBus for a managed session.
- *  Returns unsubscribe functions so listeners can be removed on detach. */
-function setupPanelListeners(eventBus: EventBusController, managed: ManagedSession): (() => void)[] {
+// ---- Slot-based session state lifecycle helpers ----
+
+/** Construct a SessionState from an AgentSession and EventBus.
+ *  Subscribes to session events and sets up panel listeners. */
+function createSessionState(
+  session: AgentSession,
+  eventBus: EventBusController,
+  config: PimoteConfig,
+  callbacks: {
+    onStatusChange?: (sessionId: string, folderPath: string) => void;
+    onAgentEnd?: (sessionId: string, slot: ManagedSlot) => void;
+    sendEvent: (event: PimoteEvent) => void;
+  },
+  slotRef: { slot: ManagedSlot | null },
+  folderPath: string,
+): SessionState {
+  const sessionId = session.sessionId;
+  const eventBuffer = new EventBuffer(config.bufferSize);
+
+  const state: SessionState = {
+    id: sessionId,
+    eventBuffer,
+    status: session.isStreaming ? 'working' : 'idle',
+    needsAttention: false,
+    lastActivity: Date.now(),
+    unsubscribe: () => {},
+    pendingUiResponses: new Map(),
+    extensionsBound: false,
+    panelState: new Map(),
+    panelListenerUnsubs: [],
+    panelThrottleTimer: null,
+  };
+
+  // Subscribe to session events
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === 'agent_start' && state.status !== 'working') {
+      state.status = 'working';
+      callbacks.onStatusChange?.(sessionId, folderPath);
+    } else if (event.type === 'agent_end' && state.status !== 'idle') {
+      state.status = 'idle';
+      state.needsAttention = true;
+      if (slotRef.slot) callbacks.onAgentEnd?.(sessionId, slotRef.slot);
+      callbacks.onStatusChange?.(sessionId, folderPath);
+    }
+    eventBuffer.onEvent(
+      event,
+      sessionId,
+      (e) => callbacks.sendEvent(e),
+      () => session.messages[session.messages.length - 1] as SdkMessage,
+    );
+  });
+
+  state.unsubscribe = unsubscribe;
+
+  // Set up panel listeners on the EventBus
+  state.panelListenerUnsubs = setupSlotPanelListeners(eventBus, state, sessionId, callbacks.sendEvent);
+
+  return state;
+}
+
+/** Clean up a SessionState: resolve pending UI, clear timers, unsubscribe listeners. */
+function teardownSessionState(state: SessionState): void {
+  // Resolve all pending UI responses
+  for (const [, pending] of state.pendingUiResponses) {
+    pending.resolve(undefined);
+  }
+  state.pendingUiResponses.clear();
+
+  // Clear panel throttle timer
+  if (state.panelThrottleTimer) clearTimeout(state.panelThrottleTimer);
+
+  // Remove panel listeners
+  for (const unsub of state.panelListenerUnsubs) unsub();
+  state.panelListenerUnsubs = [];
+
+  // Unsubscribe from session events
+  state.unsubscribe();
+}
+
+/** Register panel detection and data listeners for a SessionState on an EventBus. */
+function setupSlotPanelListeners(eventBus: EventBusController, state: SessionState, sessionId: string, sendEvent: (event: PimoteEvent) => void): (() => void)[] {
   const unsub1 = eventBus.on('pimote:detect:request', () => {
     eventBus.emit('pimote:detect:response', { detected: true });
   });
   const unsub2 = eventBus.on('pimote:panels', (data) => {
-    applyPanelMessage(managed.panelState, data as PanelBusMessage);
-    schedulePanelPush(managed);
+    applyPanelMessage(state.panelState, data as PanelBusMessage);
+    scheduleSlotPanelPush(state, sessionId, sendEvent);
   });
   return [unsub1, unsub2];
 }
 
-/** Schedule a throttled panel push (~200ms). Merges all namespaces and sends to the client. */
-function schedulePanelPush(managed: ManagedSession): void {
-  if (managed.panelThrottleTimer !== null) return;
-  managed.panelThrottleTimer = setTimeout(() => {
-    managed.panelThrottleTimer = null;
-    const cards = getMergedPanelCards(managed.panelState);
-    sendManagedEvent(managed, { type: 'panel_update', sessionId: managed.id, cards });
+/** Schedule a throttled panel push (~200ms) for a SessionState. */
+function scheduleSlotPanelPush(state: SessionState, sessionId: string, sendEvent: (event: PimoteEvent) => void): void {
+  if (state.panelThrottleTimer !== null) return;
+  state.panelThrottleTimer = setTimeout(() => {
+    state.panelThrottleTimer = null;
+    const cards = getMergedPanelCards(state.panelState);
+    sendEvent({ type: 'panel_update', sessionId, cards });
   }, 200);
 }
 
 export class PimoteSessionManager {
   private readonly authStorage: AuthStorage;
   private readonly modelRegistry: ModelRegistry;
-  private readonly sessions = new Map<string, ManagedSession>();
+  private readonly sessions = new Map<string, ManagedSlot>();
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
-  /** Per-folder lazy-init promises for extension provider registration.
-   *  First openSession for a folder triggers extension loading + provider
-   *  registration on the shared ModelRegistry. Concurrent callers for the
-   *  same folder await the same promise instead of racing. */
-  private readonly providerInitByFolder = new Map<string, Promise<void>>();
   onStatusChange?: (sessionId: string, folderPath: string) => void;
   onSessionClosed?: (sessionId: string, folderPath: string) => void;
 
@@ -137,55 +220,37 @@ export class PimoteSessionManager {
     this.modelRegistry = ModelRegistry.create(this.authStorage);
   }
 
-  /** Ensure extension-provided model providers are registered for a folder.
-   *  First caller triggers the work; concurrent callers await the same promise. */
-  private ensureProviders(folderPath: string): Promise<void> {
-    const existing = this.providerInitByFolder.get(folderPath);
-    if (existing) return existing;
-
-    const promise = (async () => {
-      // Use a throwaway loader (no eventBus needed) — we only need extensions metadata.
-      const loader = new DefaultResourceLoader({ cwd: folderPath });
-      await loader.reload();
-      const extensionsResult = loader.getExtensions();
-      for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
-        try {
-          this.modelRegistry.registerProvider(name, config);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.error(`[pimote] Extension "${extensionPath}" provider registration error: ${message}`);
-        }
-      }
-    })();
-
-    this.providerInitByFolder.set(folderPath, promise);
-
-    // On failure, remove the cached promise so the next attempt retries.
-    promise.catch(() => {
-      this.providerInitByFolder.delete(folderPath);
-    });
-
-    return promise;
-  }
-
   async openSession(folderPath: string, sessionFilePath?: string): Promise<string> {
-    // Ensure extension-provided models are registered before session creation.
-    // Shared once per folder — concurrent openSession calls for the same folder
-    // await the same promise instead of racing on ModelRegistry mutations.
-    await this.ensureProviders(folderPath);
+    const eventBusRef: { current: EventBusController | null } = { current: null };
+    const sharedAuthStorage = this.authStorage;
+    const sharedModelRegistry = this.modelRegistry;
 
-    const eventBus = createEventBus();
-    const loader = new DefaultResourceLoader({ cwd: folderPath, eventBus });
-    await loader.reload();
+    const factory: CreateAgentSessionRuntimeFactory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
+      const eventBus = createEventBus();
+      eventBusRef.current = eventBus;
 
-    const { session } = await createAgentSession({
+      const services = await createAgentSessionServices({
+        cwd,
+        agentDir,
+        authStorage: sharedAuthStorage,
+        modelRegistry: sharedModelRegistry,
+        resourceLoaderOptions: { eventBus },
+      });
+
+      return {
+        ...(await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent })),
+        services,
+        diagnostics: services.diagnostics,
+      };
+    };
+
+    const runtime = await createAgentSessionRuntime(factory, {
       cwd: folderPath,
-      resourceLoader: loader,
+      agentDir: getAgentDir(),
       sessionManager: sessionFilePath ? PiSessionManager.open(sessionFilePath) : PiSessionManager.create(folderPath),
-      authStorage: this.authStorage,
-      modelRegistry: this.modelRegistry,
     });
 
+    const session = runtime.session;
     const sessionId = session.sessionId;
 
     // Apply default model from config (only for new sessions without an existing model preference)
@@ -206,69 +271,58 @@ export class PimoteSessionManager {
       console.log(`[pimote] Set default thinking level: ${this.config.defaultThinkingLevel}`);
     }
 
-    const eventBuffer = new EventBuffer(this.config.bufferSize);
+    // Create the slot object. Use a slotRef so createSessionState callbacks can reference the slot.
+    const slotRef: { slot: ManagedSlot | null } = { slot: null };
 
-    const managed: ManagedSession = {
-      id: sessionId,
+    const sessionState = createSessionState(
       session,
+      eventBusRef.current!,
+      this.config,
+      {
+        onStatusChange: (sid, fp) => this.onStatusChange?.(sid, fp),
+        onAgentEnd: (sid, s) => this.handleAgentEnd(sid, s),
+        sendEvent: (e) => sendSlotEvent(slot, e),
+      },
+      slotRef,
       folderPath,
-      eventBuffer,
-      connectedClientId: null,
-      lastActivity: Date.now(),
-      status: 'idle',
-      needsAttention: false,
-      unsubscribe: () => {},
-      ws: null,
-      pendingUiResponses: new Map(),
-      extensionsBound: false,
-      onSessionReset: null,
-      panelState: new Map(),
-      panelThrottleTimer: null,
-      eventBus,
-      panelListenerUnsubs: [],
+    );
+
+    const slot: ManagedSlot = {
+      runtime,
+      folderPath,
+      eventBusRef,
+      connection: null,
+      sessionState,
+      get session() {
+        return this.runtime.session;
+      },
     };
+    slotRef.slot = slot;
 
-    managed.panelListenerUnsubs = setupPanelListeners(eventBus, managed);
-
-    const unsubscribe = session.subscribe((event) => {
-      if (event.type === 'agent_start' && managed.status !== 'working') {
-        managed.status = 'working';
-        this.onStatusChange?.(sessionId, folderPath);
-      } else if (event.type === 'agent_end' && managed.status !== 'idle') {
-        managed.status = 'idle';
-        managed.needsAttention = true;
-        const projectName = folderPath.split('/').pop() ?? 'Unknown';
-        const firstMessage = this.extractFirstMessage(managed);
-        const lastAgentMessage = this.extractLastAgentMessage(managed);
-        this.pushNotificationService
-          .notify({
-            projectName,
-            folderPath,
-            sessionId,
-            sessionName: managed.session.sessionName,
-            firstMessage,
-            reason: 'idle',
-            lastAgentMessage,
-          })
-          .catch((err) => console.error('[SessionManager] Push notification error:', err));
-        this.onStatusChange?.(sessionId, folderPath);
-      }
-      eventBuffer.onEvent(
-        event,
-        sessionId,
-        (e) => sendManagedEvent(managed, e),
-        () => session.messages[session.messages.length - 1] as SdkMessage,
-      );
-    });
-
-    managed.unsubscribe = unsubscribe;
-
-    this.sessions.set(sessionId, managed);
+    this.sessions.set(sessionId, slot);
     return sessionId;
   }
 
-  private extractLastAgentMessage(managed: ManagedSession): string | undefined {
-    const messages = managed.session.messages ?? [];
+  private handleAgentEnd(sessionId: string, slot: ManagedSlot): void {
+    const folderPath = slot.folderPath;
+    const projectName = folderPath.split('/').pop() ?? 'Unknown';
+    const firstMessage = this.extractFirstMessage(slot);
+    const lastAgentMessage = this.extractLastAgentMessage(slot);
+    this.pushNotificationService
+      .notify({
+        projectName,
+        folderPath,
+        sessionId,
+        sessionName: slot.session.sessionName,
+        firstMessage,
+        reason: 'idle',
+        lastAgentMessage,
+      })
+      .catch((err) => console.error('[SessionManager] Push notification error:', err));
+  }
+
+  private extractLastAgentMessage(slot: ManagedSlot): string | undefined {
+    const messages = slot.session.messages ?? [];
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       if (msg.role !== 'assistant') continue;
@@ -282,8 +336,8 @@ export class PimoteSessionManager {
     return undefined;
   }
 
-  private extractFirstMessage(managed: ManagedSession): string | undefined {
-    const messages = managed.session.messages ?? [];
+  private extractFirstMessage(slot: ManagedSlot): string | undefined {
+    const messages = slot.session.messages ?? [];
     for (const msg of messages) {
       if (msg.role !== 'user') continue;
       const { content } = msg;
@@ -299,119 +353,40 @@ export class PimoteSessionManager {
   }
 
   async closeSession(sessionId: string): Promise<void> {
-    const managed = this.sessions.get(sessionId);
-    if (!managed) return;
+    const slot = this.sessions.get(sessionId);
+    if (!slot) return;
 
-    resolveAllManagedPendingUi(managed);
-    if (managed.panelThrottleTimer) clearTimeout(managed.panelThrottleTimer);
-    managed.eventBus?.clear();
+    teardownSessionState(slot.sessionState);
+    slot.eventBusRef.current?.clear();
 
-    const folderPath = managed.folderPath;
-    managed.unsubscribe();
-    managed.session.dispose();
+    const folderPath = slot.folderPath;
+    slot.session.dispose();
     this.sessions.delete(sessionId);
 
     this.onSessionClosed?.(sessionId, folderPath);
   }
 
-  /** Remove a session from management without disposing the underlying AgentSession.
-   *  Used when the pi SDK resets the session (newSession, fork, switchSession) —
-   *  the AgentSession object is reused by the new session. */
-  detachSession(sessionId: string): void {
-    const managed = this.sessions.get(sessionId);
-    if (!managed) return;
-
-    if (managed.panelThrottleTimer) clearTimeout(managed.panelThrottleTimer);
-    // Remove old panel listeners so they don't fire on the detached managed session.
-    // The EventBus itself survives — adoptSession will re-register on the new managed session.
-    for (const unsub of managed.panelListenerUnsubs) unsub();
-    managed.panelListenerUnsubs = [];
-    managed.unsubscribe();
-    this.sessions.delete(sessionId);
-    this.onSessionClosed?.(sessionId, managed.folderPath);
+  /** Re-key a slot in the session map after session replacement. */
+  reKeySession(slot: ManagedSlot, oldId: string, newId: string): void {
+    this.sessions.delete(oldId);
+    this.sessions.set(newId, slot);
   }
 
-  /** Wrap an existing AgentSession in a new ManagedSession.
-   *  Used after detachSession when the pi SDK has reset the session to a new ID.
-   *  Pass `extensionsBound: true` when the underlying AgentSession already has
-   *  extensions bound (e.g. after a session reset that reuses the same object). */
-  adoptSession(session: AgentSession, folderPath: string, opts?: { extensionsBound?: boolean; eventBus?: EventBusController }): string {
-    const sessionId = session.sessionId;
-    const eventBuffer = new EventBuffer(this.config.bufferSize);
-    const eventBus = opts?.eventBus ?? null;
-
-    const managed: ManagedSession = {
-      id: sessionId,
-      session,
-      folderPath,
-      eventBuffer,
-      connectedClientId: null,
-      lastActivity: Date.now(),
-      status: session.isStreaming ? 'working' : 'idle',
-      needsAttention: false,
-      unsubscribe: () => {},
-      ws: null,
-      pendingUiResponses: new Map(),
-      extensionsBound: opts?.extensionsBound ?? false,
-      onSessionReset: null,
-      panelState: new Map(),
-      panelThrottleTimer: null,
-      eventBus,
-      panelListenerUnsubs: [],
-    };
-
-    if (eventBus) managed.panelListenerUnsubs = setupPanelListeners(eventBus, managed);
-
-    const unsubscribe = session.subscribe((event) => {
-      if (event.type === 'agent_start' && managed.status !== 'working') {
-        managed.status = 'working';
-        this.onStatusChange?.(managed.id, folderPath);
-      } else if (event.type === 'agent_end' && managed.status !== 'idle') {
-        managed.status = 'idle';
-        managed.needsAttention = true;
-        const projectName = folderPath.split('/').pop() ?? 'Unknown';
-        const firstMessage = this.extractFirstMessage(managed);
-        const lastAgentMessage = this.extractLastAgentMessage(managed);
-        this.pushNotificationService
-          .notify({
-            projectName,
-            folderPath,
-            sessionId: managed.id,
-            sessionName: managed.session.sessionName,
-            firstMessage,
-            reason: 'idle',
-            lastAgentMessage,
-          })
-          .catch((err) => console.error('[SessionManager] Push notification error:', err));
-        this.onStatusChange?.(managed.id, folderPath);
-      }
-      eventBuffer.onEvent(
-        event,
-        managed.id,
-        (e) => sendManagedEvent(managed, e),
-        () => session.messages[session.messages.length - 1] as SdkMessage,
-      );
-    });
-
-    managed.unsubscribe = unsubscribe;
-    this.sessions.set(sessionId, managed);
-    return sessionId;
-  }
-
-  getSession(sessionId: string): ManagedSession | undefined {
+  getSession(sessionId: string): ManagedSlot | undefined {
     return this.sessions.get(sessionId);
   }
 
-  getAllSessions(): ManagedSession[] {
+  getAllSessions(): ManagedSlot[] {
     return Array.from(this.sessions.values());
   }
 
   startIdleCheck(idleTimeout: number, isClientConnected?: (clientId: string) => boolean): void {
     this.stopIdleCheck();
     this.idleCheckHandle = setInterval(() => {
-      for (const [sessionId, managed] of this.sessions) {
-        const hasConnectedClient = managed.connectedClientId !== null && (isClientConnected?.(managed.connectedClientId) ?? false);
-        if (!hasConnectedClient && Date.now() - managed.lastActivity > idleTimeout) {
+      for (const [sessionId, slot] of this.sessions) {
+        const clientId = slot.connection?.connectedClientId ?? null;
+        const hasConnectedClient = clientId !== null && (isClientConnected?.(clientId) ?? false);
+        if (!hasConnectedClient && Date.now() - slot.sessionState.lastActivity > idleTimeout) {
           this.closeSession(sessionId).catch(() => {
             // Best-effort cleanup — swallow errors during idle reaping
           });
