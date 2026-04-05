@@ -36,12 +36,12 @@
     if (!text.startsWith('/')) return '';
     const afterSlash = text.slice(1);
     const spaceIndex = afterSlash.indexOf(' ');
-    if (spaceIndex === -1) {
-      // No space — command mode
-      return afterSlash;
+    if (autocompleteMode === 'command') {
+      // Command name is everything between / and first space (or end)
+      return spaceIndex === -1 ? afterSlash : afterSlash.slice(0, spaceIndex);
     }
-    // Space present — args mode (query is text after space)
-    return afterSlash.slice(spaceIndex + 1);
+    // Args mode — query is everything after first space
+    return spaceIndex === -1 ? '' : afterSlash.slice(spaceIndex + 1);
   });
 
   // Restore draft text when switching sessions.
@@ -139,38 +139,37 @@
     }
   }
 
-  function handleInput() {
-    if (sessionRegistry.viewed) {
-      sessionRegistry.viewed.draftText = inputText;
+  function updateAutocomplete() {
+    if (!inputText.startsWith('/') || !textareaEl) {
+      autocompleteVisible = false;
+      selectedCommand = null;
+      return;
     }
 
-    // Slash detection
-    if (inputText.startsWith('/')) {
-      if (!autocompleteVisible) {
-        autocompleteVisible = true;
-        autocompleteMode = 'command';
-        selectedCommand = null;
-      }
+    const cursorPos = textareaEl.selectionStart;
+    const afterSlash = inputText.slice(1);
+    const spaceIndex = afterSlash.indexOf(' ');
+    const commandEnd = spaceIndex === -1 ? afterSlash.length : spaceIndex;
 
-      // Parse mode from input text
-      const afterSlash = inputText.slice(1);
-      const spaceIndex = afterSlash.indexOf(' ');
-      if (spaceIndex === -1) {
-        // No space — command mode
-        autocompleteMode = 'command';
-      } else if (selectedCommand?.hasArgCompletions) {
-        // Space present and selected command has arg completions — args mode
-        autocompleteMode = 'args';
-      } else {
-        // Space present but no arg completions — dismiss
-        autocompleteVisible = false;
-        selectedCommand = null;
-      }
+    if (cursorPos <= commandEnd + 1) {
+      // Cursor is within the command-name part (between / and first space)
+      if (!autocompleteVisible) selectedCommand = null;
+      autocompleteVisible = true;
+      autocompleteMode = 'command';
+    } else if (selectedCommand?.hasArgCompletions) {
+      autocompleteVisible = true;
+      autocompleteMode = 'args';
     } else {
       autocompleteVisible = false;
       selectedCommand = null;
     }
+  }
 
+  function handleInput() {
+    if (sessionRegistry.viewed) {
+      sessionRegistry.viewed.draftText = inputText;
+    }
+    updateAutocomplete();
     autoResize();
   }
 
@@ -404,6 +403,7 @@
         bind:value={inputText}
         oninput={handleInput}
         onkeydown={handleKeydown}
+        onclick={updateAutocomplete}
         onpaste={handlePaste}
         disabled={noSession}
         rows={1}
