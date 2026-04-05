@@ -175,6 +175,12 @@ No change from current behavior — defaults are applied post-creation in `openS
 
 Removes `process.chdir()` from `AgentSessionRuntime.apply()` and `createAgentSessionRuntime()`. Already committed as `patches/@mariozechner+pi-coding-agent+0.65.0.patch`.
 
+## Tests
+
+> **Skipped.** No tests were written upfront. Follow red-green TDD as you implement —
+> write a focused failing test, make it pass, move on. Aim for component-boundary
+> behavioral tests (inputs, outputs, observable effects), not exhaustive coverage.
+
 ### Technology Choices
 
 No new dependencies. The migration uses new APIs from the same `@mariozechner/pi-coding-agent` package (0.64.0 → 0.65.0):
