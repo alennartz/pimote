@@ -7,6 +7,8 @@
   import ExtensionStatus from '$lib/components/ExtensionStatus.svelte';
   import InstallBanner from '$lib/components/InstallBanner.svelte';
   import Panel from '$lib/components/Panel.svelte';
+  import SessionSettingsDialog from '$lib/components/SessionSettingsDialog.svelte';
+  import { getContextDisplay, getContextTone, getSessionDisplayName } from '$lib/session-summary.js';
   import Menu from '@lucide/svelte/icons/menu';
   import X from '@lucide/svelte/icons/x';
   import PanelRight from '@lucide/svelte/icons/panel-right';
@@ -97,8 +99,25 @@
     return extensionTitle ? `Pimote — ${extensionTitle}` : 'Pimote';
   });
 
+  let mobileHeaderTitle = $derived(getSessionDisplayName(sessionRegistry.viewed) ?? 'Pimote');
+  let mobileContextDisplay = $derived(getContextDisplay(sessionRegistry.viewed, { compact: true }));
+  let mobileContextTone = $derived(getContextTone(sessionRegistry.viewed?.contextUsage?.percent));
+  let mobileContextChipClass = $derived(
+    mobileContextTone === 'critical'
+      ? 'border-red-500/20 bg-red-500/10 text-red-600 dark:text-red-400'
+      : mobileContextTone === 'warning'
+        ? 'border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400'
+        : 'border-border bg-muted text-muted-foreground',
+  );
+
   $effect(() => {
     document.title = browserTitle;
+  });
+
+  $effect(() => {
+    if (!panelStore.hasCards && panelOpen) {
+      panelOpen = false;
+    }
   });
 </script>
 
@@ -143,22 +162,36 @@
   <!-- Main content -->
   <div class="flex flex-1 flex-col overflow-hidden">
     <!-- Mobile header -->
-    <header class="border-border flex h-12 shrink-0 items-center border-b px-4 md:hidden">
-      <button class="text-muted-foreground hover:text-foreground rounded-md p-1" onclick={() => (sidebarOpen = true)}>
+    <header class="border-border flex h-12 shrink-0 items-center gap-2 border-b px-3 md:hidden">
+      <button class="text-muted-foreground hover:text-foreground rounded-md p-1" onclick={() => (sidebarOpen = true)} title="Open sidebar">
         <Menu class="size-5" />
       </button>
-      <img src="/pwa/icon-192.png" alt="" class="ml-3 size-5" />
-      <span class="text-foreground ml-1.5 text-sm font-semibold">Pimote</span>
-      <div class="flex-1"></div>
+
+      <div class="min-w-0 flex-1">
+        <div class="text-foreground truncate text-sm font-semibold">{mobileHeaderTitle}</div>
+      </div>
+
+      {#if sessionRegistry.viewedSessionId && mobileContextDisplay}
+        <span class="inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-medium {mobileContextChipClass}" title="Context window usage">
+          {mobileContextDisplay}
+        </span>
+      {/if}
+
       {#if panelStore.hasCards}
         <button
-          class="text-muted-foreground hover:text-foreground border-border bg-background flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5"
+          class="text-muted-foreground hover:text-foreground border-border bg-background relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg border"
           onclick={() => (panelOpen = true)}
           title="Open panel"
         >
           <PanelRight class="size-4" />
-          <span class="text-xs font-medium">{panelStore.cards.length}</span>
+          <span class="bg-primary text-primary-foreground absolute -top-1 -right-1 min-w-4 rounded-full px-1 text-center text-[10px] leading-4 font-medium">
+            {panelStore.cards.length}
+          </span>
         </button>
+      {/if}
+
+      {#if sessionRegistry.viewedSessionId}
+        <SessionSettingsDialog />
       {/if}
     </header>
 

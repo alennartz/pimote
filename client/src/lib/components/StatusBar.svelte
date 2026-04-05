@@ -5,22 +5,13 @@
   import { Separator } from '$lib/components/ui/separator/index.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
+  import { getContextDisplay, getContextTone, getSessionDisplayName } from '$lib/session-summary.js';
+  import { getRestoreModeLabel } from '$lib/restore-status.js';
   import { statusRowSpacerClass } from './status-bar-layout.js';
   import { GitBranch } from '@lucide/svelte';
 
-  let connectionLabel = $derived(
-    connection.phase === 'ready'
-      ? 'Connected'
-      : connection.phase === 'syncing'
-        ? connection.syncProgress
-          ? `Syncing ${connection.syncProgress.done}/${connection.syncProgress.total}…`
-          : 'Syncing…'
-        : connection.phase === 'connecting'
-          ? 'Connecting…'
-          : connection.phase === 'backoff'
-            ? `Retry in ${connection.reconnectCountdown}s`
-            : 'Disconnected',
-  );
+  let restoreLabel = $derived(sessionRegistry.viewed?.isRestoring ? getRestoreModeLabel(sessionRegistry.viewed.restoreMode) : null);
+  let connectionLabel = $derived(restoreLabel ?? connection.phaseLabel);
 
   let connectionColor = $derived(
     connection.phase === 'ready'
@@ -33,32 +24,14 @@
   );
 
   let contextPercent = $derived(sessionRegistry.viewed?.contextUsage?.percent);
-  let contextWindow = $derived(sessionRegistry.viewed?.contextUsage?.contextWindow ?? 0);
 
-  function formatTokens(n: number): string {
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
-    return `${n}`;
-  }
-
-  let contextDisplay = $derived(
-    contextPercent != null ? `${contextPercent.toFixed(1)}%/${formatTokens(contextWindow)}` : contextWindow > 0 ? `?/${formatTokens(contextWindow)}` : null,
-  );
+  let contextDisplay = $derived(getContextDisplay(sessionRegistry.viewed));
 
   let contextColor = $derived(
-    contextPercent != null && contextPercent > 90 ? 'text-red-400' : contextPercent != null && contextPercent > 70 ? 'text-amber-400' : 'text-muted-foreground',
+    getContextTone(contextPercent) === 'critical' ? 'text-red-400' : getContextTone(contextPercent) === 'warning' ? 'text-amber-400' : 'text-muted-foreground',
   );
 
-  let sessionDisplayName = $derived.by(() => {
-    const viewed = sessionRegistry.viewed;
-    if (!viewed) return null;
-    if (viewed.extensionTitle) return viewed.extensionTitle;
-    if (viewed.sessionName) return viewed.sessionName;
-    if (viewed.firstMessage) {
-      return viewed.firstMessage.length > 60 ? viewed.firstMessage.slice(0, 60) + '…' : viewed.firstMessage;
-    }
-    return null;
-  });
+  let sessionDisplayName = $derived(getSessionDisplayName(sessionRegistry.viewed));
 </script>
 
 <div class="border-border bg-muted/30 text-muted-foreground shrink-0 border-b text-xs">

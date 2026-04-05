@@ -250,6 +250,14 @@ export interface OpenSessionCommand extends CommandBase {
   force?: boolean;
 }
 
+export type RestoreMode = 'incremental_replay' | 'full_resync_no_cursor' | 'full_resync_cursor_stale' | 'disk_full_resync';
+
+export interface OpenSessionResponseData {
+  sessionId: string;
+  folderPath?: string;
+  restoreMode?: RestoreMode;
+}
+
 export interface CloseSessionCommand extends CommandBase {
   type: 'close_session';
 }
@@ -583,6 +591,13 @@ export interface ConnectionRestoredEvent {
   sessionId: string;
 }
 
+export interface SessionRestoreEvent {
+  type: 'session_restore';
+  sessionId: string;
+  mode: RestoreMode;
+  status: 'started' | 'completed';
+}
+
 export interface BufferedEventsEvent {
   type: 'buffered_events';
   sessionId: string;
@@ -629,6 +644,7 @@ export type PimoteEvent =
   | SessionReplacedEvent
   | SessionStateChangedEvent
   | ConnectionRestoredEvent
+  | SessionRestoreEvent
   | BufferedEventsEvent
   | FullResyncEvent
   // Panel

@@ -9,6 +9,8 @@ import type {
   BufferedEventsEvent,
   ConnectionRestoredEvent,
   FullResyncEvent,
+  RestoreMode,
+  SessionRestoreEvent,
   SessionStateChangedEvent,
 } from '@pimote/shared';
 import type { PimoteSessionManager, ManagedSlot } from './session-manager.js';
@@ -222,9 +224,9 @@ export class WsHandler {
               this.broadcastSessionArchived(requestedSessionId, existing.folderPath, false);
             }
 
-            await this.syncSessionToClient(requestedSessionId, existing, command.lastCursor);
+            const restoreMode = await this.syncSessionToClient(requestedSessionId, existing, command.lastCursor);
             WsHandler.broadcastSidebarUpdate(requestedSessionId, existing.folderPath, this.sessionManager, this.clientRegistry);
-            this.sendResponse(id, true, { sessionId: requestedSessionId, folderPath: existing.folderPath });
+            this.sendResponse(id, true, { sessionId: requestedSessionId, folderPath: existing.folderPath, restoreMode });
             break;
           }
 
@@ -241,10 +243,10 @@ export class WsHandler {
 
           const sessionId = await this.sessionManager.openSession(command.folderPath, sessionFilePath);
           const reopenedSlot = this.sessionManager.getSession(sessionId)!;
-          await this.syncSessionToClient(sessionId, reopenedSlot);
+          await this.syncSessionToClient(sessionId, reopenedSlot, undefined, 'disk_full_resync');
           WsHandler.broadcastSidebarUpdate(sessionId, reopenedSlot.folderPath, this.sessionManager, this.clientRegistry);
           await this.sendConflictEventIfNeeded(sessionId, reopenedSlot.folderPath);
-          this.sendResponse(id, true, { sessionId, folderPath: reopenedSlot.folderPath });
+          this.sendResponse(id, true, { sessionId, folderPath: reopenedSlot.folderPath, restoreMode: 'disk_full_resync' });
           break;
         }
 
@@ -909,13 +911,17 @@ export class WsHandler {
     }
   }
 
-  private async syncSessionToClient(sessionId: string, slot: ManagedSlot, lastCursor?: number): Promise<void> {
+  private async syncSessionToClient(sessionId: string, slot: ManagedSlot, lastCursor?: number, noCursorRestoreMode: RestoreMode = 'full_resync_no_cursor'): Promise<RestoreMode> {
     let replayResult: ReturnType<import('./event-buffer.js').EventBuffer['replay']> | null = null;
     let cursorBeforeClaim: number | null = null;
+
+    let restoreMode: RestoreMode;
 
     if (lastCursor !== undefined) {
       replayResult = slot.sessionState.eventBuffer.replay(lastCursor);
       if (replayResult !== null) {
+        restoreMode = 'incremental_replay';
+        this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
         this.sendEvent({
           type: 'buffered_events',
           sessionId,
@@ -927,9 +933,13 @@ export class WsHandler {
         } as ConnectionRestoredEvent);
         cursorBeforeClaim = slot.sessionState.eventBuffer.currentCursor;
       } else {
+        restoreMode = 'full_resync_cursor_stale';
+        this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
         this.sendFullResyncForSession(sessionId, slot);
       }
     } else {
+      restoreMode = noCursorRestoreMode;
+      this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
       this.sendFullResyncForSession(sessionId, slot);
     }
 
@@ -950,6 +960,10 @@ export class WsHandler {
       // Always send panel state after reconnect so the client clears stale cards
       this.sendEvent({ type: 'panel_update', sessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
     }
+
+    this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'completed' } as SessionRestoreEvent);
+
+    return restoreMode;
   }
 
   /** Close this handler's WebSocket connection. */

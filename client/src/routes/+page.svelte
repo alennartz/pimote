@@ -5,6 +5,7 @@
   import PendingSteeringMessages from '$lib/components/PendingSteeringMessages.svelte';
   import InputBar from '$lib/components/InputBar.svelte';
   import StatusBar from '$lib/components/StatusBar.svelte';
+  import MobileRuntimeStatus from '$lib/components/MobileRuntimeStatus.svelte';
   import ActiveSessionBar from '$lib/components/ActiveSessionBar.svelte';
   import NotificationBanner from '$lib/components/NotificationBanner.svelte';
   import { sessionRegistry, confirmTakeover, dismissTakeover } from '$lib/stores/session-registry.svelte.js';
@@ -36,7 +37,10 @@
 {#if sessionRegistry.viewedSessionId}
   <!-- Active session view -->
   <div class="flex min-h-0 flex-1 flex-col">
-    <StatusBar />
+    <div class="hidden md:block">
+      <StatusBar />
+    </div>
+    <MobileRuntimeStatus />
     {#if sessionRegistry.viewed?.pendingTakeover}
       <div class="bg-warning/10 border-warning/30 text-warning flex items-center gap-2 border-b px-4 py-2 text-sm">
         <span>This session is owned by another client. Take it over?</span>

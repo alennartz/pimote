@@ -1,5 +1,5 @@
 // ConnectionStore — Svelte 5 runes-based WebSocket connection manager
-import type { PimoteCommand, PimoteResponse, PimoteEvent, PimoteServerMessage } from '@pimote/shared';
+import type { OpenSessionResponseData, PimoteCommand, PimoteResponse, PimoteEvent, PimoteServerMessage, RestoreMode } from '@pimote/shared';
 import { SvelteMap } from 'svelte/reactivity';
 import { version } from '$app/environment';
 import { getClientId, setClientId } from './persistence.js';
@@ -26,6 +26,8 @@ class ConnectionStore {
   reconnectCountdown: number = $state(0);
   /** Progress of per-session restore/open commands during syncing phase. */
   syncProgress: { done: number; total: number } | null = $state(null);
+  /** Human-readable restore detail for reconnect sync. */
+  syncDetail: string | null = $state(null);
   private sessionCursors: Map<string, number> = new Map();
   subscribedSessions: Map<string, string> = $state(new SvelteMap());
 
@@ -58,6 +60,7 @@ class ConnectionStore {
     this.clearCountdownInterval();
     this.phase = 'connecting';
     this.status = this.status === 'disconnected' ? 'connecting' : 'reconnecting';
+    this.syncDetail = null;
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.ws = new WebSocket(`${protocol}//${location.host}/ws?clientId=${clientId}&version=${encodeURIComponent(version)}`);
 
@@ -72,6 +75,7 @@ class ConnectionStore {
       if (sessionCount > 0) {
         this.phase = 'syncing';
         this.syncProgress = { done: 0, total: sessionCount };
+        this.syncDetail = 'Restoring sessions';
       }
 
       const restorePromises: Promise<void>[] = [];
@@ -94,6 +98,12 @@ class ConnectionStore {
                 // reconnect cycle.
                 console.warn(`[ConnectionStore] Failed to restore session ${sessionId}: ${response.error ?? 'unknown error'}`);
               }
+              return;
+            }
+
+            const data = response.data as OpenSessionResponseData | undefined;
+            if (this.phase === 'syncing') {
+              this.syncDetail = this.labelForRestoreMode(data?.restoreMode, sessionCount);
             }
           })
           .catch(() => {
@@ -113,6 +123,7 @@ class ConnectionStore {
         this.ready = true;
         this.phase = 'ready';
         this.syncProgress = null;
+        this.syncDetail = null;
         this.onReconnected?.();
 
         if (this.pendingAdopt) {
@@ -198,6 +209,7 @@ class ConnectionStore {
       } else {
         this.status = 'disconnected';
         this.phase = 'idle';
+        this.syncDetail = null;
         this.intentionalClose = false;
       }
     };
@@ -281,6 +293,7 @@ class ConnectionStore {
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
     this.phase = 'backoff';
+    this.syncDetail = null;
     this.reconnectCountdown = Math.ceil(this.reconnectDelay / 1000);
     this.clearCountdownInterval();
     this.countdownInterval = setInterval(() => {
@@ -291,6 +304,48 @@ class ConnectionStore {
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
       this.connect();
     }, this.reconnectDelay);
+  }
+
+  get phaseLabel(): string {
+    if (this.phase === 'ready') return 'Connected';
+    if (this.phase === 'syncing') {
+      return this.syncProgress ? `Syncing ${this.syncProgress.done}/${this.syncProgress.total}…` : 'Syncing…';
+    }
+    if (this.phase === 'connecting') {
+      return this.status === 'reconnecting' ? 'Reconnecting…' : 'Connecting…';
+    }
+    if (this.phase === 'backoff') {
+      return `Reconnecting in ${this.reconnectCountdown}s`;
+    }
+    return 'Disconnected';
+  }
+
+  private labelForRestoreMode(mode: RestoreMode | undefined, sessionCount: number): string {
+    if (sessionCount > 1) {
+      switch (mode) {
+        case 'incremental_replay':
+          return 'Replaying sessions from offset';
+        case 'full_resync_cursor_stale':
+          return 'Full resync (offset too old)';
+        case 'disk_full_resync':
+          return 'Reopening sessions from disk';
+        case 'full_resync_no_cursor':
+        default:
+          return 'Full resync';
+      }
+    }
+
+    switch (mode) {
+      case 'incremental_replay':
+        return 'Replaying from offset';
+      case 'full_resync_cursor_stale':
+        return 'Full resync (offset too old)';
+      case 'disk_full_resync':
+        return 'Reopening from disk';
+      case 'full_resync_no_cursor':
+      default:
+        return 'Full resync';
+    }
   }
 }
 
