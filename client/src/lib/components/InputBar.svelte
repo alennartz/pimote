@@ -285,16 +285,19 @@
 
   function insertSlash() {
     if (!textareaEl) return;
-    inputText = '/';
+    const start = textareaEl.selectionStart ?? inputText.length;
+    const end = textareaEl.selectionEnd ?? start;
+    inputText = inputText.slice(0, start) + '/' + inputText.slice(end);
+    const cursorPos = start + 1;
     if (sessionRegistry.viewed) {
       sessionRegistry.viewed.draftText = inputText;
     }
     handleInput();
     autoResize();
     textareaEl.focus();
-    // Place cursor after the slash
+    // Place cursor after the inserted slash
     tick().then(() => {
-      textareaEl!.selectionStart = textareaEl!.selectionEnd = 1;
+      textareaEl!.selectionStart = textareaEl!.selectionEnd = cursorPos;
     });
   }
 
