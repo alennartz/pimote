@@ -71,19 +71,21 @@ make build
 
 Pimote reads its config from `~/.config/pimote/config.json` (respects `$XDG_CONFIG_HOME`).
 
-Create the file with at least a `roots` array pointing to your project directories:
+Create the file with at least a `roots` array — parent directories that contain your projects. Pimote scans each root one level deep and discovers project folders by looking for `.git` or `package.json`:
 
 ```json
 {
-  "roots": ["/home/you/projects/my-app", "/home/you/projects/another-repo"]
+  "roots": ["/home/you/projects", "/home/you/work"]
 }
 ```
+
+With this config, if `/home/you/projects/` contains `my-app/` and `another-repo/` (each with a `.git`), both show up in Pimote's folder browser.
 
 ### Options
 
 | Field                  | Type       | Default        | Description                                   |
 | ---------------------- | ---------- | -------------- | --------------------------------------------- |
-| `roots`                | `string[]` | **(required)** | Project directories to index                  |
+| `roots`                | `string[]` | **(required)** | Parent directories to scan for projects       |
 | `port`                 | `number`   | `3000`         | Server port                                   |
 | `idleTimeout`          | `number`   | `1800000`      | Idle session reap timeout (ms, default 30min) |
 | `bufferSize`           | `number`   | `1000`         | Event ring buffer size per session            |
