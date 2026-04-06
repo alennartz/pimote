@@ -1,6 +1,6 @@
 {
   "name": "@pimote/panels",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Push structured card data from pi extensions to the pimote web client",
   "type": "module",
   "license": "MIT",
