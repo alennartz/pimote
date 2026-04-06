@@ -37,7 +37,7 @@ Installable PWA (Svelte 5, Tailwind CSS, shadcn-svelte) with real-time streaming
 
 ### Projects and Folders
 
-The landing page shows a folder browser with all discovered projects. Each folder shows how many active sessions are running and whether any external pi processes are detected. Tap a folder to see its sessions or start a new one.
+The landing page shows a session-first home view. Sessions are grouped by project and ordered by recency so you can quickly resume work. Use the top-level **New session** action to pick any discovered project and start fresh.
 
 ### Sessions
 

@@ -209,6 +209,7 @@ export class PimoteSessionManager {
   private readonly modelRegistry: ModelRegistry;
   private readonly sessions = new Map<string, ManagedSlot>();
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
+
   onStatusChange?: (sessionId: string, folderPath: string) => void;
   onSessionClosed?: (sessionId: string, folderPath: string) => void;
 
@@ -252,6 +253,10 @@ export class PimoteSessionManager {
 
     const session = runtime.session;
     const sessionId = session.sessionId;
+
+    // Diagnostics: log model registry state after factory has loaded extensions
+    const availableModels = this.modelRegistry.getAvailable();
+    console.log(`[pimote] openSession: ${availableModels.length} models available, session model: ${session.model ? `${session.model.provider}/${session.model.id}` : 'none'}`);
 
     // Apply default model from config (only for new sessions without an existing model preference)
     if (!sessionFilePath && this.config.defaultProvider && this.config.defaultModel) {

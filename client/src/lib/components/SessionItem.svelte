@@ -130,9 +130,7 @@
             <span>{formatRelativeTime(session.modified)}</span>
           </div>
         </div>
-        {#if session.archived}
-          <Archive class="text-muted-foreground size-3.5 shrink-0" />
-        {:else if isActive}
+        {#if isActive}
           <div class="bg-status-connected size-2 shrink-0 rounded-full"></div>
         {:else if isRemoteActive}
           <Monitor class="text-muted-foreground size-3.5 shrink-0" />
