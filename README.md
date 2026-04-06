@@ -27,30 +27,63 @@ Pimote is an npm workspace monorepo with four packages:
 
 ### Server
 
-The server embeds pi `AgentSession` instances directly via the SDK and brokers WebSocket connections to clients. Key capabilities:
-
-- Indexes project folders and discovers existing pi sessions
-- Manages multiple concurrent sessions per client with status tracking
-- Buffers coalesced events for seamless reconnect after network drops
-- Detects conflicting external pi processes and remote sessions
-- Bridges extension UI (dialogs, panels, status) over WebSocket
-- Sends Web Push notifications (VAPID) when background sessions finish
-- Handles session takeover by killing external processes or conflicting sessions
+Node.js process that embeds pi `AgentSession` instances directly via the SDK. Manages session lifecycles, brokers WebSocket connections, buffers events for reconnect replay, bridges extension UI calls, detects conflicting processes, and delivers push notifications.
 
 ### Client
 
-An installable PWA that works on phone and desktop:
+Installable PWA (Svelte 5, Tailwind CSS, shadcn-svelte) with real-time streaming, multi-session tabs, folder browsing, extension UI, and push notifications. Works on phone and desktop.
 
-- Multi-session tabs with fast switching and status indicators (working / idle / needs-attention)
-- Real-time streaming conversation rendering with independent scrolling
-- Folder and session browsing across projects
-- Prompt, steer, abort, model/thinking-level switching
-- Slash command autocomplete (skills, extension commands, prompt templates)
-- Extension UI dialogs (select, confirm, input, editor with CodeMirror)
-- Live panel cards from extensions (side panel on desktop, overlay on mobile)
-- Push notifications for background session completion
-- Transparent reconnect with gap replay
-- Text-to-speech per message
+## Usage
+
+### Projects and Folders
+
+The landing page shows a folder browser with all discovered projects. Each folder shows how many active sessions are running and whether any external pi processes are detected. Tap a folder to see its sessions or start a new one.
+
+### Sessions
+
+Each conversation with pi is a **session**, tied to a project folder. You can:
+
+- **Open multiple sessions** simultaneously across different projects — tabs in the active session bar let you switch instantly
+- **Resume existing sessions** — the session list shows all past conversations with creation date, message count, and a preview of the first message
+- **Rename sessions** for easier identification
+- **Archive sessions** to hide them from the default list without deleting them (toggle "show archived" to see them again)
+- **Delete sessions** permanently
+- **Fork sessions** to branch a conversation from a specific point
+- **Start fresh** with a new session in the same project at any time
+
+Session state persists across browser restarts — reopening Pimote restores your open tabs and reconnects automatically.
+
+### Conversation
+
+Once in a session, you can:
+
+- **Send prompts** with text and pasted/attached images
+- **Steer** the agent while it's working — messages queue and deliver when the agent is ready
+- **Abort** a running agent turn
+- **Switch models** and **thinking levels** on the fly
+- **Compact** the conversation to manage context window usage (also supports auto-compaction)
+- Use **slash commands** — type `/` to get autocomplete for skills, extension commands, and prompt templates
+- **Listen** to responses via per-message text-to-speech
+
+### Extensions
+
+Pimote bridges all of pi's UI extension mechanisms over WebSocket:
+
+- **Dialogs** — select (inline with keyboard shortcuts), confirm, text input, and multi-line code editor (CodeMirror with syntax highlighting)
+- **Status bar** — live status entries from extensions
+- **Panels** — structured card data pushed by extensions, displayed in a side panel (desktop) or overlay (mobile)
+
+This means any pi extension that uses the standard UI APIs works in Pimote without modification.
+
+### Multi-Device and Conflict Handling
+
+- **Session takeover** — if a project has an external pi process running (e.g., from a terminal), Pimote detects it and offers to kill it and take over
+- **Device switching** — if you open the same session from another browser/device, the new connection displaces the old one
+- **Push notifications** — enable notifications to get alerted when a background session finishes working (useful when switching away from the browser)
+
+### Reconnect
+
+Network drops are handled transparently. The server buffers recent events per session, so when you reconnect, any missed events are replayed automatically — no lost output.
 
 ## Prerequisites
 
