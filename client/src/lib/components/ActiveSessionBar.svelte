@@ -159,14 +159,14 @@
           <div class="text-muted-foreground text-[11px]">Session actions</div>
         </div>
         <button
-          class="hover:bg-accent hover:text-accent-foreground flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium"
+          class="active:bg-accent active:text-accent-foreground flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium"
           onclick={() => void archiveAndCloseSession(actionSession.sessionId)}
         >
           <Archive class="size-3" />
           <span>Archive</span>
         </button>
         <button
-          class="text-destructive hover:bg-destructive/10 flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium"
+          class="text-destructive active:bg-destructive/10 flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium"
           onclick={() => closeFromTray(actionSession.sessionId)}
         >
           <X class="size-3" />
