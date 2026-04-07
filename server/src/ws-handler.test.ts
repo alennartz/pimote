@@ -899,7 +899,8 @@ describe('WsHandler', () => {
       expect(resp!.success).toBe(true);
 
       const listedSessions = (resp!.data as any).sessions;
-      expect(listedSessions).toHaveLength(2);
+      // 2 from folder index + 2 active in-memory (different IDs) = 4
+      expect(listedSessions).toHaveLength(4);
 
       for (const s of listedSessions) {
         expect(s).toHaveProperty('isOwnedByMe');
