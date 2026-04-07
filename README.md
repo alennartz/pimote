@@ -1,8 +1,45 @@
 # Pimote
 
+[![npm](https://img.shields.io/npm/v/%40pimote%2Fpimote?style=flat-square)](https://www.npmjs.com/package/@pimote/pimote)
+[![license](https://img.shields.io/npm/l/%40pimote%2Fpimote?style=flat-square)](LICENSE)
+[![node](https://img.shields.io/node/v/%40pimote%2Fpimote?style=flat-square)](https://www.npmjs.com/package/@pimote/pimote)
+[![publish app](https://github.com/alennartz/pimote/actions/workflows/publish-pimote.yml/badge.svg)](https://github.com/alennartz/pimote/actions/workflows/publish-pimote.yml)
+[![panels](https://img.shields.io/npm/v/%40pimote%2Fpanels?style=flat-square&label=%40pimote%2Fpanels)](https://www.npmjs.com/package/@pimote/panels)
+
 A full-featured web client for [pi](https://github.com/mariozechner/pi-coding-agent). Use your coding agent from your phone, tablet, or any browser — with multi-session management, real-time streaming, and push notifications.
 
 Pimote implements all of pi's RPC-compatible UI extension mechanisms (select, confirm, input, editor, status, widgets, panels), so you can use your favorite pi extensions exactly as they work in the terminal — just through a browser.
+
+**Links:** [npm package](https://www.npmjs.com/package/@pimote/pimote) · [panels package](https://www.npmjs.com/package/@pimote/panels) · [issues](https://github.com/alennartz/pimote/issues) · [pi](https://github.com/mariozechner/pi-coding-agent)
+
+## Quick start
+
+**Requirements:** Node.js 22+, npm 10+, and at least one working pi provider/model configuration.
+
+### Install globally
+
+```bash
+npm install -g @pimote/pimote
+pimote
+```
+
+### Or run once with npx
+
+```bash
+npx @pimote/pimote
+```
+
+On first run, Pimote will:
+
+- explain what it does
+- ask which parent directories to scan for projects
+- ask which port to use
+- write `~/.config/pimote/config.json`
+- start the server for you
+
+Then open the printed URL in your browser — usually `http://localhost:3000` unless you picked another port.
+
+> The npm package name is `@pimote/pimote`, but the installed command is simply `pimote`.
 
 ## Why
 
@@ -16,10 +53,11 @@ Phone/Browser ←→ Pimote Server
                 AgentSession (pi SDK)
 ```
 
-Pimote is an npm workspace monorepo with four packages:
+Pimote is published as the app package `@pimote/pimote` at the repo root, backed by an npm workspace monorepo:
 
 | Package              | Path               | Description                                           |
 | -------------------- | ------------------ | ----------------------------------------------------- |
+| **`@pimote/pimote`** | `./`               | Publishable app package and `pimote` CLI              |
 | **`@pimote/shared`** | `shared/`          | TypeScript types for the WebSocket wire protocol      |
 | **`@pimote/server`** | `server/`          | Node.js HTTP + WebSocket server hosting pi sessions   |
 | **client**           | `client/`          | SvelteKit PWA (Svelte 5, Tailwind CSS, shadcn-svelte) |
@@ -97,23 +135,16 @@ Network drops are handled transparently. The server buffers recent events per se
 
 ```bash
 npm install -g @pimote/pimote
-```
-
-Then start it:
-
-```bash
 pimote
 ```
 
-On first run, Pimote launches a setup flow that:
+### With npx
 
-- explains what Pimote does
-- asks which parent directories to scan for projects
-- asks which port to use
-- writes `~/.config/pimote/config.json`
-- starts the server for you
+```bash
+npx @pimote/pimote
+```
 
-You can also run setup explicitly:
+The first-run setup flow is the same either way. You can also run setup explicitly:
 
 ```bash
 pimote init
@@ -133,14 +164,6 @@ pimote init --root ~/projects --root ~/work --port 3001
 ```
 
 After startup, open the printed URL in your browser.
-
-### With npx
-
-```bash
-npx @pimote/pimote
-```
-
-This uses the same first-run setup flow.
 
 ### From source
 
