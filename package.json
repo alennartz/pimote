@@ -29,7 +29,8 @@
     "bin/pimote.js",
     "client/build/**",
     "server/dist/**/*.js",
-    "patches/**",
+    "scripts/postinstall-patches.mjs",
+    "patches/@mariozechner+pi-coding-agent+0.65.0.patch",
     "README.md",
     "LICENSE"
   ],
@@ -50,7 +51,7 @@
     "lint": "eslint .",
     "check": "npm run check --workspace=client && tsc --noEmit -p server/tsconfig.json && tsc --noEmit -p shared/tsconfig.json",
     "prepare": "husky",
-    "postinstall": "patch-package",
+    "postinstall": "node ./scripts/postinstall-patches.mjs",
     "prepack": "npm run build",
     "pack:dry-run": "npm pack --dry-run"
   },
