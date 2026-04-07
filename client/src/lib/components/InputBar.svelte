@@ -284,7 +284,12 @@
 
   function handleAutocompleteSelect(item: { name: string; value?: string; label?: string; description?: string }) {
     if (autocompleteMode === 'command') {
-      inputText = '/' + item.name + ' ';
+      // Replace only the command name portion, preserving any text after it
+      const afterSlash = inputText.slice(1);
+      const spaceIndex = afterSlash.indexOf(' ');
+      const rest = spaceIndex === -1 ? '' : afterSlash.slice(spaceIndex);
+      inputText = '/' + item.name + (rest || ' ');
+      const cursorPos = 1 + item.name.length + 1; // after "/{name} "
       selectedCommand = commandItems.find((c) => c.name === item.name) ?? null;
       if (selectedCommand?.hasArgCompletions) {
         autocompleteVisible = true;
@@ -292,11 +297,27 @@
       } else {
         autocompleteVisible = false;
       }
+      tick().then(() => {
+        if (textareaEl) {
+          textareaEl.selectionStart = textareaEl.selectionEnd = cursorPos;
+        }
+      });
     } else {
-      // Args mode
-      inputText = '/' + (selectedCommand?.name ?? '') + ' ' + (item.value ?? item.name);
+      // Args mode — replace only up to cursor, preserving any text after it
+      const commandName = selectedCommand?.name ?? '';
+      const prefix = '/' + commandName + ' ';
+      const cursor = textareaEl?.selectionStart ?? inputText.length;
+      const rest = cursor < inputText.length ? inputText.slice(cursor) : '';
+      const argValue = item.value ?? item.name;
+      inputText = prefix + argValue + rest;
+      const cursorPos = prefix.length + argValue.length;
       autocompleteVisible = false;
       selectedCommand = null;
+      tick().then(() => {
+        if (textareaEl) {
+          textareaEl.selectionStart = textareaEl.selectionEnd = cursorPos;
+        }
+      });
     }
     if (sessionRegistry.viewed) {
       sessionRegistry.viewed.draftText = inputText;
