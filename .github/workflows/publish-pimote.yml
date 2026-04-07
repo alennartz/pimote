@@ -1,0 +1,45 @@
+name: Publish @pimote/pimote
+
+on:
+  push:
+    tags:
+      - 'pimote-v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          scope: '@pimote'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: make test
+
+      - name: Pack dry run
+        run: npm pack --dry-run
+
+      - name: Smoke test packed install
+        run: |
+          TARBALL=$(node -e "const { execFileSync } = require('node:child_process'); const out = execFileSync('npm', ['pack', '--ignore-scripts', '--json'], { encoding: 'utf8' }); const info = JSON.parse(out); console.log(info[0].filename);")
+          TMPDIR=$(mktemp -d)
+          cp "$TARBALL" "$TMPDIR/"
+          cd "$TMPDIR"
+          npm init -y >/dev/null
+          npm install "./$TARBALL"
+          npx pimote help
+
+      - name: Publish
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

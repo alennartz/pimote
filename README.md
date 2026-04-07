@@ -91,28 +91,83 @@ Network drops are handled transparently. The server buffers recent events per se
 - **npm** ≥ 10
 - At least one LLM provider configured (pi is bundled as a dependency)
 
-## Setup
+## Install
+
+### From npm
+
+```bash
+npm install -g @pimote/pimote
+```
+
+Then start it:
+
+```bash
+pimote
+```
+
+On first run, Pimote launches a setup flow that:
+
+- explains what Pimote does
+- asks which parent directories to scan for projects
+- asks which port to use
+- writes `~/.config/pimote/config.json`
+- starts the server for you
+
+You can also run setup explicitly:
+
+```bash
+pimote init
+```
+
+Use a custom port either during setup or at startup:
+
+```bash
+pimote init --port 3001
+pimote --port 3001
+```
+
+You can preseed project roots too:
+
+```bash
+pimote init --root ~/projects --root ~/work --port 3001
+```
+
+After startup, open the printed URL in your browser.
+
+### With npx
+
+```bash
+npx @pimote/pimote
+```
+
+This uses the same first-run setup flow.
+
+### From source
 
 ```bash
 git clone https://github.com/alennartz/pimote.git
 cd pimote
-make install
-make build
+npm install
+npm run build
+npm start
 ```
 
 ## Configuration
 
 Pimote reads its config from `~/.config/pimote/config.json` (respects `$XDG_CONFIG_HOME`).
 
-Create the file with at least a `roots` array — parent directories that contain your projects. Pimote scans each root one level deep and discovers project folders by looking for `.git` or `package.json`:
+The first-run wizard creates this file for you, but you can also edit it manually. The most important setting is `roots`: parent directories that contain your projects. Pimote scans each root one level deep and discovers project folders by looking for `.git` or `package.json`.
+
+Example:
 
 ```json
 {
-  "roots": ["/home/you/projects", "/home/you/work"]
+  "roots": ["/home/you/projects", "/home/you/work"],
+  "port": 3000
 }
 ```
 
-With this config, if `/home/you/projects/` contains `my-app/` and `another-repo/` (each with a `.git`), both show up in Pimote's folder browser.
+With this config, if `/home/you/projects/` contains `my-app/` and `another-repo/`, both show up in Pimote's folder browser.
 
 ### Options
 
@@ -126,22 +181,52 @@ With this config, if `/home/you/projects/` contains `my-app/` and `another-repo/
 | `defaultModel`         | `string`   | —              | Default model                                 |
 | `defaultThinkingLevel` | `string`   | —              | Default thinking level                        |
 
-VAPID keys for push notifications are auto-generated on first run and written back to the config file.
+VAPID keys for push notifications are auto-generated on first run and written back to the config file. Session metadata and push subscription state live under `~/.local/state/pimote` (or `$XDG_STATE_HOME/pimote`).
 
 ## Running
 
-### Production
+### Installed app
 
 ```bash
-make build
-make start
+pimote
 ```
 
-Override the port: `make start PORT=3001`
+Other useful commands:
 
-Then open `http://localhost:3000` (or your configured port).
+```bash
+pimote start
+pimote --port 3001
+pimote help
+pimote version
+```
 
 > **Note:** Pimote has no built-in authentication. If you expose it over the internet, front it with a reverse proxy that handles auth (e.g., Cloudflare Tunnel with Access, OAuth2 Proxy, Tailscale).
+
+### Local installed deployment
+
+If you want your personal Pimote service to run from an installed package instead of this repo's live build output, use the deployment targets:
+
+```bash
+make deploy
+```
+
+This will:
+
+- build the app
+- pack the npm package
+- install it under `~/.local/share/pimote/releases/...`
+- update `~/.local/share/pimote/current`
+- write/update `~/.config/systemd/user/pimote.service`
+- reload and restart the user service
+
+Useful follow-up commands:
+
+```bash
+make status
+make logs
+make start-installed
+make deploy-paths
+```
 
 ### Development
 
@@ -157,10 +242,29 @@ make dev-client
 
 ## Commands
 
+### CLI
+
+```bash
+pimote                         Start Pimote (runs setup if needed)
+pimote start                   Start with existing config
+pimote init                    Create or update config
+pimote --port 3001             Override the port for this run
+pimote init --root ~/projects  Seed one or more project roots
+pimote help                    Show CLI help
+pimote version                 Show installed version
 ```
-make install        Install all workspace dependencies
-make build          Build shared → server → client (production)
-make start          Start production server
+
+### Source repo
+
+```
+npm install         Install workspace dependencies
+npm run build       Build shared → server → client
+npm start           Start the repo build via the publishable CLI
+make package        Create a publishable npm tarball in .artifacts/
+make install-local  Install the built package under ~/.local/share/pimote
+make install-service Write/update the user systemd unit
+make deploy         Install local release + restart service
+make start-installed Run the currently installed package manually
 make dev-server     Server with hot-reload (tsx watch)
 make dev-client     Vite dev server with HMR
 make test           Run all tests (server + client)
@@ -168,8 +272,10 @@ make format         Format with Prettier
 make lint           Run ESLint
 make check          Type-check (svelte-check + tsc)
 make clean          Remove all build artifacts
-make help           Show all targets
+make help           Show make targets
 ```
+
+For first-publish steps, see [docs/releasing.md](docs/releasing.md).
 
 ## `@pimote/panels`
 
@@ -201,4 +307,4 @@ Early development.
 
 ## License
 
-Private — not yet open source.
+MIT. See [LICENSE](LICENSE).

@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadConfig, ensureVapidKeys } from './config.js';
 import { createServer } from './server.js';
 import { PimoteSessionManager } from './session-manager.js';
@@ -7,12 +9,16 @@ import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore 
 import { LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_SESSION_METADATA_PATH } from './paths.js';
 import { FileSessionMetadataStore } from './session-metadata.js';
 
-async function main() {
+export interface StartOptions {
+  portOverride?: number;
+}
+
+export async function main(options: StartOptions = {}) {
   let config = await loadConfig();
   config = await ensureVapidKeys(config);
 
-  // Allow PORT env var to override config
-  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : config.port;
+  // Allow explicit CLI override first, then PORT env var, then config
+  const port = options.portOverride ?? (process.env.PORT ? parseInt(process.env.PORT, 10) : config.port);
 
   const folderIndex = new FolderIndex(config.roots);
 
@@ -54,7 +60,13 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+function isDirectRun(): boolean {
+  return process.argv[1] != null && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+}
+
+if (isDirectRun()) {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}

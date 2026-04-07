@@ -1,6 +1,8 @@
 node_modules/
 dist/
 tsconfig.tsbuildinfo
+.artifacts/
+pimote-*.tgz
 
 # Client build output handled by client/.gitignore
 

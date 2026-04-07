@@ -115,10 +115,10 @@ export default ts.config(
     },
   },
 
-  // ── Config files (JS at root) ────────────────────────────────────────────────
+  // ── Node.js scripts / config ───────────────────────────────────────────────
 
   {
-    files: ['*.config.js', '*.config.ts', 'client/*.config.*', 'server/*.config.*'],
+    files: ['bin/**/*.js', '*.config.js', '*.config.ts', 'client/*.config.*', 'server/*.config.*'],
     languageOptions: {
       globals: {
         ...globals.node,
