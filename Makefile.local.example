@@ -1,0 +1,20 @@
+# Copy to Makefile.local and adjust for your machine.
+# This file is intentionally untracked.
+
+# Example XDG overrides
+# XDG_DATA_HOME := $(HOME)/.local/share
+# XDG_CONFIG_HOME := $(HOME)/.config
+
+# Pimote install/runtime locations
+# PIMOTE_INSTALL_ROOT := $(XDG_DATA_HOME)/pimote
+# PIMOTE_SERVICE_NAME := pimote
+# PIMOTE_SYSTEMD_UNIT_PATH := $(XDG_CONFIG_HOME)/systemd/user/$(PIMOTE_SERVICE_NAME).service
+# PIMOTE_ENV_FILE := $(XDG_CONFIG_HOME)/pimote/env
+# PIMOTE_KEEP_RELEASES := 3
+
+# Service manager commands
+# SYSTEMCTL := systemctl --user
+# JOURNALCTL := journalctl --user
+
+# Optional runtime override
+# PORT := 3000

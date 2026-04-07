@@ -6,14 +6,28 @@
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
+# Optional machine-local overrides live in Makefile.local (gitignored).
+-include Makefile.local
+
 # PORT is optional — if not set, the server uses the value from ~/.config/pimote/config.json
 # Override with: make start PORT=3001
 
 ARTIFACTS_DIR ?= .artifacts
-PIMOTE_INSTALL_ROOT ?= $(HOME)/.local/share/pimote
-PIMOTE_SYSTEMD_UNIT ?= $(HOME)/.config/systemd/user/pimote.service
+XDG_DATA_HOME ?= $(HOME)/.local/share
+XDG_CONFIG_HOME ?= $(HOME)/.config
+PIMOTE_INSTALL_ROOT ?= $(XDG_DATA_HOME)/pimote
 PIMOTE_PACKAGE_NAME ?= @pimote/pimote
+PIMOTE_SERVICE_NAME ?= pimote
+PIMOTE_SYSTEMD_UNIT_PATH ?= $(XDG_CONFIG_HOME)/systemd/user/$(PIMOTE_SERVICE_NAME).service
+PIMOTE_ENV_FILE ?= $(XDG_CONFIG_HOME)/pimote/env
+PIMOTE_KEEP_RELEASES ?= 3
+SYSTEMCTL ?= systemctl --user
+JOURNALCTL ?= journalctl --user
 CURRENT_PACKAGE_DIR := $(PIMOTE_INSTALL_ROOT)/current/node_modules/$(PIMOTE_PACKAGE_NAME)
+
+export XDG_DATA_HOME XDG_CONFIG_HOME
+export PIMOTE_INSTALL_ROOT PIMOTE_PACKAGE_NAME PIMOTE_SERVICE_NAME
+export PIMOTE_SYSTEMD_UNIT_PATH PIMOTE_ENV_FILE PIMOTE_KEEP_RELEASES
 
 # ── Default ───────────────────────────────────────────────────────────────────
 
@@ -120,30 +134,32 @@ install-service:
 deploy-paths:
 	@echo "Install root:     $(PIMOTE_INSTALL_ROOT)"
 	@echo "Current package:  $(CURRENT_PACKAGE_DIR)"
-	@echo "Systemd unit:     $(PIMOTE_SYSTEMD_UNIT)"
+	@echo "Service name:     $(PIMOTE_SERVICE_NAME)"
+	@echo "Systemd unit:     $(PIMOTE_SYSTEMD_UNIT_PATH)"
+	@echo "Env file:         $(PIMOTE_ENV_FILE)"
 
 # ── Service ───────────────────────────────────────────────────────────────────
 
 ## Install the local package release, update the systemd unit, and restart/enable the service
 deploy: install-local install-service
-	systemctl --user daemon-reload
-	systemctl --user enable --now pimote
-	systemctl --user restart pimote
+	$(SYSTEMCTL) daemon-reload
+	$(SYSTEMCTL) enable --now $(PIMOTE_SERVICE_NAME)
+	$(SYSTEMCTL) restart $(PIMOTE_SERVICE_NAME)
 
 ## Reinstall the local package release and restart the service
 redeploy: deploy
 
 ## Stop the service
 undeploy:
-	systemctl --user stop pimote
+	$(SYSTEMCTL) stop $(PIMOTE_SERVICE_NAME)
 
 ## View logs (live)
 logs:
-	journalctl --user -u pimote -f
+	$(JOURNALCTL) -u $(PIMOTE_SERVICE_NAME) -f
 
 ## Check status
 status:
-	systemctl --user status pimote
+	$(SYSTEMCTL) status $(PIMOTE_SERVICE_NAME)
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 
@@ -173,9 +189,10 @@ help:
 	@echo "  clean            Remove all build artifacts"
 	@echo ""
 	@echo "  install-local    Install the app into $(PIMOTE_INSTALL_ROOT)"
-	@echo "  install-service  Write/update the user systemd unit"
+	@echo "  install-service  Write/update the user systemd unit ($(PIMOTE_SYSTEMD_UNIT_PATH))"
 	@echo "  deploy-paths     Show local deployment paths"
 	@echo "  deploy           Install local release + update unit + restart service"
+	@echo "                   (override locally via Makefile.local)"
 	@echo "  redeploy         Alias for deploy"
 	@echo "  undeploy         Stop the service"
 	@echo "  logs             Tail service logs"

@@ -16,11 +16,13 @@
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
   import { pushSharedImages } from '$lib/stores/input-bar.svelte.js';
+  import { resolveAppViewportHeight } from '$lib/app-viewport.js';
   import { onMount } from 'svelte';
 
   let { children } = $props();
   let sidebarOpen = $state(false);
   let panelOpen = $state(false);
+  let appHeight = $state('100dvh');
 
   // Report focus state to SW so it can suppress notifications when app is focused.
   // Workaround for desktop Chrome where WindowClient.focused is unreliable in push handlers.
@@ -33,6 +35,29 @@
 
   onMount(() => {
     connection.connect();
+
+    let delayedAppHeightUpdate: ReturnType<typeof setTimeout> | null = null;
+    const updateAppHeight = () => {
+      appHeight = resolveAppViewportHeight(window);
+    };
+    const scheduleAppHeightUpdate = () => {
+      updateAppHeight();
+      requestAnimationFrame(updateAppHeight);
+      if (delayedAppHeightUpdate) clearTimeout(delayedAppHeightUpdate);
+      delayedAppHeightUpdate = setTimeout(updateAppHeight, 100);
+    };
+
+    scheduleAppHeightUpdate();
+
+    const viewport = window.visualViewport;
+    viewport?.addEventListener('resize', scheduleAppHeightUpdate);
+    viewport?.addEventListener('scroll', scheduleAppHeightUpdate);
+    window.addEventListener('resize', scheduleAppHeightUpdate);
+    window.addEventListener('orientationchange', scheduleAppHeightUpdate);
+    window.addEventListener('pageshow', scheduleAppHeightUpdate);
+    window.addEventListener('focus', scheduleAppHeightUpdate);
+    window.addEventListener('focusin', scheduleAppHeightUpdate);
+    window.addEventListener('focusout', scheduleAppHeightUpdate);
 
     // Handle ?sessionId=xxx&folderPath=xxx from notification click (app was closed)
     const urlParams = new URLSearchParams(window.location.search);
@@ -105,6 +130,15 @@
 
     return () => {
       connection.disconnect();
+      viewport?.removeEventListener('resize', scheduleAppHeightUpdate);
+      viewport?.removeEventListener('scroll', scheduleAppHeightUpdate);
+      window.removeEventListener('resize', scheduleAppHeightUpdate);
+      window.removeEventListener('orientationchange', scheduleAppHeightUpdate);
+      window.removeEventListener('pageshow', scheduleAppHeightUpdate);
+      window.removeEventListener('focus', scheduleAppHeightUpdate);
+      window.removeEventListener('focusin', scheduleAppHeightUpdate);
+      window.removeEventListener('focusout', scheduleAppHeightUpdate);
+      if (delayedAppHeightUpdate) clearTimeout(delayedAppHeightUpdate);
       window.removeEventListener('focus', sendFocusState);
       window.removeEventListener('blur', sendFocusState);
       document.removeEventListener('visibilitychange', sendFocusState);
@@ -142,7 +176,7 @@
   });
 </script>
 
-<div class="bg-background flex h-dvh overflow-hidden">
+<div class="bg-background flex overflow-hidden" style={`height: ${appHeight};`}>
   <!-- Mobile overlay -->
   {#if sidebarOpen}
     <!-- svelte-ignore a11y_no_static_element_interactions -->

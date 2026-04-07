@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
-const deployRoot = process.env.PIMOTE_INSTALL_ROOT || join(homedir(), '.local', 'share', 'pimote');
+const xdgDataHome = process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share');
+const deployRoot = process.env.PIMOTE_INSTALL_ROOT || join(xdgDataHome, 'pimote');
 const releasesDir = join(deployRoot, 'releases');
 const currentLink = join(deployRoot, 'current');
 const keepReleases = Number.parseInt(process.env.PIMOTE_KEEP_RELEASES || '3', 10);

@@ -4,7 +4,18 @@ tsconfig.tsbuildinfo
 .artifacts/
 pimote-*.tgz
 
+# OS / editor hygiene
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.env
+.env.*
+!.env.example
+!.env.test
+
 # Client build output handled by client/.gitignore
 
 # Local deployment/hosting details
 .pi/agent/Deployment.md
+Makefile.local
