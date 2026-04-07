@@ -584,6 +584,12 @@ export interface SessionStateChangedEvent {
   connectedClientId: string | null;
   folderActiveSessionCount: number;
   folderActiveStatus: 'working' | 'idle' | 'attention' | null;
+  /** Session display name (from setSessionName). */
+  sessionName?: string;
+  /** First user message text, for sidebar display. */
+  firstMessage?: string;
+  /** Total message count. */
+  messageCount?: number;
 }
 
 export interface ConnectionRestoredEvent {

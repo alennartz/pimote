@@ -60,15 +60,62 @@ class IndexStore {
       folder.activeStatus = event.folderActiveStatus;
     }
 
+    const isOwnedByMe = event.connectedClientId === myClientId;
     const folderSessions = this.sessions.get(event.folderPath);
     if (folderSessions) {
-      const session = folderSessions.find((s) => s.id === event.sessionId);
-      if (session) {
-        session.liveStatus = event.liveStatus;
-        session.isOwnedByMe = event.connectedClientId === myClientId;
+      const idx = folderSessions.findIndex((s) => s.id === event.sessionId);
+      if (idx >= 0) {
+        // Update in place — merge event metadata with existing entry
+        this.sessions.set(
+          event.folderPath,
+          folderSessions.map((s, i) =>
+            i === idx
+              ? {
+                  ...s,
+                  liveStatus: event.liveStatus,
+                  isOwnedByMe,
+                  name: event.sessionName ?? s.name,
+                  firstMessage: event.firstMessage ?? s.firstMessage,
+                  messageCount: event.messageCount ?? s.messageCount,
+                }
+              : s,
+          ),
+        );
       } else if (event.liveStatus !== null) {
-        void this.loadSessions(event.folderPath);
+        // New active session — add directly from event data
+        const now = new Date().toISOString();
+        const updated = [
+          ...folderSessions,
+          {
+            id: event.sessionId,
+            name: event.sessionName ?? '',
+            firstMessage: event.firstMessage,
+            messageCount: event.messageCount ?? 0,
+            created: now,
+            modified: now,
+            archived: false,
+            isOwnedByMe,
+            liveStatus: event.liveStatus,
+          },
+        ];
+        this.sessions.set(event.folderPath, sortSessionsByRecency(updated));
       }
+    } else if (event.liveStatus !== null) {
+      // Sessions for this folder not loaded yet — seed with this entry
+      const now = new Date().toISOString();
+      this.sessions.set(event.folderPath, [
+        {
+          id: event.sessionId,
+          name: event.sessionName ?? '',
+          firstMessage: event.firstMessage,
+          messageCount: event.messageCount ?? 0,
+          created: now,
+          modified: now,
+          archived: false,
+          isOwnedByMe,
+          liveStatus: event.liveStatus,
+        },
+      ]);
     }
   }
 
@@ -82,10 +129,11 @@ class IndexStore {
 
   applySessionRenamed(event: SessionRenamedEvent): void {
     const folderSessions = this.sessions.get(event.folderPath);
-    const session = folderSessions?.find((s) => s.id === event.sessionId);
-    if (session) {
-      session.name = event.name;
-    }
+    if (!folderSessions) return;
+    this.sessions.set(
+      event.folderPath,
+      folderSessions.map((s) => (s.id === event.sessionId ? { ...s, name: event.name } : s)),
+    );
   }
 
   applySessionArchived(event: SessionArchivedEvent): void {

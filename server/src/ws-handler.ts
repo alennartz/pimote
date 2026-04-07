@@ -164,6 +164,7 @@ export class WsHandler {
           }
 
           // Enrich each session with ownership, live status, and archived state
+          const diskSessionIds = new Set(sessions.map((s) => s.id));
           const enriched = sessions
             .map((s) => {
               const sl = slotById.get(s.id);
@@ -180,6 +181,28 @@ export class WsHandler {
               };
             })
             .filter((s) => command.includeArchived || !s.archived);
+
+          // Include active in-memory sessions not yet persisted to disk
+          for (const slot of activeSessions) {
+            if (slot.folderPath === command.folderPath && !diskSessionIds.has(slot.sessionState.id)) {
+              const session = slot.session;
+              const firstUserMsg = session.messages.find((m) => m.role === 'user');
+              const rawContent = firstUserMsg?.content;
+              const firstText = typeof rawContent === 'string' ? rawContent : Array.isArray(rawContent) ? rawContent.find((c) => c.type === 'text')?.text : undefined;
+              const now = new Date().toISOString();
+              enriched.push({
+                id: slot.sessionState.id,
+                name: session.sessionName ?? '',
+                created: now,
+                modified: now,
+                messageCount: session.messages.length,
+                firstMessage: firstText || undefined,
+                archived: false,
+                isOwnedByMe: slot.connection?.connectedClientId === this.clientId,
+                liveStatus: slot.sessionState.status,
+              });
+            }
+          }
 
           this.sendResponse(id, true, { sessions: enriched });
           break;
@@ -1081,6 +1104,21 @@ export class WsHandler {
       folderActiveStatus = 'idle';
     }
 
+    // Extract session metadata for sidebar display
+    let sessionName: string | undefined;
+    let firstMessage: string | undefined;
+    let messageCount: number | undefined;
+    if (slot) {
+      const session = slot.session;
+      sessionName = session.sessionName || undefined;
+      messageCount = session.messages.length;
+      const firstUserMsg = session.messages.find((m) => m.role === 'user');
+      if (firstUserMsg) {
+        const rawContent = firstUserMsg.content;
+        firstMessage = typeof rawContent === 'string' ? rawContent : Array.isArray(rawContent) ? rawContent.find((c) => c.type === 'text')?.text : undefined;
+      }
+    }
+
     const event: SessionStateChangedEvent = {
       type: 'session_state_changed',
       sessionId,
@@ -1089,6 +1127,9 @@ export class WsHandler {
       connectedClientId: slot ? (slot.connection?.connectedClientId ?? null) : null,
       folderActiveSessionCount,
       folderActiveStatus,
+      sessionName,
+      firstMessage,
+      messageCount,
     };
 
     for (const [, handler] of clientRegistry) {
