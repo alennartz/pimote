@@ -8,6 +8,7 @@
   import InstallBanner from '$lib/components/InstallBanner.svelte';
   import Panel from '$lib/components/Panel.svelte';
   import SessionSettingsDialog from '$lib/components/SessionSettingsDialog.svelte';
+  import SessionRenameDialog from '$lib/components/SessionRenameDialog.svelte';
   import { getContextDisplay, getContextTone, getSessionDisplayName } from '$lib/session-summary.js';
   import Menu from '@lucide/svelte/icons/menu';
   import X from '@lucide/svelte/icons/x';
@@ -223,7 +224,27 @@
       </button>
 
       <div class="min-w-0 flex-1">
-        <div class="text-foreground truncate text-sm font-semibold">{mobileHeaderTitle}</div>
+        {#if sessionRegistry.viewedSessionId && sessionRegistry.viewed}
+          <SessionRenameDialog
+            sessionId={sessionRegistry.viewed.sessionId}
+            folderPath={sessionRegistry.viewed.folderPath}
+            sessionName={sessionRegistry.viewed.sessionName}
+            displayName={mobileHeaderTitle}
+          >
+            {#snippet children({ openRenameDialog })}
+              <button
+                type="button"
+                class="text-foreground hover:text-foreground block w-full truncate text-left text-sm font-semibold select-none"
+                title={`Rename session: ${mobileHeaderTitle}`}
+                onclick={openRenameDialog}
+              >
+                {mobileHeaderTitle}
+              </button>
+            {/snippet}
+          </SessionRenameDialog>
+        {:else}
+          <div class="text-foreground truncate text-sm font-semibold">{mobileHeaderTitle}</div>
+        {/if}
       </div>
 
       {#if sessionRegistry.viewedSessionId && mobileContextDisplay}

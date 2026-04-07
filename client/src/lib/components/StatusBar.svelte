@@ -9,6 +9,7 @@
   import { getRestoreModeLabel } from '$lib/restore-status.js';
   import { statusRowSpacerClass } from './status-bar-layout.js';
   import { GitBranch } from '@lucide/svelte';
+  import SessionRenameDialog from './SessionRenameDialog.svelte';
 
   let restoreLabel = $derived(sessionRegistry.viewed?.isRestoring ? getRestoreModeLabel(sessionRegistry.viewed.restoreMode) : null);
   let connectionLabel = $derived(restoreLabel ?? connection.phaseLabel);
@@ -51,9 +52,23 @@
     {#if sessionDisplayName}
       <Separator orientation="vertical" class="mx-0.5 hidden h-4 md:block" />
       <div class="hidden min-w-0 flex-1 md:flex">
-        <span class="text-muted-foreground min-w-0 truncate text-xs" title={sessionDisplayName}>
-          {sessionDisplayName}
-        </span>
+        <SessionRenameDialog
+          sessionId={sessionRegistry.viewed?.sessionId}
+          folderPath={sessionRegistry.viewed?.folderPath}
+          sessionName={sessionRegistry.viewed?.sessionName}
+          displayName={sessionDisplayName}
+        >
+          {#snippet children({ openRenameDialog })}
+            <button
+              type="button"
+              class="text-muted-foreground hover:text-foreground min-w-0 flex-1 truncate text-left text-xs transition-colors select-none"
+              title={`Rename session: ${sessionDisplayName}`}
+              onclick={openRenameDialog}
+            >
+              {sessionDisplayName}
+            </button>
+          {/snippet}
+        </SessionRenameDialog>
       </div>
     {/if}
 
@@ -112,9 +127,23 @@
   {#if sessionDisplayName || sessionRegistry.viewed?.gitBranch || contextDisplay}
     <div class="border-border/50 flex h-7 items-center gap-2 border-t px-2 md:hidden">
       {#if sessionDisplayName}
-        <span class="text-muted-foreground min-w-0 flex-1 truncate" title={sessionDisplayName}>
-          {sessionDisplayName}
-        </span>
+        <SessionRenameDialog
+          sessionId={sessionRegistry.viewed?.sessionId}
+          folderPath={sessionRegistry.viewed?.folderPath}
+          sessionName={sessionRegistry.viewed?.sessionName}
+          displayName={sessionDisplayName}
+        >
+          {#snippet children({ openRenameDialog })}
+            <button
+              type="button"
+              class="text-muted-foreground hover:text-foreground min-w-0 flex-1 truncate text-left transition-colors select-none"
+              title={`Rename session: ${sessionDisplayName}`}
+              onclick={openRenameDialog}
+            >
+              {sessionDisplayName}
+            </button>
+          {/snippet}
+        </SessionRenameDialog>
       {/if}
 
       {#if sessionRegistry.viewed?.gitBranch}
