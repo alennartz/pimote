@@ -12,6 +12,7 @@ export interface SdkMessage {
   display?: boolean;
   toolCallId?: string;
   toolName?: string;
+  isError?: boolean;
 }
 
 /**
@@ -91,6 +92,7 @@ export function mapAgentMessage(msg: SdkMessage): PimoteAgentMessage {
           toolCallId: msg.toolCallId,
           toolName: msg.toolName,
           result: resultContent.length > 0 ? resultContent[0].text : undefined,
+          isError: msg.isError || undefined,
         },
       ],
     };

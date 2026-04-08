@@ -493,6 +493,7 @@ export class SessionRegistry {
           // Replace incrementally-accumulated data with canonical result
           existing.status = 'completed';
           existing.result = block.result;
+          existing.isError = block.isError;
         } else {
           // Rehydration: no prior execution state, create from the result
           session.toolExecutions[block.toolCallId] = {
@@ -501,6 +502,7 @@ export class SessionRegistry {
             partialResult: '',
             status: 'completed',
             result: block.result,
+            isError: block.isError,
           };
         }
       }
