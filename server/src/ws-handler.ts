@@ -357,24 +357,25 @@ export class WsHandler {
         }
 
         case 'archive_session': {
-          const archiveSessionId = command.sessionId;
+          const archiveSessionIds = command.sessionIds;
           const archiveFolderPath = command.folderPath;
-          if (!archiveSessionId || !archiveFolderPath) {
-            this.sendResponse(id, false, undefined, 'sessionId and folderPath are required');
+          if (!archiveSessionIds?.length || !archiveFolderPath) {
+            this.sendResponse(id, false, undefined, 'sessionIds and folderPath are required');
             break;
           }
 
-          const archiveSlot = this.sessionManager.getSession(archiveSessionId);
-          const archiveSessionPath = archiveSlot?.session.sessionFile ?? (await this.folderIndex.resolveSessionPath(archiveFolderPath, archiveSessionId));
-          if (!archiveSessionPath) {
-            this.sendResponse(id, false, undefined, `Session not found: ${archiveSessionId}`);
-            break;
+          let archivedCount = 0;
+          for (const archiveSessionId of archiveSessionIds) {
+            const archiveSlot = this.sessionManager.getSession(archiveSessionId);
+            const archiveSessionPath = archiveSlot?.session.sessionFile ?? (await this.folderIndex.resolveSessionPath(archiveFolderPath, archiveSessionId));
+            if (!archiveSessionPath) continue;
+
+            await this.sessionMetadataStore.setArchived(archiveSessionPath, command.archived);
+            this.broadcastSessionArchived(archiveSessionId, archiveFolderPath, command.archived);
+            archivedCount++;
           }
 
-          await this.sessionMetadataStore.setArchived(archiveSessionPath, command.archived);
-          this.broadcastSessionArchived(archiveSessionId, archiveFolderPath, command.archived);
-
-          this.sendResponse(id, true, { archived: command.archived });
+          this.sendResponse(id, true, { archived: command.archived, count: archivedCount });
           break;
         }
 

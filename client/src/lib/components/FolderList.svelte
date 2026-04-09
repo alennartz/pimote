@@ -6,6 +6,7 @@
   import { buildSessionProjectGroups } from '$lib/session-list-groups.js';
   import { formatRelativeTime } from '$lib/format-relative-time.js';
   import SessionItem from './SessionItem.svelte';
+  import Archive from '@lucide/svelte/icons/archive';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import FolderIcon from '@lucide/svelte/icons/folder';
   import Loader2 from '@lucide/svelte/icons/loader-2';
@@ -27,9 +28,15 @@
 
   let loadedFoldersForCurrentConnection = false;
   let showNewSessionDialog = $state(false);
+  let showArchiveAllDialog = $state(false);
   let projectSearch = $state('');
 
   const projectGroups = $derived(buildSessionProjectGroups(indexStore.folders, indexStore.sessions));
+  const archivableCount = $derived(
+    projectGroups.reduce((total, group) => {
+      return total + group.sessions.filter((s) => !s.archived && !s.liveStatus).length;
+    }, 0),
+  );
   const pickerProjects = $derived(
     [...indexStore.folders]
       .filter((folder) => {
@@ -113,6 +120,26 @@
       console.error('Failed to create new session:', e);
     }
   }
+
+  async function archiveAll() {
+    showArchiveAllDialog = false;
+    try {
+      await Promise.all(
+        projectGroups.map((group) => {
+          const ids = group.sessions.filter((s) => !s.archived && !s.liveStatus).map((s) => s.id);
+          if (ids.length === 0) return;
+          return connection.send({
+            type: 'archive_session',
+            folderPath: group.folder.path,
+            sessionIds: ids,
+            archived: true,
+          });
+        }),
+      );
+    } catch (e) {
+      console.error('Failed to archive sessions:', e);
+    }
+  }
 </script>
 
 <div class="flex flex-col gap-2 p-2">
@@ -130,15 +157,27 @@
       {/if}
     </div>
   {:else}
-    <div class="flex items-center gap-2 px-1">
-      <Button class="flex-1 justify-center" onclick={openNewSessionDialog} disabled={connection.status !== 'connected'}>
+    <div class="flex flex-col gap-1 px-1">
+      <Button class="w-full justify-center" onclick={openNewSessionDialog} disabled={connection.status !== 'connected'}>
         <Plus class="size-4" />
         New session
       </Button>
-      <label class="text-muted-foreground hover:text-sidebar-foreground flex items-center gap-2 px-2 py-1 text-xs whitespace-nowrap">
-        <input type="checkbox" checked={indexStore.showArchived} onchange={(e) => indexStore.setShowArchived((e.currentTarget as HTMLInputElement).checked)} />
-        <span>Show archived</span>
-      </label>
+      <div class="flex items-center justify-between">
+        <label class="text-muted-foreground hover:text-sidebar-foreground flex items-center gap-1.5 py-1 text-xs">
+          <input type="checkbox" checked={indexStore.showArchived} onchange={(e) => indexStore.setShowArchived((e.currentTarget as HTMLInputElement).checked)} />
+          <span>Show archived</span>
+        </label>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          class="text-muted-foreground hover:text-sidebar-foreground"
+          title="Archive all inactive sessions"
+          disabled={connection.status !== 'connected' || archivableCount === 0}
+          onclick={() => (showArchiveAllDialog = true)}
+        >
+          <Archive class="size-4" />
+        </Button>
+      </div>
     </div>
 
     {#if projectGroups.length === 0}
@@ -259,5 +298,20 @@
         <Button variant="outline" type="button" onclick={() => handleNewSessionDialogOpenChange(false)}>Cancel</Button>
       </Dialog.Footer>
     </div>
+  </Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={showArchiveAllDialog}>
+  <Dialog.Content showCloseButton={false}>
+    <Dialog.Header>
+      <Dialog.Title>Archive all inactive sessions</Dialog.Title>
+      <Dialog.Description>
+        This will archive {archivableCount} inactive session{archivableCount !== 1 ? 's' : ''} across all projects. Active sessions will not be affected.
+      </Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Button variant="outline" onclick={() => (showArchiveAllDialog = false)}>Cancel</Button>
+      <Button onclick={archiveAll}>Archive {archivableCount} session{archivableCount !== 1 ? 's' : ''}</Button>
+    </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

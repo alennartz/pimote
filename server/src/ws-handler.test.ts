@@ -1123,7 +1123,7 @@ describe('WsHandler', () => {
       const sessionMetadataStore = createMockSessionMetadataStore();
       const { handler, sent } = createTestHandler('client-1', { folderIndex, sessionMetadataStore });
 
-      await handler.handleMessage(JSON.stringify({ type: 'archive_session', folderPath: '/home/user/project', sessionId: 'archive-me', archived: true, id: 'req-archive' }));
+      await handler.handleMessage(JSON.stringify({ type: 'archive_session', folderPath: '/home/user/project', sessionIds: ['archive-me'], archived: true, id: 'req-archive' }));
 
       expect(sessionMetadataStore.isArchived('/tmp/archive-me.jsonl')).toBe(true);
       expect(findEvents(sent, 'session_archived')).toEqual([

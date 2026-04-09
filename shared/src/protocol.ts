@@ -272,7 +272,7 @@ export interface DeleteSessionCommand extends CommandBase {
 export interface ArchiveSessionCommand extends CommandBase {
   type: 'archive_session';
   folderPath: string;
-  sessionId: string;
+  sessionIds: string[];
   archived: boolean;
 }
 

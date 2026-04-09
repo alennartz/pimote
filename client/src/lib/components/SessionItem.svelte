@@ -52,7 +52,7 @@
       await connection.send({
         type: 'archive_session',
         folderPath,
-        sessionId: session.id,
+        sessionIds: [session.id],
         archived,
       });
       if (archived && isActive) {

@@ -96,7 +96,7 @@
       await connection.send({
         type: 'archive_session',
         folderPath: session.folderPath,
-        sessionId,
+        sessionIds: [sessionId],
         archived: true,
       });
       mobileActionsSessionId = null;
