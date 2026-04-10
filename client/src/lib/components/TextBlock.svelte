@@ -153,6 +153,9 @@
 
   /* Tables */
   .markdown-content :global(table) {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     width: 100%;
     border-collapse: collapse;
     margin: 0.75em 0;
