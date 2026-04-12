@@ -152,6 +152,30 @@ describe('SessionRegistry', () => {
       expect(registry.sessions['s3'].gitBranch).toBe('release');
       expect(registry.sessions['s2'].contextUsage).toBeNull();
     });
+
+    it('session_state_changed applies git branch updates by folder', () => {
+      registry.addSession('s1', '/repo/app', 'app');
+      registry.addSession('s2', '/repo/app', 'app');
+      registry.addSession('s3', '/repo/other', 'other');
+      registry.sessions['s1'].gitBranch = 'main';
+      registry.sessions['s2'].gitBranch = 'main';
+      registry.sessions['s3'].gitBranch = 'release';
+
+      registry.handleEvent({
+        type: 'session_state_changed',
+        sessionId: 's1',
+        folderPath: '/repo/app',
+        liveStatus: 'idle',
+        connectedClientId: null,
+        folderActiveSessionCount: 1,
+        folderActiveStatus: 'idle',
+        gitBranch: 'feature/worktree',
+      });
+
+      expect(registry.sessions['s1'].gitBranch).toBe('feature/worktree');
+      expect(registry.sessions['s2'].gitBranch).toBe('feature/worktree');
+      expect(registry.sessions['s3'].gitBranch).toBe('release');
+    });
   });
 
   // --------------------------------------------------------------------------

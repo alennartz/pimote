@@ -16,6 +16,7 @@ import type { SdkMessage } from './message-mapper.js';
 import type { PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import type { PanelBusMessage } from './panel-state.js';
+import { getGitBranch } from './git-branch.js';
 
 /** Narrow interface for the WebSocket used for event routing.
  *  Avoids importing the `ws` package type in session-manager. */
@@ -212,9 +213,12 @@ export class PimoteSessionManager {
   private readonly modelRegistry: ModelRegistry;
   private readonly sessions = new Map<string, ManagedSlot>();
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
+  private gitBranchCheckHandle: ReturnType<typeof setInterval> | null = null;
+  private lastKnownGitBranchBySession = new Map<string, string | null>();
 
   onStatusChange?: (sessionId: string, folderPath: string) => void;
   onSessionClosed?: (sessionId: string, folderPath: string) => void;
+  onGitBranchChange?: (sessionId: string, folderPath: string) => void;
 
   constructor(
     private readonly config: PimoteConfig,
@@ -308,6 +312,7 @@ export class PimoteSessionManager {
     slotRef.slot = slot;
 
     this.sessions.set(sessionId, slot);
+    this.lastKnownGitBranchBySession.set(sessionId, getGitBranch(folderPath));
     return sessionId;
   }
 
@@ -370,6 +375,7 @@ export class PimoteSessionManager {
     const folderPath = slot.folderPath;
     await slot.runtime.dispose();
     this.sessions.delete(sessionId);
+    this.lastKnownGitBranchBySession.delete(sessionId);
 
     this.onSessionClosed?.(sessionId, folderPath);
   }
@@ -378,6 +384,10 @@ export class PimoteSessionManager {
   reKeySession(slot: ManagedSlot, oldId: string, newId: string): void {
     this.sessions.delete(oldId);
     this.sessions.set(newId, slot);
+
+    const lastKnown = this.lastKnownGitBranchBySession.get(oldId) ?? null;
+    this.lastKnownGitBranchBySession.delete(oldId);
+    this.lastKnownGitBranchBySession.set(newId, lastKnown);
   }
 
   /** Rebuild a slot's SessionState after session replacement.
@@ -410,6 +420,7 @@ export class PimoteSessionManager {
 
   startIdleCheck(idleTimeout: number, isClientConnected?: (clientId: string) => boolean): void {
     this.stopIdleCheck();
+
     this.idleCheckHandle = setInterval(() => {
       for (const [sessionId, slot] of this.sessions) {
         if (slot.sessionState.treeNavigationInProgress) {
@@ -425,12 +436,29 @@ export class PimoteSessionManager {
         }
       }
     }, 60_000);
+
+    this.gitBranchCheckHandle = setInterval(() => {
+      for (const [sessionId, slot] of this.sessions) {
+        if (!slot.connection?.connectedClientId) continue;
+
+        const next = getGitBranch(slot.folderPath);
+        const prev = this.lastKnownGitBranchBySession.get(sessionId) ?? null;
+        if (next !== prev) {
+          this.lastKnownGitBranchBySession.set(sessionId, next);
+          this.onGitBranchChange?.(sessionId, slot.folderPath);
+        }
+      }
+    }, 3000);
   }
 
   stopIdleCheck(): void {
     if (this.idleCheckHandle !== null) {
       clearInterval(this.idleCheckHandle);
       this.idleCheckHandle = null;
+    }
+    if (this.gitBranchCheckHandle !== null) {
+      clearInterval(this.gitBranchCheckHandle);
+      this.gitBranchCheckHandle = null;
     }
   }
 

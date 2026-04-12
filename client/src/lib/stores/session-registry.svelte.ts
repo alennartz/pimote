@@ -22,6 +22,7 @@ import type {
   ToolExecutionEndEvent,
   FullResyncEvent,
   SessionConflictEvent,
+  SessionStateChangedEvent,
   SessionOpenedEvent,
   SessionRenamedEvent,
   SessionReplacedEvent,
@@ -380,6 +381,18 @@ export class SessionRegistry {
         const conflict = event as SessionConflictEvent;
         session.conflictingProcesses = conflict.processes;
         session.conflictingRemoteSessions = conflict.remoteSessions ?? [];
+        break;
+      }
+
+      case 'session_state_changed': {
+        const changed = event as SessionStateChangedEvent;
+        if (changed.gitBranch !== undefined) {
+          for (const candidate of Object.values(this.sessions)) {
+            if (candidate.folderPath === changed.folderPath) {
+              candidate.gitBranch = changed.gitBranch;
+            }
+          }
+        }
         break;
       }
 

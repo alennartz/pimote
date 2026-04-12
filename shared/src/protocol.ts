@@ -634,6 +634,8 @@ export interface SessionStateChangedEvent {
   connectedClientId: string | null;
   folderActiveSessionCount: number;
   folderActiveStatus: 'working' | 'idle' | 'attention' | null;
+  /** Current git branch for the session folder (null when unavailable). */
+  gitBranch?: string | null;
   /** Session display name (from setSessionName). */
   sessionName?: string;
   /** First user message text, for sidebar display. */

@@ -1,6 +1,4 @@
 <script lang="ts">
-  import type { SessionMeta } from '@pimote/shared';
-  import { onMount } from 'svelte';
   import ModelPicker from './ModelPicker.svelte';
   import ThinkingPicker from './ThinkingPicker.svelte';
   import { Badge } from '$lib/components/ui/badge/index.js';
@@ -35,40 +33,6 @@
   );
 
   let sessionDisplayName = $derived(getSessionDisplayName(sessionRegistry.viewed));
-
-  let refreshingMeta = false;
-
-  async function refreshViewedSessionMeta(): Promise<void> {
-    const viewed = sessionRegistry.viewed;
-    if (!viewed || viewed.sessionId.startsWith('pending-') || !connection.ready || refreshingMeta) return;
-
-    refreshingMeta = true;
-    try {
-      const response = await connection.send({ type: 'get_session_meta', sessionId: viewed.sessionId });
-      if (response.success && response.data) {
-        const meta = (response.data as { meta: SessionMeta }).meta;
-        sessionRegistry.updateMeta(viewed.sessionId, meta);
-      }
-    } catch {
-      // Best-effort refresh; keep existing UI value on transient failures.
-    } finally {
-      refreshingMeta = false;
-    }
-  }
-
-  // Refresh when switching sessions so branch/context labels are never stale.
-  $effect(() => {
-    sessionRegistry.viewedSessionId;
-    void refreshViewedSessionMeta();
-  });
-
-  // Poll viewed session metadata for external changes (e.g. git checkout/worktree switch).
-  onMount(() => {
-    const timer = setInterval(() => {
-      void refreshViewedSessionMeta();
-    }, 5000);
-    return () => clearInterval(timer);
-  });
 </script>
 
 <div class="border-border bg-muted/30 text-muted-foreground shrink-0 border-b text-xs">

@@ -150,6 +150,9 @@ export async function createServer(
   sessionManager.onSessionClosed = (sessionId, folderPath) => {
     WsHandler.broadcastSidebarUpdate(sessionId, folderPath, sessionManager, clientRegistry);
   };
+  sessionManager.onGitBranchChange = (sessionId, folderPath) => {
+    WsHandler.broadcastSidebarUpdate(sessionId, folderPath, sessionManager, clientRegistry);
+  };
 
   const wss = new WebSocketServer({ noServer: true });
   const clientRegistry: ClientRegistry = new Map();
