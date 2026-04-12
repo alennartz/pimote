@@ -102,6 +102,27 @@ Parent (`MessageList`) flow:
    - non-empty draft: prompt Replace / Append / Prepend / Ignore
 5. Use `setEditorText(newSessionId, nextText)` for non-Ignore choices.
 
+#### Client draft policy
+
+```ts
+// client/src/lib/draft-policy.ts
+
+export type DraftChoice = 'replace' | 'append' | 'prepend' | 'ignore';
+
+/**
+ * Whether a fork with the given draft state needs a conflict prompt.
+ * Returns true only when both currentDraft and selectedText are non-empty strings.
+ */
+export function needsDraftPrompt(currentDraft: string, selectedText: string | undefined): boolean;
+
+/**
+ * Compute the next editor text for a given draft choice.
+ * Returns null for 'ignore' (draft remains unchanged).
+ * For append/prepend, joins with a single newline separator.
+ */
+export function applyDraftChoice(currentDraft: string, selectedText: string, choice: DraftChoice): string | null;
+```
+
 ### Technology Choices
 
 No new dependencies are required. Reuse existing shadcn dialog and existing connection/session/input stores.
@@ -124,16 +145,30 @@ None.
 
 ### Interface Files
 
+- `client/src/lib/draft-policy.ts` — `DraftChoice` type, `needsDraftPrompt` function, `applyDraftChoice` function for client-side fork draft conflict resolution
 - `shared/src/protocol.ts` — Added `ForkCommand` interface, added `entryId?: string` to `PimoteAgentMessage`, added `ForkCommand` to `PimoteCommand` union
 - `server/src/message-mapper.ts` — Added `id?: string` to `SdkMessage` interface, pass through SDK message `id` as `entryId` on all mapped message types
 - `server/src/ws-handler.ts` — Added `'fork'` to session command routing, added stub fork handler with `entryId` validation
 
 ### Test Files
 
+- `client/src/lib/draft-policy.test.ts` — Tests for draft conflict detection and resolution across all choice types
 - `server/src/message-mapper.test.ts` — Tests for entryId pass-through from SDK messages to PimoteAgentMessage across all message roles
 - `server/src/ws-handler.test.ts` — Tests for fork command validation, runtime invocation, response shape, session replacement lifecycle, and cancellation handling
 
 ### Behaviors Covered
+
+#### Draft Policy (client-side conflict resolution)
+
+- Returns false (no prompt) when current draft is empty
+- Returns false when selectedText is undefined
+- Returns false when selectedText is empty string
+- Returns true when both currentDraft and selectedText are non-empty
+- Returns false when draft is whitespace-only
+- Returns selectedText for replace choice
+- Appends selectedText after current draft with newline separator
+- Prepends selectedText before current draft with newline separator
+- Returns null for ignore choice (draft unchanged)
 
 #### Message Mapper (entryId pass-through)
 
@@ -153,3 +188,5 @@ None.
 - Returns `{ cancelled: true }` when fork is cancelled, without triggering session reset events
 - Triggers `session_replaced` event when fork changes the session ID
 - Omits `selectedText` from response when runtime does not provide it
+
+**Review status:** approved
