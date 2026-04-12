@@ -228,3 +228,120 @@ When reconnecting, if the event buffer replay contains a `tree_navigation_start`
 - Closing the dialog clears session-scoped tree state and loading/selection flags.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Add tree navigation lifecycle mapping to the event buffer
+
+Update `server/src/event-buffer.ts` so synthetic lifecycle events emitted by ws-handler can be buffered/replayed as true session events instead of falling through to the default mapper. Extend the internal `SdkEvent` shape and `mapEvent()` switch to support:
+
+- `tree_navigation_start` → `{ type: 'tree_navigation_start', targetId, summarizing }`
+- `tree_navigation_end` → `{ type: 'tree_navigation_end' }`
+
+Keep cursor/timestamp assignment in `EventBuffer` as-is so these events participate in reconnect replay semantics with the same guarantees as other session events.
+
+**Verify:** `npm run test --workspace=@pimote/server -- src/event-buffer.test.ts`
+**Status:** not started
+
+### Step 2: Implement `navigate_tree` and `set_tree_label` server command handlers
+
+Implement the two pending handlers in `server/src/ws-handler.ts`.
+
+For `navigate_tree`:
+
+- Build `navigateTree` options from command fields (`summarize`, `customInstructions`, `replaceInstructions`, `label`)
+- Set `slot.sessionState.treeNavigationInProgress = true` before navigation
+- Emit `tree_navigation_start` through `slot.sessionState.eventBuffer.onEvent(...)` so the event is both sent and buffered
+- Call `session.navigateTree(command.targetId, options)`
+- In `finally`, clear `treeNavigationInProgress` and emit `tree_navigation_end` through the event buffer
+- If result is not cancelled, call `handleSessionReset(slot)` so the client receives `full_resync`
+- Respond with `{ cancelled, editorText? }`
+
+For `set_tree_label`:
+
+- Normalize empty-string labels to `undefined`
+- Call `session.sessionManager.appendLabelChange(command.entryId, normalizedLabel)`
+- Respond with `{ success: true }`
+
+Do not change `/tree` prompt interception behavior already implemented in this file.
+
+**Verify:** `npm run test --workspace=@pimote/server -- src/ws-handler.test.ts src/session-manager.test.ts`
+**Status:** not started
+
+### Step 3: Finish tree dialog store filtering and local label mutation
+
+Implement the two stubs in `client/src/lib/stores/tree-dialog.svelte.ts`:
+
+- `getFilteredTree()` — recursive, pure filtering pipeline driven by `filterMode` + `searchQuery`
+- `setNodeLabel(entryId, label)` — immutable tree update that applies/clears label locally without refetch
+
+Keep existing fold reset behavior (`setFilterMode`, `setSearchQuery`) and active-leaf selection behavior (`openDialog`) intact.
+
+**Verify:** `npm run test --workspace=client -- src/lib/stores/tree-dialog.svelte.test.ts`
+**Status:** not started
+
+### Step 4: Wire `/tree` prompt responses into the tree dialog flow
+
+Update `client/src/lib/components/InputBar.svelte` to treat `/tree` prompt responses as dialog-open data instead of normal user-message flow:
+
+- After `connection.send({ type: 'prompt', ... })`, detect the `/tree` response payload shape (`{ tree, currentLeafId }`)
+- Call `treeDialogStore.openDialog(sessionId, tree, currentLeafId)` when present
+- Skip `sessionRegistry.addOptimisticUserMessage(...)` for `/tree` requests
+- Keep normal prompt behavior unchanged for non-`/tree` submissions
+
+This makes `/tree` the single entry point for opening the tree UI while preserving existing prompt behavior for all other messages.
+
+**Verify:** `npm run check --workspace=client`
+**Status:** not started
+
+### Step 5: Implement `TreeDialog.svelte` with navigation, summarization, search/filter, and labels
+
+Create `client/src/lib/components/TreeDialog.svelte` and implement the architecture-defined UI/interaction contract:
+
+- Full-screen/mobile + centered desktop dialog shell (same responsive pattern as extension editor dialog)
+- Search input + filter mode control (`default`, `user-only`, `all`, `labeled-only`)
+- Recursive collapsible tree list with:
+  - expand/collapse controls
+  - selection highlight
+  - current leaf marker
+  - active path styling
+  - type/preview/timestamp/label rendering
+- Label editing UX (long-press mobile / context menu desktop) that sends `set_tree_label` and then calls `treeDialogStore.setNodeLabel(...)`
+- Navigation action flow with three choices:
+  - no summary
+  - summarize
+  - summarize with custom prompt
+- `navigate_tree` command submission, handling `{ cancelled, editorText? }`, and forwarding `editorText` via `setEditorText(sessionId, editorText)`
+
+Use pure helper functions for tree traversal/filtering/path derivation, and keep mutable UI state scoped to component/store state.
+
+**Verify:** `npm run check --workspace=client`
+**Status:** not started
+
+### Step 6: Connect lifecycle events and mount the dialog globally
+
+Integrate tree navigation lifecycle with client runtime and app shell:
+
+- In `TreeDialog.svelte` (or `tree-dialog` store listener wiring), subscribe to `connection.onEvent` and handle:
+  - `tree_navigation_start` → set loading when `summarizing === true`
+  - `tree_navigation_end` → clear loading and arm close-on-next-resync
+  - `full_resync` for the same session → close dialog when close-on-resync is armed
+- Track in-progress tree navigation by session so replayed `tree_navigation_start` without a matching end keeps loading state correct after reconnect
+- Close dialog when `sessionRegistry.viewedSessionId` changes away from the dialog’s `sessionId`
+- Mount `<TreeDialog />` in `client/src/routes/+layout.svelte` alongside other global overlays (`ExtensionDialog`, etc.)
+
+**Verify:** `npm run check --workspace=client`
+**Status:** not started
+
+### Step 7: Run cross-package regression checks for tree navigation
+
+Run the tree-navigation-focused regression suite after integration:
+
+- `npm run test --workspace=@pimote/server -- src/event-buffer.test.ts src/ws-handler.test.ts src/session-manager.test.ts`
+- `npm run test --workspace=client -- src/lib/stores/tree-dialog.svelte.test.ts`
+- `npm run check`
+
+Address any typing/runtime regressions before moving to implementation execution.
+
+**Verify:** Commands above exit 0
+**Status:** not started
