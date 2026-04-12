@@ -131,6 +131,30 @@ describe('SessionRegistry', () => {
   });
 
   // --------------------------------------------------------------------------
+  // Session Meta
+  // --------------------------------------------------------------------------
+  describe('Session Meta', () => {
+    it('updateMeta() propagates git branch to sessions in the same folder only', () => {
+      registry.addSession('s1', '/repo/app', 'app');
+      registry.addSession('s2', '/repo/app', 'app');
+      registry.addSession('s3', '/repo/other', 'other');
+
+      registry.sessions['s2'].gitBranch = 'main';
+      registry.sessions['s3'].gitBranch = 'release';
+
+      registry.updateMeta('s1', {
+        gitBranch: 'feature/live-branch',
+        contextUsage: { percent: 12, contextWindow: 128000 },
+      });
+
+      expect(registry.sessions['s1'].gitBranch).toBe('feature/live-branch');
+      expect(registry.sessions['s2'].gitBranch).toBe('feature/live-branch');
+      expect(registry.sessions['s3'].gitBranch).toBe('release');
+      expect(registry.sessions['s2'].contextUsage).toBeNull();
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Event Routing — Streaming State
   // --------------------------------------------------------------------------
   describe('Event Routing — Streaming State', () => {
