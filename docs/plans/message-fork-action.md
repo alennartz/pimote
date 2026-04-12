@@ -190,3 +190,89 @@ None.
 - Omits `selectedText` from response when runtime does not provide it
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Implement `needsDraftPrompt` and `applyDraftChoice` in `client/src/lib/draft-policy.ts`
+
+Replace the two stub functions with their real implementations:
+
+- `needsDraftPrompt(currentDraft, selectedText)`: return `true` only when `currentDraft.trim().length > 0` **and** `selectedText` is a non-empty string. All other combinations return `false`.
+- `applyDraftChoice(currentDraft, selectedText, choice)`: switch on `choice`:
+  - `'replace'` → return `selectedText`
+  - `'append'` → return `currentDraft + '\n' + selectedText`
+  - `'prepend'` → return `selectedText + '\n' + currentDraft`
+  - `'ignore'` → return `null`
+
+These are pure functions with no dependencies. Remove the parameter underscores and the `throw` stubs.
+
+**Verify:** `npx vitest run client/src/lib/draft-policy.test.ts` — all 10 tests pass.
+**Status:** not started
+
+### Step 2: Implement the `fork` command handler in `server/src/ws-handler.ts`
+
+In `handleSessionCommand`, replace the `case 'fork'` stub (`throw new Error('Not implemented: fork command')`) with real logic that follows the same pattern used by `navigate_tree` / `new_session`:
+
+1. Keep the existing `entryId` validation that sends an error response.
+2. Call `const result = await slot.runtime.fork(command.entryId)` (the runtime method already exists — see `createCommandContextActions`).
+3. If `!result.cancelled`, call `await this.handleSessionReset(slot)` — this handles `rebuildSessionState`, `reKeySession`, `session_replaced` event emission, and sidebar broadcasts, identical to the `navigate_tree` non-cancelled path.
+4. Build the response data: `{ cancelled: result.cancelled }`. If `result.selectedText !== undefined`, add `selectedText: result.selectedText`.
+5. Call `this.sendResponse(id, true, data)`.
+
+The key reference is the `navigate_tree` handler at the same level in the switch — fork follows the same await-runtime → conditional-handleSessionReset → build-data → sendResponse pattern, but without tree navigation lifecycle events.
+
+**Verify:** `npx vitest run server/src/ws-handler.test.ts` — all fork command tests pass (validation errors, runtime invocation, cancellation, session replacement, selectedText omission).
+**Status:** not started
+
+### Step 3: Add fork action to user message icon in `client/src/lib/components/Message.svelte`
+
+Add a user-message action menu that opens when the user icon is clicked (mirroring the assistant icon's existing TTS menu pattern):
+
+1. Accept a new prop `onfork`: `{ onfork?: (entryId: string) => void }`. The `entryId` comes from `message.entryId`.
+2. For user messages (`message.role === 'user'`), make the `.user-icon` div a `<button>` when `message.entryId` is present. Add local state `userMenuOpen` (boolean).
+3. When clicked, toggle `userMenuOpen`. Show a small menu (same visual pattern as `.tool-menu` on assistant messages) containing a single "Fork" button. Use the `GitFork` icon from `@lucide/svelte/icons/git-fork`.
+4. The Fork button calls `onfork?.(message.entryId!)` and closes the menu.
+5. When `message.entryId` is absent (shouldn't happen for real messages but defensive), render the icon as a plain `<div>` with no interactivity.
+6. Style the user action menu consistently with the existing assistant `.tool-menu`.
+
+**Verify:** The component compiles. User messages show a clickable icon that reveals a Fork button. Clicking Fork fires the `onfork` callback with the message's `entryId`. Manual visual check in browser.
+**Status:** not started
+
+### Step 4: Wire fork orchestration in `client/src/lib/components/MessageList.svelte`
+
+MessageList owns the fork execution flow because it already has access to `connection`, `sessionRegistry`, and `setEditorText`.
+
+1. **Add a `handleFork(entryId: string)` function** that:
+   a. Gets `session = sessionRegistry.viewed` — bail if null.
+   b. Sends `{ type: 'fork', sessionId: session.sessionId, entryId }` via `connection.send()`.
+   c. Reads the response: if `data.cancelled` is true, return.
+   d. After session replacement (handled reactively by `session_replaced` event in session-registry), apply draft policy:
+   - Read `currentDraft` from `sessionRegistry.viewed?.draftText ?? ''`.
+   - Read `selectedText` from `data.selectedText`.
+   - If `needsDraftPrompt(currentDraft, selectedText)` returns true, open a local dialog (Step 5) and await the user's `DraftChoice`.
+   - Otherwise, if `selectedText` is present, directly call `setEditorText(sessionRegistry.viewedSessionId!, selectedText)`.
+   - If the user chose a non-ignore option, compute `nextText = applyDraftChoice(currentDraft, selectedText, choice)` and if non-null, call `setEditorText(sessionRegistry.viewedSessionId!, nextText)`.
+
+2. **Pass `handleFork` down** to `<Message>` as the `onfork` prop in the `{#each}` loop.
+
+3. **Add local dialog state** for the draft conflict prompt (see Step 5).
+
+Imports needed: `needsDraftPrompt`, `applyDraftChoice`, `DraftChoice` from `$lib/draft-policy.js`.
+
+**Verify:** Clicking Fork on a user message sends the fork command, receives the response, and applies draft policy. When no conflict: editor text is set to selectedText. When conflict: dialog appears. Manual integration test in browser.
+**Status:** not started
+
+### Step 5: Add draft conflict dialog in `client/src/lib/components/MessageList.svelte`
+
+Add a local dialog for draft conflict resolution using existing shadcn dialog primitives (`Dialog`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter` from `$lib/components/ui/dialog`).
+
+1. **State:** `draftDialogOpen: boolean`, `draftDialogResolve: ((choice: DraftChoice) => void) | null`. Managed as component-local `$state()`.
+2. **Helper function** `promptDraftChoice(): Promise<DraftChoice>` — sets `draftDialogOpen = true`, returns a promise resolved by `draftDialogResolve`.
+3. **Dialog markup** — render inside the component template:
+   - Title: "Draft conflict"
+   - Description: "The editor already has text. How should the forked message be combined?"
+   - Four buttons in the footer: Replace, Append, Prepend, Ignore. Each calls `draftDialogResolve?.('replace')` etc., then sets `draftDialogOpen = false`.
+4. **Integration with Step 4:** when `needsDraftPrompt` returns true, call `const choice = await promptDraftChoice()` and continue with `applyDraftChoice`.
+
+**Verify:** When forking a message while the editor has content, the dialog appears with four choices. Each choice correctly computes the resulting text. Ignore leaves the editor unchanged. Manual integration test in browser.
+**Status:** not started
