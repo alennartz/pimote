@@ -15,7 +15,7 @@ The implementation covers most planned tree-navigation functionality across prot
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `client/src/lib/components/TreeDialog.svelte:197-203`
-- **Status:** open
+- **Status:** resolved
 
 The plan specifies long-press/right-click label editing via an in-dialog popover with text input. The implementation uses `window.prompt(...)` instead. This is a notable interaction deviation (blocking native prompt, inconsistent styling/accessibility, no inline context), so the implemented behavior does not match the planned UI contract.
 
@@ -24,7 +24,7 @@ The plan specifies long-press/right-click label editing via an in-dialog popover
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/components/TreeDialog.svelte:44-49,249-257`
-- **Status:** open
+- **Status:** resolved
 
 `canNavigate` depends on `!loading`, but `navigateSelectedNode()` sets loading to `false` for “No summary” mode (`setLoading(summarize)`). That leaves the button enabled while the request is in flight, allowing repeated clicks/double-taps to issue multiple `navigate_tree` commands concurrently and produce race-prone reset/editorText ordering.
 
@@ -33,7 +33,7 @@ The plan specifies long-press/right-click label editing via an in-dialog popover
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/ws-handler.ts:909-923`, `server/src/session-manager.ts:415-417`
-- **Status:** open
+- **Status:** resolved
 
 `treeNavigationInProgress` is managed as a single boolean per session with unconditional `true` on start and `false` in `finally`. If multiple navigations overlap, the first completion clears the flag and emits `tree_navigation_end` while another navigation may still be running. This can emit misleading lifecycle events and re-enable idle reaping prematurely.
 
@@ -42,7 +42,7 @@ The plan specifies long-press/right-click label editing via an in-dialog popover
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/components/TreeDialog.svelte:144-149,157-165,269-270`
-- **Status:** open
+- **Status:** resolved
 
 Every `tree_navigation_end` sets `closeOnResync: true`, but cancelled navigations return early and intentionally skip immediate resync. If the map entry remains armed, a later unrelated `full_resync` for that session can unexpectedly close the tree dialog.
 

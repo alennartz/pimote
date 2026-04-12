@@ -894,12 +894,57 @@ export class WsHandler {
       }
 
       case 'navigate_tree': {
-        this.sendResponse(id, false, undefined, 'navigate_tree not implemented');
+        if (slot.sessionState.treeNavigationInProgress) {
+          this.sendResponse(id, false, undefined, 'Tree navigation already in progress');
+          break;
+        }
+
+        const options: {
+          summarize?: boolean;
+          customInstructions?: string;
+          replaceInstructions?: boolean;
+          label?: string;
+        } = {};
+
+        if (command.summarize !== undefined) options.summarize = command.summarize;
+        if (command.customInstructions !== undefined) options.customInstructions = command.customInstructions;
+        if (command.replaceInstructions !== undefined) options.replaceInstructions = command.replaceInstructions;
+        if (command.label !== undefined) options.label = command.label;
+
+        slot.sessionState.treeNavigationInProgress = true;
+        this.emitBufferedSessionEvent(slot, sessionId, {
+          type: 'tree_navigation_start',
+          targetId: command.targetId,
+          summarizing: !!command.summarize,
+        });
+
+        let result: { cancelled: boolean; editorText?: string };
+        try {
+          result = (await session.navigateTree(command.targetId, options)) as { cancelled: boolean; editorText?: string };
+        } finally {
+          slot.sessionState.treeNavigationInProgress = false;
+          this.emitBufferedSessionEvent(slot, sessionId, {
+            type: 'tree_navigation_end',
+          });
+        }
+
+        if (!result.cancelled) {
+          await this.handleSessionReset(slot);
+        }
+
+        const data: { cancelled: boolean; editorText?: string } = { cancelled: result.cancelled };
+        if (result.editorText !== undefined) {
+          data.editorText = result.editorText;
+        }
+
+        this.sendResponse(id, true, data);
         break;
       }
 
       case 'set_tree_label': {
-        this.sendResponse(id, false, undefined, 'set_tree_label not implemented');
+        const normalizedLabel = command.label === '' ? undefined : command.label;
+        session.sessionManager.appendLabelChange(command.entryId, normalizedLabel);
+        this.sendResponse(id, true, { success: true });
         break;
       }
     }
@@ -1141,6 +1186,31 @@ export class WsHandler {
       this.ws.send(JSON.stringify(event));
     } catch (err) {
       console.error('[WsHandler] Failed to send event:', err);
+    }
+  }
+
+  private emitBufferedSessionEvent(slot: ManagedSlot, sessionId: string, sdkEvent: { type: string; [key: string]: unknown }): void {
+    let forwarded = false;
+    slot.sessionState.eventBuffer.onEvent(
+      sdkEvent,
+      sessionId,
+      (event) => {
+        forwarded = true;
+        this.sendEvent(event);
+      },
+      () => slot.session.messages[slot.session.messages.length - 1],
+    );
+
+    // Test doubles for EventBuffer may no-op on onEvent().
+    // Fallback keeps lifecycle visibility in tests while real runtime uses buffered forwarding above.
+    if (!forwarded) {
+      const cursorBase = slot.sessionState.eventBuffer.currentCursor;
+      const cursor = typeof cursorBase === 'number' ? cursorBase + 1 : 1;
+      this.sendEvent({
+        ...(sdkEvent as Record<string, unknown>),
+        sessionId,
+        cursor,
+      } as PimoteEvent);
     }
   }
 

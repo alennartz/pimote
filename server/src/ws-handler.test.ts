@@ -1903,6 +1903,80 @@ describe('WsHandler', () => {
       });
     });
 
+    it('rejects overlapping tree navigation requests for the same session', async () => {
+      let resolveNavigation: ((value: { cancelled: boolean; editorText?: string }) => void) | undefined;
+      const navigateTree = vi.fn().mockImplementation(
+        () =>
+          new Promise<{ cancelled: boolean; editorText?: string }>((resolve) => {
+            resolveNavigation = resolve;
+          }),
+      );
+
+      const session = createMockSlot({
+        id: 'session-tree-overlap',
+        connectedClientId: 'client-1',
+        session: {
+          subscribe: () => () => {},
+          dispose: () => {},
+          messages: [],
+          model: null,
+          thinkingLevel: 'default',
+          isStreaming: false,
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 'session-tree-overlap',
+          sessionName: undefined,
+          autoCompactionEnabled: false,
+          bindExtensions: async () => {},
+          modelRegistry: { getAvailable: () => [] },
+          clearQueue: () => ({ steering: [], followUp: [] }),
+          navigateTree,
+          sessionManager: {
+            appendLabelChange: vi.fn(),
+            getTree: () => [],
+            getLeafId: () => null,
+          },
+        } as any,
+      });
+
+      const sessions = new Map([['session-tree-overlap', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      const firstRequest = handler.handleMessage(
+        JSON.stringify({
+          type: 'navigate_tree',
+          sessionId: 'session-tree-overlap',
+          targetId: 'entry-first',
+          id: 'req-navigate-first',
+        }),
+      );
+
+      await Promise.resolve();
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'navigate_tree',
+          sessionId: 'session-tree-overlap',
+          targetId: 'entry-second',
+          id: 'req-navigate-second',
+        }),
+      );
+
+      expect(findResponse(sent, 'req-navigate-second')).toEqual({
+        id: 'req-navigate-second',
+        success: false,
+        error: 'Tree navigation already in progress',
+      });
+
+      expect(findEvents(sent, 'tree_navigation_start')).toHaveLength(1);
+      expect(findEvents(sent, 'tree_navigation_end')).toHaveLength(0);
+
+      resolveNavigation?.({ cancelled: true });
+      await firstRequest;
+
+      expect(findEvents(sent, 'tree_navigation_end')).toHaveLength(1);
+    });
+
     it('sets or clears a tree label through the session manager and responds with success', async () => {
       const appendLabelChange = vi.fn().mockReturnValue('label-entry-id');
       const session = createMockSlot({ id: 'session-tree-label', connectedClientId: 'client-1' });
