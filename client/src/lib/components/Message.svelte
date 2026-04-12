@@ -8,13 +8,20 @@
   import TtsButton from './TtsButton.svelte';
   import User from '@lucide/svelte/icons/user';
   import Bot from '@lucide/svelte/icons/bot';
+  import GitFork from '@lucide/svelte/icons/git-fork';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
 
   const MAX_COLLAPSED_LINES = 10;
   const SKILL_COLLAPSED_LINES = 3;
 
-  let { message, streaming = false, messageKey = '' }: { message: PimoteAgentMessage | StreamingMessage; streaming?: boolean; messageKey?: string } = $props();
+  let {
+    message,
+    streaming = false,
+    messageKey = '',
+    onfork,
+  }: { message: PimoteAgentMessage | StreamingMessage; streaming?: boolean; messageKey?: string; onfork?: (entryId: string) => void } = $props();
+  let userMenuOpen = $state(false);
   let customExpanded = $state(false);
   let skillExpanded = $state(false);
   let toolMenuOpen = $state(false);
@@ -42,6 +49,7 @@
     return { name: match[1], body: match[2], after: match[3].trim() };
   }
 
+  let entryId = $derived('entryId' in message && typeof message.entryId === 'string' ? message.entryId : undefined);
   let userText = $derived(getUserText(message));
   let skillBlock = $derived(message.role === 'user' ? parseSkillBlock(userText) : null);
   let skillLines = $derived(skillBlock ? skillBlock.body.split('\n') : []);
@@ -56,9 +64,31 @@
   <!-- Tool results are displayed inline with their tool calls — skip standalone rendering -->
 {:else if message.role === 'user'}
   <div class="message user-message">
-    <div class="message-icon user-icon">
-      <User size={16} />
-    </div>
+    {#if entryId}
+      <div class="user-icon-col">
+        <button class="message-icon user-icon" onclick={() => (userMenuOpen = !userMenuOpen)}>
+          <User size={16} />
+        </button>
+        {#if userMenuOpen}
+          <div class="tool-menu">
+            <button
+              class="fork-btn"
+              onclick={() => {
+                onfork?.(entryId!);
+                userMenuOpen = false;
+              }}
+              title="Fork from this message"
+            >
+              <GitFork size={16} />
+            </button>
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <div class="message-icon user-icon">
+        <User size={16} />
+      </div>
+    {/if}
     <div class="message-body">
       {#if skillBlock}
         <!-- Skill-expanded user message: collapsible skill block + optional user text -->
@@ -213,6 +243,43 @@
     margin-top: 2px;
     background: oklch(0.35 0.08 250);
     color: oklch(0.85 0.05 250);
+  }
+
+  button.user-icon {
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  button.user-icon:active {
+    background: oklch(0.42 0.08 250);
+  }
+
+  .user-icon-col {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+  }
+
+  .fork-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    background: oklch(0.28 0.04 260);
+    color: var(--foreground);
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  .fork-btn:hover {
+    background: oklch(0.35 0.04 260);
   }
 
   .assistant-icon {

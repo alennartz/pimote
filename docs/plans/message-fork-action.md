@@ -238,7 +238,7 @@ Add a user-message action menu that opens when the user icon is clicked (mirrori
 6. Style the user action menu consistently with the existing assistant `.tool-menu`.
 
 **Verify:** The component compiles. User messages show a clickable icon that reveals a Fork button. Clicking Fork fires the `onfork` callback with the message's `entryId`. Manual visual check in browser.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Wire fork orchestration in `client/src/lib/components/MessageList.svelte`
 
