@@ -82,12 +82,57 @@ describe('TreeDialogStore', () => {
     expect(store.getFilteredTree().map((n) => n.id)).toEqual(['m1', 'm2']);
   });
 
+  it('supports user-only, all, and labeled-only filter modes', () => {
+    store.openDialog(
+      'session-123',
+      [
+        node({ id: 'u1', type: 'message', role: 'user', preview: 'User prompt', timestamp: '2026-04-11T10:00:00.000Z' }),
+        node({ id: 'a1', type: 'message', role: 'assistant', preview: 'Assistant reply', timestamp: '2026-04-11T10:01:00.000Z', label: 'important' }),
+        node({ id: 'c1', type: 'custom', customType: 'trace', preview: 'trace details', timestamp: '2026-04-11T10:02:00.000Z', label: 'debug' }),
+      ],
+      'a1',
+    );
+
+    store.setFilterMode('user-only');
+    expect(store.getFilteredTree().map((n) => n.id)).toEqual(['u1']);
+
+    store.setFilterMode('labeled-only');
+    expect(store.getFilteredTree().map((n) => n.id)).toEqual(['a1', 'c1']);
+
+    store.setFilterMode('all');
+    expect(store.getFilteredTree().map((n) => n.id)).toEqual(['u1', 'a1', 'c1']);
+  });
+
+  it('filters entries by search query against preview text', () => {
+    store.openDialog(
+      'session-123',
+      [
+        node({ id: 'm1', type: 'message', role: 'user', preview: 'Branch checkpoint', timestamp: '2026-04-11T10:00:00.000Z' }),
+        node({ id: 'm2', type: 'message', role: 'assistant', preview: 'Unrelated response', timestamp: '2026-04-11T10:01:00.000Z' }),
+      ],
+      'm2',
+    );
+
+    store.setFilterMode('all');
+    store.setSearchQuery('Branch');
+
+    expect(store.getFilteredTree().map((n) => n.id)).toEqual(['m1']);
+  });
+
   it('applies label edits locally without requiring a full tree refetch', () => {
     store.openDialog('session-123', [node({ id: 'm1', type: 'message', preview: 'Question', timestamp: '2026-04-11T10:00:00.000Z' })], 'm1');
 
     store.setNodeLabel('m1', 'Important branch');
 
     expect(store.state.tree?.[0].label).toBe('Important branch');
+  });
+
+  it('clears labels locally when setNodeLabel receives undefined', () => {
+    store.openDialog('session-123', [node({ id: 'm1', type: 'message', preview: 'Question', timestamp: '2026-04-11T10:00:00.000Z', label: 'keep me' })], 'm1');
+
+    store.setNodeLabel('m1', undefined);
+
+    expect(store.state.tree?.[0].label).toBeUndefined();
   });
 
   it('closes and clears all state', () => {

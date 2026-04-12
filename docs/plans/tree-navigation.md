@@ -196,18 +196,20 @@ When reconnecting, if the event buffer replay contains a `tree_navigation_start`
 
 ### Test Files
 
-- `server/src/ws-handler.test.ts` — Added behavioral tests for `/tree` data mapping, `navigate_tree` lifecycle flow, and `set_tree_label` delegation contract.
+- `server/src/ws-handler.test.ts` — Added behavioral tests for `/tree` data mapping (including preview truncation/fallback), `navigate_tree` lifecycle flow (success and cancellation), and `set_tree_label` delegation/clear contract.
 - `server/src/session-manager.test.ts` — Added idle-reaper tests for `treeNavigationInProgress` protection and post-navigation reaping.
-- `client/src/lib/stores/tree-dialog.svelte.test.ts` — Added tree dialog store behavioral tests for open/close lifecycle, fold-state reset, filtering expectations, and local label updates.
+- `client/src/lib/stores/tree-dialog.svelte.test.ts` — Added tree dialog store behavioral tests for open/close lifecycle, fold-state reset, all filter modes, search filtering, and local label updates/clears.
 
 ### Behaviors Covered
 
 #### Server: Tree Query + Navigation Commands
 
 - `/tree` prompt returns mapped session tree nodes with preview text, label metadata, and current leaf id.
+- `/tree` mapping truncates oversized previews and falls back to entry type for non-text preview sources.
 - `navigate_tree` forwards target and summarization options to the session and should emit start/end lifecycle events around navigation.
-- `navigate_tree` should trigger a full resync on successful navigation and return `{ cancelled, editorText? }` for input-bar population.
-- `set_tree_label` delegates label updates to `sessionManager.appendLabelChange(entryId, label)` and responds with success.
+- `navigate_tree` should trigger a full resync on successful navigation, skip resync when navigation is cancelled, and return `{ cancelled, editorText? }` for input-bar population.
+- `navigate_tree` toggles `treeNavigationInProgress` during command execution so idle-reap protection remains aligned with lifecycle events.
+- `set_tree_label` delegates label updates to `sessionManager.appendLabelChange(entryId, label)` and normalizes empty labels to clear operations.
 
 #### Server: Idle Reaping During Navigation
 
@@ -219,5 +221,10 @@ When reconnecting, if the event buffer replay contains a `tree_navigation_start`
 - Opening `/tree` data initializes a session-scoped dialog state and selects the active leaf.
 - Changing filter mode or search query resets fold state.
 - Default filtering excludes label/custom entries while keeping conversational message history.
+- User-only, all, and labeled-only filter modes each produce the expected node subsets.
+- Search query filters entries by preview text.
 - Label edits are applied locally so tree UI can update immediately without a refetch.
+- Clearing labels locally (undefined value) updates the tree without a refetch.
 - Closing the dialog clears session-scoped tree state and loading/selection flags.
+
+**Review status:** approved

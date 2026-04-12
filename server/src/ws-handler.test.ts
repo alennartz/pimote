@@ -1677,6 +1677,68 @@ describe('WsHandler', () => {
       });
     });
 
+    it('truncates long previews and falls back to entry type in /tree mapping', async () => {
+      const longText = 'x'.repeat(250);
+      const tree = [
+        {
+          entry: {
+            id: 'entry-long',
+            type: 'message',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: longText }],
+            },
+            timestamp: '2026-04-11T13:00:00.000Z',
+          },
+          children: [
+            {
+              entry: {
+                id: 'entry-custom',
+                type: 'custom',
+                timestamp: '2026-04-11T13:01:00.000Z',
+              },
+              children: [],
+            },
+          ],
+        },
+      ];
+
+      const session = createMockSlot({
+        id: 'session-tree-truncation',
+        connectedClientId: 'client-1',
+      });
+
+      (session.session as any).sessionManager = {
+        getTree: () => tree,
+        getLeafId: () => 'entry-custom',
+      };
+
+      const sessions = new Map([['session-tree-truncation', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'prompt',
+          sessionId: 'session-tree-truncation',
+          message: '/tree',
+          id: 'req-tree-truncation',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-tree-truncation');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+
+      const payload = resp!.data as any;
+      expect(payload.tree[0].preview).toHaveLength(200);
+      expect(payload.tree[0].preview.endsWith('...')).toBe(true);
+      expect(payload.tree[0].children[0]).toMatchObject({
+        id: 'entry-custom',
+        type: 'custom',
+        preview: 'custom',
+      });
+    });
+
     it('navigates to a tree entry with start/end lifecycle events and optional editorText', async () => {
       const navigateTree = vi.fn().mockResolvedValue({
         cancelled: false,
@@ -1763,6 +1825,84 @@ describe('WsHandler', () => {
       });
     });
 
+    it('emits lifecycle events for cancelled navigation and skips full_resync', async () => {
+      const refs: { slot: ManagedSlot | null } = { slot: null };
+      const navigateTree = vi.fn().mockImplementation(async () => {
+        expect(refs.slot?.sessionState.treeNavigationInProgress).toBe(true);
+        return { cancelled: true };
+      });
+
+      const slot = createMockSlot({
+        id: 'session-tree-cancel',
+        connectedClientId: 'client-1',
+        session: {
+          subscribe: () => () => {},
+          dispose: () => {},
+          messages: [],
+          model: null,
+          thinkingLevel: 'default',
+          isStreaming: false,
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 'session-tree-cancel',
+          sessionName: undefined,
+          autoCompactionEnabled: false,
+          bindExtensions: async () => {},
+          modelRegistry: { getAvailable: () => [] },
+          clearQueue: () => ({ steering: [], followUp: [] }),
+          navigateTree,
+          sessionManager: {
+            appendLabelChange: vi.fn(),
+            getTree: () => [],
+            getLeafId: () => null,
+          },
+        } as any,
+      });
+
+      refs.slot = slot;
+
+      const sessions = new Map([['session-tree-cancel', slot]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'navigate_tree',
+          sessionId: 'session-tree-cancel',
+          targetId: 'entry-cancel',
+          id: 'req-navigate-tree-cancel',
+        }),
+      );
+
+      expect(navigateTree).toHaveBeenCalledWith('entry-cancel', expect.any(Object));
+      expect(slot.sessionState.treeNavigationInProgress).toBe(false);
+
+      const startEvents = findEvents(sent, 'tree_navigation_start');
+      const endEvents = findEvents(sent, 'tree_navigation_end');
+      expect(startEvents).toEqual([
+        {
+          type: 'tree_navigation_start',
+          sessionId: 'session-tree-cancel',
+          cursor: expect.any(Number),
+          targetId: 'entry-cancel',
+          summarizing: false,
+        },
+      ]);
+      expect(endEvents).toEqual([
+        {
+          type: 'tree_navigation_end',
+          sessionId: 'session-tree-cancel',
+          cursor: expect.any(Number),
+        },
+      ]);
+
+      expect(findEvents(sent, 'full_resync')).toHaveLength(0);
+      expect(findResponse(sent, 'req-navigate-tree-cancel')).toEqual({
+        id: 'req-navigate-tree-cancel',
+        success: true,
+        data: { cancelled: true },
+      });
+    });
+
     it('sets or clears a tree label through the session manager and responds with success', async () => {
       const appendLabelChange = vi.fn().mockReturnValue('label-entry-id');
       const session = createMockSlot({ id: 'session-tree-label', connectedClientId: 'client-1' });
@@ -1788,6 +1928,36 @@ describe('WsHandler', () => {
       expect(appendLabelChange).toHaveBeenCalledWith('entry-42', 'important');
       expect(findResponse(sent, 'req-set-tree-label')).toEqual({
         id: 'req-set-tree-label',
+        success: true,
+        data: { success: true },
+      });
+    });
+
+    it('treats empty labels as a clear operation', async () => {
+      const appendLabelChange = vi.fn();
+      const session = createMockSlot({ id: 'session-tree-label-clear', connectedClientId: 'client-1' });
+      (session.session as any).sessionManager = {
+        appendLabelChange,
+        getTree: () => [],
+        getLeafId: () => null,
+      };
+
+      const sessions = new Map([['session-tree-label-clear', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'set_tree_label',
+          sessionId: 'session-tree-label-clear',
+          entryId: 'entry-clear',
+          label: '',
+          id: 'req-set-tree-label-clear',
+        }),
+      );
+
+      expect(appendLabelChange).toHaveBeenCalledWith('entry-clear', undefined);
+      expect(findResponse(sent, 'req-set-tree-label-clear')).toEqual({
+        id: 'req-set-tree-label-clear',
         success: true,
         data: { success: true },
       });
