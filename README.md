@@ -101,6 +101,8 @@ Once in a session, you can:
 - **Switch models** and **thinking levels** on the fly
 - **Compact** the conversation to manage context window usage (also supports auto-compaction)
 - Use **slash commands** — type `/` to get autocomplete for skills, extension commands, and prompt templates
+- Open **Tree Navigation** with `/tree` to browse session history, search/filter nodes, and edit labels (right-click on desktop, long-press on touch)
+- Pick a tree navigation mode: no summary, summarize, or a custom summary prompt (with in-dialog loading while summarization runs)
 - **Listen** to responses via per-message text-to-speech
 
 ### Extensions
