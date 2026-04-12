@@ -145,20 +145,36 @@ function createCommandContextActions(slot: ManagedSlot): ExtensionCommandContext
   };
 }
 
-/** Resolve the current git branch for a directory. Returns null if not a git repo. */
+/** Resolve the current git branch for a directory. Returns null if not a git repo or detached. */
 function getGitBranch(cwd: string): string | null {
-  try {
-    return (
-      execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+  // Guard against inherited Git env vars forcing resolution to another repo.
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+
+  const runGit = (args: string[]): string | null => {
+    try {
+      const value = execFileSync('git', args, {
         cwd,
+        env,
         encoding: 'utf-8',
         timeout: 2000,
         stdio: ['ignore', 'pipe', 'ignore'],
-      }).trim() || null
-    );
-  } catch {
-    return null;
-  }
+      }).trim();
+      return value || null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Best signal for the checked-out branch (works with linked worktrees).
+  const current = runGit(['branch', '--show-current']);
+  if (current) return current;
+
+  // Fallback for older Git versions / unusual setups.
+  const abbrevRef = runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
+  if (!abbrevRef || abbrevRef === 'HEAD') return null;
+  return abbrevRef;
 }
 
 /** Client ID → WsHandler lookup for cross-client communication (e.g. displacement notifications) */
@@ -865,6 +881,7 @@ export class WsHandler {
         commands.push(
           { name: 'new', description: 'Start a new session', hasArgCompletions: false },
           { name: 'reload', description: 'Reload extensions and skills', hasArgCompletions: false },
+          { name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false },
         );
 
         this.sendResponse(id, true, { commands });
