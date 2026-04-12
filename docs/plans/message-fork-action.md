@@ -262,7 +262,7 @@ MessageList owns the fork execution flow because it already has access to `conne
 Imports needed: `needsDraftPrompt`, `applyDraftChoice`, `DraftChoice` from `$lib/draft-policy.js`.
 
 **Verify:** Clicking Fork on a user message sends the fork command, receives the response, and applies draft policy. When no conflict: editor text is set to selectedText. When conflict: dialog appears. Manual integration test in browser.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Add draft conflict dialog in `client/src/lib/components/MessageList.svelte`
 
@@ -277,4 +277,4 @@ Add a local dialog for draft conflict resolution using existing shadcn dialog pr
 4. **Integration with Step 4:** when `needsDraftPrompt` returns true, call `const choice = await promptDraftChoice()` and continue with `applyDraftChoice`.
 
 **Verify:** When forking a message while the editor has content, the dialog appears with four choices. Each choice correctly computes the resulting text. Ignore leaves the editor unchanged. Manual integration test in browser.
-**Status:** not started
+**Status:** done

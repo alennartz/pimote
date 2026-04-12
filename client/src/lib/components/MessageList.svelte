@@ -5,10 +5,69 @@
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { setEditorText } from '$lib/stores/input-bar.svelte.js';
+  import { needsDraftPrompt, applyDraftChoice, type DraftChoice } from '$lib/draft-policy.js';
+  import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
   import Message from './Message.svelte';
   import StreamingIndicator from './StreamingIndicator.svelte';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
+
+  // ---- Fork flow ----
+
+  let draftDialogOpen = $state(false);
+  let draftDialogResolve: ((choice: DraftChoice) => void) | null = $state(null);
+
+  function promptDraftChoice(): Promise<DraftChoice> {
+    return new Promise<DraftChoice>((resolve) => {
+      draftDialogResolve = resolve;
+      draftDialogOpen = true;
+    });
+  }
+
+  function resolveDraft(choice: DraftChoice) {
+    draftDialogResolve?.(choice);
+    draftDialogResolve = null;
+    draftDialogOpen = false;
+  }
+
+  async function handleFork(entryId: string) {
+    const session = sessionRegistry.viewed;
+    if (!session?.sessionId) return;
+
+    let res;
+    try {
+      res = await connection.send({
+        type: 'fork',
+        sessionId: session.sessionId,
+        entryId,
+      });
+    } catch (e) {
+      console.error('Failed to send fork:', e);
+      return;
+    }
+
+    if (!res.success || !res.data) return;
+    const data = res.data as { cancelled: boolean; selectedText?: string };
+    if (data.cancelled) return;
+
+    // After session replacement, sessionRegistry.viewed points to the new session
+    const newSessionId = sessionRegistry.viewedSessionId;
+    if (!newSessionId) return;
+
+    const currentDraft = sessionRegistry.viewed?.draftText ?? '';
+    const selectedText = data.selectedText;
+
+    if (needsDraftPrompt(currentDraft, selectedText)) {
+      const choice = await promptDraftChoice();
+      const nextText = applyDraftChoice(currentDraft, selectedText!, choice);
+      if (nextText !== null) {
+        setEditorText(newSessionId, nextText);
+      }
+    } else if (selectedText) {
+      setEditorText(newSessionId, selectedText);
+    }
+  }
 
   async function handleAbort() {
     const session = sessionRegistry.viewed;
@@ -145,7 +204,7 @@
       {/if}
 
       {#each displayEntries as entry (entry.key)}
-        <Message message={entry.message} streaming={entry.streaming} messageKey={entry.key} />
+        <Message message={entry.message} streaming={entry.streaming} messageKey={entry.key} onfork={handleFork} />
       {/each}
 
       <!-- Streaming indicator (agent is working but no content yet) -->
@@ -174,6 +233,22 @@
       <OctagonX class="size-5" />
     </button>
   {/if}
+
+  <!-- Draft conflict dialog -->
+  <Dialog.Root bind:open={draftDialogOpen}>
+    <Dialog.Content showCloseButton={false}>
+      <Dialog.Header>
+        <Dialog.Title>Draft conflict</Dialog.Title>
+        <Dialog.Description>The editor already has text. How should the forked message be combined?</Dialog.Description>
+      </Dialog.Header>
+      <Dialog.Footer>
+        <Button variant="outline" onclick={() => resolveDraft('ignore')}>Ignore</Button>
+        <Button variant="outline" onclick={() => resolveDraft('prepend')}>Prepend</Button>
+        <Button variant="outline" onclick={() => resolveDraft('append')}>Append</Button>
+        <Button onclick={() => resolveDraft('replace')}>Replace</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
 
   <!-- Scroll to bottom button -->
   {#if userScrolledUp}
