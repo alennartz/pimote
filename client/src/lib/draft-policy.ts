@@ -13,9 +13,8 @@ export type DraftChoice = 'replace' | 'append' | 'prepend' | 'ignore';
  * Whether a fork with the given draft state needs a conflict prompt.
  * Returns true only when both currentDraft and selectedText are non-empty strings.
  */
-export function needsDraftPrompt(_currentDraft: string, _selectedText: string | undefined): boolean {
-  // Stub — implementation pending
-  throw new Error('Not implemented: needsDraftPrompt');
+export function needsDraftPrompt(currentDraft: string, selectedText: string | undefined): boolean {
+  return currentDraft.trim().length > 0 && typeof selectedText === 'string' && selectedText.length > 0;
 }
 
 /**
@@ -23,7 +22,15 @@ export function needsDraftPrompt(_currentDraft: string, _selectedText: string | 
  * Returns null for 'ignore' (draft remains unchanged).
  * For append/prepend, joins with a single newline separator.
  */
-export function applyDraftChoice(_currentDraft: string, _selectedText: string, _choice: DraftChoice): string | null {
-  // Stub — implementation pending
-  throw new Error('Not implemented: applyDraftChoice');
+export function applyDraftChoice(currentDraft: string, selectedText: string, choice: DraftChoice): string | null {
+  switch (choice) {
+    case 'replace':
+      return selectedText;
+    case 'append':
+      return currentDraft + '\n' + selectedText;
+    case 'prepend':
+      return selectedText + '\n' + currentDraft;
+    case 'ignore':
+      return null;
+  }
 }

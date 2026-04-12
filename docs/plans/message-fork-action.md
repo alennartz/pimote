@@ -193,6 +193,8 @@ None.
 
 ## Steps
 
+**Pre-implementation commit:** `ca4bc9ecec0992551b1f3e6c6abba290da5ab1b2`
+
 ### Step 1: Implement `needsDraftPrompt` and `applyDraftChoice` in `client/src/lib/draft-policy.ts`
 
 Replace the two stub functions with their real implementations:
@@ -207,7 +209,7 @@ Replace the two stub functions with their real implementations:
 These are pure functions with no dependencies. Remove the parameter underscores and the `throw` stubs.
 
 **Verify:** `npx vitest run client/src/lib/draft-policy.test.ts` — all 10 tests pass.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement the `fork` command handler in `server/src/ws-handler.ts`
 
