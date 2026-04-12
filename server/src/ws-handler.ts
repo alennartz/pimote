@@ -230,6 +230,7 @@ export class WsHandler {
                 archived: archivedLookup.get(s.path) === true,
                 isOwnedByMe: sl ? sl.connection?.connectedClientId === this.clientId : false,
                 liveStatus: sl ? sl.sessionState.status : null,
+                cwd: s.cwd !== command.folderPath ? s.cwd : undefined,
               };
             })
             .filter((s) => command.includeArchived || !s.archived);
@@ -252,6 +253,7 @@ export class WsHandler {
                 archived: false,
                 isOwnedByMe: slot.connection?.connectedClientId === this.clientId,
                 liveStatus: slot.sessionState.status,
+                cwd: slot.folderPath !== command.folderPath ? slot.folderPath : undefined,
               });
             }
           }
@@ -612,6 +614,7 @@ export class WsHandler {
         case 'complete_args':
         case 'set_session_name':
         case 'dequeue_steering':
+        case 'fork':
         case 'navigate_tree':
         case 'set_tree_label': {
           await this.handleSessionCommand(command, id);
@@ -876,6 +879,15 @@ export class WsHandler {
         session.setSessionName(command.name);
         this.sendResponse(id, true);
         break;
+      }
+
+      case 'fork': {
+        if (!command.entryId) {
+          this.sendResponse(id, false, undefined, 'entryId is required');
+          break;
+        }
+        // Stub — implementation pending
+        throw new Error('Not implemented: fork command');
       }
 
       case 'navigate_tree': {

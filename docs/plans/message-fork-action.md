@@ -117,3 +117,39 @@ Alternatives considered:
 ### DR Supersessions
 
 None.
+
+## Tests
+
+**Pre-test-write commit:** `1468103a5f0eea151fc1c54c971afaf4da5726a1`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — Added `ForkCommand` interface, added `entryId?: string` to `PimoteAgentMessage`, added `ForkCommand` to `PimoteCommand` union
+- `server/src/message-mapper.ts` — Added `id?: string` to `SdkMessage` interface, pass through SDK message `id` as `entryId` on all mapped message types
+- `server/src/ws-handler.ts` — Added `'fork'` to session command routing, added stub fork handler with `entryId` validation
+
+### Test Files
+
+- `server/src/message-mapper.test.ts` — Tests for entryId pass-through from SDK messages to PimoteAgentMessage across all message roles
+- `server/src/ws-handler.test.ts` — Tests for fork command validation, runtime invocation, response shape, session replacement lifecycle, and cancellation handling
+
+### Behaviors Covered
+
+#### Message Mapper (entryId pass-through)
+
+- Preserves SDK message `id` as `entryId` for user messages
+- Preserves SDK message `id` as `entryId` for assistant messages
+- Omits `entryId` when SDK message has no `id`
+- Preserves `entryId` for custom messages
+- Preserves `entryId` for tool result messages
+- Preserves `entryId` across bulk `mapAgentMessages` calls
+
+#### Fork Command (ws-handler)
+
+- Rejects fork when `sessionId` is missing
+- Rejects fork when session does not exist in memory
+- Rejects fork when `entryId` is missing
+- Calls `runtime.fork(entryId)` and returns `{ selectedText, cancelled }` from the result
+- Returns `{ cancelled: true }` when fork is cancelled, without triggering session reset events
+- Triggers `session_replaced` event when fork changes the session ID
+- Omits `selectedText` from response when runtime does not provide it

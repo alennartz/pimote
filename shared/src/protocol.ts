@@ -31,6 +31,8 @@ export interface SessionInfo {
   isOwnedByMe?: boolean;
   /** Live status if this is an active in-memory session, null otherwise */
   liveStatus?: 'working' | 'idle' | null;
+  /** Session working directory (may differ from the parent folder path) */
+  cwd?: string;
 }
 
 export interface SessionState {
@@ -64,6 +66,8 @@ export interface PimoteMessageContent {
 export interface PimoteAgentMessage {
   role: string;
   content: PimoteMessageContent[];
+  /** Stable session entry ID from the pi SDK, used for targeting specific messages (e.g. fork). */
+  entryId?: string;
   /** Present when role === 'custom' — the extension-defined message type (e.g. 'agent-complete') */
   customType?: string;
   /** For custom messages: if false, the message should be hidden from the UI */
@@ -248,6 +252,11 @@ export interface DequeueSteeringCommand extends CommandBase {
   type: 'dequeue_steering';
 }
 
+export interface ForkCommand extends CommandBase {
+  type: 'fork';
+  entryId: string;
+}
+
 export interface NavigateTreeCommand extends CommandBase {
   type: 'navigate_tree';
   targetId: string;
@@ -383,6 +392,7 @@ export type PimoteCommand =
   | CompleteArgsCommand
   | SetSessionNameCommand
   | DequeueSteeringCommand
+  | ForkCommand
   | NavigateTreeCommand
   | SetTreeLabelCommand
   // Server-level

@@ -6,6 +6,7 @@ import type { PimoteAgentMessage, PimoteMessageContent } from '@pimote/shared';
  * importing the full AgentMessage union from the SDK.
  */
 export interface SdkMessage {
+  id?: string;
   role?: string;
   content?: unknown;
   customType?: string;
@@ -71,7 +72,7 @@ export function mapAgentMessage(msg: SdkMessage): PimoteAgentMessage {
 
   // Handle custom messages — preserve customType and display flag for the client
   if (role === 'custom') {
-    return { role, content, customType: msg.customType, display: msg.display ?? true };
+    return { role, content, entryId: msg.id, customType: msg.customType, display: msg.display ?? true };
   }
 
   // Handle tool result messages
@@ -95,8 +96,9 @@ export function mapAgentMessage(msg: SdkMessage): PimoteAgentMessage {
           isError: msg.isError || undefined,
         },
       ],
+      entryId: msg.id,
     };
   }
 
-  return { role, content };
+  return { role, content, entryId: msg.id };
 }

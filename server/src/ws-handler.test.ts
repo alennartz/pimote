@@ -2038,6 +2038,353 @@ describe('WsHandler', () => {
     });
   });
 
+  describe('fork command', () => {
+    it('responds with error when sessionId is missing', async () => {
+      const { handler, sent } = createTestHandler('client-1');
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'fork',
+          entryId: 'entry-123',
+          id: 'req-fork-no-session',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-fork-no-session');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toContain('sessionId');
+    });
+
+    it('responds with error when session does not exist', async () => {
+      const { handler, sent } = createTestHandler('client-1');
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'fork',
+          sessionId: 'nonexistent',
+          entryId: 'entry-123',
+          id: 'req-fork-no-slot',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-fork-no-slot');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toContain('not found');
+    });
+
+    it('responds with error when entryId is missing', async () => {
+      const session = createMockSlot({
+        id: 'session-fork',
+        connectedClientId: 'client-1',
+      });
+
+      const sessions = new Map([['session-fork', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'fork',
+          sessionId: 'session-fork',
+          id: 'req-fork-no-entry',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-fork-no-entry');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toContain('entryId');
+    });
+
+    it('calls runtime.fork with entryId and returns selectedText and cancelled from result', async () => {
+      const forkFn = vi.fn().mockResolvedValue({
+        cancelled: false,
+        selectedText: 'forked message text',
+      });
+
+      const mockSession = {
+        subscribe: () => () => {},
+        dispose: () => {},
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'original' }] }],
+        model: null,
+        thinkingLevel: 'default',
+        isStreaming: false,
+        isCompacting: false,
+        sessionFile: undefined,
+        sessionId: 'session-fork-ok',
+        sessionName: undefined,
+        autoCompactionEnabled: false,
+        bindExtensions: async () => {},
+        modelRegistry: { getAvailable: () => [] },
+        clearQueue: () => ({ steering: [], followUp: [] }),
+      } as any;
+
+      const slot = createMockSlot({
+        id: 'session-fork-ok',
+        connectedClientId: 'client-1',
+        session: mockSession,
+      });
+      (slot.runtime as any).fork = forkFn;
+
+      const sessions = new Map([['session-fork-ok', slot]]);
+      const sessionManager = createMockSessionManager(sessions);
+      (sessionManager as any).rebuildSessionState = (s: ManagedSlot) => {
+        s.sessionState = { ...s.sessionState, id: s.runtime.session.sessionId };
+      };
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { ws, sent } = createMockWs();
+      const folderIndex = createMockFolderIndex();
+      const pushService = createMockPushService();
+
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      clientRegistry.set('client-1', handler);
+
+      // First open the session to establish connection
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-fork-ok',
+          id: 'req-open-fork',
+        }),
+      );
+
+      sent.length = 0;
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'fork',
+          sessionId: 'session-fork-ok',
+          entryId: 'entry-target-42',
+          id: 'req-fork-ok',
+        }),
+      );
+
+      expect(forkFn).toHaveBeenCalledWith('entry-target-42');
+
+      const resp = findResponse(sent, 'req-fork-ok');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).cancelled).toBe(false);
+      expect((resp!.data as any).selectedText).toBe('forked message text');
+    });
+
+    it('returns cancelled: true when runtime.fork is cancelled and does not trigger session reset', async () => {
+      const forkFn = vi.fn().mockResolvedValue({ cancelled: true });
+
+      const mockSession = {
+        subscribe: () => () => {},
+        dispose: () => {},
+        messages: [],
+        model: null,
+        thinkingLevel: 'default',
+        isStreaming: false,
+        isCompacting: false,
+        sessionFile: undefined,
+        sessionId: 'session-fork-cancel',
+        sessionName: undefined,
+        autoCompactionEnabled: false,
+        bindExtensions: async () => {},
+        modelRegistry: { getAvailable: () => [] },
+        clearQueue: () => ({ steering: [], followUp: [] }),
+      } as any;
+
+      const slot = createMockSlot({
+        id: 'session-fork-cancel',
+        connectedClientId: 'client-1',
+        session: mockSession,
+      });
+      (slot.runtime as any).fork = forkFn;
+
+      const sessions = new Map([['session-fork-cancel', slot]]);
+      const sessionManager = createMockSessionManager(sessions);
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { ws, sent } = createMockWs();
+      const folderIndex = createMockFolderIndex();
+      const pushService = createMockPushService();
+
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      clientRegistry.set('client-1', handler);
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-fork-cancel',
+          id: 'req-open-fork-cancel',
+        }),
+      );
+
+      sent.length = 0;
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'fork',
+          sessionId: 'session-fork-cancel',
+          entryId: 'entry-cancel-target',
+          id: 'req-fork-cancel',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-fork-cancel');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).cancelled).toBe(true);
+      expect((resp!.data as any).selectedText).toBeUndefined();
+
+      // No session_replaced or full_resync events when cancelled
+      expect(findEvents(sent, 'session_replaced')).toHaveLength(0);
+      expect(findEvents(sent, 'full_resync')).toHaveLength(0);
+    });
+
+    it('triggers session_replaced when fork changes the session ID', async () => {
+      const forkFn = vi.fn().mockImplementation(async () => {
+        mockSession.sessionId = 'forked-session-new';
+        return { cancelled: false, selectedText: 'text from fork' };
+      });
+
+      const mockSession = {
+        subscribe: () => () => {},
+        dispose: () => {},
+        messages: [],
+        model: null,
+        thinkingLevel: 'default',
+        isStreaming: false,
+        isCompacting: false,
+        sessionFile: undefined,
+        sessionId: 'session-fork-replace',
+        sessionName: undefined,
+        autoCompactionEnabled: false,
+        bindExtensions: async () => {},
+        modelRegistry: { getAvailable: () => [] },
+        clearQueue: () => ({ steering: [], followUp: [] }),
+      } as any;
+
+      const slot = createMockSlot({
+        id: 'session-fork-replace',
+        connectedClientId: null,
+        session: mockSession,
+      });
+      (slot.runtime as any).fork = forkFn;
+
+      const sessions = new Map([['session-fork-replace', slot]]);
+      const sessionManager = createMockSessionManager(sessions);
+      (sessionManager as any).rebuildSessionState = (s: ManagedSlot) => {
+        s.sessionState = { ...s.sessionState, id: s.runtime.session.sessionId };
+      };
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { ws, sent } = createMockWs();
+      const folderIndex = createMockFolderIndex();
+      const pushService = createMockPushService();
+
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      clientRegistry.set('client-1', handler);
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-fork-replace',
+          id: 'req-open-fork-replace',
+        }),
+      );
+
+      sent.length = 0;
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'fork',
+          sessionId: 'session-fork-replace',
+          entryId: 'entry-fork-target',
+          id: 'req-fork-replace',
+        }),
+      );
+
+      const replaced = findEvents(sent, 'session_replaced');
+      expect(replaced).toHaveLength(1);
+      expect((replaced[0] as any).oldSessionId).toBe('session-fork-replace');
+      expect((replaced[0] as any).newSessionId).toBe('forked-session-new');
+
+      const resp = findResponse(sent, 'req-fork-replace');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).cancelled).toBe(false);
+      expect((resp!.data as any).selectedText).toBe('text from fork');
+    });
+
+    it('omits selectedText from response when runtime does not provide it', async () => {
+      const forkFn = vi.fn().mockResolvedValue({ cancelled: false });
+
+      const mockSession = {
+        subscribe: () => () => {},
+        dispose: () => {},
+        messages: [],
+        model: null,
+        thinkingLevel: 'default',
+        isStreaming: false,
+        isCompacting: false,
+        sessionFile: undefined,
+        sessionId: 'session-fork-notext',
+        sessionName: undefined,
+        autoCompactionEnabled: false,
+        bindExtensions: async () => {},
+        modelRegistry: { getAvailable: () => [] },
+        clearQueue: () => ({ steering: [], followUp: [] }),
+      } as any;
+
+      const slot = createMockSlot({
+        id: 'session-fork-notext',
+        connectedClientId: 'client-1',
+        session: mockSession,
+      });
+      (slot.runtime as any).fork = forkFn;
+
+      const sessions = new Map([['session-fork-notext', slot]]);
+      const sessionManager = createMockSessionManager(sessions);
+      (sessionManager as any).rebuildSessionState = (s: ManagedSlot) => {
+        s.sessionState = { ...s.sessionState, id: s.runtime.session.sessionId };
+      };
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { ws, sent } = createMockWs();
+      const folderIndex = createMockFolderIndex();
+      const pushService = createMockPushService();
+
+      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      clientRegistry.set('client-1', handler);
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-fork-notext',
+          id: 'req-open-fork-notext',
+        }),
+      );
+
+      sent.length = 0;
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'fork',
+          sessionId: 'session-fork-notext',
+          entryId: 'entry-notext',
+          id: 'req-fork-notext',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-fork-notext');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).cancelled).toBe(false);
+      expect(resp!.data as any).not.toHaveProperty('selectedText');
+    });
+  });
+
   describe('rename_session', () => {
     it('renames an active session via the live AgentSession', async () => {
       const setSessionName = vi.fn();
@@ -2198,6 +2545,7 @@ describe('WsHandler', () => {
       expect((resp!.data as any).commands).toEqual([
         { name: 'new', description: 'Start a new session', hasArgCompletions: false },
         { name: 'reload', description: 'Reload extensions and skills', hasArgCompletions: false },
+        { name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false },
       ]);
     });
 
@@ -2222,7 +2570,7 @@ describe('WsHandler', () => {
 
       const resp = findResponse(sent, 'req-cmds-2');
       const commands = (resp!.data as any).commands;
-      expect(commands).toHaveLength(4);
+      expect(commands).toHaveLength(5);
       expect(commands[0]).toEqual({ name: 'skill:brainstorm', description: 'Brainstorm ideas', hasArgCompletions: false });
       expect(commands[1]).toEqual({ name: 'skill:code-review', description: 'Review code', hasArgCompletions: false });
     });
@@ -2239,7 +2587,7 @@ describe('WsHandler', () => {
 
       const resp = findResponse(sent, 'req-cmds-3');
       const commands = (resp!.data as any).commands;
-      expect(commands).toHaveLength(3);
+      expect(commands).toHaveLength(4);
       expect(commands[0]).toEqual({ name: 'fix-bug', description: 'Fix a bug', hasArgCompletions: false });
     });
 
@@ -2264,7 +2612,7 @@ describe('WsHandler', () => {
 
       const resp = findResponse(sent, 'req-cmds-4');
       const commands = (resp!.data as any).commands;
-      expect(commands).toHaveLength(4);
+      expect(commands).toHaveLength(5);
       expect(commands[0]).toEqual({
         name: 'deploy',
         description: 'Deploy to production',
@@ -2285,6 +2633,11 @@ describe('WsHandler', () => {
         description: 'Reload extensions and skills',
         hasArgCompletions: false,
       });
+      expect(commands[4]).toEqual({
+        name: 'tree',
+        description: 'Navigate session history tree',
+        hasArgCompletions: false,
+      });
     });
 
     it('combines all three sources in order: skills, templates, extension commands', async () => {
@@ -2301,12 +2654,13 @@ describe('WsHandler', () => {
 
       const resp = findResponse(sent, 'req-cmds-5');
       const commands = (resp!.data as any).commands;
-      expect(commands).toHaveLength(5);
+      expect(commands).toHaveLength(6);
       expect(commands[0].name).toBe('skill:brainstorm');
       expect(commands[1].name).toBe('fix-bug');
       expect(commands[2].name).toBe('deploy');
       expect(commands[3].name).toBe('new');
       expect(commands[4].name).toBe('reload');
+      expect(commands[5].name).toBe('tree');
     });
 
     it('handles missing extensionRunner gracefully', async () => {
@@ -2330,7 +2684,7 @@ describe('WsHandler', () => {
       const resp = findResponse(sent, 'req-cmds-6');
       expect(resp!.success).toBe(true);
       // Should still return the skill + built-in commands
-      expect((resp!.data as any).commands).toHaveLength(3);
+      expect((resp!.data as any).commands).toHaveLength(4);
     });
   });
 
