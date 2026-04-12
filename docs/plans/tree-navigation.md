@@ -182,3 +182,42 @@ Full-screen dialog (mobile `h-dvh`, desktop large centered modal — same patter
 #### Client: Reconnect with Active Tree Navigation
 
 When reconnecting, if the event buffer replay contains a `tree_navigation_start` without a matching `tree_navigation_end`, the client shows a loading state indicating summarization is in progress. When `tree_navigation_end` arrives followed by full resync, normal state resumes.
+
+## Tests
+
+**Pre-test-write commit:** `0d91138b4c111387ffa9ddb4b01c574fca08bbde`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — Added tree navigation wire contracts: `PimoteTreeNode`, `navigate_tree`, `set_tree_label`, and `tree_navigation_start`/`tree_navigation_end` session events.
+- `server/src/session-manager.ts` — Extended `SessionState` with `treeNavigationInProgress` and wired idle reaper skip semantics while navigation is active.
+- `server/src/ws-handler.ts` — Added `/tree` prompt interception response shape (`tree`, `currentLeafId`) and `mapTreeNodes()` mapping surface used by tree transfer.
+- `client/src/lib/stores/tree-dialog.svelte.ts` — Materialized client-side tree dialog state contract (`TreeDialogState`, filter/search mode controls, selection/loading lifecycle) with method stubs for filtering/label updates.
+
+### Test Files
+
+- `server/src/ws-handler.test.ts` — Added behavioral tests for `/tree` data mapping, `navigate_tree` lifecycle flow, and `set_tree_label` delegation contract.
+- `server/src/session-manager.test.ts` — Added idle-reaper tests for `treeNavigationInProgress` protection and post-navigation reaping.
+- `client/src/lib/stores/tree-dialog.svelte.test.ts` — Added tree dialog store behavioral tests for open/close lifecycle, fold-state reset, filtering expectations, and local label updates.
+
+### Behaviors Covered
+
+#### Server: Tree Query + Navigation Commands
+
+- `/tree` prompt returns mapped session tree nodes with preview text, label metadata, and current leaf id.
+- `navigate_tree` forwards target and summarization options to the session and should emit start/end lifecycle events around navigation.
+- `navigate_tree` should trigger a full resync on successful navigation and return `{ cancelled, editorText? }` for input-bar population.
+- `set_tree_label` delegates label updates to `sessionManager.appendLabelChange(entryId, label)` and responds with success.
+
+#### Server: Idle Reaping During Navigation
+
+- Sessions past idle timeout are not reaped while `treeNavigationInProgress === true`.
+- Once navigation finishes (`treeNavigationInProgress` flips false), stale sessions become reaped on the next idle check.
+
+#### Client: Tree Dialog Store Contract
+
+- Opening `/tree` data initializes a session-scoped dialog state and selects the active leaf.
+- Changing filter mode or search query resets fold state.
+- Default filtering excludes label/custom entries while keeping conversational message history.
+- Label edits are applied locally so tree UI can update immediately without a refetch.
+- Closing the dialog clears session-scoped tree state and loading/selection flags.

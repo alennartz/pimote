@@ -48,6 +48,8 @@ export interface SessionState {
   panelState: Map<string, Card[]>;
   panelListenerUnsubs: (() => void)[];
   panelThrottleTimer: ReturnType<typeof setTimeout> | null;
+  /** True while a tree navigation + optional summarization is in progress. */
+  treeNavigationInProgress: boolean;
 }
 
 export interface ManagedSlot {
@@ -134,6 +136,7 @@ function createSessionState(
     panelState: new Map(),
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
+    treeNavigationInProgress: false,
   };
 
   // Subscribe to session events
@@ -409,6 +412,10 @@ export class PimoteSessionManager {
     this.stopIdleCheck();
     this.idleCheckHandle = setInterval(() => {
       for (const [sessionId, slot] of this.sessions) {
+        if (slot.sessionState.treeNavigationInProgress) {
+          continue;
+        }
+
         const clientId = slot.connection?.connectedClientId ?? null;
         const hasConnectedClient = clientId !== null && (isClientConnected?.(clientId) ?? false);
         if (!hasConnectedClient && Date.now() - slot.sessionState.lastActivity > idleTimeout) {

@@ -37,6 +37,7 @@ function createMockSlot(): { slot: ManagedSlot; sent: PimoteEvent[] } {
       panelState: new Map(),
       panelListenerUnsubs: [],
       panelThrottleTimer: null,
+      treeNavigationInProgress: false,
     },
     get session() {
       return this.runtime.session;

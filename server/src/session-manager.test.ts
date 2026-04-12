@@ -34,15 +34,18 @@ function injectSession(manager: PimoteSessionManager, slot: ManagedSlot): void {
   sessions.set(slot.sessionState.id, slot);
 }
 
-function createFakeSlot(overrides: Partial<{
-  id: string;
-  folderPath: string;
-  connection: ClientConnection | null;
-  lastActivity: number;
-  status: 'idle' | 'working';
-  needsAttention: boolean;
-  unsubscribe: () => void;
-}> = {}): ManagedSlot {
+function createFakeSlot(
+  overrides: Partial<{
+    id: string;
+    folderPath: string;
+    connection: ClientConnection | null;
+    lastActivity: number;
+    status: 'idle' | 'working';
+    needsAttention: boolean;
+    unsubscribe: () => void;
+    treeNavigationInProgress: boolean;
+  }> = {},
+): ManagedSlot {
   const id = overrides.id ?? 'test-session-' + Math.random().toString(36).slice(2, 8);
   const sessionState: SessionState = {
     id,
@@ -56,6 +59,7 @@ function createFakeSlot(overrides: Partial<{
     panelState: new Map(),
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
+    treeNavigationInProgress: overrides.treeNavigationInProgress ?? false,
   };
 
   const mockSession = {
@@ -210,6 +214,56 @@ describe('PimoteSessionManager — idle reaper', () => {
     expect(isClientConnected).not.toHaveBeenCalled();
     // But session should still be reaped (null client + past timeout)
     expect(closeSessionSpy).toHaveBeenCalledWith('null-client-1');
+
+    manager.stopIdleCheck();
+  });
+
+  it('does NOT reap stale sessions while tree navigation is in progress', async () => {
+    const config = createTestConfig();
+    const manager = new PimoteSessionManager(config, createMockPushService());
+    const closeSessionSpy = vi.spyOn(manager, 'closeSession');
+
+    const now = Date.now();
+    const navigatingSlot = createFakeSlot({
+      id: 'navigating-1',
+      connection: null,
+      lastActivity: now - 400_000,
+      treeNavigationInProgress: true,
+    });
+
+    injectSession(manager, navigatingSlot);
+
+    manager.startIdleCheck(300_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(closeSessionSpy).not.toHaveBeenCalled();
+
+    manager.stopIdleCheck();
+  });
+
+  it('reaps stale sessions after tree navigation completes', async () => {
+    const config = createTestConfig();
+    const manager = new PimoteSessionManager(config, createMockPushService());
+    const closeSessionSpy = vi.spyOn(manager, 'closeSession');
+
+    const now = Date.now();
+    const navigatingSlot = createFakeSlot({
+      id: 'navigating-2',
+      connection: null,
+      lastActivity: now - 400_000,
+      treeNavigationInProgress: true,
+    });
+
+    injectSession(manager, navigatingSlot);
+
+    manager.startIdleCheck(300_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(closeSessionSpy).not.toHaveBeenCalled();
+
+    navigatingSlot.sessionState.treeNavigationInProgress = false;
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(closeSessionSpy).toHaveBeenCalledWith('navigating-2');
 
     manager.stopIdleCheck();
   });

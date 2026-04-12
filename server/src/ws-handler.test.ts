@@ -70,6 +70,7 @@ function createMockSlot(
     panelState: overrides.panelState ?? new Map(),
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
+    treeNavigationInProgress: false,
   };
 
   const connection: ClientConnection | null =
@@ -1597,6 +1598,199 @@ describe('WsHandler', () => {
       const resync = findEvents(sent, 'full_resync');
       expect(resync).toHaveLength(1);
       expect((resync[0] as any).sessionId).toBe('same-session');
+    });
+  });
+
+  describe('tree navigation interfaces', () => {
+    it('returns mapped tree data when prompt message is /tree', async () => {
+      const tree = [
+        {
+          entry: {
+            id: 'entry-user',
+            type: 'message',
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: 'Show me the latest tree node' }],
+            },
+            timestamp: '2026-04-11T12:00:00.000Z',
+          },
+          label: 'root',
+          labelTimestamp: '2026-04-11T12:00:01.000Z',
+          children: [
+            {
+              entry: {
+                id: 'entry-summary',
+                type: 'branch_summary',
+                summary: 'A summary of a previously navigated branch',
+                timestamp: '2026-04-11T12:05:00.000Z',
+              },
+              children: [],
+            },
+          ],
+        },
+      ];
+
+      const session = createMockSlot({
+        id: 'session-tree',
+        connectedClientId: 'client-1',
+      });
+
+      (session.session as any).sessionManager = {
+        getTree: () => tree,
+        getLeafId: () => 'entry-summary',
+      };
+
+      const sessions = new Map([['session-tree', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'prompt',
+          sessionId: 'session-tree',
+          message: '/tree',
+          id: 'req-tree-prompt',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-tree-prompt');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+
+      const payload = resp!.data as any;
+      expect(payload.currentLeafId).toBe('entry-summary');
+      expect(payload.tree).toHaveLength(1);
+      expect(payload.tree[0]).toMatchObject({
+        id: 'entry-user',
+        type: 'message',
+        role: 'user',
+        preview: 'Show me the latest tree node',
+        timestamp: '2026-04-11T12:00:00.000Z',
+        label: 'root',
+        labelTimestamp: '2026-04-11T12:00:01.000Z',
+      });
+      expect(payload.tree[0].children).toHaveLength(1);
+      expect(payload.tree[0].children[0]).toMatchObject({
+        id: 'entry-summary',
+        type: 'branch_summary',
+        preview: 'A summary of a previously navigated branch',
+        timestamp: '2026-04-11T12:05:00.000Z',
+      });
+    });
+
+    it('navigates to a tree entry with start/end lifecycle events and optional editorText', async () => {
+      const navigateTree = vi.fn().mockResolvedValue({
+        cancelled: false,
+        editorText: 'Use this summary as the next prompt',
+      });
+
+      const session = createMockSlot({
+        id: 'session-tree-nav',
+        connectedClientId: 'client-1',
+        session: {
+          subscribe: () => () => {},
+          dispose: () => {},
+          messages: [],
+          model: null,
+          thinkingLevel: 'default',
+          isStreaming: false,
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 'session-tree-nav',
+          sessionName: undefined,
+          autoCompactionEnabled: false,
+          bindExtensions: async () => {},
+          modelRegistry: { getAvailable: () => [] },
+          clearQueue: () => ({ steering: [], followUp: [] }),
+          navigateTree,
+          sessionManager: {
+            appendLabelChange: vi.fn(),
+            getTree: () => [],
+            getLeafId: () => null,
+          },
+        } as any,
+      });
+
+      const sessions = new Map([['session-tree-nav', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'navigate_tree',
+          sessionId: 'session-tree-nav',
+          targetId: 'entry-target',
+          summarize: true,
+          customInstructions: 'Focus on unresolved TODOs',
+          replaceInstructions: false,
+          label: 'checkpoint',
+          id: 'req-navigate-tree',
+        }),
+      );
+
+      expect(navigateTree).toHaveBeenCalledWith('entry-target', {
+        summarize: true,
+        customInstructions: 'Focus on unresolved TODOs',
+        replaceInstructions: false,
+        label: 'checkpoint',
+      });
+
+      const startEvents = findEvents(sent, 'tree_navigation_start');
+      const endEvents = findEvents(sent, 'tree_navigation_end');
+      expect(startEvents).toEqual([
+        {
+          type: 'tree_navigation_start',
+          sessionId: 'session-tree-nav',
+          cursor: expect.any(Number),
+          targetId: 'entry-target',
+          summarizing: true,
+        },
+      ]);
+      expect(endEvents).toEqual([
+        {
+          type: 'tree_navigation_end',
+          sessionId: 'session-tree-nav',
+          cursor: expect.any(Number),
+        },
+      ]);
+
+      const fullResync = findEvents(sent, 'full_resync');
+      expect(fullResync).toHaveLength(1);
+
+      const resp = findResponse(sent, 'req-navigate-tree');
+      expect(resp).toEqual({
+        id: 'req-navigate-tree',
+        success: true,
+        data: { cancelled: false, editorText: 'Use this summary as the next prompt' },
+      });
+    });
+
+    it('sets or clears a tree label through the session manager and responds with success', async () => {
+      const appendLabelChange = vi.fn().mockReturnValue('label-entry-id');
+      const session = createMockSlot({ id: 'session-tree-label', connectedClientId: 'client-1' });
+      (session.session as any).sessionManager = {
+        appendLabelChange,
+        getTree: () => [],
+        getLeafId: () => null,
+      };
+
+      const sessions = new Map([['session-tree-label', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'set_tree_label',
+          sessionId: 'session-tree-label',
+          entryId: 'entry-42',
+          label: 'important',
+          id: 'req-set-tree-label',
+        }),
+      );
+
+      expect(appendLabelChange).toHaveBeenCalledWith('entry-42', 'important');
+      expect(findResponse(sent, 'req-set-tree-label')).toEqual({
+        id: 'req-set-tree-label',
+        success: true,
+        data: { success: true },
+      });
     });
   });
 

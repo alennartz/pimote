@@ -95,6 +95,25 @@ export interface Card {
 }
 
 // ----------------------------------------------------------------------------
+// Tree navigation types
+// ----------------------------------------------------------------------------
+
+/** Session tree node transferred over the wire (preview-only, no full message content). */
+export interface PimoteTreeNode {
+  id: string;
+  type: string;
+  role?: string;
+  customType?: string;
+  preview: string;
+  /** ISO 8601 */
+  timestamp: string;
+  label?: string;
+  /** ISO 8601 */
+  labelTimestamp?: string;
+  children: PimoteTreeNode[];
+}
+
+// ----------------------------------------------------------------------------
 // Client → Server Commands
 // ----------------------------------------------------------------------------
 
@@ -229,6 +248,22 @@ export interface DequeueSteeringCommand extends CommandBase {
   type: 'dequeue_steering';
 }
 
+export interface NavigateTreeCommand extends CommandBase {
+  type: 'navigate_tree';
+  targetId: string;
+  summarize?: boolean;
+  customInstructions?: string;
+  replaceInstructions?: boolean;
+  label?: string;
+}
+
+export interface SetTreeLabelCommand extends CommandBase {
+  type: 'set_tree_label';
+  entryId: string;
+  /** Empty string or undefined clears the label. */
+  label?: string;
+}
+
 // -- Server-level commands --
 
 export interface ListFoldersCommand extends CommandBase {
@@ -348,6 +383,8 @@ export type PimoteCommand =
   | CompleteArgsCommand
   | SetSessionNameCommand
   | DequeueSteeringCommand
+  | NavigateTreeCommand
+  | SetTreeLabelCommand
   // Server-level
   | RenameSessionCommand
   | ListFoldersCommand
@@ -495,6 +532,16 @@ export interface ExtensionErrorEvent extends SessionEventBase {
   extensionName?: string;
 }
 
+export interface TreeNavigationStartEvent extends SessionEventBase {
+  type: 'tree_navigation_start';
+  targetId: string;
+  summarizing: boolean;
+}
+
+export interface TreeNavigationEndEvent extends SessionEventBase {
+  type: 'tree_navigation_end';
+}
+
 /** All session-scoped events (mirror of pi SDK's AgentSessionEvent) */
 export type PimoteSessionEvent =
   | AgentStartEvent
@@ -511,7 +558,9 @@ export type PimoteSessionEvent =
   | AutoCompactionEndEvent
   | AutoRetryStartEvent
   | AutoRetryEndEvent
-  | ExtensionErrorEvent;
+  | ExtensionErrorEvent
+  | TreeNavigationStartEvent
+  | TreeNavigationEndEvent;
 
 // -- Session conflict events --
 

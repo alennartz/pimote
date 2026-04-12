@@ -12,6 +12,7 @@ import type {
   RestoreMode,
   SessionRestoreEvent,
   SessionStateChangedEvent,
+  PimoteTreeNode,
 } from '@pimote/shared';
 import type { PimoteSessionManager, ManagedSlot } from './session-manager.js';
 import { resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests } from './session-manager.js';
@@ -31,6 +32,73 @@ function parseDataUrlImages(images?: string[]): { type: 'image'; data: string; m
     const match = url.match(/^data:(image\/[^;]+);base64,(.+)$/s);
     if (!match) throw new Error('Invalid image data URL');
     return { type: 'image' as const, data: match[2], mimeType: match[1] };
+  });
+}
+
+type SessionTreeNode = ReturnType<AgentSession['sessionManager']['getTree']>[number];
+
+const TREE_PREVIEW_MAX_CHARS = 200;
+
+function truncatePreview(value: string): string {
+  if (value.length <= TREE_PREVIEW_MAX_CHARS) return value;
+  return `${value.slice(0, TREE_PREVIEW_MAX_CHARS - 3)}...`;
+}
+
+function textFromEntryContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((block): block is { type: 'text'; text: string } => {
+      if (!block || typeof block !== 'object') return false;
+      const candidate = block as { type?: unknown; text?: unknown };
+      return candidate.type === 'text' && typeof candidate.text === 'string';
+    })
+    .map((block) => block.text)
+    .join('\n');
+}
+
+function previewForEntry(entry: SessionTreeNode['entry']): string {
+  if (entry.type === 'message') {
+    const messageContent = (entry.message as { content?: unknown } | undefined)?.content;
+    const text = textFromEntryContent(messageContent);
+    return truncatePreview(text || entry.type);
+  }
+
+  if (entry.type === 'custom_message') {
+    const text = textFromEntryContent(entry.content);
+    return truncatePreview(text || entry.type);
+  }
+
+  if (entry.type === 'compaction' || entry.type === 'branch_summary') {
+    const summary = typeof entry.summary === 'string' ? entry.summary : '';
+    return truncatePreview(summary || entry.type);
+  }
+
+  return entry.type;
+}
+
+/** Map pi SDK tree nodes to the wire transfer shape used by pimote clients. */
+export function mapTreeNodes(nodes: SessionTreeNode[]): PimoteTreeNode[] {
+  return nodes.map((node) => {
+    const timestamp = typeof node.entry.timestamp === 'string' ? node.entry.timestamp : new Date(0).toISOString();
+    return {
+      id: node.entry.id,
+      type: node.entry.type,
+      role:
+        node.entry.type === 'message'
+          ? typeof node.entry.message.role === 'string'
+            ? node.entry.message.role
+            : undefined
+          : 'role' in node.entry && typeof node.entry.role === 'string'
+            ? node.entry.role
+            : undefined,
+      customType: 'customType' in node.entry && typeof node.entry.customType === 'string' ? node.entry.customType : undefined,
+      preview: previewForEntry(node.entry),
+      timestamp,
+      label: node.label,
+      labelTimestamp: node.labelTimestamp,
+      children: mapTreeNodes(node.children),
+    };
   });
 }
 
@@ -559,7 +627,9 @@ export class WsHandler {
         case 'get_commands':
         case 'complete_args':
         case 'set_session_name':
-        case 'dequeue_steering': {
+        case 'dequeue_steering':
+        case 'navigate_tree':
+        case 'set_tree_label': {
           await this.handleSessionCommand(command, id);
           break;
         }
@@ -605,6 +675,12 @@ export class WsHandler {
           this.sendResponse(id, true);
           break;
         }
+        if (trimmed === '/tree') {
+          const tree = mapTreeNodes(session.sessionManager.getTree() as SessionTreeNode[]);
+          const currentLeafId = session.sessionManager.getLeafId();
+          this.sendResponse(id, true, { tree, currentLeafId });
+          break;
+        }
 
         session.prompt(command.message, { images: parseDataUrlImages(command.images) }).catch((err) => {
           console.error(`[WsHandler] prompt error:`, err);
@@ -638,7 +714,10 @@ export class WsHandler {
       case 'abort': {
         // Resolve pending UI responses first so stuck dialogs unblock
         resolveAllSlotPendingUi(slot);
-        await session.abort();
+        const abortResult = await Promise.race([session.abort().then(() => 'ok' as const), new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 30_000))]);
+        if (abortResult === 'timeout') {
+          console.error(`[WsHandler] session.abort() did not resolve within 30s (sessionId=${sessionId})`);
+        }
         this.sendResponse(id, true);
         break;
       }
@@ -811,6 +890,16 @@ export class WsHandler {
       case 'set_session_name': {
         session.setSessionName(command.name);
         this.sendResponse(id, true);
+        break;
+      }
+
+      case 'navigate_tree': {
+        this.sendResponse(id, false, undefined, 'navigate_tree not implemented');
+        break;
+      }
+
+      case 'set_tree_label': {
+        this.sendResponse(id, false, undefined, 'set_tree_label not implemented');
         break;
       }
     }
