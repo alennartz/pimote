@@ -15,7 +15,7 @@ The plan was implemented faithfully across all five steps. Protocol additions, s
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/components/MessageList.svelte:18-31,238-251`
-- **Status:** open
+- **Status:** resolved
 
 `promptDraftChoice()` creates a Promise resolved only through the four `resolveDraft()` button handlers. However, the bits-ui `Dialog.Root` defaults allow Escape and overlay-click dismissal, which sets `draftDialogOpen` to `false` via `bind:open` without calling `draftDialogResolve`. This leaves `handleFork` suspended forever — the promise never resolves. The closure held by `draftDialogResolve` is leaked until the next fork overwrites it.
 

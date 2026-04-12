@@ -235,7 +235,12 @@
   {/if}
 
   <!-- Draft conflict dialog -->
-  <Dialog.Root bind:open={draftDialogOpen}>
+  <Dialog.Root
+    open={draftDialogOpen}
+    onOpenChange={(open) => {
+      if (!open) resolveDraft('ignore');
+    }}
+  >
     <Dialog.Content showCloseButton={false}>
       <Dialog.Header>
         <Dialog.Title>Draft conflict</Dialog.Title>
