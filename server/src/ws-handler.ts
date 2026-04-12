@@ -886,8 +886,16 @@ export class WsHandler {
           this.sendResponse(id, false, undefined, 'entryId is required');
           break;
         }
-        // Stub — implementation pending
-        throw new Error('Not implemented: fork command');
+        const forkResult = await slot.runtime.fork(command.entryId);
+        if (!forkResult.cancelled) {
+          await this.handleSessionReset(slot);
+        }
+        const forkData: { cancelled: boolean; selectedText?: string } = { cancelled: forkResult.cancelled };
+        if (forkResult.selectedText !== undefined) {
+          forkData.selectedText = forkResult.selectedText;
+        }
+        this.sendResponse(id, true, forkData);
+        break;
       }
 
       case 'navigate_tree': {

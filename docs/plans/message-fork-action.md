@@ -224,7 +224,7 @@ In `handleSessionCommand`, replace the `case 'fork'` stub (`throw new Error('Not
 The key reference is the `navigate_tree` handler at the same level in the switch — fork follows the same await-runtime → conditional-handleSessionReset → build-data → sendResponse pattern, but without tree navigation lifecycle events.
 
 **Verify:** `npx vitest run server/src/ws-handler.test.ts` — all fork command tests pass (validation errors, runtime invocation, cancellation, session replacement, selectedText omission).
-**Status:** not started
+**Status:** done
 
 ### Step 3: Add fork action to user message icon in `client/src/lib/components/Message.svelte`
 
