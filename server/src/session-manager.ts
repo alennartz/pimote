@@ -232,6 +232,8 @@ export class PimoteSessionManager {
     const eventBusRef: { current: EventBusController | null } = { current: null };
     const sharedAuthStorage = this.authStorage;
     const sharedModelRegistry = this.modelRegistry;
+    const sessionManager = sessionFilePath ? PiSessionManager.open(sessionFilePath) : PiSessionManager.create(folderPath);
+    const effectiveFolderPath = sessionFilePath ? sessionManager.getCwd() : folderPath;
 
     const factory: CreateAgentSessionRuntimeFactory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
       const eventBus = createEventBus();
@@ -253,9 +255,9 @@ export class PimoteSessionManager {
     };
 
     const runtime = await createAgentSessionRuntime(factory, {
-      cwd: folderPath,
+      cwd: effectiveFolderPath,
       agentDir: getAgentDir(),
-      sessionManager: sessionFilePath ? PiSessionManager.open(sessionFilePath) : PiSessionManager.create(folderPath),
+      sessionManager,
     });
 
     const session = runtime.session;
@@ -296,12 +298,12 @@ export class PimoteSessionManager {
         sendEvent: (e) => sendSlotEvent(slot, e),
       },
       slotRef,
-      folderPath,
+      effectiveFolderPath,
     );
 
     const slot: ManagedSlot = {
       runtime,
-      folderPath,
+      folderPath: effectiveFolderPath,
       eventBusRef,
       connection: null,
       sessionState,
@@ -312,7 +314,7 @@ export class PimoteSessionManager {
     slotRef.slot = slot;
 
     this.sessions.set(sessionId, slot);
-    this.lastKnownGitBranchBySession.set(sessionId, getGitBranch(folderPath));
+    this.lastKnownGitBranchBySession.set(sessionId, getGitBranch(effectiveFolderPath));
     return sessionId;
   }
 

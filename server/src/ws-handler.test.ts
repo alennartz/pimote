@@ -56,6 +56,7 @@ function createMockSlot(
     bindExtensions: async () => {},
     modelRegistry: { getAvailable: () => [] },
     clearQueue: () => ({ steering: [], followUp: [] }),
+    sessionManager: { getBranch: () => [] },
   };
 
   const sessionState: SessionState = {
@@ -562,6 +563,7 @@ describe('WsHandler', () => {
             bindExtensions: async () => {},
             modelRegistry: { getAvailable: () => [] },
             clearQueue: () => ({ steering: [], followUp: [] }),
+            sessionManager: { getBranch: () => [] },
           } as any,
         });
         sessions.set(reopenedSessionId, reopened);
@@ -1160,6 +1162,7 @@ describe('WsHandler', () => {
             bindExtensions: async () => {},
             modelRegistry: { getAvailable: () => [] },
             clearQueue: () => ({ steering: [], followUp: [] }),
+            sessionManager: { getBranch: () => [] },
           } as any,
         });
         sessions.set(reopenedSessionId, reopened);
@@ -1480,6 +1483,7 @@ describe('WsHandler', () => {
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         navigateTree: async () => ({ cancelled: false }),
+        sessionManager: { getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({
@@ -1560,6 +1564,7 @@ describe('WsHandler', () => {
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         navigateTree: async () => ({ cancelled: false }),
+        sessionManager: { getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({
@@ -1768,6 +1773,7 @@ describe('WsHandler', () => {
             appendLabelChange: vi.fn(),
             getTree: () => [],
             getLeafId: () => null,
+            getBranch: () => [],
           },
         } as any,
       });
@@ -1855,6 +1861,7 @@ describe('WsHandler', () => {
             appendLabelChange: vi.fn(),
             getTree: () => [],
             getLeafId: () => null,
+            getBranch: () => [],
           },
         } as any,
       });
@@ -1935,6 +1942,7 @@ describe('WsHandler', () => {
             appendLabelChange: vi.fn(),
             getTree: () => [],
             getLeafId: () => null,
+            getBranch: () => [],
           },
         } as any,
       });
@@ -2118,6 +2126,7 @@ describe('WsHandler', () => {
         bindExtensions: async () => {},
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
+        sessionManager: { getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({
@@ -2189,6 +2198,7 @@ describe('WsHandler', () => {
         bindExtensions: async () => {},
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
+        sessionManager: { getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({
@@ -2261,6 +2271,7 @@ describe('WsHandler', () => {
         bindExtensions: async () => {},
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
+        sessionManager: { getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({
@@ -2334,6 +2345,7 @@ describe('WsHandler', () => {
         bindExtensions: async () => {},
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
+        sessionManager: { getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({

@@ -299,9 +299,24 @@ class ConnectionStore {
     this.countdownInterval = setInterval(() => {
       this.reconnectCountdown = Math.max(0, this.reconnectCountdown - 1);
     }, 1000);
-    this.reconnectTimer = setTimeout(() => {
+    this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
+
+      // Before reconnecting, check if the auth session is still valid.
+      // When a reverse proxy (e.g. Cloudflare Access) expires the session,
+      // WebSocket upgrades fail silently (code 1006) with no way to distinguish
+      // from a network error. A fetch to our own origin will surface the redirect.
+      try {
+        const resp = await fetch(location.href, { method: 'HEAD', redirect: 'manual' });
+        if (resp.type === 'opaqueredirect' || resp.status === 401 || resp.status === 403) {
+          location.reload();
+          return;
+        }
+      } catch {
+        // Network error — proceed with WebSocket reconnect attempt
+      }
+
       this.connect();
     }, this.reconnectDelay);
   }

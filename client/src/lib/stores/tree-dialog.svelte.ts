@@ -13,6 +13,33 @@ export interface TreeDialogState {
   searchQuery: string;
 }
 
+/** Check whether a single node passes the filter mode and search query. */
+function nodeMatches(node: PimoteTreeNode, mode: TreeFilterMode, query: string): boolean {
+  // Mode filter
+  switch (mode) {
+    case 'user-only':
+      if (node.role !== 'user') return false;
+      break;
+    case 'labeled-only':
+      if (!node.label) return false;
+      break;
+    case 'default':
+      // Default shows user messages, labeled nodes, and branching points (nodes with >1 child)
+      if (node.role !== 'user' && !node.label && node.children.length <= 1) return false;
+      break;
+    case 'all':
+      break;
+  }
+
+  // Search query filter
+  if (query) {
+    const haystack = (node.preview + ' ' + (node.label ?? '')).toLowerCase();
+    if (!haystack.includes(query)) return false;
+  }
+
+  return true;
+}
+
 export class TreeDialogStore {
   state: TreeDialogState = $state({
     open: false,
@@ -74,12 +101,42 @@ export class TreeDialogStore {
     this.expandedNodeIds = new SvelteSet();
   }
 
-  setNodeLabel(_entryId: string, _label: string | undefined): void {
-    throw new Error('setNodeLabel not implemented');
+  setNodeLabel(entryId: string, label: string | undefined): void {
+    if (!this.state.tree) return;
+    const update = (nodes: PimoteTreeNode[]): PimoteTreeNode[] =>
+      nodes.map((node) => {
+        // eslint-disable-next-line svelte/prefer-svelte-reactivity -- ephemeral Date, not stored reactively
+        const updated = node.id === entryId ? { ...node, label, labelTimestamp: new Date().toISOString() } : node;
+        return updated.children.length > 0 ? { ...updated, children: update(updated.children) } : updated;
+      });
+    this.state.tree = update(this.state.tree);
   }
 
   getFilteredTree(): PimoteTreeNode[] {
-    throw new Error('getFilteredTree not implemented');
+    const tree = this.state.tree;
+    if (!tree) return [];
+
+    const mode = this.state.filterMode;
+    const query = this.state.searchQuery.toLowerCase().trim();
+
+    // 'all' with no search query — return the full tree
+    if (mode === 'all' && !query) return tree;
+
+    // Recursive filter: keep a node if it matches or any descendant matches.
+    // This preserves tree structure (ancestors of matching nodes are kept).
+    const filterNodes = (nodes: PimoteTreeNode[]): PimoteTreeNode[] => {
+      const result: PimoteTreeNode[] = [];
+      for (const node of nodes) {
+        const filteredChildren = filterNodes(node.children);
+        const selfMatches = nodeMatches(node, mode, query);
+        if (selfMatches || filteredChildren.length > 0) {
+          result.push(filteredChildren.length !== node.children.length ? { ...node, children: filteredChildren } : node);
+        }
+      }
+      return result;
+    };
+
+    return filterNodes(tree);
   }
 }
 

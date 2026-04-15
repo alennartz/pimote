@@ -25,6 +25,79 @@ export function mapAgentMessages(messages: SdkMessage[]): PimoteAgentMessage[] {
   return messages.map(mapAgentMessage);
 }
 
+/**
+ * Structural type for session entries consumed by entry-ID extraction.
+ * Only the fields needed for matching buildSessionContext's message ordering.
+ */
+export interface SdkSessionEntry {
+  id: string;
+  type: string;
+  parentId: string | null;
+  summary?: string;
+  firstKeptEntryId?: string;
+}
+
+/**
+ * Extract entry IDs from branch entries in the same order that
+ * buildSessionContext produces messages.  This mirrors the SDK's
+ * compaction/branch-summary logic so IDs can be zipped 1:1 with
+ * the mapped PimoteAgentMessage array.
+ */
+export function extractMessageEntryIds(branch: SdkSessionEntry[]): string[] {
+  // Find the last compaction entry on the path
+  let compaction: SdkSessionEntry | null = null;
+  for (const entry of branch) {
+    if (entry.type === 'compaction') compaction = entry;
+  }
+
+  const ids: string[] = [];
+
+  const appendId = (entry: SdkSessionEntry) => {
+    if (entry.type === 'message') {
+      ids.push(entry.id);
+    } else if (entry.type === 'custom_message') {
+      ids.push(entry.id);
+    } else if (entry.type === 'branch_summary' && entry.summary) {
+      ids.push(entry.id);
+    }
+  };
+
+  if (compaction) {
+    // Compaction summary message maps to the compaction entry
+    ids.push(compaction.id);
+
+    const compactionIdx = branch.findIndex((e) => e.type === 'compaction' && e.id === compaction!.id);
+
+    // Kept messages before the compaction entry
+    let foundFirstKept = false;
+    for (let i = 0; i < compactionIdx; i++) {
+      if (branch[i].id === compaction.firstKeptEntryId) foundFirstKept = true;
+      if (foundFirstKept) appendId(branch[i]);
+    }
+
+    // Messages after the compaction entry
+    for (let i = compactionIdx + 1; i < branch.length; i++) {
+      appendId(branch[i]);
+    }
+  } else {
+    for (const entry of branch) {
+      appendId(entry);
+    }
+  }
+
+  return ids;
+}
+
+/**
+ * Apply entry IDs from the session manager onto mapped messages.
+ * Zips by index — both arrays must correspond 1:1.
+ */
+export function applyEntryIds(messages: PimoteAgentMessage[], entryIds: string[]): void {
+  for (let i = 0; i < messages.length && i < entryIds.length; i++) {
+    messages[i].entryId = entryIds[i];
+  }
+}
+
 export function mapAgentMessage(msg: SdkMessage): PimoteAgentMessage {
   const role = msg.role ?? 'unknown';
   const content: PimoteMessageContent[] = [];
@@ -100,5 +173,8 @@ export function mapAgentMessage(msg: SdkMessage): PimoteAgentMessage {
     };
   }
 
-  return { role, content, entryId: msg.id };
+  // Note: msg.id is typically undefined for standard SDK messages (UserMessage,
+  // AssistantMessage, ToolResultMessage).  Entry IDs are applied separately via
+  // applyEntryIds() using the session manager's branch entries.
+  return { role, content, ...(msg.id ? { entryId: msg.id } : {}) };
 }

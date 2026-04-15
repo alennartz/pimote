@@ -1,0 +1,148 @@
+# Extension-Initiated New Session: Sequence Diagram
+
+Extension Code
+     │
+     │ calls: ctx.commandContextActions.newSession()
+     ├──────────────────────────────────┐
+     │                                  │
+     │                       createCommandContextActions (ws-handler.ts:56)
+     │                       ├─ slot.runtime.newSession()
+     │                       └─ if (!cancelled) → slot.connection.onSessionReset(slot)
+     │
+     ├──────────────────────────────────────────────────────────┐
+     │                                                           │
+     │                                  handleSessionReset (ws-handler.ts:856)
+     │                                  
+     │                                  if (newSessionId !== oldSessionId):
+     │                                  ├─ sessionManager.rebuildSessionState(slot)
+     │                                  │  └─ teardownSessionState(old)
+     │                                  │  └─ createSessionState(new)
+     │                                  ├─ sessionManager.reKeySession(old → new)
+     │                                  ├─ Update subscriptions & bookkeeping
+     │                                  ├─ Rebind extensions:
+     │                                  │  ├─ createExtensionUIBridge(slot)
+     │                                  │  └─ session.bindExtensions({uiContext, commandContextActions})
+     │                                  └─ sendEvent('session_replaced', {...})
+     │
+     ├──────────────────────────────────────────────────────────┐
+     │                                                           │
+     │                                         Wire Protocol
+     │                                         ↓
+     │                              SessionReplacedEvent
+     │                              ├─ type: 'session_replaced'
+     │                              ├─ oldSessionId
+     │                              ├─ newSessionId
+     │                              └─ folder: FolderInfo
+     │
+     ├──────────────────────────────────────────────────────────┐
+     │                                                           │
+     │                              Client: session-registry.svelte.ts:674
+     │                              
+     │                              handleEvent('session_replaced'):
+     │                              ├─ sessionRegistry.replaceSession(old, new, ...)
+     │                              │  ├─ this.sessions[old] ← DELETE
+     │                              │  ├─ this.sessions[new] ← CREATE
+     │                              │  └─ this.viewedSessionId ← UPDATE if needed
+     │                              ├─ connection.removeSubscribedSession(old)
+     │                              ├─ connection.addSubscribedSession(new)
+     │                              ├─ commandStore.removeSession(old)
+     │                              └─ fetchFullSessionData(new)
+     │
+     ├──────────────────────────────────────────────────────────┐
+     │                                                           │
+     │                              UI: ActiveSessionBar.svelte
+     │                              
+     │                              {#each sessionRegistry.activeSessions}
+     │                              ├─ {session.projectName}
+     │                              ├─ Status indicator (idle/working/attention)
+     │                              └─ Close button
+     │
+     │ New session pill appears in tab bar
+     │
+
+
+# Session State Storage Structure
+
+On Server:
+┌─────────────────────────────────────────────────────────┐
+│ PimoteSessionManager                                    │
+│                                                         │
+│  sessions: Map<sessionId, ManagedSlot>                 │
+│  ├─ sessionId₁ → ManagedSlot {                         │
+│  │   ├─ runtime: AgentSessionRuntime                   │
+│  │   ├─ folderPath: string                             │
+│  │   ├─ connection: ClientConnection {                 │
+│  │   │   ├─ ws: WebSocket                              │
+│  │   │   ├─ connectedClientId: string                  │
+│  │   │   └─ onSessionReset: (slot) ⇒ void             │
+│  │   ├─ sessionState: SessionState {                   │
+│  │   │   ├─ id: sessionId                              │
+│  │   │   ├─ status: 'idle' | 'working'                │
+│  │   │   ├─ eventBuffer: EventBuffer                   │
+│  │   │   ├─ pendingUiResponses: Map<requestId, ...>   │
+│  │   │   └─ panelState: Map<string, Card[]>           │
+│  │   └─ eventBusRef: { current: EventBusController }   │
+│  └─ sessionId₂ → ManagedSlot { ... }                   │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+
+On Client:
+┌─────────────────────────────────────────────────────────┐
+│ SessionRegistry                                         │
+│                                                         │
+│  sessions: Record<sessionId, PerSessionState> {         │
+│  ├─ sessionId₁ → PerSessionState {                     │
+│  │   ├─ sessionId: string                              │
+│  │   ├─ folderPath: string                             │
+│  │   ├─ status: 'idle' | 'working'                    │
+│  │   ├─ messages: PimoteAgentMessage[]                 │
+│  │   ├─ panelCards: Card[]                             │
+│  │   └─ ... (50+ other fields)                         │
+│  └─ sessionId₂ → PerSessionState { ... }               │
+│                                                         │
+│  viewedSessionId: string | null                         │
+│  pendingNewSession: string | null                       │
+└─────────────────────────────────────────────────────────┘
+
+UI Representation:
+┌─────────────────────────────────────────────────────────┐
+│ ActiveSessionBar                                        │
+│                                                         │
+│  [●■ Project1] [■ Project2] [+ New]                    │
+│   ↑             ↑                                        │
+│   └─ Viewed     └─ Idle (other projects have similar   │
+│   (Streaming)       pill representations)              │
+│                                                         │
+│  ● = indicator (idle/working/attention)                │
+│  Each pill ↔ Session ↔ Slot on server                  │
+└─────────────────────────────────────────────────────────┘
+
+# Extension-to-Slot Connection
+
+When extension code runs:
+┌──────────────────────────────────────────────────────────────┐
+│ Extension Code (pi SDK)                                      │
+│                                                              │
+│  ctx.commandContextActions.newSession()                      │
+│    ↑                                                          │
+│    └─ from session.bindExtensions({ commandContextActions }) │
+│       at ws-handler.ts:848                                   │
+└──────────────────────────────────────────────────────────────┘
+                        │
+                        │ References specific
+                        │ ManagedSlot instance
+                        ↓
+┌──────────────────────────────────────────────────────────────┐
+│ WsHandler.createCommandContextActions(slot: ManagedSlot)     │
+│                                                              │
+│  Returns object with handlers that:                          │
+│  - Call slot.runtime.newSession()                            │
+│  - Invoke slot.connection?.onSessionReset?.(slot)            │
+│  - Use slot.session.bindExtensions()                         │
+│  - Reference slot.sessionState for UI requests               │
+└──────────────────────────────────────────────────────────────┘
+
+This is the "slot-based" architecture that allows:
+- Extensions to trigger session mutations
+- Server to track slot ownership (connection)
+- Resilient UI bridges that survive reconnects

@@ -127,6 +127,7 @@
 
   function buildTreeRows(nodes: PimoteTreeNode[], expandedNodeIds: Set<string>, activePathNodes: Set<string>, depth = 0): TreeRow[] {
     const rows: TreeRow[] = [];
+    const hasSiblings = nodes.length > 1;
 
     for (const node of nodes) {
       const hasChildren = node.children.length > 0;
@@ -135,7 +136,11 @@
       rows.push({ node, depth, expanded, hasChildren });
 
       if (expanded) {
-        rows.push(...buildTreeRows(node.children, expandedNodeIds, activePathNodes, depth + 1));
+        // Indent children when this node is a fork (multiple children)
+        // or when this node has siblings (parent was a fork), so each
+        // branch's continuation is visually nested under its head.
+        const childDepth = node.children.length > 1 || hasSiblings ? depth + 1 : depth;
+        rows.push(...buildTreeRows(node.children, expandedNodeIds, activePathNodes, childDepth));
       }
     }
 
@@ -454,8 +459,8 @@
                       </span>
                     {/if}
                   </div>
-                  <div class="text-foreground mt-0.5 break-words">{row.node.preview}</div>
-                  <div class="text-muted-foreground mt-0.5 text-[11px]" title={row.node.timestamp}>{formatRelativeTime(row.node.timestamp)}</div>
+                  <div class="text-foreground mt-0.5 line-clamp-2 break-words sm:line-clamp-4">{row.node.preview}</div>
+                  <div class="text-muted-foreground mt-0.5 hidden text-[11px] sm:block" title={row.node.timestamp}>{formatRelativeTime(row.node.timestamp)}</div>
                 </div>
               </div>
             {/each}

@@ -21,7 +21,7 @@ import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
-import { mapAgentMessages } from './message-mapper.js';
+import { mapAgentMessages, extractMessageEntryIds, applyEntryIds, type SdkSessionEntry } from './message-mapper.js';
 import { getGitBranch } from './git-branch.js';
 import type { AgentSession, ExtensionCommandContextActions } from '@mariozechner/pi-coding-agent';
 
@@ -789,6 +789,8 @@ export class WsHandler {
 
       case 'get_messages': {
         const messages = mapAgentMessages(session.messages);
+        const entryIds = extractMessageEntryIds(session.sessionManager.getBranch() as unknown as SdkSessionEntry[]);
+        applyEntryIds(messages, entryIds);
         this.sendResponse(id, true, { messages });
         break;
       }
@@ -1200,6 +1202,12 @@ export class WsHandler {
       sdkEvent,
       sessionId,
       (event) => {
+        // Augment agent_end with message entry IDs so the client can enable
+        // fork targets on messages that arrived via streaming (without IDs).
+        if (event.type === 'agent_end') {
+          const entryIds = extractMessageEntryIds(slot.session.sessionManager.getBranch() as unknown as SdkSessionEntry[]);
+          (event as unknown as Record<string, unknown>).messageEntryIds = entryIds;
+        }
         forwarded = true;
         this.sendEvent(event);
       },
@@ -1236,6 +1244,8 @@ export class WsHandler {
       messageCount: session.messages.length,
     };
     const messages = mapAgentMessages(session.messages);
+    const entryIds = extractMessageEntryIds(session.sessionManager.getBranch() as unknown as SdkSessionEntry[]);
+    applyEntryIds(messages, entryIds);
     const fullResyncEvent: FullResyncEvent = {
       type: 'full_resync',
       sessionId: pimoteSessionId,

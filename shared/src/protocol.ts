@@ -436,6 +436,10 @@ export interface AgentStartEvent extends SessionEventBase {
 export interface AgentEndEvent extends SessionEventBase {
   type: 'agent_end';
   error?: string;
+  /** Entry IDs for all messages, zipped 1:1 with the session message list.
+   *  Sent so the client can enable fork targets on messages received via
+   *  streaming events (which don't carry entry IDs individually). */
+  messageEntryIds?: string[];
 }
 
 export interface TurnStartEvent extends SessionEventBase {

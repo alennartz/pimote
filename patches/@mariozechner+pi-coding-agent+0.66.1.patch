@@ -1,8 +1,8 @@
 diff --git a/node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session-runtime.js b/node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session-runtime.js
-index 9ab786e..6f89829 100644
+index fcb3466..20ee304 100644
 --- a/node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session-runtime.js
 +++ b/node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session-runtime.js
-@@ -74,9 +74,6 @@ export class AgentSessionRuntime {
+@@ -75,9 +75,6 @@ export class AgentSessionRuntime {
          this.session.dispose();
      }
      apply(result) {
@@ -12,9 +12,9 @@ index 9ab786e..6f89829 100644
          this._session = result.session;
          this._services = result.services;
          this._diagnostics = result.diagnostics;
-@@ -223,9 +220,6 @@ export class AgentSessionRuntime {
-  */
+@@ -227,9 +224,6 @@ export class AgentSessionRuntime {
  export async function createAgentSessionRuntime(createRuntime, options) {
+     assertSessionCwdExists(options.sessionManager, options.cwd);
      const result = await createRuntime(options);
 -    if (process.cwd() !== result.services.cwd) {
 -        process.chdir(result.services.cwd);

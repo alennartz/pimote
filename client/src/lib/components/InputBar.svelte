@@ -4,6 +4,7 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import { commandStore } from '$lib/stores/command-store.svelte.js';
   import { editorTextRequest, setEditorText, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
+  import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
   import CommandAutocomplete from './CommandAutocomplete.svelte';
   import type { CommandInfo } from '@pimote/shared';
   import Send from '@lucide/svelte/icons/send';
@@ -222,15 +223,22 @@
       // Send a new prompt (text and/or images)
       if (!text && stagedImages.length === 0) return;
       try {
-        await connection.send({
+        const promptResponse = await connection.send({
           type: 'prompt',
           sessionId: sessionRegistry.viewed!.sessionId,
           message: text,
           ...(stagedImages.length > 0 ? { images: stagedImages } : {}),
         });
         sent = true;
-        // Show the user message immediately instead of waiting for the server event
-        sessionRegistry.addOptimisticUserMessage(sessionRegistry.viewed!.sessionId, text);
+
+        // Handle /tree response — open tree dialog instead of adding a message
+        const promptData = promptResponse.data as Record<string, unknown> | undefined;
+        if (promptData?.tree) {
+          treeDialogStore.openDialog(sessionRegistry.viewed!.sessionId, promptData.tree as import('@pimote/shared').PimoteTreeNode[], (promptData.currentLeafId as string) ?? null);
+        } else {
+          // Show the user message immediately instead of waiting for the server event
+          sessionRegistry.addOptimisticUserMessage(sessionRegistry.viewed!.sessionId, text);
+        }
       } catch (e) {
         console.error('Failed to send prompt:', e);
       }

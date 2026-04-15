@@ -6,6 +6,7 @@
   import ExtensionDialog from '$lib/components/ExtensionDialog.svelte';
   import ExtensionStatus from '$lib/components/ExtensionStatus.svelte';
   import InstallBanner from '$lib/components/InstallBanner.svelte';
+  import TreeDialog from '$lib/components/TreeDialog.svelte';
   import Panel from '$lib/components/Panel.svelte';
   import SessionSettingsDialog from '$lib/components/SessionSettingsDialog.svelte';
   import SessionRenameDialog from '$lib/components/SessionRenameDialog.svelte';
@@ -300,6 +301,9 @@
 
   <!-- Extension UI dialogs (global overlay) -->
   <ExtensionDialog />
+
+  <!-- Tree navigation dialog -->
+  <TreeDialog />
 
   <!-- PWA install prompt (mobile only) -->
   <InstallBanner />

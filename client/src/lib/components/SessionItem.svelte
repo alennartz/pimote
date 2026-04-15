@@ -24,6 +24,15 @@
   const isActive = $derived(sessionRegistry.isActiveSession(session.id));
   const isRemoteActive = $derived(session.liveStatus != null && !session.isOwnedByMe);
 
+  /** Shorten a cwd path to at most the last 2 segments, with … prefix when truncated. */
+  function shortenCwd(cwd: string): string {
+    const segments = cwd.split('/').filter(Boolean);
+    if (segments.length <= 2) return cwd;
+    return '…/' + segments.slice(-2).join('/');
+  }
+
+  const cwdLabel = $derived(session.cwd && session.cwd !== folderPath ? shortenCwd(session.cwd) : null);
+
   let showDeleteDialog = $state(false);
 
   function displayName(): string {
@@ -100,6 +109,11 @@
                   <span class="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase">Archived</span>
                 {/if}
               </div>
+              {#if cwdLabel}
+                <div class="text-muted-foreground mt-0.5 truncate text-xs italic {session.archived ? 'opacity-70' : ''}" title={session.cwd}>
+                  {cwdLabel}
+                </div>
+              {/if}
               <div class="text-muted-foreground mt-0.5 flex items-center gap-2 text-xs {session.archived ? 'opacity-70' : ''}">
                 <span>{session.messageCount} msg{session.messageCount !== 1 ? 's' : ''}</span>
                 <span>·</span>

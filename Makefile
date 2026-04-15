@@ -1,6 +1,6 @@
 .PHONY: all install build build-shared build-server build-client package \
         dev dev-server dev-client \
-        start start-installed test clean help \
+        start start-installed restart test clean help \
         format format-check lint check \
         install-local install-service deploy redeploy undeploy logs status deploy-paths
 
@@ -149,6 +149,10 @@ deploy: install-local install-service
 ## Reinstall the local package release and restart the service
 redeploy: deploy
 
+## Restart the service
+restart:
+	$(SYSTEMCTL) restart $(PIMOTE_SERVICE_NAME)
+
 ## Stop the service
 undeploy:
 	$(SYSTEMCTL) stop $(PIMOTE_SERVICE_NAME)
@@ -194,6 +198,7 @@ help:
 	@echo "  deploy           Install local release + update unit + restart service"
 	@echo "                   (override locally via Makefile.local)"
 	@echo "  redeploy         Alias for deploy"
+	@echo "  restart          Restart the service"
 	@echo "  undeploy         Stop the service"
 	@echo "  logs             Tail service logs"
 	@echo "  status           Show service status"

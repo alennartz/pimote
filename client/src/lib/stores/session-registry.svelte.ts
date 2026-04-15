@@ -21,6 +21,7 @@ import type {
   ToolExecutionUpdateEvent,
   ToolExecutionEndEvent,
   FullResyncEvent,
+  AgentEndEvent,
   SessionConflictEvent,
   SessionStateChangedEvent,
   SessionOpenedEvent,
@@ -193,11 +194,21 @@ export class SessionRegistry {
         session.isStreaming = true;
         break;
 
-      case 'agent_end':
+      case 'agent_end': {
+        const endEvent = event as AgentEndEvent;
         session.status = 'idle';
         session.isStreaming = false;
         if (sessionId !== this.viewedSessionId) {
           session.needsAttention = true;
+        }
+        // Apply entry IDs so fork targets work on messages received via streaming
+        if (endEvent.messageEntryIds) {
+          const ids = endEvent.messageEntryIds;
+          for (let i = 0; i < session.messages.length && i < ids.length; i++) {
+            if (!session.messages[i].entryId) {
+              session.messages[i].entryId = ids[i];
+            }
+          }
         }
         // Refresh meta (context usage changes after each turn, branch may change)
         connection
@@ -209,6 +220,7 @@ export class SessionRegistry {
           })
           .catch(() => {});
         break;
+      }
 
       case 'message_start': {
         const start = event as MessageStartEvent;
