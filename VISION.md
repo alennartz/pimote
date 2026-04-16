@@ -11,6 +11,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 **Pimote Server** — A Node.js process that:
 
 - Indexes project folders and pi sessions on your machine
+- Creates new project folders on demand (`mkdir` + `git init`) within configured roots
 - Embeds AgentSession instances directly via the pi SDK
 - Manages multiple concurrent sessions per client with status tracking
 - Brokers WebSocket connections between clients and sessions
@@ -27,6 +28,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Tracks session status (working / idle / needs-attention)
 - Streams conversations in real time with independent scrolling
 - Browses folders and sessions across projects
+- Creates new project folders from the session picker dialog (choose root, name, `mkdir` + `git init`)
 - Sends prompts, steers, aborts, switches models
 - Slash command autocomplete — typing `/` shows a fuzzy-filtered dropdown of available commands (skills, extension commands, prompt templates) with argument completion for extension commands
 - Handles extension UI dialogs (select, confirm, input)

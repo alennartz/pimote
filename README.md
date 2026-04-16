@@ -75,7 +75,7 @@ Installable PWA (Svelte 5, Tailwind CSS, shadcn-svelte) with real-time streaming
 
 ### Projects and Folders
 
-The landing page shows a session-first home view. Sessions are grouped by project and ordered by recency so you can quickly resume work. Use the top-level **New session** action to pick any discovered project and start fresh.
+The landing page shows a session-first home view. Sessions are grouped by project and ordered by recency so you can quickly resume work. Use the top-level **New session** action to pick any discovered project and start fresh, or **create a new project** folder directly from the dialog — choose a root, name the project, and Pimote creates the directory, runs `git init`, and opens a session in it.
 
 ### Sessions
 

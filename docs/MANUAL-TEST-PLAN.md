@@ -363,6 +363,56 @@
 - **[S]** Click folder name (or "new session" action)
 - **[E]** New session created for that folder; conversation view shows empty state
 
+### TC-04.11 — Create new project from session picker 🟠
+
+- **[P]** At least one root configured; "New session" dialog open
+- **[S]** Click "Create new project" button at the bottom of the folder list
+- **[S]** If multiple roots configured: select a root from the list. If single root: skip to name entry.
+- **[S]** Enter a project name and click "Create"
+- **[E]** `create_project` command sent with `root` and `name`
+- **[E]** Server creates directory at `<root>/<name>` and runs `git init`
+- **[E]** Folder list refreshes to include the new project
+- **[E]** A new session opens in the created project
+
+### TC-04.12 — Create project with invalid name 🟡
+
+- **[P]** Create project dialog is at the name entry step
+- **[S]** Enter a name containing `/` or `\`, or enter `.` or `..`, or leave it empty
+- **[E]** Validation error displayed inline; no command sent to server
+
+### TC-04.13 — Create project with duplicate name 🟡
+
+- **[P]** A project directory already exists at the target path
+- **[S]** Enter the existing project's name and click "Create"
+- **[E]** Server returns error: "Directory already exists"
+- **[E]** Error displayed in the dialog; dialog remains open for correction
+
+### TC-04.14 — Create project with invalid root 🟡
+
+- **[P]** (Via raw WS) Send `create_project` with a `root` that is not in the configured roots
+- **[E]** Response: `success: false, error: "Root is not a configured project root"`
+
+### TC-04.15 — Create project button hidden when no roots 🟡
+
+- **[P]** `list_folders` returned no roots (edge case)
+- **[S]** Open "New session" dialog
+- **[E]** "Create new project" button is not shown
+
+### TC-04.16 — Create project with single root skips root selection 🟡
+
+- **[P]** Config has exactly one root directory
+- **[S]** Click "Create new project"
+- **[E]** Dialog skips root selection and goes directly to the name entry step
+- **[E]** The selected root is shown in the dialog description
+
+### TC-04.17 — Create project back navigation 🟡
+
+- **[P]** Multiple roots configured; currently on name entry step
+- **[S]** Click "Back"
+- **[E]** Returns to root selection step
+- **[S]** Click "Back" again
+- **[E]** Returns to the folder picker list
+
 ---
 
 ## TP-05: Session Lifecycle (Open / Close / Reap)

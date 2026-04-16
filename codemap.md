@@ -49,7 +49,7 @@ sequenceDiagram
 
 Shared TypeScript types defining the WebSocket wire format between client and server.
 
-**Responsibilities:** command types (client→server), event types (server→client), response envelope, session/message/folder data shapes, push subscription types, extension UI request/response types, slash command types, tree navigation wire contracts (`PimoteTreeNode`, `navigate_tree`/`set_tree_label`, `tree_navigation_start`/`tree_navigation_end`), panel/card data types (Card, BodySection, CardColor, BodySectionStyle, PanelUpdateEvent)
+**Responsibilities:** command types (client→server), event types (server→client), response envelope, session/message/folder data shapes, push subscription types, extension UI request/response types, slash command types, tree navigation wire contracts (`PimoteTreeNode`, `navigate_tree`/`set_tree_label`, `tree_navigation_start`/`tree_navigation_end`), project management commands (`create_project`), panel/card data types (Card, BodySection, CardColor, BodySectionStyle, PanelUpdateEvent)
 
 **Dependencies:** none
 
@@ -62,7 +62,7 @@ Shared TypeScript types defining the WebSocket wire format between client and se
 
 Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges them to remote clients.
 
-**Responsibilities:** HTTP static serving + SPA fallback, WebSocket upgrade + message routing, client identity registry, three-layer session model (ManagedSlot wrapping AgentSessionRuntime + ClientConnection + SessionState), runtime factory pattern for pi SDK session creation, session state lifecycle helpers (create/teardown/rebuild), session open/close/resume/idle-reap/takeover, event buffering with delta coalescing for reconnect replay, folder/session filesystem discovery, extension UI bridging (dialog→WebSocket round-trips, fire-and-forget→events, TUI-only→no-ops), extension command context actions, SDK message mapping, session conflict detection (external pi processes via /proc + remote pimote sessions), config loading + VAPID key management, Web Push notification delivery, git branch detection, pimote slash-command handling (`/new`, `/reload`, `/tree`) plus autocomplete surfaces for extension/skill/template commands, tree navigation command lifecycle (`navigate_tree`, `set_tree_label`) with buffered lifecycle events + full-resync handoff, client version mismatch detection, EventBus creation + panel channel wiring (detect/data listeners), per-session panel state tracking with throttled pushes, panel snapshot delivery on reconnect/session-switch, idle-reap protection while tree navigation is in progress
+**Responsibilities:** HTTP static serving + SPA fallback, WebSocket upgrade + message routing, client identity registry, three-layer session model (ManagedSlot wrapping AgentSessionRuntime + ClientConnection + SessionState), runtime factory pattern for pi SDK session creation, session state lifecycle helpers (create/teardown/rebuild), session open/close/resume/idle-reap/takeover, event buffering with delta coalescing for reconnect replay, folder/session filesystem discovery, project folder creation (`mkdir` + `git init`), extension UI bridging (dialog→WebSocket round-trips, fire-and-forget→events, TUI-only→no-ops), extension command context actions, SDK message mapping, session conflict detection (external pi processes via /proc + remote pimote sessions), config loading + VAPID key management, Web Push notification delivery, git branch detection, pimote slash-command handling (`/new`, `/reload`, `/tree`) plus autocomplete surfaces for extension/skill/template commands, tree navigation command lifecycle (`navigate_tree`, `set_tree_label`) with buffered lifecycle events + full-resync handoff, client version mismatch detection, EventBus creation + panel channel wiring (detect/data listeners), per-session panel state tracking with throttled pushes, panel snapshot delivery on reconnect/session-switch, idle-reap protection while tree navigation is in progress
 
 **Dependencies:** Protocol (wire format types)
 
@@ -71,13 +71,13 @@ Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges
 - `server/src/index.ts` — entry point
 - `server/src/config.ts` — config loading, VAPID key auto-generation
 - `server/src/server.ts` — HTTP server, static files, WebSocket upgrade, client registry, version checking
-- `server/src/ws-handler.ts` — per-connection command handler, multi-session routing, session ownership/displacement, conflict detection, `/tree` prompt interception + session-tree mapping, `navigate_tree`/`set_tree_label` handlers with `tree_navigation_start`/`tree_navigation_end` event emission and full-resync orchestration, in-place session reset via slot.runtime (newSession/fork/switchSession with rebuildSessionState + reKey)
+- `server/src/ws-handler.ts` — per-connection command handler, multi-session routing, session ownership/displacement, conflict detection, `/tree` prompt interception + session-tree mapping, `navigate_tree`/`set_tree_label` handlers with `tree_navigation_start`/`tree_navigation_end` event emission and full-resync orchestration, in-place session reset via slot.runtime (newSession/fork/switchSession with rebuildSessionState + reKey), `create_project` handler (name/root validation, `mkdir` + `git init`), `list_folders` response includes configured roots
 - `server/src/session-manager.ts` — ManagedSlot/ClientConnection/SessionState types, slot-based event + UI helpers (send, wait, resolve, replay), AgentSessionRuntime factory for session creation, session state lifecycle (createSessionState/teardownSessionState/rebuildSessionState), `treeNavigationInProgress` state tracking, reKeySession for session replacement, idle reaping with tree-navigation skip protection, EventBus creation + panel listener wiring, throttled panel push scheduling
 - `server/src/event-buffer.ts` — ring buffer, SDK→wire event mapping (including buffered `tree_navigation_*` lifecycle events), streaming delta coalescing
 - `server/src/message-mapper.ts` — SDK AgentMessage → PimoteAgentMessage conversion
 - `server/src/extension-ui-bridge.ts` — extension UI calls → WebSocket events
 - `server/src/panel-state.ts` — pure panel state helpers: applyPanelMessage (namespace→cards map), getMergedPanelCards (flatten + namespace-prefix IDs)
-- `server/src/folder-index.ts` — filesystem scanning for project folders and sessions
+- `server/src/folder-index.ts` — filesystem scanning for project folders and sessions, exposes configured `roots` for project creation
 - `server/src/takeover.ts` — /proc scanning for external pi processes, kill with SIGTERM/SIGKILL
 - `server/src/push-notification.ts` — PushNotificationService, subscription CRUD, delivery
 - `server/src/push-infrastructure.ts` — FilePushSubscriptionStore, WebPushSender
@@ -87,7 +87,7 @@ Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges
 
 SvelteKit PWA rendering pi conversations in real time with session/folder browsing, model/thinking controls, extension UI, and push notifications.
 
-**Responsibilities:** WebSocket connection with auto-reconnect (backoff→connecting→syncing→ready), per-session cursor tracking, stable client identity (localStorage-persisted), multi-session state management (SessionRegistry with $state() runes), localStorage persistence of active sessions and viewed session for cross-restart restoration, streaming message accumulation with stable DOM keying, folder/session index browsing, streaming markdown rendering (smd + highlight.js), tool call visualization, model/thinking pickers, extension UI queue (inline select/confirm + modal input/editor with CodeMirror code editor), input bar with prompt/steer/follow-up/abort modes + slash command autocomplete + `/tree` dialog handoff, tree-navigation dialog lifecycle (search/filter/collapse, label editing, summarize modes, navigation lifecycle event handling, close-on-resync behavior), post-navigation editor text injection, pending steering message display with dequeue-to-edit recall, per-session draft persistence, fuzzy matching, service worker for push notifications, PWA install prompt, active session bar with status indicators, text-to-speech playback via per-message TTS button, panel card display (desktop side panel + mobile overlay)
+**Responsibilities:** WebSocket connection with auto-reconnect (backoff→connecting→syncing→ready), per-session cursor tracking, stable client identity (localStorage-persisted), multi-session state management (SessionRegistry with $state() runes), localStorage persistence of active sessions and viewed session for cross-restart restoration, streaming message accumulation with stable DOM keying, folder/session index browsing, streaming markdown rendering (smd + highlight.js), tool call visualization, model/thinking pickers, extension UI queue (inline select/confirm + modal input/editor with CodeMirror code editor), input bar with prompt/steer/follow-up/abort modes + slash command autocomplete + `/tree` dialog handoff, tree-navigation dialog lifecycle (search/filter/collapse, label editing, summarize modes, navigation lifecycle event handling, close-on-resync behavior), post-navigation editor text injection, pending steering message display with dequeue-to-edit recall, per-session draft persistence, fuzzy matching, service worker for push notifications, PWA install prompt, active session bar with status indicators, text-to-speech playback via per-message TTS button, panel card display (desktop side panel + mobile overlay), project creation flow (root selection + name input + `create_project` command)
 
 **Dependencies:** Protocol (wire format types), Server (WebSocket API)
 
@@ -98,7 +98,7 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/stores/connection.svelte.ts` — WebSocket lifecycle, reconnect phases, cursor tracking, push re-registration, clientId hydration from persistence
 - `client/src/lib/stores/session-registry.svelte.ts` — SessionRegistry class, event routing, streaming message accumulation, session lifecycle helpers, active-session hydration and persistence on mutation, pending steering message reconciliation
 - `client/src/lib/stores/session-registry.test.ts` — tests
-- `client/src/lib/stores/index-store.svelte.ts` — folder/session index browsing state
+- `client/src/lib/stores/index-store.svelte.ts` — folder/session index browsing state, stores configured roots from `list_folders` response for project creation
 - `client/src/lib/stores/command-store.svelte.ts` — per-session command cache
 - `client/src/lib/stores/command-store.test.ts` — tests
 - `client/src/lib/stores/extension-ui-queue.svelte.ts` — extension UI request queue, inline vs modal routing
@@ -127,7 +127,7 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/components/ExtensionStatus.svelte` — extension status display
 - `client/src/lib/components/StatusBar.svelte` — session status header
 - `client/src/lib/components/ActiveSessionBar.svelte` — session tab bar with status dots
-- `client/src/lib/components/FolderList.svelte` — folder browser
+- `client/src/lib/components/FolderList.svelte` — folder browser, new-session picker dialog with 'Create new project' multi-step flow (root selection → name input → `create_project`)
 - `client/src/lib/components/SessionItem.svelte` — session list item
 - `client/src/lib/components/ModelPicker.svelte` — model selection dropdown
 - `client/src/lib/components/ThinkingPicker.svelte` — thinking level dropdown
