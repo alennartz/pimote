@@ -33,7 +33,7 @@ The existence check uses `stat()` in a try/catch that assumes _any_ error means 
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `client/src/lib/components/FolderList.svelte:192-196`
-- **Status:** open
+- **Status:** dismissed
 
 The plan says "On success: calls existing `newSession(folderPath)` which issues `open_session`." The implementation inlines the logic instead — closing the dialog, calling `onSessionSelect?.()`, firing `loadFolders()`, and sending `open_session` directly. This is a reasonable adaptation: `createProject()` needs the extra `loadFolders()` call so the new project appears in the sidebar, which the existing `newSession()` doesn't do.
 
@@ -42,7 +42,7 @@ The plan says "On success: calls existing `newSession(folderPath)` which issues 
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `client/src/lib/components/FolderList.svelte:393-397`
-- **Status:** open
+- **Status:** dismissed
 
 The plan says the button is "always visible." The implementation only shows it when `indexStore.roots.length > 0`. This is a correct UX improvement — with zero roots configured, the creation flow has nowhere to create a project and the server would reject the request.
 
@@ -51,7 +51,7 @@ The plan says the button is "always visible." The implementation only shows it w
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/components/FolderList.svelte:161`
-- **Status:** open
+- **Status:** dismissed
 
 `validateProjectName` calls `name.trim()`, but its only caller (`createProject`) already passes `createName.trim()`. The `'Name is required'` check on the trimmed-of-a-trimmed value could never trigger via the current call site. Not a bug — just dead validation logic.
 
