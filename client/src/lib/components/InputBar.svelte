@@ -247,6 +247,8 @@
     if (!sent) return;
 
     inputText = '';
+    autocompleteVisible = false;
+    selectedCommand = null;
     stagedImages = [];
     if (sessionRegistry.viewed) {
       sessionRegistry.viewed.draftText = '';
