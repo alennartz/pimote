@@ -231,8 +231,14 @@ export class WsHandler {
             await stat(folderPath);
             this.sendResponse(id, false, undefined, 'Directory already exists');
             break;
-          } catch {
-            // Expected — directory doesn't exist yet
+          } catch (err) {
+            const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
+            if (code !== 'ENOENT') {
+              const message = err instanceof Error ? err.message : String(err);
+              this.sendResponse(id, false, undefined, `Cannot access directory: ${message}`);
+              break;
+            }
+            // ENOENT — directory doesn't exist yet, proceed with creation
           }
 
           // Create directory and git init

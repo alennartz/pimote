@@ -15,7 +15,7 @@ The plan was implemented faithfully — all protocol additions, server validatio
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/components/FolderList.svelte:192-199`
-- **Status:** open
+- **Status:** resolved
 
 After `create_project` succeeds, `showNewSessionDialog` is set to `false` on line 192 _before_ `open_session` is awaited on line 196. If `open_session` throws (network error, server failure), the catch block sets `createError` and `creating = false` — but the dialog is already closed, so the user never sees the error. The project was created on disk but the session wasn't opened, leaving the user with no feedback and no open session.
 
@@ -24,7 +24,7 @@ After `create_project` succeeds, `showNewSessionDialog` is set to `false` on lin
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/ws-handler.ts:229-233`
-- **Status:** open
+- **Status:** resolved
 
 The existence check uses `stat()` in a try/catch that assumes _any_ error means the directory doesn't exist. If `stat()` fails with `EPERM` or `EACCES` (permission denied on the parent directory), the code proceeds to `mkdir` rather than reporting the actual problem. Checking for `err.code === 'ENOENT'` specifically would make the intent explicit and avoid masking unexpected filesystem states.
 
