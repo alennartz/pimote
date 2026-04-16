@@ -10,7 +10,7 @@
     "test": "vitest"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "0.66.1",
+    "@mariozechner/pi-coding-agent": "0.67.6",
     "@pimote/shared": "*",
     "web-push": "^3.6.7",
     "ws": "^8.20.0"

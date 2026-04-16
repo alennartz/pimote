@@ -30,7 +30,7 @@
     "client/build/**",
     "server/dist/**/*.js",
     "scripts/postinstall-patches.mjs",
-    "patches/@mariozechner+pi-coding-agent+0.66.1.patch",
+    "patches/@mariozechner+pi-coding-agent+0.67.6.patch",
     "README.md",
     "LICENSE"
   ],
@@ -73,7 +73,7 @@
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
-    "@mariozechner/pi-coding-agent": "0.66.1",
+    "@mariozechner/pi-coding-agent": "0.67.6",
     "patch-package": "^8.0.1",
     "web-push": "^3.6.7",
     "ws": "^8.20.0"

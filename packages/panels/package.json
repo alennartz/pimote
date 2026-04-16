@@ -35,10 +35,10 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.66.1"
+    "@mariozechner/pi-coding-agent": "^0.67.6"
   },
   "devDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.66.1",
+    "@mariozechner/pi-coding-agent": "^0.67.6",
     "typescript": "^6.0.2",
     "vitest": "^4.1.2"
   }
