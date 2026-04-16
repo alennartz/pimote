@@ -21,6 +21,7 @@ function sortSessionsByRecency(sessions: SessionInfo[]): SessionInfo[] {
 
 class IndexStore {
   folders: FolderInfo[] = $state([]);
+  roots: string[] = $state([]);
   sessions = $state(new SvelteMap<string, SessionInfo[]>());
   loading: boolean = $state(false);
   showArchived: boolean = $state(getShowArchived());
@@ -37,8 +38,9 @@ class IndexStore {
       try {
         const response = await connection.send({ type: 'list_folders' });
         if (response.success && response.data) {
-          const data = response.data as { folders: FolderInfo[] };
+          const data = response.data as { folders: FolderInfo[]; roots: string[] };
           this.folders = data.folders;
+          this.roots = data.roots ?? [];
           await Promise.all(data.folders.map((folder) => this.loadSessions(folder.path)));
         }
       } catch (e) {

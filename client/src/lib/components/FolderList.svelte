@@ -31,6 +31,14 @@
   let showArchiveAllDialog = $state(false);
   let projectSearch = $state('');
 
+  // Create project flow state
+  type DialogMode = 'pick' | 'create-root' | 'create-name';
+  let dialogMode: DialogMode = $state('pick');
+  let createRoot: string = $state('');
+  let createName: string = $state('');
+  let createError: string = $state('');
+  let creating: boolean = $state(false);
+
   const projectGroups = $derived(buildSessionProjectGroups(indexStore.folders, indexStore.sessions));
   const archivableCount = $derived(
     projectGroups.reduce((total, group) => {
@@ -97,6 +105,11 @@
 
   function openNewSessionDialog() {
     projectSearch = '';
+    dialogMode = 'pick';
+    createRoot = '';
+    createName = '';
+    createError = '';
+    creating = false;
     showNewSessionDialog = true;
   }
 
@@ -104,6 +117,84 @@
     showNewSessionDialog = open;
     if (!open) {
       projectSearch = '';
+      dialogMode = 'pick';
+      createRoot = '';
+      createName = '';
+      createError = '';
+      creating = false;
+    }
+  }
+
+  function startCreateProject() {
+    const roots = indexStore.roots;
+    if (roots.length === 1) {
+      createRoot = roots[0];
+      dialogMode = 'create-name';
+    } else {
+      dialogMode = 'create-root';
+    }
+    createName = '';
+    createError = '';
+  }
+
+  function selectRoot(root: string) {
+    createRoot = root;
+    dialogMode = 'create-name';
+    createName = '';
+    createError = '';
+  }
+
+  function backToPickMode() {
+    dialogMode = 'pick';
+    createRoot = '';
+    createName = '';
+    createError = '';
+  }
+
+  function backToRootSelection() {
+    dialogMode = 'create-root';
+    createName = '';
+    createError = '';
+  }
+
+  function validateProjectName(name: string): string | null {
+    if (!name.trim()) return 'Name is required';
+    if (name.includes('/') || name.includes('\\')) return 'Name cannot contain path separators';
+    if (name === '.' || name === '..') return 'Invalid name';
+    return null;
+  }
+
+  async function createProject() {
+    const name = createName.trim();
+    const validationError = validateProjectName(name);
+    if (validationError) {
+      createError = validationError;
+      return;
+    }
+
+    creating = true;
+    createError = '';
+
+    try {
+      const response = await connection.send({
+        type: 'create_project',
+        root: createRoot,
+        name,
+      });
+
+      if (!response.success) {
+        createError = response.error ?? 'Failed to create project';
+        creating = false;
+        return;
+      }
+
+      const folderPath = (response.data as { folderPath: string }).folderPath;
+      showNewSessionDialog = false;
+      onSessionSelect?.();
+      await connection.send({ type: 'open_session', folderPath });
+    } catch (e) {
+      createError = e instanceof Error ? e.message : 'Failed to create project';
+      creating = false;
     }
   }
 
@@ -264,40 +355,107 @@
 
 <Dialog.Root open={showNewSessionDialog} onOpenChange={handleNewSessionDialogOpenChange}>
   <Dialog.Content class="sm:max-w-lg">
-    <Dialog.Header>
-      <Dialog.Title>Start a new session</Dialog.Title>
-      <Dialog.Description>Choose a project to start from. Search is client-side over discovered folders.</Dialog.Description>
-    </Dialog.Header>
+    {#if dialogMode === 'pick'}
+      <Dialog.Header>
+        <Dialog.Title>Start a new session</Dialog.Title>
+        <Dialog.Description>Choose a project to start from. Search is client-side over discovered folders.</Dialog.Description>
+      </Dialog.Header>
 
-    <div class="flex flex-col gap-4">
-      <Input bind:value={projectSearch} placeholder="Search projects" autofocus />
+      <div class="flex flex-col gap-4">
+        <Input bind:value={projectSearch} placeholder="Search projects" autofocus />
 
-      <div class="border-border max-h-80 overflow-y-auto rounded-md border">
-        {#if pickerProjects.length === 0}
-          <div class="text-muted-foreground px-3 py-6 text-center text-sm">No matching projects.</div>
-        {:else}
+        <div class="border-border max-h-80 overflow-y-auto rounded-md border">
+          {#if pickerProjects.length === 0}
+            <div class="text-muted-foreground px-3 py-6 text-center text-sm">No matching projects.</div>
+          {:else}
+            <div class="flex flex-col p-1">
+              {#each pickerProjects as folder (folder.path)}
+                <button
+                  class="hover:bg-accent hover:text-accent-foreground flex items-start gap-2 rounded-md px-3 py-2 text-left transition-colors"
+                  disabled={connection.status !== 'connected'}
+                  onclick={() => void newSession(folder.path)}
+                >
+                  <FolderIcon class="text-muted-foreground mt-0.5 size-4 shrink-0" />
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate text-sm font-medium">{folder.name}</div>
+                    <div class="text-muted-foreground truncate text-xs">{folder.path}</div>
+                  </div>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <Dialog.Footer class="flex gap-2">
+          {#if indexStore.roots.length > 0}
+            <Button variant="outline" onclick={startCreateProject}>
+              <Plus class="size-4" />
+              Create new project
+            </Button>
+          {/if}
+          <div class="flex-1"></div>
+          <Button variant="outline" type="button" onclick={() => handleNewSessionDialogOpenChange(false)}>Cancel</Button>
+        </Dialog.Footer>
+      </div>
+    {:else if dialogMode === 'create-root'}
+      <Dialog.Header>
+        <Dialog.Title>Create new project</Dialog.Title>
+        <Dialog.Description>Choose where to create the project.</Dialog.Description>
+      </Dialog.Header>
+
+      <div class="flex flex-col gap-4">
+        <div class="border-border max-h-80 overflow-y-auto rounded-md border">
           <div class="flex flex-col p-1">
-            {#each pickerProjects as folder (folder.path)}
-              <button
-                class="hover:bg-accent hover:text-accent-foreground flex items-start gap-2 rounded-md px-3 py-2 text-left transition-colors"
-                disabled={connection.status !== 'connected'}
-                onclick={() => void newSession(folder.path)}
-              >
+            {#each indexStore.roots as root (root)}
+              <button class="hover:bg-accent hover:text-accent-foreground flex items-start gap-2 rounded-md px-3 py-2 text-left transition-colors" onclick={() => selectRoot(root)}>
                 <FolderIcon class="text-muted-foreground mt-0.5 size-4 shrink-0" />
                 <div class="min-w-0 flex-1">
-                  <div class="truncate text-sm font-medium">{folder.name}</div>
-                  <div class="text-muted-foreground truncate text-xs">{folder.path}</div>
+                  <div class="truncate text-sm font-medium">{root}</div>
                 </div>
               </button>
             {/each}
           </div>
-        {/if}
-      </div>
+        </div>
 
-      <Dialog.Footer>
-        <Button variant="outline" type="button" onclick={() => handleNewSessionDialogOpenChange(false)}>Cancel</Button>
-      </Dialog.Footer>
-    </div>
+        <Dialog.Footer>
+          <Button variant="outline" onclick={backToPickMode}>Back</Button>
+        </Dialog.Footer>
+      </div>
+    {:else if dialogMode === 'create-name'}
+      <Dialog.Header>
+        <Dialog.Title>Create new project</Dialog.Title>
+        <Dialog.Description>New project in <code class="bg-muted rounded px-1 py-0.5 text-xs">{createRoot}</code></Dialog.Description>
+      </Dialog.Header>
+
+      <div class="flex flex-col gap-4">
+        <div class="flex flex-col gap-1.5">
+          <Input
+            bind:value={createName}
+            placeholder="Project name"
+            autofocus
+            disabled={creating}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') void createProject();
+            }}
+          />
+          {#if createError}
+            <p class="text-destructive text-sm">{createError}</p>
+          {/if}
+        </div>
+
+        <Dialog.Footer>
+          <Button variant="outline" onclick={indexStore.roots.length > 1 ? backToRootSelection : backToPickMode} disabled={creating}>Back</Button>
+          <Button onclick={() => void createProject()} disabled={creating || !createName.trim()}>
+            {#if creating}
+              <Loader2 class="size-4 animate-spin" />
+              Creating…
+            {:else}
+              Create
+            {/if}
+          </Button>
+        </Dialog.Footer>
+      </div>
+    {/if}
   </Dialog.Content>
 </Dialog.Root>
 
