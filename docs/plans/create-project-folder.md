@@ -75,5 +75,7 @@ The new session picker dialog gains a creation sub-flow:
 
 ## Steps
 
+**Pre-implementation commit:** `f69710957c08f07190e8d642db9f1af8fc71b278`
+
 > **Skipped.** Work through the architecture methodically — identify affected files,
 > make changes in a logical order, and commit in coherent units.

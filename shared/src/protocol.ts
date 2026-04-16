@@ -273,6 +273,16 @@ export interface SetTreeLabelCommand extends CommandBase {
   label?: string;
 }
 
+// -- Project management commands --
+
+export interface CreateProjectCommand extends CommandBase {
+  type: 'create_project';
+  /** Must be one of the configured roots */
+  root: string;
+  /** Folder name — no slashes, non-empty */
+  name: string;
+}
+
 // -- Server-level commands --
 
 export interface ListFoldersCommand extends CommandBase {
@@ -395,6 +405,8 @@ export type PimoteCommand =
   | ForkCommand
   | NavigateTreeCommand
   | SetTreeLabelCommand
+  // Project management
+  | CreateProjectCommand
   // Server-level
   | RenameSessionCommand
   | ListFoldersCommand

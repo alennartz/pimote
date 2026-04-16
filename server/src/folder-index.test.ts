@@ -14,6 +14,18 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
+describe('FolderIndex.roots', () => {
+  it('returns the configured roots', () => {
+    const index = new FolderIndex(['/home/user/projects', '/opt/repos']);
+    expect(index.roots).toEqual(['/home/user/projects', '/opt/repos']);
+  });
+
+  it('returns empty array when no roots configured', () => {
+    const index = new FolderIndex([]);
+    expect(index.roots).toEqual([]);
+  });
+});
+
 describe('FolderIndex.scan()', () => {
   it('detects directories with .git marker', async () => {
     const projectDir = join(tempDir, 'my-project');

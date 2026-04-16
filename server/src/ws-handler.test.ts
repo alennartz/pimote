@@ -110,8 +110,9 @@ function createMockSessionManager(sessions: Map<string, ManagedSlot> = new Map()
   } as unknown as PimoteSessionManager;
 }
 
-function createMockFolderIndex(): FolderIndex {
+function createMockFolderIndex(roots: string[] = []): FolderIndex {
   return {
+    roots,
     scan: async () => [],
     listSessions: async () => [],
     listSessionRecords: async () => [],
@@ -2853,6 +2854,65 @@ describe('WsHandler', () => {
       const resp = findResponse(sent, 'req-args-6');
       expect(resp!.success).toBe(true);
       expect((resp!.data as any).items).toBeNull();
+    });
+  });
+
+  describe('list_folders — roots', () => {
+    it('includes roots in list_folders response', async () => {
+      const folderIndex = createMockFolderIndex(['/home/user/projects', '/opt/repos']);
+      const { handler, sent } = createTestHandler('client-1', { folderIndex });
+
+      await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'req-roots' }));
+
+      const resp = findResponse(sent, 'req-roots');
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).roots).toEqual(['/home/user/projects', '/opt/repos']);
+    });
+  });
+
+  describe('create_project', () => {
+    it('rejects empty name', async () => {
+      const folderIndex = createMockFolderIndex(['/home/user/projects']);
+      const { handler, sent } = createTestHandler('client-1', { folderIndex });
+
+      await handler.handleMessage(JSON.stringify({ type: 'create_project', root: '/home/user/projects', name: '', id: 'req-cp-1' }));
+
+      const resp = findResponse(sent, 'req-cp-1');
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toBe('Invalid project name');
+    });
+
+    it('rejects name with path separators', async () => {
+      const folderIndex = createMockFolderIndex(['/home/user/projects']);
+      const { handler, sent } = createTestHandler('client-1', { folderIndex });
+
+      await handler.handleMessage(JSON.stringify({ type: 'create_project', root: '/home/user/projects', name: 'foo/bar', id: 'req-cp-2' }));
+
+      const resp = findResponse(sent, 'req-cp-2');
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toBe('Invalid project name');
+    });
+
+    it('rejects . and .. names', async () => {
+      const folderIndex = createMockFolderIndex(['/home/user/projects']);
+      const { handler, sent } = createTestHandler('client-1', { folderIndex });
+
+      await handler.handleMessage(JSON.stringify({ type: 'create_project', root: '/home/user/projects', name: '..', id: 'req-cp-3' }));
+
+      const resp = findResponse(sent, 'req-cp-3');
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toBe('Invalid project name');
+    });
+
+    it('rejects root not in configured roots', async () => {
+      const folderIndex = createMockFolderIndex(['/home/user/projects']);
+      const { handler, sent } = createTestHandler('client-1', { folderIndex });
+
+      await handler.handleMessage(JSON.stringify({ type: 'create_project', root: '/tmp/hacked', name: 'evil', id: 'req-cp-4' }));
+
+      const resp = findResponse(sent, 'req-cp-4');
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toBe('Root is not a configured project root');
     });
   });
 });

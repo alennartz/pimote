@@ -1,3 +1,7 @@
+import { mkdir, stat } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { join, sep } from 'node:path';
+import { promisify } from 'node:util';
 import type { WebSocket } from 'ws';
 import type {
   PimoteCommand,
@@ -200,7 +204,48 @@ export class WsHandler {
               folder.activeStatus = null;
             }
           }
-          this.sendResponse(id, true, { folders });
+          this.sendResponse(id, true, { folders, roots: this.folderIndex.roots });
+          break;
+        }
+
+        case 'create_project': {
+          const name = command.name;
+          const root = command.root;
+
+          // Validate name: non-empty, no path separators, not . or ..
+          if (!name || name.includes('/') || name.includes(sep) || name === '.' || name === '..') {
+            this.sendResponse(id, false, undefined, 'Invalid project name');
+            break;
+          }
+
+          // Validate root is one of the configured roots
+          if (!this.folderIndex.roots.includes(root)) {
+            this.sendResponse(id, false, undefined, 'Root is not a configured project root');
+            break;
+          }
+
+          const folderPath = join(root, name);
+
+          // Check if directory already exists
+          try {
+            await stat(folderPath);
+            this.sendResponse(id, false, undefined, 'Directory already exists');
+            break;
+          } catch {
+            // Expected — directory doesn't exist yet
+          }
+
+          // Create directory and git init
+          try {
+            await mkdir(folderPath, { recursive: true });
+            await promisify(execFile)('git', ['init'], { cwd: folderPath });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.sendResponse(id, false, undefined, `Failed to create project: ${message}`);
+            break;
+          }
+
+          this.sendResponse(id, true, { folderPath });
           break;
         }
 

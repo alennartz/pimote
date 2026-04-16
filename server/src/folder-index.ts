@@ -10,7 +10,12 @@ const PROJECT_MARKERS = ['.git', 'package.json'] as const;
  * Scans configured root directories for project folders and lists their sessions.
  */
 export class FolderIndex {
-  constructor(private readonly roots: string[]) {}
+  constructor(private readonly _roots: string[]) {}
+
+  /** Returns the configured root directories. */
+  get roots(): string[] {
+    return this._roots;
+  }
 
   /**
    * Scan all roots one level deep for project directories.
@@ -19,7 +24,7 @@ export class FolderIndex {
   async scan(): Promise<FolderInfo[]> {
     const folders: FolderInfo[] = [];
 
-    for (const root of this.roots) {
+    for (const root of this._roots) {
       let entries: string[];
       try {
         entries = await readdir(root);
