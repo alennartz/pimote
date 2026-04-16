@@ -66,3 +66,14 @@ The new session picker dialog gains a creation sub-flow:
 - Name input with validation feedback and a "Create" action
 - On success: calls existing `newSession(folderPath)` which issues `open_session`
 - Back/cancel returns to the normal project picker view
+
+## Tests
+
+> **Skipped.** No tests were written upfront. Follow red-green TDD as you implement —
+> write a focused failing test, make it pass, move on. Aim for component-boundary
+> behavioral tests (inputs, outputs, observable effects), not exhaustive coverage.
+
+## Steps
+
+> **Skipped.** Work through the architecture methodically — identify affected files,
+> make changes in a logical order, and commit in coherent units.
