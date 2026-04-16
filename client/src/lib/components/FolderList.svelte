@@ -191,6 +191,8 @@
       const folderPath = (response.data as { folderPath: string }).folderPath;
       showNewSessionDialog = false;
       onSessionSelect?.();
+      // Refresh folder list so the new project appears in the sidebar
+      void indexStore.loadFolders();
       await connection.send({ type: 'open_session', folderPath });
     } catch (e) {
       createError = e instanceof Error ? e.message : 'Failed to create project';
