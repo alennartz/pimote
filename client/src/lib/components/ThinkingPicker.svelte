@@ -13,7 +13,15 @@
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
 
-  const levels = ['off', 'minimal', 'low', 'medium', 'high'] as const;
+  // Full canonical set of thinking levels known to pi-ai (in display order).
+  // Used as a fallback when the server hasn't provided availableThinkingLevels
+  // yet (e.g. older server, or before first state sync).
+  const FALLBACK_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+
+  // Prefer the server-provided per-model list (correct across model capabilities,
+  // including new levels like 'xhigh' on Opus 4.7 / GPT-5.2+). Fall back to the
+  // canonical set if the server didn't supply one.
+  let levels = $derived(sessionRegistry.viewed?.availableThinkingLevels?.length ? sessionRegistry.viewed.availableThinkingLevels : (FALLBACK_LEVELS as readonly string[]));
 
   let selectedLevel = $derived(sessionRegistry.viewed?.thinkingLevel ?? 'off');
 

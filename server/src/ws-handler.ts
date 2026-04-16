@@ -826,6 +826,7 @@ export class WsHandler {
         const state: SessionState = {
           model: model ? { provider: model.provider, id: model.id, name: model.name } : null,
           thinkingLevel: session.thinkingLevel,
+          availableThinkingLevels: session.getAvailableThinkingLevels(),
           isStreaming: session.isStreaming,
           isCompacting: session.isCompacting,
           sessionFile: session.sessionFile,
@@ -1286,6 +1287,7 @@ export class WsHandler {
     const state: SessionState = {
       model: model ? { provider: model.provider, id: model.id, name: model.name } : null,
       thinkingLevel: session.thinkingLevel,
+      availableThinkingLevels: session.getAvailableThinkingLevels(),
       isStreaming: session.isStreaming,
       isCompacting: session.isCompacting,
       sessionFile: session.sessionFile,

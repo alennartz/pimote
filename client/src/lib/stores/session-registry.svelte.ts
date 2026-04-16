@@ -47,6 +47,8 @@ export interface PerSessionState {
   isCompacting: boolean;
   model: { provider: string; id: string; name: string } | null;
   thinkingLevel: string;
+  /** Server-provided list of thinking levels the current model supports. */
+  availableThinkingLevels: string[];
   streamingMessage: StreamingMessage | null;
   streamingKey: string | null;
   messageKeys: string[];
@@ -105,6 +107,7 @@ export class SessionRegistry {
       isCompacting: false,
       model: null,
       thinkingLevel: 'off',
+      availableThinkingLevels: [],
       streamingMessage: null,
       streamingKey: null,
       messageKeys: [],
@@ -368,6 +371,7 @@ export class SessionRegistry {
         rebuilt.widgetCards = session.widgetCards;
         rebuilt.model = state.model;
         rebuilt.thinkingLevel = state.thinkingLevel;
+        rebuilt.availableThinkingLevels = state.availableThinkingLevels ?? [];
         rebuilt.isStreaming = state.isStreaming;
         rebuilt.isCompacting = state.isCompacting;
         rebuilt.autoCompactionEnabled = state.autoCompactionEnabled;
@@ -470,6 +474,7 @@ export class SessionRegistry {
     const next = this.createSessionState(newSessionId, folderPath, projectName);
     next.model = old.model;
     next.thinkingLevel = old.thinkingLevel;
+    next.availableThinkingLevels = old.availableThinkingLevels;
     next.autoCompactionEnabled = old.autoCompactionEnabled;
     next.gitBranch = old.gitBranch;
     rest[newSessionId] = next;
@@ -579,6 +584,7 @@ async function fetchFullSessionData(sessionId: string): Promise<void> {
       const state = (stateRes.data as { state: SessionState }).state;
       session.model = state.model;
       session.thinkingLevel = state.thinkingLevel;
+      session.availableThinkingLevels = state.availableThinkingLevels ?? [];
       session.isStreaming = state.isStreaming;
       session.isCompacting = state.isCompacting;
       session.autoCompactionEnabled = state.autoCompactionEnabled;
