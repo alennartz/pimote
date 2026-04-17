@@ -26,7 +26,9 @@ The plan's Step 2 specifies constructing `JSONParser` with exactly `{ emitPartia
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/components/ToolCall.svelte:43-54, 75`
-- **Status:** open
+- **Status:** resolved
+
+**Resolution:** Stopped clearing `streamingMarkdown` in the cleanup branch (the value is harmless to retain and is reset implicitly when a new streamer starts), and changed `editMarkdown` to `isEdit ? (finalizedMarkdown || streamingMarkdown) : ''`. The finalized view takes over as soon as `content.args` is populated; the last streamed markdown covers any intervening tick, so the diff stays visible across the streaming→finalized handoff and the plan's byte-identical-handoff invariant is preserved.
 
 When `streaming` transitions to `false`, the cleanup branch calls `streamer.dispose()` and sets `streamingMarkdown = ''`. `editMarkdown` then falls back to `finalizedMarkdown`, which requires `content.args` to be populated. If the event that flips `streaming` off arrives in a tick before `content.args` is populated, `editMarkdown` is briefly `''`, the `{#if isEdit && editMarkdown}` branch is skipped, and the UI falls through to the raw `Arguments` `StreamingCollapsible`. Depending on how upstream events are ordered in practice this may be imperceptible, but it's a potential single-frame flicker at the handoff the plan explicitly wanted to avoid ("the rendered DOM doesn't visibly restructure at the handoff"). A safer pattern is to keep the last `streamingMarkdown` value around until `finalizedMarkdown` is non-empty, then clear.
 

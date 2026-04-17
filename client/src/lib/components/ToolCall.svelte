@@ -41,12 +41,15 @@
   $effect(() => {
     if (!isEdit) return;
     if (!streaming) {
-      // Cleanup when streaming transitions to false.
+      // Cleanup when streaming transitions to false. We deliberately keep
+      // `streamingMarkdown` around so the derived `editMarkdown` fallback
+      // can cover any tick between `streaming` flipping off and
+      // `content.args` being populated — otherwise the diff would briefly
+      // blank out and the UI would fall through to the raw Arguments view.
       if (streamer) {
         streamer.dispose();
         streamer = undefined;
         streamerWritten = 0;
-        streamingMarkdown = '';
       }
       return;
     }
@@ -73,7 +76,11 @@
   });
 
   let finalizedMarkdown = $derived(isEdit && content.args ? buildEditDiffMarkdown(content.args as EditArgs) : '');
-  let editMarkdown = $derived(isEdit ? (streaming && content.text ? streamingMarkdown : finalizedMarkdown) : '');
+  // Prefer the finalized view once args are available; fall back to the
+  // last streamed markdown otherwise. This keeps the diff visible across
+  // the streaming→finalized handoff even if `streaming` flips off one tick
+  // before `content.args` arrives.
+  let editMarkdown = $derived(isEdit ? finalizedMarkdown || streamingMarkdown : '');
 
   const PATH_SEGMENT_THRESHOLD = 80;
 
