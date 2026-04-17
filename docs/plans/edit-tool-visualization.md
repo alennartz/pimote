@@ -222,11 +222,14 @@ Construct the parser as:
 
 ```ts
 new JSONParser({
+  emitPartialTokens: true,
   emitPartialValues: true,
   paths: ['$.edits.*.oldText', '$.edits.*.newText'],
   keepStack: false,
 });
 ```
+
+Both `emitPartialTokens` and `emitPartialValues` are required: `emitPartialValues` alone only surfaces string values at parse events triggered by structural tokens (e.g. the closing `"`), so a growing `oldText`/`newText` string would not be visible mid-value. `emitPartialTokens: true` makes the parser emit in-progress string tokens as characters stream in, which is what drives the progressive `-`/`+` line reveal.
 
 In the `onValue` callback (`{ value, key, stack }`), determine:
 

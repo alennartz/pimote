@@ -15,9 +15,11 @@ The plan was implemented faithfully. Both the pure `buildEditDiffMarkdown` and s
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `client/src/lib/edit-diff.ts:117`
-- **Status:** open
+- **Status:** resolved
 
 The plan's Step 2 specifies constructing `JSONParser` with exactly `{ emitPartialValues: true, paths: [...], keepStack: false }`. The implementation additionally passes `emitPartialTokens: true`. This is harmless — the `onValue` handler only processes string values under the filtered paths, and tests confirm the streaming behavior works — but it's an unplanned addition. If `emitPartialValues` alone is sufficient (as the plan assumes), drop `emitPartialTokens`; if it was required to get tests green, the plan's parser-options list is inaccurate and should be updated.
+
+**Resolution:** Verified by removal — dropping `emitPartialTokens` fails the `reveals oldText - lines progressively as a partial string grows` test. The option is required for the streaming character-by-character reveal (without it, string values are only surfaced at structural tokens such as the closing `"`). Restored `emitPartialTokens: true` and updated the plan's Step 2 parser-options list to include it with a rationale.
 
 ### 2. Streaming cleanup briefly blanks the rendered diff before the finalized view appears
 
