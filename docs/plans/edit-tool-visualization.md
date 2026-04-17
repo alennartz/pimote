@@ -188,3 +188,107 @@ For non-edit tool calls (`toolName !== 'edit'`), the component's behavior is unc
 - Malformed JSON mid-stream is swallowed — `write()` does not throw.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Implement `buildEditDiffMarkdown`
+
+Fill in the stub in `client/src/lib/edit-diff.ts`. Make it a pure function that:
+
+- Returns `''` when `args.edits` is missing/undefined or an empty array (`!args.edits || args.edits.length === 0`).
+- For each entry in `args.edits`, produces a ` ```diff ` fenced block:
+  - Split `oldText` on `\n` and emit one `- <line>` line per piece; if `oldText === ''`, emit no `-` lines.
+  - Split `newText` on `\n` and emit one `+ <line>` line per piece; if `newText === ''`, emit no `+` lines.
+  - No markdown escaping — the raw line text goes verbatim after `- ` / `+ `.
+- Joins blocks with a single blank line between them. No trailing newline on the final block. No content is derived from `args.path`.
+
+Reference shapes (exact outputs from `edit-diff.test.ts` — use these to validate):
+
+- `{ edits: [{ oldText: 'hello', newText: 'world' }] }` → `` `\`\`\`diff\n- hello\n+ world\n\`\`\`` ``
+- `{ edits: [{ oldText: 'a', newText: 'b' }, { oldText: 'c', newText: 'd' }] }` → two blocks joined by `\n\n`.
+- `{ oldText: '', newText: 'added\nline' }` → `` `\`\`\`diff\n+ added\n+ line\n\`\`\`` ``.
+- `{ oldText: 'gone', newText: '' }` → `` `\`\`\`diff\n- gone\n\`\`\`` ``.
+
+**Verify:** `cd client && npx vitest run src/lib/edit-diff.test.ts` — all `buildEditDiffMarkdown` tests pass.
+**Status:** not started
+
+### Step 2: Implement `createEditDiffStreamer`
+
+Fill in the stub in `client/src/lib/edit-diff.ts`. Import `JSONParser` from `@streamparser/json` and build a stateful streamer that keeps a per-edit-index record of the latest partial `oldText` and `newText` strings, then re-renders the full markdown string from that record after every value event. Using the same renderer as Step 1 (extracted into a private helper that accepts `Array<{ oldText: string; newText: string }>` with defaults of `''`) guarantees byte-for-byte equality with `buildEditDiffMarkdown` once all values are final.
+
+Construct the parser as:
+
+```ts
+new JSONParser({
+  emitPartialValues: true,
+  paths: ['$.edits.*.oldText', '$.edits.*.newText'],
+  keepStack: false,
+});
+```
+
+In the `onValue` callback (`{ value, key, stack }`), determine:
+
+- The edit index from the stack entry whose key is numeric (the element inside `edits`).
+- Whether this is `oldText` or `newText` from the current `key`.
+- The partial/complete string from `value`.
+
+Maintain an internal sparse array of `{ oldText: string; newText: string }` objects (default `''`), update the appropriate field with the latest `value` (partial values overwrite previous partials for that same index+field — `@streamparser/json` emits growing prefixes), and re-compute `markdown` via the shared renderer.
+
+Error handling:
+
+- Wrap `parser.write(jsonDelta)` in `try/catch`; on throw, set an internal `errored` flag and make future `write` calls no-ops. Do not rethrow.
+- Also attach `parser.onError = () => { errored = true; }` so parser-internal errors are swallowed without escaping.
+
+`dispose()`:
+
+- Call `parser.end()` inside a `try/catch` and null out the parser reference. Guarded by a `disposed` flag so second and later calls are no-ops. Must not mutate `markdown`.
+
+Expose `markdown` as a getter over an internal string field so the property in the returned object reflects the latest rebuild without extra plumbing.
+
+**Verify:** `cd client && npx vitest run src/lib/edit-diff.test.ts` — all `createEditDiffStreamer` tests pass, including the chunk-by-chunk equivalence test and the malformed-JSON test.
+**Status:** not started
+
+### Step 3: Wire edit-specific rendering into `ToolCall.svelte`
+
+Edit `client/src/lib/components/ToolCall.svelte`:
+
+1. Add imports:
+   - `import TextBlock from './TextBlock.svelte';`
+   - `import { buildEditDiffMarkdown, createEditDiffStreamer, type EditArgs } from '$lib/edit-diff.js';`
+2. Add a derived boolean `isEdit = $derived(toolName === 'edit')`.
+3. Add streaming-diff state used only when `isEdit`:
+   - `let streamer: ReturnType<typeof createEditDiffStreamer> | undefined = $state();`
+   - `let streamerWritten = 0;` (plain local, not `$state` — tracks how many chars of `content.text` have been fed in).
+   - `let streamingMarkdown = $state('');`
+   - A `$effect` that, while `isEdit && streaming` and `content.text` is non-empty:
+     - Lazily creates `streamer` on first use.
+     - Feeds the suffix `content.text.slice(streamerWritten)` via `streamer.write(...)`, advances `streamerWritten`, and sets `streamingMarkdown = streamer.markdown`.
+     - Cleanup (effect return): when `streaming` transitions to false, call `streamer?.dispose()` and set `streamer = undefined`, `streamerWritten = 0`.
+4. Derive the finalized markdown when not streaming: `finalizedMarkdown = $derived(isEdit && content.args ? buildEditDiffMarkdown(content.args as EditArgs) : '')`.
+5. Derive the effective edit markdown to display: `editMarkdown = $derived(isEdit ? (streaming && content.text ? streamingMarkdown : finalizedMarkdown) : '')`.
+6. Render logic inside the existing `{#if expanded}` block:
+   - When `isEdit && editMarkdown`, replace the `Arguments` `StreamingCollapsible` with a `<TextBlock text={editMarkdown} streaming={streaming && !isCompleted} />` inside a `.tool-section` (no section label).
+   - Leave the `Result` section unchanged.
+   - When `!isEdit`, keep the existing Arguments/Result rendering exactly as today.
+
+Auto-expand/collapse (ThinkingBlock pattern):
+
+- Change `let expanded = $state(false)` to keep its initial `false` but add a `$effect` applied only when `isEdit`:
+
+  ```ts
+  $effect(() => {
+    if (!isEdit) return;
+    if (streaming || inProgress) {
+      expanded = true;
+    } else {
+      expanded = false;
+    }
+  });
+  ```
+
+- The manual click handler stays as-is; matching `ThinkingBlock`'s pattern, the user can toggle mid-stream and the next reactive tick reasserts, which is acceptable.
+
+Non-edit tool calls must be unaffected: none of the new state, effects, or branches run when `isEdit` is false. Verify by reading the diff — the existing `argsText`, `resultText`, and header logic remain untouched.
+
+**Verify:** `cd client && npx svelte-check --tsconfig ./tsconfig.json` passes. `cd client && npx vitest run` — all tests still pass. Manual smoke: load a finalized session containing an `edit` tool call and confirm it renders as a diff block; run a new edit and confirm the diff streams in while expanded, then the block collapses on completion. `read`/`write`/`bash` tool calls render identically to before.
+**Status:** not started
