@@ -2,8 +2,8 @@
   import type { PimoteMessageContent } from '@pimote/shared';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import StreamingCollapsible from './StreamingCollapsible.svelte';
-  import TextBlock from './TextBlock.svelte';
-  import { buildEditDiffMarkdown, createEditDiffStreamer, type EditArgs } from '$lib/edit-diff.js';
+  import EditDiffBlock from './EditDiffBlock.svelte';
+  import { createEditDiffStreamer, type EditArgs, type EditEntry } from '$lib/edit-diff.js';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import Wrench from '@lucide/svelte/icons/wrench';
   import CheckCircle from '@lucide/svelte/icons/check-circle-2';
@@ -36,13 +36,16 @@
   // Streaming-diff state used only when isEdit.
   let streamer: ReturnType<typeof createEditDiffStreamer> | undefined = $state();
   let streamerWritten = 0;
-  let streamingMarkdown = $state('');
+  // We snapshot to a plain array so Svelte reactivity triggers on each
+  // streamer update. The streamer's internal `entries` array is mutated
+  // in place and wouldn't otherwise notify downstream $derived reads.
+  let streamingEntries: EditEntry[] = $state([]);
 
   $effect(() => {
     if (!isEdit) return;
     if (!streaming) {
       // Cleanup when streaming transitions to false. We deliberately keep
-      // `streamingMarkdown` around so the derived `editMarkdown` fallback
+      // `streamingEntries` around so the derived `editEntries` fallback
       // can cover any tick between `streaming` flipping off and
       // `content.args` being populated — otherwise the diff would briefly
       // blank out and the UI would fall through to the raw Arguments view.
@@ -63,7 +66,8 @@
       streamer.write(text.slice(streamerWritten));
       streamerWritten = text.length;
     }
-    streamingMarkdown = streamer.markdown;
+    // Snapshot to a new array so Svelte sees a fresh reference.
+    streamingEntries = streamer.entries.map((e) => ({ oldText: e.oldText, newText: e.newText }));
   });
 
   $effect(() => {
@@ -75,12 +79,12 @@
     }
   });
 
-  let finalizedMarkdown = $derived(isEdit && content.args ? buildEditDiffMarkdown(content.args as EditArgs) : '');
+  let finalizedEntries = $derived<ReadonlyArray<EditEntry> | undefined>(isEdit && content.args ? ((content.args as EditArgs).edits ?? []) : undefined);
   // Prefer the finalized view once args are available; fall back to the
-  // last streamed markdown otherwise. This keeps the diff visible across
+  // last streamed entries otherwise. This keeps the diff visible across
   // the streaming→finalized handoff even if `streaming` flips off one tick
   // before `content.args` arrives.
-  let editMarkdown = $derived(isEdit ? finalizedMarkdown || streamingMarkdown : '');
+  let editEntries = $derived<ReadonlyArray<EditEntry>>(isEdit ? (finalizedEntries ?? streamingEntries) : []);
 
   const PATH_SEGMENT_THRESHOLD = 80;
 
@@ -156,9 +160,9 @@
 
   {#if expanded}
     <div class="tool-content">
-      {#if isEdit && editMarkdown}
+      {#if isEdit && editEntries.length > 0}
         <div class="tool-section">
-          <TextBlock text={editMarkdown} streaming={streaming && !isCompleted} />
+          <EditDiffBlock entries={editEntries} />
         </div>
       {:else if argsText}
         <div class="tool-section">

@@ -1,16 +1,24 @@
 import { JSONParser } from '@streamparser/json';
 
 /**
- * Edit tool diff rendering — turn `edit` tool call args into markdown diff
- * blocks for display in the client.
+ * Edit tool diff rendering helpers.
  *
- * The finalized path (`buildEditDiffMarkdown`) runs once args are complete.
- * The streaming path (`createEditDiffStreamer`) consumes raw JSON deltas as
- * they arrive over the wire and grows the same markdown incrementally.
+ * The display of edit tool calls bypasses the streaming-markdown pipeline
+ * entirely — it renders directly from structured entries via
+ * `EditDiffBlock.svelte`. This avoids the append-only contract imposed by
+ * smd and lets us color each `-`/`+` line the moment it arrives, rather
+ * than waiting for a closing fence.
  *
- * Both paths must produce byte-identical output once all deltas have been
- * consumed, so the rendered DOM does not re-layout when the component
- * transitions from streaming mode to parsed-args mode.
+ * Two producers of entries:
+ *
+ *   - Finalized path: `content.args.edits` is already an array of
+ *     `{ oldText, newText }`. Pass it straight to the component.
+ *   - Streaming path: `createEditDiffStreamer()` consumes raw JSON deltas
+ *     from `content.text` and exposes a live `entries` array that grows
+ *     character-by-character as values come in.
+ *
+ * `buildEditLines()` turns one entry into the per-line rendering shape
+ * used by the component; it's also the natural unit test surface.
  */
 
 export interface EditArgs {
@@ -18,95 +26,80 @@ export interface EditArgs {
   edits: Array<{ oldText: string; newText: string }>;
 }
 
-/**
- * Pure, synchronous. Used for finalized/restored edits.
- *
- * - Returns the empty string if `args.edits` is missing or empty.
- * - Emits one ` ```diff ` block per edit entry, in order.
- * - Each line of `oldText` becomes a `-` line; each line of `newText` becomes
- *   a `+` line. No line-level diff computation.
- * - Empty `oldText` or empty `newText` still produces at least one marker
- *   line for the non-empty side (append-only shows `+` lines with no `-`;
- *   pure deletion shows `-` lines with no `+`).
- * - Lines preserve their original text verbatim aside from the `- ` / `+ `
- *   prefix.
- * - The file path from `args.path` is NOT included in the markdown.
- */
-export function buildEditDiffMarkdown(args: EditArgs): string {
-  if (!args || !args.edits || args.edits.length === 0) return '';
-  return renderEditBlocks(args.edits);
+export interface EditEntry {
+  oldText: string;
+  newText: string;
+}
+
+/** Kind of diff line, maps 1:1 to highlight.js diff-language span classes. */
+export type EditLineKind = 'deletion' | 'addition';
+
+export interface EditLine {
+  kind: EditLineKind;
+  /** Full line text including the `- ` or `+ ` prefix. */
+  text: string;
 }
 
 /**
- * Shared renderer used by both the finalized and streaming paths. Accepts
- * a sparse-ish array of `{ oldText, newText }` with string defaults of ''.
+ * Turn one edit entry into an ordered list of diff lines.
+ *
+ * - Every line of `oldText` becomes a `deletion` line with a `- ` prefix.
+ * - Every line of `newText` becomes an `addition` line with a `+ ` prefix.
+ * - Empty `oldText`/`newText` contributes no lines on that side.
+ * - An entry with both sides empty produces an empty array.
+ *
+ * Splitting on `\n` means a trailing newline produces a trailing empty
+ * line (prefix only). This matches how the previous markdown renderer
+ * behaved and is what users see when they stream an oldText value like
+ * `"a\n"` mid-edit.
  */
-function renderEditBlocks(entries: ReadonlyArray<{ oldText?: string; newText?: string }>): string {
-  const blocks: string[] = [];
-  for (const entry of entries) {
-    const oldText = entry?.oldText ?? '';
-    const newText = entry?.newText ?? '';
-    const lines: string[] = ['```diff'];
-    if (oldText !== '') {
-      for (const line of oldText.split('\n')) lines.push(`- ${line}`);
-    }
-    if (newText !== '') {
-      for (const line of newText.split('\n')) lines.push(`+ ${line}`);
-    }
-    lines.push('```');
-    blocks.push(lines.join('\n'));
+export function buildEditLines(entry: EditEntry): EditLine[] {
+  const lines: EditLine[] = [];
+  if (entry.oldText !== '') {
+    for (const line of entry.oldText.split('\n')) lines.push({ kind: 'deletion', text: `- ${line}` });
   }
-  return blocks.join('\n\n');
+  if (entry.newText !== '') {
+    for (const line of entry.newText.split('\n')) lines.push({ kind: 'addition', text: `+ ${line}` });
+  }
+  return lines;
 }
 
 export interface EditDiffStreamer {
   /** Push the next chunk of raw JSON text received from the wire. */
   write(jsonDelta: string): void;
   /**
-   * The current diff markdown string, reflecting every partial + complete
-   * oldText/newText seen so far.
+   * Live view of parsed entries. The returned array is the same reference
+   * each time; callers that need reactivity should copy it or snapshot
+   * individual fields when updating Svelte state.
    */
-  readonly markdown: string;
+  readonly entries: ReadonlyArray<EditEntry>;
   /** Release parser resources. Safe to call multiple times. */
   dispose(): void;
 }
 
 /**
- * Create a stateful builder that consumes raw JSON deltas (as they arrive in
- * `content.text`) and produces a growing diff markdown string.
+ * Create a stateful builder that consumes raw JSON deltas (as they arrive
+ * in `content.text`) and exposes a growing `entries` array reflecting the
+ * latest partial and final `oldText` / `newText` values for each edit.
  *
  * Behavior:
  * - Internally constructs a `JSONParser` configured with
  *   `emitPartialValues: true` and
  *   `paths: ['$.edits.*.oldText', '$.edits.*.newText']`.
- * - Each `onValue` callback updates `markdown` so it reflects the latest
- *   partial value for the relevant edit index and field.
- * - A new `oldText` value for edit index N opens a new ` ```diff ` block
- *   (closing the previous one first with a blank line separator).
- * - A new `newText` value for edit index N appends `+` lines below the `-`
- *   lines of that same block.
- * - As a partial string grows (character by character), the corresponding
- *   `-`/`+` lines update in place within `markdown`. Newlines inside the
- *   partial value split into additional `-`/`+` lines.
- * - Empty buffer before any `oldText`/`newText` has been seen → `markdown`
- *   is the empty string.
- * - `dispose()` is idempotent and does not mutate `markdown`.
- *
- * Parser errors are swallowed: `markdown` simply stops advancing.
+ * - Each `onValue` callback overwrites the matching field on the entry
+ *   at the given index. New indexes extend the array in-place.
+ * - Parser errors are swallowed silently; `entries` simply stops
+ *   advancing past the failure point.
+ * - `dispose()` is idempotent and does not mutate `entries`.
  */
 export function createEditDiffStreamer(): EditDiffStreamer {
-  let markdown = '';
-  const entries: Array<{ oldText: string; newText: string }> = [];
+  const entries: EditEntry[] = [];
   let errored = false;
   let disposed = false;
 
-  const ensureEntry = (index: number) => {
+  const ensureEntry = (index: number): EditEntry => {
     while (entries.length <= index) entries.push({ oldText: '', newText: '' });
     return entries[index];
-  };
-
-  const rebuild = () => {
-    markdown = entries.length === 0 ? '' : renderEditBlocks(entries);
   };
 
   let parser: JSONParser | null = null;
@@ -126,7 +119,8 @@ export function createEditDiffStreamer(): EditDiffStreamer {
       try {
         const key = info.key;
         if (key !== 'oldText' && key !== 'newText') return;
-        // Find the edit index: the numeric key in the stack (element index in `edits` array).
+        // Find the edit index: the numeric key in the stack (element
+        // index in the outer `edits` array).
         let index: number | undefined;
         for (const frame of info.stack) {
           if (typeof frame.key === 'number') {
@@ -136,9 +130,7 @@ export function createEditDiffStreamer(): EditDiffStreamer {
         }
         if (index === undefined) return;
         const text = typeof info.value === 'string' ? info.value : '';
-        const entry = ensureEntry(index);
-        entry[key] = text;
-        rebuild();
+        ensureEntry(index)[key] = text;
       } catch {
         errored = true;
       }
@@ -149,8 +141,8 @@ export function createEditDiffStreamer(): EditDiffStreamer {
   }
 
   return {
-    get markdown() {
-      return markdown;
+    get entries() {
+      return entries;
     },
     write(jsonDelta: string) {
       if (errored || disposed || !parser) return;
