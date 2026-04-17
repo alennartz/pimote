@@ -145,3 +145,44 @@ For non-edit tool calls (`toolName !== 'edit'`), the component's behavior is unc
 - **`partial-json`** (by promplate) — purpose-built for LLM partial output, simpler API. Rejected because it reparses the entire accumulated buffer on every delta and requires diffing successive parse results to detect incremental changes. `@streamparser/json` is push-based, does the diffing implicitly via its `onValue` callbacks, and filters by path so we don't wade through the whole object on each chunk.
 - **Hand-rolled incremental JSON string extraction** (regex / manual state machine over the raw JSON text to pull out `oldText`/`newText` values as they complete). Rejected as fragile — escape handling (`\"`, `\\`, `\uXXXX`, newlines in string values) is easy to get wrong in ways that silently corrupt output. A purpose-built streaming parser gets these right for free.
 - **Server-side transform** (generate diff markdown on the server and stream that over the wire instead of raw JSON). Rejected because the server receives the same token-by-token JSON stream from the pi SDK — the incremental parsing problem is identical there, just relocated. Keeping the transform client-side avoids changing the wire protocol and localizes the whole feature to one component.
+
+## Tests
+
+**Pre-test-write commit:** `d088fd7ea1e18177769167ed078cc360096a172c`
+
+### Interface Files
+
+- `client/src/lib/edit-diff.ts` — defines `EditArgs` type, `buildEditDiffMarkdown(args)` pure function (stub), and `createEditDiffStreamer()` factory returning an `EditDiffStreamer` (stub). No implementation yet — both stubs throw `"not implemented"`.
+- `client/package.json` / `client/package-lock.json` — added `@streamparser/json` dependency (consumed by the forthcoming streamer implementation; not yet imported).
+
+### Test Files
+
+- `client/src/lib/edit-diff.test.ts` — behavioral tests for `buildEditDiffMarkdown` and `createEditDiffStreamer`.
+
+### Behaviors Covered
+
+#### `buildEditDiffMarkdown`
+
+- Returns an empty string when `edits` is an empty array.
+- Returns an empty string when `edits` is missing entirely.
+- A single edit renders as a single ` ```diff ` fenced block.
+- Multi-line `oldText` / `newText` produce one `-` / `+` line per source line.
+- Line contents are preserved verbatim — no markdown escaping is performed.
+- The file path from `args.path` is not emitted into the markdown.
+- An append-only edit (empty `oldText`) emits only `+` lines.
+- A pure deletion (empty `newText`) emits only `-` lines.
+- Multiple edits are separated by a blank line between diff blocks.
+- Edits appear in the order given in `args.edits[]`.
+
+#### `createEditDiffStreamer`
+
+- Fresh streamer starts with `markdown === ''`.
+- Markdown stays empty while only structural JSON (no observed string values) has been fed.
+- After writing the full JSON of some `args`, the streamer's `markdown` equals `buildEditDiffMarkdown(args)` exactly — the streaming and finalized renderings match byte-for-byte.
+- The same final markdown is produced regardless of chunk boundaries, including character-by-character delivery.
+- During streaming, partial `oldText` values are visible as in-progress `-` lines before the value completes.
+- A partial value containing newlines is split into multiple `-` / `+` lines as the newlines arrive.
+- Encountering a new edit index opens a new ` ```diff ` fenced block.
+- `+` lines for an edit appear after the `-` lines of the same edit's block.
+- `dispose()` is idempotent and does not mutate `markdown`.
+- Malformed JSON mid-stream is swallowed — `write()` does not throw.
