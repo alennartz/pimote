@@ -27,7 +27,7 @@
   {/if}
   {@const lines = buildEditLines(entry)}
   <pre class="edit-diff"><code class="hljs language-diff"
-      >{#each lines as line, j (j)}<span class={`hljs-${line.kind}`}>{line.text}</span>{#if j < lines.length - 1}{/if}{/each}</code
+      >{#each lines as line, j (j)}<span class={`hljs-${line.kind}`}>{line.text}</span>{j < lines.length - 1 ? '\n' : ''}{/each}</code
     ></pre>
 {/each}
 
