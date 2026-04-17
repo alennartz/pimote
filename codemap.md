@@ -115,7 +115,9 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/components/TtsButton.svelte` — per-message text-to-speech play/stop button
 - `client/src/lib/components/TextBlock.svelte` — streaming markdown rendering via smd
 - `client/src/lib/components/ThinkingBlock.svelte` — collapsible thinking block
-- `client/src/lib/components/ToolCall.svelte` — tool call display with streaming args/results
+- `client/src/lib/components/ToolCall.svelte` — tool call display with streaming args/results; `edit` tool calls render as per-edit fenced ```diff blocks via `TextBlock`(built from`edit-diff.ts` helpers) and auto-expand while streaming / auto-collapse on completion (ThinkingBlock pattern)
+- `client/src/lib/edit-diff.ts` — `edit`-tool visualization helpers: pure `buildEditDiffMarkdown(args)` that converts finalized edit args to fenced ```diff markdown, and `createEditDiffStreamer()`that consumes raw JSON deltas via`@streamparser/json`and exposes a progressively-rebuilt`markdown` string byte-identical to the finalized output
+- `client/src/lib/edit-diff.test.ts` — tests
 - `client/src/lib/components/StreamingCollapsible.svelte` — reusable collapsible pre block with show-more/less
 - `client/src/lib/components/StreamingIndicator.svelte` — animated working dots
 - `client/src/lib/components/InputBar.svelte` — prompt input with slash command integration, `/tree` response detection, optimistic-user-message skip for tree prompts, tree dialog opening

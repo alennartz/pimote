@@ -644,6 +644,7 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[P]** Agent invokes a tool (e.g., `bash`, `read`, `edit`)
 - **[E]** `tool_execution_start` event renders a ToolCall component
 - **[E]** Shows: tool name, input args (collapsible JSON)
+- **[E]** Exception: for `edit` tool calls, args render as a rendered markdown `diff` block (unified diff of each `edits[]` entry) instead of raw JSON — see TC-08.08
 
 ### TC-08.02 — Tool call streaming output 🟠
 
@@ -666,7 +667,7 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 ### TC-08.05 — Tool call args and result collapsibility 🟡
 
 - **[S]** Click on tool call args section
-- **[E]** Toggles expanded/collapsed view of JSON arguments
+- **[E]** Toggles expanded/collapsed view of JSON arguments (or the rendered diff, for `edit` tool calls)
 - **[S]** Same for result section
 
 ### TC-08.06 — Tool call appears in streaming content blocks 🟠
@@ -684,6 +685,17 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[E]** Content renders up to the line cutoff, then shows a "show more" control
 - **[S]** Click "show more"
 - **[E]** Content expands to a scrollable view with auto-scroll as new content arrives
+
+### TC-08.08 — `edit` tool call renders as streaming diff 🟠
+
+- **[P]** Agent invokes the `edit` tool with a `path` and one or more `edits[]` entries (`oldText` → `newText`)
+- **[S]** Observe the ToolCall component while args stream in
+- **[E]** The args area renders a markdown `diff` code block (unified diff per edit entry with `-`/`+` lines), not raw JSON
+- **[E]** The diff block auto-expands while the tool call is streaming (ThinkingBlock pattern) so the user can watch it fill in
+- **[S]** Wait for `tool_execution_end`
+- **[E]** On completion, the diff block auto-collapses; clicking re-expands it
+- **[E]** Partially-streamed `oldText`/`newText` render progressively without breaking the diff formatting
+- **[E]** Other tool calls (`bash`, `read`, …) are unaffected and still show collapsible JSON args
 
 ---
 
