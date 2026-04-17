@@ -1,6 +1,6 @@
 {
   "name": "@pimote/pimote",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Web client and embedded server for pi with multi-session browser access, streaming, and extension UI support",
   "type": "module",
   "license": "MIT",
