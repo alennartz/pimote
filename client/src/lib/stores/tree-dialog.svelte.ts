@@ -23,10 +23,14 @@ function nodeMatches(node: PimoteTreeNode, mode: TreeFilterMode, query: string):
     case 'labeled-only':
       if (!node.label) return false;
       break;
-    case 'default':
-      // Default shows user messages, labeled nodes, and branching points (nodes with >1 child)
-      if (node.role !== 'user' && !node.label && node.children.length <= 1) return false;
+    case 'default': {
+      // Match the pi TUI: default mode hides settings/bookkeeping entries
+      // (labels, custom entries, model/thinking-level changes, session
+      // info) and keeps everything else — including assistant messages.
+      const settingsTypes = new Set(['label', 'custom', 'model_change', 'thinking_level_change', 'session_info']);
+      if (settingsTypes.has(node.type)) return false;
       break;
+    }
     case 'all':
       break;
   }
