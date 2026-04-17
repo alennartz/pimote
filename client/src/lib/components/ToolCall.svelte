@@ -2,6 +2,8 @@
   import type { PimoteMessageContent } from '@pimote/shared';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import StreamingCollapsible from './StreamingCollapsible.svelte';
+  import TextBlock from './TextBlock.svelte';
+  import { buildEditDiffMarkdown, createEditDiffStreamer, type EditArgs } from '$lib/edit-diff.js';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import Wrench from '@lucide/svelte/icons/wrench';
   import CheckCircle from '@lucide/svelte/icons/check-circle-2';
@@ -29,6 +31,49 @@
   let toolName = $derived(content.toolName ?? 'unknown');
   let isResult = $derived(content.type === 'tool_result');
   let isCompleted = $derived(isResult || result !== undefined);
+  let isEdit = $derived(toolName === 'edit');
+
+  // Streaming-diff state used only when isEdit.
+  let streamer: ReturnType<typeof createEditDiffStreamer> | undefined = $state();
+  let streamerWritten = 0;
+  let streamingMarkdown = $state('');
+
+  $effect(() => {
+    if (!isEdit) return;
+    if (!streaming) {
+      // Cleanup when streaming transitions to false.
+      if (streamer) {
+        streamer.dispose();
+        streamer = undefined;
+        streamerWritten = 0;
+        streamingMarkdown = '';
+      }
+      return;
+    }
+    const text = content.text ?? '';
+    if (!text) return;
+    if (!streamer) {
+      streamer = createEditDiffStreamer();
+      streamerWritten = 0;
+    }
+    if (text.length > streamerWritten) {
+      streamer.write(text.slice(streamerWritten));
+      streamerWritten = text.length;
+    }
+    streamingMarkdown = streamer.markdown;
+  });
+
+  $effect(() => {
+    if (!isEdit) return;
+    if (streaming || inProgress) {
+      expanded = true;
+    } else {
+      expanded = false;
+    }
+  });
+
+  let finalizedMarkdown = $derived(isEdit && content.args ? buildEditDiffMarkdown(content.args as EditArgs) : '');
+  let editMarkdown = $derived(isEdit ? (streaming && content.text ? streamingMarkdown : finalizedMarkdown) : '');
 
   const PATH_SEGMENT_THRESHOLD = 80;
 
@@ -104,7 +149,11 @@
 
   {#if expanded}
     <div class="tool-content">
-      {#if argsText}
+      {#if isEdit && editMarkdown}
+        <div class="tool-section">
+          <TextBlock text={editMarkdown} streaming={streaming && !isCompleted} />
+        </div>
+      {:else if argsText}
         <div class="tool-section">
           <div class="tool-section-label">Arguments</div>
           <StreamingCollapsible text={argsText} streaming={streaming && !isCompleted} />

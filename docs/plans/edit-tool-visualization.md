@@ -293,4 +293,4 @@ Auto-expand/collapse (ThinkingBlock pattern):
 Non-edit tool calls must be unaffected: none of the new state, effects, or branches run when `isEdit` is false. Verify by reading the diff — the existing `argsText`, `resultText`, and header logic remain untouched.
 
 **Verify:** `cd client && npx svelte-check --tsconfig ./tsconfig.json` passes. `cd client && npx vitest run` — all tests still pass. Manual smoke: load a finalized session containing an `edit` tool call and confirm it renders as a diff block; run a new edit and confirm the diff streams in while expanded, then the block collapses on completion. `read`/`write`/`bash` tool calls render identically to before.
-**Status:** not started
+**Status:** done
