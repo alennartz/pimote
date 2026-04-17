@@ -186,3 +186,5 @@ For non-edit tool calls (`toolName !== 'edit'`), the component's behavior is unc
 - `+` lines for an edit appear after the `-` lines of the same edit's block.
 - `dispose()` is idempotent and does not mutate `markdown`.
 - Malformed JSON mid-stream is swallowed — `write()` does not throw.
+
+**Review status:** approved
