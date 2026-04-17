@@ -1,3 +1,5 @@
+import { JSONParser } from '@streamparser/json';
+
 /**
  * Edit tool diff rendering — turn `edit` tool call args into markdown diff
  * blocks for display in the client.
@@ -30,8 +32,31 @@ export interface EditArgs {
  *   prefix.
  * - The file path from `args.path` is NOT included in the markdown.
  */
-export function buildEditDiffMarkdown(_args: EditArgs): string {
-  throw new Error('not implemented');
+export function buildEditDiffMarkdown(args: EditArgs): string {
+  if (!args || !args.edits || args.edits.length === 0) return '';
+  return renderEditBlocks(args.edits);
+}
+
+/**
+ * Shared renderer used by both the finalized and streaming paths. Accepts
+ * a sparse-ish array of `{ oldText, newText }` with string defaults of ''.
+ */
+function renderEditBlocks(entries: ReadonlyArray<{ oldText?: string; newText?: string }>): string {
+  const blocks: string[] = [];
+  for (const entry of entries) {
+    const oldText = entry?.oldText ?? '';
+    const newText = entry?.newText ?? '';
+    const lines: string[] = ['```diff'];
+    if (oldText !== '') {
+      for (const line of oldText.split('\n')) lines.push(`- ${line}`);
+    }
+    if (newText !== '') {
+      for (const line of newText.split('\n')) lines.push(`+ ${line}`);
+    }
+    lines.push('```');
+    blocks.push(lines.join('\n'));
+  }
+  return blocks.join('\n\n');
 }
 
 export interface EditDiffStreamer {
@@ -70,5 +95,80 @@ export interface EditDiffStreamer {
  * Parser errors are swallowed: `markdown` simply stops advancing.
  */
 export function createEditDiffStreamer(): EditDiffStreamer {
-  throw new Error('not implemented');
+  let markdown = '';
+  const entries: Array<{ oldText: string; newText: string }> = [];
+  let errored = false;
+  let disposed = false;
+
+  const ensureEntry = (index: number) => {
+    while (entries.length <= index) entries.push({ oldText: '', newText: '' });
+    return entries[index];
+  };
+
+  const rebuild = () => {
+    markdown = entries.length === 0 ? '' : renderEditBlocks(entries);
+  };
+
+  let parser: JSONParser | null = null;
+  try {
+    parser = new JSONParser({
+      emitPartialTokens: true,
+      emitPartialValues: true,
+      paths: ['$.edits.*.oldText', '$.edits.*.newText'],
+      keepStack: false,
+    });
+  } catch {
+    errored = true;
+  }
+
+  if (parser) {
+    parser.onValue = (info) => {
+      try {
+        const key = info.key;
+        if (key !== 'oldText' && key !== 'newText') return;
+        // Find the edit index: the numeric key in the stack (element index in `edits` array).
+        let index: number | undefined;
+        for (const frame of info.stack) {
+          if (typeof frame.key === 'number') {
+            index = frame.key;
+            break;
+          }
+        }
+        if (index === undefined) return;
+        const text = typeof info.value === 'string' ? info.value : '';
+        const entry = ensureEntry(index);
+        entry[key] = text;
+        rebuild();
+      } catch {
+        errored = true;
+      }
+    };
+    parser.onError = () => {
+      errored = true;
+    };
+  }
+
+  return {
+    get markdown() {
+      return markdown;
+    },
+    write(jsonDelta: string) {
+      if (errored || disposed || !parser) return;
+      try {
+        parser.write(jsonDelta);
+      } catch {
+        errored = true;
+      }
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      try {
+        parser?.end();
+      } catch {
+        // ignore
+      }
+      parser = null;
+    },
+  };
 }

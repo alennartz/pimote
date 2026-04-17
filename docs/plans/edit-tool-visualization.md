@@ -191,6 +191,8 @@ For non-edit tool calls (`toolName !== 'edit'`), the component's behavior is unc
 
 ## Steps
 
+**Pre-implementation commit:** `28a6a08be147c145318a5fbd27826f17f1efacf6`
+
 ### Step 1: Implement `buildEditDiffMarkdown`
 
 Fill in the stub in `client/src/lib/edit-diff.ts`. Make it a pure function that:
@@ -210,7 +212,7 @@ Reference shapes (exact outputs from `edit-diff.test.ts` — use these to valida
 - `{ oldText: 'gone', newText: '' }` → `` `\`\`\`diff\n- gone\n\`\`\`` ``.
 
 **Verify:** `cd client && npx vitest run src/lib/edit-diff.test.ts` — all `buildEditDiffMarkdown` tests pass.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement `createEditDiffStreamer`
 
@@ -246,7 +248,7 @@ Error handling:
 Expose `markdown` as a getter over an internal string field so the property in the returned object reflects the latest rebuild without extra plumbing.
 
 **Verify:** `cd client && npx vitest run src/lib/edit-diff.test.ts` — all `createEditDiffStreamer` tests pass, including the chunk-by-chunk equivalence test and the malformed-JSON test.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Wire edit-specific rendering into `ToolCall.svelte`
 
