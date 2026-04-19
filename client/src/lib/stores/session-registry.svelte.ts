@@ -201,6 +201,12 @@ export class SessionRegistry {
         const endEvent = event as AgentEndEvent;
         session.status = 'idle';
         session.isStreaming = false;
+        // Clear any in-flight streaming message. The SDK does not emit message_end
+        // for a partial message when a run ends abnormally (e.g. user abort during a
+        // thinking block), so without this the streaming placeholder would linger
+        // indefinitely and the UI would continue to look "streaming".
+        session.streamingMessage = null;
+        session.streamingKey = null;
         if (sessionId !== this.viewedSessionId) {
           session.needsAttention = true;
         }

@@ -199,6 +199,37 @@ describe('SessionRegistry', () => {
       expect(session.isStreaming).toBe(false);
     });
 
+    it('agent_end clears an in-flight streamingMessage (e.g. abort during thinking)', () => {
+      // Scenario: user aborts during a streaming thinking block. The SDK does not
+      // emit message_end for the partial message — only agent_end. Without the
+      // defensive clear, streamingMessage would linger and the UI would keep
+      // treating the session as "streaming".
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('agent_start', 's1'));
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          contentIndex: 0,
+          subtype: 'start',
+          content: { type: 'thinking', text: '' },
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          contentIndex: 0,
+          subtype: 'delta',
+          content: { type: 'thinking', text: 'hmm…' },
+        }),
+      );
+      expect(registry.sessions['s1'].streamingMessage).not.toBeNull();
+
+      registry.handleEvent(makeSessionEvent('agent_end', 's1'));
+      const session = registry.sessions['s1'];
+      expect(session.isStreaming).toBe(false);
+      expect(session.streamingMessage).toBeNull();
+      expect(session.streamingKey).toBeNull();
+    });
+
     it('events for unknown sessionId are ignored (no error)', () => {
       expect(() => registry.handleEvent(makeSessionEvent('agent_start', 'unknown'))).not.toThrow();
     });
