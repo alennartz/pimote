@@ -30,7 +30,8 @@ Everything else from the brainstorm stands: interpreter-as-primary with `my-pi` 
   - Interpreter `INTERPRETER_PROMPT` (adapted from voxcoder, multimodal placeholders removed — PWA v1 is voice-only; text channel is the PWA rendering the scrollback separately, not a direct text input to the interpreter).
   - The `speak(text)` pi custom tool.
   - The `before_agent_start` hook that injects the interpreter prompt when active.
-  - The `before_provider_request` hook that truncates the last assistant message to the current `heard_text` watermark when active.
+  - The `context` hook that rewrites the assistant-history tail on the next LLM call, based on the current `heard_text` watermark and captured in-flight streaming content, when active.
+  - A `message_update` subscriber that captures the current streaming assistant message's content blocks continuously, so on abort the extension retains the pre-abort content (pi does not persist it).
   - The `tool_call` hook that streams `speak(...)` invocations to speechmux as `{type:"token", text}` frames and emits `{type:"end"}` on turn end.
   - The speechmux WS client (talks speechmux's `LlmBackend` WS protocol as the harness — see [`speechmux/docs/llm-ws-protocol.md`](../../../speechmux/docs/llm-ws-protocol.md)).
   - Activation state machine (dormant / active) driven by EventBus messages from the orchestrator.
@@ -147,19 +148,62 @@ Runtime state machine (internal to the extension instance):
 Hook behaviour while `active`:
 
 - `before_agent_start` — sets `event.systemPrompt = INTERPRETER_PROMPT + appendedUserSystemPrompt`. Sets session model to `defaultInterpreterModel` on first activation per session (persists via `session.setModel`).
-- `before_provider_request` — if a walk-back watermark is set (see speechmux frame handling below), rewrites the _last assistant message_ in the outgoing payload to `heard_text`. Clears the watermark after applying.
+- `context` — if a walk-back watermark is set (see speechmux frame handling below), rewrites the tail of `event.messages` so the LLM sees only what the user actually heard. Removes the trailing synthetic empty-text aborted assistant pi appends on abort, then inserts a reconstructed assistant message built from the captured streaming content and the `heard_text` watermark. Full contract below. Clears the watermark after applying.
 - `tool_call` for `speak` — intercepts the tool call, streams `{type:"token", text}` frames to speechmux, returns a trivial success result so the agent loop advances. Emits `{type:"end"}` when the assistant turn's tool-call batch completes (via `turn_end` or equivalent event).
 - Free-text (non-tool) assistant output — explicitly discarded from the audio channel. Scrollback still records it. No audio emission.
 
 Speechmux frame handling (the extension is the harness consumer of speechmux's `LlmBackend` WS protocol):
 
 - Incoming `{type:"user", text}` — calls `session.sendUserMessage(text)` (or `steer` / `followUp` if streaming per the `streamingBehavior` semantics).
-- Incoming `{type:"abort"}` — calls `session.abort()`. Sets walk-back watermark to `""` (effectively: truncate last assistant message to empty on next LLM call). Also appends a hidden marker via `appendCustomMessageEntry("pimote:voice:interrupt", { heard_text: "", kind: "abort" }, false)`.
-- Incoming `{type:"rollback", heard_text}` — calls `session.abort()`. Sets walk-back watermark to `heard_text`. Appends `appendCustomMessageEntry("pimote:voice:interrupt", { heard_text, kind: "rollback" }, false)`.
+- Incoming `{type:"abort"}` — stashes the current captured streaming snapshot, calls `session.abort()`, sets walk-back watermark to `""`. Appends `appendCustomMessageEntry("pimote:voice:interrupt", { heard_text: "", kind: "abort" }, false)` so the persisted log records that an interrupt occurred (even though pi itself leaves no assistant entry for the aborted turn — see pi abort semantics below).
+- Incoming `{type:"rollback", heard_text}` — same as abort, but watermark = `heard_text`. Appends `appendCustomMessageEntry("pimote:voice:interrupt", { heard_text, kind: "rollback" }, false)`.
 
-Note on the `aborted` flag: pi's `session.abort()` automatically sets `aborted: true` on the in-flight assistant message. The extension does not set this explicitly; it's a pi-level side-effect of calling `abort()`, listed here so readers tracing the brainstorm's named primitives (`abort` + `aborted:true`) see where that flag comes from.
+#### Pi abort semantics (pinned by plan, verified in `pi-agent-core` source)
 
-**Walk-back scope in v1.** The `before_provider_request` strategy rewrites _only the last assistant message_ in the outgoing payload. This handles the overwhelming-common case where speechmux emits `rollback{heard_text}` while the interpreter is mid-speaking — i.e. the barged-in text is still the latest assistant entry. **Cross-entry walk-backs** (user interrupts after an entry boundary, e.g. after a tool call and a subsequent new assistant message) are **out of scope for v1**. When we do add cross-entry walk-back later, the correct primitive is `branch(fromId)` — which moves the leaf pointer without recording anything about the abandoned path — _not_ `branchWithSummary`. Summarizing the unheard continuation would reinject it into LLM context, defeating the point of walk-back. Adding `branch()` handling in the extension is an additive change that doesn't disturb the v1 seam.
+These facts constrain the walk-back contract and were confirmed by reading pi-agent-core's `agent.js` and pi-coding-agent's `agent-session.js`:
+
+1. Mid-stream `session.abort()` causes pi-agent-core to **discard** `agent.state.streamingMessage`. `message_end` never fires for the interrupted stream, so `sessionManager.appendMessage` is **not** called — the session JSONL file has **no entry** for the interrupted turn.
+2. Pi-agent-core's `handleRunFailure` pushes a synthetic assistant message with `content: [{type:"text", text:""}]` and `stopReason:"aborted"` into `agent.state.messages` (in-memory only, not persisted).
+3. The next LLM call's `context` hook receives `messages: AgentMessage[]` ending with that synthetic empty-text aborted message.
+4. The `aborted: true` side-effect the brainstorm names is just `stopReason:"aborted"` on that synthetic message. The extension does nothing extra for it.
+
+Because of (1), the voice extension **must capture streaming content itself** via a `message_update` subscriber. Pi does not hand the partial message back after abort.
+
+#### Walk-back surgery contract
+
+Given:
+
+- `heardText: string` — watermark from the last `rollback`/`abort` speechmux frame.
+- `captured: AgentMessage | null` — snapshot of the streaming assistant message's content blocks at abort time, accumulated by the extension's `message_update` subscriber.
+- `context.messages: AgentMessage[]` — messages for the next LLM call, ending with pi's synthetic empty-text aborted assistant.
+
+The `context` hook returns a new `messages` array as follows:
+
+1. Remove the trailing synthetic empty-text aborted assistant (any `assistant` message where `stopReason === "aborted"` and the content is effectively empty).
+2. If `heardText === ""` and `captured` has no user-heard content, append nothing — the aborted turn produced no audible output, so history omits it.
+3. Otherwise, walk `captured.content` in order, accumulating `spoken` = concatenation of prior-kept `speak` tool_use `text` arguments:
+   - **Non-`speak` block** (free text, other tool_use, thinking, etc.): if `spoken.length < heardText.length`, keep (part of model's process before cutoff); else drop (produced after cutoff).
+   - **`speak` tool_use block**: let `arg = block.input.text`.
+     - If `spoken + arg` is a prefix of `heardText`, keep whole; advance `spoken += arg`.
+     - Else if `spoken.length < heardText.length`, truncate to `heardText.slice(spoken.length)` and stop.
+     - Else drop.
+   - For any `speak` tool_use that is dropped or truncated, the paired `tool_result` block (if present) is also dropped.
+4. Append the reconstructed assistant message (retain `stopReason: "aborted"`).
+5. Clear the watermark and captured snapshot.
+
+**Idempotency.** If the hook runs without a new rollback having occurred (`watermark` is null), step 1 alone applies — drop any empty-text aborted assistants pi keeps appending to state on repeated interrupts. Steps 2–4 are skipped.
+
+**Scope.** Only the most recent interrupted turn is reconstructed. Multiple interrupts without intervening completed turns collapse: earlier `speak` content is lost from LLM context, but persisted `pimote:voice:interrupt` markers preserve the fact that interrupts occurred.
+
+#### Persisted scrollback fidelity (brainstorm correction)
+
+The brainstorm said _"the PWA scrollback will show the full streamed assistant text — including text the user never heard."_ Given pi's abort semantics above, this is **not true**: pi persists no assistant entry for interrupted turns. The PWA sees live `message_update` events up to the abort, but after refresh / resync the JSONL file has nothing for the turn.
+
+For v1 we accept this: **interrupted turns leave no assistant entry in the persisted scrollback.** The `pimote:voice:interrupt` custom-message entry is a marker that _something_ was said and cut off. If we later want "record of what was attempted" in the scrollback, the extension can be extended to `appendMessage(reconstructed)` on abort — additive, doesn't touch the v1 seam.
+
+#### Cross-entry walk-back (out of scope for v1)
+
+If the user barges in after the interpreter has completed a turn and started a new one, so the heard-cutoff lies across an entry boundary, v1 doesn't handle it — only the latest assistant turn is reconstructed. When we do add cross-entry walk-back, the correct primitive is `branch(fromId)` (moves the leaf pointer, records nothing) — **not** `branchWithSummary`, which would reinject the unheard continuation. Additive change; doesn't touch the v1 seam.
 
 When the worker spawns via `my-pi` `subagent`, the interpreter's prompt instructs it to pass `model: defaultWorkerModel`. The extension does not intercept subagent spawning itself; it only configures the interpreter side.
 
