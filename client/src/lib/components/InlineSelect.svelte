@@ -20,6 +20,7 @@
 
   const uiQueue = getExtensionUiQueue();
   let highlightIndex = $state(-1);
+  let collapsed = $state(false);
   let panelEl: HTMLDivElement | undefined = $state();
 
   // Filter to only show dialogs for the currently viewed session
@@ -28,10 +29,11 @@
     return uiQueue.all.find((r) => INLINE_METHODS.has(r.method) && r.sessionId === viewedId) ?? null;
   });
 
-  // Reset highlight when a new request appears
+  // Reset highlight + expand when a new request appears
   $effect(() => {
     if (current) {
       highlightIndex = -1;
+      collapsed = false;
     }
   });
 
@@ -41,6 +43,13 @@
       panelEl.focus();
     }
   });
+
+  function toggleCollapsed(event: MouseEvent) {
+    event.stopPropagation();
+    collapsed = !collapsed;
+    // Keep focus on panel so keyboard shortcuts still work.
+    queueMicrotask(() => panelEl?.focus());
+  }
 
   function sendResponse(data: { value?: string; confirmed?: boolean; cancelled?: boolean }) {
     if (!current) return;
@@ -115,58 +124,75 @@
       const value = typeof o === 'string' ? o : (o.value ?? o.label ?? String(o));
       return { value, parsed: parseOption(str) };
     })}
-    <div class="inline-select-panel" tabindex="0" role="listbox" bind:this={panelEl} onkeydown={(e) => handleKeydown(e, normalizedOptions)}>
+    <div class="inline-select-panel" class:collapsed tabindex="0" role="listbox" bind:this={panelEl} onkeydown={(e) => handleKeydown(e, normalizedOptions)}>
       <div class="panel-header">
-        <span class="panel-title">{current.title ?? 'Select'}</span>
-        <button class="panel-cancel" onclick={handleCancel}>Esc to cancel</button>
-      </div>
-      {#if current.message}
-        <div class="panel-description">{current.message}</div>
-      {/if}
-      <div class="panel-options">
-        {#each normalizedOptions as option, i (option.value)}
-          {@const p = option.parsed}
-          <button class="select-option" class:highlighted={i === highlightIndex} onclick={() => handleSelect(option.value)} onmouseenter={() => (highlightIndex = i)}>
-            <span class="option-number">{i + 1}</span>
-            <span class="option-body">
-              <span class="option-label">{p.label}</span>
-              {#if p.description}
-                <span class="option-desc">{p.description}</span>
-              {/if}
-            </span>
+        <span class="panel-title">
+          {current.title ?? 'Select'}
+          {#if collapsed}<span class="panel-title-meta">· {normalizedOptions.length} option{normalizedOptions.length === 1 ? '' : 's'}</span>{/if}
+        </span>
+        <div class="panel-header-actions">
+          <button class="panel-collapse" aria-label={collapsed ? 'Expand' : 'Collapse'} aria-expanded={!collapsed} onclick={toggleCollapsed}>
+            {collapsed ? '▾' : '▴'}
           </button>
-        {/each}
+          <button class="panel-cancel" onclick={handleCancel}>Esc to cancel</button>
+        </div>
       </div>
-      <div class="panel-hint">
-        <span><kbd>1</kbd>–<kbd>{normalizedOptions.length}</kbd> select</span>
-        <span class="hint-sep">·</span>
-        <span><kbd>↑↓</kbd> navigate</span>
-        <span class="hint-sep">·</span>
-        <span><kbd>Enter</kbd> confirm</span>
-        <span class="hint-sep">·</span>
-        <span><kbd>Esc</kbd> cancel</span>
-      </div>
+      {#if !collapsed}
+        {#if current.message}
+          <div class="panel-description">{current.message}</div>
+        {/if}
+        <div class="panel-options">
+          {#each normalizedOptions as option, i (option.value)}
+            {@const p = option.parsed}
+            <button class="select-option" class:highlighted={i === highlightIndex} onclick={() => handleSelect(option.value)} onmouseenter={() => (highlightIndex = i)}>
+              <span class="option-number">{i + 1}</span>
+              <span class="option-body">
+                <span class="option-label">{p.label}</span>
+                {#if p.description}
+                  <span class="option-desc">{p.description}</span>
+                {/if}
+              </span>
+            </button>
+          {/each}
+        </div>
+        <div class="panel-hint">
+          <span><kbd>1</kbd>–<kbd>{normalizedOptions.length}</kbd> select</span>
+          <span class="hint-sep">·</span>
+          <span><kbd>↑↓</kbd> navigate</span>
+          <span class="hint-sep">·</span>
+          <span><kbd>Enter</kbd> confirm</span>
+          <span class="hint-sep">·</span>
+          <span><kbd>Esc</kbd> cancel</span>
+        </div>
+      {/if}
     </div>
   {:else if current.method === 'confirm'}
-    <div class="inline-select-panel" tabindex="0" role="dialog" bind:this={panelEl} onkeydown={(e) => handleKeydown(e, [])}>
+    <div class="inline-select-panel" class:collapsed tabindex="0" role="dialog" bind:this={panelEl} onkeydown={(e) => handleKeydown(e, [])}>
       <div class="panel-header">
         <span class="panel-title">{current.title ?? 'Confirm'}</span>
-        <button class="panel-cancel" onclick={handleCancel}>Esc to cancel</button>
+        <div class="panel-header-actions">
+          <button class="panel-collapse" aria-label={collapsed ? 'Expand' : 'Collapse'} aria-expanded={!collapsed} onclick={toggleCollapsed}>
+            {collapsed ? '▾' : '▴'}
+          </button>
+          <button class="panel-cancel" onclick={handleCancel}>Esc to cancel</button>
+        </div>
       </div>
-      {#if current.message}
-        <div class="panel-description">{current.message}</div>
+      {#if !collapsed}
+        {#if current.message}
+          <div class="panel-description">{current.message}</div>
+        {/if}
+        <div class="confirm-actions">
+          <Button variant="outline" onclick={() => handleConfirm(false)}>No</Button>
+          <Button onclick={() => handleConfirm(true)}>Yes</Button>
+        </div>
+        <div class="panel-hint">
+          <span><kbd>Y</kbd> yes</span>
+          <span class="hint-sep">·</span>
+          <span><kbd>N</kbd> no</span>
+          <span class="hint-sep">·</span>
+          <span><kbd>Esc</kbd> cancel</span>
+        </div>
       {/if}
-      <div class="confirm-actions">
-        <Button variant="outline" onclick={() => handleConfirm(false)}>No</Button>
-        <Button onclick={() => handleConfirm(true)}>Yes</Button>
-      </div>
-      <div class="panel-hint">
-        <span><kbd>Y</kbd> yes</span>
-        <span class="hint-sep">·</span>
-        <span><kbd>N</kbd> no</span>
-        <span class="hint-sep">·</span>
-        <span><kbd>Esc</kbd> cancel</span>
-      </div>
     </div>
   {/if}
 {/if}
@@ -206,6 +232,40 @@
   .panel-cancel:hover {
     opacity: 1;
     background: var(--accent);
+  }
+
+  .panel-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .panel-collapse {
+    font-size: 0.85rem;
+    line-height: 1;
+    color: var(--muted-foreground);
+    background: none;
+    border: none;
+    cursor: pointer;
+    opacity: 0.7;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .panel-collapse:hover {
+    opacity: 1;
+    background: var(--accent);
+  }
+
+  .panel-title-meta {
+    font-weight: 400;
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+    margin-left: 4px;
+  }
+
+  .inline-select-panel.collapsed .panel-header {
+    margin-bottom: 0;
   }
 
   .panel-description {
