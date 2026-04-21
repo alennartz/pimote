@@ -33,6 +33,16 @@ node scripts/voice-mock-smoke.mjs
 
 ## Real speechmux smoke (blocked)
 
+**Status of the browser signalling bridge:** `client/src/lib/stores/voice-call-seams.ts`
+now implements the full `hello → session → offer/answer → ice → bye`
+speechmux signalling handshake (envelope format `{v:1, type, payload}`), wires
+local `onicecandidate` → outbound `ice` trickle, and routes inbound
+`answer` / `ice` into `pc.setRemoteDescription` / `pc.addIceCandidate`. The
+scaffolding is in place but has **not** been exercised against a live
+speechmux — expect small correctness adjustments (SDP munging, end-of-
+candidates semantics, TURN creds source-of-truth) to be needed on first
+real smoke run.
+
 With the speechmux-repo changes landed:
 
 1. Start pimote server with `voice.*` config pointing at a local speechmux.

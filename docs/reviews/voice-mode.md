@@ -36,7 +36,7 @@ The interpreter will see every speak call fail, which will likely trigger retrie
 - **Category:** plan deviation
 - **Severity:** critical
 - **Location:** `client/src/lib/stores/voice-call-seams.ts:77-128` (`openSignaling`)
-- **Status:** open
+- **Status:** resolved (scaffolding — full `hello → session → offer/answer → ice → bye` handshake wired; untested against live speechmux, see `docs/manual-tests/voice-mode.md`)
 
 Plan Step 8 required `openSignaling` to "route offer/answer/ice through the `RTCPeerConnection` (full `hello → session → offer/answer → ice → bye` handshake per `speechmux/src/webrtc_transport/signaling.rs`)". The implementation sends `{type:'hello', token}` on open and parses inbound JSON into listeners, but:
 
@@ -98,7 +98,7 @@ A plain forward-declared object (`{ get: (id) => clientRegistryRef.current.get(i
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/ws-handler.ts:588-593` (`case 'call_end'`)
-- **Status:** open
+- **Status:** dismissed (v1 single-call-per-session model; explicitly low-risk per review; revisit if multi-client-per-session lands)
 
 The `call_end` handler sends `call_ended { reason: 'user_hangup' }` to the calling client via `sendEvent`, which is fine. However, if another client on the same session also has the call open (e.g., via `handleServerEvent` routing), only the caller gets the event. This is consistent with v1's single-call-per-session model, but worth noting since the orchestrator-side `endCall` doesn't broadcast. Low risk.
 
