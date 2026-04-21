@@ -109,18 +109,22 @@ surfaces `call_ended { reason: 'displaced' }` to the old client.
 Covers the pimote-side seam — the real WebRTC / STT / TTS path lives
 in speechmux and is exercised separately.
 
-**Driver:** `scripts/voice-mock-smoke.mjs` (mock-speechmux, orchestrator
+**Driver:**
 
-- extension-runtime layer) for server-side behaviour;
-  manual-browser for the PWA UI (Call button, in-call banner, mute,
-  hangup). Real-speechmux end-to-end is blocked on speechmux-repo work —
-  see `docs/manual-tests/voice-mode.md`.
+- `scripts/voice-mock-smoke.mjs` (mock-speechmux, orchestrator +
+  extension-runtime layer) for server-side behaviour.
+- `agent-browser` skill for the PWA UI — Call button renders, click
+  emits `call_bind`, in-call banner mounts with mute + hangup, hangup
+  tears down. Real-speechmux end-to-end is blocked on speechmux-repo
+  work; see `docs/manual-tests/voice-mode.md` for the current
+  `agent-browser`-driven run (Re-test 2026-04-21).
 
 ## Automation gap (recorded, not an action item for this topic)
 
 Journeys 1–7 currently have no automation driver. This is a deliberate
-pre-existing gap; introducing browser automation (e.g. via
-`agent-browser` or a playwright harness) is its own body of work. As
-autoflow topics add user-facing features, this plan gets the new primary
-journey and — when the topic brings automation along with it — the
-driver. Journey 8 is the first journey with any automation at all.
+pre-existing gap; journey 8 was first to pick one up (`agent-browser`
+skill as of Re-test 2026-04-21). As autoflow topics add user-facing
+features, this plan gets the new primary journey and — when the topic
+brings automation along with it — the driver. Journey 8 is the first
+journey to combine a server-side automated driver with a UI-automation
+driver.
