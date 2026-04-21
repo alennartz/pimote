@@ -589,6 +589,9 @@ With the speechmux-repo changes landed (startup-time LlmBackend listener + per-c
 7. Displace: start a second call on the same session with `force: true` from a different browser — confirm the first client gets `call_ended { reason: 'displaced' }` and the extension's deactivate reducer ran (speechmux client closed).
 
 **Verify:** All seven steps above succeed by direct observation. File a manual-test checklist entry in `docs/manual-tests/voice-mode.md` capturing the run (follow existing manual-test conventions if present).
-**Status:** blocked — waiting on speechmux-repo LlmBackend listener refactor + per-call auth tokens on `/signal`
+
+**Pimote-side progress (mock speechmux):** `docs/manual-tests/voice-mode.md` + `scripts/voice-mock-smoke.mjs` exercise call_bind/call_end round-trip and UI-bridge gating against a mocked VoiceOrchestrator. Runs green. The real-speechmux steps 3–7 above remain blocked on speechmux repo work.
+
+**Status:** blocked (real speechmux smoke) — waiting on speechmux-repo LlmBackend listener refactor + per-call auth tokens on `/signal`. Mock-speechmux smoke landed.
 
 **Commit:** `impl(voice): end-to-end smoke documented` (after the run succeeds)
