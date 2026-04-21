@@ -53,13 +53,14 @@ export interface VoiceCallSeams {
 // --- Store --------------------------------------------------------------------
 
 export class VoiceCallStore {
-  // In production this is a $state() rune; tests can read the same field.
-  state: VoiceCallState = {
+  // `$state` makes the field reactive in the browser; the rune is a no-op
+  // in the vitest node runtime, so tests can still read the field directly.
+  state: VoiceCallState = $state({
     phase: 'idle',
     sessionId: null,
     micMuted: false,
     lastError: null,
-  };
+  });
 
   private peer: VoicePeerConnection | null = null;
   private signaling: VoiceSignalingSocket | null = null;
