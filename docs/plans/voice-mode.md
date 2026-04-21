@@ -425,7 +425,7 @@ Replace the stub in `packages/voice/src/index.ts` with a real implementation tha
    - `open_speechmux` → `speechmuxClient = await speechmuxClientFactory({ wsUrl, callToken })`; subscribe to frames → `reduceSpeechmuxFrame`; on open-resolve execute `reduceSpeechmuxOpened`; on error execute `reduceSpeechmuxFailed`.
    - `close_speechmux` → `speechmuxClient?.close(); speechmuxClient = null`.
    - `send_user_message` → `pi.sendUserMessage(text, deliverAs ? { deliverAs } : undefined)`.
-   - `abort` → trigger session abort (via `pi.events` → orchestrator, or via the pi abort surface exposed on the session bound to the extension; see investigation note below).
+   - `abort` → `ctx.abort()` on whichever `ExtensionContext` is available (captured from the most recent hook invocation or held per-session by the extension instance).
    - `set_walkback_watermark` → store `walkBackInput = { heardText }`.
    - `clear_walkback_watermark` → `walkBackInput = null`; `capturedStreamingMessage = null`.
    - `append_custom_entry` → `pi.appendEntry(customType, data)`.
@@ -442,7 +442,7 @@ Replace the stub in `packages/voice/src/index.ts` with a real implementation tha
 8. Register `message_update` — overwrite `capturedStreamingMessage` with a deep-enough copy of `event.message` (content blocks) so we have the in-flight assistant turn if it gets aborted.
 9. Register `context` — if runtime is `active` OR `walkBackInput !== null`, run the pure `walkBack({ messages: event.messages, heardText: walkBackInput?.heardText ?? null, captured: capturedStreamingMessage })`; assign back to `event.messages`. Then clear `walkBackInput` and `capturedStreamingMessage` per the contract.
 
-Investigation note: check how the extension gets a handle on `session.abort()`. The pi SDK `ExtensionAPI` does not expose `abort` directly; either (a) pi already surfaces abort on `ExtensionContext` within a hook, in which case the `abort` action must be executed from a hook context, or (b) we need to use `pi.sendUserMessage` semantics with `deliverAs: 'steer'` to interrupt. Surface this to the user before implementing — do NOT silently guess.
+Abort mechanism (resolved): `ExtensionContext.abort()` is exposed by pi's extension system — see `@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts:198` (the `ExtensionContext` interface declares `abort(): void` alongside `isIdle()`, `signal`, and friends). It's also mirrored on `ExtensionContextActions` at the same file line ~1013. The `abort` `VoiceAction` must be executed from within a hook context (or any other place where the extension holds an `ExtensionContext`), not from the bare runtime reducer. The runtime reducer emits the `VoiceAction`; the action executor (wired in Step 4) invokes `ctx.abort()`.
 
 The default `speechmuxClientFactory` is the one from Step 3; `opts.speechmuxClientFactory` overrides it for tests.
 
