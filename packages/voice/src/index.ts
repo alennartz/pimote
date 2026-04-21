@@ -204,10 +204,18 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         text: Type.String({ description: 'The text to speak to the user.' }),
       }),
       execute: async (_toolCallId, _params, _signal, _onUpdate, _ctx) => {
-        // Unreachable while `state === active` because the tool_call hook
-        // intercepts with { action: 'handled' } and streams to speechmux.
-        // When dormant, surface a clear error so the model knows to stop
-        // calling it.
+        // The `tool_call` hook streams `speak(...)` invocations to speechmux
+        // via the captured runtime closure, but the pi-SDK `tool_call` hook
+        // can only *block* the call — it can't synthesize a result — so this
+        // `execute` still runs. When a call is active, return a trivial
+        // success so the interpreter loop advances cleanly. Only surface an
+        // error when the tool is (mis-)used outside of an active voice call.
+        if (runtime.state === 'active') {
+          return {
+            content: [{ type: 'text', text: 'ok' }],
+            details: {},
+          };
+        }
         return {
           content: [{ type: 'text', text: 'speak() is only available during an active voice call.' }],
           details: {},
@@ -232,11 +240,11 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
       const result = reduceSpeakToolCall(runtime, { text });
       runtime = result.next;
       await executeActions(result.actions);
-      // We don't have a way to short-circuit tool execution with a synthesized
-      // success result via the current tool_call hook contract (it can only
-      // `block` the call). Returning undefined lets the registered `speak`
-      // tool's own `execute` run and return a trivial success — it's a no-op
-      // apart from emitting a tool_result that the model will see.
+      // The pi-SDK `tool_call` hook can only `block` the call — it can't
+      // synthesize a result — so we let the registered `speak` tool's own
+      // `execute` run; it returns a trivial success when `state === 'active'`
+      // (see the `registerTool` above). Audible streaming has already been
+      // emitted by `executeActions` above.
       return;
     });
 

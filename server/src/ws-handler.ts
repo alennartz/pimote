@@ -1055,21 +1055,25 @@ export class WsHandler {
   }
 
   /** Notify the old owner that they've been displaced from a session.
-   *  No-op if the session is unowned or owned by this client. */
+   *  No-op if the session is unowned or owned by this client.
+   *
+   *  Voice-call tear-down on displacement lives in `sendDisplacedEvent` (the
+   *  old-owner-side site that also emits `call_ended { displaced }`), so this
+   *  method does not call `voiceOrchestrator.endCall` itself — see review
+   *  finding 4.
+   */
   private displaceOwner(sessionId: string, slot: ManagedSlot): void {
     if (slot.connection?.connectedClientId && slot.connection.connectedClientId !== this.clientId) {
       const oldHandler = this.clientRegistry.get(slot.connection.connectedClientId);
       if (oldHandler) {
         oldHandler.sendDisplacedEvent(sessionId);
+      } else if (this.voiceOrchestrator?.isCallActive(sessionId)) {
+        // Stale owner id with no live handler — clean up orchestrator state
+        // so the new owner doesn't inherit a phantom active call.
+        this.voiceOrchestrator.endCall({ sessionId, reason: 'displaced' }).catch((err) => {
+          console.warn('[voice] endCall on displace (stale handler) failed', err);
+        });
       }
-    }
-    // Tear down voice-call bookkeeping on the orchestrator so the voice
-    // extension's deactivate reducer fires (closes speechmux, clears
-    // walk-back watermark) before the new owner takes over.
-    if (this.voiceOrchestrator?.isCallActive(sessionId)) {
-      this.voiceOrchestrator.endCall({ sessionId, reason: 'displaced' }).catch((err) => {
-        console.warn('[voice] endCall on displace failed', err);
-      });
     }
   }
 

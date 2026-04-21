@@ -53,7 +53,34 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
     }
     const ws = new WsCtor(wsUrl);
     const listeners = new Set<(frame: IncomingFrame) => void>();
+    // Buffer frames that arrive after `hello` but before the caller has had a
+    // chance to attach an `onFrame` listener. Drained on the first attach.
+    const pending: IncomingFrame[] = [];
     let closed = false;
+
+    // Install the message handler BEFORE writing `hello` so frames sent
+    // between hello and the caller's onFrame attach are buffered instead of
+    // dropped. See review finding 5 (speechmux-client race).
+    ws.on('message', (raw: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      if (isBinary) return;
+      let text: string;
+      if (typeof raw === 'string') text = raw;
+      else if (raw instanceof Buffer) text = raw.toString('utf8');
+      else if (Array.isArray(raw)) text = Buffer.concat(raw).toString('utf8');
+      else text = Buffer.from(raw as ArrayBuffer).toString('utf8');
+      let frame: unknown;
+      try {
+        frame = JSON.parse(text);
+      } catch {
+        return; // ignore non-JSON
+      }
+      if (!isIncomingFrame(frame)) return;
+      if (listeners.size === 0) {
+        pending.push(frame);
+        return;
+      }
+      for (const listener of listeners) listener(frame);
+    });
 
     await new Promise<void>((resolve, reject) => {
       const onOpen = () => {
@@ -74,23 +101,6 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
       ws.once('error', onError);
     });
 
-    ws.on('message', (raw: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
-      if (isBinary) return;
-      let text: string;
-      if (typeof raw === 'string') text = raw;
-      else if (raw instanceof Buffer) text = raw.toString('utf8');
-      else if (Array.isArray(raw)) text = Buffer.concat(raw).toString('utf8');
-      else text = Buffer.from(raw as ArrayBuffer).toString('utf8');
-      let frame: unknown;
-      try {
-        frame = JSON.parse(text);
-      } catch {
-        return; // ignore non-JSON
-      }
-      if (!isIncomingFrame(frame)) return;
-      for (const listener of listeners) listener(frame);
-    });
-
     ws.on('close', () => {
       closed = true;
     });
@@ -103,7 +113,13 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
         ws.send(JSON.stringify(frame));
       },
       onFrame(listener) {
+        const firstListener = listeners.size === 0;
         listeners.add(listener);
+        if (firstListener && pending.length > 0) {
+          // Drain any frames that arrived before the listener attached.
+          const drained = pending.splice(0, pending.length);
+          for (const frame of drained) listener(frame);
+        }
         return () => listeners.delete(listener);
       },
       close() {

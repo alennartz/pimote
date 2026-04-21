@@ -36,18 +36,17 @@ export async function main(options: StartOptions = {}) {
   const sessionManager = new PimoteSessionManager(config, pushNotificationService);
 
   // Build the voice orchestrator before createServer so each WsHandler can be
-  // handed a reference. The orchestrator holds its own client-registry handle,
-  // populated below once the server exists (chicken-and-egg: the registry is
-  // created inside createServer).
+  // handed a reference. The orchestrator needs a client-registry lookup, but
+  // the real registry is created inside createServer below — so we hand it a
+  // small forwarding shim whose backing map is swapped in after createServer
+  // returns (see review finding 6: previously a Proxy-over-Map).
   const clientRegistryRef: { current: Map<string, import('./ws-handler.js').WsHandler> } = { current: new Map() };
   const voiceBoot = buildVoiceOrchestrator({
     config,
     sessionManager,
-    clientRegistry: new Proxy(new Map(), {
-      get(_t, p, _r) {
-        return Reflect.get(clientRegistryRef.current, p, clientRegistryRef.current);
-      },
-    }) as Map<string, import('./ws-handler.js').WsHandler>,
+    clientRegistry: {
+      get: (clientId) => clientRegistryRef.current.get(clientId),
+    },
   });
 
   const server = await createServer(config, sessionManager, folderIndex, pushNotificationService, sessionMetadataStore, voiceBoot.orchestrator);

@@ -22,7 +22,7 @@ A handful of lower-severity issues follow. Plan adherence is otherwise faithful.
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `packages/voice/src/index.ts:179-201` (`registerTool` + `tool_call` hook)
-- **Status:** open
+- **Status:** resolved
 
 Plan Step 4 expected the `tool_call` hook to return `{ action: 'handled', result: { success: true } }` so the tool's `execute` never runs while `state === 'active'`. The `ToolCallEventResult` interface in pi-SDK (`dist/core/extensions/types.d.ts:644`) only supports `{ block?: boolean; reason?: string }` — there is no `action: 'handled'` surface. The implementation acknowledges this in a comment and returns `undefined` from the hook, but then leaves the registered tool's `execute` returning `isError: true` with the message _"speak() is only available during an active voice call."_ unconditionally. So when `speak()` is called during an active call:
 
@@ -53,7 +53,7 @@ The plan's Step 14 notes real-speechmux smoke is blocked externally, so this may
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `server/src/voice-orchestrator-boot.ts:82-97` (`mintCallToken`) + `server/src/voice-orchestrator.ts:105-132` (`bindCall`)
-- **Status:** open
+- **Status:** resolved
 
 Plan Step 6 specified: _"If `config.voice?.speechmuxBinary` is unset, `start()` is a no-op and the orchestrator stays disabled; `bindCall` will fail with `call_bind_failed_internal`."_
 
@@ -66,7 +66,7 @@ Symptoms: misleading success response to the client, extension churn on every ca
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/ws-handler.ts:1059-1075` (private `displaceOwner`) and `server/src/ws-handler.ts:1260-1272` (`sendDisplacedEvent`)
-- **Status:** open
+- **Status:** resolved
 
 Both the new-owner's `displaceOwner` method and the old-owner's `sendDisplacedEvent` call `voiceOrchestrator.endCall({ sessionId, reason: 'displaced' })`. `endCall` is idempotent so the second invocation is a no-op, but the two-site teardown makes the intent hard to follow and invites a future regression if one site stops calling `endCall`. Also: the old owner receives `call_ended { displaced }` from `sendDisplacedEvent`, while the new owner's `displaceOwner` emits nothing to the old client — good, but subtle. Consolidate the voice teardown into a single site (prefer `sendDisplacedEvent`, since that's where the old-owner's event actually goes).
 
@@ -75,7 +75,7 @@ Both the new-owner's `displaceOwner` method and the old-owner's `sendDisplacedEv
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `packages/voice/src/speechmux-client.ts:75-100` + `packages/voice/src/index.ts:84-96`
-- **Status:** open
+- **Status:** resolved
 
 The default factory installs `ws.on('message', …)` after the `hello` frame is sent and resolves the factory promise. The outer action executor then awaits the factory and only afterwards calls `client.onFrame(listener)`. Any `user`/`abort`/`rollback` frame speechmux sends in that window (between `hello` write and `onFrame` registration) is parsed by the internal handler but dropped because `listeners` is still empty. In practice speechmux probably doesn't send frames before it sees the first harness token, but it's an unbounded dependency on speechmux's own internal timing. Safer: buffer frames inside the factory until the first `onFrame` listener is attached, or have the factory accept an initial listener.
 
@@ -84,7 +84,7 @@ The default factory installs `ws.on('message', …)` after the `hello` frame is 
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/index.ts:39-53`
-- **Status:** open
+- **Status:** resolved
 
 The orchestrator needs a `clientRegistry` at construction time, but the registry is created inside `createServer`. The workaround is a `Proxy` over an empty `Map` that forwards all gets to a mutable `clientRegistryRef.current`, which is replaced after `createServer` returns. It works for the current usage (`registry.get(clientId)`) but:
 
@@ -107,7 +107,7 @@ The `call_end` handler sends `call_ended { reason: 'user_hangup' }` to the calli
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `server/src/voice-orchestrator-boot.ts:82-97`
-- **Status:** open
+- **Status:** resolved (partial — TODO annotation tying to speechmux external blocker; full POST stays blocked on speechmux)
 
 Plan: _"`mintCallToken(sessionId)` — v1: generate a random token (`crypto.randomUUID()`), POST it to speechmux's admin endpoint (contract owned by speechmux; see External dependencies)."_
 

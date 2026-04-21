@@ -7,8 +7,14 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { PimoteConfig } from './config.js';
 import type { ClientConnection, PimoteSessionManager } from './session-manager.js';
-import type { ClientRegistry } from './ws-handler.js';
+import type { WsHandler } from './ws-handler.js';
 import { VoiceOrchestrator, type VoiceSessionBusResolver } from './voice-orchestrator.js';
+
+/** Narrow registry surface the voice orchestrator needs at boot time.
+ *  Avoids constructing a Proxy over the real Map (see review finding 6). */
+export interface VoiceClientRegistry {
+  get(clientId: string): WsHandler | undefined;
+}
 
 export interface VoiceOrchestratorBootResult {
   orchestrator: VoiceOrchestrator;
@@ -26,7 +32,7 @@ export interface VoiceOrchestratorBootResult {
  * - displacement = looks up current owner via clientRegistry and calls its
  *   `sendDisplacedEvent(sessionId)`
  */
-export function buildVoiceOrchestrator(args: { config: PimoteConfig; sessionManager: PimoteSessionManager; clientRegistry: ClientRegistry }): VoiceOrchestratorBootResult {
+export function buildVoiceOrchestrator(args: { config: PimoteConfig; sessionManager: PimoteSessionManager; clientRegistry: VoiceClientRegistry }): VoiceOrchestratorBootResult {
   const { config, sessionManager, clientRegistry } = args;
 
   let speechmuxProc: ChildProcess | null = null;
@@ -82,8 +88,18 @@ export function buildVoiceOrchestrator(args: { config: PimoteConfig; sessionMana
       });
     },
     mintCallToken: async (_sessionId) => {
-      // v1: random UUID. Speechmux per-call token registration is
-      // speechmux-repo work (see docs/plans/voice-mode.md external deps).
+      // Guard: if any piece of the speechmux wiring is missing, fail the
+      // bind so the client sees `call_bind_failed_internal` instead of
+      // succeeding with empty URLs (see review finding 3).
+      if (!config.voice?.speechmuxBinary || !config.voice?.speechmuxSignalUrl || !config.voice?.speechmuxLlmWsUrl) {
+        throw new Error('voice_disabled: speechmux binary / signal URL / llm WS URL not configured');
+      }
+      // TODO(speechmux external blocker): once speechmux exposes a per-call
+      // auth admin endpoint, POST the minted token here (and pass sessionId
+      // along). Until then we only generate a random token locally and rely
+      // on speechmux's shared-env-token mode. Tracked in
+      // docs/plans/voice-mode.md → "External dependencies" and review
+      // finding 8.
       const token = randomUUID();
       const turn = {
         urls: [] as string[],
@@ -93,7 +109,7 @@ export function buildVoiceOrchestrator(args: { config: PimoteConfig; sessionMana
       return {
         token,
         turn,
-        webrtcSignalUrl: config.voice?.speechmuxSignalUrl ?? '',
+        webrtcSignalUrl: config.voice.speechmuxSignalUrl,
       };
     },
     displaceOwner: async (sessionId, _newOwner: ClientConnection) => {
