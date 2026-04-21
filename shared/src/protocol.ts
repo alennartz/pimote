@@ -375,6 +375,28 @@ export interface KillConflictingSessionsCommand extends CommandBase {
   sessionIds: string[];
 }
 
+// -- Voice call commands --
+
+export interface CallBindCommand extends CommandBase {
+  type: 'call_bind';
+  id: string;
+  sessionId: string;
+  /** If true, displace an existing call owner on this session. */
+  force?: boolean;
+}
+
+export interface CallEndCommand extends CommandBase {
+  type: 'call_end';
+  id: string;
+  sessionId: string;
+}
+
+/** Reason codes returned in PimoteResponse.error for a failed call_bind. */
+export type CallBindErrorCode = 'call_bind_failed_session_not_found' | 'call_bind_failed_owned' | 'call_bind_failed_internal';
+
+/** Reason code returned when an extension attempts a UI bridge call during a voice call. */
+export const UI_BRIDGE_DISABLED_IN_VOICE_MODE = 'ui_bridge_disabled_in_voice_mode';
+
 // -- Extension UI commands --
 
 export interface ExtensionUiResponseCommand extends CommandBase {
@@ -431,7 +453,10 @@ export type PimoteCommand =
   | KillConflictingProcessesCommand
   | KillConflictingSessionsCommand
   // Extension UI
-  | ExtensionUiResponseCommand;
+  | ExtensionUiResponseCommand
+  // Voice
+  | CallBindCommand
+  | CallEndCommand;
 
 // ----------------------------------------------------------------------------
 // Server → Client Events
@@ -710,6 +735,68 @@ export interface PanelUpdateEvent {
   cards: Card[];
 }
 
+// -- Voice events --
+
+/**
+ * Success response to a CallBindCommand. Carries per-call WebRTC signalling
+ * endpoint, a per-call shared auth token the client must echo in speechmux's
+ * `hello.token` frame, and Cloudflare Realtime TURN credentials.
+ *
+ * Failed binds return a standard PimoteResponse with `success: false` and an
+ * error string that is one of CallBindErrorCode.
+ */
+export interface CallBindResponse {
+  type: 'call_bind_response';
+  /** Correlates with the originating CallBindCommand.id */
+  id: string;
+  sessionId: string;
+  webrtcSignalUrl: string;
+  callToken: string;
+  turn: {
+    urls: string[];
+    username: string;
+    credential: string;
+  };
+}
+
+/** The peer connection to speechmux has been established. */
+export interface CallReadyEvent {
+  type: 'call_ready';
+  sessionId: string;
+}
+
+export type CallEndReason = 'user_hangup' | 'displaced' | 'server_ended' | 'error';
+
+export interface CallEndedEvent {
+  type: 'call_ended';
+  sessionId: string;
+  reason: CallEndReason;
+}
+
+export type CallStatus = 'binding' | 'ringing' | 'connected' | 'ended';
+
+export interface CallStatusEvent {
+  type: 'call_status';
+  sessionId: string;
+  status: CallStatus;
+}
+
+// -- Voice persisted custom entries --
+
+/**
+ * Custom entry customType appended by the voice extension when it observes a
+ * speechmux rollback/abort frame. The payload records the user-heard watermark
+ * so persisted scrollback carries evidence of the interrupt even though pi
+ * itself leaves no assistant entry for an aborted turn.
+ */
+export const VOICE_INTERRUPT_CUSTOM_TYPE = 'pimote:voice:interrupt';
+
+export interface VoiceInterruptEntryData {
+  /** Characters the user actually heard before the cutoff. Empty for pure abort. */
+  heard_text: string;
+  kind: 'abort' | 'rollback';
+}
+
 // -- Version mismatch --
 
 export interface VersionMismatchEvent {
@@ -740,6 +827,11 @@ export type PimoteEvent =
   | FullResyncEvent
   // Panel
   | PanelUpdateEvent
+  // Voice
+  | CallBindResponse
+  | CallReadyEvent
+  | CallEndedEvent
+  | CallStatusEvent
   // Version
   | VersionMismatchEvent;
 

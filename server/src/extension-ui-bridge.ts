@@ -1,8 +1,16 @@
 import type { ExtensionUIContext, ExtensionUIDialogOptions, ExtensionWidgetOptions } from '@mariozechner/pi-coding-agent';
 import type { PimoteEvent } from '@pimote/shared';
+import { UI_BRIDGE_DISABLED_IN_VOICE_MODE } from '@pimote/shared';
 import type { ManagedSlot } from './session-manager.js';
 import { sendSlotEvent, waitForSlotUiResponse } from './session-manager.js';
 import type { PushNotificationService } from './push-notification.js';
+
+export interface ExtensionUIBridgeOptions {
+  /** Returns true while a voice call owns this session. Dialog methods then
+   *  reject with `ui_bridge_disabled_in_voice_mode`, fire-and-forget methods
+   *  become no-ops. Omit for non-voice tests / callers. */
+  isVoiceModeActive?: () => boolean;
+}
 
 /**
  * Creates an ExtensionUIContext implementation that bridges pi extension UI calls
@@ -17,7 +25,11 @@ import type { PushNotificationService } from './push-notification.js';
  * is updated and the bridge automatically routes to the new connection.
  * Pending UI promises survive reconnects and are replayed to the new client.
  */
-export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationService?: PushNotificationService): ExtensionUIContext {
+export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationService?: PushNotificationService, options?: ExtensionUIBridgeOptions): ExtensionUIContext {
+  const isVoice = () => options?.isVoiceModeActive?.() ?? false;
+  function voiceDisabledError(): Error {
+    return new Error(UI_BRIDGE_DISABLED_IN_VOICE_MODE);
+  }
   function notifyInteraction(method: string, fields: Record<string, unknown>): void {
     if (!pushNotificationService) return;
     const projectName = slot.folderPath.split('/').pop() ?? 'Unknown';
@@ -88,6 +100,7 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
     // ---- Dialog methods (send + wait for response) ----
 
     async select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined> {
+      if (isVoice()) throw voiceDisabledError();
       const requestId = crypto.randomUUID();
       const event = sendRequest(requestId, { method: 'select', title, options });
       notifyInteraction('select', { title, options });
@@ -95,6 +108,7 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
     },
 
     async confirm(title: string, message: string, opts?: ExtensionUIDialogOptions): Promise<boolean> {
+      if (isVoice()) throw voiceDisabledError();
       const requestId = crypto.randomUUID();
       const event = sendRequest(requestId, { method: 'confirm', title, message });
       notifyInteraction('confirm', { title, message });
@@ -102,6 +116,7 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
     },
 
     async input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined> {
+      if (isVoice()) throw voiceDisabledError();
       const requestId = crypto.randomUUID();
       const event = sendRequest(requestId, { method: 'input', title, placeholder });
       notifyInteraction('input', { title });
@@ -109,6 +124,7 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
     },
 
     async editor(title: string, prefill?: string): Promise<string | undefined> {
+      if (isVoice()) throw voiceDisabledError();
       const requestId = crypto.randomUUID();
       const event = sendRequest(requestId, { method: 'editor', title, prefill });
       notifyInteraction('editor', { title });

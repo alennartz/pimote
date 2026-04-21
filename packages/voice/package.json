@@ -1,0 +1,36 @@
+{
+  "name": "@pimote/voice",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Pimote voice extension — interpreter prompt injection, speak() tool, speechmux harness, walk-back surgery",
+  "type": "module",
+  "license": "MIT",
+  "author": "Antoine Lennartz <alennartz@gmail.com>",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./walk-back": "./dist/walk-back.js",
+    "./state-machine": "./dist/state-machine.js",
+    "./speechmux-client": "./dist/speechmux-client.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@pimote/shared": "*"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.67.6"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.67.6",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}

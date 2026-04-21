@@ -496,4 +496,51 @@ describe('createExtensionUIBridge', () => {
       expect((entry.event as any).title).toBe('Pick one');
     });
   });
+
+  // --------------------------------------------------------------------------
+  // Voice-mode gating (docs/plans/voice-mode.md — "UI bridge" rejection).
+  // While a voice call owns the session, dialog methods reject with a
+  // standard error whose message is the `ui_bridge_disabled_in_voice_mode`
+  // reason code; fire-and-forget methods become no-ops (no events emitted).
+  // --------------------------------------------------------------------------
+  describe('voice-mode gating', () => {
+    it('rejects select() with ui_bridge_disabled_in_voice_mode when a voice call owns the session', async () => {
+      const ui = createExtensionUIBridge(slot, undefined, { isVoiceModeActive: () => true });
+      await expect(ui.select('Pick', ['a', 'b'])).rejects.toThrow('ui_bridge_disabled_in_voice_mode');
+      expect(sent).toHaveLength(0);
+    });
+
+    it('rejects confirm() with ui_bridge_disabled_in_voice_mode in voice mode', async () => {
+      const ui = createExtensionUIBridge(slot, undefined, { isVoiceModeActive: () => true });
+      await expect(ui.confirm('?', 'sure?')).rejects.toThrow('ui_bridge_disabled_in_voice_mode');
+    });
+
+    it('rejects input() and editor() with ui_bridge_disabled_in_voice_mode in voice mode', async () => {
+      const ui = createExtensionUIBridge(slot, undefined, { isVoiceModeActive: () => true });
+      await expect(ui.input('Name?')).rejects.toThrow('ui_bridge_disabled_in_voice_mode');
+      await expect(ui.editor('Compose')).rejects.toThrow('ui_bridge_disabled_in_voice_mode');
+    });
+
+    it('allows dialog methods when isVoiceModeActive returns false', async () => {
+      const ui = createExtensionUIBridge(slot, undefined, { isVoiceModeActive: () => false });
+      const p = ui.select('Pick', ['a']);
+      expect(sent).toHaveLength(1);
+      const event = sent[0] as ExtensionUiRequestEvent;
+      resolveUi(slot, event.requestId, 'a');
+      expect(await p).toBe('a');
+    });
+
+    it('toggling voice-mode between calls re-enables dialogs on the same bridge', async () => {
+      let active = true;
+      const ui = createExtensionUIBridge(slot, undefined, { isVoiceModeActive: () => active });
+      await expect(ui.select('Pick', ['a'])).rejects.toThrow('ui_bridge_disabled_in_voice_mode');
+
+      active = false;
+      const p = ui.select('Pick', ['a']);
+      expect(sent).toHaveLength(1);
+      const event = sent[0] as ExtensionUiRequestEvent;
+      resolveUi(slot, event.requestId, 'a');
+      expect(await p).toBe('a');
+    });
+  });
 });

@@ -2,6 +2,20 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { PIMOTE_CONFIG_PATH } from './paths.js';
 
+export interface ModelRef {
+  provider: string;
+  modelId: string;
+}
+
+export interface VoiceConfig {
+  /** Path to speechmux binary. Optional — voice mode stays dormant if missing. */
+  speechmuxBinary?: string;
+  /** Public WS URL the client opens for WebRTC signalling. */
+  speechmuxSignalUrl?: string;
+  /** Internal WS URL the voice extension connects to for the LlmBackend protocol. */
+  speechmuxLlmWsUrl?: string;
+}
+
 export interface PimoteConfig {
   roots: string[];
   idleTimeout: number;
@@ -10,6 +24,12 @@ export interface PimoteConfig {
   defaultProvider?: string;
   defaultModel?: string;
   defaultThinkingLevel?: string;
+  /** Voice interpreter model. Falls back to defaultProvider/defaultModel if absent. */
+  defaultInterpreterModel?: ModelRef;
+  /** Voice worker model for `my-pi` subagent spawns. */
+  defaultWorkerModel?: ModelRef;
+  /** Voice subsystem config. */
+  voice?: VoiceConfig;
   vapidPublicKey?: string;
   vapidPrivateKey?: string;
   vapidEmail?: string;
@@ -70,9 +90,29 @@ export async function loadConfig(): Promise<PimoteConfig> {
     defaultProvider: typeof obj.defaultProvider === 'string' ? obj.defaultProvider : undefined,
     defaultModel: typeof obj.defaultModel === 'string' ? obj.defaultModel : undefined,
     defaultThinkingLevel: typeof obj.defaultThinkingLevel === 'string' ? obj.defaultThinkingLevel : undefined,
+    defaultInterpreterModel: parseModelRef(obj.defaultInterpreterModel),
+    defaultWorkerModel: parseModelRef(obj.defaultWorkerModel),
+    voice: parseVoiceConfig(obj.voice),
     vapidPublicKey: typeof obj.vapidPublicKey === 'string' ? obj.vapidPublicKey : undefined,
     vapidPrivateKey: typeof obj.vapidPrivateKey === 'string' ? obj.vapidPrivateKey : undefined,
     vapidEmail: typeof obj.vapidEmail === 'string' ? obj.vapidEmail : undefined,
+  };
+}
+
+function parseModelRef(v: unknown): ModelRef | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  if (typeof o.provider !== 'string' || typeof o.modelId !== 'string') return undefined;
+  return { provider: o.provider, modelId: o.modelId };
+}
+
+function parseVoiceConfig(v: unknown): VoiceConfig | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  return {
+    speechmuxBinary: typeof o.speechmuxBinary === 'string' ? o.speechmuxBinary : undefined,
+    speechmuxSignalUrl: typeof o.speechmuxSignalUrl === 'string' ? o.speechmuxSignalUrl : undefined,
+    speechmuxLlmWsUrl: typeof o.speechmuxLlmWsUrl === 'string' ? o.speechmuxLlmWsUrl : undefined,
   };
 }
 

@@ -272,3 +272,90 @@ Same pattern as panel data (DR-004); no new cross-process channel.
 - Interpreter ↔ worker interaction cadence. Prompt-engineering, not architecture.
 - Persisted-entry truncation upstream in pi (scrollback fidelity). Explicitly not blocking v1.
 - Specific interpreter model choice. Config-driven; first real pick happens in impl.
+
+## Tests
+
+**Pre-test-write commit:** `ed1db86eb60fe1cc4eeadfbe302733bc3f7d0d9c`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — wire protocol additions: `CallBindCommand`, `CallEndCommand`, `CallBindResponse`, `CallReadyEvent`, `CallEndedEvent`, `CallStatusEvent`, the `CallBindErrorCode` union, `CallEndReason`, `CallStatus`, the `VOICE_INTERRUPT_CUSTOM_TYPE` constant and `VoiceInterruptEntryData` payload shape, and the `UI_BRIDGE_DISABLED_IN_VOICE_MODE` error reason code. Extends `PimoteCommand` and `PimoteEvent` unions.
+- `packages/voice/package.json`, `packages/voice/tsconfig.json`, `packages/voice/vitest.config.ts` — new `@pimote/voice` workspace package scaffolding.
+- `packages/voice/src/index.ts` — public entry: `createVoiceExtension(options)` factory signature (stub that throws `not implemented`) plus re-exports of walk-back, state-machine, speechmux-client, and extension-runtime types.
+- `packages/voice/src/state-machine.ts` — `VoiceExtensionState` union, `VoiceActivateMessage` / `VoiceDeactivateMessage` EventBus message shapes, `VOICE_CALL_STARTED_SENTINEL`.
+- `packages/voice/src/speechmux-client.ts` — `SpeechmuxClient` interface + `SpeechmuxClientFactory` seam for the LlmBackend WS protocol; `IncomingFrame` / `OutgoingFrame` unions.
+- `packages/voice/src/walk-back.ts` — pure `walkBack(input)` function implementing the walk-back surgery contract (steps 1–4), plus `isAbortedEmptyAssistant` helper.
+- `packages/voice/src/extension-runtime.ts` — action-DSL reducers (`reduceActivate`, `reduceSpeechmuxOpened`, `reduceSpeechmuxFailed`, `reduceDeactivate`, `reduceSpeechmuxFrame`) that encode the extension's state machine and frame-handling contract as pure functions over a `VoiceRuntimeState`.
+- `server/src/config.ts` — `PimoteConfig` extended with `defaultInterpreterModel`, `defaultWorkerModel`, and a nested `voice: VoiceConfig` section (speechmux binary, public signalling URL, internal LlmBackend WS URL); parsed through new `parseModelRef` / `parseVoiceConfig` helpers.
+- `server/src/voice-orchestrator.ts` — `VoiceOrchestrator` class with `start` / `stop` / `bindCall` / `endCall` / `isCallActive`; `CallBindError` typed error carrying the `CallBindErrorCode`; `VoiceSessionBusResolver` seam for session-scoped EventBus lookup; `VoiceOrchestratorOptions` with injectable `mintCallToken`, `startSpeechmux`, `stopSpeechmux`, `displaceOwner`, `isOwnedByVoiceCall` hooks.
+- `server/src/extension-ui-bridge.ts` — extended signature: `createExtensionUIBridge(slot, pushNotificationService?, options?)` where `options.isVoiceModeActive` predicate causes `select` / `confirm` / `input` / `editor` to reject with `ui_bridge_disabled_in_voice_mode` while a call owns the session.
+- `client/src/lib/stores/voice-call.svelte.ts` — `VoiceCallStore` class with `startCall` / `endCall` / `toggleMute` / `handleServerEvent`; phase state machine `idle → binding → connecting → connected → ending`; constructor-injected `VoiceCallSeams` (sendCommand / createPeerConnection / getUserMedia / openSignaling) so tests can substitute in-memory fakes.
+- `package.json` — added `packages/voice` to workspaces.
+
+### Test Files
+
+- `packages/voice/src/walk-back.test.ts` — walk-back surgery contract coverage: idempotent stripping of synthetic aborted assistants, empty-heard abort with no audible output, fully-heard speak chunks, speak truncation at the cutoff, non-speak blocks before / after the cutoff, paired `tool_result` dropping, the step-1 always-applies rule.
+- `packages/voice/src/extension-runtime.test.ts` — state-machine transition coverage: activate → activating, speechmux-opened → active (with interpreter model set once + session-start sentinel emitted), speechmux failure → dormant + deactivate request, deactivate → dormant, duplicate / out-of-order activates ignored; speechmux frame routing (user / abort / rollback) produces the expected `VoiceAction[]` including `pimote:voice:interrupt` custom-entry data; frames ignored while not active.
+- `server/src/voice-orchestrator.test.ts` — lifecycle (`start`/`stop` idempotency), `bindCall` success path (emits `pimote:voice:activate` on the session bus, returns signalling info with token + TURN creds), failure reason codes (`call_bind_failed_session_not_found`, `call_bind_failed_owned`, `call_bind_failed_internal`), force-displacement, `endCall` emits `pimote:voice:deactivate`, is idempotent, and is a no-op for unbound sessions.
+- `server/src/extension-ui-bridge.test.ts` — existing file, appended a `voice-mode gating` block: `select` / `confirm` / `input` / `editor` reject with `ui_bridge_disabled_in_voice_mode` while `isVoiceModeActive` returns true; no request events are emitted during rejection; toggling voice-mode between calls re-enables dialogs on the same bridge.
+- `client/src/lib/stores/voice-call.svelte.test.ts` — phase state machine: happy path `idle → binding → connecting`, refusal of concurrent calls, server rejection path, `getUserMedia` / signalling failures tear down and reset to idle, `handleServerEvent` (`call_ready` → connected, `call_ended` tears down + records error for `reason=error`, `call_status ringing` nudges binding → connecting, `call_status` never regresses connected), `endCall` idempotency and local-teardown-on-command-failure, `toggleMute` behaviour while active / no-op while idle.
+
+### Behaviors Covered
+
+#### Wire protocol (shared/)
+
+- `CallBindCommand` and `CallEndCommand` carry a correlation `id` and a `sessionId`; bind supports a `force` flag to displace existing voice owners.
+- `CallBindResponse` is the success response payload; failed binds use the standard `PimoteResponse` envelope with `error` ∈ `CallBindErrorCode`.
+- `call_ready`, `call_ended`, `call_status` events are session-scoped and distinguish reasons (`user_hangup`, `displaced`, `server_ended`, `error`) and statuses (`binding`, `ringing`, `connected`, `ended`).
+- `pimote:voice:interrupt` custom entries carry `{ heard_text, kind: 'abort' | 'rollback' }`.
+
+#### Walk-back surgery (packages/voice)
+
+- Always strips trailing synthetic empty-text aborted assistants pi appends to state on abort (idempotent — applies even with no pending rollback).
+- On an abort with no audible output AND no captured speak chunks, the aborted turn is omitted entirely from LLM context.
+- When the watermark matches the concatenation of speak chunks, all chunks are kept whole.
+- Otherwise the first speak chunk that crosses the boundary is truncated to exactly `heardText.slice(spoken.length)`, later blocks are dropped.
+- Non-speak blocks (thinking, free text, other tool_use) are kept while `spoken.length < heardText.length`, dropped afterwards.
+- Paired `tool_result` blocks in downstream toolResult messages are removed when their `tool_use` is dropped or truncated.
+- Reconstructed assistant retains `stopReason: 'aborted'`.
+- Only the most recent interrupted turn is reconstructed; earlier interrupts collapse (expected per plan "scope" note; not separately asserted).
+
+#### Voice extension runtime (packages/voice)
+
+- `dormant → activating` on `pimote:voice:activate`; emits `open_speechmux` action with the supplied URL + token.
+- Duplicate / out-of-order activates are ignored (no state change, no actions).
+- `activating → active` on speechmux opened: sets the default interpreter model on first activation only, then sends the `<voice_call_started/>` sentinel as a user message.
+- `activating → dormant` on speechmux failure, emitting a deactivate request back to the orchestrator.
+- `active → dormant` on `pimote:voice:deactivate`: closes speechmux and clears the walk-back watermark.
+- Speechmux `user` frame → `send_user_message(text)`; `abort` / `rollback` frames → `abort` + watermark set + `pimote:voice:interrupt` custom entry appended with the correct `kind` and `heard_text`.
+- Frames received while not `active` are ignored.
+
+#### Voice orchestrator (server)
+
+- `start()` spawns speechmux exactly once; `stop()` is idempotent and clears all active-call bookkeeping.
+- `bindCall` emits `pimote:voice:activate` on the target session's EventBus with the internal speechmux LlmBackend WS URL + minted per-call token; returns the signalling URL, token, and TURN credentials to the client.
+- `bindCall` on an unknown session fails with `call_bind_failed_session_not_found`.
+- `bindCall` on an already-owned session without `force` fails with `call_bind_failed_owned`.
+- `bindCall` with `force=true` invokes the displacement seam, then proceeds.
+- `bindCall` surfaces mint / internal failures as `call_bind_failed_internal`.
+- `endCall` emits `pimote:voice:deactivate` exactly once per active call; repeated calls are no-ops; calls on unbound sessions emit nothing and do not throw.
+- `isCallActive` reflects the active-call set.
+
+#### Extension UI bridge (server)
+
+- When `isVoiceModeActive` is true, `select` / `confirm` / `input` / `editor` reject with an error whose message is `ui_bridge_disabled_in_voice_mode` and no WebSocket request event is emitted.
+- When `isVoiceModeActive` is false (or undefined), dialog methods behave as before.
+- The predicate is consulted on every call, so toggling voice-mode between calls re-enables dialogs on the same bridge instance.
+
+#### Voice call store (client)
+
+- Initial state is `idle` with no session and no error.
+- `startCall` sends `call_bind`, transitions `idle → binding → connecting`, creates the peer connection, acquires the microphone, and opens the speechmux signalling WS using the call token returned by the server.
+- Attempting a second `startCall` while not idle rejects with `voice_call_already_in_progress`.
+- Server `call_bind` error → store returns to `idle` and records the error code in `lastError`.
+- `getUserMedia` or signalling failure tears down the peer and returns the store to `idle`.
+- `handleServerEvent(call_ready)` for the current session moves `connecting → connected`; for other sessions it is ignored.
+- `handleServerEvent(call_ended)` for the current session tears down peer + signalling and returns to `idle`; `reason: 'error'` is recorded as `lastError`.
+- `handleServerEvent(call_status: 'ringing')` nudges `binding → connecting`; status events never regress a `connected` phase.
+- `endCall` sends `call_end`, tears down locally even if the command fails, and is a no-op from `idle`.
+- `toggleMute` flips `micMuted` during an active call; is a no-op when idle.
