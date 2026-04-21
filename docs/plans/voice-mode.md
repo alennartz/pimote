@@ -373,6 +373,8 @@ Their status blocks only **Step 14 (end-to-end smoke)**; all earlier steps use t
 
 ## Steps
 
+**Pre-implementation commit:** `5fe18eedd69c5c69edab4dccc81fb25857735171`
+
 Commits use conventional `impl:` / `fix:` prefixes with `voice-mode` scope where possible. Each step's **Verify** names the concrete test file(s) or behavior to run; the test-review commit (`334d947`) is the fixed baseline — no test edits are permitted during impl.
 
 ### Step 1: Finalize `VoiceOrchestrator.bindCall` ownership semantics
@@ -387,7 +389,7 @@ Commits use conventional `impl:` / `fix:` prefixes with `voice-mode` scope where
 No new architectural decisions — this is strictly matching the test suite.
 
 **Verify:** `npm run test --workspace server -- voice-orchestrator` passes all cases.
-**Status:** not started
+**Status:** done
 
 ### Step 2: INTERPRETER_PROMPT module
 
@@ -400,7 +402,7 @@ Create `packages/voice/src/interpreter-prompt.ts` exporting `INTERPRETER_PROMPT:
 The factory in Step 3 substitutes `{{workerProvider}}` / `{{workerModel}}` placeholders at build time so the prompt is a static string by the time it's registered.
 
 **Verify:** File exists, exports a non-empty string, referenced from `index.ts`. `npm run build --workspace @pimote/voice` succeeds.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Default `SpeechmuxClient` factory
 
@@ -414,7 +416,7 @@ In `packages/voice/src/speechmux-client.ts` (or a new `speechmux-ws-client.ts`),
 Add `ws` as a runtime dependency of `@pimote/voice` via `npm install ws --workspace @pimote/voice` (+ `@types/ws` as dev dep).
 
 **Verify:** Compiles. No new tests required (tests use the injected fake factory). Referenced as the default in `createVoiceExtension` (Step 4).
-**Status:** not started
+**Status:** done
 
 ### Step 4: Implement `createVoiceExtension`
 
@@ -447,7 +449,7 @@ Abort mechanism (resolved): `ExtensionContext.abort()` is exposed by pi's extens
 The default `speechmuxClientFactory` is the one from Step 3; `opts.speechmuxClientFactory` overrides it for tests.
 
 **Verify:** `npm run test --workspace @pimote/voice` — the existing reducer tests still pass (unchanged) and the factory no longer throws when invoked. Add a minimal smoke assertion in a new `packages/voice/src/index.test.ts` that `createVoiceExtension({...})` returns a function that, when called with an `ExtensionAPI` mock, registers at least the `speak` tool and `before_agent_start` / `context` / `tool_call` / `turn_end` / `message_update` listeners.
-**Status:** not started
+**Status:** done
 
 **Commit:** `impl(voice): voice extension runtime — interpreter prompt, speechmux client, factory wiring`
 

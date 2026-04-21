@@ -93,11 +93,12 @@ export class VoiceOrchestrator {
       throw new CallBindError('call_bind_failed_session_not_found', `No session ${args.sessionId}`);
     }
 
-    if (this.opts.isOwnedByVoiceCall(args.sessionId) && !args.force) {
+    const alreadyOwned = this.opts.isOwnedByVoiceCall(args.sessionId);
+    if (alreadyOwned && !args.force) {
       throw new CallBindError('call_bind_failed_owned', 'Session already bound to a voice call');
     }
 
-    if (args.force) {
+    if (alreadyOwned && args.force) {
       await this.opts.displaceOwner(args.sessionId, args.clientConnection);
     }
 
