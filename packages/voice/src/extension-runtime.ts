@@ -23,7 +23,10 @@ export type VoiceAction =
   | { kind: 'clear_walkback_watermark' }
   | { kind: 'append_custom_entry'; customType: string; data: VoiceInterruptEntryData }
   | { kind: 'set_model'; provider: string; modelId: string }
-  | { kind: 'emit_deactivate_request' };
+  | { kind: 'emit_deactivate_request' }
+  | { kind: 'stream_speechmux_token'; text: string }
+  | { kind: 'emit_speechmux_end' }
+  | { kind: 'return_speak_tool_result' };
 
 // --- Runtime state. Small and fully inspectable by tests. ---
 
@@ -122,4 +125,31 @@ export function reduceSpeechmuxFrame(prev: VoiceRuntimeState, frame: IncomingFra
       };
     }
   }
+}
+
+/**
+ * Reducer for the `tool_call` hook firing on a `speak(...)` invocation.
+ * While active, streams the text to speechmux as a token frame and returns a
+ * trivial success result so the agent loop advances. No-op while not active.
+ */
+export function reduceSpeakToolCall(prev: VoiceRuntimeState, args: { text: string }): { next: VoiceRuntimeState; actions: VoiceAction[] } {
+  if (prev.state !== 'active') {
+    return { next: prev, actions: [] };
+  }
+  return {
+    next: prev,
+    actions: [{ kind: 'stream_speechmux_token', text: args.text }, { kind: 'return_speak_tool_result' }],
+  };
+}
+
+/**
+ * Reducer for the assistant turn's tool-call batch completing (turn_end).
+ * While active, flushes an `{type:"end"}` frame to speechmux. No-op while
+ * not active.
+ */
+export function reduceTurnEnd(prev: VoiceRuntimeState): { next: VoiceRuntimeState; actions: VoiceAction[] } {
+  if (prev.state !== 'active') {
+    return { next: prev, actions: [] };
+  }
+  return { next: prev, actions: [{ kind: 'emit_speechmux_end' }] };
 }

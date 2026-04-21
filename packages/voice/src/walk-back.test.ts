@@ -173,6 +173,16 @@ describe('walkBack — paired tool_result dropping', () => {
     expect(allResultIds).toContain('kept-id');
     expect(allResultIds).not.toContain('dropped-id');
   });
+
+  it('drops paired tool_result blocks for TRUNCATED speak tool_uses', () => {
+    // Single speak is truncated at the cutoff — its tool_result must also be dropped.
+    const captured = capturedAssistant([speak('trunc-id', 'hello world')]);
+    const msgs: AgentMessage[] = [userMsg('hi'), toolResultMsg('trunc-id'), syntheticAborted()];
+    const out = walkBack({ heardText: 'hello', captured, messages: msgs });
+    const toolResults = out.filter((m) => (m as any).role === 'toolResult') as any[];
+    const allResultIds = toolResults.flatMap((m) => m.content.map((b: any) => b.tool_use_id));
+    expect(allResultIds).not.toContain('trunc-id');
+  });
 });
 
 describe('walkBack — step-1 always applies', () => {

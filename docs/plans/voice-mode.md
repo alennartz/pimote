@@ -359,3 +359,5 @@ Same pattern as panel data (DR-004); no new cross-process channel.
 - `handleServerEvent(call_status: 'ringing')` nudges `binding → connecting`; status events never regress a `connected` phase.
 - `endCall` sends `call_end`, tears down locally even if the command fails, and is a no-op from `idle`.
 - `toggleMute` flips `micMuted` during an active call; is a no-op when idle.
+
+**Review status:** approved

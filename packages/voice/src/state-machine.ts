@@ -4,7 +4,14 @@
 // "Interfaces". The state machine is driven by EventBus messages from the
 // server-side VoiceOrchestrator.
 
-export type VoiceExtensionState = 'dormant' | 'activating' | 'active' | 'deactivating';
+/**
+ * Runtime state of the voice extension instance.
+ *
+ * Deactivation is synchronous (close WS, clear watermark) so no transient
+ * `'deactivating'` state is needed; `reduceDeactivate` moves `active` or
+ * `activating` straight to `dormant`.
+ */
+export type VoiceExtensionState = 'dormant' | 'activating' | 'active';
 
 /** Session-scoped EventBus message that activates the voice extension. */
 export interface VoiceActivateMessage {

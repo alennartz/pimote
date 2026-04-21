@@ -138,6 +138,7 @@ export function walkBack(input: WalkBackInput): AgentMessage[] {
         spoken = combined;
       } else if (spoken.length < heardText.length) {
         // Partial — truncate the text to exactly what remains of heardText.
+        // Per contract: a truncated speak also drops its paired tool_result.
         const remaining = heardText.slice(spoken.length);
         const truncatedBlock: SpeakToolUseBlock = {
           ...block,
@@ -146,6 +147,8 @@ export function walkBack(input: WalkBackInput): AgentMessage[] {
         kept.push(truncatedBlock);
         spoken = heardText;
         truncated = true;
+        const id = toolUseId(block);
+        if (id) droppedToolUseIds.add(id);
       } else {
         // spoken already >= heardText — drop block.
         const id = toolUseId(block);

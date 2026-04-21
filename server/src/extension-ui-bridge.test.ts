@@ -499,9 +499,11 @@ describe('createExtensionUIBridge', () => {
 
   // --------------------------------------------------------------------------
   // Voice-mode gating (docs/plans/voice-mode.md — "UI bridge" rejection).
-  // While a voice call owns the session, dialog methods reject with a
-  // standard error whose message is the `ui_bridge_disabled_in_voice_mode`
-  // reason code; fire-and-forget methods become no-ops (no events emitted).
+  // While a voice call owns the session, dialog methods (select / confirm /
+  // input / editor) reject with a standard error whose message is the
+  // `ui_bridge_disabled_in_voice_mode` reason code. Fire-and-forget methods
+  // (notify / setStatus / setWidget / setTitle / setEditorText) remain
+  // unaffected per plan scope.
   // --------------------------------------------------------------------------
   describe('voice-mode gating', () => {
     it('rejects select() with ui_bridge_disabled_in_voice_mode when a voice call owns the session', async () => {

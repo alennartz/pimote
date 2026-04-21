@@ -9,9 +9,11 @@ import {
   initialRuntimeState,
   reduceActivate,
   reduceDeactivate,
+  reduceSpeakToolCall,
   reduceSpeechmuxFailed,
   reduceSpeechmuxFrame,
   reduceSpeechmuxOpened,
+  reduceTurnEnd,
   type VoiceAction,
   type RuntimeConfig,
 } from './extension-runtime.js';
@@ -172,5 +174,51 @@ describe('reduceSpeechmuxFrame (non-active state)', () => {
     const s1 = reduceActivate(initialRuntimeState(), activate, config).next;
     const { actions } = reduceSpeechmuxFrame(s1, { type: 'abort' });
     expect(actions).toEqual([]);
+  });
+});
+
+describe('reduceSpeakToolCall', () => {
+  function activeState() {
+    let s = initialRuntimeState();
+    s = reduceActivate(s, activate, config).next;
+    s = reduceSpeechmuxOpened(s, config).next;
+    return s;
+  }
+
+  it('while active, streams the speak text as a token frame and returns a trivial tool_result', () => {
+    const { actions } = reduceSpeakToolCall(activeState(), { text: 'hello there' });
+    expect(actionKinds(actions)).toEqual(['stream_speechmux_token', 'return_speak_tool_result']);
+    expect(actions[0]).toMatchObject({ text: 'hello there' });
+  });
+
+  it('no-op while dormant', () => {
+    const { actions } = reduceSpeakToolCall(initialRuntimeState(), { text: 'hello' });
+    expect(actions).toEqual([]);
+  });
+
+  it('no-op while activating', () => {
+    const s1 = reduceActivate(initialRuntimeState(), activate, config).next;
+    const { actions } = reduceSpeakToolCall(s1, { text: 'hello' });
+    expect(actions).toEqual([]);
+  });
+});
+
+describe('reduceTurnEnd', () => {
+  function activeState() {
+    let s = initialRuntimeState();
+    s = reduceActivate(s, activate, config).next;
+    s = reduceSpeechmuxOpened(s, config).next;
+    return s;
+  }
+
+  it('while active, emits an end frame to speechmux', () => {
+    const { actions } = reduceTurnEnd(activeState());
+    expect(actions).toEqual([{ kind: 'emit_speechmux_end' }]);
+  });
+
+  it('no-op while not active', () => {
+    expect(reduceTurnEnd(initialRuntimeState()).actions).toEqual([]);
+    const activating = reduceActivate(initialRuntimeState(), activate, config).next;
+    expect(reduceTurnEnd(activating).actions).toEqual([]);
   });
 });
