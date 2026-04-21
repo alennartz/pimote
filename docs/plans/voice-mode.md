@@ -515,7 +515,7 @@ In `client/src/lib/stores/voice-call.svelte.ts`, add a `createBrowserVoiceCallSe
 The store itself needs a small extension: on `connected → disconnect`, also flip local WebRTC `iceConnectionState === 'connected'` into a synthetic `call_ready` self-event so the `connecting → connected` transition happens without server round-trip (matches Step 7's shortcut).
 
 **Verify:** `npm run test --workspace client -- voice-call` still passes (seams are constructor-injected, so real seams don't affect reducer tests). Manual mic-permission prompt fires on first call.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Route voice events into `VoiceCallStore`
 
@@ -526,7 +526,7 @@ In `client/src/lib/stores/connection.svelte.ts` (or wherever incoming server eve
 - On `session_closed { reason: 'displaced' }`, if `voiceCallStore.state.sessionId === event.sessionId`, synthesize a `call_ended { reason: 'displaced' }` for local teardown.
 
 **Verify:** Routing works in the browser; `voice-call.svelte.test.ts` unaffected. Manual: opening devtools and inspecting the store shows phase transitions on a fake server event.
-**Status:** not started
+**Status:** done
 
 ### Step 10: Client UI — per-session Call button
 
@@ -535,7 +535,7 @@ Add a Call button to the per-session header (likely `client/src/lib/components/S
 Use shadcn-svelte's existing `Button` primitive; icon `Phone` from `lucide-svelte`.
 
 **Verify:** Button renders, click transitions store to `binding` (confirmed via devtools inspection or adding a `client/src/lib/components/CallButton.svelte.test.ts` render check).
-**Status:** not started
+**Status:** done
 
 ### Step 11: Client UI — in-call banner with mute + hangup
 
@@ -552,7 +552,7 @@ Mount globally in `client/src/routes/+layout.svelte` above the main content, so 
 Wire the mute toggle through the peer connection: extend `VoicePeerConnection` seam with `setMicrophoneEnabled(enabled: boolean)`, called from the store on `toggleMute` (store already flips `micMuted`; the real seam must apply the change to the RTC audio track via `track.enabled = enabled`).
 
 **Verify:** Manual — start a call, banner appears, mute button toggles the local audio track's `enabled` state (verified via devtools or a speechmux-side round-trip in Step 14).
-**Status:** not started
+**Status:** done
 
 **Commit:** `impl(client): voice call store seams + UI (Call button, in-call banner)`
 

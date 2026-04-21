@@ -10,6 +10,7 @@
   import { statusRowSpacerClass } from './status-bar-layout.js';
   import { GitBranch } from '@lucide/svelte';
   import SessionRenameDialog from './SessionRenameDialog.svelte';
+  import CallButton from './CallButton.svelte';
 
   let restoreLabel = $derived(sessionRegistry.viewed?.isRestoring ? getRestoreModeLabel(sessionRegistry.viewed.restoreMode) : null);
   let connectionLabel = $derived(restoreLabel ?? connection.phaseLabel);
@@ -88,6 +89,9 @@
 
       <Separator orientation="vertical" class="mx-0.5 hidden h-4 md:block" />
     {/if}
+
+    <!-- Voice call button -->
+    <CallButton sessionId={sessionRegistry.viewed?.sessionId} />
 
     <!-- Streaming indicator -->
     {#if sessionRegistry.viewed?.isStreaming}

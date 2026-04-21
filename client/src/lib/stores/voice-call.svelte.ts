@@ -24,6 +24,9 @@ export interface VoiceCallState {
 export interface VoicePeerConnection {
   close(): void;
   addTrack(track: unknown, stream: unknown): void;
+  /** Optional: enable/disable the local microphone track(s). Tests that
+   *  don't exercise mute can omit this method. */
+  setMicrophoneEnabled?(enabled: boolean): void;
 }
 
 /** Abstraction over the speechmux /signal WebSocket. */
@@ -126,7 +129,9 @@ export class VoiceCallStore {
 
   toggleMute(): void {
     if (this.state.phase === 'idle') return;
-    this.state = { ...this.state, micMuted: !this.state.micMuted };
+    const nextMuted = !this.state.micMuted;
+    this.state = { ...this.state, micMuted: nextMuted };
+    this.peer?.setMicrophoneEnabled?.(!nextMuted);
   }
 
   /** Handles call_ready / call_ended / call_status events from the pimote WS. */
