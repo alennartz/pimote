@@ -462,7 +462,7 @@ In `server/src/session-manager.ts` `openSession`:
 - In the `factory` closure inside `openSession`, pass `extensionFactories: [voiceExtension]` into `resourceLoaderOptions` (alongside the existing `eventBus`).
 
 **Verify:** `npm run test --workspace server` still passes (session-manager tests); `npm run build` succeeds. A temporary `console.log` in `createVoiceExtension` confirms it's invoked once per session on manual smoke.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Instantiate `VoiceOrchestrator` in server boot
 
@@ -481,7 +481,7 @@ In `server/src/index.ts` (and/or `server.ts`):
 6. Pass the orchestrator into `createServer(...)` and then into `WsHandler` (constructor arg).
 
 **Verify:** Server starts and logs orchestrator ready state. Existing tests pass. Manual curl/ws smoke of unrelated commands still works.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Wire `call_bind` / `call_end` into `WsHandler`
 
@@ -499,7 +499,7 @@ In `server/src/ws-handler.ts`:
 6. Wire an `orchestrator → ws-handler` path so `call_ready` can be broadcast when speechmux reports the WebRTC peer connected. v1 shortcut: the orchestrator doesn't know about WebRTC readiness, so the client's own WebRTC connection state drives `connected` phase locally; the server emits `call_ready` from the orchestrator once speechmux notifies via its admin/event surface (deferred to Step 14 smoke — for v1, the client may transition to `connected` on its WebRTC `iceConnectionState === 'connected'` and fire `call_ready` is merely advisory). Surface this decision to the user if the shortcut is not acceptable.
 
 **Verify:** `npm run test --workspace server -- ws-handler extension-ui-bridge` passes. The existing `extension-ui-bridge` voice-mode-gating suite passes via the real predicate wiring.
-**Status:** not started
+**Status:** done
 
 **Commit:** `impl(server): voice orchestrator + ws-handler routing + UI-bridge gating`
 

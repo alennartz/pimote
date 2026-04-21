@@ -8,6 +8,7 @@ import { PushNotificationService } from './push-notification.js';
 import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore } from './push-infrastructure.js';
 import { LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_SESSION_METADATA_PATH } from './paths.js';
 import { FileSessionMetadataStore } from './session-metadata.js';
+import { buildVoiceOrchestrator } from './voice-orchestrator-boot.js';
 
 export interface StartOptions {
   portOverride?: number;
@@ -34,7 +35,24 @@ export async function main(options: StartOptions = {}) {
 
   const sessionManager = new PimoteSessionManager(config, pushNotificationService);
 
-  const server = await createServer(config, sessionManager, folderIndex, pushNotificationService, sessionMetadataStore);
+  // Build the voice orchestrator before createServer so each WsHandler can be
+  // handed a reference. The orchestrator holds its own client-registry handle,
+  // populated below once the server exists (chicken-and-egg: the registry is
+  // created inside createServer).
+  const clientRegistryRef: { current: Map<string, import('./ws-handler.js').WsHandler> } = { current: new Map() };
+  const voiceBoot = buildVoiceOrchestrator({
+    config,
+    sessionManager,
+    clientRegistry: new Proxy(new Map(), {
+      get(_t, p, _r) {
+        return Reflect.get(clientRegistryRef.current, p, clientRegistryRef.current);
+      },
+    }) as Map<string, import('./ws-handler.js').WsHandler>,
+  });
+
+  const server = await createServer(config, sessionManager, folderIndex, pushNotificationService, sessionMetadataStore, voiceBoot.orchestrator);
+  clientRegistryRef.current = server.clientRegistry;
+  await voiceBoot.orchestrator.start();
 
   // Start idle session reaping with client connectivity check
   sessionManager.startIdleCheck(config.idleTimeout, (clientId) => server.clientRegistry.has(clientId));
@@ -51,6 +69,7 @@ export async function main(options: StartOptions = {}) {
   // Graceful shutdown
   const shutdown = async () => {
     console.log('\n[pimote] Shutting down...');
+    await voiceBoot.shutdown();
     await sessionManager.dispose();
     await server.close();
     process.exit(0);

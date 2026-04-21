@@ -28,6 +28,8 @@ import type { FileSessionMetadataStore } from './session-metadata.js';
 import { mapAgentMessages, extractMessageEntryIds, applyEntryIds, type SdkSessionEntry } from './message-mapper.js';
 import { getGitBranch } from './git-branch.js';
 import type { AgentSession, ExtensionCommandContextActions } from '@mariozechner/pi-coding-agent';
+import type { VoiceOrchestrator } from './voice-orchestrator.js';
+import { CallBindError } from './voice-orchestrator.js';
 
 /** Parse data-URL encoded images into the shape the pi SDK expects. */
 function parseDataUrlImages(images?: string[]): { type: 'image'; data: string; mimeType: string }[] | undefined {
@@ -165,6 +167,7 @@ export class WsHandler {
     private readonly sessionMetadataStore: FileSessionMetadataStore,
     clientId: string,
     private readonly clientRegistry: ClientRegistry,
+    private readonly voiceOrchestrator?: VoiceOrchestrator,
   ) {
     this.clientId = clientId;
   }
@@ -545,6 +548,48 @@ export class WsHandler {
 
           WsHandler.broadcastSidebarUpdate(takeoverSessionId, takeoverSlot.folderPath, this.sessionManager, this.clientRegistry);
           this.sendResponse(id, true, { sessionId: takeoverSessionId, killedProcesses: killedCount });
+          break;
+        }
+
+        // ---- Voice call control ----
+        case 'call_bind': {
+          if (!this.voiceOrchestrator) {
+            this.sendResponse(id, false, undefined, 'call_bind_failed_internal');
+            break;
+          }
+          const slot = this.sessionManager.getSlot(command.sessionId);
+          if (!slot) {
+            this.sendResponse(id, false, undefined, 'call_bind_failed_session_not_found');
+            break;
+          }
+          const connection: import('./session-manager.js').ClientConnection = {
+            ws: this.ws as import('./session-manager.js').EventSocket,
+            connectedClientId: this.clientId,
+            onSessionReset: (s) => this.handleSessionReset(s),
+          };
+          try {
+            const data = await this.voiceOrchestrator.bindCall({
+              sessionId: command.sessionId,
+              clientConnection: connection,
+              force: command.force ?? false,
+            });
+            this.sendResponse(id, true, data);
+            this.sendEvent({ type: 'call_status', sessionId: command.sessionId, status: 'binding' });
+          } catch (err) {
+            if (err instanceof CallBindError) {
+              this.sendResponse(id, false, undefined, err.code);
+            } else {
+              console.warn('[voice] call_bind failed', err);
+              this.sendResponse(id, false, undefined, 'call_bind_failed_internal');
+            }
+          }
+          break;
+        }
+
+        case 'call_end': {
+          await this.voiceOrchestrator?.endCall({ sessionId: command.sessionId, reason: 'user_hangup' });
+          this.sendResponse(id, true);
+          this.sendEvent({ type: 'call_ended', sessionId: command.sessionId, reason: 'user_hangup' });
           break;
         }
 
@@ -1036,7 +1081,9 @@ export class WsHandler {
     // ManagedSlot — on reconnect we skip rebinding, but on session reset
     // we must rebind so the bridge points at the new session state.
     if (!slot.sessionState.extensionsBound) {
-      const uiContext = createExtensionUIBridge(slot, this.pushNotificationService);
+      const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
+        isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(sessionId) ?? false,
+      });
       const commandContextActions = createCommandContextActions(slot);
       await slot.session.bindExtensions({ uiContext, commandContextActions });
       slot.sessionState.extensionsBound = true;
@@ -1075,7 +1122,9 @@ export class WsHandler {
     }
 
     // Rebind extension UI bridge (new session state for dialog routing)
-    const uiContext = createExtensionUIBridge(slot, this.pushNotificationService);
+    const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
+      isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(newSessionId) ?? false,
+    });
     const commandContextActions = createCommandContextActions(slot);
     await slot.session.bindExtensions({ uiContext, commandContextActions });
     slot.sessionState.extensionsBound = true;
@@ -1202,6 +1251,16 @@ export class WsHandler {
       sessionId,
       reason: 'displaced',
     });
+    // If the old owner had an active voice call on this session, surface a
+    // `call_ended { reason: 'displaced' }` so their VoiceCallStore tears down
+    // alongside the session_closed.
+    if (this.voiceOrchestrator?.isCallActive(sessionId)) {
+      this.sendEvent({
+        type: 'call_ended',
+        sessionId,
+        reason: 'displaced',
+      });
+    }
   }
 
   /** Send a session_closed event with reason 'killed' to this client's WebSocket.

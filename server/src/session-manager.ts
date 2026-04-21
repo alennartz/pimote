@@ -17,6 +17,8 @@ import type { PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import type { PanelBusMessage } from './panel-state.js';
 import { getGitBranch } from './git-branch.js';
+import { createVoiceExtension } from '@pimote/voice';
+import type { ExtensionFactory } from '@mariozechner/pi-coding-agent';
 
 /** Narrow interface for the WebSocket used for event routing.
  *  Avoids importing the `ws` package type in session-manager. */
@@ -228,12 +230,37 @@ export class PimoteSessionManager {
     this.modelRegistry = ModelRegistry.create(this.authStorage);
   }
 
+  /**
+   * Build the voice extension factory for this server's config, if possible.
+   * Returns undefined (and logs a warning) when neither voice-specific model
+   * refs nor fallback defaultProvider/defaultModel are configured — existing
+   * non-voice deployments continue to work unchanged.
+   */
+  private buildVoiceExtensionFactory(): ExtensionFactory | undefined {
+    const interpreter =
+      this.config.defaultInterpreterModel ??
+      (this.config.defaultProvider && this.config.defaultModel ? { provider: this.config.defaultProvider, modelId: this.config.defaultModel } : undefined);
+    const worker =
+      this.config.defaultWorkerModel ??
+      (this.config.defaultProvider && this.config.defaultModel ? { provider: this.config.defaultProvider, modelId: this.config.defaultModel } : undefined);
+    if (!interpreter || !worker) {
+      console.warn('[pimote] voice extension disabled: no defaultInterpreterModel/defaultWorkerModel or fallback defaultProvider/defaultModel in config');
+      return undefined;
+    }
+    return createVoiceExtension({
+      defaultInterpreterModel: interpreter,
+      defaultWorkerModel: worker,
+    });
+  }
+
   async openSession(folderPath: string, sessionFilePath?: string): Promise<string> {
     const eventBusRef: { current: EventBusController | null } = { current: null };
     const sharedAuthStorage = this.authStorage;
     const sharedModelRegistry = this.modelRegistry;
     const sessionManager = sessionFilePath ? PiSessionManager.open(sessionFilePath) : PiSessionManager.create(folderPath);
     const effectiveFolderPath = sessionFilePath ? sessionManager.getCwd() : folderPath;
+
+    const voiceExtensionFactory = this.buildVoiceExtensionFactory();
 
     const factory: CreateAgentSessionRuntimeFactory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
       const eventBus = createEventBus();
@@ -244,7 +271,10 @@ export class PimoteSessionManager {
         agentDir,
         authStorage: sharedAuthStorage,
         modelRegistry: sharedModelRegistry,
-        resourceLoaderOptions: { eventBus },
+        resourceLoaderOptions: {
+          eventBus,
+          ...(voiceExtensionFactory ? { extensionFactories: [voiceExtensionFactory] } : {}),
+        },
       });
 
       return {
@@ -410,6 +440,12 @@ export class PimoteSessionManager {
       slotRef,
       slot.folderPath,
     );
+  }
+
+  /** Alias for getSession that returns null (not undefined) for consumers
+   *  that expect nullable pointers (e.g. VoiceSessionBusResolver). */
+  getSlot(sessionId: string): ManagedSlot | null {
+    return this.sessions.get(sessionId) ?? null;
   }
 
   getSession(sessionId: string): ManagedSlot | undefined {
