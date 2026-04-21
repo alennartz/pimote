@@ -1063,6 +1063,14 @@ export class WsHandler {
         oldHandler.sendDisplacedEvent(sessionId);
       }
     }
+    // Tear down voice-call bookkeeping on the orchestrator so the voice
+    // extension's deactivate reducer fires (closes speechmux, clears
+    // walk-back watermark) before the new owner takes over.
+    if (this.voiceOrchestrator?.isCallActive(sessionId)) {
+      this.voiceOrchestrator.endCall({ sessionId, reason: 'displaced' }).catch((err) => {
+        console.warn('[voice] endCall on displace failed', err);
+      });
+    }
   }
 
   /** Bind a slot to this client — sets ownership, WebSocket routing,
@@ -1251,16 +1259,28 @@ export class WsHandler {
       sessionId,
       reason: 'displaced',
     });
-    // If the old owner had an active voice call on this session, surface a
-    // `call_ended { reason: 'displaced' }` so their VoiceCallStore tears down
-    // alongside the session_closed.
+    // If the old owner had an active voice call on this session, tear down
+    // orchestrator bookkeeping and surface `call_ended { reason: 'displaced' }`
+    // so their VoiceCallStore tears down alongside the session_closed.
     if (this.voiceOrchestrator?.isCallActive(sessionId)) {
+      void this.voiceOrchestrator.endCall({ sessionId, reason: 'displaced' });
       this.sendEvent({
         type: 'call_ended',
         sessionId,
         reason: 'displaced',
       });
     }
+  }
+
+  /** Broadcast a `call_ended` to this client (used by the session manager's
+   *  before-close hook so the orchestrator bookkeeping owner learns that a
+   *  server-initiated teardown happened). */
+  sendCallEndedEvent(sessionId: string, reason: 'user_hangup' | 'displaced' | 'server_ended' | 'error'): void {
+    this.sendEvent({
+      type: 'call_ended',
+      sessionId,
+      reason,
+    });
   }
 
   /** Send a session_closed event with reason 'killed' to this client's WebSocket.

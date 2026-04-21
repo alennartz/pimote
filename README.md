@@ -196,15 +196,39 @@ With this config, if `/home/you/projects/` contains `my-app/` and `another-repo/
 
 ### Options
 
-| Field                  | Type       | Default        | Description                                   |
-| ---------------------- | ---------- | -------------- | --------------------------------------------- |
-| `roots`                | `string[]` | **(required)** | Parent directories to scan for projects       |
-| `port`                 | `number`   | `3000`         | Server port                                   |
-| `idleTimeout`          | `number`   | `1800000`      | Idle session reap timeout (ms, default 30min) |
-| `bufferSize`           | `number`   | `1000`         | Event ring buffer size per session            |
-| `defaultProvider`      | `string`   | —              | Default LLM provider                          |
-| `defaultModel`         | `string`   | —              | Default model                                 |
-| `defaultThinkingLevel` | `string`   | —              | Default thinking level                        |
+| Field                     | Type                  | Default        | Description                                                              |
+| ------------------------- | --------------------- | -------------- | ------------------------------------------------------------------------ |
+| `roots`                   | `string[]`            | **(required)** | Parent directories to scan for projects                                  |
+| `port`                    | `number`              | `3000`         | Server port                                                              |
+| `idleTimeout`             | `number`              | `1800000`      | Idle session reap timeout (ms, default 30min)                            |
+| `bufferSize`              | `number`              | `1000`         | Event ring buffer size per session                                       |
+| `defaultProvider`         | `string`              | —              | Default LLM provider                                                     |
+| `defaultModel`            | `string`              | —              | Default model                                                            |
+| `defaultThinkingLevel`    | `string`              | —              | Default thinking level                                                   |
+| `defaultInterpreterModel` | `{provider, modelId}` | —              | Voice interpreter model (falls back to `defaultProvider`/`defaultModel`) |
+| `defaultWorkerModel`      | `{provider, modelId}` | —              | Voice worker model passed to `my-pi` subagent spawns                     |
+| `voice`                   | `object`              | —              | Voice subsystem config (see below)                                       |
+
+#### Voice mode
+
+Voice mode is optional — when `voice.speechmuxBinary` is unset the feature
+stays dormant and the server behaves exactly as before. To enable it:
+
+```json
+{
+  "roots": ["/home/you/projects"],
+  "defaultInterpreterModel": { "provider": "anthropic", "modelId": "claude-sonnet-4-5" },
+  "defaultWorkerModel": { "provider": "anthropic", "modelId": "claude-sonnet-4-5" },
+  "voice": {
+    "speechmuxBinary": "/usr/local/bin/speechmux",
+    "speechmuxSignalUrl": "wss://speechmux.example.com/signal",
+    "speechmuxLlmWsUrl": "ws://127.0.0.1:6789"
+  }
+}
+```
+
+All three `voice.*` fields are required to enable voice; `defaultInterpreterModel`
+and `defaultWorkerModel` fall back to `defaultProvider` + `defaultModel` if unset.
 
 VAPID keys for push notifications are auto-generated on first run and written back to the config file. Session metadata and push subscription state live under `~/.local/state/pimote` (or `$XDG_STATE_HOME/pimote`).
 

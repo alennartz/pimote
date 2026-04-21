@@ -221,6 +221,10 @@ export class PimoteSessionManager {
   onStatusChange?: (sessionId: string, folderPath: string) => void;
   onSessionClosed?: (sessionId: string, folderPath: string) => void;
   onGitBranchChange?: (sessionId: string, folderPath: string) => void;
+  /** Fired synchronously before a session's state is torn down (e.g. idle
+   *  reap, explicit close). Consumers use this to drop external bookkeeping
+   *  (e.g. `VoiceOrchestrator.endCall`) while the session is still addressable. */
+  onBeforeSessionClose?: (sessionId: string, folderPath: string) => Promise<void> | void;
 
   constructor(
     private readonly config: PimoteConfig,
@@ -400,6 +404,14 @@ export class PimoteSessionManager {
   async closeSession(sessionId: string): Promise<void> {
     const slot = this.sessions.get(sessionId);
     if (!slot) return;
+
+    if (this.onBeforeSessionClose) {
+      try {
+        await this.onBeforeSessionClose(sessionId, slot.folderPath);
+      } catch (err) {
+        console.warn('[pimote] onBeforeSessionClose threw:', err);
+      }
+    }
 
     teardownSessionState(slot.sessionState);
     slot.eventBusRef.current?.clear();

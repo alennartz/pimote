@@ -563,7 +563,7 @@ Revisit `server/src/ws-handler.ts` displacement and session-close paths: any pat
 Also: when `PimoteSessionManager` reaps an idle session, call `voiceOrchestrator.endCall(..., reason: 'server_ended')` first.
 
 **Verify:** `npm run test --workspace server` passes. Manual: force-close a session with an active call → the client receives `call_ended { reason: 'server_ended' }` and the store returns to `idle`.
-**Status:** not started
+**Status:** done
 
 ### Step 13: Config + docs polish
 
@@ -572,7 +572,7 @@ Also: when `PimoteSessionManager` reaps an idle session, call `voiceOrchestrator
 - Add a `packages/voice/README.md` describing the extension's public surface.
 
 **Verify:** Docs render; `npm run build` across workspaces succeeds.
-**Status:** not started
+**Status:** done
 
 **Commit:** `impl(voice): displacement tear-down + docs`
 

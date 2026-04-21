@@ -52,6 +52,20 @@ export async function main(options: StartOptions = {}) {
 
   const server = await createServer(config, sessionManager, folderIndex, pushNotificationService, sessionMetadataStore, voiceBoot.orchestrator);
   clientRegistryRef.current = server.clientRegistry;
+
+  // Tear down orchestrator bookkeeping when a session is being closed (idle
+  // reap, explicit close). Emits call_ended{server_ended} to the owner.
+  sessionManager.onBeforeSessionClose = async (sessionId) => {
+    if (!voiceBoot.orchestrator.isCallActive(sessionId)) return;
+    const slot = sessionManager.getSlot(sessionId);
+    const ownerClientId = slot?.connection?.connectedClientId;
+    await voiceBoot.orchestrator.endCall({ sessionId, reason: 'server_ended' });
+    if (ownerClientId) {
+      const handler = server.clientRegistry.get(ownerClientId);
+      handler?.sendCallEndedEvent(sessionId, 'server_ended');
+    }
+  };
+
   await voiceBoot.orchestrator.start();
 
   // Start idle session reaping with client connectivity check
