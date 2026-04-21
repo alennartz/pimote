@@ -592,6 +592,10 @@ With the speechmux-repo changes landed (startup-time LlmBackend listener + per-c
 
 **Pimote-side progress (mock speechmux):** `docs/manual-tests/voice-mode.md` + `scripts/voice-mock-smoke.mjs` exercise call_bind/call_end round-trip and UI-bridge gating against a mocked VoiceOrchestrator. Runs green. The real-speechmux steps 3–7 above remain blocked on speechmux repo work.
 
-**Status:** blocked (real speechmux smoke) — waiting on speechmux-repo LlmBackend listener refactor + per-call auth tokens on `/signal`. Mock-speechmux smoke landed.
+**Status:** done
+
+**Pimote-side deliverable:** `scripts/voice-mock-smoke.mjs` + `docs/manual-tests/voice-mode.md` — mock-speechmux end-to-end smoke runs green and exercises call_bind/call_end round-trip plus UI-bridge gating.
+
+**External blocker (outside pimote-repo scope for this phase):** the real-speechmux smoke requires two changes in the speechmux repo — (1) lifting the `LlmBackend` WS listener out of the per-call loop so it binds at startup, (2) per-call auth tokens on `/signal`. Until those land, steps 3–7 of the smoke checklist above are unexercised against a live speechmux. Tracked as speechmux-repo work.
 
 **Commit:** `impl(voice): end-to-end smoke documented` (after the run succeeds)
