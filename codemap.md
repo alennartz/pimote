@@ -2,13 +2,14 @@
 
 ## Overview
 
-Pimote is a PWA + Node.js server for remote access to pi (a coding agent). npm workspace with four packages: shared protocol types, a Node.js HTTP+WebSocket server managing pi AgentSession instances, a SvelteKit PWA client (Svelte 5 runes, shadcn-svelte) for real-time conversation rendering, and a panels library for extensions to push structured card data. Supports multiple concurrent sessions, session ownership/takeover, Web Push notifications, extension UI bridging, and a real-time side panel displaying extension-provided cards.
+Pimote is a PWA + Node.js server for remote access to pi (a coding agent). npm workspace with five packages: shared protocol types, a Node.js HTTP+WebSocket server managing pi AgentSession instances, a SvelteKit PWA client (Svelte 5 runes, shadcn-svelte) for real-time conversation rendering, a panels library for extensions to push structured card data, and a voice extension loaded into every pi session that wires a speechmux sidecar + WebRTC call into a running pi session. Supports multiple concurrent sessions, session ownership/takeover, Web Push notifications, extension UI bridging, a real-time side panel displaying extension-provided cards, and browser-driven voice calls into a pi session (interpreter + worker LLM split, walk-back surgery, speak() tool).
 
 ```mermaid
 graph LR
   Protocol --> Server
   Protocol --> Client
   Panels --> Server
+  Voice --> Server
   Server --> Client
 ```
 
@@ -43,13 +44,34 @@ sequenceDiagram
   S-->>Ext: resolve promise with value
 ```
 
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant S as Server
+  participant O as VoiceOrchestrator
+  participant M as speechmux
+  participant V as Voice ext
+
+  C->>S: call_bind { sessionId }
+  S->>O: bindCall()
+  O->>M: spawn/ensure sidecar
+  O-->>V: activate(call)
+  V-->>C: call_ready (SDP/ICE via signaling)
+  C<->>M: WebRTC audio (mic ↔ TTS)
+  V-->>S: speak() / walk-back edits
+  C->>S: call_end | displacement
+  S->>O: endCall()
+  O-->>V: deactivate
+  S-->>C: call_ended
+```
+
 ## Modules
 
 ### Protocol
 
 Shared TypeScript types defining the WebSocket wire format between client and server.
 
-**Responsibilities:** command types (client→server), event types (server→client), response envelope, session/message/folder data shapes, push subscription types, extension UI request/response types, slash command types, tree navigation wire contracts (`PimoteTreeNode`, `navigate_tree`/`set_tree_label`, `tree_navigation_start`/`tree_navigation_end`), project management commands (`create_project`), panel/card data types (Card, BodySection, CardColor, BodySectionStyle, PanelUpdateEvent)
+**Responsibilities:** command types (client→server), event types (server→client), response envelope, session/message/folder data shapes, push subscription types, extension UI request/response types (including `UI_BRIDGE_DISABLED_IN_VOICE_MODE` reason code for voice-mode gating), slash command types, tree navigation wire contracts (`PimoteTreeNode`, `navigate_tree`/`set_tree_label`, `tree_navigation_start`/`tree_navigation_end`), project management commands (`create_project`), panel/card data types (Card, BodySection, CardColor, BodySectionStyle, PanelUpdateEvent), voice-call wire contracts (`call_bind`/`call_end` commands; `call_bind_response`/`call_ready`/`call_ended`/`call_status` events; `VOICE_INTERRUPT_CUSTOM_TYPE` for walk-back/interrupt custom messages)
 
 **Dependencies:** none
 
@@ -62,17 +84,20 @@ Shared TypeScript types defining the WebSocket wire format between client and se
 
 Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges them to remote clients.
 
-**Responsibilities:** HTTP static serving + SPA fallback, WebSocket upgrade + message routing, client identity registry, three-layer session model (ManagedSlot wrapping AgentSessionRuntime + ClientConnection + SessionState), runtime factory pattern for pi SDK session creation, session state lifecycle helpers (create/teardown/rebuild), session open/close/resume/idle-reap/takeover, event buffering with delta coalescing for reconnect replay, folder/session filesystem discovery, project folder creation (`mkdir` + `git init`), extension UI bridging (dialog→WebSocket round-trips, fire-and-forget→events, TUI-only→no-ops), extension command context actions, SDK message mapping, session conflict detection (external pi processes via /proc + remote pimote sessions), config loading + VAPID key management, Web Push notification delivery, git branch detection, pimote slash-command handling (`/new`, `/reload`, `/tree`) plus autocomplete surfaces for extension/skill/template commands, tree navigation command lifecycle (`navigate_tree`, `set_tree_label`) with buffered lifecycle events + full-resync handoff, client version mismatch detection, EventBus creation + panel channel wiring (detect/data listeners), per-session panel state tracking with throttled pushes, panel snapshot delivery on reconnect/session-switch, idle-reap protection while tree navigation is in progress
+**Responsibilities:** HTTP static serving + SPA fallback, WebSocket upgrade + message routing, client identity registry, three-layer session model (ManagedSlot wrapping AgentSessionRuntime + ClientConnection + SessionState), runtime factory pattern for pi SDK session creation (with voice extension factory threaded via `resourceLoaderOptions` so every session loads `@pimote/voice` dormant), session state lifecycle helpers (create/teardown/rebuild), session open/close/resume/idle-reap/takeover, event buffering with delta coalescing for reconnect replay, folder/session filesystem discovery, project folder creation (`mkdir` + `git init`), extension UI bridging (dialog→WebSocket round-trips, fire-and-forget→events, TUI-only→no-ops) with voice-mode gating via `isVoiceModeActive` predicate (dialog calls short-circuit to `UI_BRIDGE_DISABLED_IN_VOICE_MODE`), extension command context actions, SDK message mapping, session conflict detection (external pi processes via /proc + remote pimote sessions), config loading + VAPID key management + voice config (`voice` section, `defaultInterpreterModel`, `defaultWorkerModel`), Web Push notification delivery, git branch detection, pimote slash-command handling (`/new`, `/reload`, `/tree`) plus autocomplete surfaces for extension/skill/template commands, tree navigation command lifecycle (`navigate_tree`, `set_tree_label`) with buffered lifecycle events + full-resync handoff, voice call lifecycle (`call_bind`/`call_end` routing, speechmux sidecar orchestration, per-call auth token minting seam, displacement teardown of active voice calls, EventBus activate/deactivate emission into the voice extension), client version mismatch detection, EventBus creation + panel channel wiring (detect/data listeners), per-session panel state tracking with throttled pushes, panel snapshot delivery on reconnect/session-switch, idle-reap protection while tree navigation is in progress
 
 **Dependencies:** Protocol (wire format types)
 
 **Files:**
 
-- `server/src/index.ts` — entry point
-- `server/src/config.ts` — config loading, VAPID key auto-generation
+- `server/src/index.ts` — entry point (now also boots the voice orchestrator via `voice-orchestrator-boot`)
+- `server/src/config.ts` — config loading, VAPID key auto-generation, optional `voice` section plus `defaultInterpreterModel` / `defaultWorkerModel`
 - `server/src/server.ts` — HTTP server, static files, WebSocket upgrade, client registry, version checking
-- `server/src/ws-handler.ts` — per-connection command handler, multi-session routing, session ownership/displacement, conflict detection, `/tree` prompt interception + session-tree mapping, `navigate_tree`/`set_tree_label` handlers with `tree_navigation_start`/`tree_navigation_end` event emission and full-resync orchestration, in-place session reset via slot.runtime (newSession/fork/switchSession with rebuildSessionState + reKey), `create_project` handler (name/root validation, `mkdir` + `git init`), `list_folders` response includes configured roots
-- `server/src/session-manager.ts` — ManagedSlot/ClientConnection/SessionState types, slot-based event + UI helpers (send, wait, resolve, replay), AgentSessionRuntime factory for session creation, session state lifecycle (createSessionState/teardownSessionState/rebuildSessionState), `treeNavigationInProgress` state tracking, reKeySession for session replacement, idle reaping with tree-navigation skip protection, EventBus creation + panel listener wiring, throttled panel push scheduling
+- `server/src/ws-handler.ts` — per-connection command handler, multi-session routing, session ownership/displacement (tears down any active voice call on displace), conflict detection, `/tree` prompt interception + session-tree mapping, `navigate_tree`/`set_tree_label` handlers with `tree_navigation_start`/`tree_navigation_end` event emission and full-resync orchestration, in-place session reset via slot.runtime (newSession/fork/switchSession with rebuildSessionState + reKey), `create_project` handler (name/root validation, `mkdir` + `git init`), `list_folders` response includes configured roots, `call_bind`/`call_end` command routing into the voice orchestrator, `isVoiceModeActive` predicate feeding the extension UI bridge so dialog UI requests return `UI_BRIDGE_DISABLED_IN_VOICE_MODE` while a call is bound
+- `server/src/session-manager.ts` — ManagedSlot/ClientConnection/SessionState types, slot-based event + UI helpers (send, wait, resolve, replay), AgentSessionRuntime factory for session creation, session state lifecycle (createSessionState/teardownSessionState/rebuildSessionState), threads the `@pimote/voice` extension factory into every pi session via `resourceLoaderOptions`, `treeNavigationInProgress` state tracking, reKeySession for session replacement, idle reaping with tree-navigation skip protection, EventBus creation + panel listener wiring, throttled panel push scheduling
+- `server/src/voice-orchestrator.ts` — VoiceOrchestrator: speechmux sidecar lifecycle (spawn/health/shutdown), per-session call registry, `bindCall`/`endCall` dispatch, per-call auth-token minting seam, EventBus `voice:activate` / `voice:deactivate` emission into the session's voice extension
+- `server/src/voice-orchestrator-boot.ts` — wires VoiceOrchestrator into server startup, consumes `voice` config, exposes the orchestrator + `isVoiceModeActive` predicate to ws-handler / session-manager
+- `server/src/voice-orchestrator.test.ts` — tests
 - `server/src/event-buffer.ts` — ring buffer, SDK→wire event mapping (including buffered `tree_navigation_*` lifecycle events), streaming delta coalescing
 - `server/src/message-mapper.ts` — SDK AgentMessage → PimoteAgentMessage conversion
 - `server/src/extension-ui-bridge.ts` — extension UI calls → WebSocket events
@@ -106,6 +131,10 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/stores/tree-dialog.svelte.ts` — TreeDialogStore state/lifecycle (open/close, selection, fold state, loading, filter/search), filtered tree derivation, local label mutation
 - `client/src/lib/stores/tree-dialog.svelte.test.ts` — tests
 - `client/src/lib/stores/speech.svelte.ts` — singleton speech playback state (speak/stop/toggleTts/playingKey)
+- `client/src/lib/stores/voice-call.svelte.ts` — `VoiceCallStore` class: reactive voice-call state machine (idle/binding/ready/active/ending/error), seam-based so WebRTC/signaling/getUserMedia can be injected in tests
+- `client/src/lib/stores/voice-call.svelte.test.ts` — tests
+- `client/src/lib/stores/voice-call-seams.ts` — browser implementation of the voice-call seams: `getUserMedia`, `RTCPeerConnection` setup, SDP/ICE signaling bridge over the pimote WebSocket
+- `client/src/lib/stores/voice-call-store.ts` — singleton wiring: constructs the `VoiceCallStore` with browser seams, routes server voice events (`call_bind_response`/`call_ready`/`call_ended`/`call_status`) into the store, synthesizes a `call_ended` on session displacement
 - `client/src/lib/stores/panel-store.svelte.ts` — PanelStore class: reactive card list for viewed session, handlePanelUpdate/reset methods
 - `client/src/lib/stores/panel-store.svelte.test.ts` — tests
 - `client/src/lib/stores/speech.svelte.test.ts` — tests
@@ -127,7 +156,9 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/components/ExtensionDialog.svelte` — modal extension UI (input, editor with CodeMirror)
 - `client/src/lib/components/TreeDialog.svelte` — tree navigation modal (recursive tree rendering, search/filter, summarization modes, label editor popover, `navigate_tree`/`set_tree_label` commands, lifecycle event handling)
 - `client/src/lib/components/ExtensionStatus.svelte` — extension status display
-- `client/src/lib/components/StatusBar.svelte` — session status header
+- `client/src/lib/components/StatusBar.svelte` — session status header; hosts `CallButton`
+- `client/src/lib/components/CallButton.svelte` — voice-call toggle button in the status bar (bind/end, drives `VoiceCallStore`)
+- `client/src/lib/components/CallBanner.svelte` — sticky in-call banner (mic state, call status, end-call control); mounted in `+layout.svelte`
 - `client/src/lib/components/ActiveSessionBar.svelte` — session tab bar with status dots
 - `client/src/lib/components/FolderList.svelte` — folder browser, new-session picker dialog with 'Create new project' multi-step flow (root selection → name input → `create_project`)
 - `client/src/lib/components/SessionItem.svelte` — session list item
@@ -157,7 +188,7 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/highlight-theme.css` — syntax highlight theme
 - `client/src/sw.ts` — service worker (push notifications, notification click handling)
 - `client/src/routes/+page.svelte` — main page (session view or landing)
-- `client/src/routes/+layout.svelte` — app shell, connection init, service worker registration, desktop panel integration (flex sibling), mobile panel overlay, global overlay mounting (`TreeDialog`, `ExtensionDialog`)
+- `client/src/routes/+layout.svelte` — app shell, connection init, service worker registration, desktop panel integration (flex sibling), mobile panel overlay, global overlay mounting (`TreeDialog`, `ExtensionDialog`, `CallBanner`)
 - `client/src/routes/+layout.ts`, `client/src/routes/layout.css` — layout config and styles
 - `client/src/app.html`, `client/src/app.d.ts` — SvelteKit app shell
 - `client/src/test/mocks/app-environment.ts` — test mock
@@ -168,9 +199,9 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 
 Standalone diagnostic and debugging scripts for stream/API analysis.
 
-**Responsibilities:** APIM SSE diagnostics, stream timing measurement, comparative stream analysis
+**Responsibilities:** APIM SSE diagnostics, stream timing measurement, comparative stream analysis, voice-mode mock-speechmux smoke test
 
-**Dependencies:** none
+**Dependencies:** none (voice smoke script talks to the server via the protocol types only)
 
 **Files:**
 
@@ -179,6 +210,7 @@ Standalone diagnostic and debugging scripts for stream/API analysis.
 - `tools/stream-timing.ts` — stream timing tool
 - `tools/stream-timing-fetch.ts` — raw fetch stream timing (Accept-Encoding effects)
 - `tools/stream-timing-raw.ts` — raw Anthropic stream timing
+- `scripts/voice-mock-smoke.mjs` — mock-speechmux smoke script: drives `call_bind`/`call_end`, asserts UI-bridge gating (`UI_BRIDGE_DISABLED_IN_VOICE_MODE`), exercises the voice extension-runtime reducers and the displacement teardown path
 
 ### Panels
 
@@ -194,3 +226,37 @@ Workspace package (`@pimote/panels`) for extensions to push structured card data
 - `packages/panels/src/types.ts` — Card, BodySection, CardColor, BodySectionStyle, PanelHandle, PanelMessage type definitions
 - `packages/panels/src/detect.ts` — detect() function: synchronous EventBus probe, handle creation with namespace scoping, previous-handle deactivation
 - `packages/panels/src/detect.test.ts` — tests
+
+### Voice
+
+Workspace package (`@pimote/voice`) — pi extension loaded into every pimote session (dormant by default) that hosts the voice-mode client inside the agent process.
+
+**Responsibilities:** activation state machine (dormant ↔ active, driven by `voice:activate` / `voice:deactivate` EventBus signals from the server orchestrator), speechmux WebSocket client (per-call connect with minted auth token, signaling relay, interrupt/barge-in handling), extension-runtime reducers (tool-call / message-event handling for the interpreter+worker split), walk-back surgery (rewriting the in-flight pi message history when the user interrupts or the interpreter course-corrects), `speak()` tool exposed to the worker LLM, `INTERPRETER_PROMPT` system prompt, emission of `VOICE_INTERRUPT_CUSTOM_TYPE` messages
+
+**Dependencies:** pi SDK (`ExtensionAPI`, custom message / tool APIs), Protocol (voice wire types consumed via EventBus payloads)
+
+**Files:**
+
+- `packages/voice/src/index.ts` — extension factory: registers tools (`speak`), subscribes to EventBus voice signals, owns the state machine instance
+- `packages/voice/src/state-machine.ts` — pure activation state machine (states + transitions) shared by the extension and tests
+- `packages/voice/src/extension-runtime.ts` — reducers that interpret pi SDK events inside an active call (interpreter/worker split, tool-call routing)
+- `packages/voice/src/extension-runtime.test.ts` — tests
+- `packages/voice/src/walk-back.ts` — message-history surgery: trim/rewrite the in-flight conversation on interrupt / re-steer
+- `packages/voice/src/walk-back.test.ts` — tests
+- `packages/voice/src/speechmux-client.ts` — WebSocket client to the speechmux sidecar (connect with per-call auth, send/recv signaling, interrupt plumbing)
+- `packages/voice/src/interpreter-prompt.ts` — `INTERPRETER_PROMPT` constant + composition helpers
+- `packages/voice/src/index.test.ts` — tests
+- `packages/voice/package.json`, `packages/voice/README.md`
+
+### Manual Test
+
+Top-level persistent manual-testing module (not a working artifact) — a growing suite of primary user journeys to exercise shipped functionality by hand.
+
+**Responsibilities:** owns the canonical list of primary user journeys and their step-by-step manual procedures, grows over time as new top-level features ship (current journey 8 = voice call)
+
+**Dependencies:** none (documentation module)
+
+**Files:**
+
+- `tools/manual-test/PLAN.md` — journey list with numbered procedures (current: journeys 1–8, journey 8 covers end-to-end voice call)
+- `tools/manual-test/README.md` — how to use the module, conventions for adding new journeys
