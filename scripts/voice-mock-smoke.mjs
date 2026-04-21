@@ -14,7 +14,7 @@
 // (startup-time LlmBackend listener + per-call /signal tokens). This script
 // is the runnable slice of Step 14. See docs/manual-tests/voice-mode.md.
 
-import { VoiceOrchestrator } from '../server/dist/voice-orchestrator.js';
+import { VoiceOrchestrator, CallBindError } from '../server/dist/voice-orchestrator.js';
 import {
   initialRuntimeState,
   reduceActivate,
@@ -63,7 +63,12 @@ async function main() {
   const bus = makeBus();
   const slot = { sessionState: { id: 's-1' } };
 
-  const orchestrator = new VoiceOrchestrator({
+  const displaceCalls = [];
+  let mintCounter = 0;
+
+  /** @type {VoiceOrchestrator} */
+  let orchestrator;
+  orchestrator = new VoiceOrchestrator({
     config: {
       roots: ['/tmp'],
       idleTimeout: 1000,
@@ -77,14 +82,19 @@ async function main() {
       getEventBus: (id) => (id === 's-1' ? bus : null),
     },
     mintCallToken: async () => ({
-      token: 'mock-token',
+      token: `mock-token-${++mintCounter}`,
       turn: { urls: ['turn:mock'], username: 'u', credential: 'c' },
       webrtcSignalUrl: 'wss://mock/signal',
     }),
     startSpeechmux: async () => {},
     stopSpeechmux: async () => {},
-    displaceOwner: async () => {},
-    isOwnedByVoiceCall: () => false,
+    // Mirror ws-handler's real displacement path: tear down orchestrator
+    // bookkeeping for the old owner before the new bind proceeds.
+    displaceOwner: async (sessionId, newOwner) => {
+      displaceCalls.push({ sessionId, newOwnerId: newOwner.connectedClientId });
+      await orchestrator.endCall({ sessionId, reason: 'displaced' });
+    },
+    isOwnedByVoiceCall: (sessionId) => orchestrator.isCallActive(sessionId),
   });
 
   await orchestrator.start();
@@ -97,11 +107,11 @@ async function main() {
     clientConnection: { ws: {}, connectedClientId: 'c-1', onSessionReset: null },
     force: false,
   });
-  assert(data.callToken === 'mock-token', 'bindCall returned the minted token');
+  assert(data.callToken === 'mock-token-1', 'bindCall returned the minted token');
   assert(data.webrtcSignalUrl === 'wss://mock/signal', 'bindCall returned the signal URL');
   assert(bus.emitted.length === 1, 'bus received exactly one event');
   assert(bus.emitted[0].type === 'pimote:voice:activate', 'event type is pimote:voice:activate');
-  assert(bus.emitted[0].payload.callToken === 'mock-token', 'activate payload carries the token');
+  assert(bus.emitted[0].payload.callToken === 'mock-token-1', 'activate payload carries the token');
   assert(orchestrator.isCallActive('s-1') === true, 'isCallActive true after bindCall');
   console.log('  [mock] bindCall emitted pimote:voice:activate on bus');
 
@@ -148,11 +158,99 @@ async function main() {
   );
   console.log('  [mock] speechmux rollback frame -> abort + watermark + custom entry');
 
+  // --- 3b. UI-bridge gating predicate -------------------------------------
+  console.log('\n[mock] 3b. UI-bridge gating predicate');
+  // Mirrors the predicate ws-handler.ts passes to createExtensionUIBridge:
+  //   isVoiceModeActive: () => voiceOrchestrator.isCallActive(sessionId)
+  // Gating lives in extension-ui-bridge.ts (unit-tested there); this smoke
+  // verifies the predicate's booleans reflect orchestrator state correctly
+  // across the call lifecycle.
+  const isVoiceModeActive = () => orchestrator.isCallActive('s-1');
+  assert(isVoiceModeActive() === true, 'predicate true while call is active');
+  const isOtherVoiceModeActive = () => orchestrator.isCallActive('s-other');
+  assert(isOtherVoiceModeActive() === false, 'predicate false for sessions without a call');
+
   // --- 4. endCall ----------------------------------------------------------
   console.log('\n[mock] 4. endCall -> deactivate emitted');
   await orchestrator.endCall({ sessionId: 's-1', reason: 'user_hangup' });
   assert(orchestrator.isCallActive('s-1') === false, 'isCallActive false after endCall');
   assert(bus.emitted.filter((e) => e.type === 'pimote:voice:deactivate').length === 1, 'single deactivate emitted');
+  assert(isVoiceModeActive() === false, 'predicate flips false after call ends — UI bridge re-enabled');
+
+  // Idempotency: repeated endCall is a no-op.
+  await orchestrator.endCall({ sessionId: 's-1', reason: 'user_hangup' });
+  assert(
+    bus.emitted.filter((e) => e.type === 'pimote:voice:deactivate').length === 1,
+    'repeated endCall is idempotent (no extra deactivate)',
+  );
+  // endCall on unbound session is a no-op and does not throw.
+  await orchestrator.endCall({ sessionId: 's-none', reason: 'user_hangup' });
+
+  // --- 5. bindCall error paths --------------------------------------------
+  console.log('\n[mock] 5. bindCall error paths');
+  let caught;
+  try {
+    await orchestrator.bindCall({
+      sessionId: 's-unknown',
+      clientConnection: { ws: {}, connectedClientId: 'c-x', onSessionReset: null },
+      force: false,
+    });
+  } catch (err) {
+    caught = err;
+  }
+  assert(caught instanceof CallBindError, 'unknown session throws CallBindError');
+  assert(caught?.code === 'call_bind_failed_session_not_found', 'unknown session code = call_bind_failed_session_not_found');
+
+  // Prime a new call to test call_bind_failed_owned.
+  await orchestrator.bindCall({
+    sessionId: 's-1',
+    clientConnection: { ws: {}, connectedClientId: 'c-A', onSessionReset: null },
+    force: false,
+  });
+  caught = undefined;
+  try {
+    await orchestrator.bindCall({
+      sessionId: 's-1',
+      clientConnection: { ws: {}, connectedClientId: 'c-B', onSessionReset: null },
+      force: false,
+    });
+  } catch (err) {
+    caught = err;
+  }
+  assert(caught instanceof CallBindError, 'owned session without force throws');
+  assert(caught?.code === 'call_bind_failed_owned', 'owned session without force code = call_bind_failed_owned');
+
+  // --- 6. Displacement path (force: true) ---------------------------------
+  console.log('\n[mock] 6. displacement with force:true');
+  const busCountBefore = bus.emitted.length;
+  const data2 = await orchestrator.bindCall({
+    sessionId: 's-1',
+    clientConnection: { ws: {}, connectedClientId: 'c-B', onSessionReset: null },
+    force: true,
+  });
+  assert(displaceCalls.length === 1, 'displaceOwner seam invoked once');
+  assert(displaceCalls[0].sessionId === 's-1', 'displaceOwner invoked with the right sessionId');
+  assert(displaceCalls[0].newOwnerId === 'c-B', 'displaceOwner handed the new owner');
+  const newEvents = bus.emitted.slice(busCountBefore);
+  assert(
+    newEvents.some((e) => e.type === 'pimote:voice:deactivate'),
+    'displacement emits deactivate for the old owner',
+  );
+  assert(
+    newEvents.some((e) => e.type === 'pimote:voice:activate' && e.payload.callToken === data2.callToken),
+    'displacement emits activate for the new owner',
+  );
+  assert(orchestrator.isCallActive('s-1') === true, 'displacement leaves exactly one active call');
+  assert(data2.callToken !== 'mock-token-1', 'displacement minted a fresh token');
+
+  // Simulate the real-server side effect: the ws-handler's sendDisplacedEvent
+  // broadcasts `call_ended { reason: 'displaced' }` to the first client. The
+  // orchestrator doesn't emit that wire event itself (the ws-handler does);
+  // what the orchestrator owns is the bus-side deactivate asserted above.
+
+  // Clean up: end the displacing call.
+  await orchestrator.endCall({ sessionId: 's-1', reason: 'user_hangup' });
+  assert(orchestrator.isCallActive('s-1') === false, 'post-displacement call ends cleanly');
 
   const deact = reduceDeactivate(state, { type: 'pimote:voice:deactivate', sessionId: 's-1' });
   state = deact.next;
