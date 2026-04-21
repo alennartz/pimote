@@ -361,3 +361,232 @@ Same pattern as panel data (DR-004); no new cross-process channel.
 - `toggleMute` flips `micMuted` during an active call; is a no-op when idle.
 
 **Review status:** approved
+
+## External dependencies (not planned here)
+
+The following speechmux-repo changes are prerequisite for end-to-end smoke but are **out of scope for this pimote impl plan** (they live in the speechmux repo):
+
+- Lift the WS `LlmBackend` listener out of the per-call loop so it binds at startup and survives across calls.
+- Replace the single shared env token on `/signal` with per-call auth tokens (minted by pimote's orchestrator, echoed by the client in `hello.token`, validated by speechmux).
+
+Their status blocks only **Step 14 (end-to-end smoke)**; all earlier steps use the injected seams (`startSpeechmux`, `mintCallToken`, `SpeechmuxClientFactory`) so tests and partial runtime can be completed without them.
+
+## Steps
+
+Commits use conventional `impl:` / `fix:` prefixes with `voice-mode` scope where possible. Each step's **Verify** names the concrete test file(s) or behavior to run; the test-review commit (`334d947`) is the fixed baseline — no test edits are permitted during impl.
+
+### Step 1: Finalize `VoiceOrchestrator.bindCall` ownership semantics
+
+`server/src/voice-orchestrator.ts` currently emits `pimote:voice:activate` on every successful bind, but the plan and tests expect the orchestrator to call `displaceOwner` only when another voice call already owns the session and `force=true`. Audit `bindCall` against `server/src/voice-orchestrator.test.ts`:
+
+- Ensure `isOwnedByVoiceCall` + `force` gating matches the `call_bind_failed_owned` / force-displacement test cases.
+- Ensure mint failures produce `call_bind_failed_internal` even when the bus lookup would have also failed.
+- Ensure `endCall` is idempotent and a no-op on unbound sessions, emitting exactly one `pimote:voice:deactivate` on the first call.
+- Confirm `start` spawns speechmux once and `stop` is idempotent + clears `activeCalls`.
+
+No new architectural decisions — this is strictly matching the test suite.
+
+**Verify:** `npm run test --workspace server -- voice-orchestrator` passes all cases.
+**Status:** not started
+
+### Step 2: INTERPRETER_PROMPT module
+
+Create `packages/voice/src/interpreter-prompt.ts` exporting `INTERPRETER_PROMPT: string` (and re-export from `packages/voice/src/index.ts`). Adapt voxcoder's interpreter prompt with multimodal placeholders removed. Must instruct the model to:
+
+1. When it sees the `<voice_call_started/>` sentinel as the first user message, greet the user via `speak(...)` and await real user input.
+2. Use the `speak(text)` tool for all audible output; free-text output is discarded from audio.
+3. When dispatching work to `my-pi` subagents, pass `model: defaultWorkerModel` (provider/modelId injected via prompt template substitution at factory time).
+
+The factory in Step 3 substitutes `{{workerProvider}}` / `{{workerModel}}` placeholders at build time so the prompt is a static string by the time it's registered.
+
+**Verify:** File exists, exports a non-empty string, referenced from `index.ts`. `npm run build --workspace @pimote/voice` succeeds.
+**Status:** not started
+
+### Step 3: Default `SpeechmuxClient` factory
+
+In `packages/voice/src/speechmux-client.ts` (or a new `speechmux-ws-client.ts`), add `createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory` using the `ws` package. The client:
+
+- Opens `new WebSocket(wsUrl)` and sends `{ type: 'hello', token: callToken }` on open (matching the speechmux LlmBackend harness framing from `speechmux/docs/llm-ws-protocol.md`).
+- Parses incoming JSON messages into `IncomingFrame` (`user` / `abort` / `rollback`) and dispatches to listeners.
+- `send(frame)` serializes `OutgoingFrame` and writes to the socket; throws if not open.
+- `close()` is idempotent.
+
+Add `ws` as a runtime dependency of `@pimote/voice` via `npm install ws --workspace @pimote/voice` (+ `@types/ws` as dev dep).
+
+**Verify:** Compiles. No new tests required (tests use the injected fake factory). Referenced as the default in `createVoiceExtension` (Step 4).
+**Status:** not started
+
+### Step 4: Implement `createVoiceExtension`
+
+Replace the stub in `packages/voice/src/index.ts` with a real implementation that wires the pure reducers in `extension-runtime.ts` to the pi `ExtensionAPI`. Structure it as an `ExtensionFactory` that, on invocation with `pi: ExtensionAPI`, does:
+
+1. Hold a single `VoiceRuntimeState` (via `initialRuntimeState()`) and a single `capturedStreamingMessage: AgentMessage | null`, a `walkBackInput: { heardText: string } | null`, and a `speechmuxClient: SpeechmuxClient | null` — all per-extension-instance.
+2. Implement `executeActions(actions: VoiceAction[])` that maps each action to an `ExtensionAPI` call or internal state mutation:
+   - `open_speechmux` → `speechmuxClient = await speechmuxClientFactory({ wsUrl, callToken })`; subscribe to frames → `reduceSpeechmuxFrame`; on open-resolve execute `reduceSpeechmuxOpened`; on error execute `reduceSpeechmuxFailed`.
+   - `close_speechmux` → `speechmuxClient?.close(); speechmuxClient = null`.
+   - `send_user_message` → `pi.sendUserMessage(text, deliverAs ? { deliverAs } : undefined)`.
+   - `abort` → trigger session abort (via `pi.events` → orchestrator, or via the pi abort surface exposed on the session bound to the extension; see investigation note below).
+   - `set_walkback_watermark` → store `walkBackInput = { heardText }`.
+   - `clear_walkback_watermark` → `walkBackInput = null`; `capturedStreamingMessage = null`.
+   - `append_custom_entry` → `pi.appendEntry(customType, data)`.
+   - `set_model` → look up the model by `{ provider, modelId }` and call `pi.setModel(model)`. If no match, log a warning and skip.
+   - `emit_deactivate_request` → publish `pimote:voice:deactivate` on `pi.events` so the orchestrator tears down server-side bookkeeping.
+   - `stream_speechmux_token` → `speechmuxClient?.send({ type: 'token', text })`.
+   - `emit_speechmux_end` → `speechmuxClient?.send({ type: 'end' })`.
+   - `return_speak_tool_result` → return a trivial success from the `tool_call` hook (see 6 below).
+3. Register EventBus listeners on `pi.events` for `pimote:voice:activate` → `reduceActivate`, `pimote:voice:deactivate` → `reduceDeactivate`.
+4. Register the `speak` custom tool via `pi.registerTool({ name: 'speak', params: { text: string }, ... })`. The tool's handler is a no-op that returns success; audible streaming happens via the `tool_call` hook in (6) so we intercept the args before execution. (If the tool handler is unreachable while `state === active` because `tool_call` returns `{ action: 'handled' }`, that's intentional.)
+5. Register `before_agent_start` — while `active`, prepend `INTERPRETER_PROMPT` to `event.systemPrompt`.
+6. Register `tool_call` — if `toolName === 'speak'` and runtime is `active`, run `reduceSpeakToolCall(state, input)`; execute actions; return `{ action: 'handled', result: { success: true } }` (or the pi-SDK equivalent).
+7. Register `turn_end` — run `reduceTurnEnd(state)`; execute actions.
+8. Register `message_update` — overwrite `capturedStreamingMessage` with a deep-enough copy of `event.message` (content blocks) so we have the in-flight assistant turn if it gets aborted.
+9. Register `context` — if runtime is `active` OR `walkBackInput !== null`, run the pure `walkBack({ messages: event.messages, heardText: walkBackInput?.heardText ?? null, captured: capturedStreamingMessage })`; assign back to `event.messages`. Then clear `walkBackInput` and `capturedStreamingMessage` per the contract.
+
+Investigation note: check how the extension gets a handle on `session.abort()`. The pi SDK `ExtensionAPI` does not expose `abort` directly; either (a) pi already surfaces abort on `ExtensionContext` within a hook, in which case the `abort` action must be executed from a hook context, or (b) we need to use `pi.sendUserMessage` semantics with `deliverAs: 'steer'` to interrupt. Surface this to the user before implementing — do NOT silently guess.
+
+The default `speechmuxClientFactory` is the one from Step 3; `opts.speechmuxClientFactory` overrides it for tests.
+
+**Verify:** `npm run test --workspace @pimote/voice` — the existing reducer tests still pass (unchanged) and the factory no longer throws when invoked. Add a minimal smoke assertion in a new `packages/voice/src/index.test.ts` that `createVoiceExtension({...})` returns a function that, when called with an `ExtensionAPI` mock, registers at least the `speak` tool and `before_agent_start` / `context` / `tool_call` / `turn_end` / `message_update` listeners.
+**Status:** not started
+
+**Commit:** `impl(voice): voice extension runtime — interpreter prompt, speechmux client, factory wiring`
+
+### Step 5: Thread voice extension factory into `openSession`
+
+In `server/src/session-manager.ts` `openSession`:
+
+- Import `createVoiceExtension` from `@pimote/voice`.
+- Build a single `voiceExtension` factory at `PimoteSessionManager` construction time (or on each `openSession` call — either is fine since it's cheap), using `config.defaultInterpreterModel` (fallback: `{ provider: config.defaultProvider!, modelId: config.defaultModel! }`) and `config.defaultWorkerModel` (same fallback). Skip construction if `defaultProvider`/`defaultModel` are missing AND no `defaultInterpreterModel` is configured — log a warning and do not register the extension, so existing non-voice deployments keep working.
+- In the `factory` closure inside `openSession`, pass `extensionFactories: [voiceExtension]` into `resourceLoaderOptions` (alongside the existing `eventBus`).
+
+**Verify:** `npm run test --workspace server` still passes (session-manager tests); `npm run build` succeeds. A temporary `console.log` in `createVoiceExtension` confirms it's invoked once per session on manual smoke.
+**Status:** not started
+
+### Step 6: Instantiate `VoiceOrchestrator` in server boot
+
+In `server/src/index.ts` (and/or `server.ts`):
+
+1. Import `VoiceOrchestrator` from `./voice-orchestrator.js`.
+2. Build a `busResolver: VoiceSessionBusResolver` backed by the `PimoteSessionManager` — it needs a new `getSlot(sessionId): ManagedSlot | null` accessor on `PimoteSessionManager` if one does not already exist; `getEventBus(sessionId)` returns `slot.eventBusRef.current`.
+3. Provide real implementations of the seams:
+   - `startSpeechmux` — spawn `config.voice?.speechmuxBinary` as a child process with stdio piped; resolve once it logs its WS ready marker (or after a short timeout — TBD with speechmux). If `config.voice?.speechmuxBinary` is unset, `start()` is a no-op and the orchestrator stays disabled; `bindCall` will fail with `call_bind_failed_internal`.
+   - `stopSpeechmux` — `SIGTERM` the child, `SIGKILL` on timeout. Idempotent.
+   - `mintCallToken(sessionId)` — v1: generate a random token (`crypto.randomUUID()`), POST it to speechmux's admin endpoint (contract owned by speechmux; see External dependencies). Also fetch/derive TURN creds (speechmux's existing DR-013 flow). Returns `{ token, turn, webrtcSignalUrl: config.voice!.speechmuxSignalUrl! }`.
+   - `displaceOwner(sessionId, newOwner)` — wraps the existing ws-handler displacement path: look up the current owner via the `clientRegistry`, call its `sendDisplacedEvent(sessionId)`. Exposed from ws-handler as a static or via a small `SessionDisplacer` helper to avoid a circular dep.
+   - `isOwnedByVoiceCall(sessionId)` — returns `orchestrator.isCallActive(sessionId)`.
+4. `await orchestrator.start()` after `server.start(port)` (or on first use — lazy is also fine, but eager start simplifies readiness).
+5. On shutdown, `await orchestrator.stop()` before `server.close()`.
+6. Pass the orchestrator into `createServer(...)` and then into `WsHandler` (constructor arg).
+
+**Verify:** Server starts and logs orchestrator ready state. Existing tests pass. Manual curl/ws smoke of unrelated commands still works.
+**Status:** not started
+
+### Step 7: Wire `call_bind` / `call_end` into `WsHandler`
+
+In `server/src/ws-handler.ts`:
+
+1. Add `private readonly voiceOrchestrator: VoiceOrchestrator` to the constructor signature.
+2. Add `case 'call_bind':` to the command switch. Body:
+   - Resolve the `ManagedSlot` for `command.sessionId`; if absent, `sendResponse(id, false, undefined, 'call_bind_failed_session_not_found')`.
+   - Build a `ClientConnection` from this handler (existing pattern in `claimSession`).
+   - `try { const data = await voiceOrchestrator.bindCall({ sessionId, clientConnection, force: command.force ?? false }); sendResponse(id, true, data); } catch (err) { if (err instanceof CallBindError) sendResponse(id, false, undefined, err.code); else sendResponse(id, false, undefined, 'call_bind_failed_internal'); }`.
+   - On success, emit a `call_status` event (`status: 'binding'`) to this client.
+3. Add `case 'call_end':` — `await voiceOrchestrator.endCall({ sessionId: command.sessionId, reason: 'user_hangup' })`; `sendResponse(id, true)`; emit `call_ended { reason: 'user_hangup' }` to the client.
+4. When this handler sends a `session_closed { reason: 'displaced' }` to an old owner whose session has an active call, also emit `call_ended { reason: 'displaced' }` to the old owner (so their `VoiceCallStore` tears down).
+5. In `claimSession`, when creating the `ExtensionUIBridge`, pass `{ isVoiceModeActive: () => voiceOrchestrator.isCallActive(sessionId) }` as the options arg. Do the same in the `handleSessionReset` rebind path.
+6. Wire an `orchestrator → ws-handler` path so `call_ready` can be broadcast when speechmux reports the WebRTC peer connected. v1 shortcut: the orchestrator doesn't know about WebRTC readiness, so the client's own WebRTC connection state drives `connected` phase locally; the server emits `call_ready` from the orchestrator once speechmux notifies via its admin/event surface (deferred to Step 14 smoke — for v1, the client may transition to `connected` on its WebRTC `iceConnectionState === 'connected'` and fire `call_ready` is merely advisory). Surface this decision to the user if the shortcut is not acceptable.
+
+**Verify:** `npm run test --workspace server -- ws-handler extension-ui-bridge` passes. The existing `extension-ui-bridge` voice-mode-gating suite passes via the real predicate wiring.
+**Status:** not started
+
+**Commit:** `impl(server): voice orchestrator + ws-handler routing + UI-bridge gating`
+
+### Step 8: Client — real `VoiceCallSeams`
+
+In `client/src/lib/stores/voice-call.svelte.ts`, add a `createBrowserVoiceCallSeams(connection: ConnectionStore)` factory (separate file `voice-call-seams.ts` is fine if it keeps the store testable). Implementations:
+
+- `sendCommand` — forwards to the existing pimote WS connection store's request/response helper.
+- `createPeerConnection(turn)` — `new RTCPeerConnection({ iceServers: [{ urls: turn.urls, username: turn.username, credential: turn.credential }] })`; wrap it to conform to `VoicePeerConnection`.
+- `getUserMedia()` — `navigator.mediaDevices.getUserMedia({ audio: true })`; returns `{ stream, tracks: stream.getAudioTracks() }`.
+- `openSignaling(url, callToken)` — `new WebSocket(url)` + `hello.token` frame on open; wrap to conform to `VoiceSignalingSocket`; route offer/answer/ice through the `RTCPeerConnection` (full `hello → session → offer/answer → ice → bye` handshake per `speechmux/src/webrtc_transport/signaling.rs`). Expose `opened` as a `Promise<void>` that resolves on `ws.onopen`.
+
+The store itself needs a small extension: on `connected → disconnect`, also flip local WebRTC `iceConnectionState === 'connected'` into a synthetic `call_ready` self-event so the `connecting → connected` transition happens without server round-trip (matches Step 7's shortcut).
+
+**Verify:** `npm run test --workspace client -- voice-call` still passes (seams are constructor-injected, so real seams don't affect reducer tests). Manual mic-permission prompt fires on first call.
+**Status:** not started
+
+### Step 9: Route voice events into `VoiceCallStore`
+
+In `client/src/lib/stores/connection.svelte.ts` (or wherever incoming server events fan out):
+
+- Instantiate a single `voiceCallStore = new VoiceCallStore(createBrowserVoiceCallSeams(...))` and export it (e.g. via a `voice-call-store.ts` wrapper module using Svelte context).
+- In the event dispatcher, route `call_bind_response` (if exposed as event) / `call_ready` / `call_ended` / `call_status` to `voiceCallStore.handleServerEvent(event)`.
+- On `session_closed { reason: 'displaced' }`, if `voiceCallStore.state.sessionId === event.sessionId`, synthesize a `call_ended { reason: 'displaced' }` for local teardown.
+
+**Verify:** Routing works in the browser; `voice-call.svelte.test.ts` unaffected. Manual: opening devtools and inspecting the store shows phase transitions on a fake server event.
+**Status:** not started
+
+### Step 10: Client UI — per-session Call button
+
+Add a Call button to the per-session header (likely `client/src/lib/components/StatusBar.svelte` or `ActiveSessionBar.svelte` — confirm via layout inspection). Click → `voiceCallStore.startCall(sessionId)`. Disabled while `voiceCallStore.state.phase !== 'idle'` OR `voiceCallStore.state.sessionId !== null && voiceCallStore.state.sessionId !== sessionId` (a call on another session is active).
+
+Use shadcn-svelte's existing `Button` primitive; icon `Phone` from `lucide-svelte`.
+
+**Verify:** Button renders, click transitions store to `binding` (confirmed via devtools inspection or adding a `client/src/lib/components/CallButton.svelte.test.ts` render check).
+**Status:** not started
+
+### Step 11: Client UI — in-call banner with mute + hangup
+
+Add `client/src/lib/components/CallBanner.svelte`:
+
+- Renders when `voiceCallStore.state.phase !== 'idle'`.
+- Shows current phase (binding / connecting / connected / ending).
+- Mute button → `voiceCallStore.toggleMute()`.
+- Hangup button → `voiceCallStore.endCall()`.
+- Displays `state.lastError` when set.
+
+Mount globally in `client/src/routes/+layout.svelte` above the main content, so it survives session switches.
+
+Wire the mute toggle through the peer connection: extend `VoicePeerConnection` seam with `setMicrophoneEnabled(enabled: boolean)`, called from the store on `toggleMute` (store already flips `micMuted`; the real seam must apply the change to the RTC audio track via `track.enabled = enabled`).
+
+**Verify:** Manual — start a call, banner appears, mute button toggles the local audio track's `enabled` state (verified via devtools or a speechmux-side round-trip in Step 14).
+**Status:** not started
+
+**Commit:** `impl(client): voice call store seams + UI (Call button, in-call banner)`
+
+### Step 12: Wire `call_ended` broadcasts from displacement paths
+
+Revisit `server/src/ws-handler.ts` displacement and session-close paths: any path that tears down ownership of a session currently bound to a voice call must call `voiceOrchestrator.endCall({ sessionId, reason: 'displaced' | 'server_ended' })` before the session is removed, so the orchestrator's per-session bookkeeping and the extension's deactivate reducer fire.
+
+Also: when `PimoteSessionManager` reaps an idle session, call `voiceOrchestrator.endCall(..., reason: 'server_ended')` first.
+
+**Verify:** `npm run test --workspace server` passes. Manual: force-close a session with an active call → the client receives `call_ended { reason: 'server_ended' }` and the store returns to `idle`.
+**Status:** not started
+
+### Step 13: Config + docs polish
+
+- Document the new `voice` / `defaultInterpreterModel` / `defaultWorkerModel` config fields in `README.md` (or equivalent pimote user docs).
+- Add a sample `voice` block to the example config in the docs, calling out that `speechmuxBinary` / `speechmuxSignalUrl` / `speechmuxLlmWsUrl` are required to enable voice and that absence disables the feature gracefully.
+- Add a `packages/voice/README.md` describing the extension's public surface.
+
+**Verify:** Docs render; `npm run build` across workspaces succeeds.
+**Status:** not started
+
+**Commit:** `impl(voice): displacement tear-down + docs`
+
+### Step 14: End-to-end smoke (blocked on speechmux external work)
+
+With the speechmux-repo changes landed (startup-time LlmBackend listener + per-call tokens on `/signal`):
+
+1. Start pimote server with `voice.*` config pointing at a local speechmux binary.
+2. Open a session in the PWA; click Call.
+3. Confirm: `call_bind` round-trips with TURN creds; getUserMedia prompts; `/signal` WS opens; WebRTC peer connects (`iceConnectionState === 'connected'`); banner flips to `connected`.
+4. Speak; speechmux transcribes and sends `{type:'user', text}` on LlmBackend WS; interpreter responds with `speak(...)` tool calls; text streams back as audio.
+5. Barge in: confirm speechmux sends `{type:'rollback', heard_text}`; confirm the next LLM turn's `context.messages` has been walk-back-surgeried (observable via an instrumentation log or by inspecting the persisted session's `pimote:voice:interrupt` entries).
+6. Hang up; confirm `call_ended`; confirm the UI bridge is re-enabled (run a pi extension dialog command and observe it resolves normally).
+7. Displace: start a second call on the same session with `force: true` from a different browser — confirm the first client gets `call_ended { reason: 'displaced' }` and the extension's deactivate reducer ran (speechmux client closed).
+
+**Verify:** All seven steps above succeed by direct observation. File a manual-test checklist entry in `docs/manual-tests/voice-mode.md` capturing the run (follow existing manual-test conventions if present).
+**Status:** blocked — waiting on speechmux-repo LlmBackend listener refactor + per-call auth tokens on `/signal`
+
+**Commit:** `impl(voice): end-to-end smoke documented` (after the run succeeds)
