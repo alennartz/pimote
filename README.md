@@ -55,13 +55,14 @@ Phone/Browser ←→ Pimote Server
 
 Pimote is published as the app package `@pimote/pimote` at the repo root, backed by an npm workspace monorepo:
 
-| Package              | Path               | Description                                           |
-| -------------------- | ------------------ | ----------------------------------------------------- |
-| **`@pimote/pimote`** | `./`               | Publishable app package and `pimote` CLI              |
-| **`@pimote/shared`** | `shared/`          | TypeScript types for the WebSocket wire protocol      |
-| **`@pimote/server`** | `server/`          | Node.js HTTP + WebSocket server hosting pi sessions   |
-| **client**           | `client/`          | SvelteKit PWA (Svelte 5, Tailwind CSS, shadcn-svelte) |
-| **`@pimote/panels`** | `packages/panels/` | Library for extensions to push card data to the UI    |
+| Package              | Path               | Description                                                       |
+| -------------------- | ------------------ | ----------------------------------------------------------------- |
+| **`@pimote/pimote`** | `./`               | Publishable app package and `pimote` CLI                          |
+| **`@pimote/shared`** | `shared/`          | TypeScript types for the WebSocket wire protocol                  |
+| **`@pimote/server`** | `server/`          | Node.js HTTP + WebSocket server hosting pi sessions               |
+| **client**           | `client/`          | SvelteKit PWA (Svelte 5, Tailwind CSS, shadcn-svelte)             |
+| **`@pimote/panels`** | `packages/panels/` | Library for extensions to push card data to the UI                |
+| **`@pimote/voice`**  | `packages/voice/`  | Voice-mode pi extension (dormant unless voice mode is configured) |
 
 ### Server
 

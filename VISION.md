@@ -36,6 +36,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Receives push notifications when background sessions finish working
 - Persists client identity and active sessions in localStorage — reopening the app restores session tabs and reconnects automatically
 - Reconnects transparently with gap replay and session displacement handling
+- Optionally upgrades a session into a voice call (PWA-only in v1) — the server bridges to a speechmux sidecar and the pi session runs under a voice-interpreter extension that mediates between spoken user turns and a `my-pi` worker subagent
 - Single-tab per browser (multi-tab not supported — shared localStorage would cause conflicts)
 
 **`@pimote/panels`** — A workspace package (`packages/panels/`) that extensions import to push structured card data into the web UI. Provides `detect()` for pimote detection and `PanelHandle` for updating/clearing cards via the pi EventBus. Cards flow through the server (throttled) to the client panel.

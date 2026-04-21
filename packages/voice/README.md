@@ -12,10 +12,12 @@ be read with a clear picture of the seams.
 
 When activated for a session, the extension:
 
-1. Injects a voice-interpreter system prompt (`INTERPRETER_PROMPT`) on every
+1. Injects a voice-interpreter system prompt (see `RAW_INTERPRETER_PROMPT`
+   / `renderInterpreterPrompt(...)` in `interpreter-prompt.ts`) on every
    `before_agent_start` — turns the session's model into a voice-mediator
    that relays user↔worker messages via `speak(...)` and the `my-pi`
-   subagent tool.
+   subagent tool. The prompt is templated with the configured worker
+   provider/model so the interpreter spawns the right subagent.
 2. Registers a `speak(text)` custom tool — the sole way audible output
    reaches speechmux. Free-text (non-tool) assistant output is explicitly
    discarded from the audio channel.
@@ -37,6 +39,8 @@ import {
   createVoiceExtension,
   VOICE_CALL_STARTED_SENTINEL,
   walkBack,
+  renderInterpreterPrompt,
+  RAW_INTERPRETER_PROMPT,
   type VoiceActivateMessage,
   type VoiceDeactivateMessage,
   type SpeechmuxClient,
