@@ -269,11 +269,25 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
           try {
             switch (env.type) {
               case 'session': {
-                // Speechmux returns per-session TURN creds in this frame;
-                // we currently do not apply them to the browser pc (host /
-                // srflx candidates suffice for the common case). Wiring
-                // `pc.setConfiguration({ iceServers })` from `env.payload`
-                // is a future enhancement — see DR-012.
+                // Speechmux returns per-session TURN creds in this frame.
+                // Apply them via `pc.setConfiguration` so the browser uses
+                // them during ICE negotiation — without this, peer-to-peer
+                // only works on permissive NATs / open networks. The wire
+                // shape matches speechmux/src/webrtc_transport/turn.rs
+                // (urls/username/credential, camelCase over JSON).
+                const ice = Array.isArray(env.payload?.iceServers) ? env.payload.iceServers : [];
+                const iceServers: RTCIceServer[] = ice
+                  .filter((s: unknown): s is { urls: unknown; username?: unknown; credential?: unknown } => typeof s === 'object' && s !== null)
+                  .map((s) => {
+                    const urls = Array.isArray(s.urls) ? s.urls.filter((u): u is string => typeof u === 'string') : typeof s.urls === 'string' ? [s.urls] : [];
+                    const username = typeof s.username === 'string' ? s.username : undefined;
+                    const credential = typeof s.credential === 'string' ? s.credential : undefined;
+                    return { urls, ...(username !== undefined ? { username } : {}), ...(credential !== undefined ? { credential } : {}) };
+                  })
+                  .filter((s) => s.urls.length > 0);
+                if (iceServers.length > 0) {
+                  pc.setConfiguration({ iceServers });
+                }
                 sessionReceived = true;
                 // Create offer if one hasn't been created yet (addTrack
                 // ordinarily fires `negotiationneeded` which we piggyback
