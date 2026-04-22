@@ -15,7 +15,7 @@ import type { IncomingFrame } from './speechmux-client.js';
 // --- Action DSL the outer wiring layer executes. ---
 
 export type VoiceAction =
-  | { kind: 'open_speechmux'; wsUrl: string; callToken: string }
+  | { kind: 'open_speechmux'; wsUrl: string }
   | { kind: 'close_speechmux' }
   | { kind: 'send_user_message'; text: string; deliverAs?: 'steer' | 'followUp' }
   | { kind: 'abort' }
@@ -53,7 +53,7 @@ export function reduceActivate(prev: VoiceRuntimeState, msg: VoiceActivateMessag
     // Ignore duplicate / out-of-order activates.
     return { next: prev, actions: [] };
   }
-  const actions: VoiceAction[] = [{ kind: 'open_speechmux', wsUrl: msg.speechmuxWsUrl, callToken: msg.callToken }];
+  const actions: VoiceAction[] = [{ kind: 'open_speechmux', wsUrl: msg.speechmuxWsUrl }];
   return {
     next: { ...prev, state: 'activating', sessionId: msg.sessionId },
     actions,

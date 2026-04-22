@@ -24,7 +24,7 @@
 // exercised end-to-end against a live speechmux — see
 // `docs/manual-tests/voice-mode.md` for the blocked real-smoke checklist.
 
-import type { CallBindResponse, PimoteCommand, PimoteResponse } from '@pimote/shared';
+import type { PimoteCommand, PimoteResponse } from '@pimote/shared';
 import type { VoiceCallSeams, VoicePeerConnection, VoiceSignalingSocket } from './voice-call.svelte.js';
 
 /** Minimal shape of the pimote connection store used by the voice seams. */
@@ -103,10 +103,13 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
       return (await opts.connection.send(cmd)) as PimoteResponse<T>;
     },
 
-    createPeerConnection(turn: CallBindResponse['turn']): BrowserVoicePeerConnection {
-      const pc = new RTCPeerConnection({
-        iceServers: turn.urls.length > 0 ? [{ urls: turn.urls, username: turn.username, credential: turn.credential }] : [],
-      });
+    createPeerConnection(): BrowserVoicePeerConnection {
+      // TURN credentials are delivered by speechmux in its `/signal`
+      // `session` response. We construct the peer with no iceServers here;
+      // host / srflx candidates are sufficient for the common case, and
+      // wiring speechmux's iceServers into `pc.setConfiguration` is a
+      // future enhancement (see DR-012).
+      const pc = new RTCPeerConnection();
       const audioTracks: MediaStreamTrack[] = [];
 
       pc.addEventListener('iceconnectionstatechange', () => {
@@ -146,7 +149,7 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
       return { stream, tracks: stream.getAudioTracks() };
     },
 
-    openSignaling(url: string, callToken: string): VoiceSignalingSocket {
+    openSignaling(url: string): VoiceSignalingSocket {
       const peer = currentPeer;
       if (!peer) {
         // The store should have called createPeerConnection first; if not,
@@ -230,8 +233,13 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
       const opened = new Promise<void>((resolve, reject) => {
         const onOpen = () => {
           ws.removeEventListener('error', onError);
+          // LLM-WS and `/signal` are different protocols. `/signal` DOES
+          // require a hello frame, but with Cloudflare Access as the auth
+          // boundary speechmux runs in fail-open mode and accepts a hello
+          // with no token field (see speechmux signaling.rs
+          // `validate_hello`).
           try {
-            ws.send(encodeSignal('hello', { token: callToken }));
+            ws.send(encodeSignal('hello', {}));
           } catch (err) {
             reject(err);
             return;
@@ -261,10 +269,11 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
           try {
             switch (env.type) {
               case 'session': {
-                // Speechmux's own iceServers are not applied to the browser
-                // pc — we use the TURN creds returned by the pimote
-                // `call_bind` response. The `session` ack just means the
-                // server is ready to receive the offer + trickle ice.
+                // Speechmux returns per-session TURN creds in this frame;
+                // we currently do not apply them to the browser pc (host /
+                // srflx candidates suffice for the common case). Wiring
+                // `pc.setConfiguration({ iceServers })` from `env.payload`
+                // is a future enhancement — see DR-012.
                 sessionReceived = true;
                 // Create offer if one hasn't been created yet (addTrack
                 // ordinarily fires `negotiationneeded` which we piggyback

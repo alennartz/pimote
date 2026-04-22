@@ -23,7 +23,6 @@ export interface SpeechmuxClient {
 
 export interface SpeechmuxClientFactoryOptions {
   wsUrl: string;
-  callToken: string;
 }
 
 /** Factory the extension uses to open a new speechmux WS session. Tests
@@ -36,17 +35,19 @@ export type SpeechmuxClientFactory = (opts: SpeechmuxClientFactoryOptions) => Pr
 
 /**
  * Default `SpeechmuxClient` factory backed by the `ws` package. Opens a
- * WebSocket to `wsUrl`, sends a `hello` frame carrying the per-call auth
- * token, and routes incoming JSON text frames to registered listeners.
+ * WebSocket to `wsUrl` and routes incoming JSON text frames to registered
+ * listeners. The LLM-WS protocol has no hello frame — the harness simply
+ * connects and exchanges `user` / `token` / `end` / `abort` / `rollback`
+ * frames (see speechmux/docs/llm-ws-protocol.md).
  *
- * Resolves once the socket is open AND the hello frame has been written.
- * Rejects if the socket errors or closes before opening.
+ * Resolves once the socket is open. Rejects if the socket errors or closes
+ * before opening.
  */
 export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
   // Dynamic import so consumers that never call the factory (e.g. tests)
   // don't pay the `ws` resolution cost. Cached after first load.
   let WsCtor: typeof import('ws').WebSocket | null = null;
-  return async ({ wsUrl, callToken }) => {
+  return async ({ wsUrl }) => {
     if (!WsCtor) {
       const mod = await import('ws');
       WsCtor = mod.WebSocket;
@@ -58,9 +59,9 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
     const pending: IncomingFrame[] = [];
     let closed = false;
 
-    // Install the message handler BEFORE writing `hello` so frames sent
-    // between hello and the caller's onFrame attach are buffered instead of
-    // dropped. See review finding 5 (speechmux-client race).
+    // Install the message handler before resolving so frames sent between
+    // open and the caller's onFrame attach are buffered instead of dropped.
+    // See review finding 5 (speechmux-client race).
     ws.on('message', (raw: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
       if (isBinary) return;
       let text: string;
@@ -85,12 +86,6 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
     await new Promise<void>((resolve, reject) => {
       const onOpen = () => {
         ws.off('error', onError);
-        try {
-          ws.send(JSON.stringify({ type: 'hello', token: callToken }));
-        } catch (err) {
-          reject(err instanceof Error ? err : new Error(String(err)));
-          return;
-        }
         resolve();
       };
       const onError = (err: Error) => {

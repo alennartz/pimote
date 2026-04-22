@@ -63,9 +63,11 @@ instance ready to activate.
 
 The extension listens on the session-scoped pi `EventBus` for:
 
-- `pimote:voice:activate` — `VoiceActivateMessage` with `speechmuxWsUrl` and
-  `callToken`. The extension opens a speechmux WS, sends a `hello` frame
-  carrying `callToken`, and enters `active` state.
+- `pimote:voice:activate` — `VoiceActivateMessage` carrying the speechmux
+  LLM-WS URL. The extension opens a speechmux WS and enters `active` state.
+  The LLM-WS protocol has no hello frame — the harness just connects and
+  exchanges `user` / `token` / `end` / `abort` / `rollback` frames
+  (see speechmux `docs/llm-ws-protocol.md`).
 - `pimote:voice:deactivate` — tears the WS down and clears the walk-back
   watermark. The extension stays loaded (dormant) for the next call.
 
@@ -77,9 +79,26 @@ in response to `call_bind` / `call_end` WS commands from the client.
 - Does not touch the audio transport — WebRTC signalling lives entirely
   between the pimote client and speechmux. The extension only speaks the
   `LlmBackend` harness protocol to speechmux.
-- Does not own call lifecycle — `VoiceOrchestrator` mints per-call tokens,
+- Does not own call lifecycle — `VoiceOrchestrator` dispatches bind/end,
   displaces existing owners, and broadcasts `call_ended` to clients.
+  Per-call auth on `/signal` is delegated to Cloudflare Access at the edge
+  (speechmux runs in fail-open mode), and per-session TURN creds are
+  minted by speechmux and returned to the PWA in its `/signal` `session`
+  response — pimote no longer mints or proxies either.
 - Does not persist scrollback — v1 accepts pi's existing behaviour that
   interrupted turns leave no assistant entry in the session JSONL; the
   `pimote:voice:interrupt` custom entry is the marker that _something_ was
   said and cut off.
+
+## Operational notes
+
+### Speechmux `HARNESS_READY_TIMEOUT` (10s)
+
+Per speechmux DR-016, a session actor starts a 10s watchdog when the PWA
+WebRTC peer connects; if no LLM-harness WS has attached to that session by
+the deadline, speechmux tears the session down. The pimote voice
+extension opens its LLM-WS inside the synchronous `pimote:voice:activate`
+path (server orchestrator emits → extension `reduceActivate` → `ws.open`),
+which comfortably fits inside the 10s window. The budget exists to contain
+the orphan-peer failure mode and is not an active concern for normal
+operation.

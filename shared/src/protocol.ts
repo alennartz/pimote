@@ -738,9 +738,12 @@ export interface PanelUpdateEvent {
 // -- Voice events --
 
 /**
- * Success response to a CallBindCommand. Carries per-call WebRTC signalling
- * endpoint, a per-call shared auth token the client must echo in speechmux's
- * `hello.token` frame, and Cloudflare Realtime TURN credentials.
+ * Success response to a CallBindCommand. Carries the per-call WebRTC
+ * signalling endpoint the client should connect to. The PWA obtains
+ * Cloudflare Realtime TURN credentials directly from speechmux in its
+ * `/signal` `session` response; pimote no longer mints or proxies either
+ * the per-call auth token (Cloudflare Access is the auth boundary on
+ * `/signal`) or TURN creds.
  *
  * Failed binds return a standard PimoteResponse with `success: false` and an
  * error string that is one of CallBindErrorCode.
@@ -751,12 +754,6 @@ export interface CallBindResponse {
   id: string;
   sessionId: string;
   webrtcSignalUrl: string;
-  callToken: string;
-  turn: {
-    urls: string[];
-    username: string;
-    credential: string;
-  };
 }
 
 /** The peer connection to speechmux has been established. */

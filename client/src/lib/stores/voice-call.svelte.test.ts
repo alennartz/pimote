@@ -52,8 +52,6 @@ function bindResponseData(): Omit<CallBindResponse, 'type' | 'id'> {
   return {
     sessionId: 's-1',
     webrtcSignalUrl: 'wss://speechmux/signal',
-    callToken: 'tok',
-    turn: { urls: ['turn:example.com'], username: 'u', credential: 'c' },
   };
 }
 
@@ -98,7 +96,7 @@ describe('VoiceCallStore.startCall', () => {
     expect(seams.sendCommand).toHaveBeenCalledWith(expect.objectContaining({ type: 'call_bind', sessionId: 's-1' }));
     expect(seams.createPeerConnection).toHaveBeenCalledTimes(1);
     expect(seams.getUserMedia).toHaveBeenCalledTimes(1);
-    expect(seams.openSignaling).toHaveBeenCalledWith('wss://speechmux/signal', 'tok');
+    expect(seams.openSignaling).toHaveBeenCalledWith('wss://speechmux/signal');
     expect(peer.tracks).toHaveLength(1);
     expect(sig.closed).toBe(false);
   });

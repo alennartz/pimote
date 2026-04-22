@@ -28,7 +28,6 @@ const activate: VoiceActivateMessage = {
   type: 'pimote:voice:activate',
   sessionId: 'sess-1',
   speechmuxWsUrl: 'ws://speechmux.internal/llm',
-  callToken: 'tok-abc',
 };
 
 const deactivate: VoiceDeactivateMessage = { type: 'pimote:voice:deactivate', sessionId: 'sess-1' };
@@ -44,7 +43,7 @@ describe('reduceActivate', () => {
     const { next, actions } = reduceActivate(initialRuntimeState(), activate, config);
     expect(next.state).toBe('activating');
     expect(next.sessionId).toBe('sess-1');
-    expect(actions).toEqual([{ kind: 'open_speechmux', wsUrl: activate.speechmuxWsUrl, callToken: activate.callToken }]);
+    expect(actions).toEqual([{ kind: 'open_speechmux', wsUrl: activate.speechmuxWsUrl }]);
   });
 
   it('ignores duplicate activate while already activating', () => {

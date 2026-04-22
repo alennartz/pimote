@@ -4,7 +4,6 @@
 // isolated from the plain HTTP/WS boot sequence.
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import type { PimoteConfig } from './config.js';
 import type { ClientConnection, PimoteSessionManager } from './session-manager.js';
 import type { WsHandler } from './ws-handler.js';
@@ -25,12 +24,13 @@ export interface VoiceOrchestratorBootResult {
 /**
  * Construct a VoiceOrchestrator backed by real seams:
  * - speechmux sidecar via `child_process.spawn`
- * - mint token = `crypto.randomUUID()` (production will POST to speechmux's
- *   admin surface once speechmux supports per-call auth tokens — out of
- *   scope for this phase; see docs/plans/voice-mode.md → "External
- *   dependencies")
  * - displacement = looks up current owner via clientRegistry and calls its
  *   `sendDisplacedEvent(sessionId)`
+ *
+ * Auth on `/signal` is handled by Cloudflare Access at the edge, and
+ * per-session TURN credentials are minted by speechmux and returned to the
+ * PWA in its `/signal` `session` response. Pimote's orchestrator only
+ * hands out the signalling URL.
  */
 export function buildVoiceOrchestrator(args: { config: PimoteConfig; sessionManager: PimoteSessionManager; clientRegistry: VoiceClientRegistry }): VoiceOrchestratorBootResult {
   const { config, sessionManager, clientRegistry } = args;
@@ -86,31 +86,6 @@ export function buildVoiceOrchestrator(args: { config: PimoteConfig; sessionMana
           resolve();
         }
       });
-    },
-    mintCallToken: async (_sessionId) => {
-      // Guard: if any piece of the speechmux wiring is missing, fail the
-      // bind so the client sees `call_bind_failed_internal` instead of
-      // succeeding with empty URLs (see review finding 3).
-      if (!config.voice?.speechmuxBinary || !config.voice?.speechmuxSignalUrl || !config.voice?.speechmuxLlmWsUrl) {
-        throw new Error('voice_disabled: speechmux binary / signal URL / llm WS URL not configured');
-      }
-      // TODO(speechmux external blocker): once speechmux exposes a per-call
-      // auth admin endpoint, POST the minted token here (and pass sessionId
-      // along). Until then we only generate a random token locally and rely
-      // on speechmux's shared-env-token mode. Tracked in
-      // docs/plans/voice-mode.md → "External dependencies" and review
-      // finding 8.
-      const token = randomUUID();
-      const turn = {
-        urls: [] as string[],
-        username: '',
-        credential: '',
-      };
-      return {
-        token,
-        turn,
-        webrtcSignalUrl: config.voice.speechmuxSignalUrl,
-      };
     },
     displaceOwner: async (sessionId, _newOwner: ClientConnection) => {
       const slot = sessionManager.getSlot(sessionId);

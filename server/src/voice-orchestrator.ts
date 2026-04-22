@@ -47,11 +47,6 @@ export interface VoiceOrchestratorOptions {
   config: PimoteConfig;
   sessionManager: PimoteSessionManager;
   busResolver: VoiceSessionBusResolver;
-  /**
-   * Mints a per-call auth token and registers it with speechmux. Tests
-   * inject a deterministic fake.
-   */
-  mintCallToken: (sessionId: string) => Promise<{ token: string; turn: CallBindResultData['turn']; webrtcSignalUrl: string }>;
   /** Starts the speechmux sidecar process. */
   startSpeechmux: () => Promise<void>;
   /** Stops the speechmux sidecar process. Idempotent. */
@@ -67,7 +62,7 @@ export interface VoiceOrchestratorOptions {
 
 export class VoiceOrchestrator {
   private started = false;
-  private readonly activeCalls = new Map<string, { callToken: string }>();
+  private readonly activeCalls = new Set<string>();
 
   constructor(private readonly opts: VoiceOrchestratorOptions) {}
 
@@ -102,11 +97,15 @@ export class VoiceOrchestrator {
       await this.opts.displaceOwner(args.sessionId, args.clientConnection);
     }
 
-    let minted;
-    try {
-      minted = await this.opts.mintCallToken(args.sessionId);
-    } catch (err) {
-      throw new CallBindError('call_bind_failed_internal', err instanceof Error ? err.message : String(err));
+    // Voice-disabled guard: if speechmux wiring isn't configured, fail the
+    // bind here rather than handing the client empty URLs. Speechmux is
+    // what mints the per-call TURN creds now (in the /signal `session`
+    // response) and what authenticates peers (via Cloudflare Access at the
+    // edge), so pimote no longer needs to mint anything.
+    const signalUrl = this.opts.config.voice?.speechmuxSignalUrl;
+    const llmWsUrl = this.opts.config.voice?.speechmuxLlmWsUrl;
+    if (!signalUrl || !llmWsUrl) {
+      throw new CallBindError('call_bind_failed_internal', 'voice_disabled: speechmux signal URL / llm WS URL not configured');
     }
 
     const bus = this.opts.busResolver.getEventBus(args.sessionId);
@@ -117,18 +116,15 @@ export class VoiceOrchestrator {
     const activate: VoiceActivateMessage = {
       type: 'pimote:voice:activate',
       sessionId: args.sessionId,
-      speechmuxWsUrl: this.opts.config.voice?.speechmuxLlmWsUrl ?? '',
-      callToken: minted.token,
+      speechmuxWsUrl: llmWsUrl,
     };
     bus.emit(activate.type, activate);
 
-    this.activeCalls.set(args.sessionId, { callToken: minted.token });
+    this.activeCalls.add(args.sessionId);
 
     return {
       sessionId: args.sessionId,
-      webrtcSignalUrl: minted.webrtcSignalUrl,
-      callToken: minted.token,
-      turn: minted.turn,
+      webrtcSignalUrl: signalUrl,
     };
   }
 

@@ -18,7 +18,6 @@ export interface VoiceActivateMessage {
   type: 'pimote:voice:activate';
   sessionId: string;
   speechmuxWsUrl: string;
-  callToken: string;
 }
 
 /** Session-scoped EventBus message that deactivates the voice extension. */

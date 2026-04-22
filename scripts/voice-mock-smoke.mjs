@@ -10,9 +10,9 @@
 //      frames (user / rollback) and assert the produced VoiceAction[].
 //   4. endCall -> assert pimote:voice:deactivate.
 //
-// The real-speechmux end-to-end run stays blocked on speechmux-repo changes
-// (startup-time LlmBackend listener + per-call /signal tokens). This script
-// is the runnable slice of Step 14. See docs/manual-tests/voice-mode.md.
+// The real-speechmux end-to-end run is unblocked by DR-015 (persistent
+// LLM-harness listener) and DR-016 (session watchdog). This script is the
+// runnable mock slice. See docs/manual-tests/voice-mode.md.
 
 import { VoiceOrchestrator, CallBindError } from '../server/dist/voice-orchestrator.js';
 import {
@@ -64,7 +64,6 @@ async function main() {
   const slot = { sessionState: { id: 's-1' } };
 
   const displaceCalls = [];
-  let mintCounter = 0;
 
   /** @type {VoiceOrchestrator} */
   let orchestrator;
@@ -74,18 +73,13 @@ async function main() {
       idleTimeout: 1000,
       bufferSize: 10,
       port: 3000,
-      voice: { speechmuxLlmWsUrl: 'ws://mock/llm' },
+      voice: { speechmuxLlmWsUrl: 'ws://mock/llm', speechmuxSignalUrl: 'wss://mock/signal' },
     },
     sessionManager: {},
     busResolver: {
       getSlot: (id) => (id === 's-1' ? slot : null),
       getEventBus: (id) => (id === 's-1' ? bus : null),
     },
-    mintCallToken: async () => ({
-      token: `mock-token-${++mintCounter}`,
-      turn: { urls: ['turn:mock'], username: 'u', credential: 'c' },
-      webrtcSignalUrl: 'wss://mock/signal',
-    }),
     startSpeechmux: async () => {},
     stopSpeechmux: async () => {},
     // Mirror ws-handler's real displacement path: tear down orchestrator
@@ -107,11 +101,13 @@ async function main() {
     clientConnection: { ws: {}, connectedClientId: 'c-1', onSessionReset: null },
     force: false,
   });
-  assert(data.callToken === 'mock-token-1', 'bindCall returned the minted token');
   assert(data.webrtcSignalUrl === 'wss://mock/signal', 'bindCall returned the signal URL');
+  assert(!('callToken' in data), 'bindCall no longer returns a per-call auth token (speechmux owns auth via Cloudflare Access)');
+  assert(!('turn' in data), 'bindCall no longer returns TURN creds (speechmux mints per-session TURN in /signal session response)');
   assert(bus.emitted.length === 1, 'bus received exactly one event');
   assert(bus.emitted[0].type === 'pimote:voice:activate', 'event type is pimote:voice:activate');
-  assert(bus.emitted[0].payload.callToken === 'mock-token-1', 'activate payload carries the token');
+  assert(!('callToken' in bus.emitted[0].payload), 'activate payload no longer carries a callToken');
+  assert(bus.emitted[0].payload.speechmuxWsUrl === 'ws://mock/llm', 'activate payload carries the LLM-WS URL');
   assert(orchestrator.isCallActive('s-1') === true, 'isCallActive true after bindCall');
   console.log('  [mock] bindCall emitted pimote:voice:activate on bus');
 
@@ -223,7 +219,7 @@ async function main() {
   // --- 6. Displacement path (force: true) ---------------------------------
   console.log('\n[mock] 6. displacement with force:true');
   const busCountBefore = bus.emitted.length;
-  const data2 = await orchestrator.bindCall({
+  await orchestrator.bindCall({
     sessionId: 's-1',
     clientConnection: { ws: {}, connectedClientId: 'c-B', onSessionReset: null },
     force: true,
@@ -237,11 +233,10 @@ async function main() {
     'displacement emits deactivate for the old owner',
   );
   assert(
-    newEvents.some((e) => e.type === 'pimote:voice:activate' && e.payload.callToken === data2.callToken),
+    newEvents.some((e) => e.type === 'pimote:voice:activate' && e.payload.sessionId === 's-1'),
     'displacement emits activate for the new owner',
   );
   assert(orchestrator.isCallActive('s-1') === true, 'displacement leaves exactly one active call');
-  assert(data2.callToken !== 'mock-token-1', 'displacement minted a fresh token');
 
   // Simulate the real-server side effect: the ws-handler's sendDisplacedEvent
   // broadcasts `call_ended { reason: 'displaced' }` to the first client. The

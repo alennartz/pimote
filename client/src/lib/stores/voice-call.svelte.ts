@@ -42,12 +42,16 @@ export interface VoiceSignalingSocket {
 export interface VoiceCallSeams {
   /** Sends a command over the pimote WS. Returns the server response. */
   sendCommand: <T = unknown>(cmd: PimoteCommand) => Promise<PimoteResponse<T>>;
-  /** Opens a WebRTC peer configured with the given TURN credentials. */
-  createPeerConnection: (turn: CallBindResponse['turn']) => VoicePeerConnection;
+  /**
+   * Opens a WebRTC peer. TURN credentials are delivered by speechmux in its
+   * `/signal` `session` response — not here — so this seam takes no TURN
+   * args.
+   */
+  createPeerConnection: () => VoicePeerConnection;
   /** Obtains a local microphone stream. */
   getUserMedia: () => Promise<{ stream: unknown; tracks: unknown[] }>;
   /** Opens a signalling WS to speechmux. */
-  openSignaling: (url: string, callToken: string) => VoiceSignalingSocket;
+  openSignaling: (url: string) => VoiceSignalingSocket;
 }
 
 // --- Store --------------------------------------------------------------------
@@ -96,14 +100,14 @@ export class VoiceCallStore {
       throw new Error(response.error ?? 'call_bind_failed');
     }
 
-    const { turn, webrtcSignalUrl, callToken } = response.data;
+    const { webrtcSignalUrl } = response.data;
 
     // Peer and signalling setup — all testable via injected seams.
     try {
-      this.peer = this.seams.createPeerConnection(turn);
+      this.peer = this.seams.createPeerConnection();
       const { stream, tracks } = await this.seams.getUserMedia();
       for (const track of tracks) this.peer.addTrack(track, stream);
-      this.signaling = this.seams.openSignaling(webrtcSignalUrl, callToken);
+      this.signaling = this.seams.openSignaling(webrtcSignalUrl);
     } catch (err) {
       this.teardown();
       this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: (err as Error).message };

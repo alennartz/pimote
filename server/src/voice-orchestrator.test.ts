@@ -12,7 +12,7 @@ function fakeConfig(overrides: Partial<PimoteConfig> = {}): PimoteConfig {
     idleTimeout: 1000,
     bufferSize: 10,
     port: 3000,
-    voice: { speechmuxLlmWsUrl: 'ws://speechmux/llm' },
+    voice: { speechmuxLlmWsUrl: 'ws://speechmux/llm', speechmuxSignalUrl: 'wss://speechmux/signal' },
     ...overrides,
   } as PimoteConfig;
 }
@@ -57,8 +57,7 @@ function fakeConnection(): ClientConnection {
 function makeOrchestrator(options?: {
   slotLookup?: Map<string, ManagedSlot>;
   busLookup?: Map<string, ReturnType<typeof fakeBus>>;
-  mintResult?: Awaited<ReturnType<any>>;
-  mintImpl?: (sessionId: string) => Promise<any>;
+  configOverrides?: Partial<PimoteConfig>;
   displace?: (sessionId: string, newOwner: ClientConnection) => Promise<void>;
   startImpl?: () => Promise<void>;
   stopImpl?: () => Promise<void>;
@@ -72,31 +71,22 @@ function makeOrchestrator(options?: {
     getEventBus: (id) => buses.get(id) ?? null,
   };
 
-  const mintCallToken =
-    options?.mintImpl ??
-    vi.fn(async (sessionId: string) => ({
-      token: `tok-${sessionId}`,
-      turn: { urls: ['turn:example.com'], username: 'u', credential: 'c' },
-      webrtcSignalUrl: 'wss://speechmux/signal',
-    }));
-
   const displaceOwner = options?.displace ?? vi.fn(async () => {});
   const startSpeechmux = options?.startImpl ?? vi.fn(async () => {});
   const stopSpeechmux = options?.stopImpl ?? vi.fn(async () => {});
   const isOwnedByVoiceCall = options?.isOwnedByVoiceCall ?? (() => false);
 
   const orchestrator = new VoiceOrchestrator({
-    config: fakeConfig(),
+    config: fakeConfig(options?.configOverrides),
     sessionManager: {} as PimoteSessionManager,
     busResolver: resolver,
-    mintCallToken,
     startSpeechmux,
     stopSpeechmux,
     displaceOwner,
     isOwnedByVoiceCall,
   });
 
-  return { orchestrator, buses, slots, mintCallToken, displaceOwner, startSpeechmux, stopSpeechmux };
+  return { orchestrator, buses, slots, displaceOwner, startSpeechmux, stopSpeechmux };
 }
 
 // =============================================================================
@@ -120,24 +110,24 @@ describe('VoiceOrchestrator lifecycle', () => {
 
 describe('VoiceOrchestrator.bindCall', () => {
   it('emits pimote:voice:activate on the session bus and returns signalling info', async () => {
-    const { orchestrator, buses, mintCallToken } = makeOrchestrator();
+    const { orchestrator, buses } = makeOrchestrator();
     const res = await orchestrator.bindCall({ sessionId: 's-1', clientConnection: fakeConnection(), force: false });
     expect(res.sessionId).toBe('s-1');
-    expect(res.callToken).toBe('tok-s-1');
     expect(res.webrtcSignalUrl).toBe('wss://speechmux/signal');
-    expect(res.turn.urls).toContain('turn:example.com');
-    expect(mintCallToken).toHaveBeenCalledWith('s-1');
+    // The pimote side no longer mints or proxies per-call auth tokens or
+    // TURN creds — speechmux owns both now (DR-015 / DR-016).
+    expect(res).not.toHaveProperty('callToken');
+    expect(res).not.toHaveProperty('turn');
 
     const bus = buses.get('s-1')!;
     expect(bus.emitted).toEqual([
       {
         type: 'pimote:voice:activate',
-        payload: expect.objectContaining({
+        payload: {
           type: 'pimote:voice:activate',
           sessionId: 's-1',
-          callToken: 'tok-s-1',
           speechmuxWsUrl: 'ws://speechmux/llm',
-        }),
+        },
       },
     ]);
   });
@@ -160,14 +150,12 @@ describe('VoiceOrchestrator.bindCall', () => {
     const { orchestrator } = makeOrchestrator({ isOwnedByVoiceCall: () => true, displace: displaceOwner });
     const res = await orchestrator.bindCall({ sessionId: 's-1', clientConnection: fakeConnection(), force: true });
     expect(displaceOwner).toHaveBeenCalledTimes(1);
-    expect(res.callToken).toBe('tok-s-1');
+    expect(res.webrtcSignalUrl).toBe('wss://speechmux/signal');
   });
 
-  it('mintCallToken failure surfaces as call_bind_failed_internal', async () => {
+  it('missing speechmux URLs surfaces as call_bind_failed_internal (voice disabled)', async () => {
     const { orchestrator } = makeOrchestrator({
-      mintImpl: vi.fn(async () => {
-        throw new Error('speechmux down');
-      }),
+      configOverrides: { voice: {} as PimoteConfig['voice'] },
     });
     await expect(orchestrator.bindCall({ sessionId: 's-1', clientConnection: fakeConnection(), force: false })).rejects.toMatchObject({ code: 'call_bind_failed_internal' });
   });

@@ -87,7 +87,7 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
       switch (action.kind) {
         case 'open_speechmux': {
           try {
-            const client = await clientFactory({ wsUrl: action.wsUrl, callToken: action.callToken });
+            const client = await clientFactory({ wsUrl: action.wsUrl });
             speechmuxClient = client;
             client.onFrame((frame) => {
               const result = reduceSpeechmuxFrame(runtime, frame);
