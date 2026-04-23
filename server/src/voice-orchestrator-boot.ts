@@ -49,7 +49,7 @@ export function buildVoiceOrchestrator(args: { config: PimoteConfig; sessionMana
     startSpeechmux: async () => {
       const bin = config.voice?.speechmuxBinary;
       if (!bin) {
-        console.warn('[voice] speechmuxBinary not configured; orchestrator disabled');
+        console.log('[voice] speechmuxBinary not configured; assuming speechmux is externally managed (systemd, container, remote host, etc.)');
         return;
       }
       if (speechmuxProc) return;
