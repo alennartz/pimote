@@ -68,6 +68,10 @@ export class VoiceCallStore {
 
   private peer: VoicePeerConnection | null = null;
   private signaling: VoiceSignalingSocket | null = null;
+  /** Local mic tracks from getUserMedia. Held so we can stop() them on teardown
+   *  — RTCPeerConnection.close() does NOT stop tracks; they continue to capture
+   *  (and the browser's mic indicator stays on) until explicitly stopped. */
+  private localTracks: unknown[] = [];
 
   constructor(private readonly seams: VoiceCallSeams) {}
 
@@ -106,6 +110,7 @@ export class VoiceCallStore {
     try {
       this.peer = this.seams.createPeerConnection();
       const { stream, tracks } = await this.seams.getUserMedia();
+      this.localTracks = tracks;
       for (const track of tracks) this.peer.addTrack(track, stream);
       this.signaling = this.seams.openSignaling(webrtcSignalUrl);
     } catch (err) {
@@ -168,6 +173,18 @@ export class VoiceCallStore {
   }
 
   private teardown(): void {
+    // Stop local tracks FIRST so the mic is released even if peer.close() or
+    // signaling.close() throws. Browsers keep MediaStreamTracks live past
+    // RTCPeerConnection.close() — you have to call .stop() explicitly or the
+    // mic indicator stays lit and the track keeps capturing.
+    for (const track of this.localTracks) {
+      try {
+        (track as { stop: () => void }).stop();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.localTracks = [];
     this.peer?.close();
     this.signaling?.close();
     this.peer = null;
