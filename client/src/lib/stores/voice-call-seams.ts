@@ -112,6 +112,46 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
       const pc = new RTCPeerConnection();
       const audioTracks: MediaStreamTrack[] = [];
 
+      // Sink for speechmux's outbound audio (TTS). We create a dedicated
+      // hidden <audio> element per peer and route the remote track into it
+      // via srcObject. Without this, the browser decodes SRTP and hands the
+      // PCM to nothing — the user hears silence even though audio is flowing.
+      let remoteAudioEl: HTMLAudioElement | null = null;
+      let remoteStream: MediaStream | null = null;
+      const ensureRemoteAudio = (): { el: HTMLAudioElement; stream: MediaStream } => {
+        if (remoteAudioEl && remoteStream) return { el: remoteAudioEl, stream: remoteStream };
+        const el = document.createElement('audio');
+        el.autoplay = true;
+        el.setAttribute('playsinline', ''); // iOS Safari: allow inline playback
+        el.style.display = 'none';
+        document.body.appendChild(el);
+        const stream = new MediaStream();
+        el.srcObject = stream;
+        remoteAudioEl = el;
+        remoteStream = stream;
+        return { el, stream };
+      };
+
+      pc.addEventListener('track', (ev: RTCTrackEvent) => {
+        if (ev.track.kind !== 'audio') return;
+        const { el, stream } = ensureRemoteAudio();
+        // Chromium delivers the track via ev.streams[0]; Safari sometimes
+        // ships an empty streams array and expects us to build our own.
+        const arriving = ev.streams[0];
+        if (arriving) {
+          for (const t of arriving.getAudioTracks()) {
+            if (!stream.getAudioTracks().includes(t)) stream.addTrack(t);
+          }
+        } else if (!stream.getAudioTracks().includes(ev.track)) {
+          stream.addTrack(ev.track);
+        }
+        // Kick playback — autoplay should cover it, but some browsers need
+        // an explicit .play() (which may reject if user gesture is required).
+        void el.play().catch(() => {
+          /* user-gesture policies can block this; the call button is the gesture */
+        });
+      });
+
       pc.addEventListener('iceconnectionstatechange', () => {
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
           const sid = opts.getSessionId();
@@ -129,6 +169,18 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
           } catch {
             /* ignore */
           }
+          // Tear down the remote-audio sink so it doesn't linger in the DOM.
+          if (remoteAudioEl) {
+            try {
+              remoteAudioEl.pause();
+              remoteAudioEl.srcObject = null;
+              remoteAudioEl.remove();
+            } catch {
+              /* ignore */
+            }
+            remoteAudioEl = null;
+          }
+          remoteStream = null;
         },
         addTrack(track: unknown, stream: unknown): void {
           const t = track as MediaStreamTrack;
