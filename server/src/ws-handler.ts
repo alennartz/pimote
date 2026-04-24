@@ -1118,10 +1118,13 @@ export class WsHandler {
     }
 
     // Session ID changed — rebuild session state in-place on the same slot.
-    const folderPath = slot.folderPath;
+    // rebuildSessionState refreshes slot.folderPath from the new session's header cwd,
+    // so capture folderPath AFTER the rebuild to pick up the new value (fork-from can
+    // change cwd, e.g. the worktree extension).
 
     // Rebuild session state (tears down old, creates new from runtime.session)
     this.sessionManager.rebuildSessionState(slot);
+    const folderPath = slot.folderPath;
 
     // Re-key the session map
     this.sessionManager.reKeySession(slot, oldSessionId, newSessionId);

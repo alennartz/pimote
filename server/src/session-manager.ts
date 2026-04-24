@@ -435,9 +435,15 @@ export class PimoteSessionManager {
   }
 
   /** Rebuild a slot's SessionState after session replacement.
-   *  Tears down the old state and creates a new one from the current runtime.session. */
+   *  Tears down the old state and creates a new one from the current runtime.session.
+   *  Also refreshes slot.folderPath from the new session's header cwd, since fork-from
+   *  (e.g. the worktree extension) can rebind the slot to a session whose cwd differs
+   *  from the original. */
   rebuildSessionState(slot: ManagedSlot): void {
     teardownSessionState(slot.sessionState);
+
+    const newCwd = slot.runtime.session.sessionManager.getCwd();
+    if (newCwd) slot.folderPath = newCwd;
 
     const slotRef = { slot: slot as ManagedSlot | null };
     slot.sessionState = createSessionState(
