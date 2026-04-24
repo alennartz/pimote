@@ -145,7 +145,23 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
     },
 
     async getUserMedia(): Promise<{ stream: unknown; tracks: unknown[] }> {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Explicit constraints for voice-call use:
+      // - `echoCancellation` is usually default-true, but Android Chrome has
+      //   historically been inconsistent. Without AEC, speaker-to-mic loopback
+      //   triggers speechmux's VAD and spirals into self-barge-in.
+      // - `noiseSuppression` + `autoGainControl` are standard defaults but
+      //   made explicit for the same reason.
+      // - `channelCount: 1` forces a mono track; matches speechmux's mono
+      //   decoder (avoiding the stereo-downmix warning) and halves upstream
+      //   bandwidth.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
+      });
       return { stream, tracks: stream.getAudioTracks() };
     },
 
