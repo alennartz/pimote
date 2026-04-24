@@ -91,12 +91,32 @@ export function extractMessageEntryIds(branch: SdkSessionEntry[]): string[] {
 }
 
 /**
+ * True when the message is pi-agent-core's synthetic aborted placeholder
+ * (pushed into agent.state.messages on session.abort() but never persisted
+ * via message_end). Identifying these lets entryId alignment skip over them.
+ */
+export function isAbortedPlaceholderMessage(msg: PimoteAgentMessage): boolean {
+  if (msg.role !== 'assistant') return false;
+  if (msg.aborted !== true) return false;
+  return msg.content.every((c) => c.type === 'text' && !c.text);
+}
+
+/**
  * Apply entry IDs from the session manager onto mapped messages.
- * Zips by index — both arrays must correspond 1:1.
+ *
+ * Subtle alignment: `messages` comes from `agent.state.messages`, which
+ * includes pi-agent-core's synthetic aborted placeholders (abort pushes an
+ * empty assistant into state but never persists an entry for it).
+ * `entryIds` comes from persisted session entries, which do NOT include
+ * those placeholders. We walk the messages and skip aborted placeholders
+ * so the persisted IDs land on the correct real messages.
  */
 export function applyEntryIds(messages: PimoteAgentMessage[], entryIds: string[]): void {
-  for (let i = 0; i < messages.length && i < entryIds.length; i++) {
-    messages[i].entryId = entryIds[i];
+  let idIdx = 0;
+  for (let i = 0; i < messages.length; i++) {
+    if (isAbortedPlaceholderMessage(messages[i])) continue;
+    if (idIdx >= entryIds.length) break;
+    messages[i].entryId = entryIds[idIdx++];
   }
 }
 

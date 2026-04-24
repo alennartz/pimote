@@ -210,13 +210,27 @@ export class SessionRegistry {
         if (sessionId !== this.viewedSessionId) {
           session.needsAttention = true;
         }
-        // Apply entry IDs so fork targets work on messages received via streaming
+        // Apply entry IDs so fork targets work on messages received via streaming.
+        //
+        // Same alignment subtlety as server/src/message-mapper.ts::applyEntryIds:
+        // agent.state.messages on the server side includes pi-agent-core's
+        // synthetic aborted-assistant placeholders (abort pushes an empty
+        // assistant into state but never persists an entry). messageEntryIds
+        // comes from persisted entries and therefore doesn't include those
+        // placeholders. Skip aborted-empty messages so IDs land on the right
+        // real messages. Without this, every barge-in shifts subsequent
+        // entryIds one slot earlier, breaking fork / tree navigation targeting.
         if (endEvent.messageEntryIds) {
           const ids = endEvent.messageEntryIds;
-          for (let i = 0; i < session.messages.length && i < ids.length; i++) {
-            if (!session.messages[i].entryId) {
-              session.messages[i].entryId = ids[i];
+          let idIdx = 0;
+          for (let i = 0; i < session.messages.length && idIdx < ids.length; i++) {
+            const msg = session.messages[i];
+            const isAbortedPlaceholder = msg.role === 'assistant' && msg.aborted === true && msg.content.every((c) => c.type === 'text' && !c.text);
+            if (isAbortedPlaceholder) continue;
+            if (!msg.entryId) {
+              msg.entryId = ids[idIdx];
             }
+            idIdx++;
           }
         }
         // Refresh meta (context usage changes after each turn, branch may change)
