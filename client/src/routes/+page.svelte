@@ -37,9 +37,7 @@
 {#if sessionRegistry.viewedSessionId}
   <!-- Active session view -->
   <div class="flex min-h-0 flex-1 flex-col">
-    <div class="hidden md:block">
-      <StatusBar />
-    </div>
+    <StatusBar />
     <MobileRuntimeStatus />
     {#if sessionRegistry.viewed?.pendingTakeover}
       <div class="bg-warning/10 border-warning/30 text-warning flex items-center gap-2 border-b px-4 py-2 text-sm">
