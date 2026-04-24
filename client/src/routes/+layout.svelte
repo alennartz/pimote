@@ -16,6 +16,8 @@
   import Menu from '@lucide/svelte/icons/menu';
   import X from '@lucide/svelte/icons/x';
   import PanelRight from '@lucide/svelte/icons/panel-right';
+  import Phone from '@lucide/svelte/icons/phone';
+  import { voiceCallStore } from '$lib/stores/voice-call-store.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
@@ -266,6 +268,30 @@
           <span class="bg-primary text-primary-foreground absolute -top-1 -right-1 min-w-4 rounded-full px-1 text-center text-[10px] leading-4 font-medium">
             {panelStore.cards.length}
           </span>
+        </button>
+      {/if}
+
+      {#if sessionRegistry.viewedSessionId}
+        {@const sid = sessionRegistry.viewedSessionId}
+        {@const callState = voiceCallStore.state}
+        {@const inCall = callState.phase !== 'idle' && callState.sessionId === sid}
+        <button
+          type="button"
+          class="border-border inline-flex size-9 shrink-0 items-center justify-center rounded-lg border {inCall
+            ? 'bg-destructive text-destructive-foreground border-destructive'
+            : 'bg-emerald-500/90 text-white'} disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed"
+          onclick={() => {
+            if (inCall) {
+              voiceCallStore.endCall().catch((err) => console.warn('[voice] endCall failed', err));
+            } else {
+              voiceCallStore.startCall(sid).catch((err) => console.warn('[voice] startCall failed', err));
+            }
+          }}
+          disabled={callState.phase !== 'idle' && callState.sessionId !== sid}
+          title={inCall ? 'End voice call' : 'Start voice call'}
+          aria-label={inCall ? 'End voice call' : 'Start voice call'}
+        >
+          <Phone class="size-4" />
         </button>
       {/if}
 

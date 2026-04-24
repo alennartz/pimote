@@ -79,6 +79,12 @@ export interface PimoteAgentMessage {
   customType?: string;
   /** For custom messages: if false, the message should be hidden from the UI */
   display?: boolean;
+  /**
+   * True for assistant messages whose turn ended with `stopReason: 'aborted'`.
+   * Common in voice sessions (every barge-in produces one) — the UI renders
+   * these with an "interrupted" indicator rather than as empty bubbles.
+   */
+  aborted?: boolean;
   [key: string]: unknown;
 }
 

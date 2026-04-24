@@ -14,6 +14,8 @@ export interface SdkMessage {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  /** Pi-agent-core sets this to 'aborted' for turns interrupted by session.abort(). */
+  stopReason?: string;
 }
 
 /**
@@ -138,8 +140,12 @@ export function mapAgentMessage(msg: SdkMessage): PimoteAgentMessage {
     content.push({ type: 'text', text: `[Unexpected content type: ${typeof msg.content}]` });
   }
 
-  // Log empty content for debugging
-  if (content.length === 0) {
+  // Aborted assistant turns are a real signal in voice mode (every barge-in
+  // produces one via pi-agent-core's handleRunFailure) and shouldn't be
+  // confused with malformed messages. Log the empty-content warning only
+  // when it's NOT an expected aborted turn.
+  const aborted = role === 'assistant' && msg.stopReason === 'aborted';
+  if (content.length === 0 && !aborted) {
     console.warn('[message-mapper] Empty content array for message:', { role, content: msg.content });
   }
 
@@ -176,5 +182,10 @@ export function mapAgentMessage(msg: SdkMessage): PimoteAgentMessage {
   // Note: msg.id is typically undefined for standard SDK messages (UserMessage,
   // AssistantMessage, ToolResultMessage).  Entry IDs are applied separately via
   // applyEntryIds() using the session manager's branch entries.
-  return { role, content, ...(msg.id ? { entryId: msg.id } : {}) };
+  return {
+    role,
+    content,
+    ...(msg.id ? { entryId: msg.id } : {}),
+    ...(aborted ? { aborted: true } : {}),
+  };
 }

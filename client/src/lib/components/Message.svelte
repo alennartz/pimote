@@ -11,6 +11,7 @@
   import GitFork from '@lucide/svelte/icons/git-fork';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import CircleSlash from '@lucide/svelte/icons/circle-slash';
 
   const MAX_COLLAPSED_LINES = 10;
   const SKILL_COLLAPSED_LINES = 3;
@@ -27,6 +28,18 @@
   let toolMenuOpen = $state(false);
 
   let hasSpeakableText = $derived(message.role === 'assistant' && !streaming && message.content.some((c) => c.type === 'text' && c.text));
+
+  // An assistant turn cancelled by session.abort() (e.g. a voice-mode barge-in
+  // produces one per interrupt). `aborted` comes from the wire; the server-side
+  // message-mapper sets it when pi-agent-core tags the turn with
+  // stopReason: 'aborted'.
+  let isAbortedAssistant = $derived(message.role === 'assistant' && (message as PimoteAgentMessage).aborted === true);
+  let abortedIsEmpty = $derived(
+    isAbortedAssistant &&
+      message.content.every(
+        (c) => (c.type === 'text' && (!c.text || c.text.length === 0)) || (c.type !== 'text' && c.type !== 'tool_call' && c.type !== 'tool_result' && c.type !== 'thinking'),
+      ),
+  );
 
   let textContent = $derived(
     message.content
@@ -131,46 +144,60 @@
   </div>
 {:else if message.role === 'assistant'}
   {@const toolExecs = sessionRegistry.viewed?.toolExecutions ?? {}}
-  <div class="message assistant-message">
-    <div class="assistant-icon-col">
-      {#if hasSpeakableText}
-        <button class="message-icon assistant-icon" onclick={() => (toolMenuOpen = !toolMenuOpen)}>
-          <Bot size={16} />
-        </button>
-        {#if toolMenuOpen}
-          <div class="tool-menu">
-            <TtsButton {messageKey} {textContent} />
+  {#if abortedIsEmpty}
+    <!-- Empty aborted turn — compact "interrupted" indicator instead of a blank assistant bubble. -->
+    <div class="message aborted-indicator text-muted-foreground flex items-center gap-2 px-2 py-1 text-xs italic">
+      <CircleSlash size={12} />
+      <span>interrupted</span>
+    </div>
+  {:else}
+    <div class="message assistant-message {isAbortedAssistant ? 'aborted' : ''}">
+      <div class="assistant-icon-col">
+        {#if hasSpeakableText}
+          <button class="message-icon assistant-icon" onclick={() => (toolMenuOpen = !toolMenuOpen)}>
+            <Bot size={16} />
+          </button>
+          {#if toolMenuOpen}
+            <div class="tool-menu">
+              <TtsButton {messageKey} {textContent} />
+            </div>
+          {/if}
+        {:else}
+          <div class="message-icon assistant-icon">
+            <Bot size={16} />
           </div>
         {/if}
-      {:else}
-        <div class="message-icon assistant-icon">
-          <Bot size={16} />
-        </div>
-      {/if}
-    </div>
-    <div class="message-body">
-      {#each message.content as block, i (i)}
-        {@const blockStreaming = block.streaming ?? false}
-        {#if block.type === 'text'}
-          <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
-        {:else if block.type === 'thinking'}
-          <ThinkingBlock text={block.text ?? ''} streaming={blockStreaming} />
-        {:else if block.type === 'tool_call'}
-          {@const exec = block.toolCallId ? toolExecs[block.toolCallId] : undefined}
-          <ToolCall
-            content={block}
-            streaming={blockStreaming}
-            inProgress={exec?.status === 'running'}
-            partialResult={exec?.partialResult ?? ''}
-            result={exec?.status === 'completed' ? exec.result : undefined}
-            isError={exec?.isError}
-          />
-        {:else if block.type === 'tool_result'}
-          <ToolCall content={block} />
+      </div>
+      <div class="message-body">
+        {#each message.content as block, i (i)}
+          {@const blockStreaming = block.streaming ?? false}
+          {#if block.type === 'text'}
+            <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
+          {:else if block.type === 'thinking'}
+            <ThinkingBlock text={block.text ?? ''} streaming={blockStreaming} />
+          {:else if block.type === 'tool_call'}
+            {@const exec = block.toolCallId ? toolExecs[block.toolCallId] : undefined}
+            <ToolCall
+              content={block}
+              streaming={blockStreaming}
+              inProgress={exec?.status === 'running'}
+              partialResult={exec?.partialResult ?? ''}
+              result={exec?.status === 'completed' ? exec.result : undefined}
+              isError={exec?.isError}
+            />
+          {:else if block.type === 'tool_result'}
+            <ToolCall content={block} />
+          {/if}
+        {/each}
+        {#if isAbortedAssistant}
+          <div class="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs italic opacity-70">
+            <CircleSlash size={12} />
+            <span>interrupted</span>
+          </div>
         {/if}
-      {/each}
+      </div>
     </div>
-  </div>
+  {/if}
 {:else if message.role === 'custom'}
   <!-- Custom message (extension-injected, e.g. subagent results) -->
   <div class="message custom-message">
