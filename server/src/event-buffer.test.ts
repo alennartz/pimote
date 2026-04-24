@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { EventBuffer } from './event-buffer.js';
-import type { PimoteSessionEvent } from '@pimote/shared';
+import type { PimoteSessionEvent } from '../../shared/dist/index.js';
 
 describe('EventBuffer', () => {
   const SESSION_ID = 'test-session-1';

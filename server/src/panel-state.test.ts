@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
-import type { Card } from '@pimote/shared';
+import type { Card } from '../../shared/dist/index.js';
 
 function makeCard(id: string, title: string): Card {
   return { id, header: { title } };

@@ -6,8 +6,8 @@
 // testable without a running pi session, without a speechmux WS, and without
 // real timers. The impl phase will wire it to the real ExtensionAPI.
 
-import type { VoiceInterruptEntryData } from '@pimote/shared';
-import { VOICE_INTERRUPT_CUSTOM_TYPE } from '@pimote/shared';
+import type { VoiceInterruptEntryData } from '../../../shared/dist/index.js';
+import { VOICE_INTERRUPT_CUSTOM_TYPE } from '../../../shared/dist/index.js';
 import type { VoiceExtensionState, VoiceActivateMessage, VoiceDeactivateMessage } from './state-machine.js';
 import { VOICE_CALL_STARTED_SENTINEL } from './state-machine.js';
 import type { IncomingFrame } from './speechmux-client.js';

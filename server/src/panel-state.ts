@@ -1,4 +1,4 @@
-import type { Card } from '@pimote/shared';
+import type { Card } from '../../shared/dist/index.js';
 
 /** Panel EventBus message shapes (mirrors @pimote/panels PanelMessage). */
 export type PanelBusMessage = { type: 'cards'; namespace: string; cards: Card[] } | { type: 'clear'; namespace: string };

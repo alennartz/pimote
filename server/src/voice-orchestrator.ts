@@ -5,10 +5,10 @@
 // phase fills in start()/stop()/bindCall()/endCall() bodies.
 
 import type { EventBusController } from '@mariozechner/pi-coding-agent';
-import type { CallBindErrorCode, CallBindResponse, CallEndReason } from '@pimote/shared';
+import type { CallBindErrorCode, CallBindResponse, CallEndReason } from '../../shared/dist/index.js';
 import type { PimoteConfig } from './config.js';
 import type { ClientConnection, ManagedSlot, PimoteSessionManager } from './session-manager.js';
-import type { VoiceActivateMessage, VoiceDeactivateMessage } from '@pimote/voice';
+import type { VoiceActivateMessage, VoiceDeactivateMessage } from './voice/index.js';
 
 export type CallBindResultData = Omit<CallBindResponse, 'type' | 'id'>;
 

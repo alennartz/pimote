@@ -26,7 +26,6 @@
     "@fontsource-variable/inter": "^5.2.8",
     "@internationalized/date": "^3.12.0",
     "@lucide/svelte": "^1.7.0",
-    "@pimote/shared": "*",
     "@streamparser/json": "^0.0.22",
     "@uiw/codemirror-theme-github": "^4.25.9",
     "bits-ui": "^2.17.2",

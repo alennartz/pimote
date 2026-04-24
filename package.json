@@ -29,6 +29,8 @@
     "bin/pimote.js",
     "client/build/**",
     "server/dist/**/*.js",
+    "shared/dist/**/*.js",
+    "shared/dist/**/*.d.ts",
     "scripts/postinstall-patches.mjs",
     "patches/@mariozechner+pi-coding-agent+0.67.6.patch",
     "README.md",
@@ -38,14 +40,13 @@
     "node": ">=22.0.0"
   },
   "workspaces": [
-    "shared",
     "server",
     "client",
-    "packages/panels",
-    "packages/voice"
+    "packages/panels"
   ],
   "scripts": {
-    "build": "npm run build --workspace=shared && npm run build --workspace=@pimote/server && npm run build --workspace=client",
+    "build": "npm run build:shared && npm run build --workspace=@pimote/server && npm run build --workspace=client",
+    "build:shared": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('shared/dist', { recursive: true, force: true }); rmSync('shared/tsconfig.tsbuildinfo', { force: true });\" && tsc -b shared --force",
     "start": "node ./bin/pimote.js start",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

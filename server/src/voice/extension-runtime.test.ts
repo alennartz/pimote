@@ -4,7 +4,7 @@
 // session, speechmux WS, or WebRTC peer.
 
 import { describe, it, expect } from 'vitest';
-import { VOICE_INTERRUPT_CUSTOM_TYPE } from '@pimote/shared';
+import { VOICE_INTERRUPT_CUSTOM_TYPE } from '../../../shared/dist/index.js';
 import {
   initialRuntimeState,
   reduceActivate,

@@ -11,13 +11,13 @@ import {
 import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory } from '@mariozechner/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
-import type { PimoteEvent, Card } from '@pimote/shared';
+import type { PimoteEvent, Card } from '../../shared/dist/index.js';
 import type { SdkMessage } from './message-mapper.js';
 import type { PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import type { PanelBusMessage } from './panel-state.js';
 import { getGitBranch } from './git-branch.js';
-import { createVoiceExtension } from '@pimote/voice';
+import { createVoiceExtension } from './voice/index.js';
 import type { ExtensionFactory } from '@mariozechner/pi-coding-agent';
 
 /** Narrow interface for the WebSocket used for event routing.

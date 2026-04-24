@@ -1,6 +1,6 @@
 import type { ExtensionUIContext, ExtensionUIDialogOptions, ExtensionWidgetOptions } from '@mariozechner/pi-coding-agent';
-import type { PimoteEvent } from '@pimote/shared';
-import { UI_BRIDGE_DISABLED_IN_VOICE_MODE } from '@pimote/shared';
+import type { PimoteEvent } from '../../shared/dist/index.js';
+import { UI_BRIDGE_DISABLED_IN_VOICE_MODE } from '../../shared/dist/index.js';
 import type { ManagedSlot } from './session-manager.js';
 import { sendSlotEvent, waitForSlotUiResponse } from './session-manager.js';
 import type { PushNotificationService } from './push-notification.js';

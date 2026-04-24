@@ -44,7 +44,7 @@ install:
 build: build-shared build-server build-client
 
 build-shared:
-	npm run build --workspace=shared
+	npm run build:shared
 
 ## Server depends on shared; rebuild shared first if you've changed it
 build-server: build-shared

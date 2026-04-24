@@ -4,7 +4,7 @@ import type { PimoteSessionManager, ManagedSlot, SessionState, ClientConnection 
 import type { FolderIndex } from './folder-index.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { EventBuffer } from './event-buffer.js';
-import type { PimoteEvent, PimoteResponse, PimoteSessionEvent } from '@pimote/shared';
+import type { PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
 
 // --- Mock factories ---
 

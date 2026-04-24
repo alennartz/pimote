@@ -1,4 +1,4 @@
-import type { PimoteSessionEvent } from '@pimote/shared';
+import type { PimoteSessionEvent } from '../../shared/dist/index.js';
 import { mapAgentMessage, type SdkMessage } from './message-mapper.js';
 
 /**

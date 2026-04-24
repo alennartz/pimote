@@ -16,7 +16,7 @@ import type {
   SessionRestoreEvent,
   SessionStateChangedEvent,
   PimoteTreeNode,
-} from '@pimote/shared';
+} from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot } from './session-manager.js';
 import { resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests } from './session-manager.js';
 import { getMergedPanelCards } from './panel-state.js';
@@ -916,7 +916,7 @@ export class WsHandler {
       }
 
       case 'get_commands': {
-        const commands: import('@pimote/shared').CommandInfo[] = [];
+        const commands: import('../../shared/dist/index.js').CommandInfo[] = [];
 
         // Skills
         const { skills } = session.resourceLoader.getSkills();

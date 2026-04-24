@@ -11,7 +11,7 @@ import type { FileSessionMetadataStore } from './session-metadata.js';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import crypto from 'node:crypto';
-import type { VersionMismatchEvent } from '@pimote/shared';
+import type { VersionMismatchEvent } from '../../shared/dist/index.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const CLIENT_DIR = process.env.CLIENT_DIR || join(__dirname, '..', '..', 'client', 'build');

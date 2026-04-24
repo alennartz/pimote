@@ -1,4 +1,4 @@
-import type { PimoteAgentMessage, PimoteMessageContent } from '@pimote/shared';
+import type { PimoteAgentMessage, PimoteMessageContent } from '../../shared/dist/index.js';
 
 /**
  * Minimal structural type for SDK messages consumed by the mapper.

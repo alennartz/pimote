@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
-import type { PimoteEvent, ExtensionUiRequestEvent } from '@pimote/shared';
+import type { PimoteEvent, ExtensionUiRequestEvent } from '../../shared/dist/index.js';
 import type { ManagedSlot, EventSocket, ClientConnection } from './session-manager.js';
 import type { PushNotificationService, PushNotificationPayload } from './push-notification.js';
 

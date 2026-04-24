@@ -21,7 +21,7 @@ import {
   reduceDeactivate,
   reduceSpeechmuxFrame,
   reduceSpeechmuxOpened,
-} from '../packages/voice/dist/extension-runtime.js';
+} from '../server/dist/voice/extension-runtime.js';
 import { VOICE_INTERRUPT_CUSTOM_TYPE } from '../shared/dist/index.js';
 
 let failures = 0;
