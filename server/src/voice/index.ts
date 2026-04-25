@@ -26,6 +26,7 @@ import {
 } from './extension-runtime.js';
 import { renderInterpreterPrompt } from './interpreter-prompt.js';
 import { createDefaultSpeechmuxClientFactory, type OutgoingFrame, type SpeechmuxClient, type SpeechmuxClientFactory } from './speechmux-client.js';
+import { waitForAgentIdle } from './wait-for-idle.js';
 import type { VoiceActivateMessage, VoiceDeactivateMessage } from './state-machine.js';
 import type { ContentBlock } from './walk-back.js';
 import { walkBack } from './walk-back.js';
@@ -96,6 +97,16 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     // spurious `emit_speechmux_end` actions on assistant messages that
     // didn't speak at all, and to dedupe message_end vs turn_end ends.
     let hasStreamedSinceLastEnd = false;
+
+    // Wait-for-idle helper extracted to `wait-for-idle.ts` so the polling
+    // logic is unit-testable without a real ExtensionContext. See that
+    // module's doc-comment for rationale (barge-in race vs auto-drain).
+    //
+    // Known limitation: concurrent `executeActions` invocations (from
+    // back-to-back speechmux frames) aren't serialized, so two user
+    // frames in rapid succession may both poll idle and both attempt to
+    // send. Speechmux orders frames such that this is rare in practice;
+    // a per-extension async queue is the proper fix when we see it bite.
 
     // ---- speak() argument streaming state -------------------------------
     // Per-content-index parser state for an in-flight assistant message.
@@ -234,6 +245,16 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
           return;
         }
         case 'send_user_message': {
+          // Race fix: ensure the agent is actually idle before injecting a
+          // user message. Otherwise the SDK throws and our utterance is
+          // dropped on the floor. See `waitForAgentIdle` doc-comment.
+          if (lastCtx && !lastCtx.isIdle()) {
+            const idle = await waitForAgentIdle(lastCtx);
+            if (!idle) {
+              console.warn(`[voice] send_user_message: agent did not become idle within 2000ms, dropping message: ${action.text.slice(0, 60)}`);
+              return;
+            }
+          }
           pi.sendUserMessage(action.text, action.deliverAs ? { deliverAs: action.deliverAs } : undefined);
           return;
         }
