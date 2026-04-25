@@ -21,6 +21,8 @@ vi.mock('@mariozechner/pi-coding-agent', () => {
     subscribe: vi.fn(() => () => {}),
     setModel: vi.fn(async () => undefined),
     setThinkingLevel: vi.fn(() => undefined),
+    setSteeringMode: vi.fn(() => undefined),
+    setFollowUpMode: vi.fn(() => undefined),
   };
 
   return {

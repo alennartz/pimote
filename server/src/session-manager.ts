@@ -319,6 +319,13 @@ export class PimoteSessionManager {
       console.log(`[pimote] Set default thinking level: ${this.config.defaultThinkingLevel}`);
     }
 
+    // Pimote convention: drain the entire steering / follow-up queue into a
+    // single consolidated run rather than one message per run. Matches the
+    // UX expectation that queued messages are delivered together when the
+    // agent next processes, not metered out across multiple turns.
+    session.setSteeringMode('all');
+    session.setFollowUpMode('all');
+
     // Create the slot object. Use a slotRef so createSessionState callbacks can reference the slot.
     const slotRef: { slot: ManagedSlot | null } = { slot: null };
 
