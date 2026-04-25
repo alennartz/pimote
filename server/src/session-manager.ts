@@ -18,6 +18,7 @@ import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import type { PanelBusMessage } from './panel-state.js';
 import { getGitBranch } from './git-branch.js';
 import { createVoiceExtension } from './voice/index.js';
+import { autoDrainOnAbort } from './auto-drain-on-abort.js';
 import type { ExtensionFactory } from '@mariozechner/pi-coding-agent';
 
 /** Narrow interface for the WebSocket used for event routing.
@@ -152,6 +153,13 @@ function createSessionState(
       state.needsAttention = true;
       if (slotRef.slot) callbacks.onAgentEnd?.(sessionId, slotRef.slot);
       callbacks.onStatusChange?.(sessionId, folderPath);
+      // If the run ended via abort and there are queued steering /
+      // follow-up messages, drain them — pi-agent-core's runLoop skips
+      // its trailing queue poll on the abort exit path, so without this
+      // queued messages would sit until the next prompt() call. Universal
+      // across pimote (not voice-specific) so typed-mode users also
+      // benefit. See `auto-drain-on-abort.ts` for rationale.
+      void autoDrainOnAbort(session, event.messages[event.messages.length - 1]);
     }
     eventBuffer.onEvent(
       event,
