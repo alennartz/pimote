@@ -10,6 +10,7 @@ import {
   reduceActivate,
   reduceDeactivate,
   reduceSpeakToolCall,
+  reduceSpeakToolDelta,
   reduceSpeechmuxFailed,
   reduceSpeechmuxFrame,
   reduceSpeechmuxOpened,
@@ -199,6 +200,36 @@ describe('reduceSpeakToolCall', () => {
     const s1 = reduceActivate(initialRuntimeState(), activate, config).next;
     const { actions } = reduceSpeakToolCall(s1, { text: 'hello' });
     expect(actions).toEqual([]);
+  });
+
+  it('skips the bulk token frame when alreadyStreamed is true', () => {
+    const { actions } = reduceSpeakToolCall(activeState(), { text: 'hello there', alreadyStreamed: true });
+    expect(actionKinds(actions)).toEqual(['return_speak_tool_result']);
+  });
+});
+
+describe('reduceSpeakToolDelta', () => {
+  function activeState() {
+    let s = initialRuntimeState();
+    s = reduceActivate(s, activate, config).next;
+    s = reduceSpeechmuxOpened(s, config).next;
+    return s;
+  }
+
+  it('emits a stream_speechmux_token action carrying the fragment while active', () => {
+    const { actions } = reduceSpeakToolDelta(activeState(), { fragment: 'Okay' });
+    expect(actions).toEqual([{ kind: 'stream_speechmux_token', text: 'Okay' }]);
+  });
+
+  it('is a no-op for an empty fragment', () => {
+    const { actions } = reduceSpeakToolDelta(activeState(), { fragment: '' });
+    expect(actions).toEqual([]);
+  });
+
+  it('is a no-op while not active', () => {
+    expect(reduceSpeakToolDelta(initialRuntimeState(), { fragment: 'x' }).actions).toEqual([]);
+    const activating = reduceActivate(initialRuntimeState(), activate, config).next;
+    expect(reduceSpeakToolDelta(activating, { fragment: 'x' }).actions).toEqual([]);
   });
 });
 

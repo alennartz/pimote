@@ -12,6 +12,7 @@
   "dependencies": {
     "@mariozechner/pi-coding-agent": "0.67.6",
     "@sinclair/typebox": "^0.34.49",
+    "@streamparser/json": "^0.0.22",
     "web-push": "^3.6.7",
     "ws": "^8.20.0"
   },

@@ -131,14 +131,42 @@ export function reduceSpeechmuxFrame(prev: VoiceRuntimeState, frame: IncomingFra
  * Reducer for the `tool_call` hook firing on a `speak(...)` invocation.
  * While active, streams the text to speechmux as a token frame and returns a
  * trivial success result so the agent loop advances. No-op while not active.
+ *
+ * If `alreadyStreamed` is true, the wiring layer has already forwarded this
+ * tool's text to speechmux incrementally via `reduceSpeakToolDelta` while
+ * the LLM was emitting it (low-latency path). In that case we skip the
+ * token frame to avoid double-speaking and only emit the trivial result.
  */
-export function reduceSpeakToolCall(prev: VoiceRuntimeState, args: { text: string }): { next: VoiceRuntimeState; actions: VoiceAction[] } {
+export function reduceSpeakToolCall(prev: VoiceRuntimeState, args: { text: string; alreadyStreamed?: boolean }): { next: VoiceRuntimeState; actions: VoiceAction[] } {
   if (prev.state !== 'active') {
+    return { next: prev, actions: [] };
+  }
+  const actions: VoiceAction[] = [];
+  if (!args.alreadyStreamed) {
+    actions.push({ kind: 'stream_speechmux_token', text: args.text });
+  }
+  actions.push({ kind: 'return_speak_tool_result' });
+  return { next: prev, actions };
+}
+
+/**
+ * Reducer for an incremental fragment of a `speak(...)` tool argument as it
+ * streams from the LLM. The wiring layer is responsible for parsing the
+ * provider's JSON-delta stream (via `@streamparser/json`) and feeding only
+ * the freshly-revealed suffix of `text` into this reducer.
+ *
+ * No-op while not active or when the fragment is empty.
+ */
+export function reduceSpeakToolDelta(prev: VoiceRuntimeState, args: { fragment: string }): { next: VoiceRuntimeState; actions: VoiceAction[] } {
+  if (prev.state !== 'active') {
+    return { next: prev, actions: [] };
+  }
+  if (args.fragment.length === 0) {
     return { next: prev, actions: [] };
   }
   return {
     next: prev,
-    actions: [{ kind: 'stream_speechmux_token', text: args.text }, { kind: 'return_speak_tool_result' }],
+    actions: [{ kind: 'stream_speechmux_token', text: args.fragment }],
   };
 }
 
