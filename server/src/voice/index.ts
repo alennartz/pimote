@@ -24,7 +24,7 @@ import {
   type VoiceRuntimeState,
 } from './extension-runtime.js';
 import { renderInterpreterPrompt } from './interpreter-prompt.js';
-import { createDefaultSpeechmuxClientFactory, type SpeechmuxClient, type SpeechmuxClientFactory } from './speechmux-client.js';
+import { createDefaultSpeechmuxClientFactory, type OutgoingFrame, type SpeechmuxClient, type SpeechmuxClientFactory } from './speechmux-client.js';
 import type { VoiceActivateMessage, VoiceDeactivateMessage } from './state-machine.js';
 import type { ContentBlock } from './walk-back.js';
 import { walkBack } from './walk-back.js';
@@ -73,6 +73,22 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     let capturedStreamingMessage: AgentMessage | null = null;
     let walkBackInput: { heardText: string } | null = null;
     let lastCtx: ExtensionContext | null = null;
+
+    // Pre-warm buffer: speak token / end frames emitted during the brief
+    // window between `voice:activate` and speechmux WS open are stashed
+    // here and flushed when the WS opens. See `reduceActivate` doc-comment.
+    const pendingFrames: OutgoingFrame[] = [];
+    const sendOrBuffer = (frame: OutgoingFrame): void => {
+      if (speechmuxClient) {
+        try {
+          speechmuxClient.send(frame);
+        } catch (err) {
+          console.warn('[voice] speechmux send failed', frame.type, err);
+        }
+        return;
+      }
+      pendingFrames.push(frame);
+    };
 
     // ---- speak() argument streaming state -------------------------------
     // Per-content-index parser state for an in-flight assistant message.
@@ -165,6 +181,20 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
           try {
             const client = await clientFactory({ wsUrl: action.wsUrl });
             speechmuxClient = client;
+            // Flush any speak tokens / end frames that the interpreter
+            // produced while the WS was still connecting (pre-warm path).
+            // Done before attaching `onFrame` so the flush can't be
+            // reordered with respect to incoming user / abort frames.
+            if (pendingFrames.length > 0) {
+              const drained = pendingFrames.splice(0, pendingFrames.length);
+              for (const frame of drained) {
+                try {
+                  client.send(frame);
+                } catch (err) {
+                  console.warn('[voice] pre-warm flush failed', frame.type, err);
+                }
+              }
+            }
             client.onFrame((frame) => {
               const result = reduceSpeechmuxFrame(runtime, frame);
               runtime = result.next;
@@ -188,6 +218,9 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
             /* idempotent */
           }
           speechmuxClient = null;
+          // Drop any frames still queued for a WS that will never open
+          // (e.g. a deactivate that races a pre-warm activate).
+          pendingFrames.length = 0;
           return;
         }
         case 'send_user_message': {
@@ -234,19 +267,11 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
           return;
         }
         case 'stream_speechmux_token': {
-          try {
-            speechmuxClient?.send({ type: 'token', text: action.text });
-          } catch (err) {
-            console.warn('[voice] stream_speechmux_token failed', err);
-          }
+          sendOrBuffer({ type: 'token', text: action.text });
           return;
         }
         case 'emit_speechmux_end': {
-          try {
-            speechmuxClient?.send({ type: 'end' });
-          } catch (err) {
-            console.warn('[voice] emit_speechmux_end failed', err);
-          }
+          sendOrBuffer({ type: 'end' });
           return;
         }
         case 'return_speak_tool_result': {

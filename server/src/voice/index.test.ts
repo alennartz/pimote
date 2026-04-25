@@ -169,6 +169,64 @@ describe('createVoiceExtension speak streaming', () => {
     expect(sent).toEqual([{ type: 'token', text: 'fallback path' }]);
   });
 
+  it('buffers speak tokens that arrive before the WS opens and flushes them on open (pre-warm)', async () => {
+    // Held-open client factory: resolves only when we call `release()`. This
+    // simulates speechmux WS still handshaking while the interpreter LLM
+    // greeting is already streaming.
+    const sent: Frame[] = [];
+    const fakeClient = {
+      send: (f: Frame) => {
+        sent.push(f);
+      },
+      onFrame: () => () => {},
+      close: () => {},
+    };
+    let release: () => void = () => {};
+    const clientReady = new Promise<typeof fakeClient>((resolve) => {
+      release = () => resolve(fakeClient);
+    });
+    const factory = createVoiceExtension({
+      defaultInterpreterModel: { provider: 'anthropic', modelId: 'claude-sonnet-4-5' },
+      defaultWorkerModel: { provider: 'anthropic', modelId: 'claude-sonnet-4-5' },
+      speechmuxClientFactory: () => clientReady,
+    });
+    const { pi, handlers, busHandlers } = createMockPi();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    factory(pi as any);
+
+    // Fire activate. The wiring's executeActions runs set_model, then
+    // send_user_message (sync), then awaits clientReady for open_speechmux
+    // — but since executeActions itself isn't awaited by the bus handler
+    // caller, control returns to us immediately.
+    const list = busHandlers.get('pimote:voice:activate') ?? [];
+    for (const h of list) h({ type: 'pimote:voice:activate', sessionId: 's1', speechmuxWsUrl: 'ws://x' });
+    // Yield so sync portions of executeActions run.
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Now simulate the interpreter LLM already streaming the greeting
+    // while the WS is still handshaking. These token frames must be
+    // buffered, not dropped.
+    const partial = { content: [{ type: 'tool_use', name: 'speak', id: 'tu_pre' }] };
+    const update = (ame: Frame) =>
+      (handlers.get('message_update') ?? []).forEach((h) => h({ type: 'message_update', message: { role: 'assistant', content: [] }, assistantMessageEvent: ame }, {}));
+    update({ type: 'start', partial: { content: [] } });
+    update({ type: 'toolcall_start', contentIndex: 0, partial });
+    update({ type: 'toolcall_delta', contentIndex: 0, delta: '{"text":"Hey', partial });
+    update({ type: 'toolcall_delta', contentIndex: 0, delta: ', I\'m here."}', partial });
+
+    // WS is still not open — nothing should have been sent yet.
+    expect(sent).toEqual([]);
+
+    // Release the WS handshake. The executor should flush the buffered
+    // frames into the newly-opened client before anything else.
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const tokenTexts = sent.filter((f) => f.type === 'token').map((f) => f.text as string);
+    expect(tokenTexts.join('')).toBe("Hey, I'm here.");
+  });
+
   it('does not stream non-speak tool calls', async () => {
     const { sent, handlers, busHandlers } = setupActive();
     await activate(busHandlers);

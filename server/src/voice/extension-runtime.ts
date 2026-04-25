@@ -47,22 +47,22 @@ export interface RuntimeConfig {
 
 // --- Reducers. Each takes (state, stimulus) and returns (nextState, actions). ---
 
-/** Reducer for a `pimote:voice:activate` EventBus message. */
-export function reduceActivate(prev: VoiceRuntimeState, msg: VoiceActivateMessage, _config: RuntimeConfig): { next: VoiceRuntimeState; actions: VoiceAction[] } {
+/**
+ * Reducer for a `pimote:voice:activate` EventBus message.
+ *
+ * Pre-warm path: transitions straight from dormant to active and emits the
+ * action sequence that
+ *  1. switches to the interpreter model (first activation only),
+ *  2. injects the `<voice_call_started/>` sentinel — sendUserMessage returns
+ *     immediately and kicks off the interpreter LLM turn in the background,
+ *  3. opens the speechmux WS — the executor awaits this, but the LLM is
+ *     already running by the time we get here, so the WS handshake and the
+ *     greeting LLM turn overlap. Speak tokens that arrive before the WS is
+ *     open are buffered by the wiring layer and flushed on open.
+ */
+export function reduceActivate(prev: VoiceRuntimeState, msg: VoiceActivateMessage, config: RuntimeConfig): { next: VoiceRuntimeState; actions: VoiceAction[] } {
   if (prev.state !== 'dormant') {
     // Ignore duplicate / out-of-order activates.
-    return { next: prev, actions: [] };
-  }
-  const actions: VoiceAction[] = [{ kind: 'open_speechmux', wsUrl: msg.speechmuxWsUrl }];
-  return {
-    next: { ...prev, state: 'activating', sessionId: msg.sessionId },
-    actions,
-  };
-}
-
-/** Reducer for speechmux WS successfully opened — runtime transitions to `active`. */
-export function reduceSpeechmuxOpened(prev: VoiceRuntimeState, config: RuntimeConfig): { next: VoiceRuntimeState; actions: VoiceAction[] } {
-  if (prev.state !== 'activating') {
     return { next: prev, actions: [] };
   }
   const actions: VoiceAction[] = [];
@@ -70,15 +70,37 @@ export function reduceSpeechmuxOpened(prev: VoiceRuntimeState, config: RuntimeCo
     actions.push({ kind: 'set_model', provider: config.defaultInterpreterModel.provider, modelId: config.defaultInterpreterModel.modelId });
   }
   actions.push({ kind: 'send_user_message', text: VOICE_CALL_STARTED_SENTINEL });
+  actions.push({ kind: 'open_speechmux', wsUrl: msg.speechmuxWsUrl });
   return {
-    next: { ...prev, state: 'active', interpreterModelApplied: true },
+    next: { ...prev, state: 'active', sessionId: msg.sessionId, interpreterModelApplied: true },
     actions,
   };
 }
 
-/** Reducer for speechmux WS failure during activation. */
+/**
+ * Reducer for speechmux WS successfully opened.
+ *
+ * With the pre-warm activation path, the runtime is already `active` by
+ * the time the WS finishes opening; this reducer is now an inert hook kept
+ * for back-compat with the wiring layer and existing tests. The wiring
+ * layer is responsible for flushing any speak tokens that were buffered
+ * during the WS handshake.
+ */
+export function reduceSpeechmuxOpened(prev: VoiceRuntimeState, _config: RuntimeConfig): { next: VoiceRuntimeState; actions: VoiceAction[] } {
+  return { next: prev, actions: [] };
+}
+
+/**
+ * Reducer for speechmux WS failure.
+ *
+ * Triggered from the wiring layer when the WS handshake rejects. Drops the
+ * runtime back to dormant and asks the orchestrator to deactivate; the
+ * deactivate path then closes (a possibly-already-closed) client and clears
+ * the pending speak-frame buffer. Any in-flight greeting LLM turn keeps
+ * running but its speak tokens hit the dormant guard and no-op.
+ */
 export function reduceSpeechmuxFailed(prev: VoiceRuntimeState): { next: VoiceRuntimeState; actions: VoiceAction[] } {
-  if (prev.state !== 'activating') {
+  if (prev.state !== 'active') {
     return { next: prev, actions: [] };
   }
   return {

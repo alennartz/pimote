@@ -40,54 +40,47 @@ function actionKinds(actions: VoiceAction[]): string[] {
 // =============================================================================
 
 describe('reduceActivate', () => {
-  it('transitions dormant → activating and opens the speechmux WS', () => {
+  it('transitions dormant → active in one step (pre-warm) and emits set_model, sentinel, and open_speechmux', () => {
     const { next, actions } = reduceActivate(initialRuntimeState(), activate, config);
-    expect(next.state).toBe('activating');
-    expect(next.sessionId).toBe('sess-1');
-    expect(actions).toEqual([{ kind: 'open_speechmux', wsUrl: activate.speechmuxWsUrl }]);
-  });
-
-  it('ignores duplicate activate while already activating', () => {
-    const { next: s1 } = reduceActivate(initialRuntimeState(), activate, config);
-    const { next: s2, actions } = reduceActivate(s1, activate, config);
-    expect(s2).toEqual(s1);
-    expect(actions).toEqual([]);
-  });
-
-  it('ignores activate while active', () => {
-    const s1 = reduceActivate(initialRuntimeState(), activate, config).next;
-    const s2 = reduceSpeechmuxOpened(s1, config).next;
-    const { next, actions } = reduceActivate(s2, activate, config);
-    expect(next).toEqual(s2);
-    expect(actions).toEqual([]);
-  });
-});
-
-describe('reduceSpeechmuxOpened', () => {
-  it('transitions activating → active, sets interpreter model on first activation, sends the session-start sentinel', () => {
-    const s1 = reduceActivate(initialRuntimeState(), activate, config).next;
-    const { next, actions } = reduceSpeechmuxOpened(s1, config);
     expect(next.state).toBe('active');
+    expect(next.sessionId).toBe('sess-1');
     expect(next.interpreterModelApplied).toBe(true);
-    expect(actionKinds(actions)).toEqual(['set_model', 'send_user_message']);
+    expect(actionKinds(actions)).toEqual(['set_model', 'send_user_message', 'open_speechmux']);
     const setModel = actions[0] as { kind: 'set_model'; provider: string; modelId: string };
     expect(setModel.provider).toBe('anthropic');
     expect(setModel.modelId).toBe('claude-x-interpreter');
     const sendMsg = actions[1] as { kind: 'send_user_message'; text: string };
     expect(sendMsg.text).toBe(VOICE_CALL_STARTED_SENTINEL);
+    const open = actions[2] as { kind: 'open_speechmux'; wsUrl: string };
+    expect(open.wsUrl).toBe(activate.speechmuxWsUrl);
   });
 
   it('skips setting the interpreter model on re-activation of the same session', () => {
     let s = initialRuntimeState();
     s = reduceActivate(s, activate, config).next;
-    s = reduceSpeechmuxOpened(s, config).next;
     s = reduceDeactivate(s, deactivate).next;
-    s = reduceActivate(s, activate, config).next;
-    const { actions } = reduceSpeechmuxOpened(s, config);
-    expect(actionKinds(actions)).toEqual(['send_user_message']);
+    const { next, actions } = reduceActivate(s, activate, config);
+    expect(next.state).toBe('active');
+    expect(actionKinds(actions)).toEqual(['send_user_message', 'open_speechmux']);
   });
 
-  it('is a no-op if state is not activating', () => {
+  it('ignores duplicate activate while already active', () => {
+    const s1 = reduceActivate(initialRuntimeState(), activate, config).next;
+    const { next, actions } = reduceActivate(s1, activate, config);
+    expect(next).toEqual(s1);
+    expect(actions).toEqual([]);
+  });
+});
+
+describe('reduceSpeechmuxOpened', () => {
+  it('is an inert hook now that activation is single-step — no state change, no actions', () => {
+    const s1 = reduceActivate(initialRuntimeState(), activate, config).next;
+    const { next, actions } = reduceSpeechmuxOpened(s1, config);
+    expect(next).toEqual(s1);
+    expect(actions).toEqual([]);
+  });
+
+  it('is a no-op when called from dormant too', () => {
     const { next, actions } = reduceSpeechmuxOpened(initialRuntimeState(), config);
     expect(next.state).toBe('dormant');
     expect(actions).toEqual([]);
@@ -95,14 +88,14 @@ describe('reduceSpeechmuxOpened', () => {
 });
 
 describe('reduceSpeechmuxFailed', () => {
-  it('returns to dormant and requests deactivate', () => {
+  it('returns to dormant and requests deactivate when active', () => {
     const s1 = reduceActivate(initialRuntimeState(), activate, config).next;
     const { next, actions } = reduceSpeechmuxFailed(s1);
     expect(next.state).toBe('dormant');
     expect(actions).toEqual([{ kind: 'emit_deactivate_request' }]);
   });
 
-  it('is a no-op if state is not activating', () => {
+  it('is a no-op while dormant', () => {
     const res = reduceSpeechmuxFailed(initialRuntimeState());
     expect(res.actions).toEqual([]);
   });
@@ -112,7 +105,6 @@ describe('reduceDeactivate', () => {
   it('closes speechmux and clears walk-back watermark from active state', () => {
     let s = initialRuntimeState();
     s = reduceActivate(s, activate, config).next;
-    s = reduceSpeechmuxOpened(s, config).next;
     const { next, actions } = reduceDeactivate(s, deactivate);
     expect(next.state).toBe('dormant');
     expect(next.sessionId).toBeNull();
@@ -128,10 +120,7 @@ describe('reduceDeactivate', () => {
 
 describe('reduceSpeechmuxFrame (active state)', () => {
   function activeState() {
-    let s = initialRuntimeState();
-    s = reduceActivate(s, activate, config).next;
-    s = reduceSpeechmuxOpened(s, config).next;
-    return s;
+    return reduceActivate(initialRuntimeState(), activate, config).next;
   }
 
   it('user frame → send_user_message with the raw text', () => {
@@ -169,20 +158,11 @@ describe('reduceSpeechmuxFrame (non-active state)', () => {
     const { actions } = reduceSpeechmuxFrame(initialRuntimeState(), { type: 'user', text: 'hi' });
     expect(actions).toEqual([]);
   });
-
-  it('ignores frames while activating', () => {
-    const s1 = reduceActivate(initialRuntimeState(), activate, config).next;
-    const { actions } = reduceSpeechmuxFrame(s1, { type: 'abort' });
-    expect(actions).toEqual([]);
-  });
 });
 
 describe('reduceSpeakToolCall', () => {
   function activeState() {
-    let s = initialRuntimeState();
-    s = reduceActivate(s, activate, config).next;
-    s = reduceSpeechmuxOpened(s, config).next;
-    return s;
+    return reduceActivate(initialRuntimeState(), activate, config).next;
   }
 
   it('while active, streams the speak text as a token frame and returns a trivial tool_result', () => {
@@ -196,12 +176,6 @@ describe('reduceSpeakToolCall', () => {
     expect(actions).toEqual([]);
   });
 
-  it('no-op while activating', () => {
-    const s1 = reduceActivate(initialRuntimeState(), activate, config).next;
-    const { actions } = reduceSpeakToolCall(s1, { text: 'hello' });
-    expect(actions).toEqual([]);
-  });
-
   it('skips the bulk token frame when alreadyStreamed is true', () => {
     const { actions } = reduceSpeakToolCall(activeState(), { text: 'hello there', alreadyStreamed: true });
     expect(actionKinds(actions)).toEqual(['return_speak_tool_result']);
@@ -210,10 +184,7 @@ describe('reduceSpeakToolCall', () => {
 
 describe('reduceSpeakToolDelta', () => {
   function activeState() {
-    let s = initialRuntimeState();
-    s = reduceActivate(s, activate, config).next;
-    s = reduceSpeechmuxOpened(s, config).next;
-    return s;
+    return reduceActivate(initialRuntimeState(), activate, config).next;
   }
 
   it('emits a stream_speechmux_token action carrying the fragment while active', () => {
@@ -226,19 +197,14 @@ describe('reduceSpeakToolDelta', () => {
     expect(actions).toEqual([]);
   });
 
-  it('is a no-op while not active', () => {
+  it('is a no-op while dormant', () => {
     expect(reduceSpeakToolDelta(initialRuntimeState(), { fragment: 'x' }).actions).toEqual([]);
-    const activating = reduceActivate(initialRuntimeState(), activate, config).next;
-    expect(reduceSpeakToolDelta(activating, { fragment: 'x' }).actions).toEqual([]);
   });
 });
 
 describe('reduceTurnEnd', () => {
   function activeState() {
-    let s = initialRuntimeState();
-    s = reduceActivate(s, activate, config).next;
-    s = reduceSpeechmuxOpened(s, config).next;
-    return s;
+    return reduceActivate(initialRuntimeState(), activate, config).next;
   }
 
   it('while active, emits an end frame to speechmux', () => {
@@ -246,9 +212,7 @@ describe('reduceTurnEnd', () => {
     expect(actions).toEqual([{ kind: 'emit_speechmux_end' }]);
   });
 
-  it('no-op while not active', () => {
+  it('no-op while dormant', () => {
     expect(reduceTurnEnd(initialRuntimeState()).actions).toEqual([]);
-    const activating = reduceActivate(initialRuntimeState(), activate, config).next;
-    expect(reduceTurnEnd(activating).actions).toEqual([]);
   });
 });

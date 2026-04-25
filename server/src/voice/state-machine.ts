@@ -7,11 +7,17 @@
 /**
  * Runtime state of the voice extension instance.
  *
- * Deactivation is synchronous (close WS, clear watermark) so no transient
- * `'deactivating'` state is needed; `reduceDeactivate` moves `active` or
- * `activating` straight to `dormant`.
+ * Two states only: `dormant` (no call) and `active` (a call is bound). The
+ * extension transitions to `active` the moment a `voice:activate` message
+ * arrives, before the speechmux WS has finished opening, so the interpreter
+ * LLM turn that produces the greeting can run in parallel with the WS
+ * handshake ("pre-warm"). Speak tokens emitted while the WS is still
+ * connecting are buffered in the wiring layer and flushed on open.
+ *
+ * Deactivation is synchronous (close WS, clear watermark and pending
+ * buffer) so no transient `'deactivating'` state is needed.
  */
-export type VoiceExtensionState = 'dormant' | 'activating' | 'active';
+export type VoiceExtensionState = 'dormant' | 'active';
 
 /** Session-scoped EventBus message that activates the voice extension. */
 export interface VoiceActivateMessage {
