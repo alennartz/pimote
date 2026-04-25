@@ -227,6 +227,75 @@ describe('createVoiceExtension speak streaming', () => {
     expect(tokenTexts.join('')).toBe("Hey, I'm here.");
   });
 
+  it('finalizes each speak as its own utterance at toolcall_end, and treats multiple speaks in one message as separate utterances', async () => {
+    const { sent, handlers, busHandlers } = setupActive();
+    await activate(busHandlers);
+    sent.length = 0;
+
+    // First speak at contentIndex 0.
+    const partial0 = { content: [{ type: 'tool_use', name: 'speak', id: 'tu_a' }] };
+    emitMessageUpdate(handlers, { type: 'start', partial: { content: [] } });
+    emitMessageUpdate(handlers, { type: 'toolcall_start', contentIndex: 0, partial: partial0 });
+    emitMessageUpdate(handlers, { type: 'toolcall_delta', contentIndex: 0, delta: '{"text":"hi"}', partial: partial0 });
+    emitMessageUpdate(handlers, {
+      type: 'toolcall_end',
+      contentIndex: 0,
+      partial: partial0,
+      toolCall: { id: 'tu_a', name: 'speak', arguments: { text: 'hi' } },
+    });
+
+    // After the first speak's toolcall_end, exactly one end frame should
+    // have followed the token frames, in order.
+    const afterFirst = sent.map((f) => f.type);
+    expect(afterFirst[afterFirst.length - 1]).toBe('end');
+    expect(sent.filter((f) => f.type === 'end').length).toBe(1);
+
+    // Second speak at contentIndex 1, same message.
+    const partial1 = {
+      content: [
+        { type: 'tool_use', name: 'speak', id: 'tu_a' },
+        { type: 'tool_use', name: 'speak', id: 'tu_b' },
+      ],
+    };
+    emitMessageUpdate(handlers, { type: 'toolcall_start', contentIndex: 1, partial: partial1 });
+    emitMessageUpdate(handlers, { type: 'toolcall_delta', contentIndex: 1, delta: '{"text":"there"}', partial: partial1 });
+    emitMessageUpdate(handlers, {
+      type: 'toolcall_end',
+      contentIndex: 1,
+      partial: partial1,
+      toolCall: { id: 'tu_b', name: 'speak', arguments: { text: 'there' } },
+    });
+
+    // Now two ends total — one per speak.
+    expect(sent.filter((f) => f.type === 'end').length).toBe(2);
+
+    // turn_end fires later — must NOT emit a spurious third end
+    // (hasStreamedSinceLastEnd flag was cleared by the per-speak ends).
+    for (const h of handlers.get('turn_end') ?? []) await h({ type: 'turn_end' }, {});
+    expect(sent.filter((f) => f.type === 'end').length).toBe(2);
+  });
+
+  it('does not emit end for a message that only ran non-speak tool calls', async () => {
+    const { sent, handlers, busHandlers } = setupActive();
+    await activate(busHandlers);
+    sent.length = 0;
+
+    // A message with only a bash tool call — no speak, no streamed tokens.
+    const partial = { content: [{ type: 'tool_use', name: 'bash', id: 'tu_x' }] };
+    emitMessageUpdate(handlers, { type: 'start', partial: { content: [] } });
+    emitMessageUpdate(handlers, { type: 'toolcall_start', contentIndex: 0, partial });
+    emitMessageUpdate(handlers, { type: 'toolcall_delta', contentIndex: 0, delta: '{"command":"ls"}', partial });
+    emitMessageUpdate(handlers, {
+      type: 'toolcall_end',
+      contentIndex: 0,
+      partial,
+      toolCall: { id: 'tu_x', name: 'bash', arguments: { command: 'ls' } },
+    });
+
+    for (const h of handlers.get('turn_end') ?? []) await h({ type: 'turn_end' }, {});
+    expect(sent.filter((f) => f.type === 'end')).toEqual([]);
+  });
+
   it('does not stream non-speak tool calls', async () => {
     const { sent, handlers, busHandlers } = setupActive();
     await activate(busHandlers);

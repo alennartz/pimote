@@ -14,6 +14,7 @@ import {
   initialRuntimeState,
   reduceActivate,
   reduceDeactivate,
+  reduceSpeakEnd,
   reduceSpeakToolCall,
   reduceSpeakToolDelta,
   reduceSpeechmuxFailed,
@@ -89,6 +90,12 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
       }
       pendingFrames.push(frame);
     };
+
+    // Utterance-boundary tracking: true between the first token of an
+    // utterance and the corresponding `{type:'end'}`. Used to suppress
+    // spurious `emit_speechmux_end` actions on assistant messages that
+    // didn't speak at all, and to dedupe message_end vs turn_end ends.
+    let hasStreamedSinceLastEnd = false;
 
     // ---- speak() argument streaming state -------------------------------
     // Per-content-index parser state for an in-flight assistant message.
@@ -221,6 +228,9 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
           // Drop any frames still queued for a WS that will never open
           // (e.g. a deactivate that races a pre-warm activate).
           pendingFrames.length = 0;
+          // Reset utterance-boundary tracking so a subsequent activate
+          // starts cleanly (no inherited "streaming in progress" state).
+          hasStreamedSinceLastEnd = false;
           return;
         }
         case 'send_user_message': {
@@ -268,10 +278,17 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         }
         case 'stream_speechmux_token': {
           sendOrBuffer({ type: 'token', text: action.text });
+          hasStreamedSinceLastEnd = true;
           return;
         }
         case 'emit_speechmux_end': {
+          // Suppress when no tokens have been streamed since the last end
+          // — avoids emitting end on an assistant message that only ran
+          // tool calls (subagent, bash) without speaking, and dedupes the
+          // message_end / turn_end safety-net path.
+          if (!hasStreamedSinceLastEnd) return;
           sendOrBuffer({ type: 'end' });
+          hasStreamedSinceLastEnd = false;
           return;
         }
         case 'return_speak_tool_result': {
@@ -357,6 +374,12 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
 
     pi.on('turn_end', async (_event: TurnEndEvent, ctx: ExtensionContext): Promise<void> => {
       lastCtx = ctx;
+      // Safety net. The primary finalization path is `reduceSpeakEnd`,
+      // fired from the streaming `toolcall_end` handler above. The wiring's
+      // `hasStreamedSinceLastEnd` flag makes this a no-op whenever that
+      // path already emitted end. It covers edge cases such as a provider
+      // that doesn't stream tool args (no `toolcall_end` fires, but the
+      // legacy `tool_call` bulk path streamed the text).
       const result = reduceTurnEnd(runtime);
       runtime = result.next;
       await executeActions(result.actions);
@@ -437,6 +460,13 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
                 runtime = result.next;
                 void executeActions(result.actions);
               }
+              // Finalize this speak as its own utterance: emit {type:'end'}
+              // now that the tool_use block is complete. The wiring's
+              // `hasStreamedSinceLastEnd` flag gates this so empty speaks
+              // (nothing streamed) don't emit spurious ends.
+              const endResult = reduceSpeakEnd(runtime);
+              runtime = endResult.next;
+              void executeActions(endResult.actions);
               // Mark the upcoming `tool_call` hook to skip its bulk send only
               // if we actually delivered something; otherwise fall through
               // to the legacy path so non-streaming providers still work.

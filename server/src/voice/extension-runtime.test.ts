@@ -9,6 +9,7 @@ import {
   initialRuntimeState,
   reduceActivate,
   reduceDeactivate,
+  reduceSpeakEnd,
   reduceSpeakToolCall,
   reduceSpeakToolDelta,
   reduceSpeechmuxFailed,
@@ -202,12 +203,27 @@ describe('reduceSpeakToolDelta', () => {
   });
 });
 
+describe('reduceSpeakEnd', () => {
+  function activeState() {
+    return reduceActivate(initialRuntimeState(), activate, config).next;
+  }
+
+  it('while active, emits an end frame to finalize a single speak utterance', () => {
+    const { actions } = reduceSpeakEnd(activeState());
+    expect(actions).toEqual([{ kind: 'emit_speechmux_end' }]);
+  });
+
+  it('no-op while dormant', () => {
+    expect(reduceSpeakEnd(initialRuntimeState()).actions).toEqual([]);
+  });
+});
+
 describe('reduceTurnEnd', () => {
   function activeState() {
     return reduceActivate(initialRuntimeState(), activate, config).next;
   }
 
-  it('while active, emits an end frame to speechmux', () => {
+  it('while active, emits an end frame to speechmux (safety net)', () => {
     const { actions } = reduceTurnEnd(activeState());
     expect(actions).toEqual([{ kind: 'emit_speechmux_end' }]);
   });

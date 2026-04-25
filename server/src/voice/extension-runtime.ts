@@ -193,9 +193,39 @@ export function reduceSpeakToolDelta(prev: VoiceRuntimeState, args: { fragment: 
 }
 
 /**
- * Reducer for the assistant turn's tool-call batch completing (turn_end).
- * While active, flushes an `{type:"end"}` frame to speechmux. No-op while
- * not active.
+ * Reducer for a single `speak(...)` tool call finishing — the LLM has
+ * emitted the closing `}` of the tool_use block for this speak.
+ *
+ * While active, flushes an `{type:"end"}` frame to speechmux so each
+ * `speak()` call becomes its own finalized utterance. This is called from
+ * the wiring layer's `toolcall_end` handler, after any tail tokens have
+ * been forwarded.
+ *
+ * Per-speak granularity (vs per-message) gives speechmux clean idle gaps
+ * between utterances — which simplifies barge-in semantics and matches
+ * the interpreter prompt's framing of each `speak(text)` call as a
+ * complete short utterance.
+ *
+ * The wiring layer suppresses this action when no tokens have been
+ * streamed since the previous end frame, so empty-text speak calls (and
+ * the `turn_end` safety-net path) don't emit spurious ends.
+ */
+export function reduceSpeakEnd(prev: VoiceRuntimeState): { next: VoiceRuntimeState; actions: VoiceAction[] } {
+  if (prev.state !== 'active') {
+    return { next: prev, actions: [] };
+  }
+  return { next: prev, actions: [{ kind: 'emit_speechmux_end' }] };
+}
+
+/**
+ * Reducer for the assistant turn completing (turn_end).
+ *
+ * Retained as a safety net: if for any reason a speak ends without the
+ * streaming `toolcall_end` handler firing `reduceSpeakEnd` (edge paths in
+ * the SDK or non-streaming providers where the stream event never
+ * materializes), turn_end gives us a final chance to finalize. The
+ * wiring layer gates on the "streamed since last end" flag so this is a
+ * no-op whenever the primary path has already emitted the end.
  */
 export function reduceTurnEnd(prev: VoiceRuntimeState): { next: VoiceRuntimeState; actions: VoiceAction[] } {
   if (prev.state !== 'active') {
