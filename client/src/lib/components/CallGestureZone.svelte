@@ -14,17 +14,22 @@
   }
 
   let activePointerId = $state<number | null>(null);
+  // Element that received setPointerCapture on pointerdown. We must release
+  // capture on *that* element — not on a later event's target (which can be a
+  // different child under the gesture zone). (review finding #3)
+  let captureTarget: Element | null = null;
   let startSample: PointerSample | null = null;
   let dragDy = $state(0);
 
-  function clearGesture(target: EventTarget | null, pointerId: number | null) {
-    if (target && pointerId !== null && (target as Element).hasPointerCapture?.(pointerId)) {
+  function clearGesture(pointerId: number | null) {
+    if (captureTarget && pointerId !== null && captureTarget.hasPointerCapture?.(pointerId)) {
       try {
-        (target as Element).releasePointerCapture(pointerId);
+        captureTarget.releasePointerCapture(pointerId);
       } catch {
         /* ignore */
       }
     }
+    captureTarget = null;
     activePointerId = null;
     startSample = null;
     dragDy = 0;
@@ -34,14 +39,16 @@
     if (!ev.isPrimary) return;
     if (activePointerId !== null && activePointerId !== ev.pointerId) {
       // Concurrent secondary pointer — cancel the in-flight gesture.
-      clearGesture(ev.target, activePointerId);
+      clearGesture(activePointerId);
       return;
     }
+    const target = ev.target as Element;
     try {
-      (ev.target as Element).setPointerCapture(ev.pointerId);
+      target.setPointerCapture(ev.pointerId);
     } catch {
       /* ignore */
     }
+    captureTarget = target;
     activePointerId = ev.pointerId;
     startSample = { x: ev.clientX, y: ev.clientY, t: ev.timeStamp };
     dragDy = 0;
@@ -54,12 +61,12 @@
 
   function onPointerUp(ev: PointerEvent) {
     if (activePointerId !== ev.pointerId || !startSample) {
-      clearGesture(ev.target, activePointerId);
+      clearGesture(activePointerId);
       return;
     }
     const end: PointerSample = { x: ev.clientX, y: ev.clientY, t: ev.timeStamp };
     const gesture = recognizeCallGesture(startSample, end);
-    clearGesture(ev.target, ev.pointerId);
+    clearGesture(ev.pointerId);
 
     switch (gesture) {
       case 'tap': {
@@ -93,7 +100,7 @@
 
   function onPointerCancel(ev: PointerEvent) {
     if (activePointerId === ev.pointerId) {
-      clearGesture(ev.target, ev.pointerId);
+      clearGesture(ev.pointerId);
     }
   }
 

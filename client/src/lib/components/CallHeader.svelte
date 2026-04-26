@@ -16,11 +16,14 @@
 
   let { sessionDisplayName, folderPath, startedAt, micMuted, agentState, remoteAudioLevel }: Props = $props();
 
-  // Tick once per second so the duration display stays current. The
-  // dependency on `startedAt` is read only to compute the elapsed; the
-  // setInterval keeps `now` fresh.
+  // Tick once per second so the duration display stays current. Only run
+  // the interval while the call has actually started — during binding /
+  // connecting the duration is fixed at 00:00 and ticking is wasted work.
+  // (review finding #7)
   let now = $state(Date.now());
   $effect(() => {
+    if (startedAt === null) return;
+    now = Date.now();
     const id = setInterval(() => {
       now = Date.now();
     }, 1000);

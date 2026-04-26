@@ -106,8 +106,23 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
   let levelAnalyser: AnalyserNode | null = null;
   let levelInterval: ReturnType<typeof setInterval> | null = null;
   let latestLevel: number | null = null;
+  // Track of the currently-attached track and its 'ended' listener so we can
+  // remove the listener when the analyser is replaced/torn down. Without this,
+  // a stale listener registered on an old track will fire after renegotiation
+  // and tear down the *new* analyser. (review finding #1)
+  let levelTrack: MediaStreamTrack | null = null;
+  let levelTrackEndedListener: (() => void) | null = null;
 
   const teardownLevelAnalyser = (): void => {
+    if (levelTrack && levelTrackEndedListener) {
+      try {
+        levelTrack.removeEventListener('ended', levelTrackEndedListener);
+      } catch {
+        /* ignore */
+      }
+    }
+    levelTrack = null;
+    levelTrackEndedListener = null;
     if (levelInterval) {
       clearInterval(levelInterval);
       levelInterval = null;
@@ -158,8 +173,16 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
         const rms = Math.sqrt(sumSq / buffer.length);
         latestLevel = Math.max(0, Math.min(1, rms));
       }, 100);
-      // Drop the analyser if the track ends.
-      track.addEventListener('ended', teardownLevelAnalyser, { once: true });
+      // Drop the analyser if the track ends. Stash the track + listener so a
+      // subsequent `attachLevelAnalyser` (renegotiation) or peer close can
+      // remove the listener — otherwise an old track ending later would tear
+      // down the *current* analyser.
+      const endedListener = (): void => {
+        teardownLevelAnalyser();
+      };
+      levelTrack = track;
+      levelTrackEndedListener = endedListener;
+      track.addEventListener('ended', endedListener, { once: true });
     } catch (err) {
       voiceTrace('webrtc', 'level_analyser_failed', { level: 'warn', data: { err: String(err) } });
       teardownLevelAnalyser();
@@ -233,11 +256,14 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
         });
       });
 
+      // Bind the session id at peer-creation time so a delayed
+      // `connected`/`completed` transition after a session swap can't
+      // synthesize a `call_ready` for the wrong session. (review finding #4)
+      const boundSessionId = opts.getSessionId();
       pc.addEventListener('iceconnectionstatechange', () => {
         voiceTrace('webrtc', 'iceconnectionstatechange', { data: { state: pc.iceConnectionState } });
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-          const sid = opts.getSessionId();
-          if (sid) opts.onPeerReady(sid);
+          if (boundSessionId) opts.onPeerReady(boundSessionId);
         }
       });
 
@@ -292,7 +318,12 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
           } catch {
             /* ignore */
           }
+          // Stop the periodic stats poll deterministically; it otherwise only
+          // self-cancels by polling pc.connectionState. (review finding #2)
+          clearInterval(statsInterval);
           teardownLevelAnalyser();
+          // Avoid leaking a closed peer into a future openSignaling. (review finding #5)
+          if (currentPeer === wrapped) currentPeer = null;
           // Tear down the remote-audio sink so it doesn't linger in the DOM.
           if (remoteAudioEl) {
             try {
