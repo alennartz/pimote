@@ -26,6 +26,7 @@
 
 import type { PimoteCommand, PimoteResponse } from '@pimote/shared';
 import type { VoiceCallSeams, VoicePeerConnection, VoiceSignalingSocket } from './voice-call.svelte.js';
+import { voiceTrace } from './voice-trace.js';
 
 /** Minimal shape of the pimote connection store used by the voice seams. */
 export interface VoiceCallConnectionLike {
@@ -98,6 +99,73 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
   // offer/answer/ice directly into it.
   let currentPeer: BrowserVoicePeerConnection | null = null;
 
+  // Inbound audio level analysis state. Lazily created when the first
+  // inbound audio track arrives; torn down when the peer closes. Sampled
+  // at ~10Hz; the latest RMS is cached and returned by `getRemoteAudioLevel`.
+  let levelAudioContext: AudioContext | null = null;
+  let levelAnalyser: AnalyserNode | null = null;
+  let levelInterval: ReturnType<typeof setInterval> | null = null;
+  let latestLevel: number | null = null;
+
+  const teardownLevelAnalyser = (): void => {
+    if (levelInterval) {
+      clearInterval(levelInterval);
+      levelInterval = null;
+    }
+    if (levelAnalyser) {
+      try {
+        levelAnalyser.disconnect();
+      } catch {
+        /* ignore */
+      }
+      levelAnalyser = null;
+    }
+    if (levelAudioContext) {
+      try {
+        void levelAudioContext.close();
+      } catch {
+        /* ignore */
+      }
+      levelAudioContext = null;
+    }
+    latestLevel = null;
+  };
+
+  const attachLevelAnalyser = (track: MediaStreamTrack): void => {
+    // Replace any existing analyser (e.g. renegotiation delivers a new track).
+    teardownLevelAnalyser();
+    try {
+      const ctx = new AudioContext();
+      const source = ctx.createMediaStreamSource(new MediaStream([track]));
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.4;
+      source.connect(analyser);
+      const buffer = new Uint8Array(analyser.fftSize);
+      levelAudioContext = ctx;
+      levelAnalyser = analyser;
+      latestLevel = 0;
+      levelInterval = setInterval(() => {
+        if (!levelAnalyser) return;
+        levelAnalyser.getByteTimeDomainData(buffer);
+        // Time-domain bytes are centred on 128 (silence). Compute RMS in
+        // [-1, 1] and clamp to [0, 1].
+        let sumSq = 0;
+        for (let i = 0; i < buffer.length; i++) {
+          const v = (buffer[i] - 128) / 128;
+          sumSq += v * v;
+        }
+        const rms = Math.sqrt(sumSq / buffer.length);
+        latestLevel = Math.max(0, Math.min(1, rms));
+      }, 100);
+      // Drop the analyser if the track ends.
+      track.addEventListener('ended', teardownLevelAnalyser, { once: true });
+    } catch (err) {
+      voiceTrace('webrtc', 'level_analyser_failed', { level: 'warn', data: { err: String(err) } });
+      teardownLevelAnalyser();
+    }
+  };
+
   return {
     async sendCommand<T = unknown>(cmd: PimoteCommand): Promise<PimoteResponse<T>> {
       return (await opts.connection.send(cmd)) as PimoteResponse<T>;
@@ -132,8 +200,21 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
         return { el, stream };
       };
 
+      // Snapshot peer connection state changes for diagnostics.
+      pc.addEventListener('connectionstatechange', () => {
+        voiceTrace('webrtc', 'connectionstatechange', { data: { state: pc.connectionState } });
+      });
+      pc.addEventListener('signalingstatechange', () => {
+        voiceTrace('webrtc', 'signalingstatechange', { data: { state: pc.signalingState } });
+      });
+      pc.addEventListener('icegatheringstatechange', () => {
+        voiceTrace('webrtc', 'icegatheringstatechange', { data: { state: pc.iceGatheringState } });
+      });
+
       pc.addEventListener('track', (ev: RTCTrackEvent) => {
+        voiceTrace('webrtc', 'on_track', { data: { kind: ev.track.kind, id: ev.track.id, readyState: ev.track.readyState, streamCount: ev.streams.length } });
         if (ev.track.kind !== 'audio') return;
+        attachLevelAnalyser(ev.track);
         const { el, stream } = ensureRemoteAudio();
         // Chromium delivers the track via ev.streams[0]; Safari sometimes
         // ships an empty streams array and expects us to build our own.
@@ -153,11 +234,53 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
       });
 
       pc.addEventListener('iceconnectionstatechange', () => {
+        voiceTrace('webrtc', 'iceconnectionstatechange', { data: { state: pc.iceConnectionState } });
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
           const sid = opts.getSessionId();
           if (sid) opts.onPeerReady(sid);
         }
       });
+
+      // Periodic RTCStatsReport snapshot for diagnostic dumps. Stops when the
+      // peer connection is closed.
+      const statsInterval = setInterval(async () => {
+        if (pc.connectionState === 'closed' || pc.connectionState === 'failed') {
+          clearInterval(statsInterval);
+          return;
+        }
+        try {
+          const report = await pc.getStats();
+          const summary: Record<string, unknown> = {};
+          report.forEach((stat) => {
+            if (stat.type === 'inbound-rtp' && (stat as { kind?: string }).kind === 'audio') {
+              summary.inbound = {
+                packetsReceived: (stat as { packetsReceived?: number }).packetsReceived,
+                packetsLost: (stat as { packetsLost?: number }).packetsLost,
+                jitter: (stat as { jitter?: number }).jitter,
+                bytesReceived: (stat as { bytesReceived?: number }).bytesReceived,
+                audioLevel: (stat as { audioLevel?: number }).audioLevel,
+                totalAudioEnergy: (stat as { totalAudioEnergy?: number }).totalAudioEnergy,
+              };
+            } else if (stat.type === 'outbound-rtp' && (stat as { kind?: string }).kind === 'audio') {
+              summary.outbound = {
+                packetsSent: (stat as { packetsSent?: number }).packetsSent,
+                bytesSent: (stat as { bytesSent?: number }).bytesSent,
+                retransmittedPacketsSent: (stat as { retransmittedPacketsSent?: number }).retransmittedPacketsSent,
+              };
+            } else if (stat.type === 'media-source' && (stat as { kind?: string }).kind === 'audio') {
+              summary.mediaSource = {
+                audioLevel: (stat as { audioLevel?: number }).audioLevel,
+                totalAudioEnergy: (stat as { totalAudioEnergy?: number }).totalAudioEnergy,
+                echoReturnLoss: (stat as { echoReturnLoss?: number }).echoReturnLoss,
+                echoReturnLossEnhancement: (stat as { echoReturnLossEnhancement?: number }).echoReturnLossEnhancement,
+              };
+            }
+          });
+          voiceTrace('webrtc', 'stats', { data: summary });
+        } catch (err) {
+          voiceTrace('webrtc', 'stats_error', { level: 'warn', data: { err: String(err) } });
+        }
+      }, 1000);
 
       const wrapped: BrowserVoicePeerConnection = {
         get raw() {
@@ -169,6 +292,7 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
           } catch {
             /* ignore */
           }
+          teardownLevelAnalyser();
           // Tear down the remote-audio sink so it doesn't linger in the DOM.
           if (remoteAudioEl) {
             try {
@@ -196,6 +320,10 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
       return wrapped;
     },
 
+    getRemoteAudioLevel(): number | null {
+      return latestLevel;
+    },
+
     async getUserMedia(): Promise<{ stream: unknown; tracks: unknown[] }> {
       // Explicit constraints for voice-call use:
       // - `echoCancellation` is usually default-true, but Android Chrome has
@@ -214,7 +342,28 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
           channelCount: 1,
         },
       });
-      return { stream, tracks: stream.getAudioTracks() };
+      const tracks = stream.getAudioTracks();
+      // Log the actual constraints/settings the browser applied so we can
+      // tell whether AEC/NS/AGC are really on (Chrome on Linux occasionally
+      // silently drops them).
+      for (const t of tracks) {
+        const settings = (t.getSettings ? t.getSettings() : {}) as Record<string, unknown>;
+        const constraints = (t.getConstraints ? t.getConstraints() : {}) as Record<string, unknown>;
+        const capabilities = (t.getCapabilities ? t.getCapabilities() : {}) as Record<string, unknown>;
+        voiceTrace('mic', 'getUserMedia.track', {
+          data: {
+            label: t.label,
+            id: t.id,
+            readyState: t.readyState,
+            muted: t.muted,
+            enabled: t.enabled,
+            settings,
+            constraints,
+            capabilities,
+          },
+        });
+      }
+      return { stream, tracks };
     },
 
     openSignaling(url: string): VoiceSignalingSocket {
@@ -239,9 +388,11 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
 
       const sendEnvelope = (type: string, payload: Record<string, unknown> = {}): void => {
         try {
+          voiceTrace('signaling', `send:${type}`, { data: { payloadKeys: Object.keys(payload) } });
           ws.send(encodeSignal(type, payload));
         } catch (err) {
           console.warn('[voice] signaling send failed', type, err);
+          voiceTrace('signaling', `send_failed:${type}`, { level: 'warn', data: { err: String(err) } });
         }
       };
 
@@ -322,8 +473,13 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
         ws.addEventListener('error', onError, { once: true });
       });
 
+      ws.addEventListener('open', () => voiceTrace('signaling', 'ws_open', { data: { url } }));
+      ws.addEventListener('close', (ev) => voiceTrace('signaling', 'ws_close', { data: { code: ev.code, reason: ev.reason, wasClean: ev.wasClean } }));
+      ws.addEventListener('error', () => voiceTrace('signaling', 'ws_error', { level: 'warn' }));
+
       ws.addEventListener('message', (ev) => {
         const env = decodeSignal(ev.data);
+        if (env) voiceTrace('signaling', `recv:${env.type}`, { data: { payloadKeys: Object.keys(env.payload ?? {}) } });
         if (!env) return;
         // Fan out the decoded envelope to external listeners (tests /
         // observers). The peer-connection bridge below runs regardless of

@@ -243,6 +243,8 @@ The mobile-header phone button block in `+layout.svelte` (the `{@const callState
 
 ## Steps
 
+**Pre-implementation commit:** `c5354ac3eb246cd540d92bd167e838de74f8dacc`
+
 All behavioural helpers (`call-state.ts`, `call-gesture.ts`, `call-audio-cues.ts`) and the `VoiceCallStore` extensions (`startedAt`, `abortAgent`, `getRemoteAudioLevel` / `now` seams) already exist from the test-write phase and have passing unit tests — they are not re-listed below. The remaining work is wiring the browser seam, the new Svelte UI subtree, the prop additions on existing components, the conditional render in `+page.svelte`, and the deletions.
 
 ### Step 1: Implement `getRemoteAudioLevel` in the browser voice-call seams
@@ -256,7 +258,7 @@ In `client/src/lib/stores/voice-call-seams.ts`, the `createBrowserVoiceCallSeams
 - Expose the seam on the returned `VoiceCallSeams` object.
 
 **Verify:** `pnpm --filter @pimote/client check` passes; the existing voice-call test suite still passes; manual smoke (browser console: `voiceCallStore.seams.getRemoteAudioLevel?.()`) returns a number while remote audio is playing during a call.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Add `readOnly` prop to `MessageList.svelte`
 
