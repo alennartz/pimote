@@ -574,6 +574,13 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
                 const init: RTCIceCandidateInit = { candidate: candidate ?? '', sdpMid, sdpMLineIndex };
                 if (!remoteDescriptionSet) {
                   pendingInboundIce.push(init);
+                  // Defensive re-drain: handler IIFEs run concurrently, so a
+                  // race window exists where the `answer` handler completed
+                  // its drain and is mid-`await` before flipping
+                  // `remoteDescriptionSet = true`, while this handler
+                  // queues. Re-check after the queue push so we don't strand
+                  // a candidate. (review finding #6)
+                  if (remoteDescriptionSet) await flushInboundIce();
                   return;
                 }
                 try {

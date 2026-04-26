@@ -60,7 +60,7 @@ When a second pointer arrives, `clearGesture(ev.target, activePointerId)` is inv
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/stores/voice-call-seams.ts:389-416`
-- **Status:** open
+- **Status:** resolved
 
 Each WS message handler runs inside its own `void (async () => { … })()`. If `answer` and `ice` frames arrive back-to-back, both async IIFEs start immediately. The `ice` handler sees `remoteDescriptionSet === false` and pushes to `pendingInboundIce`; meanwhile the `answer` handler awaits `setRemoteDescription`, then drains the queue. With no mutual exclusion, an `ice` frame that arrives between the drain start and `remoteDescriptionSet = true` could either succeed directly or be queued and never drained again. Low likelihood given typical timing, but the handler relies on event-loop ordering rather than explicit synchronization.
 
@@ -78,7 +78,7 @@ The 1Hz interval runs whenever `CallHeader` is mounted, even before `startedAt` 
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/components/CallingMode.svelte:11-17`
-- **Status:** open
+- **Status:** resolved
 
 `getRemoteAudioLevel()` is invoked on a fixed 100ms interval irrespective of phase. During `binding`/`connecting` it returns 0; the cost is timer overhead, and there is no synchronization with the analyser's own 10Hz tick, so the UI may sample stale or missed values.
 

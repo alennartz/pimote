@@ -8,9 +8,15 @@
   import MessageList from './MessageList.svelte';
 
   // Sample remote audio level at 100ms (10Hz) — matches the analyser rate
-  // wired through `voice-call-seams.ts`.
+  // wired through `voice-call-seams.ts`. Only sample while phase ===
+  // 'connected'; during binding/connecting the seam returns 0 anyway and
+  // the timer is wasted work. (review finding #8)
   let remoteAudioLevel = $state(0);
   $effect(() => {
+    if (voiceCallStore.state.phase !== 'connected') {
+      remoteAudioLevel = 0;
+      return;
+    }
     const id = setInterval(() => {
       remoteAudioLevel = getRemoteAudioLevel();
     }, 100);
