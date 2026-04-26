@@ -240,3 +240,236 @@ The mobile-header phone button block in `+layout.svelte` (the `{@const callState
 - Each scheduled oscillator has `stop > start` (a finite, non-zero envelope).
 
 **Review status:** approved
+
+## Steps
+
+All behavioural helpers (`call-state.ts`, `call-gesture.ts`, `call-audio-cues.ts`) and the `VoiceCallStore` extensions (`startedAt`, `abortAgent`, `getRemoteAudioLevel` / `now` seams) already exist from the test-write phase and have passing unit tests — they are not re-listed below. The remaining work is wiring the browser seam, the new Svelte UI subtree, the prop additions on existing components, the conditional render in `+page.svelte`, and the deletions.
+
+### Step 1: Implement `getRemoteAudioLevel` in the browser voice-call seams
+
+In `client/src/lib/stores/voice-call-seams.ts`, the `createBrowserVoiceCallSeams` factory currently omits `getRemoteAudioLevel`. Add it.
+
+- Hold the most recent inbound audio level on the seams closure (a number, `null` initially).
+- Track the inbound `MediaStreamTrack` already discovered in the existing `pc.addEventListener('track', ...)` handler. When an audio track arrives, attach it (via `new MediaStream([track])`) to a lazily-created `AudioContext` + `AnalyserNode` (`fftSize: 512`, `smoothingTimeConstant: 0.4`). Drop the analyser when the track ends or the peer closes.
+- Sample the analyser at ~10Hz from a `setInterval`. Convert the time-domain byte buffer to a normalised 0..1 RMS and store it as the latest level.
+- Return the cached level from `getRemoteAudioLevel(): number | null`. Return `null` when there is no analyser or the peer is closed. Tear down the interval, analyser and `AudioContext` in the existing peer `close()` path.
+- Expose the seam on the returned `VoiceCallSeams` object.
+
+**Verify:** `pnpm --filter @pimote/client check` passes; the existing voice-call test suite still passes; manual smoke (browser console: `voiceCallStore.seams.getRemoteAudioLevel?.()`) returns a number while remote audio is playing during a call.
+**Status:** not started
+
+### Step 2: Add `readOnly` prop to `MessageList.svelte`
+
+In `client/src/lib/components/MessageList.svelte`:
+
+- Declare a Props block (currently the component takes no props):
+  ```ts
+  interface Props {
+    /** When true, disables pointer interaction on rendered messages. Default: false. */
+    readOnly?: boolean;
+  }
+  let { readOnly = false }: Props = $props();
+  ```
+- On the inner content wrapper that renders the `Message`s, conditionally apply a class that sets `pointer-events: none` (e.g. `class:pointer-events-none={readOnly}`). Auto-scroll behaviour is unaffected because it isn't user-driven.
+- Suppress the per-message draft / fork-prompt UI when `readOnly` is true (the dialog flow at the top of the file): if `readOnly`, do not call `promptDraftChoice` and do not open `draftDialogOpen`.
+- Do not gate `connection.send` calls behind `readOnly` — the flag is purely a visual / pointer concern.
+
+**Verify:** existing tests still pass; rendering `<MessageList readOnly />` in a sandbox does not respond to taps on messages but still auto-scrolls when new content arrives.
+**Status:** not started
+
+### Step 3: Add `variant` prop to `CallButton.svelte`
+
+In `client/src/lib/components/CallButton.svelte`:
+
+- Extend the `Props` interface:
+  ```ts
+  interface Props {
+    sessionId?: string;
+    variant?: 'inline' | 'dialog-row';
+  }
+  let { sessionId, variant = 'inline' }: Props = $props();
+  ```
+- Compute `inCall` (call bound to this `sessionId` and phase ≠ idle) so the button can flip between Start / End behaviour. The current implementation only supports `startCall`; the `dialog-row` variant must also call `endCall` when `inCall`.
+- Render two distinct DOM bodies based on `variant`:
+  - `inline` — current 6×6 muted icon button (unchanged visuals, unchanged Start-only behaviour for backwards-compat with `StatusBar`).
+  - `dialog-row` — wider button labelled `Start call` (green: `bg-emerald-500/90 text-white`) when not in call, `End call` (red: `bg-destructive text-destructive-foreground`) when `inCall`. Icon: `Phone` (start) / `PhoneOff` (end). Width fills the dialog row (`w-32` or similar — match the visual of the deleted mobile-header button).
+- `onClick` for `dialog-row` routes to `voiceCallStore.endCall()` when `inCall`, else `voiceCallStore.startCall(sessionId)`.
+
+**Verify:** the existing `StatusBar` usage (`<CallButton sessionId={...} />`) renders unchanged; dropping `<CallButton sessionId={...} variant="dialog-row" />` into a page renders the wider button and toggles between green Start / red End.
+**Status:** not started
+
+### Step 4: Add Voice call row to `SessionSettingsDialog.svelte`
+
+In `client/src/lib/components/SessionSettingsDialog.svelte`:
+
+- Import `CallButton` from `./CallButton.svelte`.
+- Insert a new row between the existing `Thinking` row and the `Context` row:
+  ```svelte
+  <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
+    <span class="text-muted-foreground">Voice call</span>
+    <CallButton sessionId={session?.sessionId} variant="dialog-row" />
+  </div>
+  ```
+- `session` is the existing reactive session reference already in this file; reuse it. Do not gate the row on connection state — disabled-while-no-session is handled inside `CallButton`.
+
+**Verify:** opening the session settings dialog on mobile shows the new Voice call row with a Start / End call button; clicking it toggles a call. Existing rows still render in the right order.
+**Status:** not started
+
+### Step 5: Create `client/src/lib/components/CallStateRow.svelte`
+
+New component — the agent-state pulse + label row.
+
+- Props:
+  ```ts
+  interface Props {
+    state: AgentState; // imported from './call-state.js'
+    remoteAudioLevel: number; // 0..1
+  }
+  ```
+- Layout: a horizontal flex row, gap-2, items-center: `[pulse-dot]  [state-word]`.
+- Visual treatments by `state`:
+  - `listening` — solid cyan dot (`bg-cyan-400`) with a slow breathe via Tailwind `animate-pulse` (or a custom 2s opacity 0.6→1.0 keyframe in a `<style>` block) and label `"listening"`.
+  - `thinking` — amber dot (`bg-amber-400`) with a faster ~0.6s pulse and label `"thinking"`.
+  - `speaking` — green dot (`bg-emerald-400`); its scale and opacity are computed from `remoteAudioLevel` (e.g. `transform: scale(${1 + level * 0.6})`, `opacity: ${0.6 + level * 0.4}`) applied via inline `style:` directives. Slight CSS smoothing (`transition: transform 80ms, opacity 80ms`). Label `"speaking"`.
+- The label uses `text-sm font-medium text-foreground` and is read-only.
+- The dot is `size-3 rounded-full`.
+- The component must not own state — it is a pure render of its props.
+
+**Verify:** mounting the component with each of the three states renders the right colour, animation, and label; passing varying `remoteAudioLevel` values to the `speaking` state visibly modulates the dot size.
+**Status:** not started
+
+### Step 6: Create `client/src/lib/components/CallHeader.svelte`
+
+New component — the top region of calling mode. Shows session label, duration, mic state, and hosts `CallStateRow`.
+
+- Props:
+  ```ts
+  interface Props {
+    sessionDisplayName: string | null;
+    folderPath: string | null;
+    startedAt: number | null; // from VoiceCallStore.state.startedAt
+    micMuted: boolean;
+    agentState: AgentState;
+    remoteAudioLevel: number;
+  }
+  ```
+- Drive a `now: number = $state(Date.now())` value updated every 1000ms via a `setInterval` in `$effect(() => { ... return () => clearInterval(...); })`. Compute `elapsedMs = startedAt ? now - startedAt : 0` and pass through `formatCallDuration` (from `./call-state.js`) to render `MM:SS` / `H:MM:SS`.
+- Layout (top-aligned, no flex-grow): a vertical stack with `px-4 pt-6 pb-3 gap-2`:
+  1. Top row — small text: project label (`folderPath` basename or `'session'`) + `·` + `sessionDisplayName ?? 'Session'`, truncated.
+  2. Big duration row — `text-3xl tabular-nums text-foreground`.
+  3. Mic state — small row: `Mic` icon (or `MicOff` when `micMuted`) plus the literal text `"Muted"` / `"Live"`. Use the same lucide imports the existing `CallBanner` used.
+  4. `<CallStateRow state={agentState} remoteAudioLevel={remoteAudioLevel} />`.
+- The component is stateless beyond the ticking `now`. No store reads — values come in as props.
+
+**Verify:** mounting the component with a fixed `startedAt = Date.now() - 65000` shows `01:05` and ticks; `micMuted` toggles the mic icon; the state row renders.
+**Status:** not started
+
+### Step 7: Create `client/src/lib/components/CallGestureZone.svelte`
+
+New component — the bottom region. Owns pointer handling and triggers store actions + audio cues.
+
+- Props: none. Consumes `voiceCallStore` directly (singleton import) and the cues factory (see below).
+- Sizing: outermost element `style="height: min(25vh, 200px); min-height: 120px;"` plus `relative w-full select-none touch-none`.
+- Render the three permanently-visible hint labels:
+  - Top hint — `ChevronUp` icon + `"Hang up"` aligned to the top-centre.
+  - Centre hint — `"Tap to mute"` (or `"Tap to unmute"` when `voiceCallStore.state.micMuted`).
+  - Bottom hint — `ChevronDown` icon + `"Abort"` aligned to the bottom-centre.
+- Pointer handling:
+  - Module-scope (or `$state`) singleton `cues = createCallAudioCues()` — instantiated lazily on first cue. Import from `$lib/call-audio-cues.js`.
+  - On `pointerdown` (primary pointer only — `event.isPrimary`): record `start: PointerSample` from `event.clientX/Y` and `event.timeStamp`. Call `event.target.setPointerCapture(event.pointerId)`. Stash `pointerId`.
+  - On `pointerup` matching the captured `pointerId`: build `end: PointerSample` and call `recognizeCallGesture(start, end)` from `$lib/components/call-gesture.js`. Dispatch:
+    - `'tap'` → `voiceCallStore.toggleMute()`. Then play `cues.playMuteOn()` if the new `voiceCallStore.state.micMuted` is true, else `cues.playMuteOff()`.
+    - `'swipe-up'` → `voiceCallStore.endCall().catch(() => {})`. No cue.
+    - `'swipe-down'` → `voiceCallStore.abortAgent().catch(() => {})`. Then `cues.playAbortConfirm()`.
+    - `null` → no action.
+      Always release pointer capture and clear `start` / `pointerId`.
+  - On `pointercancel` or a second concurrent `pointerdown` with a different `pointerId`: cancel — release capture, clear state, no action.
+- Cosmetic: optionally translate the hint chevrons by ~`-dy * 0.3px` while the pointer is down to preview swipe direction. Skip if it complicates the diff.
+
+**Verify:** unit-test the gesture recognizer is already covered; manually confirm that tap toggles mute and plays the corresponding cue, swipe-up ends the call, swipe-down sends abort and plays the double-beep, and a swipe that begins in the zone but ends outside still registers.
+**Status:** not started
+
+### Step 8: Create `client/src/lib/components/CallingMode.svelte`
+
+New component — top-level full-screen container.
+
+- Props: none. Reads `voiceCallStore` and `sessionRegistry.viewed` directly.
+- Outer layout: `fixed inset-0 z-40 flex flex-col bg-background text-foreground` (covers everything below modal layers but above the regular page). The container is rendered inside `+page.svelte` (Step 9), so z-index is only relative to in-page content. If any toasts / dialogs need to overlay, they already use higher z-indices (verify with a quick rg before merging).
+- Internal regions:
+  1. `<CallHeader ... />` — fixed-height top region (its content determines height).
+  2. Middle region: a `flex-1 min-h-0 overflow-hidden` wrapper containing `<MessageList readOnly />`.
+  3. `<CallGestureZone />` — bottom.
+- Audio level sampling: keep a local `remoteAudioLevel = $state(0)` and a `$effect` that runs a `setInterval` at 100ms reading `voiceCallStore.seams?.getRemoteAudioLevel?.() ?? 0`. (`seams` is private — instead expose the level via `voiceCallStore.getRemoteAudioLevel?.()` if more convenient, or call the seam through a small helper added to `voice-call-store.ts`. If a helper is needed, add it: `export function getRemoteAudioLevel(): number { return voiceSeams.getRemoteAudioLevel?.() ?? 0; }` colocated with the singleton.)
+- Compute `agentState` via `deriveAgentState({ isStreaming: !!sessionRegistry.viewed?.isStreaming, remoteAudioLevel, speakingThreshold: 0.02 })`.
+- Compute `sessionDisplayName` via the existing `getSessionDisplayName` helper from `$lib/session-summary.js`; pass `folderPath = sessionRegistry.viewed?.folderPath ?? null`.
+- No teardown logic — the parent unmounts the component when phase returns to idle.
+
+**Verify:** rendering `<CallingMode />` while a call is connected covers the screen, shows the message transcript with no taps registering, ticks the duration, animates the state pulse, and the gesture zone responds.
+**Status:** not started
+
+### Step 9: Conditionally render `CallingMode` in `+page.svelte`
+
+In `client/src/routes/+page.svelte`:
+
+- Import `CallingMode from '$lib/components/CallingMode.svelte'` and `voiceCallStore from '$lib/stores/voice-call-store.js'`.
+- Compute `inCall = $derived(voiceCallStore.state.phase !== 'idle' && voiceCallStore.state.sessionId === sessionRegistry.viewedSessionId)`.
+- Restructure the active-session branch so that, when `inCall` is true, only `<CallingMode />` is rendered; when false, the existing `StatusBar` / `MobileRuntimeStatus` / takeover banners / `MessageList` / `InlineSelect` / `PendingSteeringMessages` / `ActiveSessionBar` / `InputBar` tree is rendered as today:
+  ```svelte
+  {#if sessionRegistry.viewedSessionId}
+    {#if inCall}
+      <CallingMode />
+    {:else}
+      <div class="flex min-h-0 flex-1 flex-col">... existing tree ...</div>
+    {/if}
+  {:else}
+    ... existing landing branch ...
+  {/if}
+  ```
+- The landing branch is unchanged.
+
+**Verify:** start a call from the status bar — the entire chat surface is replaced by calling mode; end the call — the normal chat surface returns with no flicker. Switching to a different session while a call is bound to another session shows the chat surface for the viewed session (calling mode is bound to the call's sessionId, not the viewed one).
+**Status:** not started
+
+### Step 10: Remove the inline mobile phone button from `+layout.svelte`
+
+In `client/src/routes/+layout.svelte`:
+
+- Delete the `{#if sessionRegistry.viewedSessionId} {@const sid ...} {@const callState ...} {@const inCall ...} <button ...>` block (lines around 274–296) that renders the green/red phone button next to `SessionSettingsDialog`.
+- Drop the `Phone` lucide import and the `voiceCallStore` import if they have no other use in this file (re-grep after deletion to confirm). The `import '$lib/stores/voice-call-store.js'` side-effect import must remain so server-event subscription still happens at app boot.
+
+**Verify:** the mobile header no longer shows the phone button; the entry point on mobile is now `SessionSettingsDialog → Voice call row`. Desktop is unaffected (it never used this button).
+**Status:** not started
+
+### Step 11: Delete `CallBanner.svelte` and remove its mount
+
+- Delete `client/src/lib/components/CallBanner.svelte`.
+- In `client/src/routes/+layout.svelte`, remove the `import CallBanner from '$lib/components/CallBanner.svelte';` line and the `<CallBanner />` element (currently mounted just below the header).
+- `rg "CallBanner" client` must return zero hits after this step.
+
+**Verify:** `pnpm --filter @pimote/client check` passes (no dangling import); during a call, the banner no longer appears — calling mode is the only in-call UI.
+**Status:** not started
+
+### Step 12: Refresh the codemap
+
+Update `codemap.md` to reflect the new files and removed file:
+
+- Add entries under `Client → Files`: `CallingMode.svelte`, `CallHeader.svelte`, `CallStateRow.svelte`, `CallGestureZone.svelte`, `call-state.ts`, `call-state.test.ts`, `call-gesture.ts`, `call-gesture.test.ts`, `call-audio-cues.ts`, `call-audio-cues.test.ts`.
+- Remove the `CallBanner.svelte` entry.
+- Update the existing `+layout.svelte` entry to drop `CallBanner` from the global overlay list.
+- Update the `voice-call-seams.ts` entry to mention `getRemoteAudioLevel` (analyser-backed RMS sampling of the inbound peer track).
+- Update the `voice-call.svelte.ts` entry to mention the `startedAt` field and `abortAgent()` method.
+
+**Verify:** the new files are documented; `rg CallBanner codemap.md` returns nothing.
+**Status:** not started
+
+### Step 13: End-to-end smoke
+
+Run the full client test suite and the manual journey:
+
+- `pnpm --filter @pimote/client test` — green.
+- `pnpm --filter @pimote/client check` — green.
+- `pnpm -w lint` — green.
+- `tools/manual-test/PLAN.md` journey 8 (voice call) — re-walk on Android Chrome PWA. Expect: mobile entry via Settings dialog row, calling-mode covers the chat, tap-to-mute plays a beep, swipe-up hangs up, swipe-down aborts and plays the double-beep, the duration ticks, the agent-state pulse cycles listening → thinking → speaking → listening over a typical exchange.
+
+**Verify:** all checks pass; the manual journey completes with no regressions.
+**Status:** not started
