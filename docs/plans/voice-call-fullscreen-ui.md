@@ -45,7 +45,7 @@ Behaviour:
 - `startedAt` is set exactly once per call, on the first transition into `phase === 'connected'`. Subsequent re-entries (none today, but defensive) do not reset it.
 - `startedAt` is cleared (back to `null`) whenever phase returns to `idle`.
 
-The store also gains an **abort capability** invoked by the gesture zone. The exact wire mechanism is the existing `VOICE_INTERRUPT_CUSTOM_TYPE` already on the protocol (referenced by `server/src/voice/walk-back.ts` and the FSM). The store exposes:
+The store also gains an **abort capability** invoked by the gesture zone. The wire frame is the existing `AbortCommand` (`type: 'abort'`, sessionId-bearing) already in `shared/src/protocol.ts`. (Note: `VOICE_INTERRUPT_CUSTOM_TYPE` is a _persisted-entry_ customType tag the voice extension stamps on scrollback when it observes a rollback/abort — not a client→server command type, and therefore not what the store sends here.) The store exposes:
 
 ```ts
 class VoiceCallStore {
@@ -55,7 +55,7 @@ class VoiceCallStore {
 }
 ```
 
-The store-side implementation routes through `seams.sendCommand` with the existing protocol shape; tests already have the seam fake.
+The store-side implementation routes through `seams.sendCommand` with an `AbortCommand`; tests already have the seam fake.
 
 #### Agent state derivation (lives in `CallingMode.svelte` / a small derive helper)
 
@@ -238,3 +238,5 @@ The mobile-header phone button block in `+layout.svelte` (the `{@const callState
 - `playAbortConfirm` schedules two oscillators with the second starting after the first — a double-beep distinguishable from the single mute cue.
 - Every cue routes through to `audioContext.destination`.
 - Each scheduled oscillator has `stop > start` (a finite, non-zero envelope).
+
+**Review status:** approved

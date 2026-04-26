@@ -289,6 +289,7 @@ describe('VoiceCallStore.abortAgent', () => {
     expect(store.state.phase).toBe('connected');
     expect(sendCommand).toHaveBeenCalledTimes(1);
     const cmd = sendCommand.mock.calls[0][0];
+    expect(cmd.type).toBe('abort');
     expect(cmd.sessionId).toBe('s-1');
   });
 
