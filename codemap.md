@@ -131,9 +131,9 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/stores/tree-dialog.svelte.ts` — TreeDialogStore state/lifecycle (open/close, selection, fold state, loading, filter/search), filtered tree derivation, local label mutation
 - `client/src/lib/stores/tree-dialog.svelte.test.ts` — tests
 - `client/src/lib/stores/speech.svelte.ts` — singleton speech playback state (speak/stop/toggleTts/playingKey)
-- `client/src/lib/stores/voice-call.svelte.ts` — `VoiceCallStore` class: reactive voice-call state machine (idle/binding/ready/active/ending/error), seam-based so WebRTC/signaling/getUserMedia can be injected in tests
+- `client/src/lib/stores/voice-call.svelte.ts` — `VoiceCallStore` class: reactive voice-call state machine (idle/binding/ready/active/ending/error), seam-based so WebRTC/signaling/getUserMedia can be injected in tests; tracks `startedAt` (set on first `connected`, cleared on `idle`) and exposes `abortAgent()` for the calling-mode swipe-down gesture
 - `client/src/lib/stores/voice-call.svelte.test.ts` — tests
-- `client/src/lib/stores/voice-call-seams.ts` — browser implementation of the voice-call seams: `getUserMedia`, `RTCPeerConnection` setup, SDP/ICE signaling bridge over the pimote WebSocket
+- `client/src/lib/stores/voice-call-seams.ts` — browser implementation of the voice-call seams: `getUserMedia`, `RTCPeerConnection` setup, SDP/ICE signaling bridge over the pimote WebSocket, and an analyser-backed `getRemoteAudioLevel` (10Hz RMS sampling of the inbound peer track) for the calling-mode pulse
 - `client/src/lib/stores/voice-call-store.ts` — singleton wiring: constructs the `VoiceCallStore` with browser seams, routes server voice events (`call_bind_response`/`call_ready`/`call_ended`/`call_status`) into the store, synthesizes a `call_ended` on session displacement
 - `client/src/lib/stores/panel-store.svelte.ts` — PanelStore class: reactive card list for viewed session, handlePanelUpdate/reset methods
 - `client/src/lib/stores/panel-store.svelte.test.ts` — tests
@@ -157,8 +157,14 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/components/TreeDialog.svelte` — tree navigation modal (recursive tree rendering, search/filter, summarization modes, label editor popover, `navigate_tree`/`set_tree_label` commands, lifecycle event handling)
 - `client/src/lib/components/ExtensionStatus.svelte` — extension status display
 - `client/src/lib/components/StatusBar.svelte` — session status header; hosts `CallButton`
-- `client/src/lib/components/CallButton.svelte` — voice-call toggle button in the status bar (bind/end, drives `VoiceCallStore`)
-- `client/src/lib/components/CallBanner.svelte` — sticky in-call banner (mic state, call status, end-call control); mounted in `+layout.svelte`
+- `client/src/lib/components/CallButton.svelte` — voice-call toggle button (`inline` variant for `StatusBar`, `dialog-row` variant labelled Start/End for `SessionSettingsDialog`)
+- `client/src/lib/components/CallingMode.svelte` — full-screen in-call surface rendered conditionally by `+page.svelte`; composes `CallHeader`, a read-only `MessageList`, and `CallGestureZone`
+- `client/src/lib/components/CallHeader.svelte` — top region of calling mode: project/session label, MM:SS duration ticker, mic state, hosts `CallStateRow`
+- `client/src/lib/components/CallStateRow.svelte` — agent-state pulse + label (listening/thinking/speaking); the speaking treatment scales with `remoteAudioLevel`
+- `client/src/lib/components/CallGestureZone.svelte` — bottom region of calling mode; pointer recogniser + audio cues (tap=mute, swipe-up=hang up, swipe-down=abort)
+- `client/src/lib/components/call-state.ts` / `call-state.test.ts` — pure helpers: `AgentState`, `deriveAgentState`, `formatCallDuration`
+- `client/src/lib/components/call-gesture.ts` / `call-gesture.test.ts` — `recognizeCallGesture` pointer-sample gesture recogniser
+- `client/src/lib/call-audio-cues.ts` / `call-audio-cues.test.ts` — `createCallAudioCues` factory: lazy `AudioContext`, mute-on/mute-off/abort-confirm beeps via `OscillatorNode`s
 - `client/src/lib/components/ActiveSessionBar.svelte` — session tab bar with status dots
 - `client/src/lib/components/FolderList.svelte` — folder browser, new-session picker dialog with 'Create new project' multi-step flow (root selection → name input → `create_project`)
 - `client/src/lib/components/SessionItem.svelte` — session list item
@@ -188,7 +194,7 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/highlight-theme.css` — syntax highlight theme
 - `client/src/sw.ts` — service worker (push notifications, notification click handling)
 - `client/src/routes/+page.svelte` — main page (session view or landing)
-- `client/src/routes/+layout.svelte` — app shell, connection init, service worker registration, desktop panel integration (flex sibling), mobile panel overlay, global overlay mounting (`TreeDialog`, `ExtensionDialog`, `CallBanner`)
+- `client/src/routes/+layout.svelte` — app shell, connection init, service worker registration, desktop panel integration (flex sibling), mobile panel overlay, global overlay mounting (`TreeDialog`, `ExtensionDialog`)
 - `client/src/routes/+layout.ts`, `client/src/routes/layout.css` — layout config and styles
 - `client/src/app.html`, `client/src/app.d.ts` — SvelteKit app shell
 - `client/src/test/mocks/app-environment.ts` — test mock

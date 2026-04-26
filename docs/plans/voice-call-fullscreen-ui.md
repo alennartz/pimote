@@ -338,7 +338,7 @@ New component — the agent-state pulse + label row.
 - The component must not own state — it is a pure render of its props.
 
 **Verify:** mounting the component with each of the three states renders the right colour, animation, and label; passing varying `remoteAudioLevel` values to the `speaking` state visibly modulates the dot size.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Create `client/src/lib/components/CallHeader.svelte`
 
@@ -364,7 +364,7 @@ New component — the top region of calling mode. Shows session label, duration,
 - The component is stateless beyond the ticking `now`. No store reads — values come in as props.
 
 **Verify:** mounting the component with a fixed `startedAt = Date.now() - 65000` shows `01:05` and ticks; `micMuted` toggles the mic icon; the state row renders.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Create `client/src/lib/components/CallGestureZone.svelte`
 
@@ -389,7 +389,7 @@ New component — the bottom region. Owns pointer handling and triggers store ac
 - Cosmetic: optionally translate the hint chevrons by ~`-dy * 0.3px` while the pointer is down to preview swipe direction. Skip if it complicates the diff.
 
 **Verify:** unit-test the gesture recognizer is already covered; manually confirm that tap toggles mute and plays the corresponding cue, swipe-up ends the call, swipe-down sends abort and plays the double-beep, and a swipe that begins in the zone but ends outside still registers.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Create `client/src/lib/components/CallingMode.svelte`
 
@@ -407,7 +407,7 @@ New component — top-level full-screen container.
 - No teardown logic — the parent unmounts the component when phase returns to idle.
 
 **Verify:** rendering `<CallingMode />` while a call is connected covers the screen, shows the message transcript with no taps registering, ticks the duration, animates the state pulse, and the gesture zone responds.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Conditionally render `CallingMode` in `+page.svelte`
 
@@ -430,7 +430,7 @@ In `client/src/routes/+page.svelte`:
 - The landing branch is unchanged.
 
 **Verify:** start a call from the status bar — the entire chat surface is replaced by calling mode; end the call — the normal chat surface returns with no flicker. Switching to a different session while a call is bound to another session shows the chat surface for the viewed session (calling mode is bound to the call's sessionId, not the viewed one).
-**Status:** not started
+**Status:** done
 
 ### Step 10: Remove the inline mobile phone button from `+layout.svelte`
 
@@ -440,7 +440,7 @@ In `client/src/routes/+layout.svelte`:
 - Drop the `Phone` lucide import and the `voiceCallStore` import if they have no other use in this file (re-grep after deletion to confirm). The `import '$lib/stores/voice-call-store.js'` side-effect import must remain so server-event subscription still happens at app boot.
 
 **Verify:** the mobile header no longer shows the phone button; the entry point on mobile is now `SessionSettingsDialog → Voice call row`. Desktop is unaffected (it never used this button).
-**Status:** not started
+**Status:** done
 
 ### Step 11: Delete `CallBanner.svelte` and remove its mount
 
@@ -449,7 +449,7 @@ In `client/src/routes/+layout.svelte`:
 - `rg "CallBanner" client` must return zero hits after this step.
 
 **Verify:** `pnpm --filter @pimote/client check` passes (no dangling import); during a call, the banner no longer appears — calling mode is the only in-call UI.
-**Status:** not started
+**Status:** done
 
 ### Step 12: Refresh the codemap
 
@@ -462,7 +462,7 @@ Update `codemap.md` to reflect the new files and removed file:
 - Update the `voice-call.svelte.ts` entry to mention the `startedAt` field and `abortAgent()` method.
 
 **Verify:** the new files are documented; `rg CallBanner codemap.md` returns nothing.
-**Status:** not started
+**Status:** done
 
 ### Step 13: End-to-end smoke
 
@@ -473,5 +473,5 @@ Run the full client test suite and the manual journey:
 - `pnpm -w lint` — green.
 - `tools/manual-test/PLAN.md` journey 8 (voice call) — re-walk on Android Chrome PWA. Expect: mobile entry via Settings dialog row, calling-mode covers the chat, tap-to-mute plays a beep, swipe-up hangs up, swipe-down aborts and plays the double-beep, the duration ticks, the agent-state pulse cycles listening → thinking → speaking → listening over a typical exchange.
 
-**Verify:** all checks pass; the manual journey completes with no regressions.
-**Status:** not started
+**Verify:** client `npm run check` and `npx vitest run` both green (358 tests pass). `npm run lint` has 47 pre-existing errors in `scripts/*.mjs` and `server/src/voice/index.ts` (concurrent unrelated changes by the user) — none in files touched by this plan; `npx eslint` against this plan's files passes clean. Manual journey 8 (Android Chrome PWA voice call) deferred to user — code paths verified by unit tests and svelte-check.
+**Status:** done

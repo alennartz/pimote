@@ -15,15 +15,21 @@ import { connection } from './connection.svelte.js';
 // on WebRTC ICE-connected (Step 7 plan shortcut).
 let storeRef: VoiceCallStore | null = null;
 
-export const voiceCallStore: VoiceCallStore = (storeRef = new VoiceCallStore(
-  createBrowserVoiceCallSeams({
-    connection,
-    getSessionId: () => storeRef?.state.sessionId ?? null,
-    onPeerReady: (sessionId: string) => {
-      storeRef?.handleServerEvent({ type: 'call_ready', sessionId });
-    },
-  }),
-));
+const voiceSeams = createBrowserVoiceCallSeams({
+  connection,
+  getSessionId: () => storeRef?.state.sessionId ?? null,
+  onPeerReady: (sessionId: string) => {
+    storeRef?.handleServerEvent({ type: 'call_ready', sessionId });
+  },
+});
+
+export const voiceCallStore: VoiceCallStore = (storeRef = new VoiceCallStore(voiceSeams));
+
+/** Inbound peer audio level (0..1) for the calling-mode pulse animation.
+ *  Returns 0 when no analyser is attached. */
+export function getRemoteAudioLevel(): number {
+  return voiceSeams.getRemoteAudioLevel?.() ?? 0;
+}
 
 // Subscribe as soon as this module is imported. The listener is retained
 // for the lifetime of the app.

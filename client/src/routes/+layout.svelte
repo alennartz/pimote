@@ -6,7 +6,7 @@
   import ExtensionDialog from '$lib/components/ExtensionDialog.svelte';
   import ExtensionStatus from '$lib/components/ExtensionStatus.svelte';
   import InstallBanner from '$lib/components/InstallBanner.svelte';
-  import CallBanner from '$lib/components/CallBanner.svelte';
+  // Side-effect import: subscribes the voice-call store to server events at app boot.
   import '$lib/stores/voice-call-store.js';
   import TreeDialog from '$lib/components/TreeDialog.svelte';
   import Panel from '$lib/components/Panel.svelte';
@@ -16,8 +16,6 @@
   import Menu from '@lucide/svelte/icons/menu';
   import X from '@lucide/svelte/icons/x';
   import PanelRight from '@lucide/svelte/icons/panel-right';
-  import Phone from '@lucide/svelte/icons/phone';
-  import { voiceCallStore } from '$lib/stores/voice-call-store.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
@@ -272,35 +270,9 @@
       {/if}
 
       {#if sessionRegistry.viewedSessionId}
-        {@const sid = sessionRegistry.viewedSessionId}
-        {@const callState = voiceCallStore.state}
-        {@const inCall = callState.phase !== 'idle' && callState.sessionId === sid}
-        <button
-          type="button"
-          class="border-border inline-flex size-9 shrink-0 items-center justify-center rounded-lg border {inCall
-            ? 'bg-destructive text-destructive-foreground border-destructive'
-            : 'bg-emerald-500/90 text-white'} disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed"
-          onclick={() => {
-            if (inCall) {
-              voiceCallStore.endCall().catch((err) => console.warn('[voice] endCall failed', err));
-            } else {
-              voiceCallStore.startCall(sid).catch((err) => console.warn('[voice] startCall failed', err));
-            }
-          }}
-          disabled={callState.phase !== 'idle' && callState.sessionId !== sid}
-          title={inCall ? 'End voice call' : 'Start voice call'}
-          aria-label={inCall ? 'End voice call' : 'Start voice call'}
-        >
-          <Phone class="size-4" />
-        </button>
-      {/if}
-
-      {#if sessionRegistry.viewedSessionId}
         <SessionSettingsDialog />
       {/if}
     </header>
-
-    <CallBanner />
 
     <!-- Page content -->
     <main class="flex flex-1 flex-col overflow-hidden">
