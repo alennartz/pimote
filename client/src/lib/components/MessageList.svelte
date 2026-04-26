@@ -13,6 +13,14 @@
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
 
+  interface Props {
+    /** When true, disables pointer interaction on rendered messages and
+     *  suppresses the draft-conflict dialog. Visual rendering and
+     *  auto-scroll are unchanged. Default: false. */
+    readOnly?: boolean;
+  }
+  let { readOnly = false }: Props = $props();
+
   // ---- Fork flow ----
 
   let draftDialogOpen = $state(false);
@@ -57,6 +65,12 @@
 
     const currentDraft = sessionRegistry.viewed?.draftText ?? '';
     const selectedText = data.selectedText;
+
+    if (readOnly) {
+      // In read-only calling-mode we never block on a dialog; just bail
+      // before opening any UI.
+      return;
+    }
 
     if (needsDraftPrompt(currentDraft, selectedText)) {
       const choice = await promptDraftChoice();
@@ -196,7 +210,7 @@
 
 <div class="message-list-wrapper">
   <div class="message-list" bind:this={scrollContainer} onscroll={onScroll}>
-    <div class="message-list-inner">
+    <div class="message-list-inner" class:pointer-events-none={readOnly}>
       {#if displayEntries.length === 0 && !sessionRegistry.viewed?.isStreaming}
         <div class="empty-state">
           <p>No messages yet</p>
@@ -223,7 +237,7 @@
   </div>
 
   <!-- Floating abort button (mobile only) -->
-  {#if sessionRegistry.viewed?.isStreaming}
+  {#if sessionRegistry.viewed?.isStreaming && !readOnly}
     <button
       class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 absolute right-3 bottom-3 z-10 flex items-center justify-center rounded-full p-3 shadow-lg transition-colors md:hidden"
       onpointerdown={(e) => e.preventDefault()}

@@ -277,7 +277,7 @@ In `client/src/lib/components/MessageList.svelte`:
 - Do not gate `connection.send` calls behind `readOnly` — the flag is purely a visual / pointer concern.
 
 **Verify:** existing tests still pass; rendering `<MessageList readOnly />` in a sandbox does not respond to taps on messages but still auto-scrolls when new content arrives.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Add `variant` prop to `CallButton.svelte`
 
@@ -298,7 +298,7 @@ In `client/src/lib/components/CallButton.svelte`:
 - `onClick` for `dialog-row` routes to `voiceCallStore.endCall()` when `inCall`, else `voiceCallStore.startCall(sessionId)`.
 
 **Verify:** the existing `StatusBar` usage (`<CallButton sessionId={...} />`) renders unchanged; dropping `<CallButton sessionId={...} variant="dialog-row" />` into a page renders the wider button and toggles between green Start / red End.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Add Voice call row to `SessionSettingsDialog.svelte`
 
@@ -315,7 +315,7 @@ In `client/src/lib/components/SessionSettingsDialog.svelte`:
 - `session` is the existing reactive session reference already in this file; reuse it. Do not gate the row on connection state — disabled-while-no-session is handled inside `CallButton`.
 
 **Verify:** opening the session settings dialog on mobile shows the new Voice call row with a Start / End call button; clicking it toggles a call. Existing rows still render in the right order.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Create `client/src/lib/components/CallStateRow.svelte`
 
