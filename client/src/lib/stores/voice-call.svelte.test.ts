@@ -82,7 +82,7 @@ function setupStore(overrides: Partial<VoiceCallSeams> = {}) {
 describe('VoiceCallStore.startCall', () => {
   it('initial state is idle', () => {
     const { store } = setupStore();
-    expect(store.state).toEqual({ phase: 'idle', sessionId: null, micMuted: false, lastError: null });
+    expect(store.state).toEqual({ phase: 'idle', sessionId: null, micMuted: false, lastError: null, startedAt: null });
   });
 
   it('happy path: idle → binding → connecting, sends call_bind, opens peer + signalling', async () => {
@@ -226,6 +226,90 @@ describe('VoiceCallStore.endCall', () => {
     expect(store.state.phase).toBe('idle');
     expect(peer.closed).toBe(true);
     expect(sig.closed).toBe(true);
+  });
+});
+
+describe('VoiceCallStore.startedAt', () => {
+  it('startedAt is null while binding/connecting', async () => {
+    const { store } = setupStore({ now: () => 5000 } as any);
+    await store.startCall('s-1');
+    expect(store.state.phase).toBe('connecting');
+    expect(store.state.startedAt).toBeNull();
+  });
+
+  it('startedAt is set on the first transition into connected', async () => {
+    const { store } = setupStore({ now: () => 5000 } as any);
+    await store.startCall('s-1');
+    store.handleServerEvent({ type: 'call_ready', sessionId: 's-1' });
+    expect(store.state.phase).toBe('connected');
+    expect(store.state.startedAt).toBe(5000);
+  });
+
+  it('startedAt is not reset by a second call_ready event for the same session', async () => {
+    let t = 1000;
+    const { store } = setupStore({ now: () => (t += 1000) } as any);
+    await store.startCall('s-1');
+    store.handleServerEvent({ type: 'call_ready', sessionId: 's-1' });
+    const first = store.state.startedAt;
+    store.handleServerEvent({ type: 'call_ready', sessionId: 's-1' });
+    expect(store.state.startedAt).toBe(first);
+  });
+
+  it('startedAt is cleared when call_ended returns the store to idle', async () => {
+    const { store } = setupStore({ now: () => 5000 } as any);
+    await store.startCall('s-1');
+    store.handleServerEvent({ type: 'call_ready', sessionId: 's-1' });
+    expect(store.state.startedAt).toBe(5000);
+    store.handleServerEvent({ type: 'call_ended', sessionId: 's-1', reason: 'user_hangup' });
+    expect(store.state.startedAt).toBeNull();
+  });
+
+  it('startedAt is cleared when endCall returns the store to idle', async () => {
+    const { store } = setupStore({ now: () => 5000 } as any);
+    await store.startCall('s-1');
+    store.handleServerEvent({ type: 'call_ready', sessionId: 's-1' });
+    await store.endCall();
+    expect(store.state.startedAt).toBeNull();
+  });
+});
+
+describe('VoiceCallStore.abortAgent', () => {
+  it('sends a command via sendCommand and does not change phase', async () => {
+    const sendCommand = vi.fn(async (cmd: any) => {
+      if (cmd.type === 'call_bind') return okResponse(bindResponseData());
+      return okResponse({});
+    });
+    const { store } = setupStore({ sendCommand: sendCommand as any });
+    await store.startCall('s-1');
+    store.handleServerEvent({ type: 'call_ready', sessionId: 's-1' });
+    expect(store.state.phase).toBe('connected');
+
+    sendCommand.mockClear();
+    await store.abortAgent();
+    expect(store.state.phase).toBe('connected');
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+    const cmd = sendCommand.mock.calls[0][0];
+    expect(cmd.sessionId).toBe('s-1');
+  });
+
+  it('is a no-op when idle', async () => {
+    const sendCommand = vi.fn(async () => okResponse({}));
+    const { store } = setupStore({ sendCommand: sendCommand as any });
+    await store.abortAgent();
+    expect(sendCommand).not.toHaveBeenCalled();
+    expect(store.state.phase).toBe('idle');
+  });
+
+  it('swallows sendCommand errors and stays connected', async () => {
+    const sendCommand = vi.fn(async (cmd: any) => {
+      if (cmd.type === 'call_bind') return okResponse(bindResponseData());
+      throw new Error('ws-down');
+    });
+    const { store } = setupStore({ sendCommand: sendCommand as any });
+    await store.startCall('s-1');
+    store.handleServerEvent({ type: 'call_ready', sessionId: 's-1' });
+    await expect(store.abortAgent()).resolves.toBeUndefined();
+    expect(store.state.phase).toBe('connected');
   });
 });
 

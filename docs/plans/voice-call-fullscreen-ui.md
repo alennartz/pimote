@@ -174,3 +174,67 @@ The mobile-header phone button block in `+layout.svelte` (the `{@const callState
 - **Reconnection / network failure** — no new state. The existing `call_ended` event drops the call; calling mode unmounts via the conditional in `+page.svelte`. Any error surfaces as a transient toast in the normal view (existing toast / banner mechanism, no new component required).
 - **PWA backgrounding / iOS** — not designed around. Inherits whatever Android Chrome does today.
 - **Desktop layout** — unchanged. The mobile-into-dialog move is mobile-only.
+
+## Tests
+
+**Pre-test-write commit:** `da7b78c486b375cd5bcbe83e39c7fac87334bf5d`
+
+### Interface Files
+
+- `client/src/lib/stores/voice-call.svelte.ts` — extended `VoiceCallState` with `startedAt: number | null`; extended `VoiceCallSeams` with optional `getRemoteAudioLevel(): number | null` and `now(): number` test seams; added `VoiceCallStore.abortAgent()` (stub routes through `seams.sendCommand` with the existing protocol shape, leaves phase unchanged); `startedAt` is set on the first transition into `connected` and cleared on every transition back to `idle`.
+- `client/src/lib/components/call-state.ts` — `AgentState` union, `deriveAgentState({ isStreaming, remoteAudioLevel, speakingThreshold })`, and `formatCallDuration(elapsedMs)` for the call-header `MM:SS` (or `H:MM:SS`) display.
+- `client/src/lib/components/call-gesture.ts` — pointer-sample gesture recogniser used by `CallGestureZone.svelte`. Returns `'tap' | 'swipe-up' | 'swipe-down' | null` from a pointerdown→pointerup pair plus tunable thresholds.
+- `client/src/lib/call-audio-cues.ts` — `CallAudioCues` interface and `createCallAudioCues(audioContextFactory?)` factory. Lazy-creates one `AudioContext`, synthesises mute-on / mute-off / abort-confirm beeps via `OscillatorNode`s with short envelopes; the factory parameter is the test seam.
+
+### Test Files
+
+- `client/src/lib/stores/voice-call.svelte.test.ts` — extended with two new describe blocks: `startedAt` lifecycle (set on first `call_ready`, idempotent on re-entry, cleared on `call_ended` and on `endCall`) and `abortAgent` behaviour (sends a session-scoped command, no phase change, no-op while idle, swallows send-command errors). Existing initial-state assertion updated to include `startedAt: null`.
+- `client/src/lib/components/call-state.test.ts` — exercises `deriveAgentState` priority rules and `formatCallDuration` formatting (sub-minute, minute, hour-plus, truncation, negative clamp).
+- `client/src/lib/components/call-gesture.test.ts` — exercises `recognizeCallGesture` for tap/swipe-up/swipe-down classification, threshold edges, ambiguous mid-zone movement, and custom thresholds.
+- `client/src/lib/call-audio-cues.test.ts` — exercises `createCallAudioCues` against an in-memory `AudioContext` fake: lazy context creation, single-beep cues, mute-on > mute-off pitch ordering, double-beep abort cue, destination connection, and finite scheduled durations.
+
+### Behaviors Covered
+
+#### `VoiceCallStore` — `startedAt`
+
+- `startedAt` is `null` while in `binding` and `connecting`.
+- `startedAt` is set to "now" on the first transition into `connected` (the `now` seam pins time in tests).
+- A second `call_ready` event for the same session does not reset `startedAt`.
+- `startedAt` is cleared whenever the store returns to `idle` (via `call_ended` or `endCall`).
+
+#### `VoiceCallStore` — `abortAgent`
+
+- While connected: invokes `seams.sendCommand` exactly once with the active `sessionId`, and the call's phase is unchanged.
+- While idle: is a no-op — no command is sent.
+- If `seams.sendCommand` rejects, the error is swallowed and the call stays connected.
+
+#### `deriveAgentState`
+
+- Returns `'listening'` when neither audio is playing nor the worker is streaming.
+- Returns `'thinking'` when the worker is streaming and no audio is playing.
+- Returns `'speaking'` when `remoteAudioLevel > speakingThreshold` — even if `isStreaming` is also true (audio out is the strongest signal).
+- The threshold is exclusive: a level exactly equal to the threshold is not yet `'speaking'`.
+
+#### `formatCallDuration`
+
+- Sub-minute durations render as `MM:SS` (e.g. `00:01`, `00:59`).
+- Minute-plus durations render as `MM:SS` up to 59:59.
+- Hour-plus durations render as `H:MM:SS`.
+- Sub-second remainders are truncated, not rounded.
+- Negative values clamp to `00:00`.
+
+#### `recognizeCallGesture`
+
+- A small (≤10px), fast (≤300ms) pointerdown→pointerup is a `tap`.
+- A drag with `Δy ≤ -80px` is a `swipe-up`; with `Δy ≥ +80px` is a `swipe-down`.
+- The 80px swipe threshold is inclusive.
+- Movements between the tap and swipe thresholds (e.g. 70px drag, 20px slow drift) are unrecognised (`null`) — no spurious gestures.
+- Custom thresholds override the defaults.
+
+#### `createCallAudioCues`
+
+- The `AudioContext` is constructed lazily on the first cue invocation, never up-front. Subsequent cues reuse the same context.
+- `playMuteOn` schedules a single oscillator beep at a higher pitch than `playMuteOff` (so the user can distinguish mute-on from mute-off by ear).
+- `playAbortConfirm` schedules two oscillators with the second starting after the first — a double-beep distinguishable from the single mute cue.
+- Every cue routes through to `audioContext.destination`.
+- Each scheduled oscillator has `stop > start` (a finite, non-zero envelope).

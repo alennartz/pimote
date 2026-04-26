@@ -6,6 +6,7 @@
 // substitute in-memory fakes for WebRTC / getUserMedia / the signalling WS.
 
 import type { CallBindResponse, CallReadyEvent, CallEndedEvent, CallStatusEvent, PimoteCommand, PimoteResponse } from '@pimote/shared';
+import { voiceTrace } from './voice-trace.js';
 
 // --- Public state shape -------------------------------------------------------
 
@@ -16,6 +17,8 @@ export interface VoiceCallState {
   sessionId: string | null;
   micMuted: boolean;
   lastError: string | null;
+  /** Epoch ms; set when phase first becomes 'connected'; cleared on idle. */
+  startedAt: number | null;
 }
 
 // --- Injectable seams (tests replace these) ----------------------------------
@@ -52,6 +55,17 @@ export interface VoiceCallSeams {
   getUserMedia: () => Promise<{ stream: unknown; tracks: unknown[] }>;
   /** Opens a signalling WS to speechmux. */
   openSignaling: (url: string) => VoiceSignalingSocket;
+  /**
+   * Returns the most recent inbound audio level (0..1) from the active peer.
+   * Null when no peer / no inbound track. Sampled by the calling-mode UI to
+   * drive the speaking-state pulse animation.
+   */
+  getRemoteAudioLevel?: () => number | null;
+  /**
+   * Returns the current epoch ms. Injected so tests can pin time when
+   * asserting on `startedAt`.
+   */
+  now?: () => number;
 }
 
 // --- Store --------------------------------------------------------------------
@@ -64,6 +78,7 @@ export class VoiceCallStore {
     sessionId: null,
     micMuted: false,
     lastError: null,
+    startedAt: null,
   });
 
   private peer: VoicePeerConnection | null = null;
@@ -81,11 +96,12 @@ export class VoiceCallStore {
    * the server emits CallReadyEvent (handed to `handleServerEvent`).
    */
   async startCall(sessionId: string): Promise<void> {
+    voiceTrace('voice_call', 'startCall', { data: { sessionId, prevPhase: this.state.phase } });
     if (this.state.phase !== 'idle') {
       throw new Error('voice_call_already_in_progress');
     }
 
-    this.state = { phase: 'binding', sessionId, micMuted: false, lastError: null };
+    this.state = { phase: 'binding', sessionId, micMuted: false, lastError: null, startedAt: null };
 
     let response: PimoteResponse<Omit<CallBindResponse, 'type' | 'id'>>;
     try {
@@ -95,12 +111,12 @@ export class VoiceCallStore {
         sessionId,
       });
     } catch (err) {
-      this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: (err as Error).message };
+      this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: (err as Error).message, startedAt: null };
       throw err;
     }
 
     if (!response.success || !response.data) {
-      this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: response.error ?? 'call_bind_failed' };
+      this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: response.error ?? 'call_bind_failed', startedAt: null };
       throw new Error(response.error ?? 'call_bind_failed');
     }
 
@@ -115,16 +131,17 @@ export class VoiceCallStore {
       this.signaling = this.seams.openSignaling(webrtcSignalUrl);
     } catch (err) {
       this.teardown();
-      this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: (err as Error).message };
+      this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: (err as Error).message, startedAt: null };
       throw err;
     }
 
-    this.state = { phase: 'connecting', sessionId, micMuted: false, lastError: null };
+    this.state = { phase: 'connecting', sessionId, micMuted: false, lastError: null, startedAt: null };
   }
 
   /** Send call_end and tear down. */
   async endCall(): Promise<void> {
     const sessionId = this.state.sessionId;
+    voiceTrace('voice_call', 'endCall', { data: { sessionId, prevPhase: this.state.phase } });
     if (!sessionId || this.state.phase === 'idle') return;
     this.state = { ...this.state, phase: 'ending' };
 
@@ -134,21 +151,44 @@ export class VoiceCallStore {
       // Fall through to local teardown even if the end command fails.
     }
     this.teardown();
-    this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: null };
+    this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: null, startedAt: null };
+  }
+
+  /**
+   * Send an interrupt custom message to abort the agent's current run. The
+   * call stays connected — this does not change phase. No-op when the store
+   * is idle.
+   *
+   * The wire mechanism is the existing `VOICE_INTERRUPT_CUSTOM_TYPE` already
+   * on the protocol; the implementation will route through `seams.sendCommand`
+   * with the existing protocol shape.
+   */
+  async abortAgent(): Promise<void> {
+    const sessionId = this.state.sessionId;
+    if (!sessionId || this.state.phase === 'idle') return;
+    voiceTrace('voice_call', 'abortAgent', { data: { sessionId, phase: this.state.phase } });
+    try {
+      await this.seams.sendCommand({ type: 'abort', id: crypto.randomUUID(), sessionId });
+    } catch (err) {
+      voiceTrace('voice_call', 'abortAgent_failed', { level: 'warn', data: { err: String(err) } });
+    }
   }
 
   toggleMute(): void {
     if (this.state.phase === 'idle') return;
     const nextMuted = !this.state.micMuted;
+    voiceTrace('voice_call', 'toggleMute', { data: { muted: nextMuted } });
     this.state = { ...this.state, micMuted: nextMuted };
     this.peer?.setMicrophoneEnabled?.(!nextMuted);
   }
 
   /** Handles call_ready / call_ended / call_status events from the pimote WS. */
   handleServerEvent(event: CallReadyEvent | CallEndedEvent | CallStatusEvent): void {
+    voiceTrace('voice_call', `serverEvent:${event.type}`, { data: { sessionId: event.sessionId, prevPhase: this.state.phase } });
     if (event.type === 'call_ready') {
       if (event.sessionId !== this.state.sessionId) return;
-      this.state = { ...this.state, phase: 'connected' };
+      const startedAt = this.state.startedAt ?? (this.seams.now ? this.seams.now() : Date.now());
+      this.state = { ...this.state, phase: 'connected', startedAt };
       return;
     }
     if (event.type === 'call_ended') {
@@ -159,6 +199,7 @@ export class VoiceCallStore {
         sessionId: null,
         micMuted: false,
         lastError: event.reason === 'error' ? 'call_ended_error' : null,
+        startedAt: null,
       };
       return;
     }
