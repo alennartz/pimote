@@ -98,12 +98,22 @@ pimote usable as a phone client.
 
 ### 8. Voice call — bind, in-call, hangup
 
-**What:** On a session, the user clicks **Call**; `call_bind` round-
-trips; the in-call banner shows phase (binding → connecting →
-connected) with mute + hangup controls; hangup sends `call_end` and
-tears down. While a call is active, extension UI bridge dialogs reject
-with `ui_bridge_disabled_in_voice_mode`. Displacement of a call owner
-surfaces `call_ended { reason: 'displaced' }` to the old client.
+**What:** On a session, the user starts a call (mobile: via the
+`Voice call` row in the session-settings dialog; desktop: via the
+inline `Start voice call` button in the status bar); `call_bind` round-
+trips; a full-screen **calling-mode** surface replaces the chat with
+three regions — header (project label + duration + mic state +
+listening / thinking / speaking pulse), read-only transcript, and a
+bottom gesture zone with three gestures: **swipe up = hang up**, **tap
+= mute toggle (with audio cue)**, **swipe down = abort current run
+(with audio cue, call stays connected)**. On call end (hangup,
+server-side end, displacement, or network drop) calling mode auto-
+returns to the normal chat surface for the same session. While a call
+is active, extension UI bridge dialogs reject with
+`ui_bridge_disabled_in_voice_mode`. Displacement of a call owner
+surfaces `call_ended { reason: 'displaced' }` to the old client. There
+is no `CallBanner` strip and no inline phone button in the mobile
+header — calling mode is the only in-call UI.
 
 **Why:** The voice modality (v1) added in the `voice-mode` topic.
 Covers the pimote-side seam — the real WebRTC / STT / TTS path lives
