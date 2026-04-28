@@ -46,7 +46,8 @@ node scripts/voice-mock-smoke.mjs
 CLI — `open`, `snapshot -i`, `click @ref`, `fill`, `eval`, `console`,
 `screenshot`. The manual-testing skill's mandatory-reuse table lists it
 as the default driver for browser / PWA journeys; this repo uses it to
-drive journey 8's PWA half (Call button, in-call banner, hangup).
+drive journey 8's PWA half (Call button, full-screen calling-mode
+surface, gesture-driven mute/hangup/abort).
 
 **Location:** external skill at `~/.agents/skills/agent-browser/` — not
 vendored into this repo. Installed globally as the `agent-browser` CLI.
@@ -66,9 +67,16 @@ agent-browser snapshot -i                     # find @refs
 agent-browser click @<new-session-button>
 agent-browser eval "$(cat patch-getusermedia.js)"  # real MediaStream shim
 agent-browser click @<call-button>
-agent-browser snapshot -i                     # expect Mute + End call
-agent-browser click @<end-call-button>
-agent-browser snapshot -i                     # banner gone
+agent-browser snapshot -i                     # expect calling-mode surface
+                                              # (header + transcript + gesture zone)
+# In-call interactions are gesture-driven: tap = mute toggle,
+# swipe-up = hang up, swipe-down = abort. There is no inline
+# `End call` button; drive hangup via a synthetic swipe-up
+# pointer sequence on the gesture zone, or via
+# `agent-browser eval 'window.__voiceCallStore?.endCall()'`
+# when wired for tests. See docs/manual-tests/voice-call-
+# fullscreen-ui.md for the recipe used in the most recent run.
+agent-browser snapshot -i                     # calling mode gone, chat returns
 ```
 
 **Inputs:** pimote server URL + session refs from each snapshot.

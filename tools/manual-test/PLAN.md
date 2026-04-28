@@ -124,10 +124,13 @@ in speechmux and is exercised separately.
 - `scripts/voice-mock-smoke.mjs` (mock-speechmux, orchestrator +
   extension-runtime layer) for server-side behaviour.
 - `agent-browser` skill for the PWA UI — Call button renders, click
-  emits `call_bind`, in-call banner mounts with mute + hangup, hangup
-  tears down. Real-speechmux end-to-end is blocked on speechmux-repo
-  work; see `docs/manual-tests/voice-mode.md` for the current
-  `agent-browser`-driven run (Re-test 2026-04-21).
+  emits `call_bind`, full-screen calling-mode surface mounts (header +
+  read-only transcript + bottom gesture zone), the three gestures
+  (tap=mute, swipe-up=hangup, swipe-down=abort) drive their respective
+  actions, and hangup tears down back to the chat surface. Real-
+  speechmux end-to-end is blocked on speechmux-repo work; see
+  `docs/manual-tests/voice-call-fullscreen-ui.md` for the current
+  `agent-browser`-driven run.
 
 ## Automation gap (recorded, not an action item for this topic)
 
