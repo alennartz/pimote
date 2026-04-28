@@ -139,7 +139,7 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/stores/panel-store.svelte.test.ts` — tests
 - `client/src/lib/stores/speech.svelte.test.ts` — tests
 - `client/src/lib/components/Panel.svelte` — side panel rendering card list with color-coded borders, header/body/footer sections
-- `client/src/lib/components/MessageList.svelte` — scrollable message list with unified display entries and auto-scroll
+- `client/src/lib/components/MessageList.svelte` — scrollable message list with unified display entries and auto-scroll; `readOnly` prop suppresses input affordances and pointer events for the calling-mode transcript
 - `client/src/lib/components/Message.svelte` — message rendering (user, assistant, custom, system) with per-message TTS toggle
 - `client/src/lib/components/TtsButton.svelte` — per-message text-to-speech play/stop button
 - `client/src/lib/components/TextBlock.svelte` — streaming markdown rendering via smd
@@ -193,7 +193,7 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/utils.ts`, `client/src/lib/index.ts` — utilities
 - `client/src/lib/highlight-theme.css` — syntax highlight theme
 - `client/src/sw.ts` — service worker (push notifications, notification click handling)
-- `client/src/routes/+page.svelte` — main page (session view or landing)
+- `client/src/routes/+page.svelte` — main page (session view or landing); conditionally renders `CallingMode` over the chat surface when the active session is in a voice call
 - `client/src/routes/+layout.svelte` — app shell, connection init, service worker registration, desktop panel integration (flex sibling), mobile panel overlay, global overlay mounting (`TreeDialog`, `ExtensionDialog`)
 - `client/src/routes/+layout.ts`, `client/src/routes/layout.css` — layout config and styles
 - `client/src/app.html`, `client/src/app.d.ts` — SvelteKit app shell
