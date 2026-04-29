@@ -79,7 +79,7 @@
 
         <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
           <span class="text-muted-foreground">Voice call</span>
-          <CallButton sessionId={session?.sessionId} variant="dialog-row" />
+          <CallButton sessionId={session?.sessionId} variant="dialog-row" onAction={() => (open = false)} />
         </div>
 
         {#if contextDisplay}

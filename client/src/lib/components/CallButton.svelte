@@ -11,9 +11,13 @@
      *  - `dialog-row`: wider labelled button used inside SessionSettingsDialog.
      *    Toggles between green Start call / red End call. */
     variant?: 'inline' | 'dialog-row';
+    /** Optional callback fired immediately after a successful start/end
+     *  click (before the async store call resolves). Used by the settings
+     *  dialog to auto-dismiss itself when the user starts/ends a call. */
+    onAction?: () => void;
   }
 
-  let { sessionId, variant = 'inline' }: Props = $props();
+  let { sessionId, variant = 'inline', onAction }: Props = $props();
 
   let inCall = $derived.by(() => {
     if (!sessionId) return false;
@@ -36,11 +40,13 @@
       voiceCallStore.endCall().catch((err) => {
         console.warn('[voice] endCall failed', err);
       });
+      onAction?.();
       return;
     }
     voiceCallStore.startCall(sessionId).catch((err) => {
       console.warn('[voice] startCall failed', err);
     });
+    onAction?.();
   }
 </script>
 

@@ -39,7 +39,7 @@
 <div class="bg-background text-foreground fixed inset-0 z-40 flex flex-col">
   <CallHeader {sessionDisplayName} {folderPath} startedAt={voiceCallStore.state.startedAt} micMuted={voiceCallStore.state.micMuted} {agentState} {remoteAudioLevel} />
 
-  <div class="min-h-0 flex-1 overflow-hidden">
+  <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
     <MessageList readOnly />
   </div>
 
