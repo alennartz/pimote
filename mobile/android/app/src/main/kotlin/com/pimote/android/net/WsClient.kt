@@ -117,7 +117,7 @@ interface WsClient {
     suspend fun <T> request(
         command: PimoteCommand,
         responseSerializer: KSerializer<T>,
-        timeoutMillis: Long = Long.MAX_VALUE,
+        timeoutMillis: Long = 10_000,
     ): TypedResponse<T>
 
     /** Fire-and-forget command send; throws [WsConnectionLost] if not connected. */
@@ -239,7 +239,7 @@ class WsClientImpl(
         attempt += 1
         val d = computeReconnectDelayMs(attempt, random)
         _state.value = WsState.Reconnecting(attempt, d)
-        val parent = kotlinx.coroutines.coroutineScope {
+        kotlinx.coroutines.coroutineScope {
             // run the delay as a child job so the network monitor can cancel it
             val dj = launch { delay(d) }
             delayJob = dj

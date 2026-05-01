@@ -53,7 +53,13 @@ fun ContactsScreen(viewModel: ContactsViewModel) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val labelByPath = PhoneAccountRules.disambiguateFolderLabels(projects.map { it.folderPath })
+    // Disambiguate over the union of project + session folder paths to match the registrar's
+    // input set (PhoneAccountRules.computeDesiredAccounts). Disambiguating projects-only would
+    // let a session whose folder isn't in the current projects snapshot render with a
+    // different prefix than what Telecom registered the account under.
+    val labelByPath = PhoneAccountRules.disambiguateFolderLabels(
+        (projects.map { it.folderPath } + sessions.map { it.folderPath }).distinct(),
+    )
     val rows = buildList {
         projects.forEach { p ->
             val label = labelByPath[p.folderPath] ?: p.folderName

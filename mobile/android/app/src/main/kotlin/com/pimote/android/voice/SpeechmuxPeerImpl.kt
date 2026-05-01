@@ -1,6 +1,5 @@
 package com.pimote.android.voice
 
-import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,9 +26,6 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
-import org.webrtc.DefaultVideoDecoderFactory
-import org.webrtc.DefaultVideoEncoderFactory
-import org.webrtc.EglBase
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.PeerConnection
@@ -43,12 +39,18 @@ import kotlin.coroutines.resumeWithException
  * Production [SpeechmuxPeer] backed by stream-webrtc-android. Each instance
  * is one-shot: construct a new one per call.
  *
+ * The [factory] is a process-wide singleton hoisted into [com.pimote.android.app.AppContainer]
+ * — `PeerConnectionFactory` and its companion `EglBase` allocate non-trivial
+ * native state and must NOT be created (or disposed) per-call. This instance
+ * therefore does not own them; [disconnect] only releases per-call resources
+ * (peer, signaling socket, audio source/track).
+ *
  * Risk flag: architecture risk #2 (OEM Bluetooth route quirks) and risk #3
  * (speechmux `/signal` accepting plain requests) interact here. If signaling
  * auth turns out to require a cookie/header, this is the file that grows.
  */
 class SpeechmuxPeerImpl(
-    appContext: Context,
+    private val factory: PeerConnectionFactory,
     private val httpClient: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : SpeechmuxPeer {
@@ -56,8 +58,6 @@ class SpeechmuxPeerImpl(
     private val _state = MutableStateFlow<PeerState>(PeerState.Idle)
     override val state: StateFlow<PeerState> = _state.asStateFlow()
 
-    private val factory: PeerConnectionFactory by lazy { initFactory(appContext) }
-    private val eglBase: EglBase by lazy { EglBase.create() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
 
@@ -68,19 +68,6 @@ class SpeechmuxPeerImpl(
 
     private val pendingLocalCandidates = mutableListOf<IceCandidate>()
     private var sessionFrameApplied = false
-
-    private fun initFactory(ctx: Context): PeerConnectionFactory {
-        PeerConnectionFactory.initialize(
-            PeerConnectionFactory.InitializationOptions.builder(ctx)
-                .createInitializationOptions(),
-        )
-        val encoder = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
-        val decoder = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
-        return PeerConnectionFactory.builder()
-            .setVideoEncoderFactory(encoder)
-            .setVideoDecoderFactory(decoder)
-            .createPeerConnectionFactory()
-    }
 
     override suspend fun connect(signalUrl: String, sessionId: String) {
         check(_state.value == PeerState.Idle) { "SpeechmuxPeerImpl is one-shot; current state=${_state.value}" }

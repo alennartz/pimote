@@ -17,7 +17,7 @@ Five findings worth flagging — two plan deviations that affect documented beha
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/call/CallController.kt:175-177`
-- **Status:** open
+- **Status:** resolved
 
 Plan step 6 explicitly says:
 
@@ -61,7 +61,7 @@ Nothing in the codebase explicitly starts `InCallActivity` either, so step 17's 
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/net/WsClient.kt:111-118`
-- **Status:** open
+- **Status:** resolved
 
 Plan architecture (line 96):
 
@@ -84,7 +84,7 @@ All in-tree callers (`CallController`, `SessionRepositoryImpl`) rely on the defa
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/voice/SpeechmuxPeerImpl.kt:64-65, 261-272`
-- **Status:** open
+- **Status:** resolved
 
 `AppContainer` constructs a fresh `SpeechmuxPeerImpl` per call via `peerFactory: () -> SpeechmuxPeer = { SpeechmuxPeerImpl(appContext) }`. Each instance lazily creates its own `PeerConnectionFactory` (which initializes the WebRTC native libs and allocates non-trivial native state) and `EglBase`. `disconnect()` releases the peer/track/source/socket but never disposes `factory` or `eglBase`:
 
@@ -107,7 +107,7 @@ Over repeated calls within a single process the leaked native state accumulates.
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/call/InCallScreen.kt:82-92`
-- **Status:** open
+- **Status:** resolved
 
 ```kotlin
 @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
@@ -125,7 +125,7 @@ The collector is never cancelled when the activity is destroyed; it leaks the co
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/net/WsClient.kt:202-211`
-- **Status:** open
+- **Status:** resolved
 
 ```kotlin
 val parent = kotlinx.coroutines.coroutineScope { ... }
@@ -138,7 +138,7 @@ val parent = kotlinx.coroutines.coroutineScope { ... }
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/contacts/ContactsScreen.kt:55-66`
-- **Status:** open
+- **Status:** resolved
 
 The UI calls `disambiguateFolderLabels(projects.map { it.folderPath })` — projects only. The registrar feeds the union of project + session folder paths (`PhoneAccountRules.computeDesiredAccounts`), so a session whose folder isn't in the current `projects` snapshot gets `folderName` as the displayed prefix in the contact list while Telecom registers it under a disambiguated label. Cosmetic divergence; the user-visible label and the Telecom label can disagree on the same row. Easy to align by either using the same union, or extracting the prefix-resolver helper as the plan step 15 suggested ("extract as a UI helper").
 

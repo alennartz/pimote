@@ -2,6 +2,9 @@ package com.pimote.android.ui.call
 
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -83,11 +86,14 @@ class InCallActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         val vm = CallViewModel()
-        // Auto-finish when the controller leaves an active call.
-        @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-        kotlinx.coroutines.GlobalScope.launch {
-            vm.state.collect { s ->
-                if (s is CallState.Ended || s is CallState.Idle) runOnUiThread { finish() }
+        // Auto-finish when the controller leaves an active call. Tied to the
+        // STARTED lifecycle so the collector is cancelled on destroy and does
+        // not retain the activity through a captured `vm`/`runOnUiThread` lambda.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                vm.state.collect { s ->
+                    if (s is CallState.Ended || s is CallState.Idle) finish()
+                }
             }
         }
         setContent { InCallScreen(vm) }

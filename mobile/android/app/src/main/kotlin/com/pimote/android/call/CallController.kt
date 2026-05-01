@@ -172,6 +172,21 @@ class CallControllerImpl(
 
     override fun endCurrentCall() {
         userHangup?.complete(Unit)
+        // Plan §CallController step 6: if state is pre-Active, also cancel callJob and
+        // transition to Ended(currentSessionId, USER_HANGUP). The Active branch is handled
+        // inside the select-race in runOutgoing via the userHangup deferred above.
+        when (_state.value) {
+            is CallState.Dialing,
+            is CallState.Binding,
+            is CallState.Negotiating -> {
+                val sid = currentSessionId
+                callJob?.cancel()
+                callJob = null
+                try { currentPeer?.disconnect() } catch (_: Throwable) { }
+                _state.value = CallState.Ended(sid, CallEndReason.USER_HANGUP)
+            }
+            else -> { /* Idle / Active / Ended — handled by select or no-op */ }
+        }
     }
 
     override fun onAudioStateChanged(audioState: AudioRouteSnapshot) {
