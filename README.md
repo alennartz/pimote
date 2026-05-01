@@ -64,6 +64,8 @@ Pimote is published as the app package `@pimote/pimote` at the repo root, backed
 | **`@pimote/panels`** | `packages/panels/` | Library for extensions to push card data to the UI                |
 | **`@pimote/voice`**  | `packages/voice/`  | Voice-mode pi extension (dormant unless voice mode is configured) |
 
+A separate **native Android client** lives at `mobile/android/` — a voice-first Kotlin app that integrates with Android Auto via `SelfManagedConnectionService`. Independent Gradle project, Docker-based build (`make android-test` / `make android-build`), not part of the npm workspace; speaks the same WebSocket protocol as the PWA. See `mobile/android/README.md`.
+
 ### Server
 
 Node.js process that embeds pi `AgentSession` instances directly via the SDK. Manages session lifecycles, brokers WebSocket connections, buffers events for reconnect replay, bridges extension UI calls, detects conflicting processes, and delivers push notifications.

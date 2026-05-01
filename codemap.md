@@ -2,15 +2,17 @@
 
 ## Overview
 
-Pimote is a PWA + Node.js server for remote access to pi (a coding agent). npm workspace with five packages: shared protocol types, a Node.js HTTP+WebSocket server managing pi AgentSession instances, a SvelteKit PWA client (Svelte 5 runes, shadcn-svelte) for real-time conversation rendering, a panels library for extensions to push structured card data, and a voice extension loaded into every pi session that wires a speechmux sidecar + WebRTC call into a running pi session. Supports multiple concurrent sessions, session ownership/takeover, Web Push notifications, extension UI bridging, a real-time side panel displaying extension-provided cards, and browser-driven voice calls into a pi session (interpreter + worker LLM split, walk-back surgery, speak() tool).
+Pimote is a PWA + Node.js server for remote access to pi (a coding agent). npm workspace with five packages: shared protocol types, a Node.js HTTP+WebSocket server managing pi AgentSession instances, a SvelteKit PWA client (Svelte 5 runes, shadcn-svelte) for real-time conversation rendering, a panels library for extensions to push structured card data, and a voice extension loaded into every pi session that wires a speechmux sidecar + WebRTC call into a running pi session. A separate native Kotlin Android client under `mobile/android/` (independent Gradle project, Docker-based build) is a voice-first peer to the PWA targeting sustained calls and Android Auto via `SelfManagedConnectionService`. Supports multiple concurrent sessions, session ownership/takeover, Web Push notifications, extension UI bridging, a real-time side panel displaying extension-provided cards, and browser-driven or Android-native voice calls into a pi session (interpreter + worker LLM split, walk-back surgery, speak() tool).
 
 ```mermaid
 graph LR
   Protocol --> Server
   Protocol --> Client
+  Protocol -.mirror.-> Android
   Panels --> Server
   Voice --> Server
   Server --> Client
+  Server --> Android
 ```
 
 ### Key Flows
@@ -253,6 +255,29 @@ Workspace package (`@pimote/voice`) — pi extension loaded into every pimote se
 - `packages/voice/src/interpreter-prompt.ts` — `INTERPRETER_PROMPT` constant + composition helpers
 - `packages/voice/src/index.test.ts` — tests
 - `packages/voice/package.json`, `packages/voice/README.md`
+
+### Android Client
+
+Native Kotlin Android app (`mobile/android/`) — voice-first, outgoing-only client complementary to the PWA. Same wire protocol; targets sustained voice calls (mic survives screen lock) and Android Auto integration via the system telephony stack.
+
+**Responsibilities:** persistent WS control connection to a configured pimote origin (auto-reconnect with exponential backoff + network-aware resume), hand-written Kotlin DTOs mirroring the voice-call subset of `shared/src/protocol.ts`, mirroring of the live session/project list into Android Telecom as self-managed `PhoneAccount`s (sanitization + folder-name disambiguation, debounced reconcile-and-diff against `TelecomManager`), outgoing-call orchestration (`open_session` for project hotline calls → `call_bind` with single-retry on owned-displacement → WebRTC peer to speechmux → `call_ready` → Telecom `Active`), in-call UI (Compose: setup screen, contacts screen, in-call screen launched explicitly on call activation), persistent app config via DataStore. Auth handled at the network layer outside the app — no in-app OIDC. No foreground service in v1; the active `SelfManagedConnectionService` connection keeps the process alive while a call is bound. iOS / CarPlay / `CarAppService` out of scope.
+
+**Dependencies:** Protocol (consumed as a reference document — Kotlin DTOs hand-mirror the voice-call subset; reciprocal `KEEP IN SYNC` header comments on `shared/src/protocol.ts` and `mobile/android/.../protocol/Protocol.kt`). Standalone Gradle project; not part of the npm workspace.
+
+**Files:**
+
+- `mobile/android/build.gradle.kts`, `mobile/android/settings.gradle.kts`, `mobile/android/gradle.properties`, `mobile/android/gradle/**`, `mobile/android/gradlew`/`gradlew.bat`, `mobile/android/build.Dockerfile` — Gradle skeleton + the `pimote-android-builder:local` Docker image used by `make android-test` / `make android-build`
+- `mobile/android/app/build.gradle.kts`, `mobile/android/app/src/main/AndroidManifest.xml` — app module build + manifest (registers `PimoteConnectionService`, `MainActivity`, `InCallActivity`; declares `INTERNET` / `RECORD_AUDIO` / `MANAGE_OWN_CALLS` permissions)
+- `mobile/android/app/src/main/kotlin/com/pimote/android/app/` — `PimoteApp` (Application), `AppContainer` (manual DI singleton; constructs `Settings`, `WsClient`, `SessionRepository`, `PhoneAccountRegistrar`, `CallController`, `peerFactory` and observes `CallController.state` to launch `InCallActivity` on `Active`), `MainActivity` (setup vs contacts root)
+- `mobile/android/app/src/main/kotlin/com/pimote/android/protocol/Protocol.kt` — hand-written DTOs and `JsonContentPolymorphic` event dispatcher mirroring `shared/src/protocol.ts` voice/session subset
+- `mobile/android/app/src/main/kotlin/com/pimote/android/net/` — `WsClient` interface + `WsClientImpl` orchestration, `WsTransport` / `NetworkAvailabilityMonitor` test seams, `Backoff.computeReconnectDelayMs`, `OkHttpWsTransport`, `AndroidNetworkAvailabilityMonitor`
+- `mobile/android/app/src/main/kotlin/com/pimote/android/settings/` — `Settings` interface + `SettingsImpl` (DataStore-backed, single `Config(pimoteOrigin)` value)
+- `mobile/android/app/src/main/kotlin/com/pimote/android/session/SessionRepository.kt` — `SessionRepository` + `SessionRepositoryImpl` (bootstrap via `list_folders` then concurrent `list_sessions` per folder, live-event reduction, refetch-on-unarchive, re-bootstrap on WS reconnect) and the pure `reduceSessionEvent` reducer
+- `mobile/android/app/src/main/kotlin/com/pimote/android/telephony/` — `PhoneAccountRegistrar` + `PhoneAccountRegistrarImpl` (debounced reconcile against `TelecomFacade`), `PhoneAccountRules` (sanitization, folder-label disambiguation, handle-id encoding, desired-set computation, diff), `TelecomFacade` test seam + `AndroidTelecomFacade`, `PimoteConnectionService` (self-managed; outgoing-only) + `PimoteConnection` (Telecom `Connection` subclass)
+- `mobile/android/app/src/main/kotlin/com/pimote/android/voice/SpeechmuxPeerImpl.kt` — `SpeechmuxPeer` over `io.getstream:stream-webrtc-android` (signaling WS, ICE candidate buffering until `session` envelope, `AudioRecord` mic, `IceConnectionState.CONNECTED` gate)
+- `mobile/android/app/src/main/kotlin/com/pimote/android/call/CallController.kt` — `CallController` interface + `CallControllerImpl` state machine (`Idle → Dialing → Binding → Negotiating → Active → Ended`, owned-displacement single retry, peer/server/user-hangup race in `Active`)
+- `mobile/android/app/src/main/kotlin/com/pimote/android/ui/setup/SetupScreen.kt`, `mobile/android/app/src/main/kotlin/com/pimote/android/ui/contacts/ContactsScreen.kt`, `mobile/android/app/src/main/kotlin/com/pimote/android/ui/call/InCallScreen.kt` — Compose screens (setup URL field + connection state, contacts list calling `TelecomManager.placeCall`, in-call mute/hangup/route display)
+- `mobile/android/app/src/test/kotlin/com/pimote/android/**` — 93 unit tests against the test seams (`BackoffTest`, `ProtocolJsonTest`, `PhoneAccountRulesTest`, `SessionReducerTest`, `WsClientTest`, `SessionRepositoryImplTest`, `PhoneAccountRegistrarImplTest`, `CallControllerTest` + colocated fakes); run via `make android-test`
 
 ### Manual Test
 

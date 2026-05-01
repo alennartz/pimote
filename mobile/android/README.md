@@ -1,6 +1,6 @@
 # Pimote Native Android Client
 
-Native Kotlin Android client for pimote, optimized for sustained voice calls and Android Auto. See [`docs/plans/native-android-client.md`](../../docs/plans/native-android-client.md) for the architecture.
+Native Kotlin Android client for pimote, optimized for sustained voice calls and Android Auto. See the `Android Client` section in [`codemap.md`](../../codemap.md) for module layout, and decision records [DR-016](../../docs/decisions/DR-016-native-kotlin-android-over-cross-platform.md), [DR-017](../../docs/decisions/DR-017-android-auth-at-network-layer.md), [DR-018](../../docs/decisions/DR-018-sessions-and-projects-as-telecom-phoneaccounts.md) for the architectural choices.
 
 ## Build toolchain
 
