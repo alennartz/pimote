@@ -710,7 +710,7 @@ fun mapWire(w: CallEndReasonWire) = when (w) {
 `onAudioStateChanged(_)` — store on a `MutableStateFlow<AudioRouteSnapshot?>` for UI consumption; no other side effects (per architecture).
 
 **Verify:** `make android-test` — all 14 cases in `CallControllerTest` go green.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Implement production `WsTransport` over OkHttp
 

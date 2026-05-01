@@ -1,7 +1,30 @@
 package com.pimote.android.call
 
+import com.pimote.android.net.WsClient
+import com.pimote.android.protocol.CallBindCommand
+import com.pimote.android.protocol.CallBindErrorCodes
+import com.pimote.android.protocol.CallBindResponseData
+import com.pimote.android.protocol.CallEndCommand
+import com.pimote.android.protocol.CallEndReasonWire
+import com.pimote.android.protocol.CallEndedEvent
+import com.pimote.android.protocol.CallReadyEvent
+import com.pimote.android.protocol.OpenSessionCommand
+import com.pimote.android.protocol.OpenSessionResponseData
 import com.pimote.android.telephony.CallConnection
+import com.pimote.android.voice.PeerConnectionFailed
+import com.pimote.android.voice.PeerState
+import com.pimote.android.voice.SpeechmuxPeer
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 /**
  * The dialing target for a fresh outgoing call.
@@ -118,17 +141,152 @@ enum class AudioRoute { EARPIECE, SPEAKER, BLUETOOTH, WIRED_HEADSET, STREAMING }
  * with the long-lived collaborators. Tests construct it with fakes.
  */
 class CallControllerImpl(
-    private val wsClient: com.pimote.android.net.WsClient,
-    private val peerFactory: () -> com.pimote.android.voice.SpeechmuxPeer,
+    private val wsClient: WsClient,
+    private val peerFactory: () -> SpeechmuxPeer,
     private val scope: kotlinx.coroutines.CoroutineScope,
 ) : CallController {
-    override val state: kotlinx.coroutines.flow.StateFlow<CallState>
-        get() = TODO("not implemented")
+    private val _state = MutableStateFlow<CallState>(CallState.Idle)
+    override val state: StateFlow<CallState> = _state.asStateFlow()
 
-    override fun startOutgoing(target: SessionTarget, connection: com.pimote.android.telephony.CallConnection): Unit =
-        TODO("not implemented")
+    private val _audioRoute = MutableStateFlow<AudioRouteSnapshot?>(null)
+    val audioRoute: StateFlow<AudioRouteSnapshot?> = _audioRoute.asStateFlow()
 
-    override fun endCurrentCall(): Unit = TODO("not implemented")
+    private var callJob: Job? = null
+    private var userHangup: CompletableDeferred<Unit>? = null
+    private var currentSessionId: String? = null
+    private var currentPeer: SpeechmuxPeer? = null
+    private var currentConnection: CallConnection? = null
 
-    override fun onAudioStateChanged(audioState: AudioRouteSnapshot): Unit = TODO("not implemented")
+    private fun newId(): String = java.util.UUID.randomUUID().toString()
+
+    override fun startOutgoing(target: SessionTarget, connection: CallConnection) {
+        callJob?.cancel()
+        userHangup = CompletableDeferred()
+        currentSessionId = null
+        currentPeer = null
+        currentConnection = connection
+        callJob = scope.launch(Dispatchers.Unconfined) {
+            runOutgoing(target, connection)
+        }
+    }
+
+    override fun endCurrentCall() {
+        userHangup?.complete(Unit)
+    }
+
+    override fun onAudioStateChanged(audioState: AudioRouteSnapshot) {
+        _audioRoute.value = audioState
+    }
+
+    private suspend fun runOutgoing(target: SessionTarget, connection: CallConnection) {
+        _state.value = CallState.Dialing(target)
+
+        // 1) Resolve sessionId.
+        val sessionId: String = when (target) {
+            is SessionTarget.ExistingSession -> target.sessionId
+            is SessionTarget.NewSessionInProject -> {
+                val resp = wsClient.request(
+                    OpenSessionCommand(id = newId(), folderPath = target.folderPath),
+                    OpenSessionResponseData.serializer(),
+                )
+                if (!resp.success || resp.data == null) {
+                    connection.markFailed(resp.error ?: "open_session_failed")
+                    _state.value = CallState.Ended(null, CallEndReason.BIND_FAILED)
+                    return
+                }
+                resp.data.sessionId
+            }
+        }
+        currentSessionId = sessionId
+
+        // 2) call_bind, with single retry on `call_bind_failed_owned`.
+        _state.value = CallState.Binding(sessionId)
+        var bind = wsClient.request(
+            CallBindCommand(id = newId(), sessionId = sessionId, force = false),
+            CallBindResponseData.serializer(),
+        )
+        if (!bind.success && bind.error == CallBindErrorCodes.OWNED) {
+            bind = wsClient.request(
+                CallBindCommand(id = newId(), sessionId = sessionId, force = true),
+                CallBindResponseData.serializer(),
+            )
+        }
+        val bindData = bind.data
+        if (!bind.success || bindData == null) {
+            connection.markFailed(bind.error ?: "call_bind_failed")
+            _state.value = CallState.Ended(sessionId, CallEndReason.BIND_FAILED)
+            return
+        }
+
+        // 3) Peer connect.
+        val peer = peerFactory()
+        currentPeer = peer
+        _state.value = CallState.Negotiating(sessionId)
+        try {
+            peer.connect(bindData.webrtcSignalUrl, sessionId)
+        } catch (_: PeerConnectionFailed) {
+            try { wsClient.send(CallEndCommand(id = newId(), sessionId = sessionId)) } catch (_: Throwable) { }
+            connection.markFailed("peer_failed")
+            _state.value = CallState.Ended(sessionId, CallEndReason.PEER_FAILED)
+            return
+        }
+
+        // 4) Await call_ready for this session.
+        wsClient.events.filterIsInstance<CallReadyEvent>().filter { it.sessionId == sessionId }.first()
+        connection.markActive()
+        _state.value = CallState.Active(sessionId)
+
+        // 5) Race: server call_ended | peer Failed | user hangup.
+        val hangup = userHangup ?: CompletableDeferred<Unit>().also { userHangup = it }
+        val outcome: Outcome = coroutineScope {
+            val winner = CompletableDeferred<Outcome>()
+            val w1 = launch(Dispatchers.Unconfined) {
+                val ev = wsClient.events.filterIsInstance<CallEndedEvent>()
+                    .filter { it.sessionId == sessionId }.first()
+                winner.complete(Outcome.RemoteEnded(mapWireReason(ev.reason)))
+            }
+            val w2 = launch(Dispatchers.Unconfined) {
+                peer.state.first { it is PeerState.Failed }
+                winner.complete(Outcome.PeerFailed)
+            }
+            val w3 = launch(Dispatchers.Unconfined) {
+                hangup.await()
+                winner.complete(Outcome.UserHangup)
+            }
+            val r = winner.await()
+            w1.cancel(); w2.cancel(); w3.cancel()
+            r
+        }
+
+        when (outcome) {
+            is Outcome.RemoteEnded -> {
+                connection.markEndedRemotely(outcome.reason)
+                peer.disconnect()
+                _state.value = CallState.Ended(sessionId, outcome.reason)
+            }
+            is Outcome.PeerFailed -> {
+                try { wsClient.send(CallEndCommand(id = newId(), sessionId = sessionId)) } catch (_: Throwable) { }
+                connection.markFailed("peer_failed")
+                _state.value = CallState.Ended(sessionId, CallEndReason.PEER_FAILED)
+            }
+            is Outcome.UserHangup -> {
+                try { wsClient.send(CallEndCommand(id = newId(), sessionId = sessionId)) } catch (_: Throwable) { }
+                peer.disconnect()
+                _state.value = CallState.Ended(sessionId, CallEndReason.USER_HANGUP)
+            }
+        }
+    }
+
+    private sealed interface Outcome {
+        data class RemoteEnded(val reason: CallEndReason) : Outcome
+        object PeerFailed : Outcome
+        object UserHangup : Outcome
+    }
+
+    private fun mapWireReason(w: CallEndReasonWire): CallEndReason = when (w) {
+        CallEndReasonWire.USER_HANGUP -> CallEndReason.USER_HANGUP
+        CallEndReasonWire.DISPLACED -> CallEndReason.DISPLACED
+        CallEndReasonWire.SERVER_ENDED -> CallEndReason.SERVER_ENDED
+        CallEndReasonWire.ERROR -> CallEndReason.SERVER_ENDED
+    }
 }
