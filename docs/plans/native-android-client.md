@@ -610,7 +610,7 @@ Behavior:
 JSON: use the constructor-injected `json` and `PimoteEventSerializer` for events; `PimoteResponse.serializer()` for envelopes; `PimoteCommand.serializer()` for outbound (sealed-interface dispatch handles the `type` discriminator).
 
 **Verify:** `make android-test` — all 9 cases in `WsClientTest` go green: `request correlates response by id`, `request times out`, `in-flight request fails with WsConnectionLost on socket drop`, `events flow surfaces server events`, `unexpected close transitions to Reconnecting with attempt counter`, `network availability resumes immediately resetting backoff`, `disconnect stops the reconnect loop`, `connect is idempotent for the same origin`, `connect with a different origin reconfigures`.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Implement `SessionRepositoryImpl` orchestration
 
