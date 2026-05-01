@@ -73,7 +73,32 @@ object PhoneAccountRules {
      * Apply the sanitization pipeline to [raw]. Returns null if the result is
      * empty (caller skips the entity).
      */
-    fun sanitize(raw: String): String? = TODO("not implemented")
+    fun sanitize(raw: String): String? {
+        // 1. trim, 2. replace ASCII control chars with space, 3. collapse whitespace runs
+        val replaced = buildString(raw.length) {
+            for (c in raw) {
+                if (c in '\u0000'..'\u001F') append(' ') else append(c)
+            }
+        }
+        val collapsed = replaced.trim().replace(Regex("\\s+"), " ")
+        if (collapsed.isEmpty()) return null
+        // 4. truncate to 50 graphemes
+        val it = java.text.BreakIterator.getCharacterInstance()
+        it.setText(collapsed)
+        var count = 0
+        var end = 0
+        var cur = it.first()
+        var next = it.next()
+        while (next != java.text.BreakIterator.DONE) {
+            count++
+            end = next
+            if (count >= 50) break
+            cur = next
+            next = it.next()
+        }
+        val truncated = if (count >= 50) collapsed.substring(0, end) else collapsed
+        return truncated.ifEmpty { null }
+    }
 
     /**
      * Derive unique short labels for the given set of folder paths. Returns a
@@ -84,7 +109,34 @@ object PhoneAccountRules {
      * Example: `["/work/repo", "/personal/repo", "/lone"]` →
      * `{"/work/repo": "work/repo", "/personal/repo": "personal/repo", "/lone": "lone"}`.
      */
-    fun disambiguateFolderLabels(folderPaths: Collection<String>): Map<String, String> = TODO("not implemented")
+    fun disambiguateFolderLabels(folderPaths: Collection<String>): Map<String, String> {
+        // Split each path into segments; start with depth=1 (basename) per path.
+        // Increase depth only for paths whose current label collides with another path.
+        val paths = folderPaths.distinct()
+        val segments = paths.associateWith { p ->
+            p.split('/').filter { it.isNotEmpty() }
+        }
+        val depth = paths.associateWith { 1 }.toMutableMap()
+        fun labelFor(p: String): String {
+            val segs = segments[p]!!
+            val d = depth[p]!!.coerceAtMost(segs.size).coerceAtLeast(1)
+            return segs.takeLast(d).joinToString("/")
+        }
+        // Iterate until stable.
+        repeat(64) {
+            val labels = paths.associateWith { labelFor(it) }
+            val byLabel = labels.entries.groupBy({ it.value }, { it.key })
+            val collisions = byLabel.filterValues { it.size > 1 }
+            if (collisions.isEmpty()) return labels
+            for ((_, colliders) in collisions) {
+                for (p in colliders) {
+                    val segs = segments[p]!!
+                    if (depth[p]!! < segs.size) depth[p] = depth[p]!! + 1
+                }
+            }
+        }
+        return paths.associateWith { labelFor(it) }
+    }
 
     /**
      * Compute the desired Telecom account set from the inputs. Pure function:
@@ -95,13 +147,47 @@ object PhoneAccountRules {
     fun computeDesiredAccounts(
         projects: List<ProjectInput>,
         sessions: List<SessionInput>,
-    ): Map<String, DesiredAccount> = TODO("not implemented")
+    ): Map<String, DesiredAccount> {
+        // Disambiguate label prefixes across the union of folder paths in projects + sessions.
+        val allPaths = (projects.map { it.folderPath } + sessions.map { it.folderPath }).distinct()
+        val labels = disambiguateFolderLabels(allPaths)
+        val out = LinkedHashMap<String, DesiredAccount>()
+        for (p in projects) {
+            val prefix = sanitize(labels[p.folderPath] ?: p.folderName) ?: continue
+            val handleId = projectHandleId(p.folderPath)
+            out[handleId] = DesiredAccount(
+                handleId = handleId,
+                kind = AccountKind.Project(p.folderPath, prefix),
+                label = prefix,
+                shortDescription = "Pimote: $prefix",
+            )
+        }
+        for (s in sessions) {
+            val prefix = sanitize(labels[s.folderPath] ?: s.folderName) ?: continue
+            val nameRaw = s.sessionName ?: "untitled"
+            val sessionPart = sanitize(nameRaw) ?: sanitize("untitled") ?: continue
+            val combined = sanitize("$prefix/$sessionPart") ?: continue
+            val handleId = sessionHandleId(s.sessionId)
+            out[handleId] = DesiredAccount(
+                handleId = handleId,
+                kind = AccountKind.Session(s.sessionId, prefix, sessionPart),
+                label = combined,
+                shortDescription = "Pimote: $combined",
+            )
+        }
+        return out
+    }
 
     /** Diff [current] (handleId → label) against [desired]; emits add/remove/replace ops. */
     fun diff(
         current: Map<String, String>,
         desired: Map<String, String>,
-    ): ReconcileOps = TODO("not implemented")
+    ): ReconcileOps {
+        val toRegister = desired.keys.filter { it !in current }
+        val toUnregister = current.keys.filter { it !in desired }
+        val toReplace = desired.keys.filter { it in current && current[it] != desired[it] }
+        return ReconcileOps(toRegister, toUnregister, toReplace)
+    }
 
     data class ProjectInput(val folderPath: String, val folderName: String)
     data class SessionInput(
@@ -126,10 +212,14 @@ object PhoneAccountRules {
     )
 
     /** Encode a folderPath into the `project:<base64url>` handleId. */
-    fun projectHandleId(folderPath: String): String = TODO("not implemented")
+    fun projectHandleId(folderPath: String): String {
+        val enc = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(folderPath.toByteArray(Charsets.UTF_8))
+        return "project:$enc"
+    }
 
     /** Encode a sessionId into the `session:<id>` handleId. */
-    fun sessionHandleId(sessionId: String): String = TODO("not implemented")
+    fun sessionHandleId(sessionId: String): String = "session:$sessionId"
 }
 
 /**

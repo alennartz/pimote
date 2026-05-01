@@ -546,6 +546,8 @@ Auto integration is fully delegated to `SelfManagedConnectionService` — no `Ca
 
 ## Steps
 
+**Pre-implementation commit:** `98cf0a0248e0c1780ee244c2b5a3b07c26ca21c1`
+
 All steps run inside the `pimote-android-builder:local` container. `make android-test` runs unit tests; `make android-build` runs `assembleDebug`. The pre-existing 26 PASS tests cover `BackoffTest`, `ProtocolJsonTest`, and `SessionReducerTest` for the _opened_ event path that's already trivially `null`-handled — they should keep passing after every step. The remaining 67 RED tests gate each step's verification.
 
 ### Step 1: Implement `PhoneAccountRules` pure helpers
@@ -561,7 +563,7 @@ Notes for the implementer:
 - `diff` partitions the `desired` keyset versus `current` keyset: keys only in desired → `toRegister`; only in current → `toUnregister`; in both with different labels → `toReplace`; identical entries omitted.
 
 **Verify:** `make android-test` — all of `PhoneAccountRulesTest` (≈20 cases) goes green. No other tests regress.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement `reduceSessionEvent`
 
@@ -578,7 +580,7 @@ Reductions per event:
 - All other event types (incl. unknown, call\_\*, session_state_changed, session_closed) → return `ReducerResult(snapshot, emptyList())` unchanged.
 
 **Verify:** `make android-test` — all of `SessionReducerTest` goes green.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Implement `WsClientImpl` orchestration
 
@@ -626,7 +628,7 @@ private var stateJob: Job? = null
 Behavior:
 
 - `start()` — launch (a) an event collector that calls `reduceSessionEvent` for each event, applies the resulting snapshot to `_projects`/`_sessions`, and dispatches each emitted `SessionEffect.RefetchFolder` via a follow-up `wsClient.request(ListSessionsCommand)` whose response merges into `_sessions`; (b) a state-watcher that observes `wsClient.state` and on a `Reconnecting → Connected` transition calls `refresh()`; (c) the initial bootstrap by calling `refresh()` once.
-- `refresh()` — `wsClient.request(ListFoldersCommand(id = uuid()), ListFoldersResponseData.serializer())`. Set `_projects` from response. Then `coroutineScope { folders.map { f -> async { wsClient.request(ListSessionsCommand(id = uuid(), folderPath = f.path, includeArchived = false), ListSessionsResponseData.serializer()) } }.awaitAll() }` and union the returned sessions into `_sessions`. ⚠️ Sequence note for tests: the test scripts ListFolders response first, then list_sessions per folder _in folder order_; issuing the list_sessions calls in `folders` iteration order satisfies this because each `async` enqueues its `request()` (and thus its pending entry) before the next.
+- `refresh()` — `wsClient.request(ListFoldersCommand(id = uuid()), ListFoldersResponseData.serializer())`. Set `_projects` from response. Then `coroutineScope { folders.map { f -> async { wsClient.request(ListSessionsCommand(id = uuid(), folderPath = f.path, includeArchived = false), ListSessionsResponseData.serializer()) } }.awaitAll() }` and union the returned sessions into `_sessions`. ⚠️ Sequence note for tests: the test scripts ListFolders response first, then list*sessions per folder \_in folder order*; issuing the list_sessions calls in `folders` iteration order satisfies this because each `async` enqueues its `request()` (and thus its pending entry) before the next.
 - `stop()` — cancel both jobs.
 
 Merging rule for refetch: replace any existing rows with `folderPath == f.path` with the freshly-returned ones (preserve other folders' rows untouched).

@@ -96,7 +96,65 @@ data class ReducerResult(
  * Projects list is never modified by event reduction — projects are
  * bootstrap-only.
  */
-fun reduceSessionEvent(snapshot: SessionSnapshot, event: PimoteEvent): ReducerResult = TODO("not implemented")
+fun reduceSessionEvent(snapshot: SessionSnapshot, event: PimoteEvent): ReducerResult {
+    val sessions = snapshot.sessions
+    return when (event) {
+        is SessionOpenedEvent -> {
+            if (sessions.any { it.sessionId == event.sessionId }) {
+                ReducerResult(snapshot, emptyList())
+            } else {
+                val added = sessions + SessionMeta(
+                    sessionId = event.sessionId,
+                    folderPath = event.folder.path,
+                    folderName = event.folder.name,
+                    name = null,
+                    archived = false,
+                )
+                ReducerResult(snapshot.copy(sessions = added), emptyList())
+            }
+        }
+        is SessionRenamedEvent -> {
+            if (sessions.none { it.sessionId == event.sessionId }) {
+                ReducerResult(snapshot, emptyList())
+            } else {
+                val updated = sessions.map {
+                    if (it.sessionId == event.sessionId) it.copy(name = event.name) else it
+                }
+                ReducerResult(snapshot.copy(sessions = updated), emptyList())
+            }
+        }
+        is SessionArchivedEvent -> {
+            val filtered = sessions.filterNot { it.sessionId == event.sessionId }
+            val effects = if (!event.archived) listOf(SessionEffect.RefetchFolder(event.folderPath)) else emptyList()
+            ReducerResult(snapshot.copy(sessions = filtered), effects)
+        }
+        is SessionDeletedEvent -> {
+            if (sessions.none { it.sessionId == event.sessionId }) {
+                ReducerResult(snapshot, emptyList())
+            } else {
+                val filtered = sessions.filterNot { it.sessionId == event.sessionId }
+                ReducerResult(snapshot.copy(sessions = filtered), emptyList())
+            }
+        }
+        is SessionReplacedEvent -> {
+            val idx = sessions.indexOfFirst { it.sessionId == event.oldSessionId }
+            if (idx < 0) {
+                ReducerResult(snapshot, emptyList())
+            } else {
+                val old = sessions[idx]
+                val replaced = sessions.toMutableList().also {
+                    it[idx] = old.copy(
+                        sessionId = event.newSessionId,
+                        folderPath = event.folder.path,
+                        folderName = event.folder.name,
+                    )
+                }
+                ReducerResult(snapshot.copy(sessions = replaced), emptyList())
+            }
+        }
+        else -> ReducerResult(snapshot, emptyList())
+    }
+}
 
 /**
  * Production [SessionRepository]. Subscribes to `wsClient.events`, applies
