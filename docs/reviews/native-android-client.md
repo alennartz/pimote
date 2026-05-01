@@ -38,7 +38,9 @@ The `userHangup` deferred is awaited only inside the post-`Active` `select` race
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `mobile/android/app/src/main/AndroidManifest.xml:30-35`
-- **Status:** open
+- **Status:** resolved
+
+Resolution: the plan's `android.intent.action.MAIN` + `android.intent.category.CALL_LAUNCHER` filter was a hallucinated mechanism (`CALL_LAUNCHER` is not a real Android category). Replaced with the standard `SelfManagedConnectionService` pattern: `AppContainer` observes `CallController.state` and launches `InCallActivity` explicitly via `startActivity(Intent(...).addFlags(FLAG_ACTIVITY_NEW_TASK))` when the call transitions to `Active`. The activity's existing `showWhenLocked` / `turnScreenOn` flags handle wake/lock; the activity already finishes itself on `Ended` (see finding #5).
 
 Plan step 16 requires:
 
