@@ -112,3 +112,23 @@ data class AudioRouteSnapshot(
 )
 
 enum class AudioRoute { EARPIECE, SPEAKER, BLUETOOTH, WIRED_HEADSET, STREAMING }
+
+/**
+ * Production [CallController]. Constructed by `AppContainer` once per process
+ * with the long-lived collaborators. Tests construct it with fakes.
+ */
+class CallControllerImpl(
+    private val wsClient: com.pimote.android.net.WsClient,
+    private val peerFactory: () -> com.pimote.android.voice.SpeechmuxPeer,
+    private val scope: kotlinx.coroutines.CoroutineScope,
+) : CallController {
+    override val state: kotlinx.coroutines.flow.StateFlow<CallState>
+        get() = TODO("not implemented")
+
+    override fun startOutgoing(target: SessionTarget, connection: com.pimote.android.telephony.CallConnection): Unit =
+        TODO("not implemented")
+
+    override fun endCurrentCall(): Unit = TODO("not implemented")
+
+    override fun onAudioStateChanged(audioState: AudioRouteSnapshot): Unit = TODO("not implemented")
+}

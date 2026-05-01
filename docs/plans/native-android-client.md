@@ -422,3 +422,90 @@ Auto integration is fully delegated to `SelfManagedConnectionService` — no `Ca
 - **`androidx.datastore:datastore-preferences`** for the small `Settings` config.
 - **Manual DI** via a single `AppContainer` object — Hilt's annotation ceremony isn't justified at this size.
 - **Single Gradle module.** No multi-module split for v1; reconsider if the project grows.
+
+## Tests
+
+**Pre-test-write commit:** `7781ea59a584fa19a965a2f08fa40419186223f2`
+
+### Interface Files
+
+- `mobile/android/settings.gradle.kts`, `mobile/android/build.gradle.kts`, `mobile/android/gradle.properties`, `mobile/android/app/build.gradle.kts`, `mobile/android/gradle/wrapper/*`, `mobile/android/gradlew`, `mobile/android/gradlew.bat`, `mobile/android/.gitignore` — Gradle skeleton for the new Android module (Kotlin 1.9.24, AGP 8.5.2, Compose, kotlinx.serialization, OkHttp, stream-webrtc-android, JUnit 5, kotlinx-coroutines-test, MockK).
+- `mobile/android/app/src/main/AndroidManifest.xml` — manifest registering `PimoteConnectionService` and the v1 permission set (`INTERNET`, `RECORD_AUDIO`, `MANAGE_OWN_CALLS`, etc.).
+- `mobile/android/app/src/main/kotlin/com/pimote/android/app/PimoteApp.kt` — `Application` class placeholder.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/settings/Settings.kt` — `Settings` interface + `Config` data class.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/protocol/Protocol.kt` — hand-written DTOs for `FolderInfo`, `SessionInfo`, `OpenSessionCommand`/`OpenSessionResponseData`, `ListFoldersCommand`/`ListSessionsCommand`, `CallBindCommand`/`CallEndCommand`, `CallBindResponseData`/`CallBindResponseEvent`, `CallReadyEvent`, `CallEndedEvent`/`CallEndReasonWire`, `CallStatusEvent`/`CallStatusWire`, `Session{Opened,Renamed,Archived,Deleted,Replaced}Event`, `PimoteResponse`, `CallBindErrorCodes`, plus a `JsonContentPolymorphicSerializer` for `PimoteEvent`.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/net/WsClient.kt` — `WsClient` interface + `WsState`, `WsConnectionLost`, `WsRequestTimeout`, `TypedResponse<T>`.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/net/Backoff.kt` — pure `computeReconnectDelayMs` schedule.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/net/WsTransport.kt` — `WsTransport` + `NetworkAvailabilityMonitor` test seams.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/voice/SpeechmuxPeer.kt` — `SpeechmuxPeer` interface + `PeerState` + `PeerConnectionFailed`.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/telephony/PhoneAccountRegistrar.kt` — `PhoneAccountRegistrar` interface + `AccountKind` sealed type + `PhoneAccountRules` pure-helpers (sanitize, disambiguateFolderLabels, computeDesiredAccounts, diff, projectHandleId, sessionHandleId).
+- `mobile/android/app/src/main/kotlin/com/pimote/android/telephony/TelecomFacade.kt` — `TelecomFacade` test seam over `TelecomManager` keyed by handleId.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/telephony/CallConnection.kt` — `CallConnection` test seam over `android.telecom.Connection`.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/telephony/PimoteConnection.kt` — `PimoteConnection extends Connection implements CallConnection` (placeholder bodies).
+- `mobile/android/app/src/main/kotlin/com/pimote/android/telephony/PimoteConnectionService.kt` — `ConnectionService` subclass (placeholder bodies).
+- `mobile/android/app/src/main/kotlin/com/pimote/android/call/CallController.kt` — `CallController` interface + `CallState` sealed type + `SessionTarget`, `CallEndReason`, `AudioRouteSnapshot`, `AudioRoute`, plus a `CallControllerImpl` constructor stub for testing.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/session/SessionRepository.kt` — `SessionRepository` interface + `ProjectMeta`, `SessionMeta`, `SessionSnapshot`, `SessionEffect`, `ReducerResult`, and the pure `reduceSessionEvent` function.
+- `shared/src/protocol.ts` — added a "KEEP IN SYNC WITH … Protocol.kt" header block listing every type the Kotlin mirror replicates. No type changes.
+
+### Test Files
+
+- `mobile/android/app/src/test/kotlin/com/pimote/android/net/BackoffTest.kt` — exhaustive coverage of the reconnect-delay schedule.
+- `mobile/android/app/src/test/kotlin/com/pimote/android/protocol/ProtocolJsonTest.kt` — command encoding, response decoding, polymorphic event dispatch by `type`.
+- `mobile/android/app/src/test/kotlin/com/pimote/android/telephony/PhoneAccountRulesTest.kt` — sanitization (whitespace, control chars, grapheme truncation, empty drops), folder-label disambiguation (basename, walk-up, three-way), handleId encoding (project base64url + session id), `computeDesiredAccounts` (label rules, prefix propagation, empty-drop), and the reconcile `diff` operations.
+- `mobile/android/app/src/test/kotlin/com/pimote/android/session/SessionReducerTest.kt` — every `session_*` event reduction path including the unarchive `RefetchFolder` effect and the no-op cases.
+- `mobile/android/app/src/test/kotlin/com/pimote/android/call/Fakes.kt` — hand-rolled `FakeWsClient`, `FakeSpeechmuxPeer`, `FakeCallConnection` used by the controller tests.
+- `mobile/android/app/src/test/kotlin/com/pimote/android/call/CallControllerTest.kt` — outgoing-call state machine driven through every documented branch with `kotlinx-coroutines-test` (`runTest` + `StandardTestDispatcher`).
+
+### Behaviors Covered
+
+#### Backoff schedule (`computeReconnectDelayMs`)
+
+- Rejects `attempt < 1`.
+- Attempt 1 with midpoint random == base delay (500 ms).
+- Doubles per attempt before saturation (500 → 1000 → 2000 → 4000 → 8000 → 16000).
+- Saturates at `maxMs` (30 000 ms) for any attempt past the saturation point.
+- Jitter at `random == 1.0` adds `+jitterFraction * base`; at `0.0` subtracts.
+- Result is never negative even with extreme jitter fraction.
+- Sweep across random seeds stays within `[0, maxMs * (1 + jitterFraction)]`.
+
+#### Protocol DTOs (`ProtocolJsonTest`)
+
+- `OpenSessionCommand`, `ListSessionsCommand`, `CallBindCommand`, `CallEndCommand` encode the right `type` discriminator and required fields.
+- `PimoteResponse` decodes both `success: true` (with embedded `CallBindResponseData`) and `success: false` (with error code).
+- `OpenSessionResponseData` decodes minimal payload.
+- `PimoteEventSerializer` polymorphically dispatches on `type` to: `session_opened`, `session_renamed`, `session_archived`, `session_deleted`, `session_replaced`, `call_bind_response`, `call_ready`, `call_ended` (all four `CallEndReason` values), `call_status` (all four `CallStatus` values).
+- Unknown `type` values throw `UnknownPimoteEventTypeException` carrying the offending discriminator.
+- Missing `type` discriminator throws `IllegalArgumentException`.
+- `CallBindErrorCodes` constants pin to the wire strings the server returns.
+
+#### PhoneAccountRules
+
+- `sanitize`: trims, replaces `\u0000`–`\u001F` with single space, collapses whitespace runs, truncates to 50 graphemes (ASCII and emoji), returns `null` for empty result (whitespace, empty, or all control chars).
+- `disambiguateFolderLabels`: non-colliding basenames stay as basename; two-way collision walks up one segment; three-way collision walks up enough to disambiguate; non-colliding paths in a mixed set keep their basename.
+- `sessionHandleId(id)` == `"session:<id>"`. `projectHandleId(path)` is `"project:<base64url>"` (no `+`/`/`/`=`), stable, and distinct per path.
+- `computeDesiredAccounts`: emits both project and session entries; session label is `"<folderName>/<sessionName>"`; project label is `"<folderName>"`; disambiguated folder prefix propagates to session labels; entries that sanitize to empty are silently dropped; `null` sessionName falls back to a non-empty stable placeholder.
+- `diff`: emits `toRegister` for handles only in desired, `toUnregister` for handles only in current, `toReplace` for label-changed handles, and is fully empty when current == desired.
+
+#### SessionRepository event reducer (`reduceSessionEvent`)
+
+- `session_opened` appends a new unarchived `SessionMeta`; idempotent on duplicate `sessionId`.
+- `session_renamed` updates `name` on the matching row; no-op when sessionId unknown.
+- `session_archived archived=true` removes the row.
+- `session_archived archived=false` emits a `SessionEffect.RefetchFolder` for the folder path.
+- `session_deleted` removes the row; no-op when sessionId unknown.
+- `session_replaced` swaps `oldSessionId` for `newSessionId` preserving metadata; no-op when old row absent.
+- Reduction never mutates the projects list.
+
+#### CallController state machine
+
+- `state` starts at `Idle`.
+- `ExistingSession` target: `Idle → Dialing → Binding → (peer.connect → call_ready) → Active`; bind command issued for `sessionId` with `force = false`; peer asked to connect with the URL from the bind response; `connection.markActive()` called on transition to `Active`.
+- `NewSessionInProject` target: issues `OpenSessionCommand(folderPath)` first, then proceeds with the bind using the returned `sessionId`.
+- `call_bind_failed_owned` triggers a single retry with `force = true`; second success transitions to `Active`.
+- Other bind failure codes (e.g. `session_not_found`) end with `Ended(sessionId, BIND_FAILED)` and `connection.markFailed`.
+- `OpenSessionCommand` failure ends with `Ended(null, BIND_FAILED)` without ever issuing a `call_bind`.
+- Peer-connect failure during `Negotiating` ends with `Ended(sessionId, PEER_FAILED)`, fires a best-effort `CallEndCommand`, and calls `connection.markFailed`.
+- `call_ended` event for the active session triggers `connection.markEndedRemotely`, `peer.disconnect()`, and `Ended(sessionId, mappedReason)`.
+- Peer state transitioning to `Failed` while `Active` ends with `Ended(sessionId, PEER_FAILED)` and a best-effort `CallEndCommand`.
+- `endCurrentCall()` sends best-effort `CallEndCommand`, disconnects the peer, and ends with `Ended(sessionId, USER_HANGUP)`.
+- Events whose `sessionId` doesn't match the controller's current call are ignored — `Active` state is preserved.
