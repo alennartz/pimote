@@ -727,7 +727,7 @@ class OkHttpWsTransport(private val client: OkHttpClient = OkHttpClient()) : WsT
 The `Connection` impl wraps `okhttp3.WebSocket` and a `MutableSharedFlow<WsTransport.Event>` whose events are pumped by an `okhttp3.WebSocketListener` (`onOpen` → `Open`; `onMessage(text)` → `TextMessage(text)`; `onClosed` → `Closed`; `onFailure` → `Failed`). `send(text)` calls `WebSocket.send(text)`. `close(code, reason)` calls `WebSocket.close(code, reason ?: "")`.
 
 **Verify:** `make android-build` succeeds — file compiles.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Implement production `NetworkAvailabilityMonitor` over ConnectivityManager
 
@@ -744,7 +744,7 @@ class AndroidNetworkAvailabilityMonitor(context: android.content.Context) : Netw
 Uses `ConnectivityManager.NetworkCallback` registered via `registerDefaultNetworkCallback` to emit `true` on `onAvailable` and `false` on `onLost`. Replay-1 `MutableStateFlow` upstream so consumers see the current value on subscription.
 
 **Verify:** `make android-build` succeeds.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Implement production `Settings` over DataStore
 
@@ -770,7 +770,7 @@ class SettingsImpl(
 No unit tests scoped — behavior is ~5 lines of DataStore access.
 
 **Verify:** `make android-build` succeeds.
-**Status:** not started
+**Status:** done
 
 ### Step 10: Implement production `SpeechmuxPeer` over stream-webrtc-android
 
@@ -794,7 +794,7 @@ No unit tests scoped (WebRTC requires native libs unavailable on the JVM unit-te
 ⚠️ **Risk flag:** the architecture's risk #2 (OEM Bluetooth route quirks) and risk #3 (speechmux `/signal` accepting plain requests) interact here — if signaling auth turns out to require a cookie/header, this is the file that grows. Don't plan around it.
 
 **Verify:** `make android-build` succeeds.
-**Status:** not started
+**Status:** done
 
 ### Step 11: Implement production `TelecomFacade` adapter
 
@@ -816,7 +816,7 @@ class AndroidTelecomFacade(
 No unit tests scoped.
 
 **Verify:** `make android-build` succeeds.
-**Status:** not started
+**Status:** done
 
 ### Step 12: Implement `PimoteConnection` body
 
@@ -833,7 +833,7 @@ Mappings:
 - `onAbort()` → forward to `onDisconnect()`.
 
 **Verify:** `make android-build` succeeds.
-**Status:** not started
+**Status:** done
 
 ### Step 13: Implement `PimoteConnectionService.onCreateOutgoingConnection` + AppContainer wiring
 
@@ -857,7 +857,7 @@ Update `mobile/android/app/src/main/AndroidManifest.xml`: add `android:name=".ap
 ⚠️ **Risk flag:** architecture risk #1 (dead-app voice-intent routing). v1 deliberately ships without a foreground service. If manual testing shows Assistant fails to wake the app for voice intents, add a foreground service in v1.1 — but do NOT add `startForeground` here.
 
 **Verify:** `make android-build` succeeds. All 67 RED unit tests now green. `make android-test` reports all 93 tests passing.
-**Status:** not started
+**Status:** done
 
 ### Step 14: Setup screen (Compose, minimal)
 

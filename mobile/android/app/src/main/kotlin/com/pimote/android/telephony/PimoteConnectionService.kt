@@ -5,6 +5,9 @@ import android.telecom.ConnectionRequest
 import android.telecom.ConnectionService
 import android.telecom.DisconnectCause
 import android.telecom.PhoneAccountHandle
+import android.telecom.TelecomManager
+import com.pimote.android.app.AppContainer
+import com.pimote.android.call.SessionTarget
 
 /**
  * Android Telecom entry point. Outgoing-only in v1: incoming requests return
@@ -21,7 +24,26 @@ class PimoteConnectionService : ConnectionService() {
         connectionManagerPhoneAccount: PhoneAccountHandle?,
         request: ConnectionRequest?,
     ): Connection {
-        TODO("not implemented")
+        val container = AppContainer.instance
+        val handleId = request?.accountHandle?.id
+        val kind = handleId?.let { container.phoneAccountRegistrar.resolve(it) }
+        if (kind == null) {
+            val c = object : Connection() {}
+            c.setDisconnected(DisconnectCause(DisconnectCause.ERROR, "unknown account"))
+            c.destroy()
+            return c
+        }
+        val target: SessionTarget = when (kind) {
+            is AccountKind.Session -> SessionTarget.ExistingSession(kind.sessionId)
+            is AccountKind.Project -> SessionTarget.NewSessionInProject(kind.folderPath)
+        }
+        val conn = PimoteConnection(container.callController, target)
+        conn.setInitializing()
+        conn.setAudioModeIsVoip(true)
+        conn.connectionCapabilities = Connection.CAPABILITY_MUTE or Connection.CAPABILITY_SUPPORT_HOLD
+        request?.address?.let { conn.setAddress(it, TelecomManager.PRESENTATION_ALLOWED) }
+        container.callController.startOutgoing(target, conn)
+        return conn
     }
 
     override fun onCreateIncomingConnection(
