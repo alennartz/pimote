@@ -2,7 +2,8 @@
         dev dev-server dev-client \
         start start-installed restart test clean help \
         format format-check lint check \
-        install-local install-service deploy redeploy undeploy logs status deploy-paths
+        install-local install-service deploy redeploy undeploy logs status deploy-paths \
+        android-image android-build android-test android-shell android-gradle android-clean
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -165,6 +166,40 @@ logs:
 status:
 	$(SYSTEMCTL) status $(PIMOTE_SERVICE_NAME)
 
+# ── Android client (mobile/android) ───────────────────────────────────────────
+
+ANDROID_DIR := mobile/android
+ANDROID_IMAGE ?= pimote-android-builder:local
+ANDROID_DOCKER_RUN := docker run --rm -t \
+	-v $(CURDIR)/$(ANDROID_DIR):/workspace \
+	-w /workspace \
+	-u $(shell id -u):$(shell id -g) \
+	-e HOME=/workspace/.docker-home \
+	$(ANDROID_IMAGE)
+
+android-image:
+	docker build -f $(ANDROID_DIR)/build.Dockerfile -t $(ANDROID_IMAGE) $(ANDROID_DIR)
+
+android-build:
+	$(ANDROID_DOCKER_RUN) ./gradlew assembleDebug
+
+android-test:
+	$(ANDROID_DOCKER_RUN) ./gradlew test
+
+android-shell:
+	docker run --rm -it \
+		-v $(CURDIR)/$(ANDROID_DIR):/workspace \
+		-w /workspace \
+		-u $(shell id -u):$(shell id -g) \
+		-e HOME=/workspace/.docker-home \
+		$(ANDROID_IMAGE) bash
+
+android-gradle:
+	$(ANDROID_DOCKER_RUN) ./gradlew $(ARGS)
+
+android-clean:
+	$(ANDROID_DOCKER_RUN) ./gradlew clean
+
 # ── Help ──────────────────────────────────────────────────────────────────────
 
 help:
@@ -203,5 +238,13 @@ help:
 	@echo "  logs             Tail service logs"
 	@echo "  status           Show service status"
 	@echo ""
+	@echo "  android-image    Build the Android build container image ($(ANDROID_IMAGE))"
+	@echo "  android-build    Assemble the debug APK inside the build container"
+	@echo "  android-test     Run Android unit tests inside the build container"
+	@echo "  android-shell    Interactive bash shell inside the build container"
+	@echo "  android-gradle   Run an arbitrary gradle task: make android-gradle ARGS=\"<task>\""
+	@echo "  android-clean    gradle clean inside the build container"
+	@echo ""
 	@echo "  help             Show this message"
 	@echo ""
+
