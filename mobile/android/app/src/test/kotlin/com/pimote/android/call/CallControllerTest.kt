@@ -323,6 +323,72 @@ class CallControllerTest {
     }
 
     @Test
+    fun `call_bind_failed_owned retry that also fails ends with BIND_FAILED`() = runTest {
+        val ws = FakeWsClient()
+        val peer = FakeSpeechmuxPeer()
+        val cc = newController(ws, peer, TestScope(StandardTestDispatcher(testScheduler)))
+        val conn = FakeCallConnection()
+
+        cc.startOutgoing(SessionTarget.ExistingSession("S1"), conn)
+        advanceUntilIdle()
+        val first = ws.sent.last { it is CallBindCommand } as CallBindCommand
+        ws.respondNext(
+            TypedResponse<CallBindResponseData>(first.id, success = false, data = null, error = CallBindErrorCodes.OWNED),
+        )
+        advanceUntilIdle()
+        val retry = ws.sent.last { it is CallBindCommand } as CallBindCommand
+        assertEquals(true, retry.force)
+        ws.respondNext(
+            TypedResponse<CallBindResponseData>(retry.id, success = false, data = null, error = CallBindErrorCodes.OWNED),
+        )
+        advanceUntilIdle()
+
+        // No third bind — the retry is single-shot.
+        assertEquals(2, ws.sent.count { it is CallBindCommand })
+        val ended = cc.state.value as CallState.Ended
+        assertEquals(CallEndReason.BIND_FAILED, ended.reason)
+        assertEquals("S1", ended.sessionId)
+        assertTrue(conn.transitions.any { it.startsWith("failed:") })
+    }
+
+    @Test
+    fun `server call_ended maps wire user_hangup to USER_HANGUP`() = runTest {
+        assertWireReasonMaps(CallEndReasonWire.USER_HANGUP, CallEndReason.USER_HANGUP, testScheduler)
+    }
+
+    @Test
+    fun `server call_ended maps wire displaced to DISPLACED`() = runTest {
+        assertWireReasonMaps(CallEndReasonWire.DISPLACED, CallEndReason.DISPLACED, testScheduler)
+    }
+
+    private suspend fun kotlinx.coroutines.test.TestScope.assertWireReasonMaps(
+        wire: CallEndReasonWire,
+        expected: CallEndReason,
+        scheduler: kotlinx.coroutines.test.TestCoroutineScheduler,
+    ) {
+        val ws = FakeWsClient()
+        val peer = FakeSpeechmuxPeer()
+        val cc = newController(ws, peer, TestScope(StandardTestDispatcher(scheduler)))
+        val conn = FakeCallConnection()
+
+        cc.startOutgoing(SessionTarget.ExistingSession("S1"), conn)
+        advanceUntilIdle()
+        val bind = ws.sent.last { it is CallBindCommand } as CallBindCommand
+        ws.respondNext(
+            TypedResponse(bind.id, success = true, data = CallBindResponseData("S1", "wss://m"), error = null),
+        )
+        advanceUntilIdle()
+        ws.emit(CallReadyEvent("S1"))
+        advanceUntilIdle()
+
+        ws.emit(CallEndedEvent("S1", reason = wire))
+        advanceUntilIdle()
+
+        val ended = cc.state.value as CallState.Ended
+        assertEquals(expected, ended.reason)
+    }
+
+    @Test
     fun `state starts at Idle`() {
         val ws = FakeWsClient()
         val peer = FakeSpeechmuxPeer()

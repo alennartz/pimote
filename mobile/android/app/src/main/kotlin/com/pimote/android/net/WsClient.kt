@@ -102,3 +102,40 @@ interface WsClient {
     /** Fire-and-forget command send; throws [WsConnectionLost] if not connected. */
     suspend fun send(command: PimoteCommand)
 }
+
+/**
+ * Production [WsClient]. Wires the OkHttp-backed [WsTransport] and the
+ * connectivity-backed [NetworkAvailabilityMonitor] together with the backoff
+ * schedule from [computeReconnectDelayMs]. Tests construct it with fakes.
+ *
+ * `idGenerator` returns the value placed into the outgoing command's `id` slot
+ * — defaulted to a random UUID in production; tests inject a deterministic
+ * supplier so request-correlation assertions are stable.
+ */
+class WsClientImpl(
+    private val transport: WsTransport,
+    private val networkMonitor: NetworkAvailabilityMonitor,
+    private val scope: kotlinx.coroutines.CoroutineScope,
+    private val json: kotlinx.serialization.json.Json = kotlinx.serialization.json.Json {
+        ignoreUnknownKeys = true; encodeDefaults = true
+    },
+    private val random: kotlin.random.Random = kotlin.random.Random.Default,
+    private val idGenerator: () -> String = { java.util.UUID.randomUUID().toString() },
+) : WsClient {
+    override val state: StateFlow<WsState>
+        get() = TODO("not implemented")
+
+    override val events: SharedFlow<PimoteEvent>
+        get() = TODO("not implemented")
+
+    override fun connect(pimoteOrigin: String): Unit = TODO("not implemented")
+    override fun disconnect(): Unit = TODO("not implemented")
+
+    override suspend fun <T> request(
+        command: PimoteCommand,
+        responseSerializer: KSerializer<T>,
+        timeoutMillis: Long,
+    ): TypedResponse<T> = TODO("not implemented")
+
+    override suspend fun send(command: PimoteCommand): Unit = TODO("not implemented")
+}

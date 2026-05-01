@@ -131,3 +131,22 @@ object PhoneAccountRules {
     /** Encode a sessionId into the `session:<id>` handleId. */
     fun sessionHandleId(sessionId: String): String = TODO("not implemented")
 }
+
+/**
+ * Production [PhoneAccountRegistrar]. Subscribes to the repository's projects
+ * and sessions, debounces the combined upstream by [debounceMs] (500 ms in
+ * production) before each reconciliation pass, and applies the resulting
+ * diff via [TelecomFacade]. Maintains a `Map<handleId, AccountKind>` to back
+ * [resolve]. Tests construct it with a fake repository, fake facade, and a
+ * controlled scheduler.
+ */
+class PhoneAccountRegistrarImpl(
+    private val repository: com.pimote.android.session.SessionRepository,
+    private val telecom: TelecomFacade,
+    private val scope: kotlinx.coroutines.CoroutineScope,
+    private val debounceMs: Long = 500L,
+) : PhoneAccountRegistrar {
+    override fun start(): Unit = TODO("not implemented")
+    override fun stop(): Unit = TODO("not implemented")
+    override fun resolve(handleId: String): AccountKind? = TODO("not implemented")
+}

@@ -97,3 +97,24 @@ data class ReducerResult(
  * bootstrap-only.
  */
 fun reduceSessionEvent(snapshot: SessionSnapshot, event: PimoteEvent): ReducerResult = TODO("not implemented")
+
+/**
+ * Production [SessionRepository]. Subscribes to `wsClient.events`, applies
+ * [reduceSessionEvent], handles emitted [SessionEffect]s (e.g.
+ * [SessionEffect.RefetchFolder]), and re-bootstraps on reconnect. Tests
+ * construct it with a fake WsClient.
+ */
+class SessionRepositoryImpl(
+    private val wsClient: com.pimote.android.net.WsClient,
+    private val scope: kotlinx.coroutines.CoroutineScope,
+) : SessionRepository {
+    override val projects: StateFlow<List<ProjectMeta>>
+        get() = TODO("not implemented")
+
+    override val sessions: StateFlow<List<SessionMeta>>
+        get() = TODO("not implemented")
+
+    override fun start(): Unit = TODO("not implemented")
+    override fun stop(): Unit = TODO("not implemented")
+    override suspend fun refresh(): Unit = TODO("not implemented")
+}

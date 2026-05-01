@@ -455,6 +455,9 @@ Auto integration is fully delegated to `SelfManagedConnectionService` — no `Ca
 - `mobile/android/app/src/test/kotlin/com/pimote/android/session/SessionReducerTest.kt` — every `session_*` event reduction path including the unarchive `RefetchFolder` effect and the no-op cases.
 - `mobile/android/app/src/test/kotlin/com/pimote/android/call/Fakes.kt` — hand-rolled `FakeWsClient`, `FakeSpeechmuxPeer`, `FakeCallConnection` used by the controller tests.
 - `mobile/android/app/src/test/kotlin/com/pimote/android/call/CallControllerTest.kt` — outgoing-call state machine driven through every documented branch with `kotlinx-coroutines-test` (`runTest` + `StandardTestDispatcher`).
+- `mobile/android/app/src/test/kotlin/com/pimote/android/net/WsClientTest.kt` — `WsClientImpl` orchestration via `WsTransport` + `NetworkAvailabilityMonitor` seams: request/response correlation, timeout, drop-while-pending, events flow, reconnect transitions, network-aware resume, idempotent connect, origin-change reconfigure, disconnect halts the loop.
+- `mobile/android/app/src/test/kotlin/com/pimote/android/session/SessionRepositoryImplTest.kt` — `SessionRepositoryImpl` orchestration: bootstrap on `start`, reaction to `SessionEffect.RefetchFolder`, reconnect-driven re-bootstrap, live event reduction.
+- `mobile/android/app/src/test/kotlin/com/pimote/android/telephony/PhoneAccountRegistrarImplTest.kt` — `PhoneAccountRegistrarImpl` orchestration: 500 ms debounce, register/unregister/replace via `TelecomFacade`, `resolve()` lookup, `stop()` clears the registry.
 
 ### Behaviors Covered
 
@@ -509,3 +512,34 @@ Auto integration is fully delegated to `SelfManagedConnectionService` — no `Ca
 - Peer state transitioning to `Failed` while `Active` ends with `Ended(sessionId, PEER_FAILED)` and a best-effort `CallEndCommand`.
 - `endCurrentCall()` sends best-effort `CallEndCommand`, disconnects the peer, and ends with `Ended(sessionId, USER_HANGUP)`.
 - Events whose `sessionId` doesn't match the controller's current call are ignored — `Active` state is preserved.
+- `call_bind_failed_owned` retry that itself fails ends with `Ended(sessionId, BIND_FAILED)` and only two `call_bind` commands are issued (no infinite loop).
+- Wire-reason mapping for `call_ended`: `user_hangup → USER_HANGUP`, `displaced → DISPLACED`, `server_ended → SERVER_ENDED`. (`ERROR` mapping pinned during implementation.)
+
+#### WsClient orchestration (`WsClientTest`)
+
+- `request()` correlates the response to the outgoing command's `id`.
+- `request()` throws `WsRequestTimeout` when no response arrives in time.
+- An in-flight `request()` cancels with `WsConnectionLost` when the underlying socket drops.
+- `events` flow surfaces decoded `PimoteEvent`s.
+- An unexpected close transitions `state` to `Reconnecting(attempt=1, nextDelayMs >= 0)`.
+- A `NetworkAvailabilityMonitor` `false → true` transition resets backoff and triggers an immediate reconnect attempt.
+- `disconnect()` stops the reconnect loop permanently; no further `transport.open()` calls are made.
+- `connect(origin)` is idempotent for the same origin.
+- `connect(otherOrigin)` reconfigures and reopens against the new origin.
+
+#### SessionRepository orchestration (`SessionRepositoryImplTest`)
+
+- `start()` issues `ListFoldersCommand` then concurrent `ListSessionsCommand` per folder, merging into the `projects` and `sessions` `StateFlow`s.
+- Reducer-emitted `SessionEffect.RefetchFolder` drives a `list_sessions` request for that folder; the response merges into `sessions`.
+- A `WsState` transition `Reconnecting → Connected` re-bootstraps.
+- Live events apply the pure reducer end-to-end (a `session_opened` event appears in `sessions`).
+
+#### PhoneAccountRegistrar orchestration (`PhoneAccountRegistrarImplTest`)
+
+- A burst of updates within the 500 ms debounce window collapses to one reconcile pass.
+- The reconcile diff drives `register` / `unregister` / unregister+reregister (replace on label change) on `TelecomFacade`.
+- Sessions removed from the repository are unregistered from Telecom.
+- `resolve(handleId)` returns the appropriate `AccountKind` for both project and session handles, and `null` for unknown ids.
+- `stop()` unregisters all currently-registered handles best-effort.
+
+**Review status:** approved (see `docs/reviews/native-android-client-tests.md`).
