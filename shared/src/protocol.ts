@@ -2,6 +2,21 @@
 // Pimote Wire Protocol Types
 // All WebSocket messages between client and server.
 // Self-contained — no imports from the pi SDK.
+//
+// KEEP IN SYNC WITH: mobile/android/app/src/main/kotlin/com/pimote/android/protocol/Protocol.kt
+//
+// The native Android client hand-mirrors a subset of these types as Kotlin
+// data classes. Any change to the following types MUST be reflected on the
+// Kotlin side (no codegen):
+//   - CallBindCommand / CallEndCommand / CallBindResponse
+//   - CallReadyEvent / CallEndedEvent / CallStatusEvent / CallEndReason / CallStatus
+//   - CallBindErrorCode
+//   - OpenSessionCommand / OpenSessionResponseData
+//   - ListFoldersCommand / ListSessionsCommand
+//   - FolderInfo / SessionInfo
+//   - SessionOpenedEvent / SessionRenamedEvent / SessionArchivedEvent /
+//     SessionDeletedEvent / SessionReplacedEvent
+// See docs/plans/native-android-client.md §Protocol DTOs.
 // ============================================================================
 
 // ----------------------------------------------------------------------------
@@ -162,6 +177,27 @@ export interface FollowUpCommand extends CommandBase {
 
 export interface AbortCommand extends CommandBase {
   type: 'abort';
+}
+
+/**
+ * Diagnostic log entry from the client. The server forwards each entry to its
+ * own logger so client-side voice/call tracing merges into the same
+ * journalctl/log stream as the server-side voice extension. Fire-and-forget
+ * (no response). Strictly for debugging — not part of the persisted
+ * conversation state.
+ */
+export interface ClientLogCommand extends CommandBase {
+  type: 'client_log';
+  /** Log severity. */
+  level: 'debug' | 'info' | 'warn' | 'error';
+  /** Free-form tag, e.g. 'voice_call', 'webrtc', 'signaling'. */
+  tag: string;
+  /** Short message. */
+  message: string;
+  /** Client wall-clock at the moment of logging (ms since epoch). */
+  clientTimestampMs: number;
+  /** Optional structured data; must be JSON-serializable. */
+  data?: Record<string, unknown>;
 }
 
 export interface SetModelCommand extends CommandBase {
@@ -421,6 +457,7 @@ export type PimoteCommand =
   | SteerCommand
   | FollowUpCommand
   | AbortCommand
+  | ClientLogCommand
   | SetModelCommand
   | CycleModelCommand
   | GetAvailableModelsCommand

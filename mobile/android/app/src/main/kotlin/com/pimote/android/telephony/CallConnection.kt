@@ -1,0 +1,25 @@
+package com.pimote.android.telephony
+
+/**
+ * App-side abstraction over [android.telecom.Connection], consumed by
+ * [com.pimote.android.call.CallController]. Production: implemented by
+ * [PimoteConnection], which forwards each call to the framework. Tests:
+ * implemented by a fake.
+ *
+ * The Telecom framework only knows about the underlying [android.telecom.Connection];
+ * this interface exists purely as a unit-test seam so the call-state-machine
+ * logic can be exercised without spinning up Telecom.
+ */
+interface CallConnection {
+    /** Move Telecom to "ringing" (`setRinging()`). */
+    fun markRinging()
+
+    /** Move Telecom to "active" (`setActive()`). */
+    fun markActive()
+
+    /** Move Telecom to disconnected with an ERROR cause and destroy. */
+    fun markFailed(reason: String)
+
+    /** Move Telecom to disconnected with the appropriate end cause and destroy. */
+    fun markEndedRemotely(reason: com.pimote.android.call.CallEndReason)
+}
