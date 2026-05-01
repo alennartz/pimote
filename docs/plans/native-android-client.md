@@ -636,7 +636,7 @@ Merging rule for refetch: replace any existing rows with `folderPath == f.path` 
 Use `java.util.UUID.randomUUID().toString()` for command ids — there's no test seam needed here.
 
 **Verify:** `make android-test` — all 4 cases in `SessionRepositoryImplTest` go green.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Implement `PhoneAccountRegistrarImpl` orchestration
 
@@ -664,7 +664,7 @@ Behavior:
 Note: `combine + debounce` from `kotlinx.coroutines.flow` is `@FlowPreview` in 1.8.x — annotate the method with `@OptIn(kotlinx.coroutines.FlowPreview::class)`.
 
 **Verify:** `make android-test` — all 5 cases in `PhoneAccountRegistrarImplTest` go green.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Implement `CallControllerImpl` state machine
 

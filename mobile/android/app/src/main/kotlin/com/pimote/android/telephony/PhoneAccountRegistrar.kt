@@ -1,5 +1,9 @@
 package com.pimote.android.telephony
 
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.launch
+
 /**
  * The concrete entity behind a Telecom `PhoneAccountHandle.id` — either an
  * existing pimote session or a project hotline (calling it creates a new
@@ -236,7 +240,66 @@ class PhoneAccountRegistrarImpl(
     private val scope: kotlinx.coroutines.CoroutineScope,
     private val debounceMs: Long = 500L,
 ) : PhoneAccountRegistrar {
-    override fun start(): Unit = TODO("not implemented")
-    override fun stop(): Unit = TODO("not implemented")
-    override fun resolve(handleId: String): AccountKind? = TODO("not implemented")
+    private val resolved = mutableMapOf<String, AccountKind>()
+    private var job: kotlinx.coroutines.Job? = null
+
+    @kotlinx.coroutines.ExperimentalCoroutinesApi
+    @kotlinx.coroutines.FlowPreview
+    override fun start() {
+        if (job?.isActive == true) return
+        job = scope.launch {
+            kotlinx.coroutines.flow.combine(repository.projects, repository.sessions) { p, s -> p to s }
+                .debounce(debounceMs)
+                .collect { (projects, sessions) -> reconcile(projects, sessions) }
+        }
+    }
+
+    override fun stop() {
+        job?.cancel()
+        job = null
+        for (id in resolved.keys.toList()) {
+            try { telecom.unregisterPhoneAccount(id) } catch (_: Throwable) { }
+        }
+        resolved.clear()
+    }
+
+    override fun resolve(handleId: String): AccountKind? = resolved[handleId]
+
+    private fun reconcile(
+        projects: List<com.pimote.android.session.ProjectMeta>,
+        sessions: List<com.pimote.android.session.SessionMeta>,
+    ) {
+        val projectInputs = projects.map { PhoneAccountRules.ProjectInput(it.folderPath, it.folderName) }
+        val sessionInputs = sessions.map {
+            PhoneAccountRules.SessionInput(
+                sessionId = it.sessionId,
+                folderPath = it.folderPath,
+                folderName = it.folderName,
+                sessionName = it.name,
+            )
+        }
+        val desired = PhoneAccountRules.computeDesiredAccounts(projectInputs, sessionInputs)
+        val current = telecom.registeredAccounts()
+        val currentLabels = current.mapValues { it.value.label }
+        val desiredLabels = desired.mapValues { it.value.label }
+        val ops = PhoneAccountRules.diff(currentLabels, desiredLabels)
+
+        for (id in ops.toUnregister + ops.toReplace) {
+            try { telecom.unregisterPhoneAccount(id) } catch (_: Throwable) { }
+            resolved.remove(id)
+        }
+        for (id in ops.toRegister + ops.toReplace) {
+            val acct = desired[id] ?: continue
+            try {
+                telecom.registerPhoneAccount(
+                    TelecomFacade.Account(
+                        handleId = acct.handleId,
+                        label = acct.label,
+                        shortDescription = acct.shortDescription,
+                    ),
+                )
+                resolved[id] = acct.kind
+            } catch (_: Throwable) { }
+        }
+    }
 }
