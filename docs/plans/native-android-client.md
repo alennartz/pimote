@@ -868,7 +868,7 @@ UI: single `OutlinedTextField` for `pimoteOrigin`, a `"Connect"` button that cal
 Also add `MainActivity.kt` (`androidx.activity.ComponentActivity`) registered in the manifest with the `LAUNCHER` intent filter, hosting a single-screen NavHost: setup if `settings.current.value == null`, contacts otherwise.
 
 **Verify:** `make android-build` succeeds. Manual: install APK, enter URL, see state become `Connected`.
-**Status:** not started
+**Status:** done
 
 ### Step 15: Contacts screen (Compose, minimal)
 
@@ -877,7 +877,7 @@ Add `mobile/android/app/src/main/kotlin/com/pimote/android/ui/contacts/ContactsS
 UI: a `LazyColumn` rendering project rows then session rows. Each row shows the disambiguated label (use `PhoneAccountRules.disambiguateFolderLabels` + the same label rules as the registrar — extract as a UI helper). Tapping a row builds the `Uri.fromParts("pimote", handleId, null)` and calls `telecomManager.placeCall(uri, bundleOf(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE to PhoneAccountHandle(componentName, handleId)))`. Pull-to-refresh calls `sessionRepository.refresh()`.
 
 **Verify:** `make android-build` succeeds. Manual: tap a row, see the system dialer launch via Telecom and an in-call screen appear.
-**Status:** not started
+**Status:** done
 
 ### Step 16: In-call screen (Compose, minimal)
 
@@ -888,7 +888,7 @@ UI: full-screen layout with the session label, a state line (`Dialing...` / `Bin
 This screen is **launched by Telecom**, not by us — the app must register an activity with the `android.intent.action.MAIN` + `android.intent.category.CALL_LAUNCHER` filter and the `android:showWhenLocked`/`android:turnScreenOn` flags. Provide a thin `InCallActivity` that hosts the Compose screen and routes `CallController.state` transitions to `Idle/Ended` into `finish()`.
 
 **Verify:** `make android-build` succeeds. Manual: place a call from contacts, see the in-call screen, tap hangup, screen dismisses.
-**Status:** not started
+**Status:** done
 
 ### Step 17: Final compile + smoke
 
@@ -898,4 +898,4 @@ Run the full pipeline from a clean state:
 - `make android-build` — `assembleDebug` succeeds; APK lands in `mobile/android/app/build/outputs/apk/debug/`.
 
 **Verify:** the two commands above succeed cleanly. The APK installs on a stock-Android device, the setup screen accepts an origin, the contacts screen lists projects/sessions, and tapping a row places a call through Telecom that progresses through `Dialing → Binding → Negotiating → Active`. Risks #1–#4 from the architecture remain explicitly accepted and documented; no regressions hidden behind workarounds in this step.
-**Status:** not started
+**Status:** done
