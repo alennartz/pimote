@@ -57,6 +57,28 @@ class PimoteConnectionService : ConnectionService() {
         return conn
     }
 
+    /**
+     * Defensive teardown when the user swipes the app away from Recents.
+     *
+     * Self-managed Telecom keeps the ConnectionService bound while a [Connection]
+     * is alive, which keeps the process alive, which keeps libwebrtc's
+     * AudioRecord open — leaving the system mic indicator lit and blocking other
+     * apps from using the mic. Forcing a [CallController.onAppShutdown] here
+     * disposes the WebRTC AudioSource and destroys the Telecom Connection so the
+     * service can unbind and the process can die.
+     *
+     * Safe to call when there is no active call — [CallController.onAppShutdown]
+     * is idempotent.
+     */
+    override fun onTaskRemoved(rootIntent: android.content.Intent?) {
+        try {
+            AppContainer.instance.callController.onAppShutdown()
+        } catch (_: Throwable) {
+            // AppContainer not initialized / already torn down — nothing to do.
+        }
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onCreateIncomingConnection(
         connectionManagerPhoneAccount: PhoneAccountHandle?,
         request: ConnectionRequest?,
