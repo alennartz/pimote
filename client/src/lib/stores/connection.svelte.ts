@@ -56,6 +56,7 @@ class ConnectionStore {
       return;
     }
 
+    this.installLifecycleListeners();
     this.ready = false;
     this.clearCountdownInterval();
     this.phase = 'connecting';
@@ -227,6 +228,39 @@ class ConnectionStore {
       this.reconnectTimer = null;
     }
     this.ws?.close();
+  }
+
+  /**
+   * Cancel any pending backoff and attempt to reconnect immediately.
+   * Called when the app regains focus / visibility / network — the user is
+   * waiting and the old backoff delay is no longer meaningful.
+   */
+  reconnectNow(): void {
+    // Only act when we're sitting in backoff. If a connect attempt is already
+    // in flight (or we're already connected), let it run.
+    if (this.phase !== 'backoff') return;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.clearCountdownInterval();
+    this.reconnectCountdown = 0;
+    this.reconnectDelay = 1000;
+    this.connect();
+  }
+
+  private lifecycleListenersInstalled = false;
+  private installLifecycleListeners(): void {
+    if (this.lifecycleListenersInstalled) return;
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    this.lifecycleListenersInstalled = true;
+    const trigger = () => this.reconnectNow();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') trigger();
+    });
+    window.addEventListener('focus', trigger);
+    window.addEventListener('online', trigger);
+    window.addEventListener('pageshow', trigger);
   }
 
   addSubscribedSession(id: string, folderPath: string): void {
