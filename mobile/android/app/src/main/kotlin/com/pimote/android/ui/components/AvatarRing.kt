@@ -28,6 +28,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.pimote.android.R
+import com.pimote.android.ui.call.formatCallDuration
 import com.pimote.android.ui.theme.PimoteTheme
 
 sealed interface AvatarRingState {
@@ -163,7 +164,7 @@ fun AvatarRing(
             }
             is AvatarRingState.Active -> {
                 Text(
-                    text = formatDuration(state.durationSeconds),
+                    text = formatCallDuration(state.durationSeconds),
                     style = typography.mono14,
                     color = colors.active,
                     textAlign = TextAlign.Center,
@@ -191,9 +192,3 @@ fun AvatarRing(
     }
 }
 
-private fun formatDuration(seconds: Long): String {
-    val safe = if (seconds < 0) 0L else seconds
-    val m = safe / 60
-    val s = safe % 60
-    return "%02d:%02d".format(m, s)
-}

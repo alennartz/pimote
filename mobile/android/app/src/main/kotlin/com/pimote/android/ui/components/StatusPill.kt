@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -84,21 +86,30 @@ fun StatusPill(
         modifier = modifier,
     ) { isCollapsed ->
         if (isCollapsed) {
+            // Collapsed dot: take the full width of whatever the caller gave us and
+            // align the tappable target to the trailing edge so the dot sits near the
+            // app bar's trailing area regardless of the parent's arrangement.
             Box(
-                modifier = Modifier
-                    .heightIn(min = 48.dp)
-                    .clickable {
-                        onTap()
-                        expandTrigger++
-                    }
-                    .padding(PaddingValues(horizontal = 12.dp, vertical = 8.dp)),
-                contentAlignment = Alignment.Center,
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.CenterEnd,
             ) {
                 Box(
                     modifier = Modifier
-                        .size(6.dp)
-                        .background(dotColor, CircleShape),
-                )
+                        .heightIn(min = 48.dp)
+                        .wrapContentWidth(Alignment.End)
+                        .clickable {
+                            onTap()
+                            expandTrigger++
+                        }
+                        .padding(PaddingValues(horizontal = 12.dp, vertical = 8.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .background(dotColor, CircleShape),
+                    )
+                }
             }
         } else {
             Row(

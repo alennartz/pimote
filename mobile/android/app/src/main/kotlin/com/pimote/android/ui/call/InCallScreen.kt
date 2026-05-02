@@ -60,11 +60,18 @@ class CallViewModel : ViewModel() {
         container.callController.state,
         container.sessionRepository.sessions,
     ) { callState, sessions ->
-        when (callState) {
-            is CallState.Active -> sessions.firstOrNull { it.sessionId == callState.sessionId }?.let {
+        val sid: String? = when (callState) {
+            is CallState.Binding -> callState.sessionId
+            is CallState.Negotiating -> callState.sessionId
+            is CallState.Active -> callState.sessionId
+            is CallState.Ended -> callState.sessionId
+            is CallState.Dialing,
+            CallState.Idle -> null
+        }
+        sid?.let { id ->
+            sessions.firstOrNull { it.sessionId == id }?.let {
                 it.name?.takeIf { n -> n.isNotBlank() } ?: "Untitled session"
             }
-            else -> null
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 

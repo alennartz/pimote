@@ -84,18 +84,25 @@ fun ContactsScreen(viewModel: ContactsViewModel, onEditSettings: () -> Unit) {
     var refreshing by remember { mutableStateOf(false) }
     var loadingHandleId by remember { mutableStateOf<String?>(null) }
 
-    val labelByPath = PhoneAccountRules.disambiguateFolderLabels(
-        (projects.map { it.folderPath } + sessions.map { it.folderPath }).distinct(),
-    )
-    val rows = buildList {
-        projects.forEach { p ->
-            val label = labelByPath[p.folderPath] ?: p.folderName
-            add(ContactRowData(PhoneAccountRules.projectHandleId(p.folderPath), label, isProject = true))
-        }
-        sessions.forEach { s ->
-            val prefix = labelByPath[s.folderPath] ?: s.folderName
-            val name = s.name?.takeIf { it.isNotBlank() } ?: "untitled"
-            add(ContactRowData(PhoneAccountRules.sessionHandleId(s.sessionId), "$prefix/$name", isProject = false))
+    // Recompute the row list only when projects/sessions change, not on every
+    // recomposition (e.g. wsState changes, refreshing toggles, snackbar state).
+    // LazyColumn's stable `key = { it.handleId }` keeps row identity even when
+    // the list reference changes, but avoiding the rebuild saves needless
+    // allocation and sorting on every recomposition.
+    val rows = remember(projects, sessions) {
+        val labelByPath = PhoneAccountRules.disambiguateFolderLabels(
+            (projects.map { it.folderPath } + sessions.map { it.folderPath }).distinct(),
+        )
+        buildList {
+            projects.forEach { p ->
+                val label = labelByPath[p.folderPath] ?: p.folderName
+                add(ContactRowData(PhoneAccountRules.projectHandleId(p.folderPath), label, isProject = true))
+            }
+            sessions.forEach { s ->
+                val prefix = labelByPath[s.folderPath] ?: s.folderName
+                val name = s.name?.takeIf { it.isNotBlank() } ?: "untitled"
+                add(ContactRowData(PhoneAccountRules.sessionHandleId(s.sessionId), "$prefix/$name", isProject = false))
+            }
         }
     }
 

@@ -24,7 +24,7 @@ The mute button toggles only the local `var muted by remember { mutableStateOf(f
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/call/InCallScreen.kt:57-67, 121`
-- **Status:** open
+- **Status:** resolved
 
 `sessionDisplayName` only resolves a name when `state is CallState.Active`, so during `Dialing` / `Binding` / `Negotiating` and after `Ended` the title collapses to the literal `"Pimote"`. When a call fails, the user sees `"Pimote"` + the failure reason with no indication of which session it was. Every non-`Idle` `CallState` variant carries a `sessionId`; sourcing the name from that would keep the header meaningful end-to-end.
 
@@ -33,7 +33,7 @@ The mute button toggles only the local `var muted by remember { mutableStateOf(f
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/setup/SetupScreen.kt:75`
-- **Status:** open
+- **Status:** resolved
 
 `var origin by rememberSaveable { mutableStateOf(current?.pimoteOrigin ?: "") }` evaluates its initializer once. `current` is a `StateFlow<Settings.Config?>` that almost certainly starts at `null` on cold start and only emits the persisted config after disk I/O completes. By the time the value arrives, `origin` is fixed at `""` and is never updated, so a returning user with a saved URL still sees an empty field. A `LaunchedEffect(current) { current?.pimoteOrigin?.let { if (origin.isBlank()) origin = it } }` (or seeding from an initial value on the ViewModel) closes the gap.
 
@@ -51,7 +51,7 @@ Step 15 specified a post-tap spinner on the row driven by `loadingHandleId`. The
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/components/StatusPill.kt:84-100`
-- **Status:** open
+- **Status:** resolved
 
 Step 6: _"render only the 6dp dot (no text) and align the pill to the trailing edge so it appears near the app bar's trailing area."_ The collapsed branch renders a bare `Box` with no horizontal alignment / `Modifier.align` / `Arrangement.End`, and neither `ContactsScreen` nor `SetupScreen` arranges the pill toward the end. The dot ends up wherever the parent layout puts it.
 
@@ -60,7 +60,7 @@ Step 6: _"render only the 6dp dot (no text) and align the pill to the trailing e
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/components/ContactRow.kt:38-46`
-- **Status:** open
+- **Status:** resolved
 
 Step 7 specified a 100ms background flash to `surfacePlus` (suggested via `rememberRipple(color = surfacePlus)` or `Surface(onClick = ...)`). Implementation uses bare `Modifier.clickable(onClick = ...)` with the default ripple color.
 
@@ -69,7 +69,7 @@ Step 7 specified a 100ms background flash to `surfacePlus` (suggested via `remem
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/components/PimoteButton.kt:78-90`
-- **Status:** open
+- **Status:** resolved
 
 Step 10 specified press feedback as _"16% ink overlay + 0.98 scale at 100ms."_ Only the 0.98 scale is implemented; no overlay tint is applied on press.
 
@@ -78,7 +78,7 @@ Step 10 specified press feedback as _"16% ink overlay + 0.98 scale at 100ms."_ O
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/components/PimoteButton.kt:80-84`
-- **Status:** open
+- **Status:** resolved
 
 Step 10 called for `Modifier.widthIn(min = ...)` or fixed width to prevent layout jump when toggling `isLoading`. Not implemented — when no `leadingIcon` is supplied (default), the width changes between the spinner-present and spinner-absent states.
 
@@ -87,7 +87,7 @@ Step 10 called for `Modifier.widthIn(min = ...)` or fixed width to prevent layou
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/components/PimoteSnackbar.kt:38-53`
-- **Status:** open
+- **Status:** resolved
 
 Step 12 specified the inner `Snackbar` `modifier = Modifier.padding(16.dp).height(52.dp).border(...)`. Implementation uses `heightIn(min = 52.dp)` (acceptable drift) but drops the inner 16.dp padding — only the host carries it. Total margin is unchanged in practice; noting the spec divergence.
 
@@ -96,7 +96,7 @@ Step 12 specified the inner `Snackbar` `modifier = Modifier.padding(16.dp).heigh
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/components/AvatarRing.kt:175-181`
-- **Status:** open
+- **Status:** resolved
 
 Step 9 introduces `formatCallDuration` in `CallStateHelpers.kt` (and tests it). `AvatarRing` defines its own private `formatDuration` instead of reusing the helper. Output identical, but the helper-extraction intent is muddied and there's now an untested duplicate.
 
@@ -114,7 +114,7 @@ Step 9 introduces `formatCallDuration` in `CallStateHelpers.kt` (and tests it). 
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/contacts/ContactsScreen.kt:97-110`
-- **Status:** open
+- **Status:** resolved
 
 `labelByPath` and `rows` are derived in-line without `remember(projects, sessions)`, so they're rebuilt every recomposition (e.g., `wsState` changes, `refreshing` toggles, snackbar state). Not a correctness bug — `LazyColumn`'s `key = { it.handleId }` keeps row identity stable — but a cheap `remember(projects, sessions) { … }` avoids needless allocation/sorting.
 

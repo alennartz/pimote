@@ -1,6 +1,11 @@
 package com.pimote.android.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,7 +19,10 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -34,10 +42,23 @@ fun ContactRow(
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    // 100ms background flash to surfacePlus on press, fading back when released.
+    val flashColor by animateColorAsState(
+        targetValue = if (pressed) PimoteTheme.colors.surfacePlus else Color.Transparent,
+        animationSpec = tween(durationMillis = 100),
+        label = "contact-row-flash",
+    )
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onTap)
+            .background(flashColor)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onTap,
+            )
             .heightIn(min = 72.dp)
             .padding(
                 horizontal = PimoteTheme.spacing.ml,

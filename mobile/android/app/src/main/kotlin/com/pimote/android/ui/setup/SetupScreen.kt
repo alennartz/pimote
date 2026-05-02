@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -72,6 +73,15 @@ fun SetupScreen(viewModel: SetupViewModel, onConnected: () -> Unit) {
     val current by viewModel.current.collectAsState()
     val wsState by viewModel.wsState.collectAsState()
     var origin by rememberSaveable { mutableStateOf(current?.pimoteOrigin ?: "") }
+    // `current` is a StateFlow that starts at null on cold start and only emits the persisted
+    // config after disk I/O completes. Seed `origin` once the value arrives, but only if the
+    // user hasn't started typing yet (origin still blank).
+    LaunchedEffect(current) {
+        val persisted = current?.pimoteOrigin
+        if (!persisted.isNullOrBlank() && origin.isBlank()) {
+            origin = persisted
+        }
+    }
     var inFlight by remember { mutableStateOf(false) }
     var connectError by remember { mutableStateOf<String?>(null) }
     val snackbar = remember { SnackbarHostState() }

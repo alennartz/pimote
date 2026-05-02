@@ -6,8 +6,11 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
@@ -21,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
@@ -84,12 +88,18 @@ fun PimoteButton(
         label = "pimote-button-scale",
     )
 
+    // 16% ink overlay drawn on top of the button content while pressed.
+    val pressOverlay = colors.ink.copy(alpha = 0.16f)
     Button(
         onClick = onClick,
         modifier = modifier
             .height(52.dp)
             .scale(scale)
-            .alpha(if (enabled) 1f else 0.38f),
+            .alpha(if (enabled) 1f else 0.38f)
+            .drawWithContent {
+                drawContent()
+                if (pressed) drawRect(pressOverlay)
+            },
         enabled = enabled && !isLoading,
         shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
         colors = ButtonDefaults.buttonColors(
@@ -106,19 +116,27 @@ fun PimoteButton(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(spacing.s),
         ) {
-            if (isLoading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    color = palette.content,
-                    strokeWidth = 2.dp,
-                )
-            } else if (leadingIcon != null) {
-                Icon(
-                    painter = leadingIcon,
-                    contentDescription = null,
-                    tint = palette.content,
-                    modifier = Modifier.size(16.dp),
-                )
+            // Reserve the 16dp leading slot whenever the caller might toggle
+            // `isLoading`, so the button width stays stable across the toggle.
+            // When neither a leading icon nor a spinner is shown, render an
+            // invisible placeholder so the layout still allocates the slot.
+            Box(modifier = Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.fillMaxSize(),
+                        color = palette.content,
+                        strokeWidth = 2.dp,
+                    )
+                } else if (leadingIcon != null) {
+                    Icon(
+                        painter = leadingIcon,
+                        contentDescription = null,
+                        tint = palette.content,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Spacer(modifier = Modifier.fillMaxSize())
+                }
             }
             Text(text = label, style = typography.labelMedium)
         }

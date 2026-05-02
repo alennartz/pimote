@@ -42,6 +42,7 @@ fun PimoteSnackbarHost(
             containerColor = colors.surfacePlus,
             contentColor = colors.ink,
             modifier = Modifier
+                .padding(16.dp)
                 .heightIn(min = 52.dp)
                 .border(1.dp, colors.line, shape),
         ) {
