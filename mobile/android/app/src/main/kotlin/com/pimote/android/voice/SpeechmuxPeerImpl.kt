@@ -45,11 +45,12 @@ import kotlin.coroutines.resumeWithException
  * Production [SpeechmuxPeer] backed by stream-webrtc-android. Each instance
  * is one-shot: construct a new one per call.
  *
- * The [factory] is a process-wide singleton hoisted into [com.pimote.android.app.AppContainer]
- * — `PeerConnectionFactory` and its companion `EglBase` allocate non-trivial
- * native state and must NOT be created (or disposed) per-call. This instance
- * therefore does not own them; [disconnect] only releases per-call resources
- * (peer, signaling socket, audio source/track).
+ * Ownership: this instance now OWNS the [factory] and [adm] passed to it.
+ * AppContainer builds a fresh PeerConnectionFactory + JavaAudioDeviceModule
+ * pair per call so that [disconnect] can release the ADM — which in turn
+ * fully releases the underlying AudioRecord and clears the system mic
+ * privacy indicator. AudioRecord.stop() alone is not enough on Pixel; only
+ * AudioDeviceModule.release() actually closes the AudioRecord.
  *
  * Wire protocol mirrors the PWA's `voice-call-seams.ts`:
  *
@@ -64,6 +65,7 @@ import kotlin.coroutines.resumeWithException
  */
 class SpeechmuxPeerImpl(
     private val factory: PeerConnectionFactory,
+    private val adm: org.webrtc.audio.JavaAudioDeviceModule,
     private val httpClient: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : SpeechmuxPeer {
@@ -275,6 +277,7 @@ class SpeechmuxPeerImpl(
             "session" -> applySessionFrame(env.payload, pc)
             "answer" -> {
                 val sdp = env.payload["sdp"]?.jsonPrimitive?.content ?: return
+                logAnswerSdp(sdp)
                 setRemoteDescription(pc, SessionDescription(SessionDescription.Type.ANSWER, sdp))
                 // Drain any candidates that arrived before the answer was
                 // applied. libwebrtc rejects addIceCandidate before SRD,
@@ -322,6 +325,34 @@ class SpeechmuxPeerImpl(
                 L.i("Peer", "signaling bye frame")
             }
         }
+    }
+
+    /**
+     * Pull the audio m-section direction and a-line summary out of the answer
+     * SDP. We need this to confirm both ends agreed on `sendrecv` and to spot
+     * cases where speechmux pinned the answer to `recvonly` (which would mean
+     * we never get inbound audio regardless of ADM).
+     */
+    private fun logAnswerSdp(sdp: String) {
+        val lines = sdp.split('\n').map { it.trimEnd('\r') }
+        var inAudio = false
+        var direction: String? = null
+        var codecs: String? = null
+        for (line in lines) {
+            if (line.startsWith("m=audio")) {
+                inAudio = true
+                codecs = line
+                continue
+            }
+            if (line.startsWith("m=") && !line.startsWith("m=audio")) {
+                inAudio = false
+            }
+            if (inAudio && (line == "a=sendrecv" || line == "a=recvonly" ||
+                    line == "a=sendonly" || line == "a=inactive")) {
+                direction = line
+            }
+        }
+        L.i("Peer", "answer audio: $codecs direction=$direction sdpLen=${sdp.length}")
     }
 
     private suspend fun applySessionFrame(payload: JsonObject, pc: PeerConnection) {
@@ -509,6 +540,16 @@ class SpeechmuxPeerImpl(
                 }
             } catch (_: Throwable) { }
             try { peerToClose?.close() } catch (_: Throwable) { }
+            // Per-call factory + ADM teardown. Order matters: the
+            // PeerConnectionFactory holds a raw native pointer to the ADM,
+            // so the factory MUST be disposed before adm.release() —
+            // otherwise libwebrtc may use-after-free during its own
+            // shutdown. After this point AudioRecord is fully released and
+            // the system mic privacy indicator clears immediately (vs.
+            // staying lit indefinitely with a long-lived ADM, which only
+            // calls AudioRecord.stop() in stopRecording).
+            try { factory.dispose() } catch (t: Throwable) { L.w("Peer", "factory.dispose threw", t) }
+            try { adm.release() } catch (t: Throwable) { L.w("Peer", "adm.release threw", t) }
             L.i("Peer", "disconnect cleanup complete")
         }, "speechmux-peer-cleanup").start()
     }
