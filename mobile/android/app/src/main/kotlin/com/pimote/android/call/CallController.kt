@@ -115,11 +115,38 @@ enum class CallEndReason {
 interface CallController {
     val state: StateFlow<CallState>
 
+    /**
+     * Whether the local mic is currently muted. Reset to `false` on every new
+     * outgoing call. UI surfaces (the in-call screen) drive this via
+     * [setMicMuted]; the controller forwards the change to the active peer.
+     */
+    val isMicMuted: StateFlow<Boolean>
+
     /** Begin an outgoing call against [target], using [connection] as the Telecom binding. */
     fun startOutgoing(target: SessionTarget, connection: CallConnection)
 
     /** Hangup-from-the-app entry point (forwarded by [CallConnection.markFailed] caller path). */
     fun endCurrentCall()
+
+    /**
+     * Mute or unmute the local mic. Updates [isMicMuted] and forwards to the
+     * active [SpeechmuxPeer] (which toggles the WebRTC audio track's enabled
+     * flag). No-op when there is no active peer.
+     */
+    fun setMicMuted(muted: Boolean)
+
+    /**
+     * Called when the app's task is being removed (user swiped away the app from
+     * Recents) or the process is otherwise about to die. Idempotent and safe from
+     * any state. Synchronously releases the local mic (disposes the WebRTC audio
+     * source/track), tears down the Telecom [CallConnection] so the
+     * ConnectionService can be unbound, and resets state to [CallState.Idle].
+     *
+     * Defensive belt-and-suspenders: even if [endCurrentCall] is reached via the
+     * normal Telecom hangup path, this method must remain a no-op when there is
+     * no live call.
+     */
+    fun onAppShutdown()
 
     /** Forward an audio-state change from Telecom into the controller's UI surface. */
     fun onAudioStateChanged(audioState: AudioRouteSnapshot)
@@ -149,6 +176,9 @@ class CallControllerImpl(
     private val _state = MutableStateFlow<CallState>(CallState.Idle)
     override val state: StateFlow<CallState> = _state.asStateFlow()
 
+    private val _isMicMuted = MutableStateFlow(false)
+    override val isMicMuted: StateFlow<Boolean> = _isMicMuted.asStateFlow()
+
     private val _audioRoute = MutableStateFlow<AudioRouteSnapshot?>(null)
     val audioRoute: StateFlow<AudioRouteSnapshot?> = _audioRoute.asStateFlow()
 
@@ -173,6 +203,8 @@ class CallControllerImpl(
         currentSessionId = null
         currentPeer = null
         currentConnection = connection
+        // Fresh call starts unmuted.
+        _isMicMuted.value = false
         callJob = scope.launch(Dispatchers.Unconfined) {
             runOutgoing(target, connection)
         }
@@ -215,6 +247,50 @@ class CallControllerImpl(
 
     override fun onAudioStateChanged(audioState: AudioRouteSnapshot) {
         _audioRoute.value = audioState
+    }
+
+    override fun setMicMuted(muted: Boolean) {
+        _isMicMuted.value = muted
+        try { currentPeer?.setMicMuted(muted) } catch (_: Throwable) { /* idempotent best-effort */ }
+    }
+
+    override fun onAppShutdown() {
+        com.pimote.android.util.L.i("Call", "onAppShutdown (state=${_state.value})")
+        // Snapshot + null out everything up front so this is idempotent and a
+        // concurrent endCurrentCall / runOutgoing race can't double-fire the
+        // teardown.
+        val peer = currentPeer
+        val conn = currentConnection
+        val sid = currentSessionId
+        currentPeer = null
+        currentConnection = null
+        currentSessionId = null
+        callJob?.cancel()
+        callJob = null
+        userHangup?.complete(Unit)
+        userHangup = null
+
+        // 1) Best-effort tell the server we're gone so it can release the call
+        //    binding immediately rather than waiting on signaling timeout.
+        //    `wsClient.send` is suspend; fire-and-forget on the application scope
+        //    because onAppShutdown itself is non-suspending (called from the
+        //    Telecom Service's onTaskRemoved on the main thread).
+        if (sid != null) {
+            scope.launch {
+                try { wsClient.send(CallEndCommand(id = newId(), sessionId = sid)) } catch (_: Throwable) { }
+            }
+        }
+        // 2) Release the mic. SpeechmuxPeerImpl.disconnect is idempotent and
+        //    disposes the AudioSource (which is what actually stops the
+        //    AudioRecord — see the comment in SpeechmuxPeerImpl.disconnect).
+        try { peer?.disconnect() } catch (_: Throwable) { }
+        // 3) Destroy the Telecom Connection so the ConnectionService can be
+        //    unbound and the process is allowed to die. Without this the
+        //    self-managed Connection keeps the service alive after the task is
+        //    removed, which is the original bug we're closing here.
+        try { conn?.markFailed("app_shutdown") } catch (_: Throwable) { }
+
+        _state.value = CallState.Idle
     }
 
     private suspend fun runOutgoing(target: SessionTarget, connection: CallConnection) {
@@ -283,6 +359,9 @@ class CallControllerImpl(
         // so by the time we get here the peer is ready.
         connection.markActive()
         _state.value = CallState.Active(sessionId)
+        // Re-apply mute state in case the user toggled mute during Negotiating
+        // (peer.setMicMuted is a no-op before the audio track exists).
+        try { peer.setMicMuted(_isMicMuted.value) } catch (_: Throwable) { }
 
         // 5) Race: server call_ended | server session_closed(displaced) | peer Failed | user hangup.
         //

@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import com.pimote.android.R
 import com.pimote.android.app.AppContainer
+import com.pimote.android.call.CallState
 import com.pimote.android.net.WsState
 import com.pimote.android.session.ProjectMeta
 import com.pimote.android.session.SessionMeta
@@ -64,6 +66,7 @@ class ContactsViewModel : ViewModel() {
     val projects: StateFlow<List<ProjectMeta>> = container.sessionRepository.projects
     val sessions: StateFlow<List<SessionMeta>> = container.sessionRepository.sessions
     val wsState: StateFlow<WsState> = container.wsClient.state
+    val callState: StateFlow<CallState> = container.callController.state
 
     suspend fun refresh(): Result<Unit> = runCatching {
         container.sessionRepository.refresh()
@@ -78,11 +81,22 @@ fun ContactsScreen(viewModel: ContactsViewModel, onEditSettings: () -> Unit) {
     val projects by viewModel.projects.collectAsState()
     val sessions by viewModel.sessions.collectAsState()
     val wsState by viewModel.wsState.collectAsState()
+    val callState by viewModel.callState.collectAsState()
     val context = LocalContextOrNull()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var refreshing by remember { mutableStateOf(false) }
     var loadingHandleId by remember { mutableStateOf<String?>(null) }
+    // Clear the per-row loading spinner when the call leaves Idle (the call is
+    // in flight and InCallActivity is launching) or when it terminates. The
+    // tap-time clear-immediately path produces no observable spinner because
+    // both writes happen before recomposition; deriving the clear from the
+    // controller's state gives the spinner a real lifetime.
+    LaunchedEffect(callState) {
+        if (callState !is CallState.Idle) {
+            loadingHandleId = null
+        }
+    }
 
     // Recompute the row list only when projects/sessions change, not on every
     // recomposition (e.g. wsState changes, refreshing toggles, snackbar state).
@@ -191,7 +205,10 @@ fun ContactsScreen(viewModel: ContactsViewModel, onEditSettings: () -> Unit) {
                                 loadingHandleId = row.handleId
                                 try {
                                     placeCall(context, row.handleId)
-                                    loadingHandleId = null
+                                    // Don't clear loadingHandleId here — placeCall returns
+                                    // synchronously but the call dispatch is async. The
+                                    // LaunchedEffect(callState) above clears the spinner once
+                                    // the controller leaves Idle.
                                 } catch (e: SecurityException) {
                                     loadingHandleId = null
                                     L.w("Contacts", "placeCall SecurityException", e)

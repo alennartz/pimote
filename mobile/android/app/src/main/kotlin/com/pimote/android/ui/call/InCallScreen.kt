@@ -2,6 +2,7 @@ package com.pimote.android.ui.call
 
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -55,6 +56,7 @@ import kotlinx.coroutines.launch
 class CallViewModel : ViewModel() {
     private val container = AppContainer.instance
     val state: StateFlow<CallState> = container.callController.state
+    val isMicMuted: StateFlow<Boolean> = container.callController.isMicMuted
 
     val sessionDisplayName: StateFlow<String?> = combine(
         container.callController.state,
@@ -78,6 +80,10 @@ class CallViewModel : ViewModel() {
     fun endCall() {
         viewModelScope.launch { container.callController.endCurrentCall() }
     }
+
+    fun setMicMuted(muted: Boolean) {
+        container.callController.setMicMuted(muted)
+    }
 }
 
 @Composable
@@ -87,7 +93,7 @@ fun InCallScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val sessionName by viewModel.sessionDisplayName.collectAsState()
-    var muted by remember { mutableStateOf(false) }
+    val muted by viewModel.isMicMuted.collectAsState()
     val isEnded = state is CallState.Ended
     val isActive = state is CallState.Active
 
@@ -188,7 +194,7 @@ fun InCallScreen(
                             .size(64.dp)
                             .clip(CircleShape)
                             .background(if (muted) colors.warning else colors.surfacePlus)
-                            .clickable { muted = !muted },
+                            .clickable { viewModel.setMicMuted(!muted) },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -233,7 +239,7 @@ fun InCallScreen(
 class InCallActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
-        val vm = CallViewModel()
+        val vm: CallViewModel by viewModels()
         setContent { PimoteTheme { InCallScreen(vm, onClose = { finish() }) } }
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // Auto-finish only when the controller goes back to Idle. We

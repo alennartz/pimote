@@ -15,7 +15,7 @@ All 16 planned steps were implemented and the new theme/component layer matches 
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/call/InCallScreen.kt:81, 175-194`
-- **Status:** open
+- **Status:** resolved
 
 The mute button toggles only the local `var muted by remember { mutableStateOf(false) }` — it never calls into `callController` / WebRTC tracks / `AudioManager`. The icon and `AvatarRing` "Muted" badge update, but the mic stays hot. This is a misleading affordance: the user thinks they are muted when they are not. If this is intentional placeholder UI, it should be hidden/disabled; otherwise the action needs to be wired into the call pipeline.
 
@@ -42,7 +42,7 @@ The mute button toggles only the local `var muted by remember { mutableStateOf(f
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/contacts/ContactsScreen.kt:166-195`
-- **Status:** open
+- **Status:** resolved
 
 Step 15 specified a post-tap spinner on the row driven by `loadingHandleId`. The current handler does `loadingHandleId = row.handleId` then immediately calls `placeCall(...)` (which returns synchronously — Telecom dispatches the call asynchronously) and clears `loadingHandleId = null` in the same callback frame. Both writes happen before any recomposition, so `isLoading == true` is never observable; the planned per-row loading affordance is effectively dead code. Fix by clearing `loadingHandleId` from a downstream signal (e.g., `CallController.state` leaving `Idle` for the matching `sessionId`) or by removing the unused branch entirely.
 
@@ -105,7 +105,7 @@ Step 9 introduces `formatCallDuration` in `CallStateHelpers.kt` (and tests it). 
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/ui/call/InCallScreen.kt:215`
-- **Status:** open
+- **Status:** resolved
 
 `val vm = CallViewModel()` is constructed directly rather than via `viewModels()` / `ViewModelProvider`. On any configuration change the VM is destroyed and rebuilt, restarting `viewModelScope` and re-warming `stateIn` collectors; `durationSeconds` resets (the `LaunchedEffect(isActive)` does this anyway, so user-visible impact is minimal today). Fine while the activity is portrait-locked, but a foot-gun the moment rotation is enabled.
 
