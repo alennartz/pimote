@@ -81,22 +81,30 @@ class AppContainer(private val appContext: Context) {
         CallControllerImpl(wsClient, peerFactory, applicationScope)
 
     init {
-        // Launch the custom in-call screen when the call goes Active.
+        // Launch the custom in-call screen as soon as the controller leaves
+        // Idle, so the user gets immediate feedback during Dialing/Binding/
+        // Negotiating and on failure (Ended) — not only after Active.
         //
         // Plan step 16 prescribed an `android.intent.action.MAIN` +
         // `android.intent.category.CALL_LAUNCHER` filter to make Telecom drive
         // this — but `CALL_LAUNCHER` is not a real Android category, so the
         // mechanism the plan named would not fire. The standard
         // `SelfManagedConnectionService` pattern is to launch the custom UI
-        // explicitly when the call transitions to Active; the activity's
+        // explicitly when the call transitions out of Idle; the activity's
         // `showWhenLocked` / `turnScreenOn` manifest flags handle wake/lock.
+        //
+        // We only fire on the Idle→non-Idle edge so we don't restart the
+        // activity for every intra-call state change.
         applicationScope.launch {
+            var prevIdle = true
             callController.state.collect { s ->
-                if (s is CallState.Active) {
+                val nowIdle = s is CallState.Idle
+                if (prevIdle && !nowIdle) {
                     val intent = Intent(appContext, InCallActivity::class.java)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     appContext.startActivity(intent)
                 }
+                prevIdle = nowIdle
             }
         }
     }

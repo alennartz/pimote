@@ -10,6 +10,8 @@ import com.pimote.android.protocol.CallEndedEvent
 import com.pimote.android.protocol.CallReadyEvent
 import com.pimote.android.protocol.OpenSessionCommand
 import com.pimote.android.protocol.OpenSessionResponseData
+import com.pimote.android.protocol.SessionClosedEvent
+import com.pimote.android.protocol.SessionClosedReasonWire
 import com.pimote.android.voice.PeerConnectionFailed
 import com.pimote.android.voice.PeerState
 import kotlinx.coroutines.CoroutineScope
@@ -386,6 +388,99 @@ class CallControllerTest {
 
         val ended = cc.state.value as CallState.Ended
         assertEquals(expected, ended.reason)
+    }
+
+    // ---------------------------------------------- displacement (session_closed)
+
+    @Test
+    fun `session_closed displaced for active session ends call with DISPLACED`() = runTest {
+        val ws = FakeWsClient()
+        val peer = FakeSpeechmuxPeer()
+        val cc = newController(ws, peer, TestScope(StandardTestDispatcher(testScheduler)))
+        val conn = FakeCallConnection()
+
+        cc.startOutgoing(SessionTarget.ExistingSession("S1"), conn)
+        advanceUntilIdle()
+        val bind = ws.sent.last { it is CallBindCommand } as CallBindCommand
+        ws.respondNext(
+            TypedResponse(bind.id, success = true, data = CallBindResponseData("S1", "wss://m"), error = null),
+        )
+        advanceUntilIdle()
+        ws.emit(CallReadyEvent("S1"))
+        advanceUntilIdle()
+        assertTrue(cc.state.value is CallState.Active)
+
+        ws.emit(SessionClosedEvent(sessionId = "S1", reason = SessionClosedReasonWire.DISPLACED))
+        advanceUntilIdle()
+
+        val ended = cc.state.value as CallState.Ended
+        assertEquals("S1", ended.sessionId)
+        assertEquals(CallEndReason.DISPLACED, ended.reason)
+        assertTrue(peer.disconnected)
+        assertTrue(conn.transitions.contains("endedRemotely:DISPLACED"))
+    }
+
+    @Test
+    fun `session_closed displaced for a different session is ignored`() = runTest {
+        val ws = FakeWsClient()
+        val peer = FakeSpeechmuxPeer()
+        val cc = newController(ws, peer, TestScope(StandardTestDispatcher(testScheduler)))
+        val conn = FakeCallConnection()
+
+        cc.startOutgoing(SessionTarget.ExistingSession("S1"), conn)
+        advanceUntilIdle()
+        val bind = ws.sent.last { it is CallBindCommand } as CallBindCommand
+        ws.respondNext(
+            TypedResponse(bind.id, success = true, data = CallBindResponseData("S1", "wss://m"), error = null),
+        )
+        advanceUntilIdle()
+        ws.emit(CallReadyEvent("S1"))
+        advanceUntilIdle()
+        assertTrue(cc.state.value is CallState.Active)
+
+        ws.emit(SessionClosedEvent(sessionId = "OTHER", reason = SessionClosedReasonWire.DISPLACED))
+        advanceUntilIdle()
+
+        // Still active — the event was for a different session.
+        assertTrue(cc.state.value is CallState.Active)
+        assertEquals(false, peer.disconnected)
+    }
+
+    @Test
+    fun `session_closed with non-displaced reasons are ignored`() = runTest {
+        // PWA only synthesizes call_ended for `displaced`. We mirror that:
+        // KILLED / REPLACED / null reason should NOT end the call. The
+        // peer will fail organically if the underlying agent session
+        // really is gone.
+        val cases = listOf(
+            SessionClosedReasonWire.KILLED,
+            SessionClosedReasonWire.REPLACED,
+            null,
+        )
+        for (reason in cases) {
+            val ws = FakeWsClient()
+            val peer = FakeSpeechmuxPeer()
+            val cc = newController(ws, peer, TestScope(StandardTestDispatcher(testScheduler)))
+            val conn = FakeCallConnection()
+
+            cc.startOutgoing(SessionTarget.ExistingSession("S1"), conn)
+            advanceUntilIdle()
+            val bind = ws.sent.last { it is CallBindCommand } as CallBindCommand
+            ws.respondNext(
+                TypedResponse(bind.id, success = true, data = CallBindResponseData("S1", "wss://m"), error = null),
+            )
+            advanceUntilIdle()
+            ws.emit(CallReadyEvent("S1"))
+            advanceUntilIdle()
+
+            ws.emit(SessionClosedEvent(sessionId = "S1", reason = reason))
+            advanceUntilIdle()
+
+            assertTrue(
+                cc.state.value is CallState.Active,
+                "reason=$reason should not end the call (state=${cc.state.value})",
+            )
+        }
     }
 
     @Test

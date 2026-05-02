@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,7 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pimote.android.app.AppContainer
-import com.pimote.android.call.CallController
+import com.pimote.android.call.CallEndReason
 import com.pimote.android.call.CallState
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -42,9 +43,13 @@ class CallViewModel : ViewModel() {
 }
 
 @Composable
-fun InCallScreen(viewModel: CallViewModel) {
+fun InCallScreen(
+    viewModel: CallViewModel,
+    onClose: () -> Unit,
+) {
     val state by viewModel.state.collectAsState()
     var muted by remember { mutableStateOf(false) }
+    val isEnded = state is CallState.Ended
 
     Scaffold { padding ->
         Column(
@@ -52,15 +57,25 @@ fun InCallScreen(viewModel: CallViewModel) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("Pimote call")
+            Text("Pimote call", style = MaterialTheme.typography.titleMedium)
             Text(describe(state))
+            (state as? CallState.Ended)?.let { ended ->
+                Text(
+                    "Reason: ${describeReason(ended.reason)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
             Spacer(Modifier.height(24.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Button(onClick = { muted = !muted }) {
-                    Text(if (muted) "Unmute" else "Mute")
-                }
-                Button(onClick = { viewModel.endCall() }) {
-                    Text("Hang up")
+            if (isEnded) {
+                Button(onClick = onClose) { Text("Close") }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Button(onClick = { muted = !muted }) {
+                        Text(if (muted) "Unmute" else "Mute")
+                    }
+                    Button(onClick = { viewModel.endCall() }) {
+                        Text("Hang up")
+                    }
                 }
             }
         }
@@ -69,33 +84,43 @@ fun InCallScreen(viewModel: CallViewModel) {
 
 private fun describe(state: CallState): String = when (state) {
     CallState.Idle -> "Idle"
-    is CallState.Dialing -> "Dialing…"
-    is CallState.Binding -> "Binding…"
-    is CallState.Negotiating -> "Negotiating…"
+    is CallState.Dialing -> "Dialing\u2026"
+    is CallState.Binding -> "Binding\u2026"
+    is CallState.Negotiating -> "Negotiating\u2026"
     is CallState.Active -> "Connected (${state.sessionId})"
-    is CallState.Ended -> "Ended (${state.reason})"
+    is CallState.Ended -> "Call ended"
+}
+
+private fun describeReason(r: CallEndReason): String = when (r) {
+    CallEndReason.USER_HANGUP -> "Hung up"
+    CallEndReason.REMOTE_HANGUP -> "Remote hung up"
+    CallEndReason.DISPLACED -> "Displaced by another client"
+    CallEndReason.SERVER_ENDED -> "Server ended call"
+    CallEndReason.PEER_FAILED -> "Voice peer failed (signaling/ICE)"
+    CallEndReason.BIND_FAILED -> "Could not bind call"
 }
 
 /**
- * Thin Activity hosting the in-call Compose screen. Telecom launches this via
- * the `android.telecom.action.SHOW_INCALL` family of intents wired through the
- * manifest. The activity finishes itself when the controller transitions to
- * Idle/Ended.
+ * Thin Activity hosting the in-call Compose screen. Launched by
+ * [com.pimote.android.app.AppContainer] on the Idle\u2192non-Idle edge of
+ * `CallController.state`, so it covers the full lifecycle including the
+ * pre-Active states and the terminal Ended state (where the user must
+ * dismiss it manually so the failure reason is readable).
  */
 class InCallActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         val vm = CallViewModel()
-        // Auto-finish when the controller leaves an active call. Tied to the
-        // STARTED lifecycle so the collector is cancelled on destroy and does
-        // not retain the activity through a captured `vm`/`runOnUiThread` lambda.
+        // Auto-finish only when the controller goes back to Idle. We
+        // deliberately do NOT finish on Ended \u2014 that state holds the
+        // failure reason for the user; they dismiss via the Close button.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 vm.state.collect { s ->
-                    if (s is CallState.Ended || s is CallState.Idle) finish()
+                    if (s is CallState.Idle) finish()
                 }
             }
         }
-        setContent { InCallScreen(vm) }
+        setContent { InCallScreen(vm, onClose = { finish() }) }
     }
 }

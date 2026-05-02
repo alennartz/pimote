@@ -59,17 +59,21 @@ object PhoneAccountRules {
      * unparseable input.
      */
     fun parseDialUri(uri: String): ParsedDial? {
-        val schemeStripped = when {
-            uri.startsWith("$PIMOTE_URI_SCHEME:") -> uri.removePrefix("$PIMOTE_URI_SCHEME:")
-            else -> return null
-        }
+        // Use java.net.URI to obtain the *decoded* scheme-specific-part. Telecom
+        // round-trips outgoing-call URIs through android.net.Uri, which percent-
+        // encodes ':' in the SSP (so what we constructed as `pimote:session:<id>`
+        // arrives at ConnectionService as `pimote:session%3A<id>`). The literal
+        // string check we used previously was fooled by that encoding.
+        val parsed = try { java.net.URI(uri) } catch (_: Throwable) { return null }
+        if (parsed.scheme != PIMOTE_URI_SCHEME) return null
+        val ssp = parsed.schemeSpecificPart ?: return null
         return when {
-            schemeStripped.startsWith("session:") -> {
-                val id = schemeStripped.removePrefix("session:")
+            ssp.startsWith("session:") -> {
+                val id = ssp.removePrefix("session:")
                 if (id.isBlank()) null else ParsedDial.Session(id)
             }
-            schemeStripped.startsWith("project:") -> {
-                val enc = schemeStripped.removePrefix("project:")
+            ssp.startsWith("project:") -> {
+                val enc = ssp.removePrefix("project:")
                 val path = try {
                     String(java.util.Base64.getUrlDecoder().decode(enc), Charsets.UTF_8)
                 } catch (_: Throwable) {
@@ -155,6 +159,27 @@ class PhoneAccountRegistrarImpl(
 ) : PhoneAccountRegistrar {
 
     override fun start() {
+        // Telecom retains PhoneAccount registrations across app launches and even
+        // across upgrade-installs. Earlier versions of this app registered up to
+        // 10 accounts (one per session/project) under DR-018. Those ghosts persist
+        // in Telecom's database and consume the per-package 10-account cap, so
+        // attempting to register the new single "pimote-service" account fails
+        // with IllegalArgumentException("limit, 10, has been reached") until they
+        // are explicitly removed. Sweep them on every start.
+        val existing = try { telecom.registeredAccounts() } catch (t: Throwable) {
+            L.w("Tel", "registeredAccounts() failed; skipping ghost cleanup: ${t.message}", t)
+            emptyMap()
+        }
+        for (handleId in existing.keys) {
+            if (handleId == PIMOTE_SERVICE_HANDLE_ID) continue
+            try {
+                telecom.unregisterPhoneAccount(handleId)
+                L.i("Tel", "unregistered ghost PhoneAccount handleId=$handleId")
+            } catch (t: Throwable) {
+                L.w("Tel", "failed to unregister ghost handleId=$handleId: ${t.message}", t)
+            }
+        }
+
         val acct = TelecomFacade.Account(
             handleId = PIMOTE_SERVICE_HANDLE_ID,
             label = "Pimote",

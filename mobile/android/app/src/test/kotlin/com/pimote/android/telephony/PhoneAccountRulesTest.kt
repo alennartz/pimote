@@ -127,6 +127,17 @@ class PhoneAccountRulesTest {
     }
 
     @Test
+    fun `parseDialUri decodes a percent-encoded session URI`() {
+        // Regression: TelecomManager round-trips outgoing-call URIs through
+        // android.net.Uri, which percent-encodes ':' in the scheme-specific-part
+        // (see Uri.fromParts). The URI delivered to ConnectionService can therefore
+        // arrive as `pimote:session%3A<id>` even though we originally constructed
+        // it as `pimote:session:<id>`. The parser must accept both.
+        val parsed = PhoneAccountRules.parseDialUri("pimote:session%3Aabc-123")
+        assertEquals(PhoneAccountRules.ParsedDial.Session("abc-123"), parsed)
+    }
+
+    @Test
     fun `parseDialUri decodes a project URI roundtripped through projectHandleId`() {
         val sourceId = PhoneAccountRules.projectHandleId("/work/repo")
         val parsed = PhoneAccountRules.parseDialUri("pimote:$sourceId")

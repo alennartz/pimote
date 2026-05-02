@@ -179,6 +179,30 @@ data class SessionArchivedEvent(
     override val type: String = "session_archived",
 ) : PimoteEvent
 
+/**
+ * Reason a session was closed by the server. Mirrors
+ * `shared/src/protocol.ts` `SessionClosedEvent.reason`.
+ *
+ * - `DISPLACED` is what we react to in [com.pimote.android.call.CallControllerImpl]
+ *   so a remote-driven call takeover tears down the local Telecom call.
+ * - `KILLED` / `REPLACED` are accepted by the deserializer but ignored by
+ *   the call controller; the WebRTC peer fails organically when the agent
+ *   session goes away.
+ */
+enum class SessionClosedReasonWire {
+    @SerialName("displaced") DISPLACED,
+    @SerialName("killed") KILLED,
+    @SerialName("replaced") REPLACED,
+}
+
+@Serializable
+@SerialName("session_closed")
+data class SessionClosedEvent(
+    val sessionId: String,
+    val reason: SessionClosedReasonWire? = null,
+    override val type: String = "session_closed",
+) : PimoteEvent
+
 @Serializable
 @SerialName("session_deleted")
 data class SessionDeletedEvent(
@@ -260,6 +284,7 @@ object PimoteEventSerializer : JsonContentPolymorphicSerializer<PimoteEvent>(Pim
             "session_opened" -> SessionOpenedEvent.serializer()
             "session_renamed" -> SessionRenamedEvent.serializer()
             "session_archived" -> SessionArchivedEvent.serializer()
+            "session_closed" -> SessionClosedEvent.serializer()
             "session_deleted" -> SessionDeletedEvent.serializer()
             "session_replaced" -> SessionReplacedEvent.serializer()
             "call_bind_response" -> CallBindResponseEvent.serializer()

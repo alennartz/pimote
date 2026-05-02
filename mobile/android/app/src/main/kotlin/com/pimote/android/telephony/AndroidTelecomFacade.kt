@@ -53,14 +53,27 @@ class AndroidTelecomFacade(
         tm.unregisterPhoneAccount(PhoneAccountHandle(componentName, handleId))
     }
 
-    @Suppress("DEPRECATION")
-    private fun selfManagedHandles(): List<PhoneAccountHandle> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        selfManagedApi26()
-    } else {
-        emptyList()
+    /**
+     * Enumerate self-managed PhoneAccounts registered by THIS app.
+     *
+     * Prefers `getOwnSelfManagedPhoneAccounts()` (API 31+) which only requires
+     * `MANAGE_OWN_CALLS` (already declared) and returns just our app's
+     * accounts. The older `getSelfManagedPhoneAccounts()` requires the
+     * `READ_PHONE_STATE` runtime permission — we don't want to prompt for
+     * that just to clean up our own ghosts.
+     *
+     * On API 26–30, returns empty (no permission). Cleanup of stale
+     * registrations on those versions would require explicit handle ids,
+     * which we don't track. Acceptable: the rest of the user base is on
+     * API 31+ and the cleanup is a one-time fix for the DR-018 → DR-019
+     * transition.
+     */
+    private fun selfManagedHandles(): List<PhoneAccountHandle> = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> ownSelfManagedApi31()
+        else -> emptyList()
     }
 
-    @RequiresApi(Build.VERSION_CODES.O)
-    private fun selfManagedApi26(): List<PhoneAccountHandle> =
-        runCatching { tm.selfManagedPhoneAccounts.toList() }.getOrDefault(emptyList())
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun ownSelfManagedApi31(): List<PhoneAccountHandle> =
+        runCatching { tm.ownSelfManagedPhoneAccounts.toList() }.getOrDefault(emptyList())
 }

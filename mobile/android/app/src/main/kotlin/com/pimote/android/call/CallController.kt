@@ -7,9 +7,10 @@ import com.pimote.android.protocol.CallBindResponseData
 import com.pimote.android.protocol.CallEndCommand
 import com.pimote.android.protocol.CallEndReasonWire
 import com.pimote.android.protocol.CallEndedEvent
-import com.pimote.android.protocol.CallReadyEvent
 import com.pimote.android.protocol.OpenSessionCommand
 import com.pimote.android.protocol.OpenSessionResponseData
+import com.pimote.android.protocol.SessionClosedEvent
+import com.pimote.android.protocol.SessionClosedReasonWire
 import com.pimote.android.telephony.CallConnection
 import com.pimote.android.voice.PeerConnectionFailed
 import com.pimote.android.voice.PeerState
@@ -181,8 +182,20 @@ class CallControllerImpl(
         com.pimote.android.util.L.i("Call", "endCurrentCall (state=${_state.value})")
         userHangup?.complete(Unit)
         // Plan §CallController step 6: if state is pre-Active, also cancel callJob and
-        // transition to Ended(currentSessionId, USER_HANGUP). The Active branch is handled
-        // inside the select-race in runOutgoing via the userHangup deferred above.
+        // transition to Ended(currentSessionId, USER_HANGUP).
+        //
+        // For the Active branch we ALSO disconnect the peer synchronously here
+        // (in addition to the userHangup deferred above, which the
+        // runOutgoing select-race handles asynchronously). Reason: the
+        // caller of `endCurrentCall()` is typically `PimoteConnection.
+        // onDisconnect`, which then immediately calls
+        // `setDisconnected(...).destroy()` on Telecom — flipping the system
+        // audio mode back to MODE_NORMAL on the main thread. If we wait for
+        // the runOutgoing coroutine to dispose the audio source, AudioRecord
+        // can be torn down by Telecom before libwebrtc's ADM stops
+        // recording, leaving the system mic indicator stuck on. Calling
+        // disconnect here is safe because SpeechmuxPeerImpl.disconnect is
+        // idempotent (snapshots+nulls fields up front).
         when (_state.value) {
             is CallState.Dialing,
             is CallState.Binding,
@@ -193,7 +206,10 @@ class CallControllerImpl(
                 try { currentPeer?.disconnect() } catch (_: Throwable) { }
                 _state.value = CallState.Ended(sid, CallEndReason.USER_HANGUP)
             }
-            else -> { /* Idle / Active / Ended — handled by select or no-op */ }
+            is CallState.Active -> {
+                try { currentPeer?.disconnect() } catch (_: Throwable) { }
+            }
+            else -> { /* Idle / Ended — no-op */ }
         }
     }
 
@@ -247,19 +263,35 @@ class CallControllerImpl(
         _state.value = CallState.Negotiating(sessionId)
         try {
             peer.connect(bindData.webrtcSignalUrl, sessionId)
-        } catch (_: PeerConnectionFailed) {
+        } catch (e: PeerConnectionFailed) {
+            com.pimote.android.util.L.w("Call", "peer connect failed: reason=${e.reason} signalUrl=${bindData.webrtcSignalUrl}", e)
             try { wsClient.send(CallEndCommand(id = newId(), sessionId = sessionId)) } catch (_: Throwable) { }
             connection.markFailed("peer_failed")
             _state.value = CallState.Ended(sessionId, CallEndReason.PEER_FAILED)
             return
         }
 
-        // 4) Await call_ready for this session.
-        wsClient.events.filterIsInstance<CallReadyEvent>().filter { it.sessionId == sessionId }.first()
+        // 4) Peer is locally connected — that *is* call-ready.
+        //
+        // The server does not actually emit `call_ready`; the PWA's
+        // voice-call-seams synthesizes it via `onPeerReady` once ICE
+        // hits `connected`/`completed` (see
+        // client/src/lib/stores/voice-call-seams.ts and
+        // client/src/lib/stores/voice-call-store.ts `onPeerReady`).
+        // Mirror that here — awaiting a real `CallReadyEvent` would hang
+        // forever. `peer.connect` only returns once ICE is established,
+        // so by the time we get here the peer is ready.
         connection.markActive()
         _state.value = CallState.Active(sessionId)
 
-        // 5) Race: server call_ended | peer Failed | user hangup.
+        // 5) Race: server call_ended | server session_closed(displaced) | peer Failed | user hangup.
+        //
+        // The `session_closed { reason: 'displaced' }` branch mirrors the
+        // PWA's `voice-call-store.ts` shortcut: when another client takes
+        // over our session via call_bind(force=true), the server emits
+        // `session_closed` rather than `call_ended`. Without this branch
+        // the call would sit in Active forever and Telecom would keep the
+        // VoIP audio mode on. See docs/plans/android-call-displacement.md.
         val hangup = userHangup ?: CompletableDeferred<Unit>().also { userHangup = it }
         val outcome: Outcome = coroutineScope {
             val winner = CompletableDeferred<Outcome>()
@@ -276,8 +308,14 @@ class CallControllerImpl(
                 hangup.await()
                 winner.complete(Outcome.UserHangup)
             }
+            val w4 = launch(Dispatchers.Unconfined) {
+                wsClient.events.filterIsInstance<SessionClosedEvent>()
+                    .filter { it.sessionId == sessionId && it.reason == SessionClosedReasonWire.DISPLACED }
+                    .first()
+                winner.complete(Outcome.RemoteEnded(CallEndReason.DISPLACED))
+            }
             val r = winner.await()
-            w1.cancel(); w2.cancel(); w3.cancel()
+            w1.cancel(); w2.cancel(); w3.cancel(); w4.cancel()
             r
         }
 
