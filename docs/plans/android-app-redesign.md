@@ -241,3 +241,16 @@ The screens' ViewModels and the data they observe (`SetupViewModel.current`, `ws
 - **Light theme.** Brief specifies dark as primary and gives a light translation, but the redesign ships dark-only. If a future change adds light theme, the palette is documented in the brief.
 - **Incoming-call UI.** v1 is outgoing-only; the brief notes this explicitly. No `CallStyle` notification work in this redesign.
 - **Dynamic type scaling.** Fixed sp values per the brief.
+
+## Tests
+
+> **Skipped.** No tests were written upfront. Follow red-green TDD as you implement —
+> write a focused failing test, make it pass, move on. Aim for component-boundary
+> behavioral tests (inputs, outputs, observable effects), not exhaustive coverage.
+>
+> For this redesign specifically: the bulk is Compose styling and layout, which is
+> not where behavioral tests pay off. Concentrate tests on the pure helpers that
+> emerge — e.g. status-pill reason-string cleanup (`ws error:` prefix strip + 40-char
+> truncation), avatar-ring state derivation from `CallController.State`, and any
+> duration/format helpers extracted along the way. Keep them in `app/src/test/` as
+> plain JUnit tests next to existing ones.
