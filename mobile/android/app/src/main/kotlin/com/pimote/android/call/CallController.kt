@@ -157,9 +157,16 @@ class CallControllerImpl(
     private var currentPeer: SpeechmuxPeer? = null
     private var currentConnection: CallConnection? = null
 
+    init {
+        scope.launch(Dispatchers.Unconfined) {
+            _state.collect { com.pimote.android.util.L.d("Call", "state -> $it") }
+        }
+    }
+
     private fun newId(): String = java.util.UUID.randomUUID().toString()
 
     override fun startOutgoing(target: SessionTarget, connection: CallConnection) {
+        com.pimote.android.util.L.i("Call", "startOutgoing target=$target")
         callJob?.cancel()
         userHangup = CompletableDeferred()
         currentSessionId = null
@@ -171,6 +178,7 @@ class CallControllerImpl(
     }
 
     override fun endCurrentCall() {
+        com.pimote.android.util.L.i("Call", "endCurrentCall (state=${_state.value})")
         userHangup?.complete(Unit)
         // Plan §CallController step 6: if state is pre-Active, also cancel callJob and
         // transition to Ended(currentSessionId, USER_HANGUP). The Active branch is handled

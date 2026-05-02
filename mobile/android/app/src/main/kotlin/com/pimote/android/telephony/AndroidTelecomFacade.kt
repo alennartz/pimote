@@ -40,6 +40,11 @@ class AndroidTelecomFacade(
             .setShortDescription(account.shortDescription)
             .setAddress(Uri.fromParts("pimote", account.handleId, null))
             .setCapabilities(PhoneAccount.CAPABILITY_SELF_MANAGED)
+            // Declare that this PhoneAccount handles `pimote:` URIs. ContactsContract
+            // contacts have a phone-number row of `pimote:session:<id>` /
+            // `pimote:project:<base64>`; Telecom routes `placeCall` on those URIs to
+            // this PhoneAccount based on the supported scheme.
+            .setSupportedUriSchemes(listOf("pimote"))
             .build()
         tm.registerPhoneAccount(pa)
     }

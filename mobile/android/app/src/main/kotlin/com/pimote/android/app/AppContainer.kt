@@ -15,6 +15,7 @@ import com.pimote.android.session.SessionRepository
 import com.pimote.android.session.SessionRepositoryImpl
 import com.pimote.android.settings.Settings
 import com.pimote.android.settings.SettingsImpl
+import com.pimote.android.contacts.ContactSyncRunner
 import com.pimote.android.telephony.AndroidTelecomFacade
 import com.pimote.android.telephony.PhoneAccountRegistrar
 import com.pimote.android.telephony.PhoneAccountRegistrarImpl
@@ -50,8 +51,12 @@ class AppContainer(private val appContext: Context) {
 
     private val componentName = ComponentName(appContext, PimoteConnectionService::class.java)
     val telecomFacade = AndroidTelecomFacade(appContext, componentName)
-    val phoneAccountRegistrar: PhoneAccountRegistrar =
-        PhoneAccountRegistrarImpl(sessionRepository, telecomFacade, applicationScope)
+
+    // DR-019: a single Pimote service PhoneAccount instead of per-session/project.
+    // Sessions/projects show up as system contacts via [ContactSyncRunner].
+    val phoneAccountRegistrar: PhoneAccountRegistrar = PhoneAccountRegistrarImpl(telecomFacade)
+    val contactSyncRunner: ContactSyncRunner =
+        ContactSyncRunner(appContext, sessionRepository, applicationScope)
 
     // Process-singleton WebRTC factory. PeerConnectionFactory.initialize and the
     // factory itself allocate non-trivial native state; creating a fresh one per

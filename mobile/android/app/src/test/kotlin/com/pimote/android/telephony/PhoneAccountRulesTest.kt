@@ -8,9 +8,9 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 
 /**
- * Pure unit tests for [PhoneAccountRules] — the sanitization, disambiguation,
- * desired-account derivation, and reconcile-diff logic that backs
- * [PhoneAccountRegistrar]. No Telecom framework dependency.
+ * Pure unit tests for [PhoneAccountRules] — the sanitization, label
+ * disambiguation, source-id encoding, and dial-URI parsing logic shared by
+ * the contacts sync layer and the Telecom outgoing-call dispatch path.
  */
 class PhoneAccountRulesTest {
 
@@ -23,7 +23,6 @@ class PhoneAccountRulesTest {
 
     @Test
     fun `sanitize replaces control characters with single space`() {
-        // \u0001 between letters → single space.
         assertEquals("a b", PhoneAccountRules.sanitize("a\u0001b"))
     }
 
@@ -42,11 +41,9 @@ class PhoneAccountRulesTest {
 
     @Test
     fun `sanitize counts emoji as a single grapheme when truncating`() {
-        // 60 thumbs-up emoji (each is a grapheme cluster, multi-codepoint).
         val raw = "\uD83D\uDC4D".repeat(60)
         val out = PhoneAccountRules.sanitize(raw)
         assertNotNull(out)
-        // Truncated to 50 graphemes → 100 UTF-16 code units (each emoji is a surrogate pair).
         assertEquals(100, out!!.length)
     }
 
@@ -89,7 +86,7 @@ class PhoneAccountRulesTest {
         assertEquals("lone", out["/lone"])
     }
 
-    // ------------------------------------------------- handleId encoding
+    // ------------------------------------------------- source-id encoding
 
     @Test
     fun `sessionHandleId is session colon id`() {
@@ -100,7 +97,6 @@ class PhoneAccountRulesTest {
     fun `projectHandleId base64url-encodes the path`() {
         val id = PhoneAccountRules.projectHandleId("/work/repo")
         assertTrue(id.startsWith("project:"))
-        // base64url alphabet only — no '+', '/', or '=' padding.
         val payload = id.removePrefix("project:")
         assertFalse(payload.contains('+'))
         assertFalse(payload.contains('/'))
@@ -122,125 +118,39 @@ class PhoneAccountRulesTest {
         assertTrue(a != b)
     }
 
-    // ----------------------------------------------- computeDesiredAccounts
+    // ----------------------------------------------------------- parseDialUri
 
     @Test
-    fun `desired accounts include both project and per-session entries`() {
-        val projects = listOf(PhoneAccountRules.ProjectInput("/work/repo", "repo"))
-        val sessions = listOf(
-            PhoneAccountRules.SessionInput("s1", "/work/repo", "repo", "feature"),
-        )
-        val out = PhoneAccountRules.computeDesiredAccounts(projects, sessions)
-        // One project handle + one session handle.
-        assertEquals(2, out.size)
-        val byKind = out.values.groupBy { it.kind::class.simpleName }
-        assertNotNull(byKind["Project"])
-        assertNotNull(byKind["Session"])
+    fun `parseDialUri decodes a session URI`() {
+        val parsed = PhoneAccountRules.parseDialUri("pimote:session:abc-123")
+        assertEquals(PhoneAccountRules.ParsedDial.Session("abc-123"), parsed)
     }
 
     @Test
-    fun `session label uses folderName slash sessionName`() {
-        val projects = listOf(PhoneAccountRules.ProjectInput("/work/repo", "repo"))
-        val sessions = listOf(
-            PhoneAccountRules.SessionInput("s1", "/work/repo", "repo", "feature"),
-        )
-        val desired = PhoneAccountRules.computeDesiredAccounts(projects, sessions).values
-            .single { it.kind is AccountKind.Session }
-        assertEquals("repo/feature", desired.label)
+    fun `parseDialUri decodes a project URI roundtripped through projectHandleId`() {
+        val sourceId = PhoneAccountRules.projectHandleId("/work/repo")
+        val parsed = PhoneAccountRules.parseDialUri("pimote:$sourceId")
+        assertEquals(PhoneAccountRules.ParsedDial.Project("/work/repo"), parsed)
     }
 
     @Test
-    fun `project label uses folderName only`() {
-        val projects = listOf(PhoneAccountRules.ProjectInput("/work/repo", "repo"))
-        val desired = PhoneAccountRules.computeDesiredAccounts(projects, emptyList()).values.single()
-        assertEquals("repo", desired.label)
-        assertEquals(AccountKind.Project::class, desired.kind::class)
+    fun `parseDialUri returns null for unknown scheme`() {
+        assertNull(PhoneAccountRules.parseDialUri("tel:+15551234"))
+        assertNull(PhoneAccountRules.parseDialUri("session:abc"))  // no scheme
     }
 
     @Test
-    fun `colliding folders propagate disambiguated prefix to session labels`() {
-        val projects = listOf(
-            PhoneAccountRules.ProjectInput("/work/repo", "repo"),
-            PhoneAccountRules.ProjectInput("/personal/repo", "repo"),
-        )
-        val sessions = listOf(
-            PhoneAccountRules.SessionInput("s1", "/work/repo", "repo", "feat"),
-        )
-        val labels = PhoneAccountRules.computeDesiredAccounts(projects, sessions).values
-            .map { it.label }
-            .toSet()
-        assertTrue(labels.contains("work/repo"))
-        assertTrue(labels.contains("personal/repo"))
-        assertTrue(labels.contains("work/repo/feat"))
+    fun `parseDialUri returns null for unknown subtype`() {
+        assertNull(PhoneAccountRules.parseDialUri("pimote:contact:abc"))
     }
 
     @Test
-    fun `entries that sanitize to empty are dropped silently`() {
-        val projects = listOf(PhoneAccountRules.ProjectInput("/", "   "))
-        val sessions = listOf(
-            PhoneAccountRules.SessionInput("s1", "/", "   ", "\u0000"),
-        )
-        val out = PhoneAccountRules.computeDesiredAccounts(projects, sessions)
-        assertTrue(out.isEmpty())
+    fun `parseDialUri returns null for empty session id`() {
+        assertNull(PhoneAccountRules.parseDialUri("pimote:session:"))
     }
 
     @Test
-    fun `null sessionName falls back to a stable placeholder`() {
-        val projects = listOf(PhoneAccountRules.ProjectInput("/work/repo", "repo"))
-        val sessions = listOf(
-            PhoneAccountRules.SessionInput("s1", "/work/repo", "repo", null),
-        )
-        // Implementation may pick any non-empty sanitized fallback (e.g. session id,
-        // "untitled", etc) — just assert the session is present and labeled.
-        val s = PhoneAccountRules.computeDesiredAccounts(projects, sessions).values
-            .single { it.kind is AccountKind.Session }
-        assertTrue(s.label.startsWith("repo/"))
-        assertTrue(s.label.length > "repo/".length)
-    }
-
-    // ----------------------------------------------------------- diff
-
-    @Test
-    fun `diff emits adds for handles only in desired`() {
-        val out = PhoneAccountRules.diff(
-            current = mapOf("session:a" to "A"),
-            desired = mapOf("session:a" to "A", "session:b" to "B"),
-        )
-        assertEquals(listOf("session:b"), out.toRegister)
-        assertTrue(out.toUnregister.isEmpty())
-        assertTrue(out.toReplace.isEmpty())
-    }
-
-    @Test
-    fun `diff emits removes for handles only in current`() {
-        val out = PhoneAccountRules.diff(
-            current = mapOf("session:a" to "A", "session:b" to "B"),
-            desired = mapOf("session:a" to "A"),
-        )
-        assertEquals(listOf("session:b"), out.toUnregister)
-        assertTrue(out.toRegister.isEmpty())
-        assertTrue(out.toReplace.isEmpty())
-    }
-
-    @Test
-    fun `diff emits replace for label-changed handles`() {
-        val out = PhoneAccountRules.diff(
-            current = mapOf("session:a" to "Old"),
-            desired = mapOf("session:a" to "New"),
-        )
-        assertEquals(listOf("session:a"), out.toReplace)
-        assertTrue(out.toRegister.isEmpty())
-        assertTrue(out.toUnregister.isEmpty())
-    }
-
-    @Test
-    fun `diff is empty when current equals desired`() {
-        val out = PhoneAccountRules.diff(
-            current = mapOf("session:a" to "A", "project:p" to "P"),
-            desired = mapOf("session:a" to "A", "project:p" to "P"),
-        )
-        assertTrue(out.toRegister.isEmpty())
-        assertTrue(out.toUnregister.isEmpty())
-        assertTrue(out.toReplace.isEmpty())
+    fun `parseDialUri returns null for malformed base64 in project URI`() {
+        assertNull(PhoneAccountRules.parseDialUri("pimote:project:!!!not-base64!!!"))
     }
 }

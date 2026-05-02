@@ -9,6 +9,13 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <!--
+        No WRITE_CONTACTS / READ_CONTACTS: ContactSyncRunner only mutates rows
+        owned by the Pimote AccountManager Account, with CALLER_IS_SYNCADAPTER=
+        true on the URIs. The system trusts apps to mutate their own Account's
+        contact rows without those runtime permissions.
+    -->
+
     <application
         android:name=".app.PimoteApp"
         android:label="Pimote"
@@ -40,6 +47,26 @@
             <intent-filter>
                 <action android:name="android.telecom.ConnectionService" />
             </intent-filter>
+        </service>
+
+        <!--
+            AccountAuthenticator service. Bound by the system AccountManager.
+            The authenticator itself is a stub — Pimote doesn't authenticate
+            users; auth is handled at the network layer (DR-017). The Account
+            exists solely so ContactsContract can group Pimote-synced contacts
+            under a "Pimote" Account, which is what gives us unlimited synced
+            contacts (vs Telecom's 10-PhoneAccount cap; see DR-019).
+        -->
+        <service
+            android:name="com.pimote.android.accounts.PimoteAuthenticatorService"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCOUNT_AUTHENTICATOR">
+            <intent-filter>
+                <action android:name="android.accounts.AccountAuthenticator" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accounts.AccountAuthenticator"
+                android:resource="@xml/account_authenticator" />
         </service>
     </application>
 </manifest>

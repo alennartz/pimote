@@ -225,11 +225,18 @@ class SessionRepositoryImpl(
     }
 
     override suspend fun refresh() {
-        val foldersResp = wsClient.request(
-            ListFoldersCommand(id = java.util.UUID.randomUUID().toString()),
-            ListFoldersResponseData.serializer(),
-        )
+        com.pimote.android.util.L.d("Session", "refresh()")
+        val foldersResp = try {
+            wsClient.request(
+                ListFoldersCommand(id = java.util.UUID.randomUUID().toString()),
+                ListFoldersResponseData.serializer(),
+            )
+        } catch (e: Throwable) {
+            com.pimote.android.util.L.w("Session", "refresh: list_folders failed: ${e.message}", e)
+            throw e
+        }
         val folders = foldersResp.data?.folders.orEmpty()
+        com.pimote.android.util.L.i("Session", "refresh: ${folders.size} folder(s)")
         _projects.value = folders.map { ProjectMeta(it.path, it.name) }
 
         val merged = LinkedHashMap<String, SessionMeta>()

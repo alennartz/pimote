@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.jsonObject
 import java.util.concurrent.ConcurrentHashMap
+import com.pimote.android.util.L
 
 /**
  * High-level connection state surfaced by [WsClient]. Mirrored as a
@@ -92,6 +93,8 @@ data class TypedResponse<T>(
 interface WsClient {
     val state: StateFlow<WsState>
     val events: SharedFlow<PimoteEvent>
+    /** Most recent transport failure message, or `null` if never failed since the last successful connect. */
+    val lastFailure: StateFlow<String?>
 
     /**
      * Begin connecting to [pimoteOrigin] (e.g. `https://pimote.example.com`).
@@ -145,9 +148,11 @@ class WsClientImpl(
 ) : WsClient {
     private val _state = MutableStateFlow<WsState>(WsState.Disconnected)
     private val _events = MutableSharedFlow<PimoteEvent>(extraBufferCapacity = 64)
+    private val _lastFailure = MutableStateFlow<String?>(null)
 
     override val state: StateFlow<WsState> = _state.asStateFlow()
     override val events: SharedFlow<PimoteEvent> = _events.asSharedFlow()
+    override val lastFailure: StateFlow<String?> = _lastFailure.asStateFlow()
 
     private val pending = ConcurrentHashMap<String, CompletableDeferred<PimoteResponse>>()
     private var currentOrigin: String? = null
@@ -158,8 +163,10 @@ class WsClientImpl(
     @Volatile private var attempt = 0
     @Volatile private var disconnected = false
 
+    @Synchronized
     override fun connect(pimoteOrigin: String) {
         if (currentOrigin == pimoteOrigin && loopJob?.isActive == true && !disconnected) return
+        L.i("WS", "connect(origin=$pimoteOrigin)")
         teardown(failPending = true)
         disconnected = false
         currentOrigin = pimoteOrigin
@@ -170,6 +177,7 @@ class WsClientImpl(
     }
 
     override fun disconnect() {
+        L.i("WS", "disconnect()")
         disconnected = true
         teardown(failPending = true)
         _state.value = WsState.Disconnected
@@ -195,11 +203,16 @@ class WsClientImpl(
         var firstIter = true
         try {
             while (!disconnected) {
-                if (firstIter) _state.value = WsState.Connecting
+                if (firstIter) {
+                    _state.value = WsState.Connecting
+                    L.d("WS", "connecting -> $url")
+                }
                 firstIter = false
                 val conn: WsTransport.Connection = try {
                     transport.open(url)
                 } catch (e: Throwable) {
+                    L.w("WS", "transport.open failed: ${e.message}", e)
+                    _lastFailure.value = e.message ?: e::class.java.simpleName
                     if (disconnected) break
                     scheduleRetry()
                     continue
@@ -211,10 +224,20 @@ class WsClientImpl(
                             is WsTransport.Event.Open -> {
                                 attempt = 0
                                 _state.value = WsState.Connected
+                                _lastFailure.value = null
+                                L.i("WS", "connected")
                             }
                             is WsTransport.Event.TextMessage -> handleMessage(ev.payload)
-                            is WsTransport.Event.Closed,
-                            is WsTransport.Event.Failed -> throw EndOfConnection
+                            is WsTransport.Event.Closed -> {
+                                _lastFailure.value = "closed: code=${ev.code} reason=${ev.reason}"
+                                L.w("WS", "closed code=${ev.code} reason=${ev.reason}")
+                                throw EndOfConnection
+                            }
+                            is WsTransport.Event.Failed -> {
+                                _lastFailure.value = ev.reason
+                                L.w("WS", "failed: ${ev.reason}")
+                                throw EndOfConnection
+                            }
                         }
                     }
                 } catch (_: EndOfConnection) {
@@ -238,6 +261,7 @@ class WsClientImpl(
     private suspend fun scheduleRetry() {
         attempt += 1
         val d = computeReconnectDelayMs(attempt, random)
+        L.d("WS", "reconnect attempt=$attempt delay=${d}ms")
         _state.value = WsState.Reconnecting(attempt, d)
         kotlinx.coroutines.coroutineScope {
             // run the delay as a child job so the network monitor can cancel it

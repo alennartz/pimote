@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Account type definition for the Pimote-owned Cloudflare-style "Account"
+    that owns synced contacts. Visible in Settings → Accounts as "Pimote".
+    The accountType MUST match @string/account_type and is the contract used
+    by ContactsContract.RawContacts.ACCOUNT_TYPE.
+-->
+<account-authenticator xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accountType="com.pimote.android.account"
+    android:icon="@android:drawable/sym_def_app_icon"
+    android:smallIcon="@android:drawable/sym_def_app_icon"
+    android:label="@string/account_name" />

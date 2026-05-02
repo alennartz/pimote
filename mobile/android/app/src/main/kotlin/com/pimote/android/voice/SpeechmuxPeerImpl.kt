@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -72,6 +73,13 @@ class SpeechmuxPeerImpl(
     override suspend fun connect(signalUrl: String, sessionId: String) {
         check(_state.value == PeerState.Idle) { "SpeechmuxPeerImpl is one-shot; current state=${_state.value}" }
         _state.value = PeerState.Connecting
+        // Pin to Dispatchers.IO so suspendCancellableCoroutine continuations resume on a
+        // worker thread rather than libwebrtc's signaling thread. Without this, callers
+        // like CallController launching with Dispatchers.Unconfined would resume the
+        // continuation on the same thread that fired onCreateSuccess (the signaling
+        // thread), and any subsequent peer manipulation on that thread — most notably
+        // peer.close() in the disconnect() error path — trips a native CHECK and SIGTRAPs.
+        withContext(Dispatchers.IO) {
         try {
             val connectedDeferred = kotlinx.coroutines.CompletableDeferred<Unit>()
             val rtcConfig = PeerConnection.RTCConfiguration(emptyList()).apply {
@@ -173,6 +181,7 @@ class SpeechmuxPeerImpl(
             disconnect()
             throw PeerConnectionFailed(e.message ?: e::class.java.simpleName)
         }
+        }
     }
 
     private suspend fun handleSignalingMessage(text: String, pc: PeerConnection) {
@@ -268,16 +277,28 @@ class SpeechmuxPeerImpl(
         }
 
     override fun disconnect() {
-        try { signalingSocket?.close(1000, "client closed") } catch (_: Throwable) { }
-        signalingSocket = null
-        try { peer?.close() } catch (_: Throwable) { }
+        // Snapshot and null out fields up-front so a second disconnect() is a no-op.
+        val peerToClose = peer
+        val sigToClose = signalingSocket
+        val trackToDispose = audioTrack
+        val srcToDispose = audioSource
         peer = null
-        try { audioTrack?.dispose() } catch (_: Throwable) { }
+        signalingSocket = null
         audioTrack = null
-        try { audioSource?.dispose() } catch (_: Throwable) { }
         audioSource = null
-        scope.cancel()
         _state.value = PeerState.Closed
+        scope.cancel()
+        // libwebrtc forbids peer.close() being called re-entrantly from within an active
+        // signaling-thread callback (it CHECKs and SIGTRAPs). Defer native cleanup to a
+        // dedicated worker thread so disconnect() is safe from any caller, including
+        // mid-callback contexts where suspendCancellableCoroutine resumed on the
+        // signaling thread despite our withContext wrapper.
+        Thread({
+            try { sigToClose?.close(1000, "client closed") } catch (_: Throwable) { }
+            try { peerToClose?.close() } catch (_: Throwable) { }
+            try { trackToDispose?.dispose() } catch (_: Throwable) { }
+            try { srcToDispose?.dispose() } catch (_: Throwable) { }
+        }, "speechmux-peer-cleanup").start()
     }
 
     override fun setMicMuted(muted: Boolean) {

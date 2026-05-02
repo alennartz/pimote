@@ -31,6 +31,7 @@ class PimoteApp : Application() {
                     container.wsClient.connect(config.pimoteOrigin)
                     container.sessionRepository.start()
                     container.phoneAccountRegistrar.start()
+                    container.contactSyncRunner.start()
                 }
             }
         }

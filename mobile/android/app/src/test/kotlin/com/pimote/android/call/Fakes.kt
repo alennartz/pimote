@@ -25,6 +25,7 @@ import kotlinx.serialization.KSerializer
 
 class FakeWsClient : WsClient {
     override val state = MutableStateFlow<WsState>(WsState.Connected)
+    override val lastFailure = MutableStateFlow<String?>(null)
 
     private val _events = MutableSharedFlow<PimoteEvent>(extraBufferCapacity = 32)
     override val events: SharedFlow<PimoteEvent> = _events

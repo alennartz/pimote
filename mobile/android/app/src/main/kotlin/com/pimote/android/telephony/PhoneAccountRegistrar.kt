@@ -1,84 +1,96 @@
 package com.pimote.android.telephony
 
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.launch
+import com.pimote.android.util.L
 
 /**
- * The concrete entity behind a Telecom `PhoneAccountHandle.id` — either an
- * existing pimote session or a project hotline (calling it creates a new
- * session in the folder). [PhoneAccountRegistrar.resolve] returns one of
- * these for a handle id pulled off an outgoing-call request.
- */
-sealed interface AccountKind {
-    data class Session(
-        val sessionId: String,
-        val folderName: String,
-        val sessionName: String,
-    ) : AccountKind
-
-    data class Project(
-        val folderPath: String,
-        val folderName: String,
-    ) : AccountKind
-}
-
-/**
- * Reconciles the live session/project list from [com.pimote.android.session.SessionRepository]
- * into Android Telecom as `PhoneAccount`s.
+ * Registers a single "Pimote" PhoneAccount with Android Telecom — the
+ * calling *service*, not a per-session contact. PhoneAccounts model
+ * calling services (a SIM, a VoIP line); they're capped at 10 per app and
+ * are not the right primitive for thousands of pimote sessions.
  *
- * `PhoneAccountHandle.id` scheme:
- * - Session: `"session:<sessionId>"`
- * - Project: `"project:<base64url(folderPath)>"`  (RFC 4648 §5, no padding)
+ * Sessions and projects appear in the system contacts/dialer/Auto picker
+ * via [com.pimote.android.contacts.ContactSyncRunner], which writes them
+ * into ContactsContract under a "Pimote" Account. Each contact's phone
+ * number is a `pimote:session:<id>` or `pimote:project:<base64url(path)>`
+ * URI; Telecom routes those URIs to this PhoneAccount because we declare
+ * `setSupportedUriSchemes(["pimote"])`.
  *
- * Display-name rules:
- * - Session label: `"<folderName>/<sessionName>"`.
- * - Project label: `"<folderName>"`.
- * - Short description: `"Pimote: <displayName>"`.
+ * Outgoing-call dispatch lives in [PimoteConnectionService], which parses
+ * the URI scheme on `ConnectionRequest.address` to determine the target.
  *
- * Sanitization (in order, applied to label and `folderName`/`sessionName` inputs):
- * 1. Trim leading/trailing whitespace.
- * 2. Replace ASCII control chars (`\u0000`–`\u001F`) with a single space.
- * 3. Collapse runs of whitespace to one space.
- * 4. Truncate to 50 graphemes (not codepoints).
- * 5. If empty after sanitization → skip registration entirely.
- *
- * Folder-name disambiguation: when two or more folder paths share the same
- * basename, walk up one segment at a time on each colliding folder until the
- * resulting labels are unique. Sessions inside disambiguated projects pick up
- * the same prefix. Non-collided projects keep the basename only.
- *
- * Reconciliation: combined upstream of [SessionRepository.projects] and
- * `.sessions` is debounced 500 ms before each diff. Diff against the current
- * registered set — additions register, removals unregister, label changes
- * unregister + reregister. A `Map<String, AccountKind>` keyed by `handleId`
- * backs [resolve].
+ * This replaces the prior architecture (one PhoneAccount per session/
+ * project) — see DR-019 for the supersession.
  */
 interface PhoneAccountRegistrar {
-    /** Begin observing the repository and reconciling. Idempotent. */
+    /** Register the single Pimote service PhoneAccount. Idempotent. */
     fun start()
 
-    /** Best-effort unregister-everything + stop observing. */
+    /** Best-effort unregister and stop. */
     fun stop()
-
-    /**
-     * Look up the entity for a `PhoneAccountHandle.id`. Returns null if the
-     * id isn't in the current registered set.
-     */
-    fun resolve(handleId: String): AccountKind?
 }
 
+/** Stable handle id for the single Pimote service PhoneAccount. */
+const val PIMOTE_SERVICE_HANDLE_ID: String = "pimote-service"
+
+/** URI scheme this app handles in Telecom. */
+const val PIMOTE_URI_SCHEME: String = "pimote"
+
 /**
- * Pure-function utilities for the registrar. Extracted so the reconciliation
- * rules can be unit-tested without spinning up the system Telecom stack.
+ * Pure-function helpers for the URI scheme used both by [com.pimote.android.contacts.ContactSyncRunner]
+ * (writing contact phone numbers) and by [PimoteConnectionService] (parsing
+ * the dialed URI on outgoing calls). Also retains the label sanitization /
+ * folder-disambiguation rules used by the contacts sync.
  */
 object PhoneAccountRules {
+
+    /** Encode a folderPath into the `project:<base64>` source-id / handle id. */
+    fun projectHandleId(folderPath: String): String {
+        val enc = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(folderPath.toByteArray(Charsets.UTF_8))
+        return "project:$enc"
+    }
+
+    /** Encode a sessionId into the `session:<id>` source-id / handle id. */
+    fun sessionHandleId(sessionId: String): String = "session:$sessionId"
+
+    /**
+     * Decode a Pimote dial URI of the form `pimote:session:<id>` or
+     * `pimote:project:<base64url(folderPath)>`. Returns null on
+     * unparseable input.
+     */
+    fun parseDialUri(uri: String): ParsedDial? {
+        val schemeStripped = when {
+            uri.startsWith("$PIMOTE_URI_SCHEME:") -> uri.removePrefix("$PIMOTE_URI_SCHEME:")
+            else -> return null
+        }
+        return when {
+            schemeStripped.startsWith("session:") -> {
+                val id = schemeStripped.removePrefix("session:")
+                if (id.isBlank()) null else ParsedDial.Session(id)
+            }
+            schemeStripped.startsWith("project:") -> {
+                val enc = schemeStripped.removePrefix("project:")
+                val path = try {
+                    String(java.util.Base64.getUrlDecoder().decode(enc), Charsets.UTF_8)
+                } catch (_: Throwable) {
+                    return null
+                }
+                if (path.isBlank()) null else ParsedDial.Project(path)
+            }
+            else -> null
+        }
+    }
+
+    sealed interface ParsedDial {
+        data class Session(val sessionId: String) : ParsedDial
+        data class Project(val folderPath: String) : ParsedDial
+    }
+
     /**
      * Apply the sanitization pipeline to [raw]. Returns null if the result is
      * empty (caller skips the entity).
      */
     fun sanitize(raw: String): String? {
-        // 1. trim, 2. replace ASCII control chars with space, 3. collapse whitespace runs
         val replaced = buildString(raw.length) {
             for (c in raw) {
                 if (c in '\u0000'..'\u001F') append(' ') else append(c)
@@ -86,18 +98,15 @@ object PhoneAccountRules {
         }
         val collapsed = replaced.trim().replace(Regex("\\s+"), " ")
         if (collapsed.isEmpty()) return null
-        // 4. truncate to 50 graphemes
         val it = java.text.BreakIterator.getCharacterInstance()
         it.setText(collapsed)
         var count = 0
         var end = 0
-        var cur = it.first()
         var next = it.next()
         while (next != java.text.BreakIterator.DONE) {
             count++
             end = next
             if (count >= 50) break
-            cur = next
             next = it.next()
         }
         val truncated = if (count >= 50) collapsed.substring(0, end) else collapsed
@@ -109,13 +118,8 @@ object PhoneAccountRules {
      * map from folderPath → label. Non-colliding paths use just their
      * basename; colliding paths walk up segment-by-segment until labels are
      * globally unique within [folderPaths].
-     *
-     * Example: `["/work/repo", "/personal/repo", "/lone"]` →
-     * `{"/work/repo": "work/repo", "/personal/repo": "personal/repo", "/lone": "lone"}`.
      */
     fun disambiguateFolderLabels(folderPaths: Collection<String>): Map<String, String> {
-        // Split each path into segments; start with depth=1 (basename) per path.
-        // Increase depth only for paths whose current label collides with another path.
         val paths = folderPaths.distinct()
         val segments = paths.associateWith { p ->
             p.split('/').filter { it.isNotEmpty() }
@@ -126,7 +130,6 @@ object PhoneAccountRules {
             val d = depth[p]!!.coerceAtMost(segs.size).coerceAtLeast(1)
             return segs.takeLast(d).joinToString("/")
         }
-        // Iterate until stable.
         repeat(64) {
             val labels = paths.associateWith { labelFor(it) }
             val byLabel = labels.entries.groupBy({ it.value }, { it.key })
@@ -141,165 +144,31 @@ object PhoneAccountRules {
         }
         return paths.associateWith { labelFor(it) }
     }
-
-    /**
-     * Compute the desired Telecom account set from the inputs. Pure function:
-     * applies sanitization + disambiguation + handle-id encoding and returns
-     * accounts keyed by `handleId`. Inputs that sanitize to empty are
-     * silently dropped.
-     */
-    fun computeDesiredAccounts(
-        projects: List<ProjectInput>,
-        sessions: List<SessionInput>,
-    ): Map<String, DesiredAccount> {
-        // Disambiguate label prefixes across the union of folder paths in projects + sessions.
-        val allPaths = (projects.map { it.folderPath } + sessions.map { it.folderPath }).distinct()
-        val labels = disambiguateFolderLabels(allPaths)
-        val out = LinkedHashMap<String, DesiredAccount>()
-        for (p in projects) {
-            val prefix = sanitize(labels[p.folderPath] ?: p.folderName) ?: continue
-            val handleId = projectHandleId(p.folderPath)
-            out[handleId] = DesiredAccount(
-                handleId = handleId,
-                kind = AccountKind.Project(p.folderPath, prefix),
-                label = prefix,
-                shortDescription = "Pimote: $prefix",
-            )
-        }
-        for (s in sessions) {
-            val prefix = sanitize(labels[s.folderPath] ?: s.folderName) ?: continue
-            val nameRaw = s.sessionName ?: "untitled"
-            val sessionPart = sanitize(nameRaw) ?: sanitize("untitled") ?: continue
-            val combined = sanitize("$prefix/$sessionPart") ?: continue
-            val handleId = sessionHandleId(s.sessionId)
-            out[handleId] = DesiredAccount(
-                handleId = handleId,
-                kind = AccountKind.Session(s.sessionId, prefix, sessionPart),
-                label = combined,
-                shortDescription = "Pimote: $combined",
-            )
-        }
-        return out
-    }
-
-    /** Diff [current] (handleId → label) against [desired]; emits add/remove/replace ops. */
-    fun diff(
-        current: Map<String, String>,
-        desired: Map<String, String>,
-    ): ReconcileOps {
-        val toRegister = desired.keys.filter { it !in current }
-        val toUnregister = current.keys.filter { it !in desired }
-        val toReplace = desired.keys.filter { it in current && current[it] != desired[it] }
-        return ReconcileOps(toRegister, toUnregister, toReplace)
-    }
-
-    data class ProjectInput(val folderPath: String, val folderName: String)
-    data class SessionInput(
-        val sessionId: String,
-        val folderPath: String,
-        val folderName: String,
-        val sessionName: String?,
-    )
-
-    data class DesiredAccount(
-        val handleId: String,
-        val kind: AccountKind,
-        val label: String,
-        val shortDescription: String,
-    )
-
-    /** Atomic reconciliation operations, applied in order: removes → adds. */
-    data class ReconcileOps(
-        val toRegister: List<String>,
-        val toUnregister: List<String>,
-        val toReplace: List<String>, // unregister + register (label change)
-    )
-
-    /** Encode a folderPath into the `project:<base64url>` handleId. */
-    fun projectHandleId(folderPath: String): String {
-        val enc = java.util.Base64.getUrlEncoder().withoutPadding()
-            .encodeToString(folderPath.toByteArray(Charsets.UTF_8))
-        return "project:$enc"
-    }
-
-    /** Encode a sessionId into the `session:<id>` handleId. */
-    fun sessionHandleId(sessionId: String): String = "session:$sessionId"
 }
 
 /**
- * Production [PhoneAccountRegistrar]. Subscribes to the repository's projects
- * and sessions, debounces the combined upstream by [debounceMs] (500 ms in
- * production) before each reconciliation pass, and applies the resulting
- * diff via [TelecomFacade]. Maintains a `Map<handleId, AccountKind>` to back
- * [resolve]. Tests construct it with a fake repository, fake facade, and a
- * controlled scheduler.
+ * Production [PhoneAccountRegistrar]. Registers exactly one Pimote service
+ * PhoneAccount via [TelecomFacade] and otherwise does nothing. Idempotent.
  */
 class PhoneAccountRegistrarImpl(
-    private val repository: com.pimote.android.session.SessionRepository,
     private val telecom: TelecomFacade,
-    private val scope: kotlinx.coroutines.CoroutineScope,
-    private val debounceMs: Long = 500L,
 ) : PhoneAccountRegistrar {
-    private val resolved = mutableMapOf<String, AccountKind>()
-    private var job: kotlinx.coroutines.Job? = null
 
-    @kotlinx.coroutines.ExperimentalCoroutinesApi
-    @kotlinx.coroutines.FlowPreview
     override fun start() {
-        if (job?.isActive == true) return
-        job = scope.launch {
-            kotlinx.coroutines.flow.combine(repository.projects, repository.sessions) { p, s -> p to s }
-                .debounce(debounceMs)
-                .collect { (projects, sessions) -> reconcile(projects, sessions) }
+        val acct = TelecomFacade.Account(
+            handleId = PIMOTE_SERVICE_HANDLE_ID,
+            label = "Pimote",
+            shortDescription = "Pimote calling service",
+        )
+        try {
+            telecom.registerPhoneAccount(acct)
+            L.i("Tel", "registered Pimote service PhoneAccount")
+        } catch (t: Throwable) {
+            L.w("Tel", "failed to register Pimote service PhoneAccount: ${t.message}", t)
         }
     }
 
     override fun stop() {
-        job?.cancel()
-        job = null
-        for (id in resolved.keys.toList()) {
-            try { telecom.unregisterPhoneAccount(id) } catch (_: Throwable) { }
-        }
-        resolved.clear()
-    }
-
-    override fun resolve(handleId: String): AccountKind? = resolved[handleId]
-
-    private fun reconcile(
-        projects: List<com.pimote.android.session.ProjectMeta>,
-        sessions: List<com.pimote.android.session.SessionMeta>,
-    ) {
-        val projectInputs = projects.map { PhoneAccountRules.ProjectInput(it.folderPath, it.folderName) }
-        val sessionInputs = sessions.map {
-            PhoneAccountRules.SessionInput(
-                sessionId = it.sessionId,
-                folderPath = it.folderPath,
-                folderName = it.folderName,
-                sessionName = it.name,
-            )
-        }
-        val desired = PhoneAccountRules.computeDesiredAccounts(projectInputs, sessionInputs)
-        val current = telecom.registeredAccounts()
-        val currentLabels = current.mapValues { it.value.label }
-        val desiredLabels = desired.mapValues { it.value.label }
-        val ops = PhoneAccountRules.diff(currentLabels, desiredLabels)
-
-        for (id in ops.toUnregister + ops.toReplace) {
-            try { telecom.unregisterPhoneAccount(id) } catch (_: Throwable) { }
-            resolved.remove(id)
-        }
-        for (id in ops.toRegister + ops.toReplace) {
-            val acct = desired[id] ?: continue
-            try {
-                telecom.registerPhoneAccount(
-                    TelecomFacade.Account(
-                        handleId = acct.handleId,
-                        label = acct.label,
-                        shortDescription = acct.shortDescription,
-                    ),
-                )
-                resolved[id] = acct.kind
-            } catch (_: Throwable) { }
-        }
+        try { telecom.unregisterPhoneAccount(PIMOTE_SERVICE_HANDLE_ID) } catch (_: Throwable) { }
     }
 }
