@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { waitForAgentIdle, type IdleProbe } from './wait-for-idle.js';
+import { ensureIdleWithImplicitAbort, waitForAgentIdle, type AbortableIdleProbe, type IdleProbe } from './wait-for-idle.js';
 
 function makeProbe(initiallyIdle: boolean, becomeIdleAfterCalls?: number): IdleProbe & { calls: number } {
   let calls = 0;
@@ -12,6 +12,32 @@ function makeProbe(initiallyIdle: boolean, becomeIdleAfterCalls?: number): IdleP
       if (initiallyIdle) return true;
       if (becomeIdleAfterCalls !== undefined && calls > becomeIdleAfterCalls) return true;
       return false;
+    },
+  };
+}
+
+function makeAbortableProbe(initiallyIdle: boolean, becomeIdleAfterAbortCalls?: number): AbortableIdleProbe & { isIdleCalls: number; abortCalls: number } {
+  let isIdleCalls = 0;
+  let abortCalls = 0;
+  let aborted = false;
+  return {
+    get isIdleCalls() {
+      return isIdleCalls;
+    },
+    get abortCalls() {
+      return abortCalls;
+    },
+    isIdle() {
+      isIdleCalls += 1;
+      if (initiallyIdle) return true;
+      if (aborted && becomeIdleAfterAbortCalls !== undefined && isIdleCalls > becomeIdleAfterAbortCalls) {
+        return true;
+      }
+      return false;
+    },
+    abort() {
+      abortCalls += 1;
+      aborted = true;
     },
   };
 }
@@ -43,5 +69,30 @@ describe('waitForAgentIdle', () => {
     expect(elapsed).toBeGreaterThanOrEqual(60);
     expect(elapsed).toBeLessThan(500);
     expect(probe.calls).toBeGreaterThan(1);
+  });
+});
+
+describe('ensureIdleWithImplicitAbort', () => {
+  it('does not abort when the agent is already idle', async () => {
+    const probe = makeAbortableProbe(true);
+    const result = await ensureIdleWithImplicitAbort(probe);
+    expect(result).toBe(true);
+    expect(probe.abortCalls).toBe(0);
+    expect(probe.isIdleCalls).toBe(1);
+  });
+
+  it('aborts and waits when the agent is busy, then resolves true', async () => {
+    // Agent is busy on entry, then becomes idle two polls after abort.
+    const probe = makeAbortableProbe(false, 2);
+    const result = await ensureIdleWithImplicitAbort(probe, 2000);
+    expect(result).toBe(true);
+    expect(probe.abortCalls).toBe(1);
+  });
+
+  it('returns false on timeout (and still issued exactly one abort)', async () => {
+    const probe = makeAbortableProbe(false);
+    const result = await ensureIdleWithImplicitAbort(probe, 60);
+    expect(result).toBe(false);
+    expect(probe.abortCalls).toBe(1);
   });
 });

@@ -593,6 +593,21 @@ export class WsHandler {
           break;
         }
 
+        // ---- Client diagnostic logs (voice/call tracing) ----
+        case 'client_log': {
+          // Forward to the server's logger so client-side traces interleave
+          // with the server-side voice extension logs in the same journal.
+          const clientWall = new Date(command.clientTimestampMs).toISOString();
+          const serverWall = new Date().toISOString();
+          const driftMs = Date.now() - command.clientTimestampMs;
+          const line = `[voice_trace][client/${command.tag}] ${command.message} ${JSON.stringify({ clientWall, serverWall, driftMs, ...(command.data ?? {}) })}`;
+          if (command.level === 'error') console.error(line);
+          else if (command.level === 'warn') console.warn(line);
+          else console.log(line);
+          this.sendResponse(id, true);
+          break;
+        }
+
         // ---- Extension UI ----
         case 'extension_ui_response': {
           const uiSlot = command.sessionId ? this.sessionManager.getSession(command.sessionId) : undefined;

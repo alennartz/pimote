@@ -4,11 +4,26 @@
 // The voice extension uses this as the seam between itself and speechmux so
 // tests can substitute an in-memory fake without running a real WebSocket.
 
-/** Frames sent FROM the extension TO speechmux. */
-export type OutgoingFrame = { type: 'token'; text: string } | { type: 'end' };
+/**
+ * Frames sent FROM the extension TO speechmux.
+ *
+ * `speak_id` (when present) identifies the harness-side `speak()` tool
+ * call this frame belongs to. Speechmux stamps every synthesized chunk
+ * with the speak_id of the current utterance and round-trips it back to
+ * the harness on `abort` / `rollback` so the harness can target the
+ * correct speak block in its conversation history. Optional for
+ * back-compat with non-speak_id-aware speechmux builds.
+ */
+export type OutgoingFrame = { type: 'token'; text: string; speak_id?: string } | { type: 'end'; speak_id?: string };
 
-/** Frames sent FROM speechmux TO the extension. */
-export type IncomingFrame = { type: 'user'; text: string } | { type: 'abort' } | { type: 'rollback'; heard_text: string };
+/**
+ * Frames sent FROM speechmux TO the extension.
+ *
+ * `speak_id` on `abort` / `rollback` (when present) is the speak_id of
+ * the utterance that was actively playing at the moment of the
+ * interrupt. The harness uses it as the walkback target.
+ */
+export type IncomingFrame = { type: 'user'; text: string } | { type: 'abort'; speak_id?: string } | { type: 'rollback'; heard_text: string; speak_id?: string };
 
 export interface SpeechmuxClient {
   /** Sends a frame to speechmux. Throws if the socket is not open. */
@@ -23,6 +38,11 @@ export interface SpeechmuxClient {
 
 export interface SpeechmuxClientFactoryOptions {
   wsUrl: string;
+  /** Optional connect timeout in milliseconds. Defaults to 5000. If the
+   *  WebSocket `open` event hasn't fired by then we tear the socket
+   *  down and reject — keeps a wedged speechmux from hanging the call
+   *  in `activating` forever. */
+  connectTimeoutMs?: number;
 }
 
 /** Factory the extension uses to open a new speechmux WS session. Tests
@@ -47,7 +67,8 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
   // Dynamic import so consumers that never call the factory (e.g. tests)
   // don't pay the `ws` resolution cost. Cached after first load.
   let WsCtor: typeof import('ws').WebSocket | null = null;
-  return async ({ wsUrl }) => {
+  return async (opts) => {
+    const { wsUrl } = opts;
     if (!WsCtor) {
       const mod = await import('ws');
       WsCtor = mod.WebSocket;
@@ -83,15 +104,37 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
       for (const listener of listeners) listener(frame);
     });
 
+    const connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
     await new Promise<void>((resolve, reject) => {
-      const onOpen = () => {
+      let settled = false;
+      const cleanup = () => {
+        clearTimeout(timer);
+        ws.off('open', onOpen);
         ws.off('error', onError);
+      };
+      const onOpen = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
         resolve();
       };
       const onError = (err: Error) => {
-        ws.off('open', onOpen);
+        if (settled) return;
+        settled = true;
+        cleanup();
         reject(err);
       };
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        try {
+          ws.terminate();
+        } catch {
+          /* ignore */
+        }
+        reject(new Error(`SpeechmuxClient: connect timeout after ${connectTimeoutMs}ms (${wsUrl})`));
+      }, connectTimeoutMs);
       ws.once('open', onOpen);
       ws.once('error', onError);
     });

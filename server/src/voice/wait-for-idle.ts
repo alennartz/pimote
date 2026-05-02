@@ -24,6 +24,11 @@ export interface IdleProbe {
   isIdle(): boolean;
 }
 
+/** Idle probe that can also abort an in-flight turn. */
+export interface AbortableIdleProbe extends IdleProbe {
+  abort(): void;
+}
+
 /**
  * Resolve once the agent is idle, polling with exponential backoff
  * (start 5 ms, doubling, capped at 50 ms). Returns false if the agent
@@ -45,4 +50,27 @@ export async function waitForAgentIdle(ctx: IdleProbe, timeoutMs = 2000): Promis
     delay = Math.min(50, delay * 2);
   }
   return true;
+}
+
+/**
+ * Ensure the agent is idle, synthesising a barge-in when it isn't.
+ *
+ * Speechmux only emits `abort` while it is actively playing TTS — i.e.
+ * during the harness's `token`/`end` stream. While the worker is
+ * silently reasoning between a `user` frame and its first `speak()`
+ * call, speechmux has no signal that the agent is busy and won't
+ * pre-empt. If the user starts a new utterance during that window, the
+ * `user` frame arrives at the harness with no preceding `abort`, so the
+ * agent is still mid-turn and `sendUserMessage` would race / be
+ * dropped.
+ *
+ * This helper closes that gap: when the agent isn't idle on entry, we
+ * fire `ctx.abort()` ourselves (idempotent if a real barge-in already
+ * issued one) and then poll for idle the same way the abort/user pair
+ * already does. Returns true once idle, false on timeout.
+ */
+export async function ensureIdleWithImplicitAbort(ctx: AbortableIdleProbe, timeoutMs = 2000): Promise<boolean> {
+  if (ctx.isIdle()) return true;
+  ctx.abort();
+  return waitForAgentIdle(ctx, timeoutMs);
 }
