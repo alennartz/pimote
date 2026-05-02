@@ -257,6 +257,8 @@ The screens' ViewModels and the data they observe (`SetupViewModel.current`, `ws
 
 ## Steps
 
+**Pre-implementation commit:** `01d6594b10ce33c32e03099cbebfc6c7a4601fbb`
+
 ### Step 1: Add bundled font files
 
 Source the two variable fonts and place them under `app/src/main/res/font/`:
@@ -267,7 +269,7 @@ Source the two variable fonts and place them under `app/src/main/res/font/`:
 Android `res/font/` filenames must be lowercase with underscores only. Rename on copy. No Gradle change needed — Compose loads these via `FontFamily(Font(R.font.inter_variable, variationSettings = ...))` in the theme step.
 
 **Verify:** Both `.ttf` files appear under `app/src/main/res/font/`. `./gradlew :app:compileDebugKotlin` succeeds (no resource error).
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -292,7 +294,7 @@ Create the following 11 files under `app/src/main/res/drawable/`, sourced from [
 Alternatively: use the Material Icons Extended artifact temporarily for prototyping, then replace with hand-imported XMLs before final build. The architecture rejects `material-icons-extended` as a permanent dependency (R8 stripping issue), so XMLs are required for the final state.
 
 **Verify:** All 11 `ic_*.xml` files exist under `drawable/`. `./gradlew :app:compileDebugKotlin` succeeds. Loading any icon with `painterResource(R.drawable.ic_folder_outlined)` in a Preview composable renders correctly.
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -309,7 +311,7 @@ Create three new files in `app/src/main/kotlin/com/pimote/android/ui/theme/`:
 No `CompositionLocal` wiring yet — that happens in Step 4.
 
 **Verify:** All three files compile. Each data class can be instantiated in a unit test or Preview with default values.
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -334,7 +336,7 @@ Create `app/src/main/kotlin/com/pimote/android/ui/theme/PimoteTheme.kt` containi
 For fonts: construct `FontFamily` using `Font(R.font.inter_variable)` and `Font(R.font.jetbrainsmono_variable)`. Use `fontVariationSettings` if weight variation is needed. All `PimoteTypography` `TextStyle` instances receive their respective font families here (UI fields → inter, mono fields → jetbrainsmono).
 
 **Verify:** `PimoteTheme { Text("hello") }` compiles and renders correctly in a Compose Preview. `PimoteTheme.colors.indigo` is accessible inside the content lambda.
-**Status:** not started
+**Status:** done
 
 ---
 
