@@ -6,6 +6,7 @@
   import ToolCall from './ToolCall.svelte';
   import StreamingCollapsible from './StreamingCollapsible.svelte';
   import TtsButton from './TtsButton.svelte';
+  import CopyButton from './CopyButton.svelte';
   import User from '@lucide/svelte/icons/user';
   import Bot from '@lucide/svelte/icons/bot';
   import GitFork from '@lucide/svelte/icons/git-fork';
@@ -47,6 +48,8 @@
       .map((c) => c.text!)
       .join('\n\n'),
   );
+
+  let hasAssistantMenu = $derived(message.role === 'assistant' && !streaming && textContent.length > 0);
 
   function getUserText(msg: PimoteAgentMessage | StreamingMessage): string {
     return msg.content
@@ -153,13 +156,16 @@
   {:else}
     <div class="message assistant-message {isAbortedAssistant ? 'aborted' : ''}">
       <div class="assistant-icon-col">
-        {#if hasSpeakableText}
+        {#if hasAssistantMenu}
           <button class="message-icon assistant-icon" onclick={() => (toolMenuOpen = !toolMenuOpen)}>
             <Bot size={16} />
           </button>
           {#if toolMenuOpen}
             <div class="tool-menu">
-              <TtsButton {messageKey} {textContent} />
+              {#if hasSpeakableText}
+                <TtsButton {messageKey} {textContent} />
+              {/if}
+              <CopyButton text={textContent} title="Copy message" />
             </div>
           {/if}
         {:else}

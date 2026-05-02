@@ -365,3 +365,7 @@ class ConnectionStore {
 }
 
 export const connection = new ConnectionStore();
+
+// Wire the voice trace helper so client-side voice logs ship to the server.
+import { configureVoiceTrace } from './voice-trace.js';
+configureVoiceTrace((cmd) => connection.send(cmd));

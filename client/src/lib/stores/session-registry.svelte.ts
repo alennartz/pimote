@@ -297,9 +297,24 @@ export class SessionRegistry {
           session.streamingKey = null;
         } else {
           session.messages = [...session.messages, message];
-          if (session.streamingKey) {
-            session.messageKeys = [...session.messageKeys, session.streamingKey];
+          // Always append a key in lockstep with messages. If streamingKey is
+          // null here (e.g. agent_end cleared it before message_end, or
+          // message_end arrived without a preceding message_start), falling
+          // through without a key would desync messages/messageKeys by 1 and
+          // poison this session — every subsequent optimistic-user reconcile
+          // would resolve to the wrong index, clobbering the previous
+          // assistant message and duplicating the user message in the UI.
+          const key = session.streamingKey ?? 'msg-' + this._nextMessageKey++;
+          if (!session.streamingKey) {
+            console.error('[session-desync] message_end without streamingKey', {
+              sessionId,
+              cursor: end.cursor,
+              role: message.role,
+              messagesLen: session.messages.length,
+              keysLen: session.messageKeys.length,
+            });
           }
+          session.messageKeys = [...session.messageKeys, key];
           session.streamingMessage = null;
           session.streamingKey = null;
         }
