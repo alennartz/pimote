@@ -365,7 +365,7 @@ Write failing test first in `app/src/test/kotlin/com/pimote/android/ui/component
 Make the test pass by implementing the function.
 
 **Verify:** `./gradlew :app:test` passes including the new `StatusPillHelpersTest`.
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -385,7 +385,7 @@ Implement `@Composable fun StatusPill(state: StatusPillState, onTap: () -> Unit 
 - **State transitions:** Cross-fade between the expanded and collapsed forms using `AnimatedContent` with a `fadeIn + fadeOut` spec at 150ms.
 
 **Verify:** Compose Preview shows pill in all 5 states. `StatusPillHelpersTest` still passes.
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -406,7 +406,7 @@ Implement `@Composable fun ContactRow(title: String, subtitle: String, kind: Con
 > **Note:** `ContactsScreen.kt` currently defines a private `data class ContactRow` with the same name. Rename that private class to `ContactRowData` when updating `ContactsScreen` in Step 15 to avoid a naming conflict.
 
 **Verify:** Compose Preview renders a Project row and a Session row. Loading state shows spinner.
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -425,7 +425,7 @@ Implement `@Composable fun EmptyState(icon: Painter, primary: String, secondary:
 - **CTA:** When `cta != null`, render `PimoteButton(label = cta.label, onClick = cta.onClick, variant = PimoteButtonVariant.Secondary)`. This creates a forward dependency on Step 10 — either define `PimoteButton` before `EmptyState`, or stub the button call and fill it in during Step 10. Simplest: swap Steps 8 and 10 if needed, or inline a `TextButton` as a placeholder and replace in Step 10.
 
 **Verify:** Compose Preview shows Connected empty state (no CTA), Disconnected state (with CTA), and Connecting state with spinning icon.
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -487,7 +487,7 @@ Write tests in `app/src/test/kotlin/com/pimote/android/ui/call/CallStateHelpersT
 - `formatCallDuration(3661)` → `"61:01"`
 
 **Verify:** `./gradlew :app:test` passes including `CallStateHelpersTest`. AvatarRing Compose Preview renders all states.
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -514,7 +514,7 @@ Implement `@Composable fun PimoteButton(label: String, onClick: () -> Unit, modi
 Use `Button` or `Surface` + `clickable` as the underlying primitive — Material3 `Button` is fine but override its `ButtonDefaults.buttonColors(...)` with the above tokens.
 
 **Verify:** Compose Preview shows all 4 variants in default, disabled, and loading states.
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -534,7 +534,7 @@ Implement `@Composable fun PimoteOutlinedTextField(value: String, onValueChange:
 Wrap the `OutlinedTextField` + error text in a `Column`.
 
 **Verify:** Compose Preview shows default, focused, error (with message), and disabled states. Error message appears only when `isError = true && errorMessage != null`.
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -556,7 +556,7 @@ Implement `@Composable fun PimoteSnackbarHost(hostState: SnackbarHostState, vari
 - `modifier = modifier.padding(16.dp)` on the `SnackbarHost` to produce the 16dp edge margin.
 
 **Verify:** Compose Preview shows Error and Info variants. Error variant has the danger icon; Info has no leading icon.
-**Status:** not started
+**Status:** done
 
 ---
 
