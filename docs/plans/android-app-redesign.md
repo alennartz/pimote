@@ -571,7 +571,7 @@ Two call sites need wrapping:
 Do not wrap `InCallScreen` internally — the theme wraps at the Activity level so both `MainActivity` subtree and `InCallActivity` subtree each get one `PimoteTheme` root.
 
 **Verify:** `./gradlew :app:compileDebugKotlin` succeeds. All three screens still compile. Material3 components in the existing screens now render with the Pimote palette (indigo primary, void background) automatically.
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -605,7 +605,7 @@ Edit `app/src/main/kotlin/com/pimote/android/ui/setup/SetupScreen.kt`:
 9. **SnackbarHost:** Replace `SnackbarHost(snackbar)` with `PimoteSnackbarHost(snackbar, variant = PimoteSnackbarVariant.Error)` in the `Scaffold` snackbarHost slot.
 
 **Verify:** `./gradlew :app:compileDebugKotlin` succeeds. Compose Preview shows the restyled screen. Inline error text appears under the URL field when `isError = true`.
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -649,7 +649,7 @@ Edit `app/src/main/kotlin/com/pimote/android/ui/contacts/ContactsScreen.kt`:
 7. **SnackbarHost:** Replace `SnackbarHost(snackbar)` with `PimoteSnackbarHost(snackbar, variant = PimoteSnackbarVariant.Error)`.
 
 **Verify:** `./gradlew :app:compileDebugKotlin` succeeds. Compose Preview shows StatusPill above the contact list, Contact rows with vector icons and no emoji, and appropriate empty states.
-**Status:** not started
+**Status:** done
 
 ---
 
@@ -766,4 +766,4 @@ Edit `app/src/main/kotlin/com/pimote/android/ui/call/InCallScreen.kt`:
 7. **Remove old `describe`, `describeReason` helpers** — they were the debug-log-style state text. The AvatarRing's phase labels and `EndedError.reason` from `deriveAvatarRingState` replace them.
 
 **Verify:** `./gradlew :app:compileDebugKotlin` succeeds. Compose Previews show the three-zone layout for Connecting, Active (with timer placeholder), Ended-ok, and Ended-error states. `./gradlew :app:test` (all 97 existing tests + the 9 new ones) still passes.
-**Status:** not started
+**Status:** done

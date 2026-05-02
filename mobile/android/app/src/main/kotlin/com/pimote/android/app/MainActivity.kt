@@ -8,7 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.MaterialTheme
+import com.pimote.android.ui.theme.PimoteTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -65,7 +65,7 @@ class MainActivity : ComponentActivity() {
         })
 
         setContent {
-            MaterialTheme {
+            PimoteTheme {
                 Root(
                     route = currentRoute,
                     onNavigate = { currentRoute = it },
