@@ -135,3 +135,5 @@ Manifest entry: `<service>` with `android.content.SyncAdapter` intent filter and
 - `PimoteSyncAdapter` / `PimoteSyncAdapterService`: pure Android service plumbing; behavior is the platform binding lifecycle. Verified manually on-device, consistent with the existing project convention that `ContactSyncRunner` and other Android-glue classes are not unit-tested.
 - `ContactSyncRunner` row representation switch from `Phone` → `MIME_CALLABLE` and the new `Settings` row write: covered by the same convention. The pure mapping it now consumes (`callableRowFor`) is unit-tested above.
 - `res/xml/contacts.xml`, `res/xml/syncadapter.xml`, manifest meta-data: declarative XML, exercised by the platform at runtime.
+
+**Review status:** approved
