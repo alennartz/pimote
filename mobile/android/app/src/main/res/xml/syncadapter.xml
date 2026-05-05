@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SyncAdapter metadata for the Pimote contacts SyncAdapter shim.
+
+    accountType MUST equal @string/account_type ("com.pimote.android.account").
+    contentAuthority MUST equal ContactsContract.AUTHORITY ("com.android.contacts").
+
+    userVisible="true" surfaces the Pimote account under
+    Settings → Accounts → Pimote → Contacts. supportsUploading="false" and
+    isAlwaysSyncable="true" reflect that we never actually drive sync — the
+    declaration exists for visibility/recognition only.
+-->
+<sync-adapter xmlns:android="http://schemas.android.com/apk/res/android"
+    android:contentAuthority="com.android.contacts"
+    android:accountType="com.pimote.android.account"
+    android:userVisible="true"
+    android:supportsUploading="false"
+    android:allowParallelSyncs="false"
+    android:isAlwaysSyncable="true" />

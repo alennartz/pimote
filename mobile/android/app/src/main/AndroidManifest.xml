@@ -25,7 +25,9 @@
 
     <application
         android:name=".app.PimoteApp"
-        android:label="Pimote"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="true"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
@@ -74,6 +76,35 @@
             <meta-data
                 android:name="android.accounts.AccountAuthenticator"
                 android:resource="@xml/account_authenticator" />
+            <!--
+                Tells the platform that contacts owned by the Pimote Account
+                expose a custom callable data kind (vnd.com.pimote.android.call).
+                Without this, the system contact card has no per-MIME action to
+                render and Assistant / Gemini don't recognize Pimote contacts as
+                callable. See DR-019 supersession.
+            -->
+            <meta-data
+                android:name="android.provider.CONTACTS_STRUCTURE"
+                android:resource="@xml/contacts" />
+        </service>
+
+        <!--
+            Contacts SyncAdapter shim. The adapter's onPerformSync is a no-op;
+            ContactSyncRunner drives reconciliation directly off SessionRepository.
+            Service exists purely so the platform recognizes the Pimote Account as
+            a first-class contacts-syncing source (gates visibility in some
+            pickers and surfaces the account under Settings → Accounts → Pimote
+            → Contacts).
+        -->
+        <service
+            android:name="com.pimote.android.contacts.PimoteSyncAdapterService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.content.SyncAdapter" />
+            </intent-filter>
+            <meta-data
+                android:name="android.content.SyncAdapter"
+                android:resource="@xml/syncadapter" />
         </service>
     </application>
 </manifest>

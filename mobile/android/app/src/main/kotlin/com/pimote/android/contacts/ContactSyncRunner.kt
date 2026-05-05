@@ -84,6 +84,45 @@ class ContactSyncRunner(
             ContentResolver.setIsSyncable(account, ContactsContract.AUTHORITY, 1)
             ContentResolver.setSyncAutomatically(account, ContactsContract.AUTHORITY, false)
         }
+        // Idempotent: ensure a ContactsContract.Settings row exists for our
+        // account with UNGROUPED_VISIBLE=1 so synced contacts roll up into
+        // the default contacts directory (and Assistant search) without
+        // requiring group membership. Failure here must not crash account
+        // setup; we just log and proceed.
+        runCatching { ensureContactsSettingsRow() }
+            .onFailure { L.w("ContactsSync", "ensureContactsSettingsRow failed: ${it.message}", it) }
+    }
+
+    private fun ensureContactsSettingsRow() {
+        val settingsUri = ContactsContract.Settings.CONTENT_URI.buildUpon()
+            .appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true")
+            .build()
+        val selection =
+            "${ContactsContract.Settings.ACCOUNT_NAME} = ? AND ${ContactsContract.Settings.ACCOUNT_TYPE} = ?"
+        val args = arrayOf(account.name, account.type)
+        val resolver = context.contentResolver
+        val present = resolver.query(
+            ContactsContract.Settings.CONTENT_URI,
+            arrayOf(ContactsContract.Settings.ACCOUNT_NAME),
+            selection,
+            args,
+            null,
+        )?.use { it.moveToFirst() } ?: false
+        if (present) {
+            val values = android.content.ContentValues().apply {
+                put(ContactsContract.Settings.UNGROUPED_VISIBLE, 1)
+                put(ContactsContract.Settings.SHOULD_SYNC, 1)
+            }
+            resolver.update(settingsUri, values, selection, args)
+        } else {
+            val values = android.content.ContentValues().apply {
+                put(ContactsContract.Settings.ACCOUNT_NAME, account.name)
+                put(ContactsContract.Settings.ACCOUNT_TYPE, account.type)
+                put(ContactsContract.Settings.UNGROUPED_VISIBLE, 1)
+                put(ContactsContract.Settings.SHOULD_SYNC, 1)
+            }
+            resolver.insert(settingsUri, values)
+        }
     }
 
     private fun reconcile(
@@ -181,7 +220,7 @@ class ContactSyncRunner(
             while (c.moveToNext()) {
                 when (c.getString(mimeIdx)) {
                     ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE -> displayName = c.getString(dataIdx)
-                    ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE -> pimoteUri = c.getString(dataIdx)
+                    PimoteContactsContract.MIME_CALLABLE -> pimoteUri = c.getString(dataIdx)
                 }
             }
         }
@@ -200,6 +239,7 @@ class ContactSyncRunner(
 
     private fun insertRawContactOps(d: ContactsSync.DesiredContact): List<ContentProviderOperation> {
         val rawIndex = 0  // back-reference for the data rows below
+        val callable = PimoteContactsContract.callableRowFor(d)
         return listOf(
             ContentProviderOperation.newInsert(syncAuthority)
                 .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, account.name)
@@ -213,10 +253,11 @@ class ContactSyncRunner(
                 .build(),
             ContentProviderOperation.newInsert(dataAuthority)
                 .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, rawIndex)
-                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
-                .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, d.pimoteUri)
-                .withValue(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_OTHER)
-                .withValue(ContactsContract.CommonDataKinds.Phone.LABEL, "Pimote")
+                .withValue(ContactsContract.Data.MIMETYPE, callable.mimeType)
+                .withValue(ContactsContract.Data.DATA1, callable.data1)
+                .withValue(ContactsContract.Data.DATA2, callable.data2)
+                .withValue(ContactsContract.Data.DATA3, callable.data3)
+                .withValue(ContactsContract.Data.IS_PRIMARY, callable.isPrimary)
                 .build(),
         )
     }
@@ -224,6 +265,7 @@ class ContactSyncRunner(
     private fun updateRawContactOps(u: ContactsSync.UpdatePair): List<ContentProviderOperation> {
         val rawId = u.rawContactId
         val d = u.desired
+        val callable = PimoteContactsContract.callableRowFor(d)
         return listOf(
             ContentProviderOperation.newUpdate(dataAuthority)
                 .withSelection(
@@ -235,9 +277,10 @@ class ContactSyncRunner(
             ContentProviderOperation.newUpdate(dataAuthority)
                 .withSelection(
                     "${ContactsContract.Data.RAW_CONTACT_ID} = ? AND ${ContactsContract.Data.MIMETYPE} = ?",
-                    arrayOf(rawId.toString(), ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE),
+                    arrayOf(rawId.toString(), PimoteContactsContract.MIME_CALLABLE),
                 )
-                .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, d.pimoteUri)
+                .withValue(ContactsContract.Data.DATA1, callable.data1)
+                .withValue(ContactsContract.Data.DATA3, callable.data3)
                 .build(),
         )
     }

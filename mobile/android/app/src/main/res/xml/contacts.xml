@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Pimote ContactsContract account-type schema. Referenced from
+    PimoteAuthenticatorService via the
+    `android.provider.CONTACTS_STRUCTURE` meta-data.
+
+    Declares one custom callable data kind:
+
+      vnd.android.cursor.item/vnd.com.pimote.android.call
+
+    The MIME string MUST stay in lockstep with
+    PimoteContactsContract.MIME_CALLABLE — see
+    PimoteContactsContractTest for the pin.
+
+    Column semantics on the data row (written by ContactSyncRunner):
+      - data1 → pimote: dial URI (pimote:session:<id> / pimote:project:<base64>)
+      - data2 → "Pimote" (short label shown under the row icon)
+      - data3 → human-readable summary ("Call repo/feature", etc.)
+
+    No explicit <Intent> element: the system contact card / Assistant
+    fire ACTION_CALL with the row's data1 value, which Telecom routes
+    to our self-managed PhoneAccount via setSupportedUriSchemes(["pimote"]).
+-->
+<ContactsAccountType xmlns:android="http://schemas.android.com/apk/res/android">
+    <ContactsDataKind
+        android:mimeType="vnd.android.cursor.item/vnd.com.pimote.android.call"
+        android:icon="@drawable/ic_call_outlined"
+        android:summaryColumn="data2"
+        android:detailColumn="data3"
+        android:detailSocialSummary="true" />
+</ContactsAccountType>

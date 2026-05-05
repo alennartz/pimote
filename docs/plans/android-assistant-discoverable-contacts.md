@@ -140,6 +140,8 @@ Manifest entry: `<service>` with `android.content.SyncAdapter` intent filter and
 
 ## Steps
 
+**Pre-implementation commit:** `4463105842bb70bb237303b3689c711ef263f7bd`
+
 ### Step 1: Implement `PimoteContactsContract.callableRowFor`
 
 Replace the `TODO()` body in `mobile/android/app/src/main/kotlin/com/pimote/android/contacts/PimoteContactsContract.kt`. Construct a `CallableRow` from the desired contact:
@@ -151,7 +153,7 @@ Replace the `TODO()` body in `mobile/android/app/src/main/kotlin/com/pimote/andr
 - `isPrimary = 1`
 
 **Verify:** `make android-test` — all `PimoteContactsContractTest` cases pass; existing `ContactsSyncTest`, `PhoneAccountRulesTest`, etc. remain green.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Add `res/xml/contacts.xml`
 
@@ -166,7 +168,7 @@ Create `mobile/android/app/src/main/res/xml/contacts.xml` declaring one `<Contac
 No nested `<Intent>` element is required for Telecom URI-scheme routing — the system contact card / Assistant fire `ACTION_CALL` with the row's `data1` value, which Telecom routes to our PhoneAccount via `setSupportedUriSchemes(["pimote"])`. (If on-device manual testing reveals the contact card needs an explicit action declaration, add a nested `<Intent>` with `android:action = "android.intent.action.CALL"` and `android:data = "@1"` in a follow-up step — note as a manual-test verification point.)
 
 **Verify:** APK builds (`make android-build`); resource lint passes; the XML validates against the platform schema (no AAPT2 errors).
-**Status:** not started
+**Status:** done
 
 ### Step 3: Wire `CONTACTS_STRUCTURE` meta-data on the AccountAuthenticator service
 
@@ -179,7 +181,7 @@ Edit `mobile/android/app/src/main/AndroidManifest.xml`. Inside the existing `<se
 ```
 
 **Verify:** APK builds; merged manifest under `mobile/android/app/build/intermediates/merged_manifest/debug/` contains both meta-data entries on the authenticator service.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Add `res/xml/syncadapter.xml`
 
@@ -198,7 +200,7 @@ Create `mobile/android/app/src/main/res/xml/syncadapter.xml`:
 The `accountType` value must match `@string/account_type`. The `contentAuthority` must equal `ContactsContract.AUTHORITY` (`com.android.contacts`).
 
 **Verify:** APK builds; AAPT2 raises no errors on the new resource.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Register `PimoteSyncAdapterService` in the manifest
 
@@ -218,7 +220,7 @@ Edit `mobile/android/app/src/main/AndroidManifest.xml`. Inside `<application>`, 
 ```
 
 **Verify:** APK builds; merged manifest contains the new service entry; on a device, `adb shell dumpsys account` shows the Pimote account type as a recognized contacts sync target.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Switch `ContactSyncRunner` row representation from `Phone` to `MIME_CALLABLE`
 
@@ -237,7 +239,7 @@ Edit `mobile/android/app/src/main/kotlin/com/pimote/android/contacts/ContactSync
 No behavioral change to `ContactsSync` (the pure layer) is needed — its `DesiredContact`/`ExistingContact` shapes already match.
 
 **Verify:** `make android-test` still green (no unit-test changes; the runner is not unit-tested). On a connected device with a fresh install: `adb shell content query --uri content://com.android.contacts/data --where "mimetype='vnd.android.cursor.item/vnd.com.pimote.android.call'"` returns one row per session/project with the expected `data1`/`data2`/`data3` values.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Write a `ContactsContract.Settings` row for the Pimote account
 
@@ -251,21 +253,21 @@ This ensures Pimote contacts roll up into the default contacts directory without
 Operation must be idempotent — query first; insert if absent, update if present. Place it next to the existing `setIsSyncable` block; run once on first account creation. Failures should be logged via `L.w("ContactsSync", …)` but not crash account creation.
 
 **Verify:** On a connected device with a fresh install: `adb shell content query --uri content://com.android.contacts/settings --where "account_type='com.pimote.android.account'"` shows one row with `ungrouped_visible=1`, `should_sync=1`. Existing tests stay green.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Wire `PimoteSyncAdapterService` lifecycle into `AppContainer`
 
 No runtime wiring needed — the platform binds the service on demand. Confirm this by reading `mobile/android/app/src/main/kotlin/com/pimote/android/app/AppContainer.kt` and verifying nothing there or in `PimoteApp` needs to start the service explicitly. If `AppContainer` currently constructs `ContactSyncRunner` for `start()`, that path is untouched. (This step exists so the implementer doesn't forget to check.)
 
 **Verify:** Code reading only — no edits expected. If edits turn out to be required, surface to the user before making them.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Update codemap
 
 Edit `codemap.md` Android Client section to mention the new files (`PimoteContactsContract.kt`, `PimoteSyncAdapter.kt`, `PimoteSyncAdapterService.kt`, `res/xml/contacts.xml`, `res/xml/syncadapter.xml`) and the row-representation change. Cleanup phase will normally do this, but inline in implementing keeps the codemap honest.
 
 **Verify:** Codemap diff matches the file list.
-**Status:** not started
+**Status:** done
 
 ### Step 10: Manual on-device verification
 

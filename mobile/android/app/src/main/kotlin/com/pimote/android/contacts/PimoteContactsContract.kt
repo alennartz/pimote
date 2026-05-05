@@ -55,10 +55,13 @@ object PimoteContactsContract {
     /**
      * Pure mapping from a desired contact to the column values of its
      * callable data row.
-     *
-     * Implementation pending — see plan
-     * `docs/plans/android-assistant-discoverable-contacts.md`.
      */
     fun callableRowFor(desired: ContactsSync.DesiredContact): CallableRow =
-        TODO("Implemented in implementing phase")
+        CallableRow(
+            mimeType = MIME_CALLABLE,
+            data1 = desired.pimoteUri,
+            data2 = LABEL,
+            data3 = desired.summary,
+            isPrimary = 1,
+        )
 }
