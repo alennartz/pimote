@@ -125,3 +125,69 @@ The wire's `session_opened` and `session_replaced` events do NOT carry `modified
 2. **Refetch effect.** Emit a `SessionEffect.RefetchFolder` on every `session_opened`. Adds a round-trip per session-open and complicates the test matrix (every `session_opened` test also asserts an effect). The user-visible payoff is small because the existing manual-refresh path already converges.
 
 Option 1 is consistent with the rest of the reducer, simpler to test, and avoids per-open round-trips. Drawback: a freshly-opened session shows `0 msgs · just now` until the next refresh, which is acceptable UX given the prominent Refresh button on the screen and the WS-reconnect refresh.
+
+## Tests
+
+**Pre-test-write commit:** `0f29951a50b2cc836a0caa7cbe92514ccec9c5b6`
+
+### Interface Files
+
+- `mobile/android/app/src/main/kotlin/com/pimote/android/session/SessionRepository.kt` — expanded `SessionMeta` data class with the new fields (`modified`, `created`, `messageCount`, `firstMessage`, `cwd`), all defaulted so existing call sites continue to compile. `reduceSessionEvent` signature gains a `now: () -> String = { "" }` clock parameter, also defaulted.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/session/SessionListGroups.kt` — new file declaring `SessionProjectGroup` and the `buildSessionProjectGroups` pure function (body is `TODO()`).
+- `mobile/android/app/src/main/kotlin/com/pimote/android/session/SessionDisplay.kt` — new file declaring `sessionDisplayName`, `shortenCwd`, `cwdLabelFor`, and `formatRelativeTime` pure functions (bodies are `TODO()`).
+
+### Test Files
+
+- `mobile/android/app/src/test/kotlin/com/pimote/android/session/SessionListGroupsTest.kt` — mirrors `client/src/lib/session-list-groups.test.ts` and adds Android-specific edge cases (tie-breakers, unparseable timestamps, orphan sessions).
+- `mobile/android/app/src/test/kotlin/com/pimote/android/session/SessionDisplayTest.kt` — covers the display-name fallback chain, cwd shortening, the cwd-label suppression rule, and relative-time bucketing including negative-skew and unparseable-input edge cases.
+- `mobile/android/app/src/test/kotlin/com/pimote/android/session/SessionReducerExpandedTest.kt` — pins the new clock-injected behavior on `session_opened` and the metadata-preservation behavior on `session_replaced`. Coexists with the existing `SessionReducerTest`.
+
+### Behaviors Covered
+
+#### buildSessionProjectGroups
+
+- Folders with no sessions are dropped.
+- Within a project, sessions sort by `modified` desc; ties break on `created` desc, then `sessionId` asc.
+- Project groups sort by `lastModified` desc; ties break on `folderName` asc.
+- `lastModified` equals the first session's `modified` after sorting.
+- Unparseable timestamps sort to the bottom rather than crashing.
+- Empty inputs return an empty list.
+- Sessions whose `folderPath` matches no project are dropped.
+
+#### sessionDisplayName
+
+- Returns `name` when non-blank.
+- Falls back to `firstMessage` when `name` is blank or null.
+- Truncates `firstMessage` longer than 60 chars, appending `…`; passes through exactly-60-char strings verbatim.
+- Falls back to `"Session <first 8 chars of sessionId>"` when both are absent; tolerates short session IDs.
+
+#### shortenCwd
+
+- Returns input unchanged for paths with ≤ 2 non-empty segments.
+- For 3+ segments, returns `"…/" + lastTwoSegments.joinToString("/")`.
+- Tolerates trailing slashes and consecutive slashes.
+- Empty input returns empty.
+
+#### cwdLabelFor
+
+- Returns null when `cwd` is null, blank, or equals `folderPath`.
+- Returns the shortened cwd when distinct.
+- Returns the unchanged cwd when distinct AND short (≤ 2 segments).
+
+#### formatRelativeTime
+
+- `< 60 s` → `"just now"`; `< 60 m` → `"<n>m ago"`; `< 24 h` → `"<n>h ago"`; `< 30 d` → `"<n>d ago"`.
+- Past 30 days falls through to a non-empty absolute date string.
+- Negative diffs (clock skew) treated as `"just now"`.
+- Unparseable input returns the input verbatim.
+
+#### reduceSessionEvent (expanded)
+
+- `session_opened` seeds `created` and `modified` from the injected `now` lambda.
+- `session_opened` seeds `messageCount = 0`, `firstMessage = null`, `cwd = null`.
+- `session_replaced` preserves the old row's `name`, `messageCount`, `firstMessage`, `cwd`, `modified`, and `created` on the new `sessionId`.
+
+#### Out of unit-test scope
+
+- The grouped Compose layout in `ContactsScreen.kt`: snapshot/UI tests are not part of this codebase's existing convention; manual on-device verification is the bar.
+- `SessionRepositoryImpl.refresh` / `refetchFolder` populating the new fields from `SessionInfo`: integration with the WS layer; covered by `SessionRepositoryImplTest` adjustments during implementation rather than fresh test files.

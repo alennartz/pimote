@@ -23,12 +23,30 @@ import com.pimote.android.net.WsState
 
 data class ProjectMeta(val folderPath: String, val folderName: String)
 
+/**
+ * Held metadata for one unarchived session. Fields beyond the original
+ * five (`sessionId`, `folderPath`, `folderName`, `name`, `archived`) mirror
+ * the wire's `SessionInfo` and drive the in-app contacts list (recency
+ * sort, message count, cwd hint, first-message fallback).
+ *
+ * `liveStatus` and `isOwnedByMe` are intentionally NOT mirrored — the
+ * Android contacts screen does not surface remote-active state, and the
+ * archived filter happens at the repository level so the UI never needs
+ * to render archived contacts.
+ */
 data class SessionMeta(
     val sessionId: String,
     val folderPath: String,
     val folderName: String,
     val name: String?,
     val archived: Boolean,
+    /** ISO-8601 UTC timestamp from the server, or a clock-injected fallback for newly-opened rows. */
+    val modified: String = "",
+    /** ISO-8601 UTC timestamp from the server, or a clock-injected fallback for newly-opened rows. */
+    val created: String = "",
+    val messageCount: Int = 0,
+    val firstMessage: String? = null,
+    val cwd: String? = null,
 )
 
 /**
@@ -109,7 +127,11 @@ data class ReducerResult(
  * Projects list is never modified by event reduction — projects are
  * bootstrap-only.
  */
-fun reduceSessionEvent(snapshot: SessionSnapshot, event: PimoteEvent): ReducerResult {
+fun reduceSessionEvent(
+    snapshot: SessionSnapshot,
+    event: PimoteEvent,
+    now: () -> String = { "" },
+): ReducerResult {
     val sessions = snapshot.sessions
     return when (event) {
         is SessionOpenedEvent -> {
