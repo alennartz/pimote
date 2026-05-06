@@ -289,3 +289,58 @@ Discrepancies become follow-up steps; do not silently work around them.
 
 **Verify:** All 8 manual checks pass. Discrepancies recorded as new steps in this plan.
 **Status:** not started
+
+## Follow-up: visual hierarchy fix
+
+User feedback after on-device install of the initial implementation: "looks flat — needs per-project grouping, and message count + last time too." The list was structurally grouped but every row used the same `ContactRow` template (same height, same chevron, same press-flash background, only the icon differing) so the visual rhythm read as a flat list. The data-path concern in the same feedback was a misreport — message count and relative time were already landing correctly; only the visual treatment needed work.
+
+### Step F1: Distinct project header treatment
+
+Add a dedicated `ProjectHeaderRow` composable in a new file `mobile/android/app/src/main/kotlin/com/pimote/android/ui/contacts/ContactsRows.kt`:
+
+- Section-title styling: `surfacePlus` background tint, `inkSecondary` text color, 40 dp min-height, `labelMedium` typography upper-cased with extra letter-spacing.
+- Thin top divider drawn on every header except the first (caller passes `showTopDivider = groupIndex > 0`).
+- The header itself is **not** tappable. The "call this project" affordance is a small inline `IconButton` on the right (`ic_call_outlined`, indigo tint, 36 dp). When the project's `handleId` is the active `loadingHandleId`, the IconButton swaps for a `CircularProgressIndicator`.
+
+**Verify:** APK builds; project headers render visibly distinct from session rows.
+**Status:** done
+
+### Step F2: Indented session rows with PWA-style layout
+
+In the same new file, add a dedicated `SessionListRow` composable:
+
+- Indented from the screen edge by `spacing.ml + spacing.ml` (≈ 40 dp) so sessions visibly nest under the project header.
+- Three-line layout in the title column:
+  1. **Display name** — `bodyLarge` + `SemiBold`, `ink` color, single line, ellipsis on overflow.
+  2. **Cwd hint** _(optional)_ — `bodySmall` italic, `inkSecondary`, only when `cwdLabelFor` returns non-null.
+  3. **Metadata line** — `bodySmall`, `inkSecondary`, content `"<n> msg(s) · <relative time>"`. cwd is no longer joined into this line.
+- Leading icon: `ic_chat_bubble_outlined`, `inkSecondary` tint, 18 dp; swapped for a 20 dp progress indicator while loading.
+- Trailing chevron: `KeyboardArrowRight`, `inkDisabled` tint.
+- Press-flash to `surfacePlus` for 100 ms, matching the original `ContactRow`.
+
+`ContactsScreen` updates: `ContactsRow.SessionChild` now carries `cwdLabel: String?` and `metadataLine: String` separately (the previous single `subtitle` joined cwd with msgs/time, which made cwd hard to spot). `ContactsRow` rows also carry `groupIndex` so the renderer can suppress the divider on the first header. The `LazyColumn` `items` block dispatches to either `ProjectHeaderRow` or `SessionListRow` via `when (row)`. The shared `onCall` lambda (place-call + spinner-clear via `LaunchedEffect(callState)`) is reused by both.
+
+**Verify:** APK builds; 155 unit tests still pass (visual change has no test-suite impact; pure helpers unchanged).
+**Status:** done
+
+### Step F3: Manual on-device verification (extended)
+
+Re-install the debug APK on a Pixel device with ≥ 2 projects and multiple sessions per project. Verify:
+
+1. **Project headers** are visibly distinct from session rows: shorter height, tinted background (`surfacePlus`), uppercase label, no chevron, with a small indigo phone-icon button on the right.
+2. **Sessions are indented** under their project header — there's a clear left-edge step inward from header to session rows.
+3. **Each session row shows three lines** when applicable:
+   - The display name in a clearly bolder/larger weight than the metadata.
+   - An italic muted cwd line only when the session's `cwd` differs from its project folder.
+   - A `"<n> msgs · <relative time>"` line.
+4. **Top divider** is drawn between groups but not above the first group.
+5. **Tap targets:**
+   - Tapping a project header itself does nothing.
+   - Tapping the project header's **phone icon button** places the project's hotline call.
+   - Tapping a session row places that session's call.
+6. Loading spinner appears on the row whose call is in flight (project icon button or session row), and clears once the controller leaves Idle.
+7. Pull-to-refresh / Refresh button / WS status pill / snackbar / empty states unchanged.
+8. Layout still feels right with one-project-one-session and many-projects-many-sessions edge cases.
+
+**Verify:** All 8 checks pass. Discrepancies recorded as new follow-up steps.
+**Status:** not started

@@ -52,8 +52,6 @@ import com.pimote.android.telephony.PIMOTE_SERVICE_HANDLE_ID
 import com.pimote.android.telephony.PIMOTE_URI_SCHEME
 import com.pimote.android.telephony.PhoneAccountRules
 import com.pimote.android.telephony.PimoteConnectionService
-import com.pimote.android.ui.components.ContactKind
-import com.pimote.android.ui.components.ContactRow
 import com.pimote.android.ui.components.EmptyState
 import com.pimote.android.ui.components.EmptyStateCta
 import com.pimote.android.ui.components.PimoteSnackbarHost
@@ -82,18 +80,24 @@ class ContactsViewModel : ViewModel() {
  * Pre-flattened row entries for the grouped contacts list. We materialize
  * project headers and their session children into a single linear list so
  * the LazyColumn can render with one [items] call and stable per-row keys
- * via [handleId].
+ * via [handleId]. Each row carries the index of the group it belongs to
+ * so the renderer can decide whether to draw a top divider on the header
+ * (omitted on the very first group).
  */
 private sealed interface ContactsRow {
     val handleId: String
+    val groupIndex: Int
     data class ProjectHeader(
         override val handleId: String,
+        override val groupIndex: Int,
         val label: String,
     ) : ContactsRow
     data class SessionChild(
         override val handleId: String,
+        override val groupIndex: Int,
         val title: String,
-        val subtitle: String,
+        val cwdLabel: String?,
+        val metadataLine: String,
     ) : ContactsRow
 }
 
@@ -103,28 +107,30 @@ private fun flattenGroups(
     nowMillis: Long,
 ): List<ContactsRow> {
     val out = ArrayList<ContactsRow>(groups.sumOf { 1 + it.sessions.size })
-    for (g in groups) {
+    groups.forEachIndexed { idx, g ->
         val projectLabel = labelByPath[g.project.folderPath] ?: g.project.folderName
         out += ContactsRow.ProjectHeader(
             handleId = PhoneAccountRules.projectHandleId(g.project.folderPath),
+            groupIndex = idx,
             label = projectLabel,
         )
         for (s in g.sessions) {
             out += ContactsRow.SessionChild(
                 handleId = PhoneAccountRules.sessionHandleId(s.sessionId),
+                groupIndex = idx,
                 title = sessionDisplayName(s),
-                subtitle = sessionSubtitle(s, nowMillis),
+                cwdLabel = cwdLabelFor(s, s.folderPath),
+                metadataLine = sessionMetadataLine(s, nowMillis),
             )
         }
     }
     return out
 }
 
-private fun sessionSubtitle(session: SessionMeta, nowMillis: Long): String {
-    val cwd = cwdLabelFor(session, session.folderPath)
+private fun sessionMetadataLine(session: SessionMeta, nowMillis: Long): String {
     val msgs = "${session.messageCount} msg${if (session.messageCount != 1) "s" else ""}"
     val rel = formatRelativeTime(session.modified, nowMillis)
-    return listOfNotNull(cwd, msgs, rel).joinToString(" · ")
+    return "$msgs · $rel"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -234,41 +240,45 @@ fun ContactsScreen(viewModel: ContactsViewModel, onEditSettings: () -> Unit) {
             } else {
                 LazyColumn(modifier = Modifier.fillMaxWidth()) {
                     items(rows, key = { it.handleId }) { row ->
-                        val (title, subtitle, kind) = when (row) {
-                            is ContactsRow.ProjectHeader ->
-                                Triple(row.label, "New session in this project", ContactKind.Project)
-                            is ContactsRow.SessionChild ->
-                                Triple(row.title, row.subtitle, ContactKind.Session)
-                        }
-                        ContactRow(
-                            title = title,
-                            subtitle = subtitle,
-                            kind = kind,
-                            isLoading = loadingHandleId == row.handleId,
-                            onTap = {
-                                if (context == null) return@ContactRow
-                                loadingHandleId = row.handleId
-                                try {
-                                    placeCall(context, row.handleId)
-                                    // Don't clear loadingHandleId here — placeCall returns
-                                    // synchronously but the call dispatch is async. The
-                                    // LaunchedEffect(callState) above clears the spinner once
-                                    // the controller leaves Idle.
-                                } catch (e: SecurityException) {
-                                    loadingHandleId = null
-                                    L.w("Contacts", "placeCall SecurityException", e)
-                                    scope.launch {
-                                        snackbar.showSnackbar("Permission missing for placeCall")
-                                    }
-                                } catch (e: Throwable) {
-                                    loadingHandleId = null
-                                    L.w("Contacts", "placeCall failed: ${e.message}", e)
-                                    scope.launch {
-                                        snackbar.showSnackbar("Failed: ${e.message}")
-                                    }
+                        val handleId = row.handleId
+                        val onCall: () -> Unit = onCall@{
+                            if (context == null) return@onCall
+                            loadingHandleId = handleId
+                            try {
+                                placeCall(context, handleId)
+                                // Don't clear loadingHandleId here — placeCall returns
+                                // synchronously but the call dispatch is async. The
+                                // LaunchedEffect(callState) above clears the spinner once
+                                // the controller leaves Idle.
+                            } catch (e: SecurityException) {
+                                loadingHandleId = null
+                                L.w("Contacts", "placeCall SecurityException", e)
+                                scope.launch {
+                                    snackbar.showSnackbar("Permission missing for placeCall")
                                 }
-                            },
-                        )
+                            } catch (e: Throwable) {
+                                loadingHandleId = null
+                                L.w("Contacts", "placeCall failed: ${e.message}", e)
+                                scope.launch {
+                                    snackbar.showSnackbar("Failed: ${e.message}")
+                                }
+                            }
+                        }
+                        when (row) {
+                            is ContactsRow.ProjectHeader -> ProjectHeaderRow(
+                                label = row.label,
+                                isLoading = loadingHandleId == handleId,
+                                showTopDivider = row.groupIndex > 0,
+                                onCallProject = onCall,
+                            )
+                            is ContactsRow.SessionChild -> SessionListRow(
+                                title = row.title,
+                                cwdLabel = row.cwdLabel,
+                                metadataLine = row.metadataLine,
+                                isLoading = loadingHandleId == handleId,
+                                onTap = onCall,
+                            )
+                        }
                     }
                 }
             }
