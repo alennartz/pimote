@@ -32,12 +32,19 @@ class SessionListGroupsTest {
     )
 
     @Test
-    fun `omits projects with no visible sessions`() {
+    fun `keeps empty projects and sorts them after non-empty ones`() {
+        // On mobile, the project header is the call-into-a-new-session
+        // affordance, so empty projects must remain visible. They sort
+        // below any project with sessions (epoch-0 lastModified) and
+        // alphabetically among themselves.
         val groups = buildSessionProjectGroups(
-            projects = listOf(project("/a", "alpha"), project("/b", "beta")),
-            sessions = listOf(session("a1", "/a", "2026-04-05T10:00:00.000Z")),
+            projects = listOf(project("/a", "alpha"), project("/b", "beta"), project("/c", "charlie")),
+            sessions = listOf(session("b1", "/b", "2026-04-05T10:00:00.000Z")),
         )
-        assertEquals(listOf("alpha"), groups.map { it.project.folderName })
+        // beta has the only session → first. alpha and charlie are empty → alphabetical.
+        assertEquals(listOf("beta", "alpha", "charlie"), groups.map { it.project.folderName })
+        assertEquals(emptyList<String>(), groups[1].sessions.map { it.sessionId })
+        assertEquals(emptyList<String>(), groups[2].sessions.map { it.sessionId })
     }
 
     @Test
@@ -95,12 +102,19 @@ class SessionListGroupsTest {
     }
 
     @Test
-    fun `empty projects and empty sessions yield empty groups`() {
+    fun `no projects yields empty groups`() {
         assertEquals(emptyList<SessionProjectGroup>(), buildSessionProjectGroups(emptyList(), emptyList()))
-        assertEquals(
-            emptyList<SessionProjectGroup>(),
-            buildSessionProjectGroups(listOf(project("/a", "alpha")), emptyList()),
+    }
+
+    @Test
+    fun `projects with no sessions still produce groups (mobile divergence from PWA)`() {
+        val groups = buildSessionProjectGroups(
+            projects = listOf(project("/a", "alpha")),
+            sessions = emptyList(),
         )
+        assertEquals(1, groups.size)
+        assertEquals("alpha", groups.single().project.folderName)
+        assertEquals(emptyList<String>(), groups.single().sessions.map { it.sessionId })
     }
 
     @Test

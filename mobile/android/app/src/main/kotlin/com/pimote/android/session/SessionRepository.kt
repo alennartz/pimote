@@ -242,13 +242,17 @@ class SessionRepositoryImpl(
         stateJob = scope.launch(Dispatchers.Unconfined) {
             var prev: WsState? = null
             wsClient.state.collect { cur ->
-                if (prev is WsState.Reconnecting && cur is WsState.Connected) {
+                // Refresh on any non-Connected → Connected transition. The
+                // initial Disconnected/Connecting → Connected case is the
+                // common one (cold app launch); the Reconnecting → Connected
+                // case covers transient drops. Either way, the server's
+                // session/folder list is the source of truth post-connect.
+                if (prev !is WsState.Connected && cur is WsState.Connected) {
                     runCatching { refresh() }
                 }
                 prev = cur
             }
         }
-        bootstrapJob = scope.launch(Dispatchers.Unconfined) { runCatching { refresh() } }
     }
 
     override fun stop() {

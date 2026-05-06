@@ -20,11 +20,14 @@ data class SessionProjectGroup(
 /**
  * Build the list of project groups for display.
  *
- * - Folders with no sessions are dropped.
+ * - Empty projects ARE kept (unlike the PWA, which drops them). On mobile,
+ *   the project header is the call-into-a-new-session affordance, so empty
+ *   projects must remain visible.
  * - Sessions sort newest-first by `modified`, breaking ties on `created`
  *   then `sessionId` ascending.
  * - Groups sort newest-first by `lastModified`, breaking ties on
- *   `project.folderName` ascending.
+ *   `project.folderName` ascending. Empty groups have no `lastModified`;
+ *   they sort to the bottom (epoch 0) and break ties alphabetically.
  */
 fun buildSessionProjectGroups(
     projects: List<ProjectMeta>,
@@ -36,14 +39,15 @@ fun buildSessionProjectGroups(
             .thenByDescending { parseTimestamp(it.created) }
             .thenBy { it.sessionId }
 
-    val groups = projects.mapNotNull { p ->
+    val groups = projects.map { p ->
         val folderSessions = byPath[p.folderPath].orEmpty()
-        if (folderSessions.isEmpty()) return@mapNotNull null
         val sorted = folderSessions.sortedWith(sessionComparator)
         SessionProjectGroup(
             project = p,
             sessions = sorted,
-            lastModified = sorted.first().modified,
+            // Empty groups: empty string sorts as epoch 0 via parseTimestamp,
+            // pushing them below any group with real sessions.
+            lastModified = sorted.firstOrNull()?.modified ?: "",
         )
     }
 
