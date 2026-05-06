@@ -1,7 +1,6 @@
 package com.pimote.android.contacts
 
 import com.pimote.android.session.ProjectMeta
-import com.pimote.android.session.SessionMeta
 import com.pimote.android.telephony.PhoneAccountRules
 
 /**
@@ -59,21 +58,27 @@ object ContactsSync {
     )
 
     /**
-     * Build the desired contact set from the repository state. Reuses
-     * [PhoneAccountRules.sanitize] and [PhoneAccountRules.disambiguateFolderLabels]
-     * for label rules — these stayed valid even after we abandoned the
-     * per-session PhoneAccount model. There is no cap here: the system
-     * contacts database imposes no limit comparable to Telecom's 10-account
-     * cap.
+     * Build the desired contact set from the repository state.
+     *
+     * **Only projects/folders become contacts.** Individual sessions are not
+     * registered — a typical user has dozens-to-hundreds of sessions, most
+     * of them transient or unnamed, and surfacing each as a separate
+     * "contact" pollutes the system contact list with no-name entries.
+     * Calling a project URI lets the user start (or resume) a session in
+     * that folder; that's the right granularity for a voice-driven affordance.
+     *
+     * Reuses [PhoneAccountRules.sanitize] and
+     * [PhoneAccountRules.disambiguateFolderLabels] for label rules. There is
+     * no cap here: ContactsContract imposes no limit comparable to Telecom's
+     * 10-account cap.
      */
     fun computeDesiredContacts(
         projects: List<ProjectMeta>,
-        sessions: List<SessionMeta>,
     ): List<DesiredContact> {
-        val allPaths = (projects.map { it.folderPath } + sessions.map { it.folderPath }).distinct()
-        val labels = PhoneAccountRules.disambiguateFolderLabels(allPaths)
-        val out = ArrayList<DesiredContact>(projects.size + sessions.size)
-
+        val labels = PhoneAccountRules.disambiguateFolderLabels(
+            projects.map { it.folderPath }.distinct(),
+        )
+        val out = ArrayList<DesiredContact>(projects.size)
         for (p in projects) {
             val prefix = PhoneAccountRules.sanitize(labels[p.folderPath] ?: p.folderName) ?: continue
             val sourceId = PhoneAccountRules.projectHandleId(p.folderPath)
@@ -82,22 +87,7 @@ object ContactsSync {
                     sourceId = sourceId,
                     displayName = prefix,
                     pimoteUri = "pimote:$sourceId",
-                    summary = "New session in $prefix",
-                ),
-            )
-        }
-        for (s in sessions) {
-            val prefix = PhoneAccountRules.sanitize(labels[s.folderPath] ?: s.folderName) ?: continue
-            val nameRaw = s.name?.takeIf { it.isNotBlank() } ?: "untitled"
-            val sessionPart = PhoneAccountRules.sanitize(nameRaw) ?: continue
-            val combined = PhoneAccountRules.sanitize("$prefix/$sessionPart") ?: continue
-            val sourceId = PhoneAccountRules.sessionHandleId(s.sessionId)
-            out.add(
-                DesiredContact(
-                    sourceId = sourceId,
-                    displayName = combined,
-                    pimoteUri = "pimote:$sourceId",
-                    summary = "Call $combined",
+                    summary = "Call $prefix",
                 ),
             )
         }

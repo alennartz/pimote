@@ -17,11 +17,17 @@
     <uses-permission android:name="android.permission.WRITE_SYNC_SETTINGS" />
 
     <!--
-        No WRITE_CONTACTS / READ_CONTACTS: ContactSyncRunner only mutates rows
-        owned by the Pimote AccountManager Account, with CALLER_IS_SYNCADAPTER=
-        true on the URIs. The system trusts apps to mutate their own Account's
-        contact rows without those runtime permissions.
+        ContactSyncRunner reads and writes ContactsContract rows owned by the
+        Pimote AccountManager Account. CALLER_IS_SYNCADAPTER=true on the URIs
+        only relaxes permission checks when the caller is bound as a real
+        SyncAdapter (system holds the binder identity). When called from the
+        Application process directly — which is what we do, because contacts
+        change live with WS events and the sync framework is too async — the
+        system still requires READ_CONTACTS / WRITE_CONTACTS at the caller's
+        UID. Both are runtime ("dangerous") permissions; MainActivity prompts.
     -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.WRITE_CONTACTS" />
 
     <application
         android:name=".app.PimoteApp"

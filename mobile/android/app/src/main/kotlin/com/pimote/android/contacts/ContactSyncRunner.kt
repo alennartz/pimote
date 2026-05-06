@@ -62,8 +62,8 @@ class ContactSyncRunner(
         job = scope.launch {
             combine(repository.projects, repository.sessions) { p, s -> p to s }
                 .debounce(debounceMs)
-                .collect { (projects, sessions) ->
-                    runCatching { reconcile(projects, sessions) }
+                .collect { (projects, _) ->
+                    runCatching { reconcile(projects) }
                         .onFailure { L.w("ContactsSync", "reconcile failed: ${it.message}", it) }
                 }
         }
@@ -127,9 +127,8 @@ class ContactSyncRunner(
 
     private fun reconcile(
         projects: List<com.pimote.android.session.ProjectMeta>,
-        sessions: List<com.pimote.android.session.SessionMeta>,
     ) {
-        val desired = ContactsSync.computeDesiredContacts(projects, sessions)
+        val desired = ContactsSync.computeDesiredContacts(projects)
         val existing = readExistingContacts()
         val ops = ContactsSync.diff(desired, existing)
 
@@ -144,7 +143,16 @@ class ContactSyncRunner(
         val batch = ArrayList<ContentProviderOperation>()
         for (raw in ops.toDelete) batch += deleteRawContactOps(raw)
         for (u in ops.toUpdate) batch += updateRawContactOps(u)
-        for (d in ops.toInsert) batch += insertRawContactOps(d)
+        // Back-reference indices in ContentProviderOperation.applyBatch are
+        // the absolute position in the submitted op list, not relative per
+        // contact. We must capture the index of each RawContacts insert and
+        // use it as the back-ref for that contact's data rows. (Hardcoding 0
+        // attached every contact's name/callable rows to the first inserted
+        // raw contact.)
+        for (d in ops.toInsert) {
+            val rawRefIdx = batch.size
+            batch += insertRawContactOps(d, rawRefIdx)
+        }
 
         if (batch.isNotEmpty()) {
             try {
@@ -188,14 +196,32 @@ class ContactSyncRunner(
                 val rawId = c.getLong(idIdx)
                 val sourceId = c.getString(srcIdx) ?: continue
                 val (display, uri) = readContactDataFor(rawId)
-                out.add(
-                    ContactsSync.ExistingContact(
-                        sourceId = sourceId,
-                        rawContactId = rawId,
-                        displayName = display.orEmpty(),
-                        pimoteUri = uri.orEmpty(),
-                    ),
-                )
+                // Defensive: a raw_contacts row with no StructuredName /
+                // callable data row is an orphan from a previously-failed
+                // insert. Surface it with a sourceId the desired set won't
+                // match ("orphan:<rawId>") so diff() puts it in toDelete and
+                // reconcile cleans it up on the next pass. Reinsertion of
+                // the real contact happens because the canonical sourceId
+                // is no longer in the existing set.
+                if (display.isNullOrBlank() && uri.isNullOrBlank()) {
+                    out.add(
+                        ContactsSync.ExistingContact(
+                            sourceId = "orphan:$rawId",
+                            rawContactId = rawId,
+                            displayName = "",
+                            pimoteUri = "",
+                        ),
+                    )
+                } else {
+                    out.add(
+                        ContactsSync.ExistingContact(
+                            sourceId = sourceId,
+                            rawContactId = rawId,
+                            displayName = display.orEmpty(),
+                            pimoteUri = uri.orEmpty(),
+                        ),
+                    )
+                }
             }
         }
         return out
@@ -237,8 +263,10 @@ class ContactSyncRunner(
             .build(),
     )
 
-    private fun insertRawContactOps(d: ContactsSync.DesiredContact): List<ContentProviderOperation> {
-        val rawIndex = 0  // back-reference for the data rows below
+    private fun insertRawContactOps(
+        d: ContactsSync.DesiredContact,
+        rawIndex: Int,
+    ): List<ContentProviderOperation> {
         val callable = PimoteContactsContract.callableRowFor(d)
         return listOf(
             ContentProviderOperation.newInsert(syncAuthority)

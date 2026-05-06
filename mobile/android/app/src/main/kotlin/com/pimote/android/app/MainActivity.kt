@@ -93,6 +93,11 @@ class MainActivity : ComponentActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 add(Manifest.permission.BLUETOOTH_CONNECT)
             }
+            // ContactSyncRunner writes session/project rows under the Pimote
+            // Account from the Application process. CALLER_IS_SYNCADAPTER does
+            // not waive permission checks for non-SyncAdapter callers.
+            add(Manifest.permission.READ_CONTACTS)
+            add(Manifest.permission.WRITE_CONTACTS)
         }.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
