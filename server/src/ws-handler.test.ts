@@ -30,7 +30,7 @@ function createMockSlot(
     id: string;
     folderPath: string;
     connectedClientId: string | null;
-    lastActivity: number;
+    idleSince: number;
     status: 'idle' | 'working';
     needsAttention: boolean;
     unsubscribe: () => void;
@@ -65,7 +65,7 @@ function createMockSlot(
     eventBuffer: overrides.eventBuffer ?? createMockEventBuffer(),
     status: overrides.status ?? 'idle',
     needsAttention: overrides.needsAttention ?? false,
-    lastActivity: overrides.lastActivity ?? Date.now(),
+    idleSince: overrides.idleSince ?? Date.now(),
     unsubscribe: overrides.unsubscribe ?? (() => {}),
     pendingUiResponses: new Map(),
     extensionsBound: overrides.extensionsBound ?? false,

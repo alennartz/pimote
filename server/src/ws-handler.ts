@@ -1101,7 +1101,8 @@ export class WsHandler {
       onSessionReset: (s) => this.handleSessionReset(s),
     };
     slot.connection = connection;
-    slot.sessionState.lastActivity = Date.now();
+    // Note: do NOT touch `idleSince` here. Idleness is an agent-level concept driven by
+    // agent_start/agent_end — a client claiming a session does not extend its idle clock.
     this.subscribedSessions.add(sessionId);
 
     // Bind extensions when needed. The bridge holds a direct reference to this
@@ -1472,9 +1473,10 @@ export class WsHandler {
       const slot = this.sessionManager.getSession(sid);
       if (slot) {
         slot.connection = null;
-        slot.sessionState.lastActivity = Date.now();
         // Note: pending UI responses are NOT resolved here — they survive
         // for replay on reconnect. They are resolved on session close or abort.
+        // Note: do NOT touch `idleSince`. Disconnecting does not reset idleness — if the
+        // agent finished 10 minutes ago, a peeking client should not extend the session's life.
       }
     }
     this.subscribedSessions.clear();

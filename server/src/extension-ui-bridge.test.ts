@@ -30,7 +30,7 @@ function createMockSlot(): { slot: ManagedSlot; sent: PimoteEvent[] } {
       eventBuffer: {} as any,
       status: 'idle' as const,
       needsAttention: false,
-      lastActivity: Date.now(),
+      idleSince: Date.now(),
       unsubscribe: () => {},
       pendingUiResponses: new Map(),
       extensionsBound: false,

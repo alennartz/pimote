@@ -45,7 +45,10 @@ export interface SessionState {
   eventBuffer: EventBuffer;
   status: 'idle' | 'working';
   needsAttention: boolean;
-  lastActivity: number;
+  /** Timestamp the session entered the idle state (last `agent_end`), or null while `status === 'working'`.
+   *  The reaper uses this to decide eligibility — a streaming session is never reapable.
+   *  Client connect/disconnect does NOT reset this clock; idleness is purely an agent-level concept. */
+  idleSince: number | null;
   unsubscribe: () => void;
   pendingUiResponses: Map<string, PendingUiEntry>;
   extensionsBound: boolean;
@@ -133,7 +136,7 @@ function createSessionState(
     eventBuffer,
     status: session.isStreaming ? 'working' : 'idle',
     needsAttention: false,
-    lastActivity: Date.now(),
+    idleSince: session.isStreaming ? null : Date.now(),
     unsubscribe: () => {},
     pendingUiResponses: new Map(),
     extensionsBound: false,
@@ -147,9 +150,11 @@ function createSessionState(
   const unsubscribe = session.subscribe((event) => {
     if (event.type === 'agent_start' && state.status !== 'working') {
       state.status = 'working';
+      state.idleSince = null;
       callbacks.onStatusChange?.(sessionId, folderPath);
     } else if (event.type === 'agent_end' && state.status !== 'idle') {
       state.status = 'idle';
+      state.idleSince = Date.now();
       state.needsAttention = true;
       if (slotRef.slot) callbacks.onAgentEnd?.(sessionId, slotRef.slot);
       callbacks.onStatusChange?.(sessionId, folderPath);
@@ -500,7 +505,11 @@ export class PimoteSessionManager {
 
         const clientId = slot.connection?.connectedClientId ?? null;
         const hasConnectedClient = clientId !== null && (isClientConnected?.(clientId) ?? false);
-        if (!hasConnectedClient && Date.now() - slot.sessionState.lastActivity > idleTimeout) {
+        // Only idle (non-streaming) sessions are eligible for reaping. `idleSince` is set on
+        // `agent_end` and cleared on `agent_start`, so a working session can never be reaped
+        // here, regardless of how long it's been since a client was connected.
+        const idleSince = slot.sessionState.idleSince;
+        if (!hasConnectedClient && idleSince !== null && Date.now() - idleSince > idleTimeout) {
           this.closeSession(sessionId).catch(() => {
             // Best-effort cleanup — swallow errors during idle reaping
           });
