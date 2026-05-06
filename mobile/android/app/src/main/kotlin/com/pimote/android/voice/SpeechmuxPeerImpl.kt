@@ -3,8 +3,11 @@ package com.pimote.android.voice
 import com.pimote.android.util.L
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,12 +35,18 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
+import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RTCStatsReport
+import org.webrtc.RtpReceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
+import java.math.BigInteger
+import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -81,6 +90,18 @@ class SpeechmuxPeerImpl(
     private var audioSource: AudioSource? = null
     private var audioTrack: AudioTrack? = null
     private var audioSender: org.webrtc.RtpSender? = null
+
+    // ----- Control DataChannel (`speechmux-control`) -----
+    // Created locally before `createOffer` so the m=application section is
+    // in the SDP. Carries client→server `playhead` (~20 Hz, jitter-buffer
+    // emitted-sample count at 48 kHz) and server→client `interrupt` frames
+    // (server fired on barge-in; we silence ~120 ms of in-flight tail audio).
+    // Protocol reference: speechmux/docs/webrtc-protocol.md, Phase 3.
+    private var controlChannel: DataChannel? = null
+    private var playheadJob: Job? = null
+    private var inboundAudioReceiver: RtpReceiver? = null
+    private var lastReportedPlayhead: Long = -1L
+    @Volatile private var muteRestoreToken: Long = 0L
 
     private val pendingLocalCandidates = mutableListOf<IceCandidate>()
     // Inbound ICE candidates received before `setRemoteDescription(answer)`
@@ -178,9 +199,23 @@ class SpeechmuxPeerImpl(
                 override fun onIceCandidatesRemoved(p0: Array<out IceCandidate>?) {}
                 override fun onAddStream(p0: org.webrtc.MediaStream?) {}
                 override fun onRemoveStream(p0: org.webrtc.MediaStream?) {}
-                override fun onDataChannel(p0: org.webrtc.DataChannel?) {}
+                override fun onDataChannel(p0: org.webrtc.DataChannel?) {
+                    // Speechmux is the answerer and never opens its own DC;
+                    // the only channel that should appear here is the one
+                    // we created locally, surfaced via the remote leg. Log
+                    // and ignore — we already track our own handle.
+                    L.d("Peer", "unexpected remote-initiated DataChannel label=${p0?.label()}")
+                }
                 override fun onRenegotiationNeeded() {}
-                override fun onAddTrack(p0: org.webrtc.RtpReceiver?, p1: Array<out org.webrtc.MediaStream>?) {}
+                override fun onAddTrack(receiver: org.webrtc.RtpReceiver?, streams: Array<out org.webrtc.MediaStream>?) {
+                    // Capture the remote audio receiver so `interrupt`
+                    // frames can briefly disable inbound playback to mute
+                    // the in-flight jitter-buffer tail.
+                    if (receiver != null && receiver.track()?.kind() == "audio") {
+                        inboundAudioReceiver = receiver
+                        L.d("Peer", "captured inbound audio receiver")
+                    }
+                }
             }
             val pc = factory.createPeerConnection(rtcConfig, observer)
                 ?: throw PeerConnectionFailed("createPeerConnection_returned_null")
@@ -193,6 +228,45 @@ class SpeechmuxPeerImpl(
             audioSource = src
             audioTrack = track
             audioSender = pc.addTrack(track, listOf("pimote-stream"))
+
+            // Create the speechmux-control DataChannel BEFORE the offer is
+            // built so the m=application section is part of the SDP. If we
+            // don't, speechmux degrades to whole-turn walk-back on barge-in
+            // (no playhead → heard-samples floors at 0).
+            val dcInit = DataChannel.Init().apply {
+                ordered = true
+                // Reliable defaults: do NOT set maxRetransmits / maxPacketLifeTime.
+                negotiated = false
+            }
+            val ctrl = pc.createDataChannel("speechmux-control", dcInit)
+            if (ctrl == null) {
+                L.w("Peer", "createDataChannel('speechmux-control') returned null — barge-in walk-back will be coarse")
+            } else {
+                controlChannel = ctrl
+                ctrl.registerObserver(object : DataChannel.Observer {
+                    override fun onBufferedAmountChange(p0: Long) {}
+                    override fun onStateChange() {
+                        val s = ctrl.state()
+                        L.i("Peer", "control DC state=$s")
+                        if (s == DataChannel.State.OPEN) {
+                            startPlayheadReporter()
+                        } else if (s == DataChannel.State.CLOSED || s == DataChannel.State.CLOSING) {
+                            playheadJob?.cancel()
+                            playheadJob = null
+                        }
+                    }
+                    override fun onMessage(buffer: DataChannel.Buffer?) {
+                        val data = buffer?.data ?: return
+                        if (buffer.binary) {
+                            L.d("Peer", "control DC: ignoring binary frame")
+                            return
+                        }
+                        val bytes = ByteArray(data.remaining()).also { data.get(it) }
+                        val text = String(bytes, StandardCharsets.UTF_8)
+                        handleControlFrame(text)
+                    }
+                })
+            }
 
             // Open signaling.
             val signalConnected = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -495,11 +569,16 @@ class SpeechmuxPeerImpl(
         val trackToDispose = audioTrack
         val srcToDispose = audioSource
         val senderToRemove = audioSender
+        val ctrlToClose = controlChannel
         peer = null
         signalingSocket = null
         audioTrack = null
         audioSource = null
         audioSender = null
+        controlChannel = null
+        inboundAudioReceiver = null
+        playheadJob?.cancel()
+        playheadJob = null
         _state.value = PeerState.Closed
         scope.cancel()
         // libwebrtc forbids peer.close() being called re-entrantly from within an active
@@ -524,6 +603,9 @@ class SpeechmuxPeerImpl(
             //      actually rings the ADM's stopRecording() bell.
             //   4. Send `bye` and close signaling.
             //   5. Finally close the peer.
+            try { ctrlToClose?.unregisterObserver() } catch (_: Throwable) { }
+            try { ctrlToClose?.close() } catch (_: Throwable) { }
+            try { ctrlToClose?.dispose() } catch (_: Throwable) { }
             try { trackToDispose?.setEnabled(false) } catch (_: Throwable) { }
             try {
                 if (peerToClose != null && senderToRemove != null) {
@@ -556,6 +638,125 @@ class SpeechmuxPeerImpl(
 
     override fun setMicMuted(muted: Boolean) {
         audioTrack?.setEnabled(!muted)
+    }
+
+    // -------------------------------------------------------------------
+    // speechmux-control DataChannel — protocol details in
+    // speechmux/docs/webrtc-protocol.md (Phase 3).
+    //
+    // Note: control-DC frames use a flat envelope `{v, type, ...fields}`,
+    // unlike the signaling-WS envelopes which wrap fields in `payload`.
+    // -------------------------------------------------------------------
+
+    /**
+     * Periodically poll `pc.getStats()` for the inbound-rtp audio stat's
+     * `jitterBufferEmittedCount` and forward each new value to speechmux
+     * as a `playhead` frame. The 50 ms cadence (~20 Hz) matches the demo
+     * client and is the sweet spot for sentence-level walk-back accuracy
+     * per the speechmux protocol doc.
+     */
+    private fun startPlayheadReporter() {
+        if (playheadJob?.isActive == true) return
+        val pc = peer ?: return
+        playheadJob = scope.launch {
+            lastReportedPlayhead = -1L
+            while (isActive) {
+                val pcRef = peer
+                val ch = controlChannel
+                if (pcRef == null || ch == null || ch.state() != DataChannel.State.OPEN) break
+                val emitted = readJitterBufferEmittedCount(pcRef)
+                if (emitted != null && emitted != lastReportedPlayhead) {
+                    lastReportedPlayhead = emitted
+                    val frame = buildJsonObject {
+                        put("v", SIGNAL_PROTOCOL_VERSION)
+                        put("type", "playhead")
+                        put("played_samples_48k", emitted)
+                    }.toString()
+                    sendControlText(frame)
+                }
+                delay(50)
+            }
+        }
+    }
+
+    private suspend fun readJitterBufferEmittedCount(pc: PeerConnection): Long? =
+        suspendCancellableCoroutine { cont ->
+            try {
+                pc.getStats { report: RTCStatsReport ->
+                    if (cont.isCompleted) return@getStats
+                    var best: Long? = null
+                    for (stat in report.statsMap.values) {
+                        if (stat.type != "inbound-rtp") continue
+                        val media = stat.members["mediaType"] as? String ?: stat.members["kind"] as? String
+                        if (media != "audio") continue
+                        val raw = stat.members["jitterBufferEmittedCount"] ?: continue
+                        val v = when (raw) {
+                            is BigInteger -> raw.toLong()
+                            is Long -> raw
+                            is Number -> raw.toLong()
+                            else -> continue
+                        }
+                        // Take the max in case multiple inbound-rtp audio
+                        // stats appear (e.g. simulcast); we only have one
+                        // inbound audio stream in practice.
+                        if (best == null || v > best) best = v
+                    }
+                    cont.resume(best)
+                }
+            } catch (t: Throwable) {
+                cont.resume(null)
+            }
+        }
+
+    private fun sendControlText(json: String) {
+        val ch = controlChannel ?: return
+        if (ch.state() != DataChannel.State.OPEN) return
+        val bytes = json.toByteArray(StandardCharsets.UTF_8)
+        try {
+            ch.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), false))
+        } catch (t: Throwable) {
+            L.w("Peer", "control DC send failed: ${t.message}", t)
+        }
+    }
+
+    private fun handleControlFrame(text: String) {
+        val obj = try {
+            json.parseToJsonElement(text).jsonObject
+        } catch (_: Throwable) {
+            L.w("Peer", "control DC: unparseable frame (len=${text.length})")
+            return
+        }
+        val v = obj["v"]?.jsonPrimitive?.intOrNull
+        if (v != SIGNAL_PROTOCOL_VERSION) {
+            L.d("Peer", "control DC: ignoring v=$v frame")
+            return
+        }
+        val type = obj["type"]?.jsonPrimitive?.content
+        when (type) {
+            "interrupt" -> handleInterrupt()
+            null -> L.w("Peer", "control DC: missing type")
+            else -> L.d("Peer", "control DC: ignoring unknown type=$type")
+        }
+    }
+
+    /**
+     * Silence the inbound jitter-buffer tail for ~120 ms. Speechmux has
+     * already stopped sending new audio; this just drops the ~100–200 ms
+     * already in flight in our jitter buffer / OS audio pipeline so the
+     * user doesn't hear the assistant talking over them.
+     */
+    private fun handleInterrupt() {
+        val track = inboundAudioReceiver?.track() ?: return
+        L.i("Peer", "control DC: interrupt — silencing inbound for 120ms")
+        val token = ++muteRestoreToken
+        try { track.setEnabled(false) } catch (_: Throwable) {}
+        scope.launch {
+            delay(120)
+            // Only restore if no newer interrupt has fired since.
+            if (muteRestoreToken == token) {
+                try { inboundAudioReceiver?.track()?.setEnabled(true) } catch (_: Throwable) {}
+            }
+        }
     }
 
     private companion object {
