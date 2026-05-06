@@ -196,6 +196,8 @@ Option 1 is consistent with the rest of the reducer, simpler to test, and avoids
 
 ## Steps
 
+**Pre-implementation commit:** `5346704f911b28644783b4f794c206f866fa33a1`
+
 ### Step 1: Implement display helpers (`SessionDisplay.kt`)
 
 Replace all four `TODO()` bodies in `mobile/android/app/src/main/kotlin/com/pimote/android/session/SessionDisplay.kt`:
@@ -206,7 +208,7 @@ Replace all four `TODO()` bodies in `mobile/android/app/src/main/kotlin/com/pimo
 - `formatRelativeTime`: parse via `java.time.Instant.parse`. On parse failure return the input verbatim. Compute `diffMs = nowMillis - parsed.toEpochMilli()`. Negative → `"just now"`. Bucket by 60 s / 60 m / 24 h / 30 d. Past 30 d return `java.time.format.DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withZone(ZoneId.systemDefault()).format(parsed)`.
 
 **Verify:** `make android-test` — `SessionDisplayTest` passes (all 21 cases).
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement `buildSessionProjectGroups` (`SessionListGroups.kt`)
 
@@ -219,7 +221,7 @@ Replace the `TODO()` body. Algorithm:
 5. Sort the resulting groups by `(parseTimestamp(lastModified) desc, project.folderName asc)`.
 
 **Verify:** `make android-test` — `SessionListGroupsTest` passes (all 8 cases).
-**Status:** not started
+**Status:** done
 
 ### Step 3: Implement reducer expansion (`SessionRepository.kt`)
 
@@ -233,7 +235,7 @@ In `reduceSessionEvent`:
 Update `SessionReducerTest.kt` (existing file) so every `reduceSessionEvent(...)` call passes a `now` lambda. Do not weaken any existing assertion.
 
 **Verify:** `make android-test` — both `SessionReducerTest` (existing 14 cases) and `SessionReducerExpandedTest` (3 new cases) pass.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Wire the clock and rich fields through `SessionRepositoryImpl`
 
@@ -244,7 +246,7 @@ In `SessionRepository.kt`:
 - Update `AppContainer.kt` if it constructs `SessionRepositoryImpl` directly — it currently does. The default constructor argument means no change is required, but verify by reading the file.
 
 **Verify:** `make android-test` — existing `SessionRepositoryImplTest` (4 cases) still passes. The wire-mock `SessionInfo` fixtures in that file already include `created`/`modified`/`messageCount`; no behavioral assertion change should be required.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Rebuild `ContactsScreen` as a grouped LazyColumn
 
@@ -258,14 +260,14 @@ Edit `mobile/android/app/src/main/kotlin/com/pimote/android/ui/contacts/Contacts
 - The relative-time string is computed at composition time from `System.currentTimeMillis()`. It will not auto-tick — acceptable for v1 (the PWA's relative time also doesn't tick without a refresh).
 
 **Verify:** APK builds (`make android-build`). Visual verification deferred to Step 7.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Full unit-suite verification
 
 Run `make android-test` end-to-end. All 155 tests should pass: 124 existing + 31 newly-implemented (8 `SessionListGroupsTest` + 21 `SessionDisplayTest` + 2 net-new `SessionReducerExpandedTest` + 0 reducer-test regressions).
 
 **Verify:** `make android-test` exits 0; output reports 155 tests, 0 failures.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Manual on-device verification
 

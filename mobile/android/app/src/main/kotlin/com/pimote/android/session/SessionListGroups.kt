@@ -1,5 +1,7 @@
 package com.pimote.android.session
 
+import java.time.Instant
+
 /**
  * Pure helper that groups sessions under their parent project, sorts
  * sessions by recency within each group, and sorts the groups by their
@@ -7,9 +9,6 @@ package com.pimote.android.session
  *
  * Mirrors `client/src/lib/session-list-groups.ts` so the Android in-app
  * contacts screen has the same layout rhythm as the PWA session list.
- *
- * Implementation pending \u2014 see plan
- * `docs/plans/android-contacts-screen-pwa-parity.md`.
  */
 data class SessionProjectGroup(
     val project: ProjectMeta,
@@ -30,4 +29,33 @@ data class SessionProjectGroup(
 fun buildSessionProjectGroups(
     projects: List<ProjectMeta>,
     sessions: List<SessionMeta>,
-): List<SessionProjectGroup> = TODO("Implemented in implementing phase")
+): List<SessionProjectGroup> {
+    val byPath: Map<String, List<SessionMeta>> = sessions.groupBy { it.folderPath }
+    val sessionComparator: Comparator<SessionMeta> =
+        compareByDescending<SessionMeta> { parseTimestamp(it.modified) }
+            .thenByDescending { parseTimestamp(it.created) }
+            .thenBy { it.sessionId }
+
+    val groups = projects.mapNotNull { p ->
+        val folderSessions = byPath[p.folderPath].orEmpty()
+        if (folderSessions.isEmpty()) return@mapNotNull null
+        val sorted = folderSessions.sortedWith(sessionComparator)
+        SessionProjectGroup(
+            project = p,
+            sessions = sorted,
+            lastModified = sorted.first().modified,
+        )
+    }
+
+    val groupComparator: Comparator<SessionProjectGroup> =
+        compareByDescending<SessionProjectGroup> { parseTimestamp(it.lastModified) }
+            .thenBy { it.project.folderName }
+
+    return groups.sortedWith(groupComparator)
+}
+
+private fun parseTimestamp(s: String): Long = try {
+    Instant.parse(s).toEpochMilli()
+} catch (_: Throwable) {
+    0L
+}

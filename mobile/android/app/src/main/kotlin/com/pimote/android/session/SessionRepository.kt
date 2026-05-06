@@ -130,7 +130,7 @@ data class ReducerResult(
 fun reduceSessionEvent(
     snapshot: SessionSnapshot,
     event: PimoteEvent,
-    now: () -> String = { "" },
+    now: () -> String,
 ): ReducerResult {
     val sessions = snapshot.sessions
     return when (event) {
@@ -138,12 +138,18 @@ fun reduceSessionEvent(
             if (sessions.any { it.sessionId == event.sessionId }) {
                 ReducerResult(snapshot, emptyList())
             } else {
+                val stamp = now()
                 val added = sessions + SessionMeta(
                     sessionId = event.sessionId,
                     folderPath = event.folder.path,
                     folderName = event.folder.name,
                     name = null,
                     archived = false,
+                    modified = stamp,
+                    created = stamp,
+                    messageCount = 0,
+                    firstMessage = null,
+                    cwd = null,
                 )
                 ReducerResult(snapshot.copy(sessions = added), emptyList())
             }
@@ -177,6 +183,10 @@ fun reduceSessionEvent(
                 ReducerResult(snapshot, emptyList())
             } else {
                 val old = sessions[idx]
+                // `copy` already preserves modified/created/messageCount/firstMessage/cwd
+                // verbatim; we override only the identity-and-folder fields. The rich
+                // metadata stays attached to the new sessionId until the next
+                // canonical refetch overwrites it.
                 val replaced = sessions.toMutableList().also {
                     it[idx] = old.copy(
                         sessionId = event.newSessionId,
@@ -200,6 +210,7 @@ fun reduceSessionEvent(
 class SessionRepositoryImpl(
     private val wsClient: com.pimote.android.net.WsClient,
     private val scope: kotlinx.coroutines.CoroutineScope,
+    private val nowProvider: () -> String = { java.time.Instant.now().toString() },
 ) : SessionRepository {
     private val _projects = MutableStateFlow<List<ProjectMeta>>(emptyList())
     private val _sessions = MutableStateFlow<List<SessionMeta>>(emptyList())
@@ -216,7 +227,7 @@ class SessionRepositoryImpl(
         eventJob = scope.launch(Dispatchers.Unconfined) {
             wsClient.events.collect { ev ->
                 val snap = SessionSnapshot(_projects.value, _sessions.value)
-                val out = reduceSessionEvent(snap, ev)
+                val out = reduceSessionEvent(snap, ev, nowProvider)
                 if (out.snapshot != snap) {
                     _projects.value = out.snapshot.projects
                     _sessions.value = out.snapshot.sessions
@@ -291,6 +302,11 @@ class SessionRepositoryImpl(
                     folderName = folder.name,
                     name = s.name,
                     archived = s.archived ?: false,
+                    modified = s.modified,
+                    created = s.created,
+                    messageCount = s.messageCount,
+                    firstMessage = s.firstMessage,
+                    cwd = s.cwd,
                 )
             }
         }
@@ -318,6 +334,11 @@ class SessionRepositoryImpl(
                 folderName = folder.folderName,
                 name = it.name,
                 archived = it.archived ?: false,
+                modified = it.modified,
+                created = it.created,
+                messageCount = it.messageCount,
+                firstMessage = it.firstMessage,
+                cwd = it.cwd,
             )
         }
         _sessions.value = keep + refreshed

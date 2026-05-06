@@ -43,6 +43,11 @@ import com.pimote.android.call.CallState
 import com.pimote.android.net.WsState
 import com.pimote.android.session.ProjectMeta
 import com.pimote.android.session.SessionMeta
+import com.pimote.android.session.SessionProjectGroup
+import com.pimote.android.session.buildSessionProjectGroups
+import com.pimote.android.session.cwdLabelFor
+import com.pimote.android.session.formatRelativeTime
+import com.pimote.android.session.sessionDisplayName
 import com.pimote.android.telephony.PIMOTE_SERVICE_HANDLE_ID
 import com.pimote.android.telephony.PIMOTE_URI_SCHEME
 import com.pimote.android.telephony.PhoneAccountRules
@@ -73,7 +78,54 @@ class ContactsViewModel : ViewModel() {
     }
 }
 
-private data class ContactRowData(val handleId: String, val label: String, val isProject: Boolean)
+/**
+ * Pre-flattened row entries for the grouped contacts list. We materialize
+ * project headers and their session children into a single linear list so
+ * the LazyColumn can render with one [items] call and stable per-row keys
+ * via [handleId].
+ */
+private sealed interface ContactsRow {
+    val handleId: String
+    data class ProjectHeader(
+        override val handleId: String,
+        val label: String,
+    ) : ContactsRow
+    data class SessionChild(
+        override val handleId: String,
+        val title: String,
+        val subtitle: String,
+    ) : ContactsRow
+}
+
+private fun flattenGroups(
+    groups: List<SessionProjectGroup>,
+    labelByPath: Map<String, String>,
+    nowMillis: Long,
+): List<ContactsRow> {
+    val out = ArrayList<ContactsRow>(groups.sumOf { 1 + it.sessions.size })
+    for (g in groups) {
+        val projectLabel = labelByPath[g.project.folderPath] ?: g.project.folderName
+        out += ContactsRow.ProjectHeader(
+            handleId = PhoneAccountRules.projectHandleId(g.project.folderPath),
+            label = projectLabel,
+        )
+        for (s in g.sessions) {
+            out += ContactsRow.SessionChild(
+                handleId = PhoneAccountRules.sessionHandleId(s.sessionId),
+                title = sessionDisplayName(s),
+                subtitle = sessionSubtitle(s, nowMillis),
+            )
+        }
+    }
+    return out
+}
+
+private fun sessionSubtitle(session: SessionMeta, nowMillis: Long): String {
+    val cwd = cwdLabelFor(session, session.folderPath)
+    val msgs = "${session.messageCount} msg${if (session.messageCount != 1) "s" else ""}"
+    val rel = formatRelativeTime(session.modified, nowMillis)
+    return listOfNotNull(cwd, msgs, rel).joinToString(" · ")
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,25 +151,16 @@ fun ContactsScreen(viewModel: ContactsViewModel, onEditSettings: () -> Unit) {
     }
 
     // Recompute the row list only when projects/sessions change, not on every
-    // recomposition (e.g. wsState changes, refreshing toggles, snackbar state).
-    // LazyColumn's stable `key = { it.handleId }` keeps row identity even when
-    // the list reference changes, but avoiding the rebuild saves needless
-    // allocation and sorting on every recomposition.
+    // recomposition. Mirror the PWA: group sessions under their parent project
+    // by recency, drop empty projects. The relative-time strings are computed
+    // at composition time from System.currentTimeMillis(); they don't auto-tick
+    // (PWA parity).
     val rows = remember(projects, sessions) {
         val labelByPath = PhoneAccountRules.disambiguateFolderLabels(
             (projects.map { it.folderPath } + sessions.map { it.folderPath }).distinct(),
         )
-        buildList {
-            projects.forEach { p ->
-                val label = labelByPath[p.folderPath] ?: p.folderName
-                add(ContactRowData(PhoneAccountRules.projectHandleId(p.folderPath), label, isProject = true))
-            }
-            sessions.forEach { s ->
-                val prefix = labelByPath[s.folderPath] ?: s.folderName
-                val name = s.name?.takeIf { it.isNotBlank() } ?: "untitled"
-                add(ContactRowData(PhoneAccountRules.sessionHandleId(s.sessionId), "$prefix/$name", isProject = false))
-            }
-        }
+        val groups = buildSessionProjectGroups(projects, sessions)
+        flattenGroups(groups, labelByPath, System.currentTimeMillis())
     }
 
     // Note: `handleId` here is the SOURCE_ID encoded into the URI on placeCall.
@@ -191,14 +234,16 @@ fun ContactsScreen(viewModel: ContactsViewModel, onEditSettings: () -> Unit) {
             } else {
                 LazyColumn(modifier = Modifier.fillMaxWidth()) {
                     items(rows, key = { it.handleId }) { row ->
+                        val (title, subtitle, kind) = when (row) {
+                            is ContactsRow.ProjectHeader ->
+                                Triple(row.label, "New session in this project", ContactKind.Project)
+                            is ContactsRow.SessionChild ->
+                                Triple(row.title, row.subtitle, ContactKind.Session)
+                        }
                         ContactRow(
-                            title = row.label,
-                            subtitle = if (row.isProject) {
-                                "New session in this project"
-                            } else {
-                                "Tap to call this session"
-                            },
-                            kind = if (row.isProject) ContactKind.Project else ContactKind.Session,
+                            title = title,
+                            subtitle = subtitle,
+                            kind = kind,
                             isLoading = loadingHandleId == row.handleId,
                             onTap = {
                                 if (context == null) return@ContactRow

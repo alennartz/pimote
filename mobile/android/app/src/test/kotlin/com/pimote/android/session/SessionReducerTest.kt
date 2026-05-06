@@ -22,13 +22,16 @@ class SessionReducerTest {
     private fun snapWith(vararg sessions: SessionMeta) =
         SessionSnapshot(projects = emptyList(), sessions = sessions.toList())
 
+    /** Fixed clock for these tests; new-row timestamp values are pinned in [SessionReducerExpandedTest]. */
+    private val fixedNow: () -> String = { "2026-01-01T00:00:00Z" }
+
     @Test
     fun `session_opened appends a new SessionMeta`() {
         val ev = SessionOpenedEvent(
             sessionId = "s1",
             folder = FolderInfo(path = "/work/repo", name = "repo"),
         )
-        val out = reduceSessionEvent(emptySnap, ev)
+        val out = reduceSessionEvent(emptySnap, ev, fixedNow)
         assertEquals(1, out.snapshot.sessions.size)
         val s = out.snapshot.sessions.single()
         assertEquals("s1", s.sessionId)
@@ -44,7 +47,7 @@ class SessionReducerTest {
             SessionMeta("s1", "/p", "p", null, archived = false),
         )
         val ev = SessionOpenedEvent(sessionId = "s1", folder = FolderInfo(path = "/p", name = "p"))
-        val out = reduceSessionEvent(before, ev)
+        val out = reduceSessionEvent(before, ev, fixedNow)
         assertEquals(1, out.snapshot.sessions.size)
     }
 
@@ -55,7 +58,7 @@ class SessionReducerTest {
             SessionMeta("s2", "/p", "p", "old", archived = false),
         )
         val ev = SessionRenamedEvent(sessionId = "s2", folderPath = "/p", name = "new")
-        val out = reduceSessionEvent(before, ev)
+        val out = reduceSessionEvent(before, ev, fixedNow)
         val s2 = out.snapshot.sessions.single { it.sessionId == "s2" }
         assertEquals("new", s2.name)
         // Other rows untouched.
@@ -67,7 +70,7 @@ class SessionReducerTest {
     @Test
     fun `session_renamed is a no-op when sessionId unknown`() {
         val before = snapWith(SessionMeta("s1", "/p", "p", "n", archived = false))
-        val out = reduceSessionEvent(before, SessionRenamedEvent("missing", "/p", "x"))
+        val out = reduceSessionEvent(before, SessionRenamedEvent("missing", "/p", "x"), fixedNow)
         assertEquals(before, out.snapshot)
     }
 
@@ -78,7 +81,7 @@ class SessionReducerTest {
             SessionMeta("s2", "/p", "p", null, archived = false),
         )
         val out = reduceSessionEvent(
-            before, SessionArchivedEvent("s1", "/p", archived = true),
+            before, SessionArchivedEvent("s1", "/p", archived = true), fixedNow,
         )
         assertEquals(listOf("s2"), out.snapshot.sessions.map { it.sessionId })
         assertTrue(out.effects.isEmpty())
@@ -88,7 +91,7 @@ class SessionReducerTest {
     fun `session_archived archived=false emits RefetchFolder effect`() {
         val before = snapWith(SessionMeta("s1", "/p", "p", null, archived = false))
         val out = reduceSessionEvent(
-            before, SessionArchivedEvent("s2", "/p", archived = false),
+            before, SessionArchivedEvent("s2", "/p", archived = false), fixedNow,
         )
         // Snapshot drops the row (or leaves it absent); the effect drives canonical re-fetch.
         assertEquals(1, out.effects.size)
@@ -102,7 +105,7 @@ class SessionReducerTest {
         val before = snapWith(
             SessionMeta("s1", "/p", "p", null, archived = false),
         )
-        val out = reduceSessionEvent(before, SessionDeletedEvent("s1", "/p"))
+        val out = reduceSessionEvent(before, SessionDeletedEvent("s1", "/p"), fixedNow)
         assertTrue(out.snapshot.sessions.isEmpty())
         assertTrue(out.effects.isEmpty())
     }
@@ -110,7 +113,7 @@ class SessionReducerTest {
     @Test
     fun `session_deleted is no-op when sessionId unknown`() {
         val before = snapWith(SessionMeta("s1", "/p", "p", null, archived = false))
-        val out = reduceSessionEvent(before, SessionDeletedEvent("missing", "/p"))
+        val out = reduceSessionEvent(before, SessionDeletedEvent("missing", "/p"), fixedNow)
         assertEquals(before, out.snapshot)
     }
 
@@ -124,7 +127,7 @@ class SessionReducerTest {
             newSessionId = "new",
             folder = FolderInfo(path = "/p", name = "p"),
         )
-        val out = reduceSessionEvent(before, ev)
+        val out = reduceSessionEvent(before, ev, fixedNow)
         val s = out.snapshot.sessions.single()
         assertEquals("new", s.sessionId)
         assertEquals("/p", s.folderPath)
@@ -137,7 +140,7 @@ class SessionReducerTest {
     fun `session_replaced is no-op when oldSessionId not present`() {
         val before = snapWith(SessionMeta("s1", "/p", "p", null, archived = false))
         val ev = SessionReplacedEvent("missing", "new", FolderInfo("/p", "p"))
-        val out = reduceSessionEvent(before, ev)
+        val out = reduceSessionEvent(before, ev, fixedNow)
         assertEquals(before, out.snapshot)
     }
 
@@ -148,7 +151,7 @@ class SessionReducerTest {
             projects = projects,
             sessions = listOf(SessionMeta("s", "/p", "p", null, archived = false)),
         )
-        val out = reduceSessionEvent(snap, SessionDeletedEvent("s", "/p"))
+        val out = reduceSessionEvent(snap, SessionDeletedEvent("s", "/p"), fixedNow)
         assertEquals(projects, out.snapshot.projects)
     }
 }
