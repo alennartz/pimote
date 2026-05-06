@@ -66,6 +66,26 @@ class PimoteConnection(
         destroy()
     }
 
+    override fun setAudioRoute(route: AudioRoute) {
+        val mask = when (route) {
+            AudioRoute.EARPIECE -> CallAudioState.ROUTE_EARPIECE
+            AudioRoute.SPEAKER -> CallAudioState.ROUTE_SPEAKER
+            AudioRoute.BLUETOOTH -> CallAudioState.ROUTE_BLUETOOTH
+            AudioRoute.WIRED_HEADSET -> CallAudioState.ROUTE_WIRED_HEADSET
+            AudioRoute.STREAMING -> return
+        }
+        // Framework call. If `mask` isn't in the supported route mask, Telecom
+        // ignores the request — that's fine; the UI only shows this control
+        // when SPEAKER is in the supported set.
+        //
+        // `Connection#setAudioRoute(int)` is deprecated as of API 34 in favor of
+        // `requestCallEndpointChange(CallEndpoint, ...)`, but we still support
+        // API 26+ where the new API is unavailable. The old method continues
+        // to work on all API levels we target.
+        @Suppress("DEPRECATION")
+        super.setAudioRoute(mask)
+    }
+
     private fun mapEndReasonToDisconnectCause(reason: CallEndReason): Int = when (reason) {
         CallEndReason.USER_HANGUP, CallEndReason.REMOTE_HANGUP -> DisconnectCause.REMOTE
         CallEndReason.DISPLACED -> DisconnectCause.CANCELED

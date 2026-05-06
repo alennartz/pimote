@@ -22,4 +22,11 @@ interface CallConnection {
 
     /** Move Telecom to disconnected with the appropriate end cause and destroy. */
     fun markEndedRemotely(reason: com.pimote.android.call.CallEndReason)
+
+    /**
+     * Request a route change on the underlying [android.telecom.Connection].
+     * No-op if the requested route isn't in the current supported mask;
+     * Telecom will emit an `onCallAudioStateChanged` callback if it accepts.
+     */
+    fun setAudioRoute(route: com.pimote.android.call.AudioRoute)
 }

@@ -43,6 +43,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
 import com.pimote.android.R
 import com.pimote.android.app.AppContainer
+import com.pimote.android.call.AudioRoute
+import com.pimote.android.call.AudioRouteSnapshot
 import com.pimote.android.call.CallState
 import com.pimote.android.ui.components.AvatarRing
 import com.pimote.android.ui.theme.PimoteTheme
@@ -57,6 +59,7 @@ class CallViewModel : ViewModel() {
     private val container = AppContainer.instance
     val state: StateFlow<CallState> = container.callController.state
     val isMicMuted: StateFlow<Boolean> = container.callController.isMicMuted
+    val audioRoute: StateFlow<AudioRouteSnapshot?> = container.callController.audioRoute
 
     val sessionDisplayName: StateFlow<String?> = combine(
         container.callController.state,
@@ -84,6 +87,13 @@ class CallViewModel : ViewModel() {
     fun setMicMuted(muted: Boolean) {
         container.callController.setMicMuted(muted)
     }
+
+    fun toggleSpeaker() {
+        val snap = audioRoute.value ?: return
+        if (AudioRoute.SPEAKER !in snap.supportedRoutes) return
+        val next = if (snap.route == AudioRoute.SPEAKER) AudioRoute.EARPIECE else AudioRoute.SPEAKER
+        container.callController.setAudioRoute(next)
+    }
 }
 
 @Composable
@@ -94,6 +104,7 @@ fun InCallScreen(
     val state by viewModel.state.collectAsState()
     val sessionName by viewModel.sessionDisplayName.collectAsState()
     val muted by viewModel.isMicMuted.collectAsState()
+    val route by viewModel.audioRoute.collectAsState()
     val isEnded = state is CallState.Ended
     val isActive = state is CallState.Active
 
@@ -188,6 +199,30 @@ fun InCallScreen(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // Speaker button — 64dp circular. Shown only when the framework
+                    // reports SPEAKER in the supported route set (i.e. always on a
+                    // phone, but may be absent on tablets / when a wired or BT
+                    // headset has captured the route).
+                    val speakerSupported = route?.supportedRoutes?.contains(AudioRoute.SPEAKER) == true
+                    val speakerOn = route?.route == AudioRoute.SPEAKER
+                    if (speakerSupported) {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(if (speakerOn) colors.indigo else colors.surfacePlus)
+                                .clickable { viewModel.toggleSpeaker() },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_volume_up),
+                                contentDescription = if (speakerOn) "Disable speakerphone" else "Enable speakerphone",
+                                tint = colors.ink,
+                                modifier = Modifier.size(28.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(spacing.l))
+                    }
                     // Mute button — 64dp circular
                     Box(
                         modifier = Modifier

@@ -484,6 +484,41 @@ class CallControllerTest {
     }
 
     @Test
+    fun `setAudioRoute forwards to the active connection`() = runTest {
+        val ws = FakeWsClient()
+        val peer = FakeSpeechmuxPeer()
+        val cc = newController(ws, peer, TestScope(StandardTestDispatcher(testScheduler)))
+        val conn = FakeCallConnection()
+
+        // Before any call: setAudioRoute is a no-op (no connection bound).
+        cc.setAudioRoute(AudioRoute.SPEAKER)
+        assertTrue(conn.routeRequests.isEmpty())
+
+        cc.startOutgoing(SessionTarget.ExistingSession("S1"), conn)
+        advanceUntilIdle()
+
+        cc.setAudioRoute(AudioRoute.SPEAKER)
+        cc.setAudioRoute(AudioRoute.EARPIECE)
+        assertEquals(listOf(AudioRoute.SPEAKER, AudioRoute.EARPIECE), conn.routeRequests)
+    }
+
+    @Test
+    fun `onAudioStateChanged updates audioRoute snapshot`() {
+        val ws = FakeWsClient()
+        val peer = FakeSpeechmuxPeer()
+        val cc = newController(ws, peer, TestScope(StandardTestDispatcher()))
+
+        assertEquals(null, cc.audioRoute.value)
+        val snap = AudioRouteSnapshot(
+            isMuted = false,
+            route = AudioRoute.SPEAKER,
+            supportedRoutes = setOf(AudioRoute.EARPIECE, AudioRoute.SPEAKER),
+        )
+        cc.onAudioStateChanged(snap)
+        assertEquals(snap, cc.audioRoute.value)
+    }
+
+    @Test
     fun `state starts at Idle`() {
         val ws = FakeWsClient()
         val peer = FakeSpeechmuxPeer()

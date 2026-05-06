@@ -101,6 +101,7 @@ class FakeSpeechmuxPeer : SpeechmuxPeer {
 
 class FakeCallConnection : CallConnection {
     val transitions = mutableListOf<String>()
+    val routeRequests = mutableListOf<AudioRoute>()
 
     override fun markRinging() {
         transitions.add("ringing")
@@ -116,5 +117,9 @@ class FakeCallConnection : CallConnection {
 
     override fun markEndedRemotely(reason: CallEndReason) {
         transitions.add("endedRemotely:$reason")
+    }
+
+    override fun setAudioRoute(route: AudioRoute) {
+        routeRequests.add(route)
     }
 }

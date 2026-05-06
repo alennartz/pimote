@@ -150,6 +150,22 @@ interface CallController {
 
     /** Forward an audio-state change from Telecom into the controller's UI surface. */
     fun onAudioStateChanged(audioState: AudioRouteSnapshot)
+
+    /**
+     * Latest audio route snapshot reported by Telecom, or `null` before the
+     * first `onCallAudioStateChanged` callback (i.e. before the Connection is
+     * registered with the framework). UI consumers should treat `null` as
+     * "don't show route controls yet."
+     */
+    val audioRoute: StateFlow<AudioRouteSnapshot?>
+
+    /**
+     * Request a route change. Forwarded to the active [CallConnection]; the
+     * resulting `audioRoute` flow update is driven by Telecom's
+     * `onCallAudioStateChanged` callback once the framework accepts. No-op if
+     * there is no active connection.
+     */
+    fun setAudioRoute(route: AudioRoute)
 }
 
 /**
@@ -180,7 +196,7 @@ class CallControllerImpl(
     override val isMicMuted: StateFlow<Boolean> = _isMicMuted.asStateFlow()
 
     private val _audioRoute = MutableStateFlow<AudioRouteSnapshot?>(null)
-    val audioRoute: StateFlow<AudioRouteSnapshot?> = _audioRoute.asStateFlow()
+    override val audioRoute: StateFlow<AudioRouteSnapshot?> = _audioRoute.asStateFlow()
 
     private var callJob: Job? = null
     private var userHangup: CompletableDeferred<Unit>? = null
@@ -205,6 +221,9 @@ class CallControllerImpl(
         currentConnection = connection
         // Fresh call starts unmuted.
         _isMicMuted.value = false
+        // Clear the previous call's route snapshot; Telecom will re-emit
+        // `onCallAudioStateChanged` once this connection is registered.
+        _audioRoute.value = null
         callJob = scope.launch(Dispatchers.Unconfined) {
             runOutgoing(target, connection)
         }
@@ -247,6 +266,10 @@ class CallControllerImpl(
 
     override fun onAudioStateChanged(audioState: AudioRouteSnapshot) {
         _audioRoute.value = audioState
+    }
+
+    override fun setAudioRoute(route: AudioRoute) {
+        try { currentConnection?.setAudioRoute(route) } catch (_: Throwable) { /* best-effort */ }
     }
 
     override fun setMicMuted(muted: Boolean) {
