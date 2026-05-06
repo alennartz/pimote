@@ -191,3 +191,5 @@ Option 1 is consistent with the rest of the reducer, simpler to test, and avoids
 
 - The grouped Compose layout in `ContactsScreen.kt`: snapshot/UI tests are not part of this codebase's existing convention; manual on-device verification is the bar.
 - `SessionRepositoryImpl.refresh` / `refetchFolder` populating the new fields from `SessionInfo`: integration with the WS layer; covered by `SessionRepositoryImplTest` adjustments during implementation rather than fresh test files.
+
+**Review status:** approved
