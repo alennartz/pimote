@@ -52,6 +52,12 @@ export async function main(options: StartOptions = {}) {
   const server = await createServer(config, sessionManager, folderIndex, pushNotificationService, sessionMetadataStore, voiceBoot.orchestrator);
   clientRegistryRef.current = server.clientRegistry;
 
+  // Suppress push notifications for sessions currently owned by a voice call.
+  // The user is on the line — we don't need to ping their phone for idle
+  // signals or extension UI prompts. Pushes resume automatically once the
+  // call ends and `isCallActive` flips back to false.
+  pushNotificationService.setSuppressionPredicate((sessionId) => voiceBoot.orchestrator.isCallActive(sessionId));
+
   // Tear down orchestrator bookkeeping when a session is being closed (idle
   // reap, explicit close). Emits call_ended{server_ended} to the owner.
   sessionManager.onBeforeSessionClose = async (sessionId) => {

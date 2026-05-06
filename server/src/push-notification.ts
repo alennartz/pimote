@@ -34,11 +34,20 @@ export interface PushNotificationPayload {
 
 export class PushNotificationService {
   private subscriptions: PushSubscriptionRecord[] = [];
+  private suppressionPredicate?: (sessionId: string) => boolean;
 
   constructor(
     private readonly sender: PushSender,
     private readonly store: SubscriptionStore,
   ) {}
+
+  /** Install a predicate that suppresses notifications for a given session.
+   *  Used to silence pushes while a voice call owns the session — pushes
+   *  resume automatically once the predicate stops returning true (call
+   *  hangs up). Pass `undefined` to clear. */
+  setSuppressionPredicate(predicate: ((sessionId: string) => boolean) | undefined): void {
+    this.suppressionPredicate = predicate;
+  }
 
   /** Load subscriptions from store on startup */
   async initialize(): Promise<void> {
@@ -72,6 +81,9 @@ export class PushNotificationService {
 
   /** Send push notification to all subscriptions */
   async notify(payload: PushNotificationPayload): Promise<void> {
+    if (this.suppressionPredicate?.(payload.sessionId)) {
+      return;
+    }
     const expiredEndpoints: string[] = [];
     const payloadStr = JSON.stringify(payload);
 

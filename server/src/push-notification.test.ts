@@ -262,6 +262,62 @@ describe('PushNotificationService', () => {
       expect(sentPayload.reason).toBe('idle');
     });
 
+    it('notify() skips delivery when suppression predicate returns true for sessionId', async () => {
+      const sub = makeSubscription('https://push.example.com/1');
+      const { service, sender } = createService({ initial: [sub] });
+      await service.initialize();
+
+      const suppressed = new Set(['session-call-active']);
+      service.setSuppressionPredicate((sessionId) => suppressed.has(sessionId));
+
+      const suppressedPayload: PushNotificationPayload = {
+        folderPath: '/home/user/project',
+        projectName: 'pimote',
+        sessionId: 'session-call-active',
+        reason: 'idle',
+      };
+      await service.notify(suppressedPayload);
+      expect(sender.calls).toHaveLength(0);
+
+      const allowedPayload: PushNotificationPayload = {
+        folderPath: '/home/user/project',
+        projectName: 'pimote',
+        sessionId: 'session-other',
+        reason: 'idle',
+      };
+      await service.notify(allowedPayload);
+      expect(sender.calls).toHaveLength(1);
+
+      // Clearing the predicate (e.g. simulating call hangup wiring removal)
+      // re-enables delivery for the previously-suppressed session.
+      service.setSuppressionPredicate(undefined);
+      await service.notify(suppressedPayload);
+      expect(sender.calls).toHaveLength(2);
+    });
+
+    it('notify() resumes delivery once the predicate stops suppressing the session', async () => {
+      const sub = makeSubscription('https://push.example.com/1');
+      const { service, sender } = createService({ initial: [sub] });
+      await service.initialize();
+
+      let callActive = true;
+      service.setSuppressionPredicate((sessionId) => sessionId === 'session-x' && callActive);
+
+      const payload: PushNotificationPayload = {
+        folderPath: '/home/user/project',
+        projectName: 'pimote',
+        sessionId: 'session-x',
+        reason: 'idle',
+      };
+
+      await service.notify(payload);
+      expect(sender.calls).toHaveLength(0);
+
+      callActive = false; // call hangs up
+      await service.notify(payload);
+      expect(sender.calls).toHaveLength(1);
+    });
+
     it('notify() sends interaction payload correctly', async () => {
       const sub = makeSubscription('https://push.example.com/1');
       const { service, sender } = createService({ initial: [sub] });

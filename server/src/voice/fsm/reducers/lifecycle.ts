@@ -9,7 +9,7 @@
 // Holds NO knowledge of the streaming / walkback machines. Those plug in
 // through the top-level dispatcher.
 
-import { VOICE_CALL_STARTED_SENTINEL } from '../../state-machine.js';
+import { VOICE_CALL_ENDED_SENTINEL, VOICE_CALL_STARTED_SENTINEL } from '../../state-machine.js';
 import type { Action } from '../actions.js';
 import type { Event } from '../events.js';
 import type { LifecycleState, RuntimeState } from '../state.js';
@@ -72,11 +72,23 @@ export function reduceLifecycle(prev: LifecycleState, event: Event, ctx: { inter
       if (prev.kind === 'dormant') {
         return { next: prev, interpreterAppliedNow: false, actions: [] };
       }
+      // Inject an explicit end-of-call sentinel into the conversation so
+      // the agent has an in-history signal that voice mode is over —
+      // mirrors the `<voice_call_started/>` sentinel on activate. Without
+      // it, a session resumed in text mode after a call sees a wall of
+      // prior `speak()` calls and tends to mimic one more before the
+      // tool-side guard rejects it.
+      //
+      // Crucially this is a *silent* injection: unlike the start sentinel
+      // (which deliberately triggers the greeting turn), the end sentinel
+      // must NOT trigger a turn — the call is over, the LLM has nothing
+      // to do right now, and a triggered turn would just provoke one more
+      // speak() attempt that we then have to reject.
       // Idempotent: close_ws is a no-op if no client is open.
       return {
         next: { kind: 'dormant' },
         interpreterAppliedNow: false,
-        actions: [{ kind: 'close_ws' }],
+        actions: [{ kind: 'inject_silent_user_message', customType: 'voice_call_ended', text: VOICE_CALL_ENDED_SENTINEL }, { kind: 'close_ws' }],
       };
     }
 

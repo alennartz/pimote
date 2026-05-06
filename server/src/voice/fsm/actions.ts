@@ -12,6 +12,13 @@ export type Action =
   // ---- Lifecycle side effects ----
   | { kind: 'set_interpreter_model'; provider: string; modelId: string }
   | { kind: 'send_user_message'; text: string; deliverAs?: 'steer' | 'followUp' }
+  /**
+   * Inject a user-visible message into the conversation history without
+   * triggering an agent turn. Used for end-of-call sentinels and similar
+   * passive lifecycle markers — the LLM sees it on the next user-initiated
+   * turn but the agent doesn't respond to it now.
+   */
+  | { kind: 'inject_silent_user_message'; customType: string; text: string }
   | { kind: 'open_ws'; url: string }
   | { kind: 'close_ws' }
   | { kind: 'emit_deactivate_request' }

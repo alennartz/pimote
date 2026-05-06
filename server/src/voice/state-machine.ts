@@ -34,3 +34,11 @@ export interface VoiceDeactivateMessage {
 
 /** Sentinel user message appended on entry to the `active` state. */
 export const VOICE_CALL_STARTED_SENTINEL = '<voice_call_started/>';
+
+/**
+ * Sentinel user message appended on exit from `active`/`activating` back to
+ * `dormant`. Gives the agent an explicit in-history signal that the voice
+ * call has ended, so subsequent turns (including future text-mode pickups
+ * of the same session) don't keep mimicking prior `speak()` calls.
+ */
+export const VOICE_CALL_ENDED_SENTINEL = '<voice_call_ended/>';

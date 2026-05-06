@@ -186,6 +186,22 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
           return;
         }
 
+        case 'inject_silent_user_message': {
+          // sendMessage() with a `custom` role + triggerTurn:false appends
+          // an entry that converts to a `role:"user"` message for the LLM
+          // (see core/messages.ts convertToLlm) but does not start a turn
+          // now. Exactly what we want for the end-of-call sentinel.
+          pi.sendMessage(
+            {
+              customType: action.customType,
+              content: action.text,
+              display: true,
+            },
+            { triggerTurn: false },
+          );
+          return;
+        }
+
         case 'open_ws': {
           // Reentrancy guard: close any prior client first.
           try {
@@ -287,7 +303,12 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
           return { content: [{ type: 'text', text: 'ok' }], details: {} };
         }
         return {
-          content: [{ type: 'text', text: 'speak() is only available during an active voice call.' }],
+          content: [
+            {
+              type: 'text',
+              text: 'Voice call has ended. The user is now in text mode — do NOT call speak() again. Reply with normal assistant text. Any further speak() calls in this session will be rejected.',
+            },
+          ],
           details: {},
           isError: true,
         };
