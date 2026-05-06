@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Pimote</string>
+    <string name="app_name">Pimote Calls</string>
     <string name="account_type">com.pimote.android.account</string>
     <string name="account_name">Pimote</string>
     <string name="contacts_summary_call_session">Call this session</string>

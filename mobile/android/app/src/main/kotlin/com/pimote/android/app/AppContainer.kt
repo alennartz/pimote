@@ -7,10 +7,12 @@ import com.pimote.android.call.CallController
 import com.pimote.android.call.CallControllerImpl
 import com.pimote.android.call.CallState
 import com.pimote.android.ui.call.InCallActivity
+import com.pimote.android.net.AccessAuthInterceptor
 import com.pimote.android.net.AndroidNetworkAvailabilityMonitor
 import com.pimote.android.net.OkHttpWsTransport
 import com.pimote.android.net.WsClient
 import com.pimote.android.net.WsClientImpl
+import okhttp3.OkHttpClient
 import com.pimote.android.session.SessionRepository
 import com.pimote.android.session.SessionRepositoryImpl
 import com.pimote.android.settings.Settings
@@ -43,8 +45,20 @@ class AppContainer(private val appContext: Context) {
     val applicationScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val settings: Settings = SettingsImpl(appContext, applicationScope)
 
+    /**
+     * Process-wide OkHttp client. The [AccessAuthInterceptor] reads the
+     * current Cloudflare Access service-token credentials from [settings]
+     * on every request, so the same client is safe to reuse across the
+     * WebSocket transport, the speechmux signaling socket, and any future
+     * REST callers — credential changes take effect on the next request
+     * without reconstructing the client.
+     */
+    val httpClient: OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor(AccessAuthInterceptor(settings.current))
+        .build()
+
     val wsClient: WsClient = WsClientImpl(
-        transport = OkHttpWsTransport(),
+        transport = OkHttpWsTransport(httpClient),
         networkMonitor = AndroidNetworkAvailabilityMonitor(appContext),
         scope = applicationScope,
     )
@@ -184,7 +198,7 @@ class AppContainer(private val appContext: Context) {
 
     val peerFactory: () -> SpeechmuxPeer = {
         val (factory, adm) = newPeerConnectionFactoryAndAdm()
-        SpeechmuxPeerImpl(factory, adm)
+        SpeechmuxPeerImpl(factory, adm, httpClient = httpClient)
     }
 
     val callController: CallController =

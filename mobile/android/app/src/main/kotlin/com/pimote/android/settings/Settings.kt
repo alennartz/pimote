@@ -10,7 +10,25 @@ import kotlinx.coroutines.flow.StateFlow
  * authentication is handled at the network layer outside the app.
  */
 interface Settings {
-    data class Config(val pimoteOrigin: String)
+    /**
+     * Persisted app config.
+     *
+     * [accessClientId] / [accessClientSecret] are an optional Cloudflare
+     * Access service-token pair. When both are non-null/non-blank, every
+     * outbound HTTP/WS request adds `CF-Access-Client-Id` and
+     * `CF-Access-Client-Secret` headers (see `AccessAuthInterceptor`),
+     * letting the app reach a Zero Trust–protected origin without WARP.
+     * Empty values preserve the legacy network-layer-auth posture.
+     *
+     * The secret is encrypted at rest via `SecretVault` (AndroidKeyStore-
+     * backed AES/GCM) before being written to DataStore. In-memory it is
+     * a plain [String] because OkHttp needs it that way at request time.
+     */
+    data class Config(
+        val pimoteOrigin: String,
+        val accessClientId: String? = null,
+        val accessClientSecret: String? = null,
+    )
 
     /** Current config; null until [set] has been called at least once. */
     val current: StateFlow<Config?>
