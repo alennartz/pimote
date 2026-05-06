@@ -557,4 +557,24 @@
   .custom-toggle:hover {
     color: oklch(0.75 0.1 280);
   }
+
+  /* ---- Mobile: stack icon row above body, open menu to the right ---- */
+
+  @media (max-width: 640px) {
+    .message {
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .user-icon-col,
+    .assistant-icon-col {
+      flex-direction: row;
+      align-items: center;
+      margin-top: 0;
+    }
+
+    .tool-menu {
+      flex-direction: row;
+    }
+  }
 </style>
