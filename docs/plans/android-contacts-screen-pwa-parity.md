@@ -193,3 +193,97 @@ Option 1 is consistent with the rest of the reducer, simpler to test, and avoids
 - `SessionRepositoryImpl.refresh` / `refetchFolder` populating the new fields from `SessionInfo`: integration with the WS layer; covered by `SessionRepositoryImplTest` adjustments during implementation rather than fresh test files.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Implement display helpers (`SessionDisplay.kt`)
+
+Replace all four `TODO()` bodies in `mobile/android/app/src/main/kotlin/com/pimote/android/session/SessionDisplay.kt`:
+
+- `sessionDisplayName`: `name.takeIf { !it.isNullOrBlank() } ?: session.firstMessage?.let { if (it.length > 60) it.take(60) + "…" else it } ?: "Session ${session.sessionId.take(8)}"`.
+- `shortenCwd`: split on `/`, drop empty segments. If ≤ 2 keep input verbatim (i.e. return `cwd` as-is). If ≥ 3, return `"…/" + segs.takeLast(2).joinToString("/")`.
+- `cwdLabelFor`: return null if `session.cwd` is null/blank or equals `folderPath`; otherwise `shortenCwd(session.cwd)`.
+- `formatRelativeTime`: parse via `java.time.Instant.parse`. On parse failure return the input verbatim. Compute `diffMs = nowMillis - parsed.toEpochMilli()`. Negative → `"just now"`. Bucket by 60 s / 60 m / 24 h / 30 d. Past 30 d return `java.time.format.DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withZone(ZoneId.systemDefault()).format(parsed)`.
+
+**Verify:** `make android-test` — `SessionDisplayTest` passes (all 21 cases).
+**Status:** not started
+
+### Step 2: Implement `buildSessionProjectGroups` (`SessionListGroups.kt`)
+
+Replace the `TODO()` body. Algorithm:
+
+1. Build `sessionsByPath: Map<String, List<SessionMeta>>` from the `sessions` argument grouped by `folderPath`.
+2. For each project, look up its session list. Empty → drop.
+3. Sort each project's sessions by `(modified desc, created desc, sessionId asc)` using `compareByDescending { parseTimestamp(it.modified) }.thenByDescending { parseTimestamp(it.created) }.thenBy { it.sessionId }`. Define a private `parseTimestamp(s: String): Long` that returns `Instant.parse(s).toEpochMilli()` or `0L` on failure (so unparseable timestamps sort to the bottom).
+4. Construct `SessionProjectGroup(project, sortedSessions, lastModified = sortedSessions.first().modified)`.
+5. Sort the resulting groups by `(parseTimestamp(lastModified) desc, project.folderName asc)`.
+
+**Verify:** `make android-test` — `SessionListGroupsTest` passes (all 8 cases).
+**Status:** not started
+
+### Step 3: Implement reducer expansion (`SessionRepository.kt`)
+
+In `reduceSessionEvent`:
+
+- Drop the default value on `now: () -> String`. Make it a required parameter to force every call site to pass a clock. (Existing `SessionReducerTest` will need a `fixedNow` helper; pass `{ "" }` or `{ "2026-01-01T00:00:00Z" }` — the existing tests don't assert on `modified`/`created` values.)
+- `SessionOpenedEvent` branch: seed the new `SessionMeta` with `modified = now()`, `created = now()`, `messageCount = 0`, `firstMessage = null`, `cwd = null`.
+- `SessionReplacedEvent` branch: when copying `old`, keep its `modified`, `created`, `messageCount`, `firstMessage`, `cwd` verbatim alongside the existing `name` preservation.
+- All other branches unchanged.
+
+Update `SessionReducerTest.kt` (existing file) so every `reduceSessionEvent(...)` call passes a `now` lambda. Do not weaken any existing assertion.
+
+**Verify:** `make android-test` — both `SessionReducerTest` (existing 14 cases) and `SessionReducerExpandedTest` (3 new cases) pass.
+**Status:** not started
+
+### Step 4: Wire the clock and rich fields through `SessionRepositoryImpl`
+
+In `SessionRepository.kt`:
+
+- Add a `nowProvider: () -> String = { java.time.Instant.now().toString() }` constructor parameter to `SessionRepositoryImpl`. Pass it into every `reduceSessionEvent(snap, ev, nowProvider)` call inside the `events.collect { … }` loop.
+- In `refresh()` and `refetchFolder()`, populate `SessionMeta` from `SessionInfo` using its `modified`, `created`, `messageCount`, `firstMessage`, `cwd` fields.
+- Update `AppContainer.kt` if it constructs `SessionRepositoryImpl` directly — it currently does. The default constructor argument means no change is required, but verify by reading the file.
+
+**Verify:** `make android-test` — existing `SessionRepositoryImplTest` (4 cases) still passes. The wire-mock `SessionInfo` fixtures in that file already include `created`/`modified`/`messageCount`; no behavioral assertion change should be required.
+**Status:** not started
+
+### Step 5: Rebuild `ContactsScreen` as a grouped LazyColumn
+
+Edit `mobile/android/app/src/main/kotlin/com/pimote/android/ui/contacts/ContactsScreen.kt`:
+
+- Replace the flat `rows` derivation with a call to `buildSessionProjectGroups(projects, sessions)`. Wrap in a `remember(projects, sessions)`.
+- Replace the single `items(rows, key = { it.handleId }) { row -> ContactRow(…) }` with nested rendering: for each `SessionProjectGroup`, emit a project header row (using existing `ContactRow` with `kind = ContactKind.Project`, title = disambiguated folder label, subtitle = `"New session in this project"`), then `items(group.sessions, key = { it.sessionId })` rendering session rows (using existing `ContactRow` with `kind = ContactKind.Session`, title = `sessionDisplayName(s)`, subtitle composed from `cwdLabelFor`, message-count, and `formatRelativeTime(s.modified, System.currentTimeMillis())`).
+- The subtitle composition rule: `listOfNotNull(cwdLabel, "$messageCount msg${if (messageCount != 1) "s" else ""}", relativeTime).joinToString(" · ")`. If `cwdLabel` is null the cwd dot is omitted, mirroring PWA layout.
+- Keep the disambiguated folder labels via `PhoneAccountRules.disambiguateFolderLabels`. Project header uses the disambiguated label; session rows use `sessionDisplayName(session)` (NOT the prefixed `"folder/name"` format — the visual grouping makes the prefix redundant).
+- Keep the existing `loadingHandleId`, `placeCall`, snackbar, refresh, status pill, and empty-state code paths unchanged. The handle-id mapping for taps is unchanged: project taps call `PhoneAccountRules.projectHandleId(folderPath)`, session taps call `PhoneAccountRules.sessionHandleId(sessionId)`.
+- The relative-time string is computed at composition time from `System.currentTimeMillis()`. It will not auto-tick — acceptable for v1 (the PWA's relative time also doesn't tick without a refresh).
+
+**Verify:** APK builds (`make android-build`). Visual verification deferred to Step 7.
+**Status:** not started
+
+### Step 6: Full unit-suite verification
+
+Run `make android-test` end-to-end. All 155 tests should pass: 124 existing + 31 newly-implemented (8 `SessionListGroupsTest` + 21 `SessionDisplayTest` + 2 net-new `SessionReducerExpandedTest` + 0 reducer-test regressions).
+
+**Verify:** `make android-test` exits 0; output reports 155 tests, 0 failures.
+**Status:** not started
+
+### Step 7: Manual on-device verification
+
+Not a code step. Install the debug APK on a Pixel device with a configured Pimote origin and at least two projects with multiple sessions each.
+
+1. Open Pimote. Confirm the contacts screen renders projects as headers, with their sessions listed underneath.
+2. Confirm session rows show:
+   - The display name (session name, or first-message excerpt, or `Session <id>` fallback).
+   - The cwd hint (only when distinct from the project folder).
+   - `<n> msg(s) · <relative time>`.
+3. Confirm groups order by recency (most-recently-active project first).
+4. Confirm sessions inside a group order by recency.
+5. Tap a session row → outgoing call to that session via the existing Telecom path.
+6. Tap a project row → outgoing "new session in project" call.
+7. Pull-to-refresh / Refresh button still works; status pill / snackbar / empty states unchanged.
+8. Open a brand-new session from the PWA → confirm it appears at the top of the right group within ~1 s, with `0 msgs · just now` until the next refresh corrects messageCount/firstMessage.
+
+Discrepancies become follow-up steps; do not silently work around them.
+
+**Verify:** All 8 manual checks pass. Discrepancies recorded as new steps in this plan.
+**Status:** not started
