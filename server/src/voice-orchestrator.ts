@@ -1,8 +1,10 @@
-// Voice orchestrator — owns the speechmux sidecar lifecycle and the per-call
-// bind dispatch. See docs/plans/voice-mode.md → "Voice orchestrator".
+// Voice orchestrator — owns per-call bind dispatch.
+// See docs/plans/voice-mode.md → "Voice orchestrator".
 //
-// This file defines the interface surface + a stub implementation. The impl
-// phase fills in start()/stop()/bindCall()/endCall() bodies.
+// Speechmux is treated as an externally managed service (systemd, container,
+// remote host, etc.). This orchestrator is only constructed when voice config
+// is present (`voice.speechmuxSignalUrl` + `voice.speechmuxLlmWsUrl`); when
+// it is absent, the server skips voice wiring entirely.
 
 import type { EventBusController } from '@mariozechner/pi-coding-agent';
 import type { CallBindErrorCode, CallBindResponse, CallEndReason } from '../../shared/dist/index.js';
@@ -47,10 +49,6 @@ export interface VoiceOrchestratorOptions {
   config: PimoteConfig;
   sessionManager: PimoteSessionManager;
   busResolver: VoiceSessionBusResolver;
-  /** Starts the speechmux sidecar process. */
-  startSpeechmux: () => Promise<void>;
-  /** Stops the speechmux sidecar process. Idempotent. */
-  stopSpeechmux: () => Promise<void>;
   /**
    * Displace the current owner of a session (if any). Implementations wrap
    * the session-manager's standard displacement path.
@@ -61,23 +59,12 @@ export interface VoiceOrchestratorOptions {
 }
 
 export class VoiceOrchestrator {
-  private started = false;
   private readonly activeCalls = new Set<string>();
 
   constructor(private readonly opts: VoiceOrchestratorOptions) {}
 
-  /** Spawns speechmux sidecar. Throws if it fails to start. */
-  async start(): Promise<void> {
-    if (this.started) return;
-    await this.opts.startSpeechmux();
-    this.started = true;
-  }
-
-  /** Kills speechmux. Idempotent. */
+  /** Drop all active-call bookkeeping. Idempotent. Called on server shutdown. */
   async stop(): Promise<void> {
-    if (!this.started) return;
-    await this.opts.stopSpeechmux();
-    this.started = false;
     this.activeCalls.clear();
   }
 
@@ -97,11 +84,9 @@ export class VoiceOrchestrator {
       await this.opts.displaceOwner(args.sessionId, args.clientConnection);
     }
 
-    // Voice-disabled guard: if speechmux wiring isn't configured, fail the
-    // bind here rather than handing the client empty URLs. Speechmux is
-    // what mints the per-call TURN creds now (in the /signal `session`
-    // response) and what authenticates peers (via Cloudflare Access at the
-    // edge), so pimote no longer needs to mint anything.
+    // The orchestrator is only constructed when voice is configured, so
+    // these URLs are guaranteed present. Re-read them per call so live
+    // config edits (if/when supported) take effect on the next bind.
     const signalUrl = this.opts.config.voice?.speechmuxSignalUrl;
     const llmWsUrl = this.opts.config.voice?.speechmuxLlmWsUrl;
     if (!signalUrl || !llmWsUrl) {

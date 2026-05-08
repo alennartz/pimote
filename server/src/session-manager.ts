@@ -249,11 +249,15 @@ export class PimoteSessionManager {
 
   /**
    * Build the voice extension factory for this server's config, if possible.
-   * Returns undefined (and logs a warning) when neither voice-specific model
-   * refs nor fallback defaultProvider/defaultModel are configured — existing
-   * non-voice deployments continue to work unchanged.
+   * Returns undefined when voice is not configured (no speechmux URLs) or
+   * when neither voice-specific model refs nor fallback defaultProvider/
+   * defaultModel are configured. Non-voice deployments continue to work
+   * unchanged — sessions simply don't load `@pimote/voice` at all.
    */
   private buildVoiceExtensionFactory(): ExtensionFactory | undefined {
+    if (!this.config.voice?.speechmuxSignalUrl || !this.config.voice?.speechmuxLlmWsUrl) {
+      return undefined;
+    }
     const interpreter =
       this.config.defaultInterpreterModel ??
       (this.config.defaultProvider && this.config.defaultModel ? { provider: this.config.defaultProvider, modelId: this.config.defaultModel } : undefined);

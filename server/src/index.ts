@@ -49,29 +49,35 @@ export async function main(options: StartOptions = {}) {
     },
   });
 
-  const server = await createServer(config, sessionManager, folderIndex, pushNotificationService, sessionMetadataStore, voiceBoot.orchestrator);
+  if (!voiceBoot) {
+    console.log('[voice] dormant: voice config absent (set voice.speechmuxSignalUrl and voice.speechmuxLlmWsUrl to enable)');
+  }
+
+  const server = await createServer(config, sessionManager, folderIndex, pushNotificationService, sessionMetadataStore, voiceBoot?.orchestrator);
   clientRegistryRef.current = server.clientRegistry;
 
-  // Suppress push notifications for sessions currently owned by a voice call.
-  // The user is on the line — we don't need to ping their phone for idle
-  // signals or extension UI prompts. Pushes resume automatically once the
-  // call ends and `isCallActive` flips back to false.
-  pushNotificationService.setSuppressionPredicate((sessionId) => voiceBoot.orchestrator.isCallActive(sessionId));
+  if (voiceBoot) {
+    const orchestrator = voiceBoot.orchestrator;
 
-  // Tear down orchestrator bookkeeping when a session is being closed (idle
-  // reap, explicit close). Emits call_ended{server_ended} to the owner.
-  sessionManager.onBeforeSessionClose = async (sessionId) => {
-    if (!voiceBoot.orchestrator.isCallActive(sessionId)) return;
-    const slot = sessionManager.getSlot(sessionId);
-    const ownerClientId = slot?.connection?.connectedClientId;
-    await voiceBoot.orchestrator.endCall({ sessionId, reason: 'server_ended' });
-    if (ownerClientId) {
-      const handler = server.clientRegistry.get(ownerClientId);
-      handler?.sendCallEndedEvent(sessionId, 'server_ended');
-    }
-  };
+    // Suppress push notifications for sessions currently owned by a voice call.
+    // The user is on the line — we don't need to ping their phone for idle
+    // signals or extension UI prompts. Pushes resume automatically once the
+    // call ends and `isCallActive` flips back to false.
+    pushNotificationService.setSuppressionPredicate((sessionId) => orchestrator.isCallActive(sessionId));
 
-  await voiceBoot.orchestrator.start();
+    // Tear down orchestrator bookkeeping when a session is being closed (idle
+    // reap, explicit close). Emits call_ended{server_ended} to the owner.
+    sessionManager.onBeforeSessionClose = async (sessionId) => {
+      if (!orchestrator.isCallActive(sessionId)) return;
+      const slot = sessionManager.getSlot(sessionId);
+      const ownerClientId = slot?.connection?.connectedClientId;
+      await orchestrator.endCall({ sessionId, reason: 'server_ended' });
+      if (ownerClientId) {
+        const handler = server.clientRegistry.get(ownerClientId);
+        handler?.sendCallEndedEvent(sessionId, 'server_ended');
+      }
+    };
+  }
 
   // Start idle session reaping with client connectivity check
   sessionManager.startIdleCheck(config.idleTimeout, (clientId) => server.clientRegistry.has(clientId));
@@ -88,7 +94,7 @@ export async function main(options: StartOptions = {}) {
   // Graceful shutdown
   const shutdown = async () => {
     console.log('\n[pimote] Shutting down...');
-    await voiceBoot.shutdown();
+    await voiceBoot?.shutdown();
     await sessionManager.dispose();
     await server.close();
     process.exit(0);

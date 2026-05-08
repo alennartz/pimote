@@ -8,8 +8,6 @@ export interface ModelRef {
 }
 
 export interface VoiceConfig {
-  /** Path to speechmux binary. Optional — voice mode stays dormant if missing. */
-  speechmuxBinary?: string;
   /** Public WS URL the client opens for WebRTC signalling. */
   speechmuxSignalUrl?: string;
   /** Internal WS URL the voice extension connects to for the LlmBackend protocol. */
@@ -110,7 +108,6 @@ function parseVoiceConfig(v: unknown): VoiceConfig | undefined {
   if (!v || typeof v !== 'object') return undefined;
   const o = v as Record<string, unknown>;
   return {
-    speechmuxBinary: typeof o.speechmuxBinary === 'string' ? o.speechmuxBinary : undefined,
     speechmuxSignalUrl: typeof o.speechmuxSignalUrl === 'string' ? o.speechmuxSignalUrl : undefined,
     speechmuxLlmWsUrl: typeof o.speechmuxLlmWsUrl === 'string' ? o.speechmuxLlmWsUrl : undefined,
   };

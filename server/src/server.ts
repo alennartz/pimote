@@ -106,7 +106,7 @@ export async function createServer(
   folderIndex: FolderIndex,
   pushNotificationService: PushNotificationService,
   sessionMetadataStore: FileSessionMetadataStore,
-  voiceOrchestrator: VoiceOrchestrator,
+  voiceOrchestrator: VoiceOrchestrator | undefined,
 ): Promise<PimoteServer> {
   const clientVersion = await loadClientVersion();
   if (clientVersion) {

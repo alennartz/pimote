@@ -59,8 +59,6 @@ function makeOrchestrator(options?: {
   busLookup?: Map<string, ReturnType<typeof fakeBus>>;
   configOverrides?: Partial<PimoteConfig>;
   displace?: (sessionId: string, newOwner: ClientConnection) => Promise<void>;
-  startImpl?: () => Promise<void>;
-  stopImpl?: () => Promise<void>;
   isOwnedByVoiceCall?: (id: string) => boolean;
 }) {
   const slots = options?.slotLookup ?? new Map<string, ManagedSlot>([['s-1', fakeSlot('s-1')]]);
@@ -72,39 +70,30 @@ function makeOrchestrator(options?: {
   };
 
   const displaceOwner = options?.displace ?? vi.fn(async () => {});
-  const startSpeechmux = options?.startImpl ?? vi.fn(async () => {});
-  const stopSpeechmux = options?.stopImpl ?? vi.fn(async () => {});
   const isOwnedByVoiceCall = options?.isOwnedByVoiceCall ?? (() => false);
 
   const orchestrator = new VoiceOrchestrator({
     config: fakeConfig(options?.configOverrides),
     sessionManager: {} as PimoteSessionManager,
     busResolver: resolver,
-    startSpeechmux,
-    stopSpeechmux,
     displaceOwner,
     isOwnedByVoiceCall,
   });
 
-  return { orchestrator, buses, slots, displaceOwner, startSpeechmux, stopSpeechmux };
+  return { orchestrator, buses, slots, displaceOwner };
 }
 
 // =============================================================================
 
 describe('VoiceOrchestrator lifecycle', () => {
-  it('start() spawns speechmux once', async () => {
-    const { orchestrator, startSpeechmux } = makeOrchestrator();
-    await orchestrator.start();
-    await orchestrator.start();
-    expect(startSpeechmux).toHaveBeenCalledTimes(1);
-  });
-
-  it('stop() is idempotent', async () => {
-    const { orchestrator, stopSpeechmux } = makeOrchestrator();
-    await orchestrator.start();
+  it('stop() clears active-call state and is idempotent', async () => {
+    const { orchestrator } = makeOrchestrator();
+    await orchestrator.bindCall({ sessionId: 's-1', clientConnection: fakeConnection(), force: false });
+    expect(orchestrator.isCallActive('s-1')).toBe(true);
     await orchestrator.stop();
+    expect(orchestrator.isCallActive('s-1')).toBe(false);
     await orchestrator.stop();
-    expect(stopSpeechmux).toHaveBeenCalledTimes(1);
+    expect(orchestrator.isCallActive('s-1')).toBe(false);
   });
 });
 

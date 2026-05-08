@@ -55,14 +55,14 @@ Phone/Browser ←→ Pimote Server
 
 Pimote is published as the app package `@pimote/pimote` at the repo root, backed by an npm workspace monorepo:
 
-| Package              | Path               | Description                                                       |
-| -------------------- | ------------------ | ----------------------------------------------------------------- |
-| **`@pimote/pimote`** | `./`               | Publishable app package and `pimote` CLI                          |
-| **`@pimote/shared`** | `shared/`          | TypeScript types for the WebSocket wire protocol                  |
-| **`@pimote/server`** | `server/`          | Node.js HTTP + WebSocket server hosting pi sessions               |
-| **client**           | `client/`          | SvelteKit PWA (Svelte 5, Tailwind CSS, shadcn-svelte)             |
-| **`@pimote/panels`** | `packages/panels/` | Library for extensions to push card data to the UI                |
-| **`@pimote/voice`**  | `packages/voice/`  | Voice-mode pi extension (dormant unless voice mode is configured) |
+| Package              | Path               | Description                                                          |
+| -------------------- | ------------------ | -------------------------------------------------------------------- |
+| **`@pimote/pimote`** | `./`               | Publishable app package and `pimote` CLI                             |
+| **`@pimote/server`** | `server/`          | Node.js HTTP + WebSocket server hosting pi sessions                  |
+| **client**           | `client/`          | SvelteKit PWA (Svelte 5, Tailwind CSS, shadcn-svelte)                |
+| **`@pimote/panels`** | `packages/panels/` | Standalone library extensions can import to push card data to the UI |
+
+The `shared/` directory holds TypeScript types for the WebSocket wire protocol shared between server and client — it's a tsc-only project, not a published package. The voice-mode pi extension lives at `server/src/voice/` and is loaded into each session only when voice is configured (see [Voice mode](#voice-mode)).
 
 A separate **native Android client** lives at `mobile/android/` — a voice-first Kotlin app that integrates with Android Auto via `SelfManagedConnectionService`, and exposes your projects as Android system contacts so they're callable from Google Assistant / Gemini, the dialer, and the system contact card. Independent Gradle project, Docker-based build (`make android-test` / `make android-build`), not part of the npm workspace; speaks the same WebSocket protocol as the PWA. See `mobile/android/README.md`.
 
@@ -214,8 +214,13 @@ With this config, if `/home/you/projects/` contains `my-app/` and `another-repo/
 
 #### Voice mode
 
-Voice mode is optional — when `voice.speechmuxBinary` is unset the feature
-stays dormant and the server behaves exactly as before. To enable it:
+Voice mode is optional. When the `voice` section is absent from the config
+(or its URLs are unset), the feature stays fully dormant: no voice extension
+is loaded into sessions, no orchestrator is wired up, and the server behaves
+exactly as it would without voice support.
+
+To enable it, point pimote at an externally managed speechmux instance
+(systemd, container, remote host — pimote does not spawn the sidecar):
 
 ```json
 {
@@ -223,15 +228,15 @@ stays dormant and the server behaves exactly as before. To enable it:
   "defaultInterpreterModel": { "provider": "anthropic", "modelId": "claude-sonnet-4-5" },
   "defaultWorkerModel": { "provider": "anthropic", "modelId": "claude-sonnet-4-5" },
   "voice": {
-    "speechmuxBinary": "/usr/local/bin/speechmux",
     "speechmuxSignalUrl": "wss://speechmux.example.com/signal",
     "speechmuxLlmWsUrl": "ws://127.0.0.1:6789"
   }
 }
 ```
 
-All three `voice.*` fields are required to enable voice; `defaultInterpreterModel`
-and `defaultWorkerModel` fall back to `defaultProvider` + `defaultModel` if unset.
+Both `voice.speechmuxSignalUrl` and `voice.speechmuxLlmWsUrl` are required to
+enable voice. `defaultInterpreterModel` and `defaultWorkerModel` fall back to
+`defaultProvider` + `defaultModel` if unset.
 
 VAPID keys for push notifications are auto-generated on first run and written back to the config file. Session metadata and push subscription state live under `~/.local/state/pimote` (or `$XDG_STATE_HOME/pimote`).
 
@@ -333,22 +338,26 @@ For first-publish steps, see [docs/releasing.md](docs/releasing.md).
 
 A standalone package that pi extensions can import to push structured card data into the Pimote side panel. Cards appear in a responsive side panel (desktop) or overlay (mobile).
 
-```typescript
+```ts
 import { detect } from '@pimote/panels';
+import type { ExtensionFactory } from '@mariozechner/pi-coding-agent';
 
-export function activate(ctx: ExtensionAPI) {
-  const panel = detect(ctx);
-  if (!panel) return; // not running in pimote
+const extension: ExtensionFactory = (pi) => {
+  const panels = detect(pi, 'my-extension');
+  if (!panels) return; // not running in pimote
 
-  panel.update([
+  panels.updateCards([
     {
       id: 'status',
-      title: 'Build Status',
-      color: 'green',
-      body: [{ style: 'compact', items: ['All tests passing'] }],
+      color: 'success',
+      header: { title: 'Build', tag: 'passed' },
+      body: [{ content: 'All 42 tests passed', style: 'text' }],
+      footer: ['2.3s'],
     },
   ]);
-}
+};
+
+export default extension;
 ```
 
 See [`packages/panels/README.md`](packages/panels/README.md) for full API docs.
