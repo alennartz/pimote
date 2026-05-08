@@ -2,7 +2,7 @@
 
 ## Overview
 
-Pimote is a PWA + Node.js server for remote access to pi (a coding agent). npm workspace with five packages: shared protocol types, a Node.js HTTP+WebSocket server managing pi AgentSession instances, a SvelteKit PWA client (Svelte 5 runes, shadcn-svelte) for real-time conversation rendering, a panels library for extensions to push structured card data, and a voice extension loaded into every pi session that wires a speechmux sidecar + WebRTC call into a running pi session. A separate native Kotlin Android client under `mobile/android/` (independent Gradle project, Docker-based build) is a voice-first peer to the PWA targeting sustained calls and Android Auto via `SelfManagedConnectionService`. Supports multiple concurrent sessions, session ownership/takeover, Web Push notifications, extension UI bridging, a real-time side panel displaying extension-provided cards, and browser-driven or Android-native voice calls into a pi session (interpreter + worker LLM split, walk-back surgery, speak() tool).
+Pimote is a PWA + Node.js server for remote access to pi (a coding agent). npm workspace with three published packages: a Node.js HTTP+WebSocket server managing pi AgentSession instances, a SvelteKit PWA client (Svelte 5 runes, shadcn-svelte) for real-time conversation rendering, and a standalone `@pimote/panels` library for extensions to push structured card data. The shared protocol types live in `shared/` as a tsc-only project (not a published package). A voice extension lives inside the server at `server/src/voice/` and is loaded into pi sessions only when voice is configured — it bridges a WebRTC call (via an externally managed speechmux service; pimote does not spawn it) into a running pi session. A separate native Kotlin Android client under `mobile/android/` (independent Gradle project, Docker-based build) is a voice-first peer to the PWA targeting sustained calls and Android Auto via `SelfManagedConnectionService`. Supports multiple concurrent sessions, session ownership/takeover, Web Push notifications, extension UI bridging, a real-time side panel displaying extension-provided cards, and browser-driven or Android-native voice calls into a pi session (interpreter + worker LLM split, walk-back surgery, speak() tool).
 
 ```mermaid
 graph LR
@@ -10,7 +10,6 @@ graph LR
   Protocol --> Client
   Protocol -.mirror.-> Android
   Panels --> Server
-  Voice --> Server
   Server --> Client
   Server --> Android
 ```
@@ -56,7 +55,7 @@ sequenceDiagram
 
   C->>S: call_bind { sessionId }
   S->>O: bindCall()
-  O->>M: spawn/ensure sidecar
+  Note over M: speechmux runs externally<br/>(systemd / container / remote)
   O-->>V: activate(call)
   V-->>C: call_ready (SDP/ICE via signaling)
   C<->>M: WebRTC audio (mic ↔ TTS)
@@ -86,7 +85,7 @@ Shared TypeScript types defining the WebSocket wire format between client and se
 
 Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges them to remote clients.
 
-**Responsibilities:** HTTP static serving + SPA fallback, WebSocket upgrade + message routing, client identity registry, three-layer session model (ManagedSlot wrapping AgentSessionRuntime + ClientConnection + SessionState), runtime factory pattern for pi SDK session creation (with voice extension factory threaded via `resourceLoaderOptions` so every session loads `@pimote/voice` dormant), session state lifecycle helpers (create/teardown/rebuild), session open/close/resume/idle-reap/takeover, event buffering with delta coalescing for reconnect replay, folder/session filesystem discovery, project folder creation (`mkdir` + `git init`), extension UI bridging (dialog→WebSocket round-trips, fire-and-forget→events, TUI-only→no-ops) with voice-mode gating via `isVoiceModeActive` predicate (dialog calls short-circuit to `UI_BRIDGE_DISABLED_IN_VOICE_MODE`), extension command context actions, SDK message mapping, session conflict detection (external pi processes via /proc + remote pimote sessions), config loading + VAPID key management + voice config (`voice` section, `defaultInterpreterModel`, `defaultWorkerModel`), Web Push notification delivery, git branch detection, pimote slash-command handling (`/new`, `/reload`, `/tree`) plus autocomplete surfaces for extension/skill/template commands, tree navigation command lifecycle (`navigate_tree`, `set_tree_label`) with buffered lifecycle events + full-resync handoff, voice call lifecycle (`call_bind`/`call_end` routing, speechmux sidecar orchestration, per-call auth token minting seam, displacement teardown of active voice calls, EventBus activate/deactivate emission into the voice extension), client version mismatch detection, EventBus creation + panel channel wiring (detect/data listeners), per-session panel state tracking with throttled pushes, panel snapshot delivery on reconnect/session-switch, idle-reap protection while tree navigation is in progress
+**Responsibilities:** HTTP static serving + SPA fallback, WebSocket upgrade + message routing, client identity registry, three-layer session model (ManagedSlot wrapping AgentSessionRuntime + ClientConnection + SessionState), runtime factory pattern for pi SDK session creation (with the voice extension factory threaded via `resourceLoaderOptions` only when voice is configured — otherwise sessions don't load it at all), session state lifecycle helpers (create/teardown/rebuild), session open/close/resume/idle-reap/takeover, event buffering with delta coalescing for reconnect replay, folder/session filesystem discovery, project folder creation (`mkdir` + `git init`), extension UI bridging (dialog→WebSocket round-trips, fire-and-forget→events, TUI-only→no-ops) with voice-mode gating via `isVoiceModeActive` predicate (dialog calls short-circuit to `UI_BRIDGE_DISABLED_IN_VOICE_MODE`), extension command context actions, SDK message mapping, session conflict detection (external pi processes via /proc + remote pimote sessions), config loading + VAPID key management + voice config (`voice` section with `speechmuxSignalUrl` + `speechmuxLlmWsUrl`, `defaultInterpreterModel`, `defaultWorkerModel`), Web Push notification delivery, git branch detection, pimote slash-command handling (`/new`, `/reload`, `/tree`) plus autocomplete surfaces for extension/skill/template commands, tree navigation command lifecycle (`navigate_tree`, `set_tree_label`) with buffered lifecycle events + full-resync handoff, voice call lifecycle (`call_bind`/`call_end` routing into the orchestrator, displacement teardown of active voice calls, EventBus activate/deactivate emission into the voice extension) — fully no-op'd when voice is not configured, host of the in-server voice extension (`server/src/voice/`), client version mismatch detection, EventBus creation + panel channel wiring (detect/data listeners), per-session panel state tracking with throttled pushes, panel snapshot delivery on reconnect/session-switch, idle-reap protection while tree navigation is in progress
 
 **Dependencies:** Protocol (wire format types)
 
@@ -96,9 +95,9 @@ Node.js HTTP + WebSocket server that hosts pi AgentSession instances and bridges
 - `server/src/config.ts` — config loading, VAPID key auto-generation, optional `voice` section plus `defaultInterpreterModel` / `defaultWorkerModel`
 - `server/src/server.ts` — HTTP server, static files, WebSocket upgrade, client registry, version checking
 - `server/src/ws-handler.ts` — per-connection command handler, multi-session routing, session ownership/displacement (tears down any active voice call on displace), conflict detection, `/tree` prompt interception + session-tree mapping, `navigate_tree`/`set_tree_label` handlers with `tree_navigation_start`/`tree_navigation_end` event emission and full-resync orchestration, in-place session reset via slot.runtime (newSession/fork/switchSession with rebuildSessionState + reKey), `create_project` handler (name/root validation, `mkdir` + `git init`), `list_folders` response includes configured roots, `call_bind`/`call_end` command routing into the voice orchestrator, `isVoiceModeActive` predicate feeding the extension UI bridge so dialog UI requests return `UI_BRIDGE_DISABLED_IN_VOICE_MODE` while a call is bound
-- `server/src/session-manager.ts` — ManagedSlot/ClientConnection/SessionState types, slot-based event + UI helpers (send, wait, resolve, replay), AgentSessionRuntime factory for session creation, session state lifecycle (createSessionState/teardownSessionState/rebuildSessionState), threads the `@pimote/voice` extension factory into every pi session via `resourceLoaderOptions`, `treeNavigationInProgress` state tracking, reKeySession for session replacement, idle reaping with tree-navigation skip protection, EventBus creation + panel listener wiring, throttled panel push scheduling
-- `server/src/voice-orchestrator.ts` — VoiceOrchestrator: speechmux sidecar lifecycle (spawn/health/shutdown), per-session call registry, `bindCall`/`endCall` dispatch, per-call auth-token minting seam, EventBus `voice:activate` / `voice:deactivate` emission into the session's voice extension
-- `server/src/voice-orchestrator-boot.ts` — wires VoiceOrchestrator into server startup, consumes `voice` config, exposes the orchestrator + `isVoiceModeActive` predicate to ws-handler / session-manager
+- `server/src/session-manager.ts` — ManagedSlot/ClientConnection/SessionState types, slot-based event + UI helpers (send, wait, resolve, replay), AgentSessionRuntime factory for session creation, session state lifecycle (createSessionState/teardownSessionState/rebuildSessionState), threads the in-server voice extension factory into pi sessions via `resourceLoaderOptions` only when voice is configured (URLs + interpreter/worker models present); otherwise sessions skip loading it entirely, `treeNavigationInProgress` state tracking, reKeySession for session replacement, idle reaping with tree-navigation skip protection, EventBus creation + panel listener wiring, throttled panel push scheduling
+- `server/src/voice-orchestrator.ts` — VoiceOrchestrator: per-session call registry, `bindCall`/`endCall` dispatch, EventBus `voice:activate` / `voice:deactivate` emission into the session's voice extension; `stop()` clears active-call bookkeeping on shutdown
+- `server/src/voice-orchestrator-boot.ts` — boot wiring: `isVoiceConfigured(config)` predicate plus `buildVoiceOrchestrator()` which returns `null` when voice config (`voice.speechmuxSignalUrl` + `voice.speechmuxLlmWsUrl`) is absent so callers skip all voice wiring; otherwise wires displacement and exposes `isOwnedByVoiceCall`. Speechmux is treated as externally managed — pimote no longer spawns a sidecar
 - `server/src/voice-orchestrator.test.ts` — tests
 - `server/src/event-buffer.ts` — ring buffer, SDK→wire event mapping (including buffered `tree_navigation_*` lifecycle events), streaming delta coalescing
 - `server/src/message-mapper.ts` — SDK AgentMessage → PimoteAgentMessage conversion
@@ -235,26 +234,23 @@ Workspace package (`@pimote/panels`) for extensions to push structured card data
 - `packages/panels/src/detect.ts` — detect() function: synchronous EventBus probe, handle creation with namespace scoping, previous-handle deactivation
 - `packages/panels/src/detect.test.ts` — tests
 
-### Voice
+### Voice Extension
 
-Workspace package (`@pimote/voice`) — pi extension loaded into every pimote session (dormant by default) that hosts the voice-mode client inside the agent process.
+In-server pi extension (`server/src/voice/`) — loaded into pi sessions only when voice is configured. Hosts the voice-mode client inside the agent process and bridges a WebRTC call (via an externally managed speechmux service) into a running pi session. Not a published npm package — it's compiled as part of `@pimote/server` and threaded into sessions by `session-manager.ts` via `resourceLoaderOptions.extensionFactories`.
 
-**Responsibilities:** activation state machine (dormant ↔ active, driven by `voice:activate` / `voice:deactivate` EventBus signals from the server orchestrator), speechmux WebSocket client (per-call connect with minted auth token, signaling relay, interrupt/barge-in handling), extension-runtime reducers (tool-call / message-event handling for the interpreter+worker split), walk-back surgery (rewriting the in-flight pi message history when the user interrupts or the interpreter course-corrects), `speak()` tool exposed to the worker LLM, `INTERPRETER_PROMPT` system prompt, emission of `VOICE_INTERRUPT_CUSTOM_TYPE` messages
+**Responsibilities:** activation state machine (dormant ↔ active, driven by `pimote:voice:activate` / `pimote:voice:deactivate` EventBus signals from the server orchestrator), speechmux WebSocket client (per-call connect, signaling relay, interrupt/barge-in handling), FSM reducers (tool-call / message-event handling for the interpreter+worker split), walk-back surgery (rewriting the in-flight pi message history when the user interrupts or the interpreter course-corrects), `speak()` tool exposed to the worker LLM, `INTERPRETER_PROMPT` system prompt, emission of `VOICE_INTERRUPT_CUSTOM_TYPE` messages, `wait-for-idle` helper used by the FSM during turn handoff
 
-**Dependencies:** pi SDK (`ExtensionAPI`, custom message / tool APIs), Protocol (voice wire types consumed via EventBus payloads)
+**Dependencies:** pi SDK (`ExtensionAPI`, custom message / tool APIs), Protocol (voice wire types consumed via EventBus payloads), Server (lives inside it)
 
 **Files:**
 
-- `packages/voice/src/index.ts` — extension factory: registers tools (`speak`), subscribes to EventBus voice signals, owns the state machine instance
-- `packages/voice/src/state-machine.ts` — pure activation state machine (states + transitions) shared by the extension and tests
-- `packages/voice/src/extension-runtime.ts` — reducers that interpret pi SDK events inside an active call (interpreter/worker split, tool-call routing)
-- `packages/voice/src/extension-runtime.test.ts` — tests
-- `packages/voice/src/walk-back.ts` — message-history surgery: trim/rewrite the in-flight conversation on interrupt / re-steer
-- `packages/voice/src/walk-back.test.ts` — tests
-- `packages/voice/src/speechmux-client.ts` — WebSocket client to the speechmux sidecar (connect with per-call auth, send/recv signaling, interrupt plumbing)
-- `packages/voice/src/interpreter-prompt.ts` — `INTERPRETER_PROMPT` constant + composition helpers
-- `packages/voice/src/index.test.ts` — tests
-- `packages/voice/package.json`, `packages/voice/README.md`
+- `server/src/voice/index.ts` — extension factory: registers tools (`speak`), subscribes to EventBus voice signals, owns the state machine instance
+- `server/src/voice/state-machine.ts` — pure activation state machine (states + transitions) shared by the extension and tests
+- `server/src/voice/walk-back.ts` — message-history surgery: trim/rewrite the in-flight conversation on interrupt / re-steer
+- `server/src/voice/speechmux-client.ts` — WebSocket client to the externally managed speechmux service (signaling relay, interrupt plumbing)
+- `server/src/voice/interpreter-prompt.ts` — `INTERPRETER_PROMPT` constant + composition helpers
+- `server/src/voice/wait-for-idle.ts`, `server/src/voice/wait-for-idle.test.ts` — turn-idle helper used by the FSM + tests
+- `server/src/voice/fsm/**` — FSM state, events, actions, text extraction, and per-state reducers driving the interpreter/worker split
 
 ### Android Client
 
