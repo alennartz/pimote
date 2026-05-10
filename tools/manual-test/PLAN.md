@@ -132,6 +132,39 @@ in speechmux and is exercised separately.
   `docs/manual-tests/voice-call-fullscreen-ui.md` for the current
   `agent-browser`-driven run.
 
+### 9. Android — Assistant-callable Pimote projects
+
+**What:** Pimote projects are voice-callable via Google Assistant
+("Hey Google, call <project>" or "Hey Google, call Pimote") and
+tappable from the system contact card. Boot the Android app, ensure
+`READ_CONTACTS` / `WRITE_CONTACTS` are granted, and wait ~2 s for
+the contact + shortcut sync debounce.
+
+1. From the system Contacts app, locate a Pimote project contact,
+   open its card, confirm the call action button is present, tap it,
+   and observe the call dispatching through `PimoteConnectionService`
+   (the in-app `InCallActivity` opens).
+2. Say `"Hey Google, call Pimote"`. Confirm the fallback shortcut
+   resolves to the most-recently-active project and the call
+   dispatches.
+3. Say `"Hey Google, call <project name>"` for one of the top-N
+   projects (within the system shortcut cap). Confirm direct
+   resolution dispatches.
+4. Say `"Hey Google, call <utterance close to a project name>"`
+   (small mispronunciation / partial match). Confirm fuzzy-match
+   resolution dispatches.
+5. Confirm long-tail projects beyond the system shortcut cap are
+   still callable from the contact-card surface (repeat step 1
+   against an off-list project).
+
+**Why:** This journey is the integration test for the
+`android-assistant-callable-projects` topic. The unit tests cover
+`ContactsSync` / `ShortcutsSync` purely; nothing on the JVM exercises
+`TelecomManager`, `ShortcutManagerCompat`, or Assistant
+fulfillment — those need a physical device.
+
+**Driver:** manual on a physical Android device (no automation).
+
 ## Automation gap (recorded, not an action item for this topic)
 
 Journeys 1–7 currently have no automation driver. This is a deliberate

@@ -75,12 +75,11 @@ object ContactsSync {
     fun computeDesiredContacts(
         projects: List<ProjectMeta>,
     ): List<DesiredContact> {
-        val labels = PhoneAccountRules.disambiguateFolderLabels(
-            projects.map { it.folderPath }.distinct(),
-        )
         val out = ArrayList<DesiredContact>(projects.size)
         for (p in projects) {
-            val prefix = PhoneAccountRules.sanitize(labels[p.folderPath] ?: p.folderName) ?: continue
+            val root = PhoneAccountRules.rootSegmentOf(p.folderPath)
+            val raw = if (root != null) "$root ${p.folderName}" else p.folderName
+            val prefix = PhoneAccountRules.sanitize(raw) ?: continue
             val sourceId = PhoneAccountRules.projectHandleId(p.folderPath)
             out.add(
                 DesiredContact(

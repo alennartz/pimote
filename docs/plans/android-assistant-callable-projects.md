@@ -332,6 +332,8 @@ Dynamic shortcuts (built by `AndroidShortcutManagerFacade`) bind to this capabil
 
 ## Steps
 
+**Pre-implementation commit:** `e44e343b42f6c625c54cd4ed429f0f966c46d54f`
+
 ### Step 1: Implement `PhoneAccountRules.rootSegmentOf`
 
 Replace the `TODO` body in `mobile/android/app/src/main/kotlin/com/pimote/android/telephony/PhoneAccountRegistrar.kt` so the helper returns the last `/`-delimited segment of `folderPath`'s parent. Edge handling already specified by the doc-comment and the five `PhoneAccountRulesTest.rootSegmentOf*` cases:
@@ -345,7 +347,7 @@ Replace the `TODO` body in `mobile/android/app/src/main/kotlin/com/pimote/androi
 Pure Kotlin string handling — no path APIs needed. Drop empty segments before picking the second-to-last.
 
 **Verify:** `make android-test` runs `PhoneAccountRulesTest` cleanly and all five `rootSegmentOf` cases pass.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Switch `ContactsSync.computeDesiredContacts` to the `"<root> <project>"` display-name format
 
@@ -359,7 +361,7 @@ In `mobile/android/app/src/main/kotlin/com/pimote/android/contacts/ContactsSync.
 The `sourceId`, `pimoteUri`, and `summary` fields are unchanged — only `displayName` derivation moves. The `disambiguateFolderLabels` call is removed from this function (the helper itself stays for `ContactsScreen`).
 
 **Verify:** `ContactsSyncTest` passes including the new `falls back to bare folderName` and `colliding folder names are disambiguated by root segment prefix` cases.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Implement `ShortcutsSync.synonymsFor`
 
@@ -373,7 +375,7 @@ Fill in `synonymsFor(rootSegment, projectName)` in `mobile/android/app/src/main/
 No deduping rules beyond what the architecture's prose suggests — `synonymsForTest` only asserts containment + ordering for the null-root case.
 
 **Verify:** the four `synonymsFor` cases in `ShortcutsSyncTest` pass.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Implement `ShortcutsSync.diff`
 
@@ -388,7 +390,7 @@ Fill in `diff(desired, existing)` in `ShortcutsSync.kt` with a sourceId-keyed re
 Return a `SyncOps(toDelete = …, toUpsert = …)`.
 
 **Verify:** the five `diff` cases in `ShortcutsSyncTest` pass — including `diff treats rank, synonyms, pimoteUri, and capabilityParameter as content`.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Implement `ShortcutsSync.computeDesiredShortcuts`
 
@@ -413,7 +415,7 @@ Fill in `computeDesiredShortcuts(groups, maxShortcuts)` in `ShortcutsSync.kt`. B
 Respect `maxShortcuts` strictly — never emit more than `maxShortcuts` total entries.
 
 **Verify:** all `computeDesiredShortcuts` cases in `ShortcutsSyncTest` pass (fallback always present, cap honored, ordering preserved, label/URI/rank shape correct).
-**Status:** not started
+**Status:** done
 
 ### Step 6: Implement `ShortcutsSync.resolveByFuzzyMatch`
 
@@ -426,7 +428,7 @@ Fill in `resolveByFuzzyMatch(utterance, projects)` in `ShortcutsSync.kt`. Behavi
 Use a small token-based scoring routine (lower-case, split on whitespace, count token overlap with each project's candidate strings — folderName plus the root-prefixed form). Return the best candidate above a sane threshold (e.g. requires at least one shared token of length ≥ 3 and a normalized score above 0.5); otherwise `null`. The threshold isn't asserted directly — tests only exercise exact match and total mismatch — so a simple deterministic scorer is enough.
 
 **Verify:** the three `resolveByFuzzyMatch` cases in `ShortcutsSyncTest` pass.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Implement `CallByPimoteUri.placeCall`
 
@@ -442,7 +444,7 @@ Fill in `placeCall(context, pimoteUri, telecom)` in `mobile/android/app/src/main
 The `telecom: TelecomFacade` parameter is currently unused at runtime — the architecture's signature retains it for testability of future paths but production calls go through `TelecomManager` directly to match `ContactsScreen.placeCall`. Leave the parameter; ignore it in the body for now and add a `// telecom seam reserved` comment.
 
 **Verify:** `make android-build` compiles. No JVM unit tests cover this helper; the contact-card and Assistant manual journeys (Step 13) exercise it end-to-end.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Implement `AndroidShortcutManagerFacade`
 
@@ -455,7 +457,7 @@ In `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/AndroidShort
 Intent action and class name must match `mobile/android/app/src/main/res/xml/shortcuts.xml` (`ACTION_VIEW`, `com.pimote.android.shortcuts.CallByNameActivity`).
 
 **Verify:** `make android-build` compiles. Manual journey 9 (Step 13) confirms shortcut population on device.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Implement `ShortcutsRunner.start` / `stop`
 
@@ -480,7 +482,7 @@ In `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/ShortcutsRun
 Add `@FlowPreview @ExperimentalCoroutinesApi` annotations on `start()` (the `debounce` operator requires them, matching `ContactSyncRunner`). Use `kotlinx.coroutines.flow.combine` and `debounce` imports.
 
 **Verify:** `make android-build` compiles. The runner has no JVM unit tests; behavior is exercised via manual journey 9.
-**Status:** not started
+**Status:** done
 
 ### Step 10: Implement `CallByNameActivity.onCreate`
 
@@ -498,7 +500,7 @@ In `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/CallByNameAc
 Use `super.onCreate(savedInstanceState)` first, then the resolution logic, then `finish()`.
 
 **Verify:** `make android-build` compiles. Manual journey covers `"Hey Google, call Pimote"` and `"Hey Google, call <project>"` end-to-end (Step 13).
-**Status:** not started
+**Status:** done
 
 ### Step 11: Implement `CallByDataRowActivity.onCreate`
 
@@ -513,7 +515,7 @@ In `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/CallByDataRo
 No runtime permission prompt here — the activity is invoked from the system contact-card UI, which holds contacts permission on our behalf (and the app already requests `READ_CONTACTS` at startup). Failures log via `L.w("Shortcuts", …)`.
 
 **Verify:** `make android-build` compiles. Manual journey: tap the call action button on a Pimote contact card and the `pimote:project:...` URI dispatches via Telecom (Step 13).
-**Status:** not started
+**Status:** done
 
 ### Step 12: Wire `ShortcutsRunner` into `AppContainer`
 
@@ -522,7 +524,7 @@ In `mobile/android/app/src/main/kotlin/com/pimote/android/app/AppContainer.kt`, 
 If `ContactSyncRunner` is not currently started by `AppContainer.init` (the `init` block above only handles `InCallActivity` launch), grep `mobile/android/app/src/main/kotlin/com/pimote/android` for `contactSyncRunner.start` to find the actual start site and wire `shortcutsRunner.start()` next to it.
 
 **Verify:** `make android-build` compiles. After install, `ShortcutManagerCompat.getDynamicShortcuts(context)` reflects the project list (manual confirmation via journey 9).
-**Status:** not started
+**Status:** done
 
 ### Step 13: Run the manual journey for assistant-callable projects
 
@@ -538,5 +540,4 @@ Extend `tools/manual-test/PLAN.md` with a new journey 9 covering the user-visibl
 Log any deviations as findings; this journey is the integration test that the unit tests can't cover (no Telecom / ShortcutManager / Assistant on JVM).
 
 **Verify:** `make android-test` is green; the journey above passes on a physical device.
-**Status:** not started
-
+**Status:** done

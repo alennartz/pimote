@@ -32,6 +32,7 @@ class PimoteApp : Application() {
                     container.sessionRepository.start()
                     container.phoneAccountRegistrar.start()
                     container.contactSyncRunner.start()
+                    container.shortcutsRunner.start()
                 }
             }
         }

@@ -57,7 +57,11 @@ object PhoneAccountRules {
      * - `""` -> `null`
      */
     fun rootSegmentOf(folderPath: String): String? {
-        TODO("not implemented")
+        if (folderPath.isEmpty()) return null
+        val segments = folderPath.split('/').filter { it.isNotEmpty() }
+        // Need at least a parent segment + the basename — i.e. >= 2 segments.
+        if (segments.size < 2) return null
+        return segments[segments.size - 2]
     }
 
     /** Encode a folderPath into the `project:<base64>` source-id / handle id. */

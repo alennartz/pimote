@@ -2,6 +2,7 @@ package com.pimote.android.shortcuts
 
 import com.pimote.android.session.ProjectMeta
 import com.pimote.android.session.SessionProjectGroup
+import com.pimote.android.telephony.PhoneAccountRules
 
 /**
  * Pure-function derivation of the desired App Actions / dynamic-shortcut set.
@@ -63,7 +64,32 @@ object ShortcutsSync {
         groups: List<SessionProjectGroup>,
         maxShortcuts: Int,
     ): List<DesiredShortcut> {
-        TODO("not implemented")
+        val cap = maxShortcuts.coerceAtLeast(1)
+        val fallback = DesiredShortcut(
+            shortcutId = FALLBACK_SHORTCUT_ID,
+            shortLabel = "Pimote",
+            longLabel = "Call Pimote",
+            capabilityParameter = FALLBACK_PARAMETER,
+            synonyms = FALLBACK_SYNONYMS,
+            pimoteUri = null,
+            rank = 0,
+        )
+        if (cap <= 1) return listOf(fallback)
+        val projectShortcuts = groups.take(cap - 1).mapIndexed { index, g ->
+            val root = PhoneAccountRules.rootSegmentOf(g.project.folderPath)
+            val shortLabel = if (root != null) "$root ${g.project.folderName}" else g.project.folderName
+            val handleId = PhoneAccountRules.projectHandleId(g.project.folderPath)
+            DesiredShortcut(
+                shortcutId = handleId,
+                shortLabel = shortLabel,
+                longLabel = "Call $shortLabel",
+                capabilityParameter = shortLabel,
+                synonyms = synonymsFor(root, g.project.folderName),
+                pimoteUri = "pimote:$handleId",
+                rank = index + 1,
+            )
+        }
+        return listOf(fallback) + projectShortcuts
     }
 
     /** Diff two lists by [DesiredShortcut.shortcutId] + content equality. */
@@ -71,7 +97,14 @@ object ShortcutsSync {
         desired: List<DesiredShortcut>,
         existing: List<DesiredShortcut>,
     ): SyncOps {
-        TODO("not implemented")
+        val desiredById = desired.associateBy { it.shortcutId }
+        val existingById = existing.associateBy { it.shortcutId }
+        val toDelete = existing.filter { it.shortcutId !in desiredById }.map { it.shortcutId }
+        val toUpsert = desired.filter { d ->
+            val e = existingById[d.shortcutId]
+            e == null || e != d
+        }
+        return SyncOps(toDelete = toDelete, toUpsert = toUpsert)
     }
 
     /**
@@ -79,7 +112,8 @@ object ShortcutsSync {
      * those only go on the fallback shortcut.
      */
     fun synonymsFor(rootSegment: String?, projectName: String): List<String> {
-        TODO("not implemented")
+        if (rootSegment == null) return listOf(projectName)
+        return listOf(projectName, "$rootSegment $projectName")
     }
 
     /**
@@ -91,6 +125,33 @@ object ShortcutsSync {
         utterance: String,
         projects: List<ProjectMeta>,
     ): String? {
-        TODO("not implemented")
+        if (projects.isEmpty()) return null
+        val tokens = tokenize(utterance)
+        if (tokens.isEmpty()) return null
+
+        var bestProject: ProjectMeta? = null
+        var bestScore = 0.0
+        for (p in projects) {
+            val candidates = mutableListOf(p.folderName)
+            val root = PhoneAccountRules.rootSegmentOf(p.folderPath)
+            if (root != null) candidates += "$root ${p.folderName}"
+            for (candidate in candidates) {
+                val candTokens = tokenize(candidate)
+                if (candTokens.isEmpty()) continue
+                val shared = tokens.intersect(candTokens.toSet())
+                if (shared.none { it.length >= 3 }) continue
+                val score = shared.size.toDouble() /
+                    maxOf(tokens.size, candTokens.size).toDouble()
+                if (score > bestScore) {
+                    bestScore = score
+                    bestProject = p
+                }
+            }
+        }
+        if (bestProject == null || bestScore <= 0.5) return null
+        return "pimote:${PhoneAccountRules.projectHandleId(bestProject.folderPath)}"
     }
+
+    private fun tokenize(s: String): List<String> =
+        s.lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
 }
