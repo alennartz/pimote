@@ -18,6 +18,9 @@ import com.pimote.android.session.SessionRepositoryImpl
 import com.pimote.android.settings.Settings
 import com.pimote.android.settings.SettingsImpl
 import com.pimote.android.contacts.ContactSyncRunner
+import com.pimote.android.shortcuts.AndroidShortcutManagerFacade
+import com.pimote.android.shortcuts.ShortcutManagerFacade
+import com.pimote.android.shortcuts.ShortcutsRunner
 import com.pimote.android.telephony.AndroidTelecomFacade
 import com.pimote.android.telephony.PhoneAccountRegistrar
 import com.pimote.android.telephony.PhoneAccountRegistrarImpl
@@ -73,6 +76,11 @@ class AppContainer(private val appContext: Context) {
     val phoneAccountRegistrar: PhoneAccountRegistrar = PhoneAccountRegistrarImpl(telecomFacade)
     val contactSyncRunner: ContactSyncRunner =
         ContactSyncRunner(appContext, sessionRepository, applicationScope)
+
+    val shortcutManagerFacade: ShortcutManagerFacade =
+        AndroidShortcutManagerFacade(appContext)
+    val shortcutsRunner: ShortcutsRunner =
+        ShortcutsRunner(appContext, sessionRepository, shortcutManagerFacade, applicationScope)
 
     // EglBase is process-singleton — GL context allocation is expensive and
     // the underlying EGL context is reusable across PeerConnectionFactories.

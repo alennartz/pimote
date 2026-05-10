@@ -29,12 +29,23 @@ class ContactsSyncTest {
     }
 
     @Test
-    fun `project contact label is folderName`() {
+    fun `project contact label is root folderName`() {
+        // New format: "<root> <project>". Root is the parent path's last
+        // segment (rootSegmentOf), project is the folder's basename.
         val projects = listOf(ProjectMeta("/work/repo", "repo"))
         val out = ContactsSync.computeDesiredContacts(projects)
         val projectContact = out.single()
-        assertEquals("repo", projectContact.displayName)
+        assertEquals("work repo", projectContact.displayName)
         assertEquals(PhoneAccountRules.projectHandleId("/work/repo"), projectContact.sourceId)
+    }
+
+    @Test
+    fun `project contact label falls back to bare folderName when root is null`() {
+        // Top-level folder: parent has no segment, so rootSegmentOf returns
+            // null. Display name is the bare project name.
+        val projects = listOf(ProjectMeta("/repo", "repo"))
+        val out = ContactsSync.computeDesiredContacts(projects)
+        assertEquals("repo", out.single().displayName)
     }
 
     @Test
@@ -46,7 +57,9 @@ class ContactsSyncTest {
     }
 
     @Test
-    fun `colliding folder names are disambiguated by parent path segment`() {
+    fun `colliding folder names are disambiguated by root segment prefix`() {
+        // Under the new format "<root> <project>", colliding basenames
+        // are naturally distinguished by their distinct root segments.
         val projects = listOf(
             ProjectMeta("/work/repo", "repo"),
             ProjectMeta("/personal/repo", "repo"),
@@ -54,8 +67,8 @@ class ContactsSyncTest {
         val labels = ContactsSync.computeDesiredContacts(projects)
             .map { it.displayName }
             .toSet()
-        assertTrue(labels.contains("work/repo"))
-        assertTrue(labels.contains("personal/repo"))
+        assertTrue(labels.contains("work repo"))
+        assertTrue(labels.contains("personal repo"))
     }
 
     @Test

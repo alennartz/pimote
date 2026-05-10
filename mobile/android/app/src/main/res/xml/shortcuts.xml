@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <capability android:name="actions.intent.CREATE_CALL">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.pimote.android"
+            android:targetClass="com.pimote.android.shortcuts.CallByNameActivity">
+            <parameter
+                android:name="call.participant.name"
+                android:key="participantName"/>
+        </intent>
+    </capability>
+</shortcuts>

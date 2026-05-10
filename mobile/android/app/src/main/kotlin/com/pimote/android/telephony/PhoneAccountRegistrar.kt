@@ -43,6 +43,23 @@ const val PIMOTE_URI_SCHEME: String = "pimote"
  */
 object PhoneAccountRules {
 
+    /**
+     * Returns the last path segment of [folderPath]'s parent — the configured
+     * server-side "root" segment that groups projects (e.g. "repos", "work").
+     * Returns null if the parent has no segment (root-of-filesystem edge case)
+     * or the input is malformed. Pure; uses '/' as the only separator.
+     *
+     * Examples:
+     * - `/Users/alenna/repos/pimote` -> `"repos"`
+     * - `/repos/pimote` -> `"repos"`
+     * - `/pimote` -> `null`
+     * - `pimote` -> `null`
+     * - `""` -> `null`
+     */
+    fun rootSegmentOf(folderPath: String): String? {
+        TODO("not implemented")
+    }
+
     /** Encode a folderPath into the `project:<base64>` source-id / handle id. */
     fun projectHandleId(folderPath: String): String {
         val enc = java.util.Base64.getUrlEncoder().withoutPadding()

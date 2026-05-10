@@ -46,6 +46,35 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <!--
+            App Actions fulfillment trampoline. Headless (Theme.NoDisplay):
+            reads `participantName` extra and dispatches via Telecom. No
+            intent-filter — Assistant invokes via the explicit intent declared
+            in shortcuts.xml.
+        -->
+        <activity
+            android:name=".shortcuts.CallByNameActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+
+        <!--
+            Contact-card ACTION_VIEW trampoline. Headless. Receives the per-
+            MIME card-action button click on Pimote contacts.
+        -->
+        <activity
+            android:name=".shortcuts.CallByDataRowActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="vnd.android.cursor.item/vnd.com.pimote.android.call" />
+            </intent-filter>
         </activity>
 
         <activity

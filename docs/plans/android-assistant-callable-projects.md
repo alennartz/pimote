@@ -253,3 +253,76 @@ Dynamic shortcuts (built by `AndroidShortcutManagerFacade`) bind to this capabil
 ### DR Supersessions
 
 - **DR-024** (Pimote contacts as Assistant-discoverable callable-MIME rows) — partially superseded. The structural choices it kept from DR-019 (single self-managed PhoneAccount, `pimote:` URI scheme, AccountManager-owned contact rows, projects-only sync, SyncAdapter shim, runtime contacts permissions, `Settings.UNGROUPED_VISIBLE` row) all carry forward unchanged. What's superseded is its central claim that the custom-MIME `<ContactsDataKind>` + `CONTACTS_STRUCTURE` resource alone makes Pimote contacts Assistant-callable and renders a contact-card action. AOSP `DataKind.java` builds the per-MIME card action by resolving `Intent(ACTION_VIEW).setDataAndType(rowUri, mimeType)` against installed activities — without an activity declaring an `<intent-filter>` for that action+MIME, no button renders. Google Assistant's "call X" voice resolver searches `ContactsContract` only for `tel:` `Phone` rows; non-`tel:` calling apps integrate via App Actions (`actions.intent.CREATE_CALL` capability + dynamic shortcuts) instead. The new decision: keep DR-024's ContactsContract structure for visibility/dialer-search, add a `CallByDataRowActivity` with an `ACTION_VIEW` intent filter for the contact-card button, and add the `shortcuts/` module + App Actions integration for voice. The 15-shortcut system cap on Assistant-visible voice targets is accepted; long-tail projects remain callable via the contact-card and dialer surfaces.
+
+## Tests
+
+**Pre-test-write commit:** `eeee35006d4a4155d14a1f96b4ca6013bd237130`
+
+### Interface Files
+
+- `mobile/android/app/src/main/kotlin/com/pimote/android/telephony/PhoneAccountRegistrar.kt` — adds the `PhoneAccountRules.rootSegmentOf(folderPath): String?` helper (stubbed).
+- `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/ShortcutsSync.kt` — `DesiredShortcut` data class, `ShortcutsSync` object exposing `computeDesiredShortcuts`, `diff`, `synonymsFor`, `resolveByFuzzyMatch`, plus `FALLBACK_SHORTCUT_ID` / `FALLBACK_PARAMETER` / `FALLBACK_SYNONYMS` constants and the `SyncOps` data class. All methods stubbed.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/ShortcutManagerFacade.kt` — test seam over `ShortcutManagerCompat`.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/AndroidShortcutManagerFacade.kt` — production binding (stubbed).
+- `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/ShortcutsRunner.kt` — runner class with `start()` / `stop()` stubs.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/CallByPimoteUri.kt` — shared `placeCall` helper (stub).
+- `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/CallByNameActivity.kt` — App Actions fulfillment trampoline (skeleton; `finish()` only).
+- `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/CallByDataRowActivity.kt` — contact-card `ACTION_VIEW` trampoline (skeleton; `finish()` only).
+- `mobile/android/app/src/main/res/xml/shortcuts.xml` — declares the `actions.intent.CREATE_CALL` capability.
+- `mobile/android/app/src/main/AndroidManifest.xml` — adds the `android.app.shortcuts` meta-data on `MainActivity` and declares the two trampoline activities (`CallByNameActivity`, `CallByDataRowActivity` with the callable-MIME `ACTION_VIEW` filter).
+- `mobile/android/app/src/main/kotlin/com/pimote/android/app/AppContainer.kt` — instantiates `AndroidShortcutManagerFacade` and `ShortcutsRunner` alongside the existing `ContactSyncRunner`.
+
+### Test Files
+
+- `mobile/android/app/src/test/kotlin/com/pimote/android/telephony/PhoneAccountRulesTest.kt` — extended with five `rootSegmentOf` cases.
+- `mobile/android/app/src/test/kotlin/com/pimote/android/contacts/ContactsSyncTest.kt` — updated `computeDesiredContacts` cases for the new `"<root> <project>"` display-name format (replaces the old `disambiguateFolderLabels`-based collision case; adds a fallback case for top-level paths where the parent has no segment).
+- `mobile/android/app/src/test/kotlin/com/pimote/android/shortcuts/ShortcutsSyncTest.kt` — new pure-function tests covering `computeDesiredShortcuts`, `synonymsFor`, `resolveByFuzzyMatch`, and `diff`.
+
+### Behaviors Covered
+
+#### `PhoneAccountRules.rootSegmentOf`
+
+- Returns the parent path's last segment for a deep absolute path (`/Users/alenna/repos/pimote` → `"repos"`).
+- Returns the parent's only segment when there is just one above the basename (`/repos/pimote` → `"repos"`).
+- Returns null when the parent has no segment (`/pimote`).
+- Returns null when the input has no parent at all (`pimote`).
+- Returns null on empty input.
+
+#### `ContactsSync.computeDesiredContacts` (revised display-name format)
+
+- Project contact display name is `"<root> <project>"` when the parent path has a segment (`/work/repo` → `"work repo"`).
+- Falls back to the bare project name when `rootSegmentOf` is null (`/repo` → `"repo"`).
+- Folder-name collisions across distinct roots are naturally distinguished by the root prefix (`/work/repo` and `/personal/repo` produce `"work repo"` / `"personal repo"`).
+
+#### `ShortcutsSync.computeDesiredShortcuts`
+
+- The result always contains the fallback shortcut at rank 0, even when there are no projects.
+- The fallback shortcut has `shortcutId == FALLBACK_SHORTCUT_ID`, `capabilityParameter == FALLBACK_PARAMETER`, and a null `pimoteUri` (resolved at fulfillment time).
+- The result is capped at `maxShortcuts` entries.
+- Project entries are picked from the head of the (already-sorted) input ordering.
+- `maxShortcuts == 1` yields only the fallback (no projects).
+- Project `shortLabel` uses the `"<root> <project>"` form (`/repos/pimote` → `"repos pimote"`).
+- Project `longLabel` is the call-prefixed variant (begins with `"Call "`).
+- Project shortcuts carry a `pimote:project:<base64>` URI matching `PhoneAccountRules.projectHandleId`.
+- Project ranks are non-zero and ascend by recency starting at 1 (0=fallback, 1, 2, ...).
+- The fallback shortcut carries the canonical `FALLBACK_SYNONYMS` list (including pronunciation variants).
+
+#### `ShortcutsSync.synonymsFor`
+
+- Includes the bare project name as a synonym.
+- Includes a `"<root> <project>"` combination synonym when a root is supplied.
+- Returns just the bare project name when the root is null.
+- Never includes pronunciation variants of "Pimote" itself — those belong only on the fallback shortcut.
+
+#### `ShortcutsSync.resolveByFuzzyMatch`
+
+- Returns null on an empty project list.
+- Returns the matching project's `pimote:` URI for an utterance that matches a project's name exactly.
+- Returns null for utterances that don't match anything recognisable.
+
+#### `ShortcutsSync.diff`
+
+- Emits an upsert for shortcut ids only present in `desired`.
+- Emits a delete for shortcut ids only present in `existing`.
+- Emits an upsert when an id is present in both but the content differs.
+- Emits no operations when `desired` and `existing` are content-equal.

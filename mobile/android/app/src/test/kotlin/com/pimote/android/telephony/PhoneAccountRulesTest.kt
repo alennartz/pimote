@@ -164,4 +164,31 @@ class PhoneAccountRulesTest {
     fun `parseDialUri returns null for malformed base64 in project URI`() {
         assertNull(PhoneAccountRules.parseDialUri("pimote:project:!!!not-base64!!!"))
     }
+
+    // ---------------------------------------------------------- rootSegmentOf
+
+    @Test
+    fun `rootSegmentOf returns parent's last segment for absolute path`() {
+        assertEquals("repos", PhoneAccountRules.rootSegmentOf("/Users/alenna/repos/pimote"))
+    }
+
+    @Test
+    fun `rootSegmentOf returns first segment when the parent is a single segment`() {
+        assertEquals("repos", PhoneAccountRules.rootSegmentOf("/repos/pimote"))
+    }
+
+    @Test
+    fun `rootSegmentOf returns null when the parent has no segment`() {
+        assertNull(PhoneAccountRules.rootSegmentOf("/pimote"))
+    }
+
+    @Test
+    fun `rootSegmentOf returns null when the input has no parent`() {
+        assertNull(PhoneAccountRules.rootSegmentOf("pimote"))
+    }
+
+    @Test
+    fun `rootSegmentOf returns null for empty string`() {
+        assertNull(PhoneAccountRules.rootSegmentOf(""))
+    }
 }
