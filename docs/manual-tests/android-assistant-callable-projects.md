@@ -72,7 +72,95 @@ Prerequisite for all of the above: app booted with `READ_CONTACTS` /
   would not exercise the bugs that matter (see _Harness Limitations_).
 - **Improved:** none.
 
-## Harness Limitations
+## Re-test 2026-05-10 (on-device, Pixel 8 / Android 16)
+
+Manual-test re-run on a real device after the initial harness-gap
+recording below. Device: Pixel 8, Android 16 build CP1A.260405.005,
+Google Contacts app stock, paired over wireless adb at
+`192.168.1.240`. APK rebuilt from `19c00ab` (which contains the inline
+bugfix found during this run).
+
+### Findings
+
+- **Item 1 (contact card action button) — NOT FIXED, RECORDED.**
+  Google Contacts on Pixel 8 / Android 16 does **not** render a
+  per-MIME call action on the contact card despite (a) the
+  custom-MIME data row being present (verified via
+  `content query --uri content://com.android.contacts/data` — row id
+  10059 has `data1=pimote:project:...`, `data2=Pimote`,
+  `data3=Call repos pimote`), (b) the `CONTACTS_STRUCTURE` resource
+  being declared on `PimoteAuthenticatorService`, (c) `pm
+query-activities -a VIEW -t vnd.android.cursor.item/vnd.com.pimote.android.call`
+  returning `CallByDataRowActivity` as a default-resolved match, and
+  (d) the `Intent(ACTION_VIEW, content://...data/<id>)` path firing
+  `CallByDataRowActivity` correctly when triggered manually via `am
+start` (verified end-to-end — call dispatched, `state -> Active`,
+  `InCallActivity` opened). The contact card shows the contact name
+  in `<root> <project>` format and "Contact created by Pimote"
+  attribution, with greyed-out Call/Message/Video/Email buttons and
+  "No contact details" — indistinguishable from the pre-DR-024
+  state from the user's point of view. The DataKind code path the
+  intent-filter design relies on (`Intent(ACTION_VIEW).setDataAndType(rowUri, mimeType)`
+  resolved against installed activities to render an action) appears
+  not to be how Google Contacts on this device actually builds the
+  card. Architectural rethink needed; not solvable inline.
+- **Items 2 & 3 (Assistant fallback + direct match) — ✅.**
+  Simulated by firing the shortcut intent the way Assistant does
+  (`am start -n .../CallByNameActivity --es participantName <value>`).
+  `participantName=fallback` → most-recently-active project →
+  `state -> Binding → Negotiating → Active`, in-call audio confirmed.
+  `participantName="repos pimote"` (canonical) and
+  `participantName="pimote"` (bare-name synonym, exercising review
+  finding 5's synonym scan) both resolved end-to-end the same way.
+- **Item 4 (Assistant fuzzy / fallback synonym pass-through) — ⚠️ bug
+  found and fixed inline.**
+  `participantName="pee mote"` was meant to verify either a fallback
+  synonym match (since `pee mote ∈ FALLBACK_SYNONYMS`) or a fuzzy
+  match — it hit neither. Root cause: `CallByNameActivity`'s
+  exact-match step explicitly skipped the fallback shortcut
+  (`if (s.shortcutId == FALLBACK_SHORTCUT_ID) return@firstOrNull false`),
+  so when Assistant pass-throughs the heard utterance instead of
+  canonicalizing to `capabilityParameter=fallback`, resolution
+  bypassed fallback entirely and ended at the defensive MainActivity
+  launch. **Fix committed as `19c00ab`** — widened the fallback
+  recognition to: `participantName == FALLBACK_PARAMETER ||
+participantName.isEmpty() || participantName ∈ FALLBACK_SYNONYMS
+(case-insensitive)`. Verified post-fix: dispatcher logs
+  `isFallback=true` for `"pee mote"`. End-to-end call dispatch
+  blocked by a separate device-network flake (DNS for
+  `pimote.alenna.dev` unresolvable mid-test, sustained `reconnect
+attempt=8`+); the resolution logic is verified, the network
+  round-trip is not.
+- **Items 5 & 6 — not separately exercised** beyond what items 2–4
+  cover; item 6 (long-tail via card) is gated behind item 1.
+- **Pre-existing latent crash surfaced (out of topic scope).**
+  `WsConnectionLost: not connected` at `WsClient.kt:347` from
+  `CallControllerImpl.runOutgoing` (`CallController.kt:326`) when a
+  Telecom outgoing call is dispatched into a freshly-restarted
+  process before WS is connected. Not introduced by this topic, but
+  the new entry points (`CallByNameActivity`, `CallByDataRowActivity`)
+  make hitting it easier — every shortcut/contact-card invocation
+  is a fresh outgoing call that may land in a cold process. Worth a
+  follow-up bug.
+- **Sync verifications passed.** 18 contacts under the Pimote
+  AccountManager Account, all with the new `<root> <project>` display
+  name. 15 dynamic shortcuts (14 projects + fallback), every shortcut
+  bound to `actions.intent.CREATE_CALL` with the correct synonym
+  arrays in `addCapabilityBinding(...)`. Fallback shortcut carries
+  `[Pimote, pee mote, pee-mote, pie mote, pie-mote, my pi]`.
+
+### Verdicts after re-test
+
+| #   | Item                                            | Verdict                                                            |
+| --- | ----------------------------------------------- | ------------------------------------------------------------------ |
+| 1   | Contact-card call action button + dispatch      | **fail (real)**                                                    |
+| 2   | Dialer name search by `<root> <project>`        | **deferred** — follows from item 1 button rendering, blocked by it |
+| 3   | Assistant fallback (`call Pimote` + variants)   | **pass**                                                           |
+| 4   | Assistant direct match                          | **pass**                                                           |
+| 5   | Assistant fuzzy / fallback-synonym pass-through | **pass (after inline fix `19c00ab`)**                              |
+| 6   | Long-tail off-cap projects via contact card     | **deferred** — gated on item 1                                     |
+
+## Original Harness Limitations (initial run, retained for record)
 
 This subagent has no physical Android device, no Google Assistant
 runtime, no system Contacts/Dialer app, and no Android emulator with a
@@ -150,7 +238,75 @@ variants, contact-card action button, off-cap long-tail).
 
 ## Open Issues
 
-### 1. Journey 9 (all six items) requires on-device execution
+### 1. Item 1 — contact-card action button does not render on Pixel 8 / Android 16
+
+- **Symptom:** Opening a Pimote contact in Google Contacts shows
+  attribution and the new `<root> <project>` name correctly, but no
+  callable per-MIME action button. The four standard buttons
+  (Call/Message/Video/Email) are greyed out (no `Phone`/`Email` rows
+  exist), and the body shows "No contact details". This is the same
+  user-visible state as before this topic shipped — the user's
+  original report. **Item 1 is not fixed.**
+- **What was verified is correct under the hood:** custom-MIME data
+  row present, `CONTACTS_STRUCTURE` resource declared,
+  `<intent-filter>` for `ACTION_VIEW` + custom MIME on
+  `CallByDataRowActivity` resolves at `pm query-activities`,
+  manually-fired `Intent(ACTION_VIEW, content://com.android.contacts/data/<id>, mimetype)`
+  dispatches `CallByDataRowActivity` end-to-end into a real
+  Telecom-routed call. The card surface itself just doesn't surface
+  the action.
+- **Most likely architectural cause:** Google Contacts on modern
+  Pixel devices does not follow the AOSP `DataKind` code path that
+  the architecture relies on. The plan's reasoning (per
+  `docs/decisions/DR-024...md` and the architecting notes) cited the
+  AOSP `DataKind.java` `Intent(ACTION_VIEW).setDataAndType(uri,
+mimetype)` resolution — that may have been the path on stock AOSP
+  but Google Contacts (Play-distributed, separate from AOSP
+  Contacts) appears to ignore custom MIMEs, or only render them when
+  the contact also has a standard `Phone` row, or only when the
+  contact card is invoked from a different surface. None of this is
+  publicly documented; it would require reverse-engineering Google
+  Contacts behavior or empirically probing supported-row variations.
+- **Suggested follow-up:** open a separate topic to investigate
+  alternatives. Two architectural options to consider, neither cheap:
+  1. Add a synthetic `Phone` row alongside the custom-MIME row — not
+     a `tel:` URI (which would force the global `tel:` claim already
+     rejected in the brainstorm) but a non-callable placeholder so
+     the contact appears in Phone-row-gated surfaces. Risk: the
+     standard `Call` button might activate and try to dial nonsense.
+  2. Replace ContactsContract sync with a different surfacing
+     strategy entirely — launcher-pinned shortcuts, a home-screen
+     widget, or accepting that voice (which works) is the primary
+     surface and dialer/card are best-effort.
+- **DR consequence:** DR-024's central claim (custom-MIME +
+  CONTACTS_STRUCTURE makes the contact card render an action button)
+  is now empirically falsified on at least Pixel 8 / Android 16 /
+  stock Google Contacts. Cleanup phase should record this
+  amendment.
+
+### 2. Pre-existing `WsConnectionLost` crash on cold-process Telecom dispatch
+
+- **Symptom:** When a Pimote outgoing call is dispatched into a
+  freshly-restarted process (Android killed the prior process and
+  restarted it just for the Telecom binding), `CallControllerImpl.runOutgoing`
+  fires a WS `request(...)` before the WS has reconnected, throws
+  `WsConnectionLost: not connected`, no catch handler, process
+  killed ("Pimote Calls keeps stopping" dialog).
+- **Why it surfaced now:** The new `CallByNameActivity` /
+  `CallByDataRowActivity` entry points let the user trigger an
+  outgoing call from voice or contact card without ever bringing the
+  app to the foreground first — Android can re-launch the process
+  cold. The WS isn't connected yet when Telecom calls
+  `onCreateOutgoingConnection`, race lost.
+- **Out of scope for this topic.** It's a pre-existing race in
+  `CallController.kt:326` (call site is older than this topic);
+  surfaces because the new entry points make cold-process dispatch
+  the common case rather than the rare case. Worth a follow-up:
+  `runOutgoing` should await WS connection (with timeout) before
+  firing the request, or fail with a friendly Toast/Connection
+  failure rather than crash.
+
+### 3. (Original) Journey 9 (all six items) required on-device execution
 
 - **Observation:** None of the six topic-specific items above were
   exercised — this run had no access to a physical Android device,
