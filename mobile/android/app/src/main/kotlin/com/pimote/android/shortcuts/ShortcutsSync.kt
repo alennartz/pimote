@@ -162,7 +162,11 @@ object ShortcutsSync {
                 }
             }
         }
-        if (bestProject == null || bestScore <= 0.5) return null
+        // `>= 0.5` (not strict `>`) so two-token utterances against single-token
+        // candidates (e.g. "repos pimote" vs. project "pimote" with no root)
+        // resolve. The shared-token `length >= 3` guard above remains as the
+        // anti-noise floor.
+        if (bestProject == null || bestScore < 0.5) return null
         return "pimote:${PhoneAccountRules.projectHandleId(bestProject.folderPath)}"
     }
 

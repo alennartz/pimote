@@ -24,7 +24,8 @@ The plan was implemented faithfully. All 13 steps are reflected in the diff with
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/CallByNameActivity.kt:46-55`
-- **Status:** open
+- **Status:** resolved
+- **Resolution:** kept the empty-participant-as-fallback behavior intentionally (the brainstorm's "I just want to talk to my pi" framing fits Assistant misses with no parameter better than launching MainActivity), and added a comment in `CallByNameActivity.dispatch` documenting the divergence from the plan's strict `==`.
 
 Plan Step 10 says: when `participantName == FALLBACK_PARAMETER` and the project list is empty, "show a toast 'No projects available' and finish." Implementation matches, but it also routes empty `participantName` through the same branch (treating it as fallback). That's a defensible adaptation — Assistant occasionally fulfills with no parameter — but it diverges from the plan's stricter `==` test and means an empty-participant call with zero projects ends in a toast rather than the defensive MainActivity launch the plan reserves for non-fallback misses. Mention either way; the user-facing result is comparable.
 
@@ -42,7 +43,8 @@ Plan Step 10 says: when `participantName == FALLBACK_PARAMETER` and the project 
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/ShortcutsSync.kt:128-156`
-- **Status:** open
+- **Status:** resolved
+- **Resolution:** loosened the cutoff from strict `> 0.5` to `>= 0.5` so two-token utterances against single-token candidates (e.g. "repos pimote" vs. project "pimote" with no root) resolve. The shared-token `length >= 3` guard remains as the anti-noise floor. The architecture's wording ("an internal threshold") leaves threshold tuning to the implementation.
 
 Score is `shared.size / max(utteranceTokens, candidateTokens)` with a strict `> 0.5` cutoff. Utterance "repos pimote" against a project with `folderName = "pimote"` and no root yields one shared token over two utterance tokens = 0.5, which fails the strict threshold. The unit tests don't exercise this case (they cover only exact-match and total-mismatch), so behavior is technically within spec, but Assistant is reasonably likely to produce two-word utterances against single-word project names. Consider `>= 0.5`, or weighting candidate matches more leniently.
 
@@ -51,7 +53,8 @@ Score is `shared.size / max(utteranceTokens, candidateTokens)` with a strict `> 
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/CallByNameActivity.kt:60-67`
-- **Status:** open
+- **Status:** resolved
+- **Resolution:** widened exact-match to scan `synonyms` in addition to `capabilityParameter`. Synonyms are exactly the utterances Assistant is bound to via `addCapabilityBinding`, so any of them coming back is a deterministic project match and no longer depends on the fuzzy fallback's threshold.
 
 Assistant binds `call.participant.name` against the synonym list (e.g. `["pimote", "repos pimote"]`) but may pass back any of those values. The exact-match step compares against `capabilityParameter`, which equals the canonical `shortLabel` (e.g. `"repos pimote"`). When Assistant returns `"pimote"`, exact-match fails and the request leans on `resolveByFuzzyMatch`, which currently scores `1.0` for that case and resolves correctly. Combined with finding 4, the fuzzy fallback is doing more work than the plan implied. Worth either widening exact-match to scan `synonyms` (cheap, deterministic), or noting in a comment that the fuzzy stage is the canonical synonym→project resolver.
 

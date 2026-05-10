@@ -44,6 +44,12 @@ class CallByNameActivity : Activity() {
         val groups = buildSessionProjectGroups(projects, sessions)
 
         val pimoteUri: String? = when {
+            // Empty/missing participantName is treated as the fallback path
+            // intentionally: Assistant occasionally fulfills with no parameter,
+            // and the fallback's framing ("I just want to talk to my pi") is a
+            // better match for that than the defensive MainActivity launch the
+            // plan reserves for non-fallback misses. Diverges from plan Step 10's
+            // strict `==` test; user-facing result is equivalent in the common case.
             participantName == ShortcutsSync.FALLBACK_PARAMETER || participantName.isEmpty() -> {
                 val top = groups.firstOrNull()
                 if (top == null) {
@@ -56,9 +62,15 @@ class CallByNameActivity : Activity() {
             else -> {
                 val cap = max(container.shortcutManagerFacade.getMaxShortcutCountPerActivity(), 2)
                 val desired = ShortcutsSync.computeDesiredShortcuts(groups, cap)
-                val match = desired.firstOrNull {
-                    it.shortcutId != ShortcutsSync.FALLBACK_SHORTCUT_ID &&
-                        it.capabilityParameter.equals(participantName, ignoreCase = true)
+                // Exact-match scans both capabilityParameter (the canonical
+                // shortLabel) and the synonym set. Synonyms are exactly the
+                // utterances Assistant is bound to via addCapabilityBinding,
+                // so any of them coming back is a deterministic project match
+                // and shouldn't depend on the fuzzy fallback's threshold.
+                val match = desired.firstOrNull { s ->
+                    if (s.shortcutId == ShortcutsSync.FALLBACK_SHORTCUT_ID) return@firstOrNull false
+                    s.capabilityParameter.equals(participantName, ignoreCase = true) ||
+                        s.synonyms.any { it.equals(participantName, ignoreCase = true) }
                 }
                 match?.pimoteUri
                     ?: ShortcutsSync.resolveByFuzzyMatch(participantName, projects)
