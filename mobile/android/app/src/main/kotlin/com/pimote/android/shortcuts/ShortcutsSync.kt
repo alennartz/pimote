@@ -92,7 +92,21 @@ object ShortcutsSync {
         return listOf(fallback) + projectShortcuts
     }
 
-    /** Diff two lists by [DesiredShortcut.shortcutId] + content equality. */
+    /**
+     * Diff two lists by [DesiredShortcut.shortcutId] + content equality.
+     *
+     * **Caller note:** [SyncOps.toUpsert] only contains entries whose content
+     * changed (or are newly added) — it deliberately omits content-equal
+     * entries. It is therefore *not* the right input for
+     * [ShortcutManagerFacade.setDynamicShortcuts], which replaces the full
+     * dynamic-shortcut set: passing only `toUpsert` would drop unchanged
+     * shortcuts. To apply these ops via the facade, build the new full set as
+     * `existing.filterNot { it.shortcutId in toDelete } + toUpsert` (replacing
+     * any matching id from existing with its upserted version) and pass that
+     * to `setDynamicShortcuts`. The current [ShortcutsRunner] sidesteps this
+     * entirely by computing `desired` and calling `setDynamicShortcuts(desired)`
+     * directly when `desired != existing`.
+     */
     fun diff(
         desired: List<DesiredShortcut>,
         existing: List<DesiredShortcut>,

@@ -15,7 +15,7 @@ The plan was implemented faithfully. All 13 steps are reflected in the diff with
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/ShortcutsSync.kt:97-106`
-- **Status:** open
+- **Status:** resolved
 
 `diff()` returns `toUpsert` containing only entries whose content changed (and entries newly added), excluding content-equal entries that should still exist. `ShortcutManagerFacade.setDynamicShortcuts(...)` replaces the full set. Anyone wiring `diff` through to the facade as `setDynamicShortcuts(ops.toUpsert)` would inadvertently delete unchanged shortcuts. The runner sidesteps the issue by calling `setDynamicShortcuts(desired)` directly when `desired != existing` (Step 9), so `diff` is currently only exercised by its unit tests. The plan asked for `diff` in this shape, but the function as exported is a footgun for any future caller. Either drop `diff` (runner doesn't need it) or document that `toUpsert` must be merged with content-equal `existing` entries before being passed to the facade.
 
@@ -33,7 +33,7 @@ Plan Step 10 says: when `participantName == FALLBACK_PARAMETER` and the project 
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/shortcuts/AndroidShortcutManagerFacade.kt:80-82`
-- **Status:** open
+- **Status:** resolved
 
 `info.longLabel?.toString() ?: ""` and `extras?.getString(EXTRA_CAPABILITY_PARAMETER) ?: ""` coerce missing extras to empty strings rather than surfacing the corruption. In normal operation we always set both, so the round-trip is safe. If a third party (or a future `ShortcutManagerCompat` semantic shift) ever drops an extra, the diff will silently differ from `desired` (capabilityParameter `""` vs. e.g. `"repos pimote"`), causing a permanent reconcile loop on every debounce tick. A debug-time `L.w` if `extras` is null or the keys are missing would catch this.
 

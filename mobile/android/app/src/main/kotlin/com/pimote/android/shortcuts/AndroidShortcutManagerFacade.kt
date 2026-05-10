@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.PersistableBundle
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
+import com.pimote.android.util.L
 
 /**
  * Production binding over `ShortcutManagerCompat`. Translates
@@ -71,6 +72,29 @@ class AndroidShortcutManagerFacade(
         val infos = ShortcutManagerCompat.getDynamicShortcuts(context)
         return infos.map { info ->
             val extras = info.extras
+            if (extras == null) {
+                L.w(
+                    "Shortcuts",
+                    "getDynamicShortcuts: shortcut id=${info.id} has null extras; " +
+                        "capabilityParameter/synonyms/pimoteUri will round-trip as empty/null " +
+                        "and may force a permanent reconcile loop.",
+                )
+            } else {
+                if (!extras.containsKey(EXTRA_CAPABILITY_PARAMETER)) {
+                    L.w(
+                        "Shortcuts",
+                        "getDynamicShortcuts: shortcut id=${info.id} missing extra " +
+                            "'$EXTRA_CAPABILITY_PARAMETER'; coercing to empty string.",
+                    )
+                }
+                if (!extras.containsKey(EXTRA_SYNONYMS)) {
+                    L.w(
+                        "Shortcuts",
+                        "getDynamicShortcuts: shortcut id=${info.id} missing extra " +
+                            "'$EXTRA_SYNONYMS'; coercing to empty list.",
+                    )
+                }
+            }
             val capabilityParameter = extras?.getString(EXTRA_CAPABILITY_PARAMETER) ?: ""
             val synonyms = extras?.getStringArray(EXTRA_SYNONYMS)?.toList() ?: emptyList()
             val pimoteUri = extras?.getString(EXTRA_PIMOTE_URI)
