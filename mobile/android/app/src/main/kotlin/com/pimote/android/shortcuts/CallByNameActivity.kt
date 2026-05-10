@@ -37,11 +37,22 @@ class CallByNameActivity : Activity() {
 
     private fun dispatch() {
         val participantName = intent?.getStringExtra("participantName")?.trim().orEmpty()
+        L.i("Shortcuts", "CallByNameActivity received participantName='$participantName'")
         val container = AppContainer.instance
         val repo = container.sessionRepository
         val projects = repo.projects.value
         val sessions = repo.sessions.value
         val groups = buildSessionProjectGroups(projects, sessions)
+
+        // Recognize fallback path: explicit FALLBACK_PARAMETER, empty/missing
+        // participantName, OR any FALLBACK_SYNONYM that arrived as a raw
+        // pass-through (Assistant matches the synonym to our shortcut but
+        // doesn't always canonicalize to the bound capabilityParameter — when
+        // it pass-throughs the heard utterance, e.g. "pee mote", we still need
+        // to route through fallback rather than fall into fuzzy and miss).
+        val isFallbackUtterance = participantName == ShortcutsSync.FALLBACK_PARAMETER ||
+            participantName.isEmpty() ||
+            ShortcutsSync.FALLBACK_SYNONYMS.any { it.equals(participantName, ignoreCase = true) }
 
         val pimoteUri: String? = when {
             // Empty/missing participantName is treated as the fallback path
@@ -50,7 +61,7 @@ class CallByNameActivity : Activity() {
             // better match for that than the defensive MainActivity launch the
             // plan reserves for non-fallback misses. Diverges from plan Step 10's
             // strict `==` test; user-facing result is equivalent in the common case.
-            participantName == ShortcutsSync.FALLBACK_PARAMETER || participantName.isEmpty() -> {
+            isFallbackUtterance -> {
                 val top = groups.firstOrNull()
                 if (top == null) {
                     Toast.makeText(this, "No projects available", Toast.LENGTH_SHORT).show()
@@ -77,14 +88,19 @@ class CallByNameActivity : Activity() {
             }
         }
 
+        L.i("Shortcuts", "resolved isFallback=$isFallbackUtterance pimoteUri=$pimoteUri")
         if (pimoteUri != null) {
             CallByPimoteUri.placeCall(applicationContext, pimoteUri, container.telecomFacade)
             return
         }
 
-        // Defensive fallback: resolution failed. Surface MainActivity so the
-        // user lands somewhere coherent rather than a silent dismiss.
-        if (participantName != ShortcutsSync.FALLBACK_PARAMETER && participantName.isNotEmpty()) {
+        // Defensive fallback: resolution failed for a *non-fallback* utterance.
+        // Surface MainActivity so the user lands somewhere coherent rather
+        // than a silent dismiss. When the utterance was a fallback synonym /
+        // empty / FALLBACK_PARAMETER and we still got null, the toast inside
+        // the fallback branch is the right user-facing response — don't
+        // additionally launch MainActivity in that case.
+        if (!isFallbackUtterance) {
             startActivity(
                 Intent(this, MainActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
