@@ -63,7 +63,7 @@ class ShortcutsSyncTest {
             listOf(
                 PhoneAccountRules.projectHandleId("/work/alpha"),
                 PhoneAccountRules.projectHandleId("/work/beta"),
-            ).map { it -> "project:${it.removePrefix("project:")}" },
+            ),
             projectIds,
         )
     }
@@ -217,6 +217,32 @@ class ShortcutsSyncTest {
         )
         assertEquals(listOf("project:a"), ops.toUpsert.map { it.shortcutId })
         assertTrue(ops.toDelete.isEmpty())
+    }
+
+    @Test
+    fun `diff treats rank, synonyms, pimoteUri, and capabilityParameter as content`() {
+        // Architecture: diff by shortcutId + content equality. Any field that
+        // is part of DesiredShortcut affects what gets pushed to the system,
+        // so a change to any of them must trigger an upsert.
+        val base = shortcut("project:a")
+        val mutations = listOf(
+            base.copy(rank = base.rank + 1),
+            base.copy(synonyms = base.synonyms + "extra"),
+            base.copy(pimoteUri = "pimote:project:different"),
+            base.copy(capabilityParameter = "different-param"),
+        )
+        for (mutated in mutations) {
+            val ops = ShortcutsSync.diff(
+                desired = listOf(mutated),
+                existing = listOf(base),
+            )
+            assertEquals(
+                listOf("project:a"),
+                ops.toUpsert.map { it.shortcutId },
+                "expected upsert when mutating to $mutated",
+            )
+            assertTrue(ops.toDelete.isEmpty(), "unexpected delete for $mutated")
+        }
     }
 
     @Test

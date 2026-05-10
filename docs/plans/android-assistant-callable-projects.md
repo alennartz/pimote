@@ -325,4 +325,7 @@ Dynamic shortcuts (built by `AndroidShortcutManagerFacade`) bind to this capabil
 - Emits an upsert for shortcut ids only present in `desired`.
 - Emits a delete for shortcut ids only present in `existing`.
 - Emits an upsert when an id is present in both but the content differs.
+- Treats `rank`, `synonyms`, `pimoteUri`, and `capabilityParameter` as content — mutating any of them triggers an upsert.
 - Emits no operations when `desired` and `existing` are content-equal.
+
+**Review status:** approved
