@@ -64,7 +64,7 @@ Pimote is published as the app package `@pimote/pimote` at the repo root, backed
 
 The `shared/` directory holds TypeScript types for the WebSocket wire protocol shared between server and client — it's a tsc-only project, not a published package. The voice-mode pi extension lives at `server/src/voice/` and is loaded into each session only when voice is configured (see [Voice mode](#voice-mode)).
 
-A separate **native Android client** lives at `mobile/android/` — a voice-first Kotlin app that integrates with Android Auto via `SelfManagedConnectionService`, and exposes your projects as Android system contacts so they're callable from Google Assistant / Gemini, the dialer, and the system contact card. Independent Gradle project, Docker-based build (`make android-test` / `make android-build`), not part of the npm workspace; speaks the same WebSocket protocol as the PWA. See `mobile/android/README.md`.
+A separate **native Android client** lives at `mobile/android/` — a voice-first Kotlin app that integrates with Android Auto via `SelfManagedConnectionService`, and exposes your projects as Android system contacts so they're callable by name from Google Assistant / Gemini ("Hey Google, call <project>") and from the dialer's name search. Independent Gradle project, Docker-based build (`make android-test` / `make android-build`), not part of the npm workspace; speaks the same WebSocket protocol as the PWA. See `mobile/android/README.md`.
 
 ### Server
 
