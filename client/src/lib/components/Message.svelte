@@ -13,6 +13,8 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import CircleSlash from '@lucide/svelte/icons/circle-slash';
+  import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+  import { parseAssistantError } from '$lib/assistant-error.js';
 
   const MAX_COLLAPSED_LINES = 10;
   const SKILL_COLLAPSED_LINES = 3;
@@ -48,6 +50,13 @@
       .map((c) => c.text!)
       .join('\n\n'),
   );
+
+  let assistantError = $derived.by(() => {
+    if (message.role !== 'assistant') return null;
+    const raw = 'errorMessage' in message && typeof message.errorMessage === 'string' ? message.errorMessage : undefined;
+    if (!raw) return null;
+    return parseAssistantError(raw);
+  });
 
   let hasAssistantMenu = $derived(message.role === 'assistant' && !streaming && textContent.length > 0);
 
@@ -154,7 +163,7 @@
       <span>interrupted</span>
     </div>
   {:else}
-    <div class="message assistant-message {isAbortedAssistant ? 'aborted' : ''}">
+    <div class="message assistant-message {isAbortedAssistant ? 'aborted' : ''} {assistantError ? 'errored' : ''}">
       <div class="assistant-icon-col">
         {#if hasAssistantMenu}
           <button class="message-icon assistant-icon" onclick={() => (toolMenuOpen = !toolMenuOpen)}>
@@ -175,6 +184,18 @@
         {/if}
       </div>
       <div class="message-body">
+        {#if assistantError}
+          <div class="assistant-error">
+            <div class="assistant-error-header">
+              <TriangleAlert size={14} />
+              <span>provider error</span>
+            </div>
+            <div class="assistant-error-summary">{assistantError.summary}</div>
+            {#if assistantError.requestId}
+              <div class="assistant-error-meta">request id: {assistantError.requestId}</div>
+            {/if}
+          </div>
+        {/if}
         {#each message.content as block, i (i)}
           {@const blockStreaming = block.streaming ?? false}
           {#if block.type === 'text'}
@@ -320,6 +341,11 @@
     color: var(--foreground);
   }
 
+  .assistant-message.errored .assistant-icon {
+    background: oklch(0.32 0.09 22);
+    color: oklch(0.88 0.03 22);
+  }
+
   button.assistant-icon {
     border: none;
     cursor: pointer;
@@ -350,6 +376,38 @@
     flex: 1;
     min-width: 0;
     font-size: 0.9rem;
+  }
+
+  .assistant-error {
+    margin-bottom: 8px;
+    border-left: 3px solid oklch(0.64 0.19 24);
+    background: oklch(0.22 0.04 24 / 0.55);
+    border-radius: 4px;
+    padding: 8px 10px;
+  }
+
+  .assistant-error-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: oklch(0.74 0.16 24);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: lowercase;
+  }
+
+  .assistant-error-summary {
+    margin-top: 4px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    line-height: 1.45;
+  }
+
+  .assistant-error-meta {
+    margin-top: 6px;
+    color: var(--muted-foreground);
+    font-family: var(--font-mono, monospace);
+    font-size: 0.75rem;
   }
 
   .user-body {

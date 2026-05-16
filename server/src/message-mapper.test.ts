@@ -69,6 +69,24 @@ describe('mapAgentMessage', () => {
       expect(result.entryId).toBe('entry-tool-999');
       expect(result.role).toBe('toolResult');
     });
+
+    it('preserves provider error text for failed assistant messages', () => {
+      const msg: SdkMessage = {
+        id: 'entry-err-1',
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage: '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+      };
+
+      const result = mapAgentMessage(msg);
+
+      expect(result.entryId).toBe('entry-err-1');
+      expect(result.role).toBe('assistant');
+      expect(result.content).toEqual([]);
+      expect(result.errorMessage).toBe('{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}');
+      expect(result.aborted).toBeUndefined();
+    });
   });
 });
 

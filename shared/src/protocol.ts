@@ -100,6 +100,8 @@ export interface PimoteAgentMessage {
    * these with an "interrupted" indicator rather than as empty bubbles.
    */
   aborted?: boolean;
+  /** Present on assistant messages whose turn failed before producing content. */
+  errorMessage?: string;
   [key: string]: unknown;
 }
 

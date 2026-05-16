@@ -16,6 +16,8 @@ export interface SdkMessage {
   isError?: boolean;
   /** Pi-agent-core sets this to 'aborted' for turns interrupted by session.abort(). */
   stopReason?: string;
+  /** Provider / model failure surfaced by pi-agent-core on failed assistant turns. */
+  errorMessage?: string;
 }
 
 /**
@@ -207,5 +209,6 @@ export function mapAgentMessage(msg: SdkMessage): PimoteAgentMessage {
     content,
     ...(msg.id ? { entryId: msg.id } : {}),
     ...(aborted ? { aborted: true } : {}),
+    ...(role === 'assistant' && typeof msg.errorMessage === 'string' ? { errorMessage: msg.errorMessage } : {}),
   };
 }
