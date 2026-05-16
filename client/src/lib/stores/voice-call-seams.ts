@@ -223,6 +223,123 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
         return { el, stream };
       };
 
+      let controlChannel: RTCDataChannel | null = null;
+      let playheadInterval: ReturnType<typeof setInterval> | null = null;
+      let latestPlayedSamples48k = 0;
+      let lastReportedPlayhead = -1;
+      let interruptMuteRestoreToken = 0;
+
+      const stopPlayheadReporter = (): void => {
+        if (playheadInterval) {
+          clearInterval(playheadInterval);
+          playheadInterval = null;
+        }
+      };
+
+      const sendControlFrame = (type: string, fields: Record<string, unknown> = {}): void => {
+        if (!controlChannel || controlChannel.readyState !== 'open') return;
+        try {
+          controlChannel.send(JSON.stringify({ v: SIGNAL_PROTOCOL_VERSION, type, ...fields }));
+        } catch (err) {
+          voiceTrace('webrtc', 'control_send_failed', { level: 'warn', data: { type, err: String(err) } });
+        }
+      };
+
+      const readJitterBufferEmittedCount = async (): Promise<number | null> => {
+        try {
+          const report = await pc.getStats();
+          let best: number | null = null;
+          report.forEach((stat) => {
+            if (stat.type !== 'inbound-rtp' || (stat as { kind?: string }).kind !== 'audio') return;
+            const raw = (stat as { jitterBufferEmittedCount?: unknown }).jitterBufferEmittedCount;
+            if (typeof raw !== 'number') return;
+            if (best === null || raw > best) best = raw;
+          });
+          if (best !== null) latestPlayedSamples48k = best;
+          return best;
+        } catch {
+          return latestPlayedSamples48k > 0 ? latestPlayedSamples48k : null;
+        }
+      };
+
+      const startPlayheadReporter = (): void => {
+        if (playheadInterval) return;
+        playheadInterval = setInterval(() => {
+          void (async () => {
+            if (!controlChannel || controlChannel.readyState !== 'open') {
+              stopPlayheadReporter();
+              return;
+            }
+            const emitted = await readJitterBufferEmittedCount();
+            if (emitted === null || emitted === lastReportedPlayhead) return;
+            lastReportedPlayhead = emitted;
+            sendControlFrame('playhead', { played_samples_48k: emitted });
+          })();
+        }, 50);
+      };
+
+      const waitForStablePlayhead = async (): Promise<number> => {
+        let last = (await readJitterBufferEmittedCount()) ?? latestPlayedSamples48k;
+        let stableSince = performance.now();
+        const deadline = stableSince + 1500;
+        while (true) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          const next = (await readJitterBufferEmittedCount()) ?? last;
+          if (next !== last) {
+            last = next;
+            stableSince = performance.now();
+            continue;
+          }
+          if (performance.now() - stableSince >= 120 || performance.now() >= deadline) {
+            latestPlayedSamples48k = last;
+            return last;
+          }
+        }
+      };
+
+      const handleControlMessage = (raw: string): void => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          return;
+        }
+        if (!parsed || typeof parsed !== 'object') return;
+        const obj = parsed as Record<string, unknown>;
+        if (obj.v !== SIGNAL_PROTOCOL_VERSION || typeof obj.type !== 'string') return;
+        if (obj.type === 'interrupt') {
+          if (!remoteAudioEl) return;
+          const token = ++interruptMuteRestoreToken;
+          remoteAudioEl.muted = true;
+          setTimeout(() => {
+            if (remoteAudioEl && interruptMuteRestoreToken === token) remoteAudioEl.muted = false;
+          }, 120);
+          return;
+        }
+        if (obj.type === 'prepare_turn') {
+          const requestId = typeof obj.request_id === 'number' ? obj.request_id : null;
+          if (requestId === null) return;
+          void (async () => {
+            const playedSamples = await waitForStablePlayhead();
+            sendControlFrame('turn_ready', { request_id: requestId, played_samples_48k: playedSamples });
+          })();
+        }
+      };
+
+      const ctrl = pc.createDataChannel('speechmux-control', { ordered: true });
+      controlChannel = ctrl;
+      ctrl.addEventListener('open', () => {
+        voiceTrace('webrtc', 'control_open');
+        startPlayheadReporter();
+      });
+      ctrl.addEventListener('close', () => {
+        voiceTrace('webrtc', 'control_close');
+        stopPlayheadReporter();
+      });
+      ctrl.addEventListener('message', (ev) => {
+        if (typeof ev.data === 'string') handleControlMessage(ev.data);
+      });
+
       // Snapshot peer connection state changes for diagnostics.
       pc.addEventListener('connectionstatechange', () => {
         voiceTrace('webrtc', 'connectionstatechange', { data: { state: pc.connectionState } });
@@ -286,6 +403,7 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
                 bytesReceived: (stat as { bytesReceived?: number }).bytesReceived,
                 audioLevel: (stat as { audioLevel?: number }).audioLevel,
                 totalAudioEnergy: (stat as { totalAudioEnergy?: number }).totalAudioEnergy,
+                jitterBufferEmittedCount: (stat as { jitterBufferEmittedCount?: number }).jitterBufferEmittedCount,
               };
             } else if (stat.type === 'outbound-rtp' && (stat as { kind?: string }).kind === 'audio') {
               summary.outbound = {
@@ -321,6 +439,13 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
           // Stop the periodic stats poll deterministically; it otherwise only
           // self-cancels by polling pc.connectionState. (review finding #2)
           clearInterval(statsInterval);
+          stopPlayheadReporter();
+          try {
+            controlChannel?.close();
+          } catch {
+            /* ignore */
+          }
+          controlChannel = null;
           teardownLevelAnalyser();
           // Avoid leaking a closed peer into a future openSignaling. (review finding #5)
           if (currentPeer === wrapped) currentPeer = null;
@@ -415,7 +540,7 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
       // server has a session actor ready to receive them).
       const pendingOutboundIce: RTCIceCandidate[] = [];
       // Inbound ICE candidates queued until setRemoteDescription completes.
-      const pendingInboundIce: RTCIceCandidateInit[] = [];
+      const pendingInboundIce: Array<RTCIceCandidateInit | null> = [];
 
       const sendEnvelope = (type: string, payload: Record<string, unknown> = {}): void => {
         try {
@@ -568,10 +693,16 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
               }
               case 'ice': {
                 const p = env.payload ?? {};
-                const candidate = typeof p.candidate === 'string' ? p.candidate : null;
+                const candidateField = Object.prototype.hasOwnProperty.call(p, 'candidate') ? p.candidate : undefined;
                 const sdpMid = typeof p.sdpMid === 'string' ? p.sdpMid : undefined;
                 const sdpMLineIndex = typeof p.sdpMLineIndex === 'number' ? p.sdpMLineIndex : undefined;
-                const init: RTCIceCandidateInit = { candidate: candidate ?? '', sdpMid, sdpMLineIndex };
+                const init =
+                  candidateField === null
+                    ? null
+                    : typeof candidateField === 'string'
+                      ? ({ candidate: candidateField, sdpMid, sdpMLineIndex } satisfies RTCIceCandidateInit)
+                      : undefined;
+                if (init === undefined) return;
                 if (!remoteDescriptionSet) {
                   pendingInboundIce.push(init);
                   // Defensive re-drain: handler IIFEs run concurrently, so a

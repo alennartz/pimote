@@ -17,7 +17,7 @@
 // `assistantMessageEvent` that never fires inside `message_update`). The
 // FSM split + correct reset-on-message_start eliminates that bug class.
 
-import type { ExtensionAPI, ExtensionContext, ExtensionFactory, BeforeAgentStartEvent, ContextEvent } from '@mariozechner/pi-coding-agent';
+import type { ExtensionAPI, ExtensionContext, ExtensionFactory, BeforeAgentStartEvent, ContextEvent, TurnEndEvent, AgentEndEvent } from '@mariozechner/pi-coding-agent';
 
 /** Local mirror of pi-coding-agent's `MessageStartEvent` (not re-exported
  *  at the package root in this version). Kept narrow to what we use. */
@@ -216,6 +216,9 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
             client.onFrame((frame) => {
               void dispatch({ type: 'ws:incoming', frame });
             });
+            client.onDisconnect(() => {
+              void dispatch({ type: 'ws:disconnected' });
+            });
             await dispatch({ type: 'ws:opened' });
           } catch (err) {
             console.warn('[voice] speechmux open failed', err);
@@ -239,7 +242,7 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
             console.warn('[voice] send_frame with no client — dropping', action.frame.type);
             return;
           }
-          const preview = action.frame.type === 'token' ? action.frame.text.slice(0, 60) : null;
+          const preview = action.frame.type === 'token' ? action.frame.text.slice(0, 60) : action.frame.type === 'error' ? action.frame.message.slice(0, 60) : null;
           console.log('[voice_trace] send_frame', JSON.stringify({ type: action.frame.type, preview }));
           try {
             speechmuxClient.send(action.frame);
@@ -326,10 +329,6 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     // The `tool_call` hook is intentionally NOT registered. The streaming
     // reducer is the sole emitter of speak frames; bulk-emission via
     // tool_call was the source of the double-emit class of bugs.
-    //
-    // The `turn_end` safety net is also intentionally NOT registered.
-    // With per-speak `end` framing driven by `toolcall_end`, it was
-    // redundant and contributed to double-end emissions.
 
     pi.on('message_start', (event: MessageStartEvent) => {
       // Only assistant messages reset the streaming state. User and
@@ -381,6 +380,28 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         default:
           // text_*, thinking_* — not relevant to outbound streaming.
           return;
+      }
+    });
+
+    pi.on('turn_end', (event: TurnEndEvent) => {
+      if (state.lifecycle.kind !== 'active' || !speechmuxClient) return;
+      const lastSpeakResult = [...event.toolResults].reverse().find((result) => result.toolName === 'speak');
+      if (!lastSpeakResult) return;
+      try {
+        speechmuxClient.send(typeof lastSpeakResult.toolCallId === 'string' ? { type: 'floor_released', speak_id: lastSpeakResult.toolCallId } : { type: 'floor_released' });
+      } catch (err) {
+        console.warn('[voice] speechmux send failed', 'floor_released', err);
+      }
+    });
+
+    pi.on('agent_end', (event: AgentEndEvent) => {
+      if (state.lifecycle.kind !== 'active' || !speechmuxClient) return;
+      const error = (event as AgentEndEvent & { error?: unknown }).error;
+      if (typeof error !== 'string' || error.length === 0) return;
+      try {
+        speechmuxClient.send({ type: 'error', message: error });
+      } catch (err) {
+        console.warn('[voice] speechmux send failed', 'error', err);
       }
     });
 

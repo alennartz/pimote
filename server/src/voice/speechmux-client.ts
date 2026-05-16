@@ -14,7 +14,11 @@
  * correct speak block in its conversation history. Optional for
  * back-compat with non-speak_id-aware speechmux builds.
  */
-export type OutgoingFrame = { type: 'token'; text: string; speak_id?: string } | { type: 'end'; speak_id?: string };
+export type OutgoingFrame =
+  | { type: 'token'; text: string; speak_id?: string }
+  | { type: 'end'; speak_id?: string }
+  | { type: 'floor_released'; speak_id?: string }
+  | { type: 'error'; message: string; speak_id?: string };
 
 /**
  * Frames sent FROM speechmux TO the extension.
@@ -23,7 +27,10 @@ export type OutgoingFrame = { type: 'token'; text: string; speak_id?: string } |
  * the utterance that was actively playing at the moment of the
  * interrupt. The harness uses it as the walkback target.
  */
-export type IncomingFrame = { type: 'user'; text: string } | { type: 'abort'; speak_id?: string } | { type: 'rollback'; heard_text: string; speak_id?: string };
+export type IncomingFrame =
+  | { type: 'user'; text: string }
+  | { type: 'abort'; reason?: 'user_speaking' | 'barge_in' | 'session_closed'; speak_id?: string }
+  | { type: 'rollback'; heard_text: string; speak_id?: string };
 
 export interface SpeechmuxClient {
   /** Sends a frame to speechmux. Throws if the socket is not open. */
@@ -31,6 +38,9 @@ export interface SpeechmuxClient {
 
   /** Register a listener for incoming frames. Returns an unsubscribe fn. */
   onFrame(listener: (frame: IncomingFrame) => void): () => void;
+
+  /** Register a listener for post-open socket disconnects. Returns an unsubscribe fn. */
+  onDisconnect(listener: () => void): () => void;
 
   /** Closes the socket. Idempotent. */
   close(): void;
@@ -57,8 +67,9 @@ export type SpeechmuxClientFactory = (opts: SpeechmuxClientFactoryOptions) => Pr
  * Default `SpeechmuxClient` factory backed by the `ws` package. Opens a
  * WebSocket to `wsUrl` and routes incoming JSON text frames to registered
  * listeners. The LLM-WS protocol has no hello frame — the harness simply
- * connects and exchanges `user` / `token` / `end` / `abort` / `rollback`
- * frames (see speechmux/docs/llm-ws-protocol.md).
+ * connects and exchanges `user` / `token` / `end` / `floor_released` /
+ * `error` / `abort` / `rollback` frames (see
+ * speechmux/docs/llm-ws-protocol.md).
  *
  * Resolves once the socket is open. Rejects if the socket errors or closes
  * before opening.
@@ -75,10 +86,13 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
     }
     const ws = new WsCtor(wsUrl);
     const listeners = new Set<(frame: IncomingFrame) => void>();
+    const disconnectListeners = new Set<() => void>();
     // Buffer frames that arrive after `hello` but before the caller has had a
     // chance to attach an `onFrame` listener. Drained on the first attach.
     const pending: IncomingFrame[] = [];
     let closed = false;
+    let opened = false;
+    let disconnectNotified = false;
 
     // Install the message handler before resolving so frames sent between
     // open and the caller's onFrame attach are buffered instead of dropped.
@@ -115,6 +129,7 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
       const onOpen = () => {
         if (settled) return;
         settled = true;
+        opened = true;
         cleanup();
         resolve();
       };
@@ -139,8 +154,15 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
       ws.once('error', onError);
     });
 
+    const notifyDisconnect = () => {
+      if (!opened || disconnectNotified) return;
+      disconnectNotified = true;
+      for (const listener of disconnectListeners) listener();
+    };
+
     ws.on('close', () => {
       closed = true;
+      notifyDisconnect();
     });
 
     return {
@@ -159,6 +181,10 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
           for (const frame of drained) listener(frame);
         }
         return () => listeners.delete(listener);
+      },
+      onDisconnect(listener) {
+        disconnectListeners.add(listener);
+        return () => disconnectListeners.delete(listener);
       },
       close() {
         if (closed) return;
@@ -180,7 +206,7 @@ function isIncomingFrame(value: unknown): value is IncomingFrame {
     case 'user':
       return typeof v.text === 'string';
     case 'abort':
-      return true;
+      return v.reason === undefined || v.reason === 'user_speaking' || v.reason === 'barge_in' || v.reason === 'session_closed';
     case 'rollback':
       return typeof v.heard_text === 'string';
     default:

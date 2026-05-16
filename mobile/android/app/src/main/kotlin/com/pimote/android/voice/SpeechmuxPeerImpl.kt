@@ -94,9 +94,9 @@ class SpeechmuxPeerImpl(
     // ----- Control DataChannel (`speechmux-control`) -----
     // Created locally before `createOffer` so the m=application section is
     // in the SDP. Carries client→server `playhead` (~20 Hz, jitter-buffer
-    // emitted-sample count at 48 kHz) and server→client `interrupt` frames
-    // (server fired on barge-in; we silence ~120 ms of in-flight tail audio).
-    // Protocol reference: speechmux/docs/webrtc-protocol.md, Phase 3.
+    // emitted-sample count at 48 kHz) plus `turn_ready`, and server→client
+    // `interrupt` plus `prepare_turn` frames. Protocol reference:
+    // speechmux/docs/webrtc-protocol.md, Phase 3.
     private var controlChannel: DataChannel? = null
     private var playheadJob: Job? = null
     private var inboundAudioReceiver: RtpReceiver? = null
@@ -372,7 +372,12 @@ class SpeechmuxPeerImpl(
                 }
             }
             "ice" -> {
-                val candidate = env.payload["candidate"]?.jsonPrimitive?.content ?: return
+                val candidateElement = env.payload["candidate"]
+                if (candidateElement == null || candidateElement == kotlinx.serialization.json.JsonNull) {
+                    L.d("Peer", "recv end-of-candidates")
+                    return
+                }
+                val candidate = candidateElement.jsonPrimitive.content
                 val mid = env.payload["sdpMid"]?.jsonPrimitive?.content ?: ""
                 val mLine = env.payload["sdpMLineIndex"]?.jsonPrimitive?.intOrNull ?: 0
                 val cand = IceCandidate(mid, mLine, candidate)
@@ -719,6 +724,42 @@ class SpeechmuxPeerImpl(
         }
     }
 
+    private fun sendTurnReady(requestId: Int, playedSamples48k: Long) {
+        val frame = buildJsonObject {
+            put("v", SIGNAL_PROTOCOL_VERSION)
+            put("type", "turn_ready")
+            put("request_id", requestId)
+            put("played_samples_48k", playedSamples48k)
+        }.toString()
+        sendControlText(frame)
+    }
+
+    private suspend fun waitForStablePlayhead(): Long {
+        var last = readCurrentPlayhead() ?: 0L
+        var stableSince = System.currentTimeMillis()
+        val deadline = stableSince + 1500L
+        while (true) {
+            delay(25)
+            val next = readCurrentPlayhead() ?: last
+            if (next != last) {
+                last = next
+                stableSince = System.currentTimeMillis()
+                continue
+            }
+            val now = System.currentTimeMillis()
+            if (now - stableSince >= 120L || now >= deadline) {
+                lastReportedPlayhead = last
+                return last
+            }
+        }
+    }
+
+    private suspend fun readCurrentPlayhead(): Long? {
+        val pcRef = peer
+        if (pcRef == null) return if (lastReportedPlayhead >= 0L) lastReportedPlayhead else null
+        return readJitterBufferEmittedCount(pcRef) ?: if (lastReportedPlayhead >= 0L) lastReportedPlayhead else null
+    }
+
     private fun handleControlFrame(text: String) {
         val obj = try {
             json.parseToJsonElement(text).jsonObject
@@ -734,6 +775,17 @@ class SpeechmuxPeerImpl(
         val type = obj["type"]?.jsonPrimitive?.content
         when (type) {
             "interrupt" -> handleInterrupt()
+            "prepare_turn" -> {
+                val requestId = obj["request_id"]?.jsonPrimitive?.intOrNull
+                if (requestId == null) {
+                    L.w("Peer", "control DC: prepare_turn missing request_id")
+                    return
+                }
+                scope.launch {
+                    val playedSamples = waitForStablePlayhead()
+                    sendTurnReady(requestId, playedSamples)
+                }
+            }
             null -> L.w("Peer", "control DC: missing type")
             else -> L.d("Peer", "control DC: ignoring unknown type=$type")
         }
