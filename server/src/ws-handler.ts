@@ -27,7 +27,7 @@ import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
 import { mapAgentMessages, extractMessageEntryIds, applyEntryIds, type SdkSessionEntry } from './message-mapper.js';
 import { getGitBranch } from './git-branch.js';
-import type { AgentSession, ExtensionCommandContextActions } from '@mariozechner/pi-coding-agent';
+import type { AgentSession, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { CallBindError } from './voice-orchestrator.js';
 

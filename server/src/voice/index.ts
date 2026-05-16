@@ -17,7 +17,7 @@
 // `assistantMessageEvent` that never fires inside `message_update`). The
 // FSM split + correct reset-on-message_start eliminates that bug class.
 
-import type { ExtensionAPI, ExtensionContext, ExtensionFactory, BeforeAgentStartEvent, ContextEvent, TurnEndEvent, AgentEndEvent } from '@mariozechner/pi-coding-agent';
+import type { ExtensionAPI, ExtensionContext, ExtensionFactory, BeforeAgentStartEvent, ContextEvent, TurnEndEvent, AgentEndEvent } from '@earendil-works/pi-coding-agent';
 
 /** Local mirror of pi-coding-agent's `MessageStartEvent` (not re-exported
  *  at the package root in this version). Kept narrow to what we use. */
@@ -25,8 +25,8 @@ interface MessageStartEvent {
   type: 'message_start';
   message: AgentMessage;
 }
-import type { AgentMessage } from '@mariozechner/pi-agent-core';
-import { Type } from '@sinclair/typebox';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import { Type } from 'typebox';
 
 import { renderInterpreterPrompt } from './interpreter-prompt.js';
 import { createDefaultSpeechmuxClientFactory, type SpeechmuxClient, type SpeechmuxClientFactory } from './speechmux-client.js';

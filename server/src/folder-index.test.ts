@@ -137,7 +137,7 @@ describe('FolderIndex.listSessions()', () => {
 
   it('maps pi SessionInfo dates to ISO strings', async () => {
     // We can test the mapping logic by mocking SessionManager.list()
-    const { SessionManager } = await import('@mariozechner/pi-coding-agent');
+    const { SessionManager } = await import('@earendil-works/pi-coding-agent');
 
     const mockDate1 = new Date('2025-06-15T10:30:00Z');
     const mockDate2 = new Date('2025-06-15T11:45:00Z');
@@ -174,7 +174,7 @@ describe('FolderIndex.listSessions()', () => {
   });
 
   it('maps sessions without optional name', async () => {
-    const { SessionManager } = await import('@mariozechner/pi-coding-agent');
+    const { SessionManager } = await import('@earendil-works/pi-coding-agent');
 
     const listSpy = vi.spyOn(SessionManager, 'list').mockResolvedValueOnce([
       {
@@ -204,7 +204,7 @@ describe('FolderIndex.listSessions()', () => {
 
 describe('FolderIndex.renameSession()', () => {
   it('appends session info when the session file exists', async () => {
-    const { SessionManager } = await import('@mariozechner/pi-coding-agent');
+    const { SessionManager } = await import('@earendil-works/pi-coding-agent');
 
     const openSpy = vi.spyOn(SessionManager, 'open').mockReturnValue({
       appendSessionInfo: vi.fn(),
@@ -224,7 +224,7 @@ describe('FolderIndex.renameSession()', () => {
   });
 
   it('returns false when the session file cannot be found', async () => {
-    const { SessionManager } = await import('@mariozechner/pi-coding-agent');
+    const { SessionManager } = await import('@earendil-works/pi-coding-agent');
 
     const openSpy = vi.spyOn(SessionManager, 'open');
     const index = new FolderIndex([]);

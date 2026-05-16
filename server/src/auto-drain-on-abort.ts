@@ -17,7 +17,7 @@
 // (and falls back to follow-up if steering is empty) and replays the
 // drained messages as a fresh prompt.
 
-import type { AgentMessage } from '@mariozechner/pi-agent-core';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 
 /**
  * Minimal shape of the parts of pi's `AgentSession` we touch. Letting

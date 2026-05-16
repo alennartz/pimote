@@ -4,7 +4,7 @@
 // values. The shell in `index.ts` interprets each into an actual call
 // against the pi SDK / speechmux WS / EventBus.
 
-import type { AgentMessage } from '@mariozechner/pi-agent-core';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { OutgoingFrame } from '../speechmux-client.js';
 import type { VoiceInterruptEntryData } from '../../../../shared/dist/index.js';
 

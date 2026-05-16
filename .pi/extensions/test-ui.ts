@@ -1,6 +1,6 @@
-import type { ExtensionAPI, ExtensionUIDialogOptions, ToolDefinition } from '@mariozechner/pi-coding-agent';
-import { StringEnum } from '@mariozechner/pi-ai';
-import { Type } from '@sinclair/typebox';
+import type { ExtensionAPI, ExtensionUIDialogOptions, ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { StringEnum } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 
 const TEST_TOOL_GUIDELINES = ['Use these test_* tools only when the user explicitly wants to exercise Pimote extension UI bridge behavior.'];
 
@@ -117,7 +117,7 @@ export default function testUiExtension(pi: ExtensionAPI) {
       if (signal?.aborted) return CANCELLED;
       const value = await raceSignal(ctx.ui.editor(params.title, params.prefill), signal);
       if (value === ABORTED) return CANCELLED;
-      return textResult(value === undefined ? 'Cancelled.' : 'Editor submitted.', {
+      return textResult(value === undefined ? 'Cancelled.' : `Editor submitted: ${value}`, {
         value,
         cancelled: value === undefined,
       });

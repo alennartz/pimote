@@ -10,13 +10,13 @@ When your extension is running inside pimote, `detect()` returns a handle for se
 npm install @pimote/panels
 ```
 
-Requires `@mariozechner/pi-coding-agent` as a peer dependency (already present in any pi extension).
+Requires `@earendil-works/pi-coding-agent` as a peer dependency (already present in any pi extension).
 
 ## Usage
 
 ```ts
 import { detect } from '@pimote/panels';
-import type { ExtensionFactory } from '@mariozechner/pi-coding-agent';
+import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 
 const extension: ExtensionFactory = (pi) => {
   const panels = detect(pi, 'my-extension');

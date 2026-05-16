@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { PanelHandle } from './types.js';
 
 /** Tracks active state per key so re-detection deactivates the old handle. */

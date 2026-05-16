@@ -41,7 +41,7 @@
 // `input`). Earlier versions only matched the latter, which silently
 // failed on every real captured message.
 
-import type { AgentMessage } from '@mariozechner/pi-agent-core';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 
 /** Generic content block — we only inspect `type` + tool-call shape. */
 export interface ContentBlock {

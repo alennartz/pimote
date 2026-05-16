@@ -7,8 +7,8 @@ import {
   ModelRegistry,
   getAgentDir,
   SessionManager as PiSessionManager,
-} from '@mariozechner/pi-coding-agent';
-import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory } from '@mariozechner/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent';
+import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory } from '@earendil-works/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
 import type { PimoteEvent, Card } from '../../shared/dist/index.js';
@@ -19,7 +19,7 @@ import type { PanelBusMessage } from './panel-state.js';
 import { getGitBranch } from './git-branch.js';
 import { createVoiceExtension } from './voice/index.js';
 import { autoDrainOnAbort } from './auto-drain-on-abort.js';
-import type { ExtensionFactory } from '@mariozechner/pi-coding-agent';
+import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 
 /** Narrow interface for the WebSocket used for event routing.
  *  Avoids importing the `ws` package type in session-manager. */

@@ -1,6 +1,6 @@
 import { readdir, stat, unlink } from 'node:fs/promises';
 import { join, basename } from 'node:path';
-import { SessionManager, type SessionInfo as PiSessionInfo } from '@mariozechner/pi-coding-agent';
+import { SessionManager, type SessionInfo as PiSessionInfo } from '@earendil-works/pi-coding-agent';
 import type { FolderInfo, SessionInfo as PimoteSessionInfo } from '../../shared/dist/index.js';
 
 /** Project marker files/directories that identify a folder as a project. */

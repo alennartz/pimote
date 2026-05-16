@@ -5,7 +5,7 @@
 // reducer. The shell in `index.ts` is the only place where ad-hoc input
 // translation lives.
 
-import type { AgentMessage } from '@mariozechner/pi-agent-core';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { IncomingFrame } from '../speechmux-client.js';
 import type { VoiceActivateMessage, VoiceDeactivateMessage } from '../state-machine.js';
 

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { VoiceOrchestrator, CallBindError, type VoiceSessionBusResolver } from './voice-orchestrator.js';
 import type { PimoteConfig } from './config.js';
 import type { ClientConnection, ManagedSlot, PimoteSessionManager } from './session-manager.js';
-import type { EventBusController } from '@mariozechner/pi-coding-agent';
+import type { EventBusController } from '@earendil-works/pi-coding-agent';
 
 // --- Helpers ------------------------------------------------------------------
 

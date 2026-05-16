@@ -17,7 +17,7 @@
 // calls or whenever the snapshot was stale. The id-based design has no
 // such ambiguity.
 
-import type { AgentMessage } from '@mariozechner/pi-agent-core';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { Action } from '../actions.js';
 import type { Event } from '../events.js';
 import type { RuntimeState, WalkbackState } from '../state.js';

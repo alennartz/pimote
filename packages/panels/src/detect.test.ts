@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { detect } from './detect.js';
 import type { Card } from './types.js';
-import type { EventBus, ExtensionAPI } from '@mariozechner/pi-coding-agent';
+import type { EventBus, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
 // --- Helpers ---
 

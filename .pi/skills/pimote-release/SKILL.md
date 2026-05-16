@@ -205,7 +205,6 @@ git push origin panels-v0.1.0
 - The app package published from the repo root is `@pimote/pimote`.
 - The installed binary name remains `pimote`.
 - The app publish workflow performs a packed-install smoke test before publish.
-- The app currently relies on a repo-shipped patch for `@mariozechner/pi-coding-agent`, so keep the pinned version and patch compatibility in mind when upgrading dependencies.
 - Local deployment uses installed package releases under `~/.local/share/pimote/` and is intentionally separate from publish tagging.
 
 ## Response pattern

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentMessage } from '@mariozechner/pi-agent-core';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { autoDrainOnAbort, type AutoDrainSession } from './auto-drain-on-abort.js';
 
 function makeSession(overrides: Partial<AutoDrainSession> & { agentOverrides?: Partial<AutoDrainSession['agent']> } = {}): AutoDrainSession & {

@@ -44,7 +44,7 @@
 | **Server Machine** | Linux with `/proc` filesystem (for process takeover tests)                                |
 | **Node.js**        | v20+                                                                                      |
 | **Config File**    | `~/.config/pimote/config.json` with valid `roots` array                                   |
-| **pi SDK**         | `@mariozechner/pi-coding-agent` installed, API keys configured                            |
+| **pi SDK**         | `@earendil-works/pi-coding-agent` installed, API keys configured                          |
 | **Test Projects**  | At least 2 project directories under configured roots, each with `.git` or `package.json` |
 | **Browsers**       | Chrome (latest), Firefox (latest), Safari (latest, for PWA tests)                         |
 | **Mobile Device**  | Android phone with Chrome, or iOS with Safari (for push + PWA tests)                      |

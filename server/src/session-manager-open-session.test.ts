@@ -12,7 +12,7 @@ vi.mock('./git-branch.js', () => ({
   getGitBranch: gitBranchSpy,
 }));
 
-vi.mock('@mariozechner/pi-coding-agent', () => {
+vi.mock('@earendil-works/pi-coding-agent', () => {
   const fakeSession = {
     sessionId: 'session-1',
     isStreaming: false,

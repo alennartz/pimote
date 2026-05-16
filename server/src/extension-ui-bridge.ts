@@ -1,4 +1,4 @@
-import type { ExtensionUIContext, ExtensionUIDialogOptions, ExtensionWidgetOptions } from '@mariozechner/pi-coding-agent';
+import type { ExtensionUIContext, ExtensionUIDialogOptions, ExtensionWidgetOptions } from '@earendil-works/pi-coding-agent';
 import type { PimoteEvent } from '../../shared/dist/index.js';
 import { UI_BRIDGE_DISABLED_IN_VOICE_MODE } from '../../shared/dist/index.js';
 import type { ManagedSlot } from './session-manager.js';
@@ -176,8 +176,29 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
       // no-op
     },
 
+    setWorkingVisible(): void {
+      // TODO(pimote-bridge): forward to client so extensions can hide/show the working indicator row.
+      // Web client renders its own streaming UI; no-op is safe but loses extension control.
+    },
+
+    setWorkingIndicator(): void {
+      // TODO(pimote-bridge): forward custom working-indicator frames/colors to client renderer.
+      // Web client renders its own spinner; no-op is safe but loses extension control.
+    },
+
     setHiddenThinkingLabel(): void {
       // no-op
+    },
+
+    addAutocompleteProvider(): void {
+      // TODO(pimote-bridge): wire extension autocomplete factory into the client autocomplete stack.
+      // Today the client only has built-in slash/path completion; extension providers are dropped.
+    },
+
+    getEditorComponent(): undefined {
+      // TODO(pimote-bridge): decide whether to surface a stub EditorFactory for chained extension editors.
+      // Web client has no TUI editor component to wrap, so undefined is the honest answer.
+      return undefined;
     },
 
     setFooter(): void {

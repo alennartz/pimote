@@ -340,7 +340,7 @@ A standalone package that pi extensions can import to push structured card data 
 
 ```ts
 import { detect } from '@pimote/panels';
-import type { ExtensionFactory } from '@mariozechner/pi-coding-agent';
+import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 
 const extension: ExtensionFactory = (pi) => {
   const panels = detect(pi, 'my-extension');

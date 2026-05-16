@@ -6,7 +6,7 @@
 // is present (`voice.speechmuxSignalUrl` + `voice.speechmuxLlmWsUrl`); when
 // it is absent, the server skips voice wiring entirely.
 
-import type { EventBusController } from '@mariozechner/pi-coding-agent';
+import type { EventBusController } from '@earendil-works/pi-coding-agent';
 import type { CallBindErrorCode, CallBindResponse, CallEndReason } from '../../shared/dist/index.js';
 import type { PimoteConfig } from './config.js';
 import type { ClientConnection, ManagedSlot, PimoteSessionManager } from './session-manager.js';
