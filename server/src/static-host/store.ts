@@ -1,3 +1,5 @@
+import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { CardColor } from '../../../shared/dist/index.js';
 
 /** One persisted entry; the in-memory `StaticHostRegistration.sessionId` is implicit from the filename. */
@@ -36,15 +38,36 @@ export interface StaticHostStore {
 export class FileStaticHostStore implements StaticHostStore {
   constructor(private readonly storeDir: string) {}
 
-  async read(_sessionId: string): Promise<StaticHostStoreFile | undefined> {
-    throw new Error('not implemented');
+  private pathFor(sessionId: string): string {
+    return join(this.storeDir, `${sessionId}.json`);
   }
 
-  async write(_sessionId: string, _file: StaticHostStoreFile): Promise<void> {
-    throw new Error('not implemented');
+  async read(sessionId: string): Promise<StaticHostStoreFile | undefined> {
+    const path = this.pathFor(sessionId);
+    let raw: string;
+    try {
+      raw = await readFile(path, 'utf-8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw err;
+    }
+    return JSON.parse(raw) as StaticHostStoreFile;
   }
 
-  async remove(_sessionId: string): Promise<void> {
-    throw new Error('not implemented');
+  async write(sessionId: string, file: StaticHostStoreFile): Promise<void> {
+    await mkdir(this.storeDir, { recursive: true });
+    const finalPath = this.pathFor(sessionId);
+    const tmpPath = finalPath + '.tmp';
+    await writeFile(tmpPath, JSON.stringify(file, null, 2) + '\n', 'utf-8');
+    await rename(tmpPath, finalPath);
+  }
+
+  async remove(sessionId: string): Promise<void> {
+    try {
+      await unlink(this.pathFor(sessionId));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw err;
+    }
   }
 }

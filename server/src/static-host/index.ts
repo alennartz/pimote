@@ -1,6 +1,10 @@
-import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
+import type { ExtensionFactory, ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { Type } from 'typebox';
+import type { Card } from '../../../shared/dist/index.js';
 import type { StaticHostRegistry } from './registry.js';
 import type { StaticHostStore } from './store.js';
+import { executeRegisterTool, executeRemoveTool, type RegisterToolInput, type RemoveToolInput, type ToolDeps } from './tools.js';
+import { STATIC_HOST_TOOL_DESCRIPTION } from './prompt.js';
 
 export { InMemoryStaticHostRegistry } from './registry.js';
 export type { StaticHostRegistry, StaticHostRegistration, StaticHostCardMetadata } from './registry.js';
@@ -34,6 +38,89 @@ export interface CreateStaticHostExtensionOptions {
  *   - `session_shutdown` => `registry.unregisterAllForSession(S)`. The file
  *     stays on disk for the next session load.
  */
-export function createStaticHostExtension(_opts: CreateStaticHostExtensionOptions): ExtensionFactory {
-  throw new Error('not implemented');
+export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions): ExtensionFactory {
+  const { registry, store } = opts;
+
+  function buildCardsFor(sessionId: string): Card[] {
+    return registry.listForSession(sessionId).map((entry) => {
+      const card: Card = {
+        id: `static-host:${entry.slug}`,
+        header: {
+          title: entry.cardMetadata.title,
+          ...(entry.cardMetadata.tag !== undefined ? { tag: entry.cardMetadata.tag } : {}),
+        },
+        href: `/s/${entry.slug}/`,
+        ...(entry.cardMetadata.color !== undefined ? { color: entry.cardMetadata.color } : {}),
+      };
+      return card;
+    });
+  }
+
+  function emitPanelCards(pi: ExtensionAPI, sessionId: string): void {
+    const cards = buildCardsFor(sessionId);
+    pi.events.emit('pimote:panels', { type: 'cards', namespace: 'static-host', cards });
+  }
+
+  function toolDeps(pi: ExtensionAPI, sessionId: string): ToolDeps {
+    return {
+      registry,
+      store,
+      sessionId,
+      emitPanelCards: () => emitPanelCards(pi, sessionId),
+    };
+  }
+
+  return (pi: ExtensionAPI) => {
+    pi.registerTool({
+      name: 'pimote_static_host',
+      label: 'Host static bundle',
+      description: STATIC_HOST_TOOL_DESCRIPTION,
+      parameters: Type.Object({
+        slug: Type.String({ description: 'Short URL slug, lowercase [a-z0-9-]+ with no leading/trailing dash.' }),
+        folder: Type.String({ description: 'Absolute path to the folder containing the bundle (must contain index.html).' }),
+        title: Type.String({ description: 'Title displayed on the panel card.' }),
+        tag: Type.Optional(Type.String({ description: 'Optional short tag shown next to the title.' })),
+        color: Type.Optional(Type.String({ description: 'Optional card color.' })),
+      }),
+      execute: async (_callId: string, input: RegisterToolInput, _abort: unknown, _meta: unknown, ctx: ExtensionContext) => {
+        const sessionId = ctx.sessionManager.getSessionId();
+        const out = await executeRegisterTool(input, toolDeps(pi, sessionId));
+        return { content: [{ type: 'text', text: JSON.stringify(out) }], details: out };
+      },
+    } as unknown as Parameters<ExtensionAPI['registerTool']>[0]);
+
+    pi.registerTool({
+      name: 'pimote_static_host_remove',
+      label: 'Remove hosted bundle',
+      description: 'Unregister a previously hosted static bundle by slug.',
+      parameters: Type.Object({
+        slug: Type.String({ description: 'Slug of the bundle to remove.' }),
+      }),
+      execute: async (_callId: string, input: RemoveToolInput, _abort: unknown, _meta: unknown, ctx: ExtensionContext) => {
+        const sessionId = ctx.sessionManager.getSessionId();
+        const out = await executeRemoveTool(input, toolDeps(pi, sessionId));
+        return { content: [{ type: 'text', text: JSON.stringify(out) }], details: out };
+      },
+    } as unknown as Parameters<ExtensionAPI['registerTool']>[0]);
+
+    pi.on('session_start', async (_ev: unknown, ctx: ExtensionContext) => {
+      const sessionId = ctx.sessionManager.getSessionId();
+      const file = await store.read(sessionId);
+      if (!file) return;
+      for (const entry of file.entries) {
+        registry.register({
+          slug: entry.slug,
+          folderPath: entry.folderPath,
+          sessionId,
+          cardMetadata: entry.cardMetadata,
+        });
+      }
+      emitPanelCards(pi, sessionId);
+    });
+
+    pi.on('session_shutdown', async (_ev: unknown, ctx: ExtensionContext) => {
+      const sessionId = ctx.sessionManager.getSessionId();
+      registry.unregisterAllForSession(sessionId);
+    });
+  };
 }

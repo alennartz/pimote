@@ -360,6 +360,8 @@ No new dependencies. Everything uses Node built-ins (`node:fs/promises`, `node:p
 
 ## Steps
 
+**Pre-implementation commit:** `b217d8772c809c6cb95350ffedbef7c89884bc44`
+
 ### Step 1: Implement `InMemoryStaticHostRegistry`
 
 Fill in the stubbed methods in `server/src/static-host/registry.ts`. Back the implementation with the existing `bySlug: Map<string, StaticHostRegistration>` and `bySession: Map<string, Set<string>>` fields.
@@ -373,7 +375,7 @@ Fill in the stubbed methods in `server/src/static-host/registry.ts`. Back the im
 No new files.
 
 **Verify:** `pnpm --filter @pimote/server vitest run src/static-host/registry.test.ts` passes.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement `FileStaticHostStore`
 
@@ -387,7 +389,7 @@ Fill in the stubbed methods in `server/src/static-host/store.ts`. Use `node:fs/p
 No new files.
 
 **Verify:** `pnpm --filter @pimote/server vitest run src/static-host/store.test.ts` passes.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Implement `gcStaticHostStore`
 
@@ -398,7 +400,7 @@ Fill in `server/src/static-host/gc.ts`.
 - Non-file entries (subdirectories, other extensions) are left alone — selection is by `.json` suffix, not by `stat`.
 
 **Verify:** `pnpm --filter @pimote/server vitest run src/static-host/gc.test.ts` passes.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Implement `validateSlug` and `resolveSlugCollision`
 
@@ -408,7 +410,7 @@ Fill in the two pure helpers in `server/src/static-host/tools.ts`.
 - `resolveSlugCollision`: if `!registry.has(slug)` return `slug`; otherwise iterate `i = 2, 3, ...` returning the first `${slug}-${i}` that `!registry.has`. No upper bound needed for tests; the loop terminates because the registry is finite.
 
 **Verify:** `validateSlug` and `resolveSlugCollision` describe blocks of `src/static-host/tools.test.ts` pass.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Implement `executeRegisterTool` and `executeRemoveTool`
 
@@ -438,7 +440,7 @@ Validation failures (steps 1–3) must throw before any state mutation — emiss
 6. Return `{ removed: true }`.
 
 **Verify:** `pnpm --filter @pimote/server vitest run src/static-host/tools.test.ts` passes.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Implement `serveStaticHostRoute`
 
@@ -459,14 +461,14 @@ Algorithm:
 Return `true` whenever a response is written; `false` only on prefix mismatch / wrong method.
 
 **Verify:** `pnpm --filter @pimote/server vitest run src/static-host/http-handler.test.ts` passes.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Author the register-tool prompt text
 
 Create `server/src/static-host/prompt.ts` exporting `export const STATIC_HOST_TOOL_DESCRIPTION: string` containing the verbatim description text from the architecture section (the multi-paragraph block covering use cases, the responsive-layout mandate with 360px/1440px breakpoints, the no-secrets rule, and the workflow note). The string must be long enough that `length > 200` and contain the substrings `responsive` and `secret` (case-insensitive) — the `index.test.ts` description test asserts this.
 
 **Verify:** file exists, exports the constant; covered indirectly by Step 8.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Implement `createStaticHostExtension`
 
@@ -491,7 +493,7 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
 ```
 
 **Verify:** `pnpm --filter @pimote/server vitest run src/static-host/index.test.ts` passes; full `pnpm --filter @pimote/server vitest run src/static-host/` is green.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Thread the static-host factory through `PimoteSessionManager`
 

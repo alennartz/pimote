@@ -10,6 +10,28 @@
  * before `server.start()` so the HTTP route never sees a stale slug pointing
  * at a folder that the agent has long since deleted.
  */
-export async function gcStaticHostStore(_args: { storeDir: string; validSessionIds: Set<string> }): Promise<void> {
-  throw new Error('not implemented');
+import { readdir, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+
+export async function gcStaticHostStore(args: { storeDir: string; validSessionIds: Set<string> }): Promise<void> {
+  const { storeDir, validSessionIds } = args;
+  let entries: string[];
+  try {
+    entries = await readdir(storeDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw err;
+  }
+  const suffix = '.json';
+  for (const name of entries) {
+    if (!name.endsWith(suffix)) continue;
+    const sessionId = name.slice(0, -suffix.length);
+    if (validSessionIds.has(sessionId)) continue;
+    try {
+      await unlink(join(storeDir, name));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw err;
+    }
+  }
 }

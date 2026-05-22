@@ -51,27 +51,53 @@ export class InMemoryStaticHostRegistry implements StaticHostRegistry {
   private readonly bySlug = new Map<string, StaticHostRegistration>();
   private readonly bySession = new Map<string, Set<string>>();
 
-  register(_reg: StaticHostRegistration): void {
-    throw new Error('not implemented');
+  register(reg: StaticHostRegistration): void {
+    if (this.bySlug.has(reg.slug)) {
+      throw new Error(`static-host slug already registered: ${reg.slug}`);
+    }
+    this.bySlug.set(reg.slug, reg);
+    let set = this.bySession.get(reg.sessionId);
+    if (!set) {
+      set = new Set();
+      this.bySession.set(reg.sessionId, set);
+    }
+    set.add(reg.slug);
   }
 
-  unregister(_slug: string): void {
-    throw new Error('not implemented');
+  unregister(slug: string): void {
+    const entry = this.bySlug.get(slug);
+    if (!entry) return;
+    this.bySlug.delete(slug);
+    const set = this.bySession.get(entry.sessionId);
+    if (set) {
+      set.delete(slug);
+      if (set.size === 0) this.bySession.delete(entry.sessionId);
+    }
   }
 
-  unregisterAllForSession(_sessionId: string): void {
-    throw new Error('not implemented');
+  unregisterAllForSession(sessionId: string): void {
+    const set = this.bySession.get(sessionId);
+    if (!set) return;
+    for (const slug of set) this.bySlug.delete(slug);
+    this.bySession.delete(sessionId);
   }
 
-  lookup(_slug: string): StaticHostRegistration | undefined {
-    throw new Error('not implemented');
+  lookup(slug: string): StaticHostRegistration | undefined {
+    return this.bySlug.get(slug);
   }
 
-  has(_slug: string): boolean {
-    throw new Error('not implemented');
+  has(slug: string): boolean {
+    return this.bySlug.has(slug);
   }
 
-  listForSession(_sessionId: string): StaticHostRegistration[] {
-    throw new Error('not implemented');
+  listForSession(sessionId: string): StaticHostRegistration[] {
+    const set = this.bySession.get(sessionId);
+    if (!set) return [];
+    const out: StaticHostRegistration[] = [];
+    for (const slug of set) {
+      const entry = this.bySlug.get(slug);
+      if (entry) out.push(entry);
+    }
+    return out;
   }
 }

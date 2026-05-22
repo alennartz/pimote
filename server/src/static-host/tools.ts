@@ -1,6 +1,8 @@
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { CardColor } from '../../../shared/dist/index.js';
 import type { StaticHostRegistry } from './registry.js';
-import type { StaticHostStore } from './store.js';
+import type { StaticHostStore, StaticHostStoreEntry, StaticHostStoreFile } from './store.js';
 
 /** Input to the `pimote_static_host` tool. */
 export interface RegisterToolInput {
@@ -50,8 +52,13 @@ export interface ToolDeps {
  *
  * Returns `null` if invalid.
  */
-export function validateSlug(_slug: string): string | null {
-  throw new Error('not implemented');
+const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+export function validateSlug(slug: string): string | null {
+  if (typeof slug !== 'string') return null;
+  if (slug.length === 0 || slug.length > 64) return null;
+  if (!SLUG_RE.test(slug)) return null;
+  return slug;
 }
 
 /**
@@ -60,8 +67,12 @@ export function validateSlug(_slug: string): string | null {
  *
  * The caller must have already validated the input slug via `validateSlug`.
  */
-export function resolveSlugCollision(_slug: string, _registry: StaticHostRegistry): string {
-  throw new Error('not implemented');
+export function resolveSlugCollision(slug: string, registry: StaticHostRegistry): string {
+  if (!registry.has(slug)) return slug;
+  for (let i = 2; ; i++) {
+    const candidate = `${slug}-${i}`;
+    if (!registry.has(candidate)) return candidate;
+  }
 }
 
 /**
@@ -72,14 +83,73 @@ export function resolveSlugCollision(_slug: string, _registry: StaticHostRegistr
  * the persistence file, calls `registry.register(...)`, and emits the panel
  * snapshot.
  */
-export async function executeRegisterTool(_input: RegisterToolInput, _deps: ToolDeps): Promise<RegisterToolOutput> {
-  throw new Error('not implemented');
+export async function executeRegisterTool(input: RegisterToolInput, deps: ToolDeps): Promise<RegisterToolOutput> {
+  const validSlug = validateSlug(input.slug);
+  if (validSlug === null) {
+    throw new Error(`invalid slug: ${JSON.stringify(input.slug)}`);
+  }
+
+  let folderStat;
+  try {
+    folderStat = await stat(input.folder);
+  } catch {
+    throw new Error(`folder does not exist: ${input.folder}`);
+  }
+  if (!folderStat.isDirectory()) {
+    throw new Error(`folder is not a directory: ${input.folder}`);
+  }
+
+  const indexPath = join(input.folder, 'index.html');
+  let indexStat;
+  try {
+    indexStat = await stat(indexPath);
+  } catch {
+    throw new Error(`folder has no index.html: ${input.folder}`);
+  }
+  if (!indexStat.isFile()) {
+    throw new Error(`index.html is not a file: ${indexPath}`);
+  }
+
+  const resolved = resolveSlugCollision(validSlug, deps.registry);
+  const cardMetadata: StaticHostStoreEntry['cardMetadata'] = {
+    title: input.title,
+    ...(input.tag !== undefined ? { tag: input.tag } : {}),
+    ...(input.color !== undefined ? { color: input.color } : {}),
+  };
+
+  const existing = (await deps.store.read(deps.sessionId)) ?? { version: 1 as const, entries: [] };
+  const entries: StaticHostStoreEntry[] = [...existing.entries, { slug: resolved, folderPath: input.folder, cardMetadata }];
+  const file: StaticHostStoreFile = { version: 1, entries };
+  await deps.store.write(deps.sessionId, file);
+
+  deps.registry.register({
+    slug: resolved,
+    folderPath: input.folder,
+    sessionId: deps.sessionId,
+    cardMetadata,
+  });
+
+  deps.emitPanelCards();
+
+  return { slug: resolved, url: `/s/${resolved}/` };
 }
 
 /**
  * Execute the `pimote_static_host_remove` tool body. Returns `{ removed: false }`
  * when the slug is not owned by this session.
  */
-export async function executeRemoveTool(_input: RemoveToolInput, _deps: ToolDeps): Promise<RemoveToolOutput> {
-  throw new Error('not implemented');
+export async function executeRemoveTool(input: RemoveToolInput, deps: ToolDeps): Promise<RemoveToolOutput> {
+  const existing = deps.registry.lookup(input.slug);
+  if (!existing || existing.sessionId !== deps.sessionId) {
+    return { removed: false };
+  }
+
+  const file = (await deps.store.read(deps.sessionId)) ?? { version: 1 as const, entries: [] };
+  const entries = file.entries.filter((e) => e.slug !== input.slug);
+  await deps.store.write(deps.sessionId, { version: 1, entries });
+
+  deps.registry.unregister(input.slug);
+  deps.emitPanelCards();
+
+  return { removed: true };
 }
