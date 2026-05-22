@@ -565,7 +565,9 @@ Review `client/src/sw.ts`. The current fetch handler only intercepts `POST /_sha
 If future investigation surfaces interference (e.g. workbox-precaching's navigation route swallowing `/s/*`), add an explicit early-return in the `fetch` listener for paths starting with `/s/` — return without calling `event.respondWith` so the request goes to network unmodified. Document the change with a comment referencing this plan.
 
 **Verify:** With the SW active, `fetch('/s/<slug>/')` from devtools network panel shows the request hits the server (not served from cache).
-**Status:** done (no code change required — SW already passes `/s/*` through to network)
+**Status:** done
+
+**Notes:** No code change required — SW already passes `/s/*` through to network.
 
 ### Step 14: Full build and integration sanity check
 
@@ -577,4 +579,6 @@ Run the full workspace build and tests:
 Then manually exercise the flow: start the server, open the client, drive an agent session to call `pimote_static_host` against a small folder containing `index.html`, confirm a clickable card appears in the panel, tap it, see the bundle render. Restart the server and confirm the card replays from persistence on the next session load. Call `pimote_static_host_remove` and confirm the card vanishes and the bundle 404s.
 
 **Verify:** all of the above succeed; no console errors during the round-trip.
-**Status:** done (automated: `npm run build`, server vitest 327/327, panels vitest 9/9, `npm run check` all clean; manual end-to-end flow deferred to manual-testing phase)
+**Status:** done
+
+**Notes:** Automated: `npm run build`, server vitest 327/327, panels vitest 9/9, `npm run check` all clean. Manual end-to-end flow deferred to manual-testing phase.
