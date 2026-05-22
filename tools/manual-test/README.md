@@ -40,6 +40,65 @@ node scripts/voice-mock-smoke.mjs
 **Prerequisites:** workspaces built (`server/dist`, `packages/voice/dist`,
 `shared/dist`). No real speechmux, browser, or network required.
 
+### static-host-smoke
+
+**Purpose:** Exercise the server-side static-host pipeline end-to-end
+without booting the full pimote server or requiring an LLM. Covers the
+shipped `InMemoryStaticHostRegistry`, `FileStaticHostStore`,
+`gcStaticHostStore`, `serveStaticHostRoute`, `executeRegisterTool`,
+`executeRemoveTool`, slug validation + collision resolution,
+persistence + replay across session evict/rehydrate, and boot-time GC
+of orphan store files. Drives static-resources tests 1–11 in
+`docs/manual-tests/static-resources.md`.
+
+**Location:** `tools/manual-test/static-host-smoke/static-host-smoke.mjs`
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/static-host-smoke/static-host-smoke.mjs
+```
+
+**Inputs:** none (uses `fs.mkdtemp` for an isolated bundle + store dir).
+
+**Outputs:** per-test ✓/✗ lines on stdout; non-zero exit on any failure.
+
+**Prerequisites:** workspaces built (`server/dist`, `shared/dist`). No
+real network, browser, or LLM required.
+
+### static-host-pwa-smoke
+
+**Purpose:** Verify the client-side behaviours the test-review phase
+deferred for static-resources: `Panel.svelte` rendering `Card.href`
+as a clickable `<a>`, the service worker passing `/s/*` through to the
+network unmodified, and browser-back returning to the session view
+after viewing a hosted bundle. Drives static-resources tests 12–14.
+
+**Location:** `tools/manual-test/static-host-pwa-smoke/static-host-pwa-smoke.mjs`
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/static-host-pwa-smoke/static-host-pwa-smoke.mjs
+```
+
+**Inputs:** none. The script builds a fresh sandbox under `os.tmpdir()`
+(its own `HOME`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME`), fabricates a
+pi session jsonl on disk, seeds the static-host persistence file,
+boots `bin/pimote.js` on a free local port, and drives the PWA via
+`agent-browser` against that sandboxed instance.
+
+**Outputs:** per-test ✓/✗ lines on stdout; non-zero exit on any failure.
+On failure the sandbox directory is preserved and its path printed for
+inspection.
+
+**Prerequisites:** workspaces built (`npm run build`), `agent-browser`
+on `PATH`, writable `os.tmpdir()`. The script tracks the child PID it
+spawns and only kills that PID on teardown — it never uses
+pattern-based `pkill` against shared binary paths.
+
 ### agent-browser (cross-repo skill)
 
 **Purpose:** Drive PWA user journeys end-to-end via a headless-Chromium

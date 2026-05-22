@@ -100,12 +100,43 @@ no-cache` from the static-host handler, not the SW shell). Devtools
 
 ## Results
 
-(Filled in during execution.)
+### Smoke Suite
+
+- Journey 6 (Panel cards from extensions) is exercised as part of tests
+  12–14 below; not run separately.
+
+### Topic-Specific Tests
+
+| #   | Test                                           | Driver                | Verdict  | Notes                                                                                                                                                     |
+| --- | ---------------------------------------------- | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | HTTP route serves `index.html` at `/s/<slug>/` | static-host-smoke     | **pass** | 200 + `text/html` + `no-cache`.                                                                                                                           |
+| 2   | Nested asset MIME                              | static-host-smoke     | **pass** | `.js` resolved to JS MIME.                                                                                                                                |
+| 3   | Subdirectory → `index.html`                    | static-host-smoke     | **pass** | `/s/<slug>/sub/` served subdir index.                                                                                                                     |
+| 4   | Unknown slug 404, no SPA fall-through          | static-host-smoke     | **pass** | 404 + handler returns `handled=true`.                                                                                                                     |
+| 5   | Path-traversal rejected                        | static-host-smoke     | **pass** | `..%2F` decoded server-side and rejected.                                                                                                                 |
+| 6   | Prefix mismatch falls through                  | static-host-smoke     | **pass** | `/unrelated` hits the stub SPA fallback.                                                                                                                  |
+| 7   | Persistence file shape after register          | static-host-smoke     | **pass** | `{version:1, entries:[…]}` with slug + folder + cardMetadata.                                                                                             |
+| 8   | Session evict drops registrations              | static-host-smoke     | **pass** | Route 404s after `unregisterAllForSession`.                                                                                                               |
+| 9   | Session rehydrate replays from disk            | static-host-smoke     | **pass** | Replayed registry has slug; reconstructed card carries `href: /s/<slug>/`.                                                                                |
+| 10  | Boot-time GC removes orphan store files        | static-host-smoke     | **pass** | Orphan json deleted, live json + non-json files preserved, missing dir tolerated.                                                                         |
+| 11  | Remove tool tears down route + card            | static-host-smoke     | **pass** | 404 after remove; store file updated; empty snapshot re-emitted; cross-session remove no-ops.                                                             |
+| 12  | Anchor renders as `<a href>` in `Panel.svelte` | static-host-pwa-smoke | **pass** | `link "Smoke Bundle Card smoke"` in accessibility snapshot; `href="/s/static-host-pwa-smoke-bundle/"`.                                                    |
+| 13  | Service worker passes `/s/*` through           | static-host-pwa-smoke | **pass** | Page-context `fetch` returns 200 + `cache-control: no-cache, no-store, must-revalidate` from the server (would be absent if SW had served the SPA shell). |
+| 14  | Browser-back returns to the session view       | static-host-pwa-smoke | **pass** | URL drops back to `/`; session input bar + folder list + panel link visible in re-snapshot.                                                               |
+
+**Coherence pass (UI-bearing tests 12–14):** _looks coherent._ The
+panel card renders as a plain bordered block whose entire surface is a
+same-tab link to the bundle, the bundle renders as plain HTML at the
+expected path with no SPA chrome injected, and browser-back lands
+cleanly on the session with the panel still showing the card.
 
 ## Plan Updates
 
-(Filled in during execution.)
+No persistent-plan changes. Static-host is a tool surface inside
+existing journey 6 (Panel cards from extensions); adding it as its own
+primary journey would dilute the plan. Topic-specific tests above
+cover the new behaviours.
 
 ## Open Issues
 
-(Filled in during execution.)
+None.
