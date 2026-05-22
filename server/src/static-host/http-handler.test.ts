@@ -136,9 +136,20 @@ describe('serveStaticHostRoute', () => {
     await writeFile(join(root, 'secret.txt'), 'SECRET', 'utf-8');
     registry.register({ slug: 'demo', folderPath: folder, sessionId: 's', cardMetadata: { title: 'D' } });
 
-    const r = await get('/s/demo/../secret.txt');
-    expect(r.status).toBe(404);
-    expect(r.body).not.toContain('SECRET');
+    // Use percent-encoded separators so the URL parser doesn't normalise the
+    // `..` segment away client-side. The handler is expected to decode the
+    // path and then reject anything that resolves outside `folderPath`.
+    const rPosix = await get('/s/demo/..%2Fsecret.txt');
+    expect(rPosix.handled).toBe(true);
+    expect(rPosix.status).toBe(404);
+    expect(rPosix.body).not.toContain('SECRET');
+
+    // Backslash-style traversal (Windows path separator). Must also be rejected
+    // — platforms vary, and the handler should defend against both.
+    const rWin = await get('/s/demo/..%5Csecret.txt');
+    expect(rWin.handled).toBe(true);
+    expect(rWin.status).toBe(404);
+    expect(rWin.body).not.toContain('SECRET');
   });
 
   it('sets a no-cache response for served files', async () => {

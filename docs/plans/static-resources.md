@@ -355,3 +355,5 @@ No new dependencies. Everything uses Node built-ins (`node:fs/promises`, `node:p
 - The remove tool unregisters, persists the new state, and re-emits the panel snapshot.
 - On `session_shutdown`, releases every registration owned by the session.
 - On `session_shutdown`, the persistence file is left on disk for the next session load to replay.
+
+**Review status:** approved
