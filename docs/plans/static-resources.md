@@ -514,7 +514,7 @@ In `server/src/session-manager.ts`:
 No behaviour change when `staticHostFactory` is undefined (preserves existing tests).
 
 **Verify:** `pnpm --filter @pimote/server vitest run src/session-manager.test.ts src/session-manager-open-session.test.ts` still passes.
-**Status:** not started
+**Status:** done
 
 ### Step 10: Wire the static-host bootstrap into `server/src/index.ts`
 
@@ -527,7 +527,7 @@ In `main()` of `server/src/index.ts`, after `FolderIndex` initialisation and bef
 5. Pass `staticHostRegistry` to `createServer(...)` as a new positional or options argument — see Step 11 for the signature change. Use an options bag if the positional list grows uncomfortable.
 
 **Verify:** `pnpm --filter @pimote/server build` succeeds (no type errors); server boots locally via `pnpm --filter @pimote/server dev` without runtime error.
-**Status:** not started
+**Status:** done
 
 ### Step 11: Slot the `/s/<slug>/` route into `server.ts`
 
@@ -547,7 +547,7 @@ In `server/src/server.ts`:
   Unknown slugs return 404 from the handler with `handled = true`, so they do not reach the SPA fallback — matching the architecture's "unknown slug 404, does not fall through" rule.
 
 **Verify:** `pnpm --filter @pimote/server vitest run` (full server test suite) is green. Manually `curl http://localhost:<port>/s/nonexistent/` returns 404; `curl http://localhost:<port>/unrelated` still serves the SPA shell.
-**Status:** not started
+**Status:** done
 
 ### Step 12: Render `Card.href` as a link in `Panel.svelte`
 

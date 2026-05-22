@@ -10,6 +10,7 @@ import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
+import { serveStaticHostRoute, type StaticHostRegistry } from './static-host/index.js';
 import crypto from 'node:crypto';
 import type { VersionMismatchEvent } from '../../shared/dist/index.js';
 
@@ -107,6 +108,7 @@ export async function createServer(
   pushNotificationService: PushNotificationService,
   sessionMetadataStore: FileSessionMetadataStore,
   voiceOrchestrator: VoiceOrchestrator | undefined,
+  staticHostRegistry: StaticHostRegistry,
 ): Promise<PimoteServer> {
   const clientVersion = await loadClientVersion();
   if (clientVersion) {
@@ -133,6 +135,13 @@ export async function createServer(
     if (req.method === 'GET') {
       const served = await serveStatic(req, res);
       if (served) return;
+    }
+
+    // 3b. Static-host route — /s/<slug>/* serves agent-registered bundles.
+    // Unknown slugs return 404 from the handler and do NOT fall through to the SPA.
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      const handled = await serveStaticHostRoute(req, res, staticHostRegistry);
+      if (handled) return;
     }
 
     // 4. SPA fallback — serve index.html for unmatched GET routes

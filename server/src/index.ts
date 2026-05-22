@@ -6,9 +6,10 @@ import { PimoteSessionManager } from './session-manager.js';
 import { FolderIndex } from './folder-index.js';
 import { PushNotificationService } from './push-notification.js';
 import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore } from './push-infrastructure.js';
-import { LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_SESSION_METADATA_PATH } from './paths.js';
+import { LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_SESSION_METADATA_PATH, PIMOTE_STATIC_HOST_DIR } from './paths.js';
 import { FileSessionMetadataStore } from './session-metadata.js';
 import { buildVoiceOrchestrator } from './voice-orchestrator-boot.js';
+import { InMemoryStaticHostRegistry, FileStaticHostStore, gcStaticHostStore, createStaticHostExtension } from './static-host/index.js';
 
 export interface StartOptions {
   portOverride?: number;
@@ -33,7 +34,26 @@ export async function main(options: StartOptions = {}) {
   const sessionMetadataStore = new FileSessionMetadataStore(PIMOTE_SESSION_METADATA_PATH);
   await sessionMetadataStore.initialize();
 
-  const sessionManager = new PimoteSessionManager(config, pushNotificationService);
+  // Static-host bootstrap: GC orphan persistence files, then construct the
+  // registry/store/factory singletons shared by the session manager and the
+  // HTTP route handler. The registry is process-lifetime; sessions register
+  // and unregister against it as they load and shut down.
+  const validSessionIds = new Set<string>();
+  try {
+    const folders = await folderIndex.scan();
+    for (const folder of folders) {
+      const records = await folderIndex.listSessionRecords(folder.path);
+      for (const rec of records) validSessionIds.add(rec.id);
+    }
+  } catch (err) {
+    console.warn('[pimote] static-host GC: failed to enumerate sessions, skipping sweep', err);
+  }
+  await gcStaticHostStore({ storeDir: PIMOTE_STATIC_HOST_DIR, validSessionIds });
+  const staticHostRegistry = new InMemoryStaticHostRegistry();
+  const staticHostStore = new FileStaticHostStore(PIMOTE_STATIC_HOST_DIR);
+  const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore });
+
+  const sessionManager = new PimoteSessionManager(config, pushNotificationService, { staticHostFactory });
 
   // Build the voice orchestrator before createServer so each WsHandler can be
   // handed a reference. The orchestrator needs a client-registry lookup, but
@@ -53,7 +73,7 @@ export async function main(options: StartOptions = {}) {
     console.log('[voice] dormant: voice config absent (set voice.speechmuxSignalUrl and voice.speechmuxLlmWsUrl to enable)');
   }
 
-  const server = await createServer(config, sessionManager, folderIndex, pushNotificationService, sessionMetadataStore, voiceBoot?.orchestrator);
+  const server = await createServer(config, sessionManager, folderIndex, pushNotificationService, sessionMetadataStore, voiceBoot?.orchestrator, staticHostRegistry);
   clientRegistryRef.current = server.clientRegistry;
 
   if (voiceBoot) {

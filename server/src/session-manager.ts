@@ -239,12 +239,16 @@ export class PimoteSessionManager {
    *  (e.g. `VoiceOrchestrator.endCall`) while the session is still addressable. */
   onBeforeSessionClose?: (sessionId: string, folderPath: string) => Promise<void> | void;
 
+  private readonly staticHostFactory?: ExtensionFactory;
+
   constructor(
     private readonly config: PimoteConfig,
     private readonly pushNotificationService: PushNotificationService,
+    options: { staticHostFactory?: ExtensionFactory } = {},
   ) {
     this.authStorage = AuthStorage.create();
     this.modelRegistry = ModelRegistry.create(this.authStorage);
+    this.staticHostFactory = options.staticHostFactory;
   }
 
   /**
@@ -282,6 +286,8 @@ export class PimoteSessionManager {
     const effectiveFolderPath = sessionFilePath ? sessionManager.getCwd() : folderPath;
 
     const voiceExtensionFactory = this.buildVoiceExtensionFactory();
+    const staticHostFactory = this.staticHostFactory;
+    const extensionFactories = [...(voiceExtensionFactory ? [voiceExtensionFactory] : []), ...(staticHostFactory ? [staticHostFactory] : [])];
 
     const factory: CreateAgentSessionRuntimeFactory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
       const eventBus = createEventBus();
@@ -294,7 +300,7 @@ export class PimoteSessionManager {
         modelRegistry: sharedModelRegistry,
         resourceLoaderOptions: {
           eventBus,
-          ...(voiceExtensionFactory ? { extensionFactories: [voiceExtensionFactory] } : {}),
+          ...(extensionFactories.length ? { extensionFactories } : {}),
         },
       });
 
