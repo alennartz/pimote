@@ -357,3 +357,222 @@ No new dependencies. Everything uses Node built-ins (`node:fs/promises`, `node:p
 - On `session_shutdown`, the persistence file is left on disk for the next session load to replay.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Implement `InMemoryStaticHostRegistry`
+
+Fill in the stubbed methods in `server/src/static-host/registry.ts`. Back the implementation with the existing `bySlug: Map<string, StaticHostRegistration>` and `bySession: Map<string, Set<string>>` fields.
+
+- `register`: throw if `bySlug.has(reg.slug)`; otherwise insert into both maps (create the session's `Set` lazily).
+- `unregister`: look up the entry, delete from `bySlug`, remove the slug from the session's `Set`, drop the session entry if its set becomes empty.
+- `unregisterAllForSession`: iterate the session's `Set` (if any) deleting each slug from `bySlug`, then drop the session entry.
+- `lookup` / `has`: direct `bySlug` reads.
+- `listForSession`: map the session's `Set` (if any) through `bySlug.get`; return `[]` for unknown sessions.
+
+No new files.
+
+**Verify:** `pnpm --filter @pimote/server vitest run src/static-host/registry.test.ts` passes.
+**Status:** not started
+
+### Step 2: Implement `FileStaticHostStore`
+
+Fill in the stubbed methods in `server/src/static-host/store.ts`. Use `node:fs/promises` and follow the atomic-write pattern from `server/src/session-metadata.ts` (write to `<path>.tmp` then `rename`).
+
+- File path: `join(this.storeDir, `${sessionId}.json`)`.
+- `read`: `readFile` → `JSON.parse`. Treat `ENOENT` as `undefined`. Propagate `SyntaxError` (so corrupt files reject).
+- `write`: `mkdir(storeDir, { recursive: true })`, write to `<path>.tmp`, `rename` to final path. Serialize with `JSON.stringify(file, null, 2) + '\n'`.
+- `remove`: `unlink`; swallow `ENOENT`.
+
+No new files.
+
+**Verify:** `pnpm --filter @pimote/server vitest run src/static-host/store.test.ts` passes.
+**Status:** not started
+
+### Step 3: Implement `gcStaticHostStore`
+
+Fill in `server/src/static-host/gc.ts`.
+
+- `readdir(storeDir)`; on `ENOENT` return immediately.
+- For each entry: skip if it doesn't end in `.json`; derive `sessionId = name.slice(0, -'.json'.length)`; if `!validSessionIds.has(sessionId)`, `unlink(join(storeDir, name))` (swallow `ENOENT`).
+- Non-file entries (subdirectories, other extensions) are left alone — selection is by `.json` suffix, not by `stat`.
+
+**Verify:** `pnpm --filter @pimote/server vitest run src/static-host/gc.test.ts` passes.
+**Status:** not started
+
+### Step 4: Implement `validateSlug` and `resolveSlugCollision`
+
+Fill in the two pure helpers in `server/src/static-host/tools.ts`.
+
+- `validateSlug`: return `slug` if it matches `/^[a-z0-9]+(?:-[a-z0-9]+)*$/` and `slug.length <= 64`, else `null`. (The regex rejects empty, leading/trailing dashes, uppercase, whitespace, `/`, `.`, and non-ASCII in one shot.)
+- `resolveSlugCollision`: if `!registry.has(slug)` return `slug`; otherwise iterate `i = 2, 3, ...` returning the first `${slug}-${i}` that `!registry.has`. No upper bound needed for tests; the loop terminates because the registry is finite.
+
+**Verify:** `validateSlug` and `resolveSlugCollision` describe blocks of `src/static-host/tools.test.ts` pass.
+**Status:** not started
+
+### Step 5: Implement `executeRegisterTool` and `executeRemoveTool`
+
+Fill in the tool body functions in `server/src/static-host/tools.ts`. Both rely on `ToolDeps` for `registry`, `store`, `sessionId`, `emitPanelCards`.
+
+`executeRegisterTool(input, deps)`:
+
+1. Validate slug via `validateSlug`; throw on null.
+2. `stat(input.folder)`; throw if it doesn't exist or isn't a directory.
+3. `stat(join(input.folder, 'index.html'))`; throw if missing/not a file.
+4. `resolved = resolveSlugCollision(input.slug, deps.registry)`.
+5. Read current entries via `deps.store.read(deps.sessionId)` (default to `{ version: 1, entries: [] }`); push the new entry `{ slug: resolved, folderPath: input.folder, cardMetadata: { title, ...(tag !== undefined ? { tag } : {}), ...(color !== undefined ? { color } : {}) } }`.
+6. `await deps.store.write(deps.sessionId, { version: 1, entries })`.
+7. `deps.registry.register({ slug: resolved, folderPath: input.folder, sessionId: deps.sessionId, cardMetadata })`.
+8. `deps.emitPanelCards()`.
+9. Return `{ slug: resolved, url: `/s/${resolved}/` }`.
+
+Validation failures (steps 1–3) must throw before any state mutation — emission, registry, and store are untouched.
+
+`executeRemoveTool(input, deps)`:
+
+1. Look up `deps.registry.lookup(input.slug)`. If `undefined` or `sessionId !== deps.sessionId`, return `{ removed: false }`.
+2. Read current entries from `deps.store.read(deps.sessionId)` (treat absent file as empty). Filter out the slug.
+3. `await deps.store.write(deps.sessionId, { version: 1, entries: filtered })`.
+4. `deps.registry.unregister(input.slug)`.
+5. `deps.emitPanelCards()`.
+6. Return `{ removed: true }`.
+
+**Verify:** `pnpm --filter @pimote/server vitest run src/static-host/tools.test.ts` passes.
+**Status:** not started
+
+### Step 6: Implement `serveStaticHostRoute`
+
+Fill in `server/src/static-host/http-handler.ts`. Reuse the existing MIME table approach from `server/src/server.ts` (extract a small const `MIME_TYPES` in this file — duplicating is fine; the architecture says "align", not "share").
+
+Algorithm:
+
+1. Only handle `GET` and `HEAD`. For other methods, return `false` (fall-through).
+2. Parse the URL pathname (`new URL(req.url ?? '', 'http://x').pathname`).
+3. Match against `/^\/s\/([a-z0-9-]+)(?:\/(.*))?$/`. Require the trailing slash after the slug — `/s/foo` (no slash, no remainder) returns `false` so the SPA falls through, per the `falls through for /s` test. `/s/foo/` matches with empty remainder.
+4. `registry.lookup(slug)` → undefined: write `404`, return `true`.
+5. Decode the remainder via `decodeURIComponent` (in a try/catch — malformed encoding → 404, return `true`).
+6. Reject any decoded segment containing `\\`, a NUL byte, or a `..` path segment _before_ resolving (defence-in-depth for the Windows-separator traversal test).
+7. `resolved = path.resolve(folderPath, decoded)`. Reject (404) if `resolved !== folderPath && !resolved.startsWith(folderPath + path.sep)`.
+8. `stat(resolved)`. If directory, append `index.html` and re-stat. Missing → 404.
+9. Set headers: `Content-Type` from extension (fallback `application/octet-stream`); `Cache-Control: no-cache, no-store, must-revalidate`. Stream the file via `createReadStream` piped into `res`. Return `true`.
+
+Return `true` whenever a response is written; `false` only on prefix mismatch / wrong method.
+
+**Verify:** `pnpm --filter @pimote/server vitest run src/static-host/http-handler.test.ts` passes.
+**Status:** not started
+
+### Step 7: Author the register-tool prompt text
+
+Create `server/src/static-host/prompt.ts` exporting `export const STATIC_HOST_TOOL_DESCRIPTION: string` containing the verbatim description text from the architecture section (the multi-paragraph block covering use cases, the responsive-layout mandate with 360px/1440px breakpoints, the no-secrets rule, and the workflow note). The string must be long enough that `length > 200` and contain the substrings `responsive` and `secret` (case-insensitive) — the `index.test.ts` description test asserts this.
+
+**Verify:** file exists, exports the constant; covered indirectly by Step 8.
+**Status:** not started
+
+### Step 8: Implement `createStaticHostExtension`
+
+Fill in `server/src/static-host/index.ts` `createStaticHostExtension({ registry, store })`. Return an `ExtensionFactory` — a function `(pi: ExtensionAPI) => void | Promise<void>`.
+
+Inside the factory:
+
+- Maintain a per-session in-memory list keyed by `sessionId`: `const sessionEntries = new Map<string, StaticHostStoreEntry[]>()`.
+- Helper `emitPanelCards(pi, sessionId)`: build `cards: Card[]` from `sessionEntries.get(sessionId) ?? []` — one card per entry with `id: entry.slug`, `header: { title: entry.cardMetadata.title, tag: entry.cardMetadata.tag }`, `color: entry.cardMetadata.color`, `href: `/s/${entry.slug}/``. Emit `pi.events.emit('pimote:panels', { type: 'cards', namespace: 'static-host', cards })`.
+- Helper `toolDeps(pi, sessionId): ToolDeps` building `{ registry, store, sessionId, emitPanelCards: () => emitPanelCards(pi, sessionId) }` — but with the wrinkle that `executeRegisterTool` / `executeRemoveTool` own the store write and call `registry.register/unregister`. The extension's local `sessionEntries` cache must be kept in sync — after a successful tool call, re-read `store.read(sessionId)` and write the result into `sessionEntries` before emitting. Alternative shape: don't cache; let `emitPanelCards` always derive from `registry.listForSession(sessionId)` instead. **Use the registry-derived shape** — it's simpler and the tests don't constrain caching.
+- Register two tools via `pi.registerTool({...})`:
+  - `pimote_static_host` with the `STATIC_HOST_TOOL_DESCRIPTION` from Step 7, an input schema describing `{ slug, folder, title, tag?, color? }`, and an `execute(_callId, input, _abort, _meta, ctx)` that resolves `sessionId = ctx.sessionManager.getSessionId()` and calls `executeRegisterTool(input, toolDeps(pi, sessionId))`.
+  - `pimote_static_host_remove` with input `{ slug }`, executing `executeRemoveTool(input, toolDeps(pi, sessionId))`.
+- Register lifecycle handlers via `pi.on(...)`:
+  - `pi.on('session_start', async (_ev, ctx) => { ... })`: `sessionId = ctx.sessionManager.getSessionId()`; `file = await store.read(sessionId)`; for each persisted entry, `registry.register({ slug: entry.slug, folderPath: entry.folderPath, sessionId, cardMetadata: entry.cardMetadata })`; then `emitPanelCards(pi, sessionId)`. If `file` is undefined, do nothing.
+  - `pi.on('session_shutdown', async (_ev, ctx) => { registry.unregisterAllForSession(ctx.sessionManager.getSessionId()); })`. Do **not** call `store.remove` — the file must survive shutdown for the next boot to replay.
+
+Export signature stays:
+
+```ts
+export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions): ExtensionFactory;
+```
+
+**Verify:** `pnpm --filter @pimote/server vitest run src/static-host/index.test.ts` passes; full `pnpm --filter @pimote/server vitest run src/static-host/` is green.
+**Status:** not started
+
+### Step 9: Thread the static-host factory through `PimoteSessionManager`
+
+In `server/src/session-manager.ts`:
+
+- Add a constructor option / field for an optional `staticHostFactory: ExtensionFactory`. The factory is built in `server/src/index.ts` (Step 10) and injected — `PimoteSessionManager` does not know about `StaticHostRegistry` directly.
+- In `openSession`, after the `voiceExtensionFactory` line, append the static-host factory to the `extensionFactories` array when present. The merged construction looks like:
+
+  ```ts
+  const extensionFactories = [
+    ...(voiceExtensionFactory ? [voiceExtensionFactory] : []),
+    ...(this.staticHostFactory ? [this.staticHostFactory] : []),
+  ];
+  // ...
+  resourceLoaderOptions: { eventBus, ...(extensionFactories.length ? { extensionFactories } : {}) },
+  ```
+
+No behaviour change when `staticHostFactory` is undefined (preserves existing tests).
+
+**Verify:** `pnpm --filter @pimote/server vitest run src/session-manager.test.ts src/session-manager-open-session.test.ts` still passes.
+**Status:** not started
+
+### Step 10: Wire the static-host bootstrap into `server/src/index.ts`
+
+In `main()` of `server/src/index.ts`, after `FolderIndex` initialisation and before `createServer`:
+
+1. Import `PIMOTE_STATIC_HOST_DIR` from `./paths.js` and `{ InMemoryStaticHostRegistry, FileStaticHostStore, gcStaticHostStore, createStaticHostExtension }` from `./static-host/index.js`.
+2. `await gcStaticHostStore({ storeDir: PIMOTE_STATIC_HOST_DIR, validSessionIds: new Set(folderIndex.getAllSessionIds()) })` — pick the existing FolderIndex accessor that returns known sessionIds; read `folder-index.ts` to confirm its exact name and substitute if different.
+3. Construct `const staticHostRegistry = new InMemoryStaticHostRegistry();` and `const staticHostStore = new FileStaticHostStore(PIMOTE_STATIC_HOST_DIR);`.
+4. Build `const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore });` and pass it to `new PimoteSessionManager(config, pushNotificationService, { staticHostFactory })` (matching the constructor option added in Step 9).
+5. Pass `staticHostRegistry` to `createServer(...)` as a new positional or options argument — see Step 11 for the signature change. Use an options bag if the positional list grows uncomfortable.
+
+**Verify:** `pnpm --filter @pimote/server build` succeeds (no type errors); server boots locally via `pnpm --filter @pimote/server dev` without runtime error.
+**Status:** not started
+
+### Step 11: Slot the `/s/<slug>/` route into `server.ts`
+
+In `server/src/server.ts`:
+
+- Add `staticHostRegistry: StaticHostRegistry` to `createServer`'s parameter list (or an options bag if you cut over in Step 10).
+- Import `serveStaticHostRoute` from `./static-host/index.js`.
+- In the request handler, insert the route **between** the existing static-file lookup (step 3) and the SPA fallback (step 4):
+
+  ```ts
+  if (req.method === 'GET') {
+    const handled = await serveStaticHostRoute(req, res, staticHostRegistry);
+    if (handled) return;
+  }
+  ```
+
+  Unknown slugs return 404 from the handler with `handled = true`, so they do not reach the SPA fallback — matching the architecture's "unknown slug 404, does not fall through" rule.
+
+**Verify:** `pnpm --filter @pimote/server vitest run` (full server test suite) is green. Manually `curl http://localhost:<port>/s/nonexistent/` returns 404; `curl http://localhost:<port>/unrelated` still serves the SPA shell.
+**Status:** not started
+
+### Step 12: Render `Card.href` as a link in `Panel.svelte`
+
+Update `client/src/lib/components/Panel.svelte`. Wrap the existing card body so the root element becomes `<a href={card.href}>` when `card.href` is set, and remains the existing `<div>` otherwise. Keep all existing classes on whichever root renders; add `cursor-pointer hover:bg-muted/50` (or matching idiom in the existing codebase — grep for existing hover styles before picking) to the anchor variant for affordance. Same-tab navigation (no `target`, no `rel`).
+
+The cleanest Svelte 5 shape is a small `{#if card.href}<a href={card.href} class="...">...inner...</a>{:else}<div class="...">...inner...</div>{/if}` with the card contents extracted into a `{#snippet}` to avoid duplication. Read the surrounding Svelte to match the project's conventions before committing to that exact shape.
+
+**Verify:** `pnpm --filter pimote-client build` succeeds. Manual: register a bundle via the agent tool and confirm tapping the card navigates to `/s/<slug>/`.
+**Status:** not started
+
+### Step 13: Ensure the client SW does not interfere with `/s/*`
+
+Review `client/src/sw.ts`. The current fetch handler only intercepts `POST /_share`, and `precacheAndRoute(self.__WB_MANIFEST)` matches only manifest URLs — `/s/*` is dynamic and won't be in the manifest, so it already passes through to the network. **No code change is required** unless investigation finds otherwise.
+
+If future investigation surfaces interference (e.g. workbox-precaching's navigation route swallowing `/s/*`), add an explicit early-return in the `fetch` listener for paths starting with `/s/` — return without calling `event.respondWith` so the request goes to network unmodified. Document the change with a comment referencing this plan.
+
+**Verify:** With the SW active, `fetch('/s/<slug>/')` from devtools network panel shows the request hits the server (not served from cache).
+**Status:** not started
+
+### Step 14: Full build and integration sanity check
+
+Run the full workspace build and tests:
+
+- `pnpm -r build`
+- `pnpm -r test` (or `pnpm -r vitest run`)
+
+Then manually exercise the flow: start the server, open the client, drive an agent session to call `pimote_static_host` against a small folder containing `index.html`, confirm a clickable card appears in the panel, tap it, see the bundle render. Restart the server and confirm the card replays from persistence on the next session load. Call `pimote_static_host_remove` and confirm the card vanishes and the bundle 404s.
+
+**Verify:** all of the above succeed; no console errors during the round-trip.
+**Status:** not started
