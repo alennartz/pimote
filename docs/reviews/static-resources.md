@@ -24,6 +24,7 @@ The `try { ... } catch (err) { console.warn(...); }` around `folderIndex.scan()`
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/static-host/tools.ts:96-149` (`executeRegisterTool`)
+- **Status:** dismissed — pi serializes tool calls per session in practice, so the abstract race isn't reachable. A code comment now documents that per-session serialization is the assumption, so a future reader doesn't introduce concurrency without revisiting this.
 
 `executeRegisterTool` performs `store.read` → mutate → `await store.write` → `registry.register`, with `await`s between the read and the register call. Two concurrent invocations in the same session can both observe the same `existing` snapshot, both resolve their slug against the (synchronous) registry, then both write — the second write loses the first entry from disk while the registry still holds it. If they resolve to the same slug, `registry.register` throws on the second invocation. The remove tool has the same structural shape. The pi tool runtime may serialize tool calls per session in practice, but the function itself doesn't guarantee it. Either add a per-session lock or derive the entry list from `registry.listForSession(sessionId)` rather than re-reading the store.
 
@@ -59,6 +60,7 @@ Replay does `registry.register(...)` per persisted entry. `register` throws if t
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `server/src/static-host/index.ts:42`
+- **Status:** dismissed — intentional. Namespacing the card id (`static-host:<slug>`) is defence-in-depth against future panel-source collisions and consistent with how other panel emitters scope their IDs. Plan can be considered approximate; the implementation choice stands.
 
 Plan Step 8 specifies `id: entry.slug`; the implementation uses `id: \`static-host:${entry.slug}\``. Defensible — it namespaces the card id away from other panel sources — and tests are green, but it's a literal deviation worth noting.
 
@@ -85,6 +87,7 @@ The tool schema declares `color` as a free string; the architecture specifies `C
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `server/src/session-manager.ts:172,313`
+- **Status:** dismissed — the plan's "always enabled" describes production wiring, not a type-level requirement. Optional-in-type for test-fixture ergonomics is the right trade-off; no factory rewrite needed.
 
 Architecture says the factory is "always enabled (no config gate)". In practice `server/src/index.ts` always passes it; the optionality exists to keep pre-existing session-manager tests green without rewriting their fixtures. Behavior matches intent; flagging only as a literal-wording drift.
 

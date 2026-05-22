@@ -82,6 +82,13 @@ export function resolveSlugCollision(slug: string, registry: StaticHostRegistry)
  * On success: updates the in-memory list for the session, atomically rewrites
  * the persistence file, calls `registry.register(...)`, and emits the panel
  * snapshot.
+ *
+ * Concurrency assumption: pi serializes tool calls within a single session,
+ * so the read-modify-write sequence on `store` here is safe. If that ever
+ * changes (parallel tool execution per session), this body must be revisited
+ * — the existing read/write pair would race and the registry/disk could
+ * desync. Re-derive entries from `registry.listForSession(sessionId)` after
+ * `registry.register`, or add a per-session lock.
  */
 export async function executeRegisterTool(input: RegisterToolInput, deps: ToolDeps): Promise<RegisterToolOutput> {
   const validSlug = validateSlug(input.slug);
@@ -141,6 +148,10 @@ export async function executeRegisterTool(input: RegisterToolInput, deps: ToolDe
 /**
  * Execute the `pimote_static_host_remove` tool body. Returns `{ removed: false }`
  * when the slug is not owned by this session.
+ *
+ * Concurrency assumption: same as `executeRegisterTool` — relies on pi's
+ * per-session serialization of tool calls. If that changes, this body must
+ * be revisited.
  */
 export async function executeRemoveTool(input: RemoveToolInput, deps: ToolDeps): Promise<RemoveToolOutput> {
   const existing = deps.registry.lookup(input.slug);
