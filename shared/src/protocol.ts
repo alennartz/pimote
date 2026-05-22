@@ -126,6 +126,12 @@ export interface Card {
   };
   body?: BodySection[];
   footer?: string[];
+  /**
+   * Optional same-origin URL. When present, the client renders the entire
+   * card as a clickable link (same-tab navigation). No server-side validation
+   * — any string is allowed; the consumer is responsible for using a sane URL.
+   */
+  href?: string;
 }
 
 // ----------------------------------------------------------------------------

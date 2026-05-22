@@ -253,3 +253,105 @@ HTTP GET /s/<slug>/<path>:
 ## Technology Choices
 
 No new dependencies. Everything uses Node built-ins (`node:fs/promises`, `node:path`, `node:http`, `node:crypto` for nothing — slug comes from the agent). MIME detection: use the existing approach in `serveStatic` (read `server/src/server.ts` to confirm and align).
+
+## Tests
+
+**Pre-test-write commit:** `c2492401cd57ac2a95b12c073eb979b1a5c70749`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — added optional `href?: string` to `Card`.
+- `packages/panels/src/types.ts` — added optional `href?: string` to `Card` (kept in lock-step with protocol).
+- `server/src/paths.ts` — added `PIMOTE_STATIC_HOST_DIR` constant.
+- `server/src/static-host/registry.ts` — `StaticHostRegistration`, `StaticHostCardMetadata`, `StaticHostRegistry` interface, `InMemoryStaticHostRegistry` class (stubbed).
+- `server/src/static-host/store.ts` — `StaticHostStoreEntry`, `StaticHostStoreFile`, `StaticHostStore` interface, `FileStaticHostStore` class (stubbed).
+- `server/src/static-host/gc.ts` — `gcStaticHostStore({ storeDir, validSessionIds })` boot-time GC function (stubbed).
+- `server/src/static-host/http-handler.ts` — `serveStaticHostRoute(req, res, registry)` HTTP route handler (stubbed).
+- `server/src/static-host/tools.ts` — `RegisterToolInput/Output`, `RemoveToolInput/Output`, `ToolDeps`, `validateSlug`, `resolveSlugCollision`, `executeRegisterTool`, `executeRemoveTool` (stubbed).
+- `server/src/static-host/index.ts` — public exports, `CreateStaticHostExtensionOptions`, `createStaticHostExtension(opts)` extension factory builder (stubbed).
+
+### Test Files
+
+- `server/src/static-host/registry.test.ts` — behavior of the in-memory registry: register/lookup/has/unregister, dup-throw, per-session removal, list-by-session.
+- `server/src/static-host/store.test.ts` — file-store round-trip, overwrite, dir-auto-create, atomic write (no `.tmp` leak), remove (existing + missing), corrupt-JSON rejection, per-session file naming.
+- `server/src/static-host/gc.test.ts` — GC deletes orphan files, keeps live ones, tolerates missing dir, leaves unrelated files alone.
+- `server/src/static-host/tools.test.ts` — slug validation, collision resolution, register success path (registry + store + panel emit + url shape), validation failures (bad slug, missing folder, no index.html), remove (owned / unknown / cross-session).
+- `server/src/static-host/http-handler.test.ts` — index.html serving, nested asset MIME, subdirectory → index.html, unknown-slug 404 (no fall-through), prefix-mismatch fall-through, missing file 404, traversal rejection, no-cache headers.
+- `server/src/static-host/index.test.ts` — extension factory wiring against a fake `ExtensionAPI`: tool registration, register-tool description content, session_start replay, register/remove tool happy paths emit panel cards with `href`, session_shutdown releases the session, persistence file survives shutdown.
+
+### Behaviors Covered
+
+#### `Card.href` (protocol + panels)
+
+- `href` is an optional string field on both `Card` types; existing consumers that don't set it continue to compile.
+
+#### `InMemoryStaticHostRegistry`
+
+- Registering a slug makes it retrievable via `lookup` and `has`.
+- Unknown slugs are absent from `lookup` and `has`.
+- Registering a duplicate slug throws.
+- A slug can be re-registered after `unregister`.
+- `unregister` removes a registration; unknown slugs are a no-op.
+- `unregisterAllForSession` removes every registration owned by that session and only those.
+- `listForSession` returns the full set owned by a session, or `[]` for unknown sessions.
+
+#### `FileStaticHostStore`
+
+- `read` returns `undefined` when no file exists for the session.
+- `write` then `read` round-trips entries verbatim, including optional `tag`/`color`.
+- `write` overwrites prior state for the same session.
+- `write` creates the storage directory tree if missing.
+- `write` is atomic — no `.tmp` siblings remain after a successful write.
+- `remove` deletes an existing file; missing files are a no-op.
+- `read` of a corrupt JSON file rejects rather than silently returning data.
+- Files are stored one-per-session as `<sessionId>.json`.
+
+#### `gcStaticHostStore`
+
+- Deletes `<sessionId>.json` files whose sessionId is not in `validSessionIds`.
+- Keeps files whose sessionId is in `validSessionIds`.
+- Tolerates a missing store directory (no throw, no work).
+- Empty `validSessionIds` deletes every json file.
+- Leaves unrelated non-json files (and subdirectories) alone.
+
+#### Tools — `validateSlug` / `resolveSlugCollision`
+
+- Accepts lowercase alphanumeric + hyphen slugs without leading/trailing dashes.
+- Rejects empty strings, leading/trailing dashes, uppercase, whitespace, path separators, dots, non-ASCII, and over-length slugs.
+- `resolveSlugCollision` returns the input slug when free; otherwise appends `-2`, `-3`, ... until free.
+
+#### Tools — `executeRegisterTool`
+
+- Valid input registers the bundle, persists it to the per-session store, emits a panel-card snapshot, and returns `{ slug, url: "/s/<slug>/" }`.
+- `cardMetadata` (including optional `tag`/`color`) is persisted as provided.
+- Slug collisions are resolved before registering — the returned `slug` reflects the suffixed value.
+- Rejects invalid slugs, missing folders, and folders without `index.html`.
+- A validation failure does not mutate the registry, the store, or emit a panel update.
+
+#### Tools — `executeRemoveTool`
+
+- Removing an entry owned by the session reports `removed: true`, drops it from the registry, persists the new state, and re-emits the panel snapshot.
+- Returns `removed: false` for unknown slugs.
+- Returns `removed: false` for slugs owned by a different session, and does not mutate the registration.
+
+#### `serveStaticHostRoute`
+
+- `/s/<slug>/` serves the bundle's `index.html` with an HTML content-type.
+- Nested asset requests are served with content-type inferred from the file extension.
+- A request whose path resolves to a subdirectory is served the subdirectory's `index.html`.
+- Unknown slugs return 404 and the handler reports "handled" (does NOT fall through to the SPA).
+- Paths that don't match the `/s/<slug>/` prefix return "not handled" (caller falls through).
+- Missing files inside a registered bundle return 404.
+- Path-traversal attempts that resolve outside the bundle folder return 404 and never expose external content.
+- Successful responses set a no-cache `Cache-Control` header.
+
+#### `createStaticHostExtension`
+
+- Registers exactly two tools: `pimote_static_host` and `pimote_static_host_remove`.
+- The register tool carries a substantive description covering responsive layout and the no-secrets rule.
+- On `session_start`, replays persisted entries for the session into the registry and emits a panel-card snapshot.
+- On `session_start` with no persisted file, completes without error and leaves the registry untouched.
+- The register tool registers, persists, and emits a panel card whose `href` matches `/s/<slug>/`.
+- The remove tool unregisters, persists the new state, and re-emits the panel snapshot.
+- On `session_shutdown`, releases every registration owned by the session.
+- On `session_shutdown`, the persistence file is left on disk for the next session load to replay.
