@@ -62,7 +62,7 @@ Pimote is published as the app package `@pimote/pimote` at the repo root, backed
 | **client**           | `client/`          | SvelteKit PWA (Svelte 5, Tailwind CSS, shadcn-svelte)                |
 | **`@pimote/panels`** | `packages/panels/` | Standalone library extensions can import to push card data to the UI |
 
-The `shared/` directory holds TypeScript types for the WebSocket wire protocol shared between server and client — it's a tsc-only project, not a published package. The voice-mode pi extension lives at `server/src/voice/` and is loaded into each session only when voice is configured (see [Voice mode](#voice-mode)).
+The `shared/` directory holds TypeScript types for the WebSocket wire protocol shared between server and client — it's a tsc-only project, not a published package. The voice-mode pi extension lives at `server/src/voice/` and is loaded into each session only when voice is configured (see [Voice mode](#voice-mode)). The static-host pi extension lives at `server/src/static-host/` and is loaded unconditionally — it exposes the `pimote_static_host` / `pimote_static_host_remove` agent tools that publish a local folder under `/s/<slug>/` and push a tappable card to the panel UI.
 
 A separate **native Android client** lives at `mobile/android/` — a voice-first Kotlin app that integrates with Android Auto via `SelfManagedConnectionService`, and exposes your projects as Android system contacts so they're callable by name from Google Assistant / Gemini ("Hey Google, call <project>") and from the dialer's name search. Independent Gradle project, Docker-based build (`make android-test` / `make android-build`), not part of the npm workspace; speaks the same WebSocket protocol as the PWA. See `mobile/android/README.md`.
 
@@ -114,9 +114,11 @@ Pimote bridges all of pi's UI extension mechanisms over WebSocket:
 
 - **Dialogs** — select (inline with keyboard shortcuts), confirm, text input, and multi-line code editor (CodeMirror with syntax highlighting)
 - **Status bar** — live status entries from extensions
-- **Panels** — structured card data pushed by extensions, displayed in a side panel (desktop) or overlay (mobile)
+- **Panels** — structured card data pushed by extensions, displayed in a side panel (desktop) or overlay (mobile); cards may declare an `href` to render as a tappable link
 
 This means any pi extension that uses the standard UI APIs works in Pimote without modification.
+
+Pimote also ships an in-server pi extension that gives the agent two tools, `pimote_static_host` and `pimote_static_host_remove`, for publishing a local folder of static files (built PWA, report, demo, etc.) at `/s/<slug>/` on the same origin as the Pimote UI. Each registration emits a tappable panel card pointing at the bundle. Bundle registrations are persisted per session under `~/.local/state/pimote/static-host/` and garbage-collected on server boot.
 
 ### Multi-Device and Conflict Handling
 

@@ -76,6 +76,7 @@ interface Card {
   };
   body?: BodySection[];
   footer?: string[];
+  href?: string;
 }
 
 interface BodySection {
@@ -90,6 +91,10 @@ interface BodySection {
 - **`header.tag`** — Optional short label displayed next to the title.
 - **`body`** — Optional content sections, each with a style (`text`, `code`, or `secondary`).
 - **`footer`** — Optional array of short strings displayed at the bottom.
+- **`href`** — Optional same-origin URL. When set, the client renders the
+  entire card as a clickable link (same-tab navigation). Use for cards
+  that point at a hosted resource — e.g. a bundle served by pimote's
+  static-host tool.
 
 ## How it works
 
