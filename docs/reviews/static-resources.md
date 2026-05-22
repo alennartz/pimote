@@ -15,7 +15,7 @@ The plan was implemented faithfully across all 14 steps; tests are green (server
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `server/src/index.ts:41-52`
-- **Status:** open
+- **Status:** resolved
 
 The `try { ... } catch (err) { console.warn(...); }` around `folderIndex.scan()` / `listSessionRecords()` swallows errors and then proceeds to call `gcStaticHostStore({ ..., validSessionIds: new Set() })`. With an empty allow-list, GC deletes every `<sessionId>.json` for static-host. Any transient I/O hiccup (locked directory, EIO, partial filesystem readiness on slow disks) at boot will silently nuke all persisted bundles. The handler should bail out of `gcStaticHostStore` entirely on enumeration failure, not run it with an empty set.
 
@@ -32,6 +32,7 @@ The `try { ... } catch (err) { console.warn(...); }` around `folderIndex.scan()`
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/static-host/http-handler.ts:29,60-62`
+- **Status:** resolved
 
 `PREFIX_RE = /^\/s\/([a-z0-9-]+)(?:\/(.*))?$/` — the trailing-slash group is optional. `/s/foo` matches with an empty remainder, resolves to the folder, gets `index.html` appended, and serves the bundle. But the browser then resolves relative asset URLs against `/s/` instead of `/s/foo/`, so every asset 404s. The architecture and the in-file comment both claim the trailing slash is required; the regex disagrees. Verified empirically: `node -e "/^\/s\/([a-z0-9-]+)(?:\/(.*))?$/.exec('/s/foo')"` returns a match. Fix is either to tighten the regex to require the slash and 301-redirect `/s/foo` → `/s/foo/`, or to detect the no-remainder case and redirect.
 
@@ -40,6 +41,7 @@ The `try { ... } catch (err) { console.warn(...); }` around `folderIndex.scan()`
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/static-host/http-handler.ts:118-130`
+- **Status:** resolved
 
 After headers are written, `createReadStream(resolved)` is piped into `res`. If the read stream errors mid-pipe (file deleted between `stat` and stream open, EIO, client abort), the promise wrapping the pipe rejects and bubbles out of the async request handler — `server.ts`'s outer handler has no `.catch` around `serveStaticHostRoute`. Best case it's an `unhandledRejection`; worst case Node crashes on `--unhandled-rejections=strict`. Wrap the stream in a promise that resolves on `end` and `destroy`s the response (without re-throwing) on `error`.
 
@@ -48,6 +50,7 @@ After headers are written, `createReadStream(resolved)` is piped into `res`. If 
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/static-host/index.ts` (session_start handler)
+- **Status:** resolved
 
 Replay does `registry.register(...)` per persisted entry. `register` throws if the slug is already taken (e.g. two sessions persisted the same slug before GC, or another session reloaded earlier in the same boot). One conflict aborts the loop mid-replay, leaving the session partially loaded and skipping the `emitPanelCards` call. Should either skip-on-conflict with a `console.warn` or auto-suffix; either way the replay loop should be defensive.
 
@@ -64,6 +67,7 @@ Plan Step 8 specifies `id: entry.slug`; the implementation uses `id: \`static-ho
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `server/src/static-host/tools.ts:96-117`
+- **Status:** resolved
 
 Architecture specifies `folder` as an absolute path. `executeRegisterTool` checks existence/directory/index.html but not absoluteness. A relative path would resolve against `process.cwd()`, which is surprising and depends on where the agent process happens to be running. Cheap to add `if (!path.isAbsolute(input.folder)) throw ...`.
 
@@ -72,6 +76,7 @@ Architecture specifies `folder` as an absolute path. `executeRegisterTool` check
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/static-host/index.ts:79`
+- **Status:** resolved
 
 The tool schema declares `color` as a free string; the architecture specifies `CardColor` (a literal union). Arbitrary strings end up in `cardMetadata.color` and reach `Panel.svelte`'s `colorMap[card.color]` lookup, returning `undefined` and producing a broken Tailwind class. Constrain to the union in the schema or validate in `executeRegisterTool`.
 

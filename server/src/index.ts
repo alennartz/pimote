@@ -38,7 +38,7 @@ export async function main(options: StartOptions = {}) {
   // registry/store/factory singletons shared by the session manager and the
   // HTTP route handler. The registry is process-lifetime; sessions register
   // and unregister against it as they load and shut down.
-  const validSessionIds = new Set<string>();
+  let validSessionIds: Set<string> | null = new Set<string>();
   try {
     const folders = await folderIndex.scan();
     for (const folder of folders) {
@@ -46,9 +46,15 @@ export async function main(options: StartOptions = {}) {
       for (const rec of records) validSessionIds.add(rec.id);
     }
   } catch (err) {
-    console.warn('[pimote] static-host GC: failed to enumerate sessions, skipping sweep', err);
+    // Critical: do NOT run GC with an empty allow-list — that would delete
+    // every persisted bundle on a transient I/O hiccup at boot. Skip the
+    // sweep entirely and let the next clean boot reclaim orphans.
+    console.warn('[pimote] static-host GC: failed to enumerate sessions, skipping sweep this boot', err);
+    validSessionIds = null;
   }
-  await gcStaticHostStore({ storeDir: PIMOTE_STATIC_HOST_DIR, validSessionIds });
+  if (validSessionIds) {
+    await gcStaticHostStore({ storeDir: PIMOTE_STATIC_HOST_DIR, validSessionIds });
+  }
   const staticHostRegistry = new InMemoryStaticHostRegistry();
   const staticHostStore = new FileStaticHostStore(PIMOTE_STATIC_HOST_DIR);
   const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore });

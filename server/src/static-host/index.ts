@@ -80,7 +80,11 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
         folder: Type.String({ description: 'Absolute path to the folder containing the bundle (must contain index.html).' }),
         title: Type.String({ description: 'Title displayed on the panel card.' }),
         tag: Type.Optional(Type.String({ description: 'Optional short tag shown next to the title.' })),
-        color: Type.Optional(Type.String({ description: 'Optional card color.' })),
+        color: Type.Optional(
+          Type.Union([Type.Literal('accent'), Type.Literal('success'), Type.Literal('warning'), Type.Literal('error'), Type.Literal('muted')], {
+            description: 'Optional card color.',
+          }),
+        ),
       }),
       execute: async (_callId: string, input: RegisterToolInput, _abort: unknown, _meta: unknown, ctx: ExtensionContext) => {
         const sessionId = ctx.sessionManager.getSessionId();
@@ -108,12 +112,20 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
       const file = await store.read(sessionId);
       if (!file) return;
       for (const entry of file.entries) {
-        registry.register({
-          slug: entry.slug,
-          folderPath: entry.folderPath,
-          sessionId,
-          cardMetadata: entry.cardMetadata,
-        });
+        try {
+          registry.register({
+            slug: entry.slug,
+            folderPath: entry.folderPath,
+            sessionId,
+            cardMetadata: entry.cardMetadata,
+          });
+        } catch (err) {
+          // Defensive: a slug conflict (e.g. two sessions persisted the same
+          // slug, or another session reloaded earlier this boot) must not
+          // abort the whole replay loop and leave the session partially
+          // loaded. Skip the conflicting entry and continue.
+          console.warn(`[static-host] session_start: skipping persisted entry ${entry.slug} for session ${sessionId}`, err);
+        }
       }
       emitPanelCards(pi, sessionId);
     });

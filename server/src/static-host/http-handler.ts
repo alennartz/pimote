@@ -26,7 +26,12 @@ const MIME_TYPES: Record<string, string> = {
   '.map': 'application/json; charset=utf-8',
 };
 
-const PREFIX_RE = /^\/s\/([a-z0-9-]+)(?:\/(.*))?$/;
+// Match `/s/<slug>/<remainder>` — the trailing slash after the slug is
+// REQUIRED. Without it, browsers resolve relative asset URLs against `/s/`
+// instead of `/s/<slug>/` and every asset 404s. `/s/<slug>` (no slash) is
+// handled separately below with a 301 redirect to `/s/<slug>/`.
+const PREFIX_RE = /^\/s\/([a-z0-9-]+)\/(.*)$/;
+const PREFIX_NO_SLASH_RE = /^\/s\/([a-z0-9-]+)$/;
 
 function send404(res: http.ServerResponse): void {
   res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
@@ -58,10 +63,22 @@ export async function serveStaticHostRoute(req: http.IncomingMessage, res: http.
     return false;
   }
 
+  // `/s/<slug>` (no trailing slash) — redirect to the canonical form so the
+  // browser resolves relative asset URLs against `/s/<slug>/`.
+  const noSlashMatch = PREFIX_NO_SLASH_RE.exec(pathname);
+  if (noSlashMatch) {
+    const [, slug] = noSlashMatch;
+    if (!registry.lookup(slug)) {
+      send404(res);
+      return true;
+    }
+    res.writeHead(301, { Location: `/s/${slug}/`, 'Cache-Control': 'no-cache, no-store, must-revalidate' });
+    res.end();
+    return true;
+  }
+
   const m = PREFIX_RE.exec(pathname);
   if (!m) return false;
-  // The regex requires the trailing slash after the slug to provide a
-  // remainder group; `/s/foo` (no slash, no remainder) fails the match.
   const [, slug, rawRemainder = ''] = m;
 
   const reg = registry.lookup(slug);
@@ -132,10 +149,32 @@ export async function serveStaticHostRoute(req: http.IncomingMessage, res: http.
     return true;
   }
 
-  await new Promise<void>((resolvePromise, reject) => {
+  // Stream errors AFTER `writeHead(200)` cannot be turned into a 5xx — headers
+  // are already on the wire. Destroy the response and resolve cleanly so the
+  // rejection does not bubble out of the async request handler as an
+  // unhandled rejection.
+  await new Promise<void>((resolvePromise) => {
     const stream = createReadStream(resolved);
-    stream.on('error', reject);
-    stream.on('end', () => resolvePromise());
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      resolvePromise();
+    };
+    stream.on('error', (err) => {
+      console.warn('[static-host] stream error while serving', resolved, err);
+      try {
+        res.destroy();
+      } catch {
+        // ignore
+      }
+      settle();
+    });
+    stream.on('end', settle);
+    res.on('close', () => {
+      stream.destroy();
+      settle();
+    });
     stream.pipe(res);
   });
   return true;
