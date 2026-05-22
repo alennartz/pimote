@@ -14,7 +14,8 @@
 <div class="bg-sidebar flex h-full w-70 flex-col overflow-y-auto border-l p-2">
   <div class="flex flex-col gap-2">
     {#each panelStore.cards as card (card.id)}
-      <div class="rounded border p-2 {card.color ? colorMap[card.color] + ' border-l-2' : ''}">
+      {@const baseClass = `rounded border p-2 ${card.color ? colorMap[card.color] + ' border-l-2' : ''}`}
+      {#snippet cardBody()}
         <!-- Header -->
         <div class="flex items-center gap-1.5">
           <span class="truncate text-sm font-medium">{card.header.title}</span>
@@ -44,7 +45,18 @@
             {card.footer.join(' · ')}
           </div>
         {/if}
-      </div>
+      {/snippet}
+      {#if card.href}
+        <!-- card.href targets the server-hosted /s/<slug>/ route, not a SPA route, so resolve() does not apply. -->
+        <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+        <a href={card.href} class="{baseClass} text-foreground hover:bg-accent/50 block no-underline transition-colors">
+          {@render cardBody()}
+        </a>
+      {:else}
+        <div class={baseClass}>
+          {@render cardBody()}
+        </div>
+      {/if}
     {/each}
   </div>
 </div>

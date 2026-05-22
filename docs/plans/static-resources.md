@@ -556,7 +556,7 @@ Update `client/src/lib/components/Panel.svelte`. Wrap the existing card body so 
 The cleanest Svelte 5 shape is a small `{#if card.href}<a href={card.href} class="...">...inner...</a>{:else}<div class="...">...inner...</div>{/if}` with the card contents extracted into a `{#snippet}` to avoid duplication. Read the surrounding Svelte to match the project's conventions before committing to that exact shape.
 
 **Verify:** `pnpm --filter pimote-client build` succeeds. Manual: register a bundle via the agent tool and confirm tapping the card navigates to `/s/<slug>/`.
-**Status:** not started
+**Status:** done
 
 ### Step 13: Ensure the client SW does not interfere with `/s/*`
 
@@ -565,7 +565,7 @@ Review `client/src/sw.ts`. The current fetch handler only intercepts `POST /_sha
 If future investigation surfaces interference (e.g. workbox-precaching's navigation route swallowing `/s/*`), add an explicit early-return in the `fetch` listener for paths starting with `/s/` — return without calling `event.respondWith` so the request goes to network unmodified. Document the change with a comment referencing this plan.
 
 **Verify:** With the SW active, `fetch('/s/<slug>/')` from devtools network panel shows the request hits the server (not served from cache).
-**Status:** not started
+**Status:** done (no code change required — SW already passes `/s/*` through to network)
 
 ### Step 14: Full build and integration sanity check
 
