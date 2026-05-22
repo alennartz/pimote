@@ -577,4 +577,4 @@ Run the full workspace build and tests:
 Then manually exercise the flow: start the server, open the client, drive an agent session to call `pimote_static_host` against a small folder containing `index.html`, confirm a clickable card appears in the panel, tap it, see the bundle render. Restart the server and confirm the card replays from persistence on the next session load. Call `pimote_static_host_remove` and confirm the card vanishes and the bundle 404s.
 
 **Verify:** all of the above succeed; no console errors during the round-trip.
-**Status:** not started
+**Status:** done (automated: `npm run build`, server vitest 327/327, panels vitest 9/9, `npm run check` all clean; manual end-to-end flow deferred to manual-testing phase)
