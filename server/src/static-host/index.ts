@@ -61,12 +61,17 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
     pi.events.emit('pimote:panels', { type: 'cards', namespace: 'static-host', cards });
   }
 
+  function emitNavigate(pi: ExtensionAPI, url: string): void {
+    pi.events.emit('pimote:navigate', { url });
+  }
+
   function toolDeps(pi: ExtensionAPI, sessionId: string): ToolDeps {
     return {
       registry,
       store,
       sessionId,
       emitPanelCards: () => emitPanelCards(pi, sessionId),
+      emitNavigate: (url) => emitNavigate(pi, url),
     };
   }
 

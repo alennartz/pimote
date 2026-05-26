@@ -62,6 +62,7 @@ describe('executeRegisterTool', () => {
   let registry: InMemoryStaticHostRegistry;
   let store: FileStaticHostStore;
   let emitPanelCards: ReturnType<typeof vi.fn>;
+  let emitNavigate: ReturnType<typeof vi.fn>;
   let deps: ToolDeps;
 
   beforeEach(async () => {
@@ -69,7 +70,8 @@ describe('executeRegisterTool', () => {
     registry = new InMemoryStaticHostRegistry();
     store = new FileStaticHostStore(join(root, 'store'));
     emitPanelCards = vi.fn();
-    deps = { registry, store, sessionId: 'sess-1', emitPanelCards };
+    emitNavigate = vi.fn();
+    deps = { registry, store, sessionId: 'sess-1', emitPanelCards, emitNavigate };
   });
 
   afterEach(async () => {
@@ -101,6 +103,24 @@ describe('executeRegisterTool', () => {
     expect(emitPanelCards).toHaveBeenCalledTimes(1);
   });
 
+  it('emits a navigate request with the resolved url on a successful register', async () => {
+    const folder = await makeBundle(root, 'demo');
+    const out = await executeRegisterTool({ slug: 'demo', folder, title: 'Demo' }, deps);
+    expect(emitNavigate).toHaveBeenCalledTimes(1);
+    expect(emitNavigate).toHaveBeenCalledWith(out.url);
+    expect(out.url).toBe('/s/demo/');
+  });
+
+  it('emits the collision-suffixed url to navigate, not the requested slug', async () => {
+    const f1 = await makeBundle(root, 'd1');
+    const f2 = await makeBundle(root, 'd2');
+    await executeRegisterTool({ slug: 'report', folder: f1, title: 'A' }, deps);
+    emitNavigate.mockClear();
+    await executeRegisterTool({ slug: 'report', folder: f2, title: 'B' }, deps);
+    expect(emitNavigate).toHaveBeenCalledTimes(1);
+    expect(emitNavigate).toHaveBeenCalledWith('/s/report-2/');
+  });
+
   it('resolves slug collisions with -2, -3, ... suffix', async () => {
     const f1 = await makeBundle(root, 'd1');
     const f2 = await makeBundle(root, 'd2');
@@ -130,6 +150,7 @@ describe('executeRegisterTool', () => {
     expect(registry.listForSession('sess-1')).toEqual([]);
     expect(await store.read('sess-1')).toBeUndefined();
     expect(emitPanelCards).not.toHaveBeenCalled();
+    expect(emitNavigate).not.toHaveBeenCalled();
   });
 });
 
@@ -138,6 +159,7 @@ describe('executeRemoveTool', () => {
   let registry: InMemoryStaticHostRegistry;
   let store: FileStaticHostStore;
   let emitPanelCards: ReturnType<typeof vi.fn>;
+  let emitNavigate: ReturnType<typeof vi.fn>;
   let deps: ToolDeps;
 
   beforeEach(async () => {
@@ -145,7 +167,8 @@ describe('executeRemoveTool', () => {
     registry = new InMemoryStaticHostRegistry();
     store = new FileStaticHostStore(join(root, 'store'));
     emitPanelCards = vi.fn();
-    deps = { registry, store, sessionId: 'sess-1', emitPanelCards };
+    emitNavigate = vi.fn();
+    deps = { registry, store, sessionId: 'sess-1', emitPanelCards, emitNavigate };
   });
 
   afterEach(async () => {
@@ -174,7 +197,7 @@ describe('executeRemoveTool', () => {
     const folder = await makeBundle(root, 'demo');
     await executeRegisterTool({ slug: 'demo', folder, title: 'D' }, deps);
 
-    const otherDeps: ToolDeps = { ...deps, sessionId: 'sess-2', emitPanelCards: vi.fn() };
+    const otherDeps: ToolDeps = { ...deps, sessionId: 'sess-2', emitPanelCards: vi.fn(), emitNavigate: vi.fn() };
     const out = await executeRemoveTool({ slug: 'demo' }, otherDeps);
     expect(out.removed).toBe(false);
     expect(registry.has('demo')).toBe(true);

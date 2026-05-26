@@ -28,6 +28,7 @@ import type {
   SessionRenamedEvent,
   SessionReplacedEvent,
   PanelUpdateEvent,
+  NavigateEvent,
   SessionRestoreEvent,
   Card,
   RestoreMode,
@@ -456,6 +457,18 @@ export class SessionRegistry {
         session.panelCards = (event as PanelUpdateEvent).cards;
         if (sessionId === this.viewedSessionId) {
           this.syncViewedPanelStore();
+        }
+        break;
+      }
+
+      case 'pimote_navigate': {
+        // Only honor navigation for the currently viewed session — don't
+        // yank the user away if a background session emits this.
+        if (sessionId === this.viewedSessionId) {
+          const url = (event as NavigateEvent).url;
+          if (typeof url === 'string' && url.length > 0) {
+            location.href = url;
+          }
         }
         break;
       }

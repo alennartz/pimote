@@ -786,6 +786,22 @@ export interface PanelUpdateEvent {
   cards: Card[];
 }
 
+/**
+ * Server-initiated client navigation request. Emitted by extensions that
+ * register a new same-origin surface (e.g. `pimote_static_host`) and want
+ * the client to jump to it on creation. The client decides whether to act —
+ * the static-host extension emits this only when the session is the one
+ * that issued the tool call, but clients should still ignore the event when
+ * the targeted `sessionId` is not the currently viewed session to avoid
+ * yanking users browsing elsewhere.
+ */
+export interface NavigateEvent {
+  type: 'pimote_navigate';
+  sessionId: string;
+  /** Same-origin URL to navigate to. */
+  url: string;
+}
+
 // -- Voice events --
 
 /**
@@ -875,6 +891,8 @@ export type PimoteEvent =
   | FullResyncEvent
   // Panel
   | PanelUpdateEvent
+  // Navigation
+  | NavigateEvent
   // Voice
   | CallBindResponse
   | CallReadyEvent

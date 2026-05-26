@@ -42,6 +42,13 @@ export interface ToolDeps {
   sessionId: string;
   /** Push the current panel-card snapshot for this session onto the EventBus. */
   emitPanelCards: () => void;
+  /**
+   * Request that the client navigate to `url`. Fired once per successful
+   * `pimote_static_host` registration. Not fired on session_start replay —
+   * the user only wants to be ferried over the first time a bundle is
+   * registered, not every time the session reloads.
+   */
+  emitNavigate: (url: string) => void;
 }
 
 /**
@@ -142,7 +149,10 @@ export async function executeRegisterTool(input: RegisterToolInput, deps: ToolDe
 
   deps.emitPanelCards();
 
-  return { slug: resolved, url: `/s/${resolved}/` };
+  const url = `/s/${resolved}/`;
+  deps.emitNavigate(url);
+
+  return { slug: resolved, url };
 }
 
 /**

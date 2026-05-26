@@ -210,7 +210,12 @@ function setupSlotPanelListeners(eventBus: EventBusController, state: SessionSta
     applyPanelMessage(state.panelState, data as PanelBusMessage);
     scheduleSlotPanelPush(state, sessionId, sendEvent);
   });
-  return [unsub1, unsub2];
+  const unsub3 = eventBus.on('pimote:navigate', (data) => {
+    const url = (data as { url?: unknown } | null | undefined)?.url;
+    if (typeof url !== 'string' || url.length === 0) return;
+    sendEvent({ type: 'pimote_navigate', sessionId, url });
+  });
+  return [unsub1, unsub2, unsub3];
 }
 
 /** Schedule a throttled panel push (~200ms) for a SessionState. */

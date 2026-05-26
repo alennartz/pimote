@@ -148,6 +148,28 @@ describe('createStaticHostExtension', () => {
     expect(registry.listForSession('sess-fresh')).toEqual([]);
   });
 
+  function navigateEvents(): Array<{ url: string }> {
+    return pi.emitted.filter((e) => e.type === 'pimote:navigate').map((e) => e.payload as { url: string });
+  }
+
+  it('the register tool emits a single navigate event with the resolved url', async () => {
+    await pi.handlers.get('session_start')!({ type: 'session_start', reason: 'new' }, makeCtx('sess-1'));
+    const folder = await bundle('demo');
+    const tool = pi.toolDefs.find((t) => t.name === 'pimote_static_host')!;
+    await tool.execute('call-1', { slug: 'demo', folder, title: 'Demo' }, undefined, undefined, makeCtx('sess-1'));
+    expect(navigateEvents()).toEqual([{ url: '/s/demo/' }]);
+  });
+
+  it('session_start replay does not emit a navigate event', async () => {
+    const folder = await bundle('persisted');
+    await store.write('sess-X', {
+      version: 1,
+      entries: [{ slug: 'persisted', folderPath: folder, cardMetadata: { title: 'Persisted' } }],
+    });
+    await pi.handlers.get('session_start')!({ type: 'session_start', reason: 'startup' }, makeCtx('sess-X'));
+    expect(navigateEvents()).toEqual([]);
+  });
+
   it('the register tool registers, persists, and emits a card', async () => {
     // First boot the session.
     await pi.handlers.get('session_start')!({ type: 'session_start', reason: 'new' }, makeCtx('sess-1'));
