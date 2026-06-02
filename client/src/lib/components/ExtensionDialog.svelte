@@ -107,10 +107,7 @@
         }}
         class="flex h-full min-h-0 flex-col"
       >
-        <header
-          class="bg-background/95 sticky top-0 z-10 flex shrink-0 flex-col gap-2 border-b px-4 py-3 backdrop-blur sm:px-5"
-          style="padding-top: max(0.75rem, env(safe-area-inset-top));"
-        >
+        <header class="bg-background/95 z-10 flex shrink-0 flex-col gap-2 border-b px-4 py-3 backdrop-blur sm:px-5" style="padding-top: max(0.75rem, env(safe-area-inset-top));">
           <div class="flex flex-col items-start gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div class="w-full min-w-0 sm:w-auto">
               <div class="text-base font-semibold break-words">{current.title ?? 'Editor'}</div>
@@ -135,7 +132,7 @@
         </div>
 
         <div
-          class="bg-background/95 sticky bottom-0 z-10 flex shrink-0 flex-col gap-2 border-t px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-end sm:px-5"
+          class="bg-background/95 z-10 flex shrink-0 flex-col gap-2 border-t px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-end sm:px-5"
           style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));"
         >
           <Button variant="outline" type="button" class="w-full sm:w-auto" onclick={handleCancel}>Cancel</Button>
