@@ -193,3 +193,5 @@ Row 2 group (`md:hidden`, alongside context usage / git branch). Hidden entirely
 
 - New session state initializes `lifetimeCostUsd` to `0`.
 - `updateMeta(sessionId, meta)` assigns `meta.lifetimeCostUsd` to the target session only — it is session-specific (like `contextUsage`), not propagated folder-wide (unlike `gitBranch`).
+
+**Review status:** approved
