@@ -195,3 +195,90 @@ Row 2 group (`md:hidden`, alongside context usage / git branch). Hidden entirely
 - `updateMeta(sessionId, meta)` assigns `meta.lifetimeCostUsd` to the target session only — it is session-specific (like `contextUsage`), not propagated folder-wide (unlike `gitBranch`).
 
 **Review status:** approved
+
+## Steps
+
+The architecture's interface files are already in place from the test-write phase:
+`SessionMeta.lifetimeCostUsd` exists in the protocol; `ws-handler.ts`'s
+`get_session_meta` handler already calls
+`sumAssistantCostUsd(session.sessionManager.getBranch() as unknown as CostBranchEntry[])`;
+`PerSessionState.lifetimeCostUsd` exists and is initialized to `0` in
+`createSessionState`. The remaining work is filling in the two pure-function stubs
+(currently throwing `"not implemented"`), wiring `updateMeta` to assign the field,
+and rendering it in the StatusBar. Each step makes existing tests pass; no new tests.
+
+### Step 1: Implement `sumAssistantCostUsd` in `server/src/session-cost.ts`
+
+Replace the stub body of `sumAssistantCostUsd(entries: CostBranchEntry[]): number`
+(remove the `throw new Error('not implemented')`; rename `_entries` → `entries`).
+Sum `message.usage.cost.total` over entries where `type === 'message'` and
+`message.role === 'assistant'`. Treat any missing link in the
+`message?.usage?.cost?.total` chain as `0` (use `?? 0`), and skip non-message /
+non-assistant entries entirely. The result must be a finite number `>= 0` for an
+empty branch (`0`).
+
+**Verify:** `cd server && npx vitest run src/session-cost.test.ts` — all cases in
+`server/src/session-cost.test.ts` pass (empty/trivial, summation, filtering,
+malformed-cost, monotonic-across-compaction).
+**Status:** not started
+
+### Step 2: Implement `formatSessionCost` in `client/src/lib/session-summary.ts`
+
+Replace the stub body of `formatSessionCost(usd: number): string | null` (remove the
+`throw`; rename `_usd` → `usd`). Return `null` when `usd <= 0`; `"<$0.01"` when
+`0 < usd < 0.01`; otherwise `"$" + usd.toFixed(2)`. `toFixed(2)` is the pinned
+rounding mode (the test expects `1.235 → "$1.24"`, `12 → "$12.00"`).
+
+**Verify:** `cd client && npx vitest run src/lib/session-summary.test.ts` — all
+`formatSessionCost` cases pass (no-spend sentinel, sub-cent, cent-and-above).
+**Status:** not started
+
+### Step 3: Assign `lifetimeCostUsd` in `updateMeta`
+
+In `client/src/lib/stores/session-registry.svelte.ts`, `updateMeta(sessionId, meta)`
+currently assigns only `session.contextUsage`. Add
+`session.lifetimeCostUsd = meta.lifetimeCostUsd;` alongside it (session-specific, like
+`contextUsage` — do NOT propagate it folder-wide the way `gitBranch` is). Update the
+method's doc comment to mention cost.
+
+**Verify:** `cd client && npx vitest run src/lib/stores/session-registry.test.ts` —
+the `updateMeta() assigns lifetimeCostUsd to the target session only` and
+`session state initializes lifetimeCostUsd to 0` tests pass, and the existing
+git-branch-propagation test still passes.
+**Status:** not started
+
+### Step 4: Render the cost in `StatusBar.svelte`
+
+In `client/src/lib/components/StatusBar.svelte`:
+
+1. Import `formatSessionCost` from `$lib/session-summary.js` (extend the existing
+   import line that already pulls `getContextDisplay`, `getContextTone`,
+   `getSessionDisplayName`).
+2. Add a derived value near the existing `contextDisplay`:
+   `let costDisplay = $derived(formatSessionCost(sessionRegistry.viewed?.lifetimeCostUsd ?? 0));`
+3. **Desktop (Row 1):** add a muted span as a sibling of the desktop context-usage
+   span (the `hidden items-center gap-1 md:flex` block, ~line 78), guarded by
+   `{#if costDisplay}`, styled `text-muted-foreground hidden items-center gap-1 md:flex`,
+   with `title="Session cost"`, rendering `{costDisplay}`.
+4. **Mobile (Row 2):** add a matching span as a sibling of the mobile context-usage
+   span (the `flex shrink-0 items-center gap-1` block, ~line 160), guarded by
+   `{#if costDisplay}`, styled `text-muted-foreground flex shrink-0 items-center gap-1`,
+   `title="Session cost"`, rendering `{costDisplay}`. Also add `|| costDisplay` to the
+   Row 2 wrapper's `{#if sessionDisplayName || ... || contextDisplay}` visibility
+   guard so the row appears when cost is the only populated field.
+
+The indicator is hidden whenever `formatSessionCost` returns `null` (zero/no spend).
+
+**Verify:** `cd client && npx vitest run` passes (no StatusBar unit test, but the
+suite must stay green). Manually: a session with nonzero spend shows `$X.XX` muted in
+Row 1 (desktop) / Row 2 (mobile); a fresh session shows nothing.
+**Status:** not started
+
+### Step 5: Typecheck and full test sweep
+
+Run the server and client typechecks/tests to confirm the stub removals and StatusBar
+edit introduce no type or test regressions across the touched workspaces.
+
+**Verify:** `cd server && npx tsc --noEmit && npx vitest run` and
+`cd client && npx svelte-check && npx vitest run` both pass.
+**Status:** not started
