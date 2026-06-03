@@ -80,6 +80,24 @@ button**. No existing component provides all three — `EditDiffBlock` has none,
 `StreamingCollapsible` has collapse only, smd code blocks have copy+highlight
 but no collapse — so this is a small new composition, not a drop-in reuse.
 
+### `.md`/`.markdown` writes render through smd, not the code path
+
+When the `write` path extension is `.md`/`.markdown`, route the extracted
+`content` stream through the existing smd markdown pipeline (`TextBlock.svelte`)
+instead of the highlighted-code block — rendered output, not source. Rationale:
+it's the same append-only streaming pipeline, rendered markdown is this app's
+core aesthetic, and any fenced code blocks _inside_ the doc get our new
+incremental fenced-code highlighting for free.
+
+Tradeoff accepted: rendering hides literal bytes (whitespace, frontmatter, raw
+HTML, the `#`/`*` characters). Judged acceptable because watching a write
+stream is about glanceability, not byte auditing. Two refinements preserve the
+useful bits: the **copy button copies raw source** (not rendered text), and the
+rendered doc stays inside a wrapper so long files don't blow out the transcript.
+Rejected alternatives: treating `.md` as hljs `markdown`-language _source_
+(colorized but unrendered — consistency win, but loses the rendered aesthetic),
+and a source⇄rendered toggle (more work, not worth it for v1).
+
 ### Extract `content` from JSON deltas, like edit-diff
 
 Render the file text — not escaped JSON — from the first delta, by running a
@@ -97,8 +115,10 @@ deltas into renderable structured values mid-stream.
    Language from the fence info-string.
 3. `write` tool view in `ToolCall.svelte`: a new bespoke block (parallel to the
    `edit` path) that streams `content` via a `@streamparser/json` reader on
-   `$.content`, highlights by path-extension language, auto-expands while
-   streaming / auto-collapses on done, and offers collapse + copy.
+   `$.content`. For `.md`/`.markdown` paths it renders through smd
+   (`TextBlock.svelte`); for all other paths it highlights by path-extension
+   language. Auto-expands while streaming / auto-collapses on done, and offers
+   collapse + copy (copy always yields raw source).
 
 ## Open questions
 
