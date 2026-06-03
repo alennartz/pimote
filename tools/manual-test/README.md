@@ -99,6 +99,46 @@ on `PATH`, writable `os.tmpdir()`. The script tracks the child PID it
 spawns and only kills that PID on teardown — it never uses
 pattern-based `pkill` against shared binary paths.
 
+### cost-accumulation-smoke
+
+**Purpose:** Verify the per-session lifetime dollar cost surfaced in the
+StatusBar (the `cost-accumulation` topic). Covers the full server +
+client path without a live LLM: fabricates pi session JSONLs whose
+assistant entries carry real-format `usage.cost.total` values (which
+pi's `SessionManager` rehydrates into the in-memory branch on open —
+the same path the plan relies on for restart survival), then asserts:
+(1) `get_session_meta` succeeds with a numeric `lifetimeCostUsd` equal
+to the sum over _assistant_ entries only (user / toolResult /
+`model_change` entries excluded); (2) the StatusBar renders the
+`formatSessionCost` figure (`$1.23`) for a priced session; (3) a
+zero-spend session reports `lifetimeCostUsd: 0` and renders no
+`[title="Session cost"]` span. Exercises StatusBar rendering within
+the connect-and-open primary journey.
+
+**Location:** `tools/manual-test/cost-accumulation-smoke/cost-accumulation-smoke.mjs`
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/cost-accumulation-smoke/cost-accumulation-smoke.mjs
+```
+
+**Inputs:** none. Builds a fresh sandbox under `os.tmpdir()` (its own
+`HOME` + XDG dirs), fabricates two pi session JSONLs (priced +
+zero-spend), boots `bin/pimote.js` on a free local port, checks
+`get_session_meta` directly over the WebSocket, and drives the PWA via
+`agent-browser` to assert the rendered StatusBar figure.
+
+**Outputs:** per-test ✓/✗ lines + a `priced-statusbar.png` /
+`zero-statusbar.png` screenshot pair in the sandbox; non-zero exit on
+any failure. On failure the sandbox is preserved and its path printed.
+
+**Prerequisites:** workspaces built (`npm run build`), `agent-browser`
+on `PATH`, writable `os.tmpdir()`. Tracks and kills only the child PID
+it spawns — no pattern-based `pkill`. No real LLM, speechmux, or
+network required.
+
 ### agent-browser (cross-repo skill)
 
 **Purpose:** Drive PWA user journeys end-to-end via a headless-Chromium

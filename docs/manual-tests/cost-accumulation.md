@@ -67,12 +67,58 @@ surfaces).
 
 ## Results
 
-(filled in during execution)
+**Unit suites (regression guard, not the smoke itself):**
+
+- `server: vitest run src/session-cost.test.ts` → 12/12 pass. **pass**
+- `client: vitest run src/lib/session-summary.test.ts src/lib/stores/session-registry.test.ts` → 80/80 pass. **pass**
+
+**Smoke + topic-specific (driver: `tools/manual-test/cost-accumulation-smoke/`):**
+
+- **Journey 1 (connect + open) / get_session_meta health.** Booted a
+  sandboxed `bin/pimote.js`; opened both fabricated sessions over the WS.
+  `get_session_meta` succeeded for both (no throw), returning a numeric
+  `lifetimeCostUsd`. **pass.** Coherence: PWA loads, folder list + sessions
+  render, session opens to the chat view — **looks coherent.**
+- **Topic 1 — nonzero cost renders `$X.XX`.** Priced session (assistant
+  costs `0.50 + 0.73`) → StatusBar `[title="Session cost"]` shows `$1.23` in
+  both the desktop Row 1 and mobile Row 2 spans (`"$1.23|$1.23"`). **pass.**
+  Coherence (screenshot): `$1.23` sits muted next to the connection status,
+  same visual weight as siblings — **looks coherent.**
+- **Topic 2 — `get_session_meta` does not throw.** Both priced and zero
+  sessions returned a successful response with numeric `lifetimeCostUsd`
+  (`1.23` / `0`). **pass.**
+- **Topic 3 — zero / no-spend hides the indicator.** Zero-spend session
+  reported `lifetimeCostUsd: 0`; the PWA rendered zero `[title="Session cost"]`
+  spans. **pass.** Coherence (screenshot): StatusBar shows the connection
+  status with no cost figure and no layout gap — **looks coherent.**
+- **Topic 4 — filtering correctness end-to-end.** The fabricated priced
+  branch interleaved `model_change`, user-`prompt`, and `toolResult`-style
+  user entries among the two priced assistant turns; the surfaced figure
+  equalled the assistant-only sum (`1.23`, within 1e-9). **pass.**
+
+**Nonzero-figure note (per focus hint):** a nonzero cost normally requires
+real LLM token spend against a priced model, which is not reachable
+in-environment (the sandbox boots with `0 models available`). Rather than
+leave the figure at `$0`, the harness fabricates pi session JSONLs whose
+assistant entries carry real-format `usage.cost.total` values; pi rehydrates
+them into the branch on open (the plan's documented restart-survival path),
+so the server recompute and the client render are both exercised against a
+genuine `$1.23`. The zero/hidden state is also verified directly. No figure
+was "forced" client-side — it flows through `sumAssistantCostUsd` →
+`SessionMeta.lifetimeCostUsd` → `formatSessionCost`.
 
 ## Plan Updates
 
-(filled in during execution)
+None. The per-session cost figure is a sub-element of the StatusBar exercised
+within existing journeys 1 (connect + open) and 2 (prompt → response), not a
+standalone primary journey — `tools/manual-test/PLAN.md` stays focused and is
+unchanged. The new driver is registered in `tools/manual-test/README.md`.
 
 ## Open Issues
 
-(filled in during execution)
+None. All smoke and topic-specific tests pass; no inline fixes were required
+(the implementation matched the plan and review). The only harness wrinkles
+resolved during setup were in the test driver itself (open-by-id needs
+`folderPath` + reopen assigns a fresh sessionId; command responses carry no
+`type` field; the cost `<span>` is non-interactive so it must be read via DOM
+eval, not the `-i` accessibility snapshot) — none of these are product issues.
