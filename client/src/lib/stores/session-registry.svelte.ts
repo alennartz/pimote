@@ -556,14 +556,16 @@ export class SessionRegistry {
     return sessionId in this.sessions;
   }
 
-  /** Update session meta (git branch, context usage) */
+  /** Update session meta (git branch, context usage, lifetime cost) */
   updateMeta(sessionId: string, meta: SessionMeta): void {
     const session = this.sessions[sessionId];
     if (!session) return;
 
-    // Context usage is session-specific, but git branch is repository-level.
-    // Keep branch labels in sync for all sessions under the same folder.
+    // Context usage and lifetime cost are session-specific, but git branch is
+    // repository-level. Keep branch labels in sync for all sessions under the
+    // same folder.
     session.contextUsage = meta.contextUsage;
+    session.lifetimeCostUsd = meta.lifetimeCostUsd;
     for (const candidate of Object.values(this.sessions)) {
       if (candidate.folderPath === session.folderPath) {
         candidate.gitBranch = meta.gitBranch;

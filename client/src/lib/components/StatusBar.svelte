@@ -5,7 +5,7 @@
   import { Separator } from '$lib/components/ui/separator/index.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { getContextDisplay, getContextTone, getSessionDisplayName } from '$lib/session-summary.js';
+  import { getContextDisplay, getContextTone, getSessionDisplayName, formatSessionCost } from '$lib/session-summary.js';
   import { getRestoreModeLabel } from '$lib/restore-status.js';
   import { statusRowSpacerClass } from './status-bar-layout.js';
   import { GitBranch } from '@lucide/svelte';
@@ -28,6 +28,8 @@
   let contextPercent = $derived(sessionRegistry.viewed?.contextUsage?.percent);
 
   let contextDisplay = $derived(getContextDisplay(sessionRegistry.viewed));
+
+  let costDisplay = $derived(formatSessionCost(sessionRegistry.viewed?.lifetimeCostUsd ?? 0));
 
   let contextColor = $derived(
     getContextTone(contextPercent) === 'critical' ? 'text-red-400' : getContextTone(contextPercent) === 'warning' ? 'text-amber-400' : 'text-muted-foreground',
@@ -80,6 +82,13 @@
       </span>
     {/if}
 
+    <!-- Session cost (desktop only — shown in row 2 on mobile) -->
+    {#if costDisplay}
+      <span class="text-muted-foreground hidden items-center gap-1 md:flex" title="Session cost">
+        {costDisplay}
+      </span>
+    {/if}
+
     <!-- Git branch (desktop only — shown in row 2 on mobile) -->
     {#if sessionRegistry.viewed?.gitBranch}
       <span class="text-muted-foreground hidden items-center gap-1 md:flex" title="Git branch">
@@ -128,7 +137,7 @@
   </div>
 
   <!-- Row 2: session name + git branch + context usage (mobile only) -->
-  {#if sessionDisplayName || sessionRegistry.viewed?.gitBranch || contextDisplay}
+  {#if sessionDisplayName || sessionRegistry.viewed?.gitBranch || contextDisplay || costDisplay}
     <div class="border-border/50 flex h-7 items-center gap-2 border-t px-2 md:hidden">
       {#if sessionDisplayName}
         <SessionRenameDialog
@@ -160,6 +169,12 @@
       {#if contextDisplay}
         <span class="flex shrink-0 items-center gap-1 {contextColor}" title="Context window usage">
           {contextDisplay}
+        </span>
+      {/if}
+
+      {#if costDisplay}
+        <span class="text-muted-foreground flex shrink-0 items-center gap-1" title="Session cost">
+          {costDisplay}
         </span>
       {/if}
     </div>

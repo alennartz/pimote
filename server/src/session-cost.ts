@@ -28,6 +28,12 @@ export interface CostBranchEntry {
  * - Missing/undefined usage or cost contributes 0.
  * - Returns a finite number >= 0. Empty branch => 0.
  */
-export function sumAssistantCostUsd(_entries: CostBranchEntry[]): number {
-  throw new Error('not implemented');
+export function sumAssistantCostUsd(entries: CostBranchEntry[]): number {
+  let total = 0;
+  for (const entry of entries) {
+    if (entry.type !== 'message') continue;
+    if (entry.message?.role !== 'assistant') continue;
+    total += entry.message.usage?.cost?.total ?? 0;
+  }
+  return total;
 }

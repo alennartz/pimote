@@ -45,8 +45,10 @@ export function getContextDisplay(session: SessionSummarySource | null | undefin
  * - 0 < usd < 0.01      → "<$0.01"
  * - usd >= 0.01         → "$" + usd.toFixed(2)   (e.g. "$1.23", "$0.04")
  */
-export function formatSessionCost(_usd: number): string | null {
-  throw new Error('not implemented');
+export function formatSessionCost(usd: number): string | null {
+  if (usd <= 0) return null;
+  if (usd < 0.01) return '<$0.01';
+  return '$' + usd.toFixed(2);
 }
 
 export function getContextTone(percent: number | null | undefined): 'normal' | 'warning' | 'critical' {

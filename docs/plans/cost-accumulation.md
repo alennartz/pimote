@@ -198,6 +198,8 @@ Row 2 group (`md:hidden`, alongside context usage / git branch). Hidden entirely
 
 ## Steps
 
+**Pre-implementation commit:** `b7212414cae362213f271cf8d3e07d5dcb4b39c3`
+
 The architecture's interface files are already in place from the test-write phase:
 `SessionMeta.lifetimeCostUsd` exists in the protocol; `ws-handler.ts`'s
 `get_session_meta` handler already calls
@@ -220,7 +222,7 @@ empty branch (`0`).
 **Verify:** `cd server && npx vitest run src/session-cost.test.ts` — all cases in
 `server/src/session-cost.test.ts` pass (empty/trivial, summation, filtering,
 malformed-cost, monotonic-across-compaction).
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement `formatSessionCost` in `client/src/lib/session-summary.ts`
 
@@ -231,7 +233,7 @@ rounding mode (the test expects `1.235 → "$1.24"`, `12 → "$12.00"`).
 
 **Verify:** `cd client && npx vitest run src/lib/session-summary.test.ts` — all
 `formatSessionCost` cases pass (no-spend sentinel, sub-cent, cent-and-above).
-**Status:** not started
+**Status:** done
 
 ### Step 3: Assign `lifetimeCostUsd` in `updateMeta`
 
@@ -245,7 +247,7 @@ method's doc comment to mention cost.
 the `updateMeta() assigns lifetimeCostUsd to the target session only` and
 `session state initializes lifetimeCostUsd to 0` tests pass, and the existing
 git-branch-propagation test still passes.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Render the cost in `StatusBar.svelte`
 
@@ -272,7 +274,7 @@ The indicator is hidden whenever `formatSessionCost` returns `null` (zero/no spe
 **Verify:** `cd client && npx vitest run` passes (no StatusBar unit test, but the
 suite must stay green). Manually: a session with nonzero spend shows `$X.XX` muted in
 Row 1 (desktop) / Row 2 (mobile); a fresh session shows nothing.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Typecheck and full test sweep
 
@@ -281,4 +283,4 @@ edit introduce no type or test regressions across the touched workspaces.
 
 **Verify:** `cd server && npx tsc --noEmit && npx vitest run` and
 `cd client && npx svelte-check && npx vitest run` both pass.
-**Status:** not started
+**Status:** done
