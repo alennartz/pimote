@@ -72,7 +72,7 @@ Node.js process that embeds pi `AgentSession` instances directly via the SDK. Ma
 
 ### Client
 
-Installable PWA (Svelte 5, Tailwind CSS, shadcn-svelte) with real-time streaming, multi-session tabs, folder browsing, extension UI, and push notifications. Works on phone and desktop.
+Installable PWA (Svelte 5, Tailwind CSS, shadcn-svelte) with real-time streaming, multi-session tabs, folder browsing, extension UI, push notifications, and a session StatusBar that surfaces model/thinking controls plus live context-window and lifetime-cost indicators. Works on phone and desktop.
 
 ## Usage
 
@@ -102,6 +102,7 @@ Once in a session, you can:
 - **Steer** the agent while it's working — messages queue and deliver when the agent is ready
 - **Abort** a running agent turn
 - **Switch models** and **thinking levels** on the fly
+- See **session context usage** and **lifetime cost** at a glance in the StatusBar
 - **Compact** the conversation to manage context window usage (also supports auto-compaction)
 - Use **slash commands** — type `/` to get autocomplete for skills, extension commands, and prompt templates
 - Open **Tree Navigation** with `/tree` to browse session history, search/filter nodes, and edit labels (right-click on desktop, long-press on touch)

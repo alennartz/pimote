@@ -424,13 +424,14 @@
 - **[E]** `session_opened` event received with `sessionId` and `folder` info
 - **[E]** Client adds session to registry, subscribes, switches view
 - **[E]** `get_state` and `get_messages` fetched atomically
-- **[E]** StatusBar shows model name and thinking level
+- **[E]** StatusBar shows model name and thinking level; a brand-new session has no session-cost indicator yet
 
 ### TC-05.02 — Open existing session from file 🟠
 
 - **[S]** Click a specific session from the session list
 - **[E]** Session loaded from file; existing conversation history appears in MessageList
 - **[E]** Message count matches expectations
+- **[E]** StatusBar refreshes session metadata; context usage / git branch appear when available, and session cost appears only when lifetime spend is greater than `$0.00`
 
 ### TC-05.03 — Close session 🔴
 
