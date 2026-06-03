@@ -267,6 +267,8 @@ export interface SessionMeta {
     percent: number | null;
     contextWindow: number;
   } | null;
+  /** Total USD cost summed over the session branch; 0 when no spend / nothing to show. Always a number, never null. */
+  lifetimeCostUsd: number;
 }
 
 export interface GetCommandsCommand extends CommandBase {

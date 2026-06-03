@@ -145,12 +145,33 @@ describe('SessionRegistry', () => {
       registry.updateMeta('s1', {
         gitBranch: 'feature/live-branch',
         contextUsage: { percent: 12, contextWindow: 128000 },
+        lifetimeCostUsd: 0,
       });
 
       expect(registry.sessions['s1'].gitBranch).toBe('feature/live-branch');
       expect(registry.sessions['s2'].gitBranch).toBe('feature/live-branch');
       expect(registry.sessions['s3'].gitBranch).toBe('release');
       expect(registry.sessions['s2'].contextUsage).toBeNull();
+    });
+
+    it('updateMeta() assigns lifetimeCostUsd to the target session only', () => {
+      registry.addSession('s1', '/repo/app', 'app');
+      registry.addSession('s2', '/repo/app', 'app');
+
+      registry.updateMeta('s1', {
+        gitBranch: null,
+        contextUsage: null,
+        lifetimeCostUsd: 1.23,
+      });
+
+      expect(registry.sessions['s1'].lifetimeCostUsd).toBe(1.23);
+      // Cost is session-specific (like contextUsage), not folder-level like gitBranch.
+      expect(registry.sessions['s2'].lifetimeCostUsd).toBe(0);
+    });
+
+    it('session state initializes lifetimeCostUsd to 0', () => {
+      registry.addSession('s1', '/repo/app', 'app');
+      expect(registry.sessions['s1'].lifetimeCostUsd).toBe(0);
     });
 
     it('session_state_changed applies git branch updates by folder', () => {

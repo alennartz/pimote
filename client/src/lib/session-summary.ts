@@ -39,6 +39,16 @@ export function getContextDisplay(session: SessionSummarySource | null | undefin
   return null;
 }
 
+/**
+ * Adaptive display for the session lifetime cost figure.
+ * - usd <= 0            → null (caller hides the indicator)
+ * - 0 < usd < 0.01      → "<$0.01"
+ * - usd >= 0.01         → "$" + usd.toFixed(2)   (e.g. "$1.23", "$0.04")
+ */
+export function formatSessionCost(_usd: number): string | null {
+  throw new Error('not implemented');
+}
+
 export function getContextTone(percent: number | null | undefined): 'normal' | 'warning' | 'critical' {
   if (percent != null && percent > 90) return 'critical';
   if (percent != null && percent > 70) return 'warning';

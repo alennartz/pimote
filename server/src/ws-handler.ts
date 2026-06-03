@@ -27,6 +27,7 @@ import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
 import { mapAgentMessages, extractMessageEntryIds, applyEntryIds, type SdkSessionEntry } from './message-mapper.js';
 import { getGitBranch } from './git-branch.js';
+import { sumAssistantCostUsd, type CostBranchEntry } from './session-cost.js';
 import type { AgentSession, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { CallBindError } from './voice-orchestrator.js';
@@ -925,6 +926,7 @@ export class WsHandler {
         const meta: SessionMeta = {
           gitBranch: getGitBranch(slot.folderPath),
           contextUsage: contextUsage ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow } : null,
+          lifetimeCostUsd: sumAssistantCostUsd(session.sessionManager.getBranch() as unknown as CostBranchEntry[]),
         };
         this.sendResponse(id, true, { meta });
         break;

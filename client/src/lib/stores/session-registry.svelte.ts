@@ -69,6 +69,8 @@ export interface PerSessionState {
   panelCards: Card[];
   widgetCards: Record<string, Card>;
   contextUsage: { percent: number | null; contextWindow: number } | null;
+  /** Total USD cost summed over the session branch; 0 when no spend. */
+  lifetimeCostUsd: number;
   draftText: string;
   pendingSteeringMessages: string[];
   lastBotActivityTimestamp: string | null;
@@ -128,6 +130,7 @@ export class SessionRegistry {
       widgetCards: {},
       gitBranch: null,
       contextUsage: null,
+      lifetimeCostUsd: 0,
       draftText: '',
       pendingSteeringMessages: [],
       lastBotActivityTimestamp: null,

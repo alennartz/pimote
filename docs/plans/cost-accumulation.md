@@ -147,3 +147,49 @@ Row 2 group (`md:hidden`, alongside context usage / git branch). Hidden entirely
    they count if and only if they're on the branch.
 3. **Models without pricing.** `cost.total === 0` for unpriced models yields `$0`
    (hidden) even with real token spend. Accepted — the figure reflects what pi knows.
+
+## Tests
+
+**Pre-test-write commit:** `0dda89d0f9f3b4cd92927bcc70f37e6e8eec9395`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — extended `SessionMeta` with `lifetimeCostUsd: number` (USD, `0` when no spend; always a number, never null).
+- `server/src/session-cost.ts` — new pure helper module. Defines `CostBranchEntry` (duck-typed structural view of a session branch entry) and `sumAssistantCostUsd(entries): number` (stub throwing `"not implemented"`).
+- `server/src/ws-handler.ts` — `get_session_meta` handler wired to populate `lifetimeCostUsd` via `sumAssistantCostUsd(session.sessionManager.getBranch())`; imports the new helper.
+- `client/src/lib/session-summary.ts` — new `formatSessionCost(usd): string | null` (stub throwing `"not implemented"`).
+- `client/src/lib/stores/session-registry.svelte.ts` — `PerSessionState` gains `lifetimeCostUsd: number`, initialized to `0` in `createSessionState`. (`updateMeta` not yet wired to assign it — that is implementation.)
+
+### Test Files
+
+- `server/src/session-cost.test.ts` — behavioral tests for `sumAssistantCostUsd`: empty/trivial inputs, summation over assistant entries, filtering of non-assistant and non-message entries, missing/malformed cost data, and contract guarantees including monotonicity across compaction.
+- `client/src/lib/session-summary.test.ts` — behavioral tests for `formatSessionCost`: zero/negative sentinel, sub-cent display, and cent-and-above formatting/rounding.
+- `client/src/lib/stores/session-registry.test.ts` — added tests asserting `updateMeta` assigns `lifetimeCostUsd` to the target session only (session-specific, not folder-level) and that new session state initializes it to `0`. (Existing `updateMeta` test literal updated to include `lifetimeCostUsd`.)
+
+### Behaviors Covered
+
+#### Server — `sumAssistantCostUsd`
+
+- Empty branch → `0`.
+- Branch of only non-assistant entries (user, toolResult, compaction) → `0`.
+- Sums `message.usage.cost.total` across assistant message entries (e.g. `0.01 + 0.02 → 0.03`).
+- A single assistant entry returns its cost unchanged.
+- User and toolResult messages are ignored.
+- Non-`message` entries (compaction, model-change, label) are ignored even if they carry an assistant-shaped payload.
+- Assistant entry with missing `usage`, missing `cost`, or missing `cost.total` contributes `0` and does not throw.
+- A `message` entry with no `message` field does not throw.
+- Result is always a finite number `>= 0`.
+- Pre-compaction assistant entries that remain on the branch are still counted alongside post-compaction ones (total is monotonic across a compaction).
+
+#### Client — `formatSessionCost`
+
+- `0` → `null`; negative → `null` (caller hides the indicator).
+- `0 < usd < 0.01` → `"<$0.01"` (e.g. `0.004`, `0.0001`).
+- `0.01` → `"$0.01"`; `0.04` → `"$0.04"`; `1.23` → `"$1.23"`.
+- Rounds to two decimals (`1.235` → `"$1.24"`; rounding mode pinned to `toFixed(2)`).
+- Whole-dollar amounts padded to two decimals (`12` → `"$12.00"`).
+
+#### Client — `SessionRegistry` cost state
+
+- New session state initializes `lifetimeCostUsd` to `0`.
+- `updateMeta(sessionId, meta)` assigns `meta.lifetimeCostUsd` to the target session only — it is session-specific (like `contextUsage`), not propagated folder-wide (unlike `gitBranch`).
