@@ -38,3 +38,11 @@ adb install mobile/android/app/build/outputs/apk/debug/app-debug.apk
 # USB
 adb install mobile/android/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+**Test device IP (static, reserved on home LAN):** `192.168.1.240`
+
+The wireless-debug `adb pair` / `adb connect` ports are _not_ static — Android
+randomizes them each time wireless debugging is toggled. The pairing port is
+shown alongside the 6-digit pairing code in Settings → Developer options →
+Wireless debugging → Pair device with pairing code. The `adb connect` port is
+shown on the main Wireless debugging screen.

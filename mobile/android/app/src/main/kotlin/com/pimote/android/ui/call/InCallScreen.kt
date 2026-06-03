@@ -60,6 +60,7 @@ class CallViewModel : ViewModel() {
     val state: StateFlow<CallState> = container.callController.state
     val isMicMuted: StateFlow<Boolean> = container.callController.isMicMuted
     val audioRoute: StateFlow<AudioRouteSnapshot?> = container.callController.audioRoute
+    val isSpeakerphoneOn: StateFlow<Boolean> = container.callController.isSpeakerphoneOn
 
     val sessionDisplayName: StateFlow<String?> = combine(
         container.callController.state,
@@ -89,10 +90,12 @@ class CallViewModel : ViewModel() {
     }
 
     fun toggleSpeaker() {
-        val snap = audioRoute.value ?: return
-        if (AudioRoute.SPEAKER !in snap.supportedRoutes) return
-        val next = if (snap.route == AudioRoute.SPEAKER) AudioRoute.EARPIECE else AudioRoute.SPEAKER
-        container.callController.setAudioRoute(next)
+        // Drives `AudioManager.setCommunicationDevice` on API 31+ (via
+        // CallAudioRouter) and falls back to Telecom's setAudioRoute on
+        // older releases. The router's auto-routing handles BT/AA without
+        // a user toggle; this control is just for the on-phone speaker
+        // vs earpiece choice.
+        container.callController.setSpeakerphone(!isSpeakerphoneOn.value)
     }
 }
 
@@ -105,6 +108,7 @@ fun InCallScreen(
     val sessionName by viewModel.sessionDisplayName.collectAsState()
     val muted by viewModel.isMicMuted.collectAsState()
     val route by viewModel.audioRoute.collectAsState()
+    val speakerOnState by viewModel.isSpeakerphoneOn.collectAsState()
     val isEnded = state is CallState.Ended
     val isActive = state is CallState.Active
 
@@ -203,8 +207,12 @@ fun InCallScreen(
                     // reports SPEAKER in the supported route set (i.e. always on a
                     // phone, but may be absent on tablets / when a wired or BT
                     // headset has captured the route).
+                    //
+                    // `speakerOn` is sourced from the CallAudioRouter on API 31+
+                    // (authoritative) and falls back to the Telecom audio-route
+                    // snapshot on older releases.
                     val speakerSupported = route?.supportedRoutes?.contains(AudioRoute.SPEAKER) == true
-                    val speakerOn = route?.route == AudioRoute.SPEAKER
+                    val speakerOn = speakerOnState
                     if (speakerSupported) {
                         Box(
                             modifier = Modifier

@@ -3,6 +3,8 @@ package com.pimote.android.app
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import com.pimote.android.call.CallAudioRouter
 import com.pimote.android.call.CallController
 import com.pimote.android.call.CallControllerImpl
 import com.pimote.android.call.CallState
@@ -112,31 +114,27 @@ class AppContainer(private val appContext: Context) {
     }
     // Explicit JavaAudioDeviceModule. Without it, libwebrtc falls back to its
     // C++ default ADM (OpenSL ES) whose output stream type does not align with
-    // the MODE_IN_COMMUNICATION audio mode that Telecom puts the system into
-    // via setAudioModeIsVoip(true). Net effect: capture works, but inbound
-    // audio renders to a stream that's effectively muted during a VoIP call,
-    // so the user can't hear the model. JavaAudioDeviceModule uses
+    // the MODE_IN_COMMUNICATION audio mode Telecom puts the system into for
+    // self-managed VoIP calls. JavaAudioDeviceModule uses
     // AudioAttributes.USAGE_VOICE_COMMUNICATION + CONTENT_TYPE_SPEECH for
     // playback and AudioRecord with VOICE_COMMUNICATION input — both aligned
-    // with the call audio path Telecom is managing.
+    // with the call audio path the OS expects for VoIP.
     //
-    // Audio capture is configured to bypass Pixel's telephony DSP entirely:
+    // Audio source is VOICE_COMMUNICATION (the JavaADM default). This is the
+    // source that follows the active communication device selected by
+    // `AudioManager.setCommunicationDevice`, which is what makes BT HFP/SCO
+    // routing work for Bluetooth headsets and Android Auto. The previous
+    // VOICE_RECOGNITION workaround — chosen to bypass Pixel's FORTEMEDIA
+    // "AMixMODEM" telephony DSP gain-zero bug on local-mic capture — had the
+    // side effect of pinning capture to the builtin mic and breaking AA. If
+    // the Pixel uplink-gain-zero issue resurfaces on speakerphone-only calls
+    // it should be addressed at its real root (e.g. disabling platform AEC/NS
+    // effects on the AudioRecord session, or using UNPROCESSED source), not
+    // by re-pinning the source.
     //
-    //   - Audio source = VOICE_RECOGNITION (not the JavaADM default of
-    //     VOICE_COMMUNICATION). On Pixel/Tensor, capturing from
-    //     VOICE_COMMUNICATION while the system is in MODE_IN_COMMUNICATION
-    //     routes the mic through the FORTEMEDIA "AMixMODEM" / "Telephony
-    //     Voice Processor" chain. That chain has its own gain stage that,
-    //     in self-managed Telecom VoIP calls, zeroes the uplink gain a few
-    //     seconds in (`[AMixMODEM] pGainUL_: 0` in kernel logs). Server-side
-    //     audio-level traces confirmed phone capture going to digital
-    //     silence (RMS ~3e-6) for 40+ seconds. VOICE_RECOGNITION skips the
-    //     telephony DSP entirely and gives us raw mic samples.
-    //
-    //   - HW AEC + HW NS disabled for the same reason: any audiofx effects
-    //     re-engage parts of the FORTEMEDIA chain. WebRTC's software AEC3 +
-    //     NS3 in the APM run by default (createAudioSource constraints) and
-    //     handle echo/noise/AGC entirely in user space.
+    // HW AEC + HW NS remain disabled — WebRTC's software AEC3 + NS3 in the
+    // APM run by default (createAudioSource constraints) and handle echo /
+    // noise / AGC entirely in user space.
     //
     // Lifecycle: the ADM is process-singleton, paired with the factory. It is
     // never explicitly released in v1 — the OS reclaims on process death.
@@ -151,7 +149,7 @@ class AppContainer(private val appContext: Context) {
     private fun newPeerConnectionFactoryAndAdm(): Pair<PeerConnectionFactory, org.webrtc.audio.JavaAudioDeviceModule> {
         webrtcInitialized
         val adm = JavaAudioDeviceModule.builder(appContext)
-            .setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION)
+            .setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION)
             .setUseHardwareAcousticEchoCanceler(false)
             .setUseHardwareNoiseSuppressor(false)
             .setAudioRecordStateCallback(object : org.webrtc.audio.JavaAudioDeviceModule.AudioRecordStateCallback {
@@ -209,8 +207,23 @@ class AppContainer(private val appContext: Context) {
         SpeechmuxPeerImpl(factory, adm, httpClient = httpClient)
     }
 
+    /**
+     * API 31+ only. Owns the comm-device selection while a call is active
+     * (BT SCO when AA / a headset is connected, builtin earpiece / speaker
+     * otherwise). On API 26–30 this is null and CallControllerImpl falls
+     * back to Telecom-driven routing.
+     */
+    val callAudioRouter: CallAudioRouter? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            CallAudioRouter(
+                appContext.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager,
+            )
+        } else {
+            null
+        }
+
     val callController: CallController =
-        CallControllerImpl(wsClient, peerFactory, applicationScope)
+        CallControllerImpl(wsClient, peerFactory, applicationScope, callAudioRouter)
 
     init {
         // Launch the custom in-call screen as soon as the controller leaves

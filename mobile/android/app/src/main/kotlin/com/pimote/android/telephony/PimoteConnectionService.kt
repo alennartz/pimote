@@ -50,7 +50,11 @@ class PimoteConnectionService : ConnectionService() {
 
         val conn = PimoteConnection(container.callController, target)
         conn.setInitializing()
-        conn.setAudioModeIsVoip(true)
+        // Note: do NOT call setAudioModeIsVoip(true) here. That method is for
+        // non-self-managed Connections; for self-managed PhoneAccounts Telecom
+        // moves the system to MODE_IN_COMMUNICATION automatically. Calling it
+        // explicitly is redundant and on some OEM audio HALs can interact
+        // poorly with the call audio path.
         conn.connectionCapabilities = Connection.CAPABILITY_MUTE or Connection.CAPABILITY_SUPPORT_HOLD
         request.address?.let { conn.setAddress(it, TelecomManager.PRESENTATION_ALLOWED) }
         container.callController.startOutgoing(target, conn)

@@ -166,6 +166,21 @@ interface CallController {
      * there is no active connection.
      */
     fun setAudioRoute(route: AudioRoute)
+
+    /**
+     * Whether the active call audio is currently routed to the builtin
+     * loudspeaker. Driven by [CallAudioRouter] on API 31+, and by
+     * Telecom's `audioRoute` snapshot as a fallback on older releases.
+     */
+    val isSpeakerphoneOn: StateFlow<Boolean>
+
+    /**
+     * Toggle the loudspeaker. On API 31+ this is forwarded to
+     * [CallAudioRouter.setSpeakerphone] which selects between the builtin
+     * speaker and the best available external comm device. On older
+     * releases it falls back to [setAudioRoute] with SPEAKER/EARPIECE.
+     */
+    fun setSpeakerphone(enabled: Boolean)
 }
 
 /**
@@ -188,6 +203,12 @@ class CallControllerImpl(
     private val wsClient: WsClient,
     private val peerFactory: () -> SpeechmuxPeer,
     private val scope: kotlinx.coroutines.CoroutineScope,
+    /**
+     * Optional. Present on API 31+ (constructed in AppContainer); null on
+     * 26–30 where `AudioManager.setCommunicationDevice` is unavailable and
+     * we fall back to the pre-existing Telecom-route behaviour.
+     */
+    private val audioRouter: CallAudioRouter? = null,
 ) : CallController {
     private val _state = MutableStateFlow<CallState>(CallState.Idle)
     override val state: StateFlow<CallState> = _state.asStateFlow()
@@ -198,6 +219,13 @@ class CallControllerImpl(
     private val _audioRoute = MutableStateFlow<AudioRouteSnapshot?>(null)
     override val audioRoute: StateFlow<AudioRouteSnapshot?> = _audioRoute.asStateFlow()
 
+    // Speakerphone state: prefer the router's authoritative flow on 31+,
+    // fall back to deriving it from the Telecom audio-route snapshot on
+    // older releases.
+    private val _legacySpeakerphoneOn = MutableStateFlow(false)
+    override val isSpeakerphoneOn: StateFlow<Boolean> =
+        audioRouter?.speakerphoneOn ?: _legacySpeakerphoneOn.asStateFlow()
+
     private var callJob: Job? = null
     private var userHangup: CompletableDeferred<Unit>? = null
     private var currentSessionId: String? = null
@@ -207,6 +235,26 @@ class CallControllerImpl(
     init {
         scope.launch(Dispatchers.Unconfined) {
             _state.collect { com.pimote.android.util.L.d("Call", "state -> $it") }
+        }
+        // Drive the audio router off call-state edges. We start the router
+        // when the call leaves Idle and stop it when it returns to Idle/Ended,
+        // so the BT SCO link is engaged for the duration of the call and
+        // released afterwards (clearing the comm device). On API 26–30 the
+        // router is null and this collector is a no-op.
+        if (audioRouter != null) {
+            scope.launch(Dispatchers.Unconfined) {
+                var routerActive = false
+                _state.collect { s ->
+                    val shouldBeActive = s !is CallState.Idle && s !is CallState.Ended
+                    if (shouldBeActive && !routerActive) {
+                        audioRouter.start()
+                        routerActive = true
+                    } else if (!shouldBeActive && routerActive) {
+                        audioRouter.stop()
+                        routerActive = false
+                    }
+                }
+            }
         }
     }
 
@@ -266,10 +314,26 @@ class CallControllerImpl(
 
     override fun onAudioStateChanged(audioState: AudioRouteSnapshot) {
         _audioRoute.value = audioState
+        // Legacy fallback only: on API 31+ the router owns this flow.
+        if (audioRouter == null) {
+            _legacySpeakerphoneOn.value = audioState.route == AudioRoute.SPEAKER
+        }
     }
 
     override fun setAudioRoute(route: AudioRoute) {
         try { currentConnection?.setAudioRoute(route) } catch (_: Throwable) { /* best-effort */ }
+    }
+
+    override fun setSpeakerphone(enabled: Boolean) {
+        if (audioRouter != null) {
+            audioRouter.setSpeakerphone(enabled)
+        } else {
+            // Pre-API-31 fallback: route via Telecom and mirror the request
+            // into the legacy state flow. `onAudioStateChanged` will overwrite
+            // this with the framework's reported route once Telecom acks.
+            _legacySpeakerphoneOn.value = enabled
+            setAudioRoute(if (enabled) AudioRoute.SPEAKER else AudioRoute.EARPIECE)
+        }
     }
 
     override fun setMicMuted(muted: Boolean) {
