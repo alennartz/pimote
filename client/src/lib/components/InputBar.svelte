@@ -5,6 +5,7 @@
   import { commandStore } from '$lib/stores/command-store.svelte.js';
   import { editorTextRequest, setEditorText, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
   import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
+  import { loginStore } from '$lib/stores/login-store.js';
   import CommandAutocomplete from './CommandAutocomplete.svelte';
   import type { CommandInfo } from '@pimote/shared';
   import Send from '@lucide/svelte/icons/send';
@@ -202,6 +203,22 @@
   async function sendMessage() {
     const text = inputText.trim();
     if (!canSend) return;
+
+    // Intercept the bare `/login` command client-side: open the login dialog
+    // instead of sending a prompt to the agent.
+    if (text === '/login') {
+      void loginStore.open();
+      inputText = '';
+      autocompleteVisible = false;
+      selectedCommand = null;
+      if (sessionRegistry.viewed) {
+        sessionRegistry.viewed.draftText = '';
+      }
+      if (textareaEl) {
+        textareaEl.style.height = 'auto';
+      }
+      return;
+    }
 
     let sent = false;
 

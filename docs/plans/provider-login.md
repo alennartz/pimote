@@ -257,7 +257,7 @@ In `server/src/session-manager.ts`, the manager already owns `this.authStorage`
 
 **Verify:** `cd server && npx tsc --noEmit` (or the package's typecheck) passes; the
 manager exposes a single shared orchestrator instance.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Route the `login_*` commands in `ws-handler`
 
@@ -302,7 +302,7 @@ connection receives the `login_step` events and resolves inputs.
 **Verify:** `cd server && npx tsc --noEmit` passes. Manually: a `login_list` command
 returns the provider list; `login_begin` for a busy orchestrator returns
 `{ ok: false, reason: 'busy' }`.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Register `/login` in `get_commands` autocomplete
 
@@ -312,7 +312,7 @@ commands" block (alongside `new`/`reload`/`tree`), push
 
 **Verify:** `get_commands` response includes a `login` entry; `/login` appears in the
 client slash-command autocomplete.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Implement the client `LoginStore`
 
@@ -359,7 +359,7 @@ session-registry store (match how other singletons reach it).
 
 **Verify:** importing `loginStore` routes incoming `login_step` events into the store;
 `cd client && npx svelte-check` / typecheck passes.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Build the `LoginDialog.svelte` component and mount it globally
 
@@ -384,7 +384,7 @@ Mount `<LoginDialog />` in `client/src/routes/+layout.svelte` next to `<TreeDial
 
 **Verify:** `/login` opens the modal; a full login flow (provider pick → auth/device
 step → done) renders end-to-end against a running server.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Intercept `/login` in `InputBar` to open the dialog
 
@@ -396,4 +396,4 @@ state, and return without sending a `prompt`.
 
 **Verify:** typing `/login` and submitting opens the login dialog and does not post a
 user message or hit the agent.
-**Status:** not started
+**Status:** done

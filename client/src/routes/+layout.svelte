@@ -9,6 +9,7 @@
   // Side-effect import: subscribes the voice-call store to server events at app boot.
   import '$lib/stores/voice-call-store.js';
   import TreeDialog from '$lib/components/TreeDialog.svelte';
+  import LoginDialog from '$lib/components/LoginDialog.svelte';
   import Panel from '$lib/components/Panel.svelte';
   import SessionSettingsDialog from '$lib/components/SessionSettingsDialog.svelte';
   import SessionRenameDialog from '$lib/components/SessionRenameDialog.svelte';
@@ -306,6 +307,9 @@
 
   <!-- Tree navigation dialog -->
   <TreeDialog />
+
+  <!-- Provider login dialog -->
+  <LoginDialog />
 
   <!-- PWA install prompt (mobile only) -->
   <InstallBanner />
