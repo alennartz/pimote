@@ -183,6 +183,8 @@ overlay dialog mounting pattern.
 
 ## Steps
 
+**Pre-implementation commit:** `2c5fdc04ac5afd91cc574b3f594887adeaad3691`
+
 ### Step 1: Implement `LoginOrchestrator.listProviders` and `isBusy`
 
 In `server/src/login-orchestrator.ts`, fill in the two synchronous methods plus the
@@ -200,7 +202,7 @@ real `AuthStorage` satisfies the seam unchanged.
 **Verify:** the `LoginOrchestrator.listProviders` and `in-flight guard` (the
 `isBusy() === false before any login`) describe blocks in
 `server/src/login-orchestrator.test.ts` pass.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement `LoginOrchestrator.runLogin`
 
@@ -238,7 +240,7 @@ be unique within the flow.
 **Verify:** the `LoginOrchestrator.runLogin success`, `runLogin failure`, and the
 remaining `in-flight guard` blocks in `server/src/login-orchestrator.test.ts` pass.
 Run `cd server && npx vitest run src/login-orchestrator.test.ts`.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Construct and expose the `LoginOrchestrator` from `PimoteSessionManager`
 
@@ -341,7 +343,7 @@ test's `sendCommand` fake ignores it.
 
 **Verify:** `cd client && npx vitest run src/lib/stores/login.svelte.test.ts` — all
 `LoginStore.*` blocks pass.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Wire the singleton `LoginStore` + `login_step` event routing
 

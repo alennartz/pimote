@@ -87,6 +87,8 @@ export class LoginBusyError extends Error {
 export class LoginOrchestrator {
   private readonly authStorage: LoginAuthStorage;
   private readonly modelRegistry: LoginModelRegistry;
+  private busy = false;
+  private requestCounter = 0;
 
   constructor(authStorage: LoginAuthStorage, modelRegistry: LoginModelRegistry) {
     this.authStorage = authStorage;
@@ -95,12 +97,16 @@ export class LoginOrchestrator {
 
   /** List OAuth providers with logged-in status (from getOAuthProviders + getAuthStatus). */
   listProviders(): LoginProviderInfo[] {
-    throw new Error('not implemented');
+    return this.authStorage.getOAuthProviders().map((p) => ({
+      id: p.id,
+      name: p.name,
+      loggedIn: this.authStorage.getAuthStatus(p.id).configured,
+    }));
   }
 
   /** Whether a login flow is currently running. */
   isBusy(): boolean {
-    throw new Error('not implemented');
+    return this.busy;
   }
 
   /**
@@ -108,7 +114,67 @@ export class LoginOrchestrator {
    * flow ends; emits a terminal `done` step itself (success or failure). Throws
    * LoginBusyError if a flow is already in progress.
    */
-  runLogin(_providerId: string, _transport: LoginTransport): Promise<void> {
-    throw new Error('not implemented');
+  async runLogin(providerId: string, transport: LoginTransport): Promise<void> {
+    // Synchronous in-flight guard (before the first await) so a concurrent
+    // runLogin issued in the same tick rejects while the first is in flight.
+    if (this.busy) {
+      throw new LoginBusyError();
+    }
+    this.busy = true;
+
+    const providerName = this.authStorage.getOAuthProviders().find((p) => p.id === providerId)?.name ?? providerId;
+
+    const nextRequestId = (): string => `login-${++this.requestCounter}`;
+
+    const callbacks: LoginOAuthCallbacks = {
+      onAuth: (info) => {
+        transport.emit({ kind: 'auth', url: info.url, instructions: info.instructions });
+      },
+      onDeviceCode: (info) => {
+        transport.emit({
+          kind: 'device_code',
+          userCode: info.userCode,
+          verificationUri: info.verificationUri,
+          expiresInSeconds: info.expiresInSeconds,
+        });
+      },
+      onProgress: (message) => {
+        transport.emit({ kind: 'progress', message });
+      },
+      onPrompt: (prompt) =>
+        transport.requestInput({
+          requestId: nextRequestId(),
+          message: prompt.message,
+          placeholder: prompt.placeholder,
+          allowEmpty: prompt.allowEmpty,
+        }),
+      onManualCodeInput: () =>
+        transport.requestInput({
+          requestId: nextRequestId(),
+          message: 'Paste the authorization code',
+        }),
+      onSelect: (prompt) =>
+        transport.requestSelect({
+          requestId: nextRequestId(),
+          message: prompt.message,
+          options: prompt.options,
+        }),
+      signal: transport.signal,
+    };
+
+    try {
+      await this.authStorage.login(providerId, callbacks);
+      this.modelRegistry.refresh();
+      transport.emit({ kind: 'done', success: true, providerName });
+    } catch (err) {
+      transport.emit({
+        kind: 'done',
+        success: false,
+        providerName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      this.busy = false;
+    }
   }
 }

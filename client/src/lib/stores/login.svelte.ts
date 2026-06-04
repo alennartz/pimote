@@ -52,33 +52,81 @@ export class LoginStore {
   }
 
   /** Open the dialog: fetch the provider list and move to the picker. */
-  open(): Promise<void> {
-    throw new Error('not implemented');
+  async open(): Promise<void> {
+    this.state.flow = 'listing';
+    const resp = await this.seams.sendCommand<LoginListResponseData>({
+      type: 'login_list',
+      id: crypto.randomUUID(),
+    });
+    this.state.providers = resp.data?.providers ?? [];
+    this.state.flow = 'picking';
   }
 
   /** Begin a login flow for the chosen provider. Resolves to false if server is busy. */
-  begin(_providerId: string): Promise<boolean> {
-    throw new Error('not implemented');
+  async begin(providerId: string): Promise<boolean> {
+    const resp = await this.seams.sendCommand<LoginBeginResponseData>({
+      type: 'login_begin',
+      id: crypto.randomUUID(),
+      providerId,
+    });
+    if (!resp.data?.ok) {
+      return false;
+    }
+    this.state.flow = 'running';
+    this.state.currentStep = null;
+    this.state.succeeded = null;
+    this.state.error = null;
+    return true;
   }
 
   /** Submit a value for the current prompt/select step (keyed by its requestId). */
-  submitInput(_value: string): Promise<void> {
-    throw new Error('not implemented');
+  async submitInput(value: string): Promise<void> {
+    const step = this.state.currentStep;
+    if (!step || (step.kind !== 'prompt' && step.kind !== 'select')) {
+      return;
+    }
+    await this.seams.sendCommand({
+      type: 'login_input',
+      id: crypto.randomUUID(),
+      requestId: step.requestId,
+      value,
+    });
   }
 
   /** Cancel the in-flight flow and reset to idle. */
-  cancel(): Promise<void> {
-    throw new Error('not implemented');
+  async cancel(): Promise<void> {
+    await this.seams.sendCommand({ type: 'login_cancel', id: crypto.randomUUID() });
+    this.state.flow = 'idle';
   }
 
   /** Route an incoming `login_step` event into the state machine. */
-  handleStep(_step: LoginStep): void {
-    throw new Error('not implemented');
+  handleStep(step: LoginStep): void {
+    if (step.kind === 'done') {
+      this.state.flow = 'done';
+      this.state.succeeded = step.success;
+      this.state.error = step.error ?? null;
+      if (step.success) {
+        const sessionId = this.seams.getViewedSessionId();
+        if (sessionId) {
+          void this.seams.sendCommand({
+            type: 'get_available_models',
+            id: crypto.randomUUID(),
+            sessionId,
+          });
+        }
+      }
+      return;
+    }
+    this.state.currentStep = step;
   }
 
   /** Reset the store to its initial idle state. */
   close(): void {
-    throw new Error('not implemented');
+    this.state.flow = 'idle';
+    this.state.providers = [];
+    this.state.currentStep = null;
+    this.state.succeeded = null;
+    this.state.error = null;
   }
 }
 
