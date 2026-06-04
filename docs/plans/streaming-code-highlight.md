@@ -181,6 +181,7 @@ long files.
 - `client/src/lib/code-highlight.test.ts` — `highlightToHtml` markup/escaping contract and the `IncrementalHighlighter` throttle/flush/dispose contract (jsdom + fake timers).
 - `client/src/lib/write-content.test.ts` — `extractWriteContent` finalized extraction and the `createWriteContentStreamer` byte-identity / progressive-growth contract.
 - `client/src/lib/editor-language.test.ts` — extended with `inferLanguageFromPath` extension-mapping cases.
+- `client/src/lib/smd-renderer.test.ts` — extended with a mid-stream fenced-code highlight case (fake timers): fenced code carries hljs span markup before the closing fence arrives, not only at `end_token`.
 
 ### Behaviors Covered
 
@@ -211,3 +212,12 @@ long files.
 
 - Maps known extensions to their `EditorLanguage` (`.ts` → typescript, `.md` → markdown, `.svelte` → html), case-insensitively.
 - Returns null for paths with no extension or an unmapped extension.
+
+#### smd-renderer (mid-stream fenced-code highlight)
+
+- A fenced code block opened with a language hint and streamed without a
+  closing fence carries hljs span markup once the throttle window elapses —
+  i.e. it highlights WHILE streaming, not only at `end_token`. Closing the
+  fence afterward does not throw or lose content.
+
+**Review status:** approved

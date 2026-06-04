@@ -1,9 +1,13 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import * as smd from 'streaming-markdown';
 import { createRenderer } from './smd-renderer.js';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 /** Helper: render complete markdown in one shot */
 function renderComplete(markdown: string): HTMLDivElement {
@@ -172,6 +176,31 @@ describe('createRenderer', () => {
       const code = container.querySelector('pre code');
       expect(code).not.toBeNull();
       expect(code!.classList.contains('hljs')).toBe(true);
+    });
+
+    it('highlights fenced code mid-stream, before the closing fence arrives', () => {
+      // The headline markdown-surface behavior: fenced code highlights WHILE it
+      // streams, not only once the fence closes. Open a fence with a language
+      // and stream code into it WITHOUT a closing fence, then let the throttle
+      // window elapse — the <code> should already carry hljs span markup.
+      vi.useFakeTimers();
+      const container = document.createElement('div');
+      const renderer = createRenderer(container);
+      const p = smd.parser(renderer);
+
+      smd.parser_write(p, '```typescript\nconst x: number = 42;\n');
+
+      // Advance past the (~100ms) trailing-edge throttle window mid-stream.
+      vi.advanceTimersByTime(200);
+
+      const code = container.querySelector('pre code');
+      expect(code).not.toBeNull();
+      // hljs span markup is present before end_token — highlighted while streaming.
+      expect(code!.innerHTML).toContain('hljs-');
+
+      // Fence is still open; closing it must not throw or lose content.
+      smd.parser_end(p);
+      expect(container.querySelector('pre code')!.textContent).toContain('const x');
     });
 
     it('incrementally builds DOM — feeding partial text creates partial output', () => {
