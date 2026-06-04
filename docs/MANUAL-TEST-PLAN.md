@@ -645,7 +645,7 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[P]** Agent invokes a tool (e.g., `bash`, `read`, `edit`)
 - **[E]** `tool_execution_start` event renders a ToolCall component
 - **[E]** Shows: tool name, input args (collapsible JSON)
-- **[E]** Exception: for `edit` tool calls, args render as a rendered markdown `diff` block (unified diff of each `edits[]` entry) instead of raw JSON — see TC-08.08
+- **[E]** Exception: for `edit` tool calls, args render as a rendered markdown `diff` block (unified diff of each `edits[]` entry) instead of raw JSON — see TC-08.08; for `write` tool calls, args render as highlighted code or rendered markdown — see TC-08.09
 
 ### TC-08.02 — Tool call streaming output 🟠
 
@@ -697,6 +697,18 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[E]** On completion, the diff block auto-collapses; clicking re-expands it
 - **[E]** Partially-streamed `oldText`/`newText` render progressively without breaking the diff formatting
 - **[E]** Other tool calls (`bash`, `read`, …) are unaffected and still show collapsible JSON args
+
+### TC-08.09 — `write` tool call renders as highlighted code / rendered markdown 🟠
+
+- **[P]** Agent invokes the `write` tool with a `path` and a `content` body
+- **[S]** Observe the ToolCall component (`WriteFileBlock`) while `content` streams in
+- **[E]** A code-file path (e.g. `.ts`, `.py`) renders the body as a syntax-highlighted `<pre><code class="hljs">` block (real `hljs-*` spans), not raw JSON args
+- **[E]** A `.md`/`.markdown` path renders the body as _rendered_ markdown (headings, lists, inner fenced code highlighted) via the smd pipeline, not source text
+- **[E]** Code highlights _while it streams_ (throttled ~100ms), and markdown fenced code inside any message highlights mid-stream too, not only when the closing fence arrives
+- **[E]** The block auto-expands while streaming and auto-collapses on completion (ThinkingBlock pattern); clicking re-expands it
+- **[E]** The Copy button yields the **raw source** verbatim (literal `#`/`*`, frontmatter, whitespace) in **both** code and markdown modes — never the rendered/highlighted text
+- **[E]** A long write (>20 lines) shows a "Show more… (N lines)" collapse wrapper that bounds the body in **both** modes
+- **[E]** Other tool calls (`bash`, `read`, …) and `edit` (TC-08.08) are unaffected
 
 ---
 
