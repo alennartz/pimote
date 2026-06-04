@@ -143,3 +143,38 @@ re-pulls `get_available_models`.
 None — no new dependencies. Reuses pi SDK auth/model APIs, the existing WS command/event
 envelope, the existing request/response-by-requestId pattern, and the existing global-
 overlay dialog mounting pattern.
+
+## Tests
+
+**Pre-test-write commit:** `437cbc62fa3918cd745a2cacd9d0307b0145c435`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — added the provider-login wire contracts: `LoginProviderInfo`, the four client→server commands (`LoginListCommand`, `LoginBeginCommand`, `LoginInputCommand`, `LoginCancelCommand`) and their response shapes (`LoginListResponseData`, `LoginBeginResponseData`), the global `LoginStep` discriminated union + `LoginStepEvent`, and wired all of them into the `PimoteCommand` / `PimoteEvent` unions.
+- `server/src/login-orchestrator.ts` — `LoginOrchestrator` class skeleton plus its dependency seams: `LoginAuthStorage` / `LoginModelRegistry` (narrow structural interfaces the real pi-SDK `AuthStorage` / `ModelRegistry` satisfy), the connection-bound `LoginTransport`, the locally-mirrored `LoginOAuthCallbacks` family, and the `LoginBusyError` type. Method bodies throw `not implemented`.
+- `client/src/lib/stores/login.svelte.ts` — `LoginStore` class skeleton: `LoginStoreState` (flow state machine + provider list + current step + terminal result), the `LoginStoreSeams` injection point (`sendCommand` + `getViewedSessionId`), and the `open`/`begin`/`submitInput`/`cancel`/`handleStep`/`close` surface. Method bodies throw `not implemented`.
+
+### Test Files
+
+- `server/src/login-orchestrator.test.ts` — exercises `listProviders`, the single-flight in-flight guard, and `runLogin` happy/abort/failure paths against in-memory `AuthStorage` / `ModelRegistry` / transport fakes.
+- `client/src/lib/stores/login.svelte.test.ts` — exercises the client flow state machine (open→pick→run→done), `login_step` routing, input submission, cancel/close, and the post-success model re-pull, all through an injected `sendCommand` fake.
+
+### Behaviors Covered
+
+#### LoginOrchestrator (server)
+
+- Lists one entry per OAuth provider with `id`/`name`, marks `loggedIn` from auth status, and returns `[]` when no providers exist.
+- Reports `isBusy()` false before a flow, true while a flow runs, and false again after it ends.
+- Runs a single login flow at a time — a concurrent `runLogin` rejects with `LoginBusyError`; a second login is allowed once the first completes (including after a failure).
+- Calls `authStorage.login` with the requested provider id and refreshes the model registry on success.
+- Emits a terminal `done{success:true}` step on completion; translates provider callbacks into transport activity: `onAuth`→`auth` step, `onDeviceCode`→`device_code` step, `onProgress`→`progress` step, `onPrompt`→transport `requestInput`, `onSelect`→transport `requestSelect`, and threads the transport `AbortSignal` into the callbacks.
+- On login failure emits a terminal `done{success:false, error}` step, does not refresh the model registry, and clears busy state so a retry can start.
+
+#### LoginStore (client)
+
+- `open()` sends `login_list`, populates the provider list from the response, and moves the flow to `picking`.
+- `begin(id)` sends `login_begin` carrying the provider id, enters `running` and returns `true` on acceptance; on a `busy` response returns `false` and does not enter `running`.
+- `handleStep` stores `auth` / `device_code` / `prompt` / `select` / `progress` steps as the current step.
+- `submitInput(value)` sends `login_input` echoing the current prompt/select step's `requestId` and the submitted value.
+- A terminal `done{success:true}` step moves the flow to `done`, records success, and re-pulls `get_available_models` for the viewed session (skipped when no session is viewed); a `done{success:false}` step records the failure + error and does not re-pull models.
+- `cancel()` sends `login_cancel` and returns the flow to `idle`; `close()` resets the store to its initial idle state.

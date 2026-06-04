@@ -449,6 +449,52 @@ export type CallBindErrorCode = 'call_bind_failed_session_not_found' | 'call_bin
 /** Reason code returned when an extension attempts a UI bridge call during a voice call. */
 export const UI_BRIDGE_DISABLED_IN_VOICE_MODE = 'ui_bridge_disabled_in_voice_mode';
 
+// -- Provider login commands --
+//
+// Interactive OAuth provider login (`/login` equivalent). These commands are
+// global — login is not session-scoped, so they carry no `sessionId`. They do
+// carry the usual `id` for request/response correlation.
+
+/** A single OAuth provider's logged-in status, for the login picker. */
+export interface LoginProviderInfo {
+  id: string;
+  name: string;
+  loggedIn: boolean;
+}
+
+/** List OAuth providers and their logged-in status. resp: LoginListResponseData */
+export interface LoginListCommand extends CommandBase {
+  type: 'login_list';
+}
+
+/** Begin an interactive login flow for a provider. resp: LoginBeginResponseData */
+export interface LoginBeginCommand extends CommandBase {
+  type: 'login_begin';
+  providerId: string;
+}
+
+/** Resolve a pending login prompt/select keyed by `requestId`. */
+export interface LoginInputCommand extends CommandBase {
+  type: 'login_input';
+  requestId: string;
+  value: string;
+}
+
+/** Abort the in-flight login flow (fires the AbortSignal, rejects pending input). */
+export interface LoginCancelCommand extends CommandBase {
+  type: 'login_cancel';
+}
+
+export interface LoginListResponseData {
+  providers: LoginProviderInfo[];
+}
+
+export interface LoginBeginResponseData {
+  ok: boolean;
+  /** Present when ok === false because a login flow is already in progress. */
+  reason?: 'busy';
+}
+
 // -- Extension UI commands --
 
 export interface ExtensionUiResponseCommand extends CommandBase {
@@ -509,7 +555,12 @@ export type PimoteCommand =
   | ExtensionUiResponseCommand
   // Voice
   | CallBindCommand
-  | CallEndCommand;
+  | CallEndCommand
+  // Provider login
+  | LoginListCommand
+  | LoginBeginCommand
+  | LoginInputCommand
+  | LoginCancelCommand;
 
 // ----------------------------------------------------------------------------
 // Server → Client Events
@@ -869,6 +920,28 @@ export interface VoiceInterruptEntryData {
   kind: 'abort' | 'rollback';
 }
 
+// -- Provider login events --
+
+/**
+ * A single step in an interactive login flow, server → client. Rendered
+ * generically by the login modal. `prompt`/`select` steps carry a `requestId`
+ * the client echoes back via `login_input` to resolve the pending input. The
+ * `done` step is terminal. Login is global (not session-scoped), so this event
+ * carries no `sessionId`.
+ */
+export type LoginStep =
+  | { kind: 'auth'; url: string; instructions?: string }
+  | { kind: 'device_code'; userCode: string; verificationUri: string; expiresInSeconds?: number }
+  | { kind: 'prompt'; requestId: string; message: string; placeholder?: string; allowEmpty?: boolean }
+  | { kind: 'select'; requestId: string; message: string; options: { id: string; label: string }[] }
+  | { kind: 'progress'; message: string }
+  | { kind: 'done'; success: boolean; providerName: string; error?: string };
+
+export interface LoginStepEvent {
+  type: 'login_step';
+  step: LoginStep;
+}
+
 // -- Version mismatch --
 
 export interface VersionMismatchEvent {
@@ -906,6 +979,8 @@ export type PimoteEvent =
   | CallReadyEvent
   | CallEndedEvent
   | CallStatusEvent
+  // Provider login
+  | LoginStepEvent
   // Version
   | VersionMismatchEvent;
 

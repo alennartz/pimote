@@ -6,7 +6,7 @@
   import CallButton from './CallButton.svelte';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
-  import { getContextDisplay, getContextTone } from '$lib/session-summary.js';
+  import { getContextDisplay, getContextTone, formatSessionCost } from '$lib/session-summary.js';
   import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import X from '@lucide/svelte/icons/x';
 
@@ -15,6 +15,7 @@
   let session = $derived(sessionRegistry.viewed);
   let contextDisplay = $derived(getContextDisplay(session));
   let contextTone = $derived(getContextTone(session?.contextUsage?.percent));
+  let costDisplay = $derived(formatSessionCost(session?.lifetimeCostUsd ?? 0));
 
   let connectionLabel = $derived(connection.phaseLabel);
 
@@ -88,6 +89,13 @@
             <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium {contextChipClass}">
               {contextDisplay}
             </span>
+          </div>
+        {/if}
+
+        {#if costDisplay}
+          <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
+            <span class="text-muted-foreground">Cost</span>
+            <span class="font-medium">{costDisplay}</span>
           </div>
         {/if}
 
