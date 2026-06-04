@@ -121,6 +121,18 @@ export function inferLanguageFromTitle(title: string): ResolvedEditorLanguage | 
   };
 }
 
+/**
+ * Map a clean file path to an `EditorLanguage` via the file extension.
+ *
+ * Unlike `inferLanguageFromTitle` (which regex-scans free-text titles), this
+ * assumes `path` is a real path and just splits off the extension. Returns
+ * null when the path has no extension or the extension is unmapped. Extension
+ * matching is case-insensitive.
+ */
+export function inferLanguageFromPath(_path: string): EditorLanguage | null {
+  throw new Error('not implemented');
+}
+
 export function inferLanguageFromContent(prefill: string): ResolvedEditorLanguage | null {
   const id = mapHighlightLanguage(detectHighlightedLanguage(prefill));
   if (!id) return null;

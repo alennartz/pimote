@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractFilenameFromTitle, inferLanguageFromContent, inferLanguageFromTitle, resolveEditorLanguage } from './editor-language.js';
+import { extractFilenameFromTitle, inferLanguageFromContent, inferLanguageFromPath, inferLanguageFromTitle, resolveEditorLanguage } from './editor-language.js';
 
 describe('extractFilenameFromTitle', () => {
   it('extracts a plain filename', () => {
@@ -47,6 +47,32 @@ describe('inferLanguageFromTitle', () => {
 describe('inferLanguageFromContent', () => {
   it('auto-detects python from prefill content', () => {
     expect(inferLanguageFromContent('def greet(name):\n    print(f"Hello, {name}")\n')).toMatchObject({ id: 'python', source: 'prefill' });
+  });
+});
+
+describe('inferLanguageFromPath', () => {
+  it('maps a typescript path by extension', () => {
+    expect(inferLanguageFromPath('server/src/ws-handler.ts')).toBe('typescript');
+  });
+
+  it('maps a markdown path by extension', () => {
+    expect(inferLanguageFromPath('docs/notes.md')).toBe('markdown');
+  });
+
+  it('maps svelte files to the html language', () => {
+    expect(inferLanguageFromPath('client/src/routes/+page.svelte')).toBe('html');
+  });
+
+  it('matches the extension case-insensitively', () => {
+    expect(inferLanguageFromPath('README.MD')).toBe('markdown');
+  });
+
+  it('returns null for a path with no extension', () => {
+    expect(inferLanguageFromPath('Makefile')).toBeNull();
+  });
+
+  it('returns null for an unmapped extension', () => {
+    expect(inferLanguageFromPath('archive.xyz')).toBeNull();
   });
 });
 

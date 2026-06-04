@@ -164,3 +164,50 @@ long files.
   `extractWriteContent(content.args)`.
 - `language = inferLanguageFromPath(path)`; `isMarkdown = language === 'markdown'`.
 - Always `<WriteFileBlock content={body} mode={isMarkdown ? 'markdown' : 'code'} {language} streaming={...} />`.
+
+## Tests
+
+**Pre-test-write commit:** `2f6f048c003a568a70f508fac1728180e67d081c`
+
+### Interface Files
+
+- `client/src/lib/code-highlight.ts` — shared streaming-highlight engine: pure `highlightToHtml(text, language)` and the stateful `IncrementalHighlighter` (`schedule`/`flush`/`dispose`) created via `createIncrementalHighlighter({ intervalMs? })`. Stubs throw `not implemented`.
+- `client/src/lib/write-content.ts` — `WriteArgs` shape, finalized `extractWriteContent(args)`, and the `WriteContentStreamer` (`write`/`content`/`dispose`) created via `createWriteContentStreamer()` (mirrors `edit-diff.ts`). Stubs throw `not implemented`.
+- `client/src/lib/editor-language.ts` — added pure `inferLanguageFromPath(path)` mapping a file extension to an `EditorLanguage` via the existing `EXTENSION_LANGUAGE_MAP`. Stub throws `not implemented`.
+- `client/src/lib/components/WriteFileBlock.svelte` — new component interface stub declaring the props contract (`content`, `mode: 'code' | 'markdown'`, `language`, `streaming?`). Renders a placeholder; real collapse/copy/render chrome lands in implementation.
+
+### Test Files
+
+- `client/src/lib/code-highlight.test.ts` — `highlightToHtml` markup/escaping contract and the `IncrementalHighlighter` throttle/flush/dispose contract (jsdom + fake timers).
+- `client/src/lib/write-content.test.ts` — `extractWriteContent` finalized extraction and the `createWriteContentStreamer` byte-identity / progressive-growth contract.
+- `client/src/lib/editor-language.test.ts` — extended with `inferLanguageFromPath` extension-mapping cases.
+
+### Behaviors Covered
+
+#### code-highlight (`highlightToHtml`)
+
+- Emits hljs `<span class="hljs-*">` markup for a registered language and preserves the underlying source text.
+- Returns HTML-escaped plain text with no spans when the language is null or unregistered.
+- Never throws on an unknown language; empty input with a null language yields an empty string.
+
+#### code-highlight (`IncrementalHighlighter`)
+
+- `flush()` synchronously sets the element's `innerHTML` to `highlightToHtml(text, language)` for the latest scheduled values, using the most recent text when scheduled repeatedly.
+- Null-language schedules flush to escaped plain text (no spans).
+- Repeated `schedule` calls within `intervalMs` collapse to a single trailing-edge pass that renders the latest text; a settled schedule renders after the interval without an explicit flush.
+- `dispose()` cancels a pending highlight and is idempotent; `flush()` with nothing scheduled does not throw.
+
+#### write-content (`extractWriteContent`)
+
+- Returns `args.content` for valid args (including empty string) and `''` for missing/non-string content, null/undefined, and non-object inputs.
+
+#### write-content (`createWriteContentStreamer`)
+
+- Starts empty; stays empty until a `content` value is seen.
+- Final `content` equals `extractWriteContent(finalArgs)` whether fed in one chunk or one character at a time (byte-identity), preserving escaped characters verbatim.
+- Reveals content progressively and grows only monotonically; swallows malformed JSON without throwing; `dispose()` is idempotent and does not mutate `content`.
+
+#### editor-language (`inferLanguageFromPath`)
+
+- Maps known extensions to their `EditorLanguage` (`.ts` → typescript, `.md` → markdown, `.svelte` → html), case-insensitively.
+- Returns null for paths with no extension or an unmapped extension.
