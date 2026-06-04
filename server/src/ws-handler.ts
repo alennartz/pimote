@@ -19,6 +19,7 @@ import type {
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot } from './session-manager.js';
 import { resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests } from './session-manager.js';
+import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
 import type { FolderIndex } from './folder-index.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
@@ -161,6 +162,10 @@ export type ClientRegistry = Map<string, WsHandler>;
 export class WsHandler {
   private subscribedSessions = new Set<string>();
   private viewedSessionId: string | null = null;
+  /** Pending login prompt/select inputs keyed by requestId (mirrors pendingUiResponses). */
+  private pendingLoginInputs = new Map<string, { resolve: (v: string) => void; reject: (e: unknown) => void }>();
+  /** AbortController for the in-flight login flow this connection initiated, if any. */
+  private loginAbort: AbortController | null = null;
   readonly clientId: string;
 
   constructor(
@@ -736,6 +741,50 @@ export class WsHandler {
           break;
         }
 
+        // -- Global login commands (NOT session-scoped) --
+        case 'login_list': {
+          const providers = this.sessionManager.getLoginOrchestrator().listProviders();
+          this.sendResponse(id, true, { providers });
+          break;
+        }
+
+        case 'login_begin': {
+          const orchestrator = this.sessionManager.getLoginOrchestrator();
+          if (orchestrator.isBusy()) {
+            this.sendResponse(id, true, { ok: false, reason: 'busy' });
+            break;
+          }
+          const transport = this.createLoginTransport();
+          // Drive the flow async — it emits login_step events as it goes and a
+          // terminal `done` step on completion. Respond `ok` immediately.
+          orchestrator.runLogin(command.providerId, transport).catch((err) => {
+            if (err instanceof LoginBusyError) return;
+            console.error('[WsHandler] login flow error:', err);
+          });
+          this.sendResponse(id, true, { ok: true });
+          break;
+        }
+
+        case 'login_input': {
+          const pending = this.pendingLoginInputs.get(command.requestId);
+          if (pending) {
+            this.pendingLoginInputs.delete(command.requestId);
+            pending.resolve(command.value);
+          }
+          this.sendResponse(id, true);
+          break;
+        }
+
+        case 'login_cancel': {
+          this.loginAbort?.abort();
+          for (const [, pending] of this.pendingLoginInputs) {
+            pending.reject(new Error('login cancelled'));
+          }
+          this.pendingLoginInputs.clear();
+          this.sendResponse(id, true);
+          break;
+        }
+
         default: {
           this.sendResponse(id, false, undefined, `Unknown command type: ${(command as { type: string }).type}`);
         }
@@ -972,6 +1021,7 @@ export class WsHandler {
           { name: 'new', description: 'Start a new session', hasArgCompletions: false },
           { name: 'reload', description: 'Reload extensions and skills', hasArgCompletions: false },
           { name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false },
+          { name: 'login', description: 'Log in to a model provider', hasArgCompletions: false },
         );
 
         this.sendResponse(id, true, { commands });
@@ -1353,6 +1403,31 @@ export class WsHandler {
     } catch (err) {
       console.error('[WsHandler] Failed to send event:', err);
     }
+  }
+
+  /** Build a connection-bound LoginTransport: events flow to this client, and
+   *  prompt/select inputs resolve via this connection's pendingLoginInputs map. */
+  private createLoginTransport(): LoginTransport {
+    const controller = new AbortController();
+    this.loginAbort = controller;
+    const awaitInput = (requestId: string): Promise<string> =>
+      new Promise<string>((resolve, reject) => {
+        this.pendingLoginInputs.set(requestId, { resolve, reject });
+      });
+    return {
+      emit: (step) => {
+        this.sendEvent({ type: 'login_step', step });
+      },
+      requestInput: ({ requestId, message, placeholder, allowEmpty }) => {
+        this.sendEvent({ type: 'login_step', step: { kind: 'prompt', requestId, message, placeholder, allowEmpty } });
+        return awaitInput(requestId);
+      },
+      requestSelect: ({ requestId, message, options }) => {
+        this.sendEvent({ type: 'login_step', step: { kind: 'select', requestId, message, options } });
+        return awaitInput(requestId);
+      },
+      signal: controller.signal,
+    };
   }
 
   private emitBufferedSessionEvent(slot: ManagedSlot, sessionId: string, sdkEvent: { type: string; [key: string]: unknown }): void {

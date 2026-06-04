@@ -17,6 +17,7 @@ import type { PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import type { PanelBusMessage } from './panel-state.js';
 import { getGitBranch } from './git-branch.js';
+import { LoginOrchestrator } from './login-orchestrator.js';
 import { createVoiceExtension } from './voice/index.js';
 import { autoDrainOnAbort } from './auto-drain-on-abort.js';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
@@ -237,6 +238,7 @@ function scheduleSlotPanelPush(state: SessionState, sessionId: string, sendEvent
 export class PimoteSessionManager {
   private readonly authStorage: AuthStorage;
   private readonly modelRegistry: ModelRegistry;
+  private readonly loginOrchestrator: LoginOrchestrator;
   private readonly sessions = new Map<string, ManagedSlot>();
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
   private gitBranchCheckHandle: ReturnType<typeof setInterval> | null = null;
@@ -259,6 +261,7 @@ export class PimoteSessionManager {
   ) {
     this.authStorage = AuthStorage.create();
     this.modelRegistry = ModelRegistry.create(this.authStorage);
+    this.loginOrchestrator = new LoginOrchestrator(this.authStorage, this.modelRegistry);
     this.staticHostFactory = options.staticHostFactory;
   }
 
@@ -509,6 +512,11 @@ export class PimoteSessionManager {
 
   getSession(sessionId: string): ManagedSlot | undefined {
     return this.sessions.get(sessionId);
+  }
+
+  /** The shared, server-wide login orchestrator (login is global, not session-scoped). */
+  getLoginOrchestrator(): LoginOrchestrator {
+    return this.loginOrchestrator;
   }
 
   getAllSessions(): ManagedSlot[] {
