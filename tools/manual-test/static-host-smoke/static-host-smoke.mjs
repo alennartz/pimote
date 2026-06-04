@@ -93,6 +93,7 @@ async function main() {
       store,
       sessionId: sessionA,
       emitPanelCards: () => emitted.push({ sessionId: sessionA, cards: registry.listForSession(sessionA) }),
+      emitNavigate: () => {},
     };
     const reg = await executeRegisterTool(
       { slug: 'demo', folder: bundleDir, title: 'Demo bundle', tag: 'preview', color: 'accent' },
@@ -170,6 +171,7 @@ async function main() {
         store,
         sessionId: sessionC,
         emitPanelCards: () => {},
+        emitNavigate: () => {},
       };
       const dup = await executeRegisterTool({ slug: 'demo', folder: bundleDir, title: 'Dup attempt' }, depsC);
       assert(dup.slug === 'demo-2', 'slug collision resolved to demo-2');
@@ -317,6 +319,7 @@ async function main() {
         store,
         sessionId: sessionB,
         emitPanelCards: () => {},
+        emitNavigate: () => {},
       };
       const rm3 = await executeRemoveTool({ slug: 'demo' }, depsB);
       assert(rm3.removed === false, 'remove from wrong session -> removed=false');
