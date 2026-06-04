@@ -31,13 +31,25 @@ breaks.
 
 **What:** User types a prompt in a session; the server routes to pi;
 assistant message streams back live (markdown renders progressively,
-tool calls render with their args/results); `agent_end` leaves the
+with fenced code highlighting WHILE it streams; tool calls render with
+their args/results). Tool-call visualization is specialized: `edit`
+calls render as live per-edit diffs, and `write` calls render via
+`WriteFileBlock` — syntax-highlighted code for code paths, live
+rendered markdown for `.md`/`.markdown` paths, each with a raw-source
+copy button and a show-more/collapse wrapper. `agent_end` leaves the
 session idle.
 
 **Why:** The product's core loop. Correctness + latency here is the
 primary UX.
 
-**Driver:** manual-browser.
+**Driver:** manual-browser for the live-streaming half;
+`tools/manual-test/streaming-code-highlight-smoke/` drives the settled
+state of the `write`-tool / markdown render path (mode routing,
+raw-source copy in both modes, collapse in both modes, code
+highlighting, markdown rendering). The streaming-only behaviors
+(auto-expand/collapse, mid-stream highlight in the write view) remain
+manual-browser / unit-tested — a disk-fabricated harness can't drive a
+live token stream.
 
 ### 3. Extension UI bridge
 

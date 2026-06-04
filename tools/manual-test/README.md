@@ -139,6 +139,44 @@ on `PATH`, writable `os.tmpdir()`. Tracks and kills only the child PID
 it spawns — no pattern-based `pkill`. No real LLM, speechmux, or
 network required.
 
+### streaming-code-highlight-smoke
+
+**Purpose:** Verify the FINALIZED render contracts of the `write` tool
+visualization (the `streaming-code-highlight` topic) without a live LLM:
+fabricates a pi session with completed `write` tool calls (code + markdown,
+short + long), boots pimote, opens it in the PWA via `agent-browser`, and
+asserts (1) mode routing by extension (`.ts`→highlighted `<pre><code>`,
+`.md`→rendered markdown), (2) the copy button yields RAW source verbatim in
+BOTH modes, (3) the show-more/collapse wrapper bounds long files in BOTH modes,
+(4) real hljs span markup in code mode, and (5) rendered markdown + highlighted
+inner fence in markdown mode. Exercises the settled half of journey 2's
+tool-call visualization.
+
+> Harness limitation: disk-fabricated sessions show the settled state only, so
+> the streaming-only behaviors (auto-expand/collapse during a write stream,
+> mid-stream highlight in the write view) are NOT exercised here — their logic
+> is covered by client unit tests. See
+> `docs/manual-tests/streaming-code-highlight.md`.
+
+**Location:** `tools/manual-test/streaming-code-highlight-smoke/streaming-code-highlight-smoke.mjs`
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/streaming-code-highlight-smoke/streaming-code-highlight-smoke.mjs
+```
+
+**Inputs:** none (fresh `os.tmpdir()` sandbox; `SCH_SHOT=<path>` optionally
+redirects the coherence screenshot outside the sandbox).
+
+**Outputs:** per-test ✓/✗ lines + a `write-blocks.png` screenshot; non-zero exit
+on any failure. On failure the sandbox is preserved and its path printed.
+
+**Prerequisites:** workspaces built (`npm run build`), `agent-browser` on PATH,
+writable `os.tmpdir()`. Tracks and kills only the child PID it spawns. No real
+LLM, speechmux, or network required.
+
 ### agent-browser (cross-repo skill)
 
 **Purpose:** Drive PWA user journeys end-to-end via a headless-Chromium

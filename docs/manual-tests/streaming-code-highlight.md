@@ -91,12 +91,70 @@ Mitigations that DO cover the streaming logic without a live stream:
 
 ## Results
 
-_Pending execution._
+Driver: `tools/manual-test/streaming-code-highlight-smoke/streaming-code-highlight-smoke.mjs`
+(boots `bin/pimote.js` in a sandbox, fabricates one session with 4 completed
+`write` tool calls, drives the PWA via `agent-browser`). 407 client unit tests
+also green (`npm test`).
+
+### Smoke Suite
+
+- **Journey 1 (Connect + open session)** — **pass.** PWA connected, folder
+  picker populated, fabricated session opened, all 4 write tool blocks rendered.
+- **Journey 2 (Prompt → streamed response, settled half)** — **pass.** The
+  write tool-call render path produces `WriteFileBlock` chrome instead of the
+  generic args dump; markdown writes render through the smd pipeline. Coherence:
+  **looks coherent** — screenshot shows colorized TS keywords + a top-right Copy
+  button in code mode, and a rendered `<h1>`/bold/list with highlighted inner
+  fence in markdown mode (not raw source). Matches brainstorm intent.
+
+### Topic-Specific Tests
+
+1. **Mode routing by extension** — **pass.** `.ts` → `data-mode=code`
+   (`pre.wfb-code code`); `.md` → `data-mode=markdown` (`.wfb-markdown`).
+2. **Precondition (a): copy = RAW source, both modes** — **pass.** Code-mode
+   copy byte-identical to the `.ts` source; markdown-mode copy byte-identical to
+   the `.md` source and retains literal `#` / ` ``` ` bytes (captured by
+   overriding `clipboard.writeText` — headless clipboard reads are unreliable).
+3. **Precondition (b): collapse bounds long files, both modes** — **pass.**
+   Both the 33-line `.ts` and the 33-line `.md` writes show a
+   "Show more… (33 lines)" toggle and clamp the body (`.wfb-body.clamped`) when
+   collapsed.
+4. **Code-mode real hljs markup** — **pass.** Code `<code>` carries the `hljs`
+   class + 12 `hljs-*` spans and preserves the source text verbatim.
+5. **Markdown-mode renders markdown incl. fenced code** — **pass.** Heading →
+   `<h1>`, list → `<li>`s, no literal `# Streaming` text, inner ```ts fence
+   highlighted (6 hljs spans).
+6. **Auto-expand/auto-collapse while streaming** — **open (not exercised).**
+   Live-stream-only; covered at the engine boundary by
+   `code-highlight.test.ts` + the `ToolCall` edit-precedent. See Harness
+   Limitations / Open Issues.
+7. **Mid-stream code highlighting in the write view** — **open (not
+   exercised).** Live-stream-only; engine covered by `code-highlight.test.ts`
+   (`IncrementalHighlighter`) and the JSON-delta path by `write-content.test.ts`.
+   See Harness Limitations / Open Issues.
+8. **Mid-stream fenced-code highlighting in assistant markdown** — **pass
+   (via unit test).** `smd-renderer.test.ts` asserts an OPEN fence carries
+   `hljs-` markup before `end_token` at the renderer boundary — the observable
+   behavior, not just the engine. The same smd path was exercised live in the
+   finalized markdown write (test 5).
 
 ## Plan Updates
 
-_Pending._
+`tools/manual-test/PLAN.md` Journey 2 ("Prompt → streamed assistant response")
+updated: its tool-call-visualization clause now names the `write` →
+`WriteFileBlock` render path (highlighted code / rendered markdown) alongside
+the existing `edit` diff, and records `streaming-code-highlight-smoke` as a
+settled-state driver for that surface. No new primary journey added (this is a
+render-path enrichment of journey 2, not a new user journey).
 
 ## Open Issues
 
-_Pending._
+- **Live-stream-only behaviors not integration-tested** (topic tests 6 & 7:
+  auto-expand/auto-collapse during a write stream, and mid-stream code
+  highlighting in the write view). The disk-fabricated harness structurally
+  cannot drive a live token stream. Per parent decision (option A), accepted as
+  a documented harness limitation for this smoke phase: the streaming _logic_ is
+  unit-tested at the engine boundary (`code-highlight.test.ts` throttle/flush,
+  `write-content.test.ts` byte-identity), matching the `edit` precedent where
+  component chrome was never integration-tested. Revisit if a future topic makes
+  a live-stream harness (fake streaming provider) worth building.
