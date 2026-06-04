@@ -207,6 +207,21 @@ describe('LoginOrchestrator.runLogin success', () => {
     expect(lastStep(t)).toMatchObject({ kind: 'done', success: true });
   });
 
+  it('routes onManualCodeInput through the transport requestInput and returns its value', async () => {
+    const auth = fakeAuthStorage({
+      login: async (_id, cb) => {
+        const code = await cb.onManualCodeInput!();
+        if (code !== 'manual-pasted-code') throw new Error('unexpected manual code value');
+      },
+    });
+    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
+    const t = fakeTransport();
+    t.requestInput = vi.fn(async () => 'manual-pasted-code');
+    await orch.runLogin('anthropic', t);
+    expect(t.requestInput).toHaveBeenCalledOnce();
+    expect(lastStep(t)).toMatchObject({ kind: 'done', success: true });
+  });
+
   it('routes onSelect through the transport requestSelect and returns its value', async () => {
     const auth = fakeAuthStorage({
       login: async (_id, cb) => {
@@ -278,6 +293,38 @@ describe('LoginOrchestrator.runLogin failure', () => {
     const orch = new LoginOrchestrator(auth, registry);
     await orch.runLogin('anthropic', fakeTransport());
     expect(registry.refreshCount).toBe(0);
+  });
+
+  it('emits a terminal done step with success false when the flow is aborted mid-login', async () => {
+    const auth = fakeAuthStorage({
+      login: async (_id, cb) => {
+        await new Promise<void>((_resolve, reject) => {
+          cb.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        });
+      },
+    });
+    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
+    const t = fakeTransport();
+    const running = orch.runLogin('anthropic', t);
+    t.abort();
+    await running;
+    expect(lastStep(t)).toMatchObject({ kind: 'done', success: false });
+  });
+
+  it('clears busy state after an aborted login so a retry can start', async () => {
+    const auth = fakeAuthStorage({
+      login: async (_id, cb) => {
+        await new Promise<void>((_resolve, reject) => {
+          cb.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        });
+      },
+    });
+    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
+    const t = fakeTransport();
+    const running = orch.runLogin('anthropic', t);
+    t.abort();
+    await running;
+    expect(orch.isBusy()).toBe(false);
   });
 
   it('clears busy state after a failed login so a retry can start', async () => {

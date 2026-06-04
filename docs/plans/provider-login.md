@@ -178,3 +178,5 @@ overlay dialog mounting pattern.
 - `submitInput(value)` sends `login_input` echoing the current prompt/select step's `requestId` and the submitted value.
 - A terminal `done{success:true}` step moves the flow to `done`, records success, and re-pulls `get_available_models` for the viewed session (skipped when no session is viewed); a `done{success:false}` step records the failure + error and does not re-pull models.
 - `cancel()` sends `login_cancel` and returns the flow to `idle`; `close()` resets the store to its initial idle state.
+
+**Review status:** approved
