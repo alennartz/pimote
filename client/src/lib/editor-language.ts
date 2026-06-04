@@ -129,8 +129,13 @@ export function inferLanguageFromTitle(title: string): ResolvedEditorLanguage | 
  * null when the path has no extension or the extension is unmapped. Extension
  * matching is case-insensitive.
  */
-export function inferLanguageFromPath(_path: string): EditorLanguage | null {
-  throw new Error('not implemented');
+export function inferLanguageFromPath(path: string): EditorLanguage | null {
+  const lastComponent = path.split(/[/\\]/).pop() ?? '';
+  const dotIndex = lastComponent.lastIndexOf('.');
+  if (dotIndex <= 0) return null;
+  const extension = lastComponent.slice(dotIndex + 1).toLowerCase();
+  if (!extension) return null;
+  return EXTENSION_LANGUAGE_MAP[extension] ?? null;
 }
 
 export function inferLanguageFromContent(prefill: string): ResolvedEditorLanguage | null {

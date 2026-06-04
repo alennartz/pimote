@@ -302,7 +302,7 @@ paths: ['$.content'], keepStack: false }`. On each `onValue`, overwrite the
 cases, byte-identity for one-chunk vs one-char-at-a-time feeding, escaped-char
 preservation, progressive + monotonic growth, malformed-JSON no-throw, idempotent
 dispose.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Implement `inferLanguageFromPath` in `editor-language.ts`
 
@@ -316,7 +316,7 @@ unmapped. Do not touch `inferLanguageFromTitle` or the shared map.
 **Verify:** the `inferLanguageFromPath` block in
 `client/src/lib/editor-language.test.ts` passes — `.ts`→typescript, `.md`→markdown,
 `.svelte`→html, case-insensitive `README.MD`, null for `Makefile` and `.xyz`.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Mid-stream fenced-code highlighting in `smd-renderer.ts`
 

@@ -14,8 +14,9 @@
  * streamer's `content` equals `extractWriteContent(finalArgs)` exactly — the
  * streaming→finalized handoff is invisible. This is the same contract
  * `edit-diff.ts` established for the edit tool. The streaming implementation is
- * backed by `@streamparser/json` (wired in during implementation).
+ * backed by `@streamparser/json`.
  */
+import { JSONParser } from '@streamparser/json';
 
 export interface WriteArgs {
   path: string;
@@ -28,8 +29,11 @@ export interface WriteArgs {
  * Returns `args.content` when it is a string; returns `''` when `args` is
  * absent, not an object, or has no string `content` field.
  */
-export function extractWriteContent(_args: unknown): string {
-  throw new Error('not implemented');
+export function extractWriteContent(args: unknown): string {
+  if (args && typeof args === 'object' && typeof (args as Record<string, unknown>).content === 'string') {
+    return (args as Record<string, unknown>).content as string;
+  }
+  return '';
 }
 
 export interface WriteContentStreamer {
@@ -59,5 +63,56 @@ export interface WriteContentStreamer {
  * - `dispose()` is idempotent and does not mutate `content`.
  */
 export function createWriteContentStreamer(): WriteContentStreamer {
-  throw new Error('not implemented');
+  let content = '';
+  let errored = false;
+  let disposed = false;
+
+  let parser: JSONParser | null = null;
+  try {
+    parser = new JSONParser({
+      emitPartialTokens: true,
+      emitPartialValues: true,
+      paths: ['$.content'],
+      keepStack: false,
+    });
+  } catch {
+    errored = true;
+  }
+
+  if (parser) {
+    parser.onValue = (info) => {
+      try {
+        if (typeof info.value === 'string') content = info.value;
+      } catch {
+        errored = true;
+      }
+    };
+    parser.onError = () => {
+      errored = true;
+    };
+  }
+
+  return {
+    get content() {
+      return content;
+    },
+    write(jsonDelta: string) {
+      if (errored || disposed || !parser) return;
+      try {
+        parser.write(jsonDelta);
+      } catch {
+        errored = true;
+      }
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      try {
+        parser?.end();
+      } catch {
+        // ignore
+      }
+      parser = null;
+    },
+  };
 }
