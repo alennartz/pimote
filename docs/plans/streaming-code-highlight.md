@@ -389,7 +389,7 @@ build + manual testing.
 **Verify:** `npm run check` (svelte-check) in `client/` passes with no new
 errors; `npm run build` succeeds; the component renders both modes without
 runtime errors in dev.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Wire the `write` branch into `ToolCall.svelte`
 
