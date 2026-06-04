@@ -74,6 +74,17 @@ export class LoginStore {
 
   /** Begin a login flow for the chosen provider. Resolves to false if server is busy. */
   async begin(providerId: string): Promise<boolean> {
+    // Clear any prior flow's step state BEFORE sending the command. Some
+    // providers (e.g. GitHub Copilot) emit their first step synchronously
+    // inside the server's login_begin handling — that login_step event can
+    // reach us and be routed through handleStep before this command's response
+    // resolves. Resetting here (rather than after the await) ensures we don't
+    // clobber an already-arrived step, which previously left such flows stuck
+    // on a blank "Working…" screen.
+    this.state.currentStep = null;
+    this.state.authInfo = null;
+    this.state.succeeded = null;
+    this.state.error = null;
     const resp = await this.seams.sendCommand<LoginBeginResponseData>({
       type: 'login_begin',
       id: crypto.randomUUID(),
@@ -83,10 +94,6 @@ export class LoginStore {
       return false;
     }
     this.state.flow = 'running';
-    this.state.currentStep = null;
-    this.state.authInfo = null;
-    this.state.succeeded = null;
-    this.state.error = null;
     return true;
   }
 
@@ -113,6 +120,14 @@ export class LoginStore {
   /** Route an incoming `login_step` event into the state machine. */
   handleStep(step: LoginStep): void {
     if (step.kind === 'done') {
+      // If the operator already returned the flow to idle (cancel/close), this
+      // terminal step is the stale echo of the aborted flow — the server emits
+      // done{success:false} when login_cancel fires the AbortSignal. Ignoring it
+      // keeps a cancelled login from resurrecting the dialog as a "Login failed"
+      // screen the user never asked for.
+      if (this.state.flow === 'idle') {
+        return;
+      }
       this.state.flow = 'done';
       this.state.succeeded = step.success;
       this.state.error = step.error ?? null;
