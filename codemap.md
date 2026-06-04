@@ -147,9 +147,14 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/components/TtsButton.svelte` — per-message text-to-speech play/stop button
 - `client/src/lib/components/TextBlock.svelte` — streaming markdown rendering via smd
 - `client/src/lib/components/ThinkingBlock.svelte` — collapsible thinking block
-- `client/src/lib/components/ToolCall.svelte` — tool call display with streaming args/results; `edit` tool calls render as per-edit fenced ```diff blocks via `TextBlock`(built from`edit-diff.ts` helpers) and auto-expand while streaming / auto-collapse on completion (ThinkingBlock pattern)
+- `client/src/lib/components/ToolCall.svelte` — tool call display with streaming args/results; `edit` tool calls render as per-edit fenced ```diff blocks via `TextBlock`(built from`edit-diff.ts`helpers) and auto-expand while streaming / auto-collapse on completion (ThinkingBlock pattern); a parallel`write`branch renders the file body via`WriteFileBlock`
+- `client/src/lib/components/WriteFileBlock.svelte` — `write`-tool file-body visualization: renders in code mode (highlighted `<pre><code>` via `code-highlight.ts`) or markdown mode (via `TextBlock`) based on `inferLanguageFromPath(path)`, with collapse + copy-raw-source chrome and auto-expand-while-streaming / auto-collapse-on-completion behavior in both modes
 - `client/src/lib/edit-diff.ts` — `edit`-tool visualization helpers: pure `buildEditDiffMarkdown(args)` that converts finalized edit args to fenced ```diff markdown, and `createEditDiffStreamer()`that consumes raw JSON deltas via`@streamparser/json`and exposes a progressively-rebuilt`markdown` string byte-identical to the finalized output
 - `client/src/lib/edit-diff.test.ts` — tests
+- `client/src/lib/write-content.ts` — `write`-tool content extraction (mirrors `edit-diff.ts`): pure `extractWriteContent(args)` for finalized args plus `createWriteContentStreamer()` that reads `$.content` via `@streamparser/json` with byte-identical streaming→finalized handoff
+- `client/src/lib/write-content.test.ts` — tests
+- `client/src/lib/code-highlight.ts` — shared streaming-highlight engine built on the `syntax-highlighter.ts` hljs instance: pure `highlightToHtml(text, language)` plus stateful `IncrementalHighlighter` (schedule/flush/dispose) via `createIncrementalHighlighter({intervalMs})` with a ~100ms trailing-edge throttle + forced flush
+- `client/src/lib/code-highlight.test.ts` — tests
 - `client/src/lib/components/StreamingCollapsible.svelte` — reusable collapsible pre block with show-more/less
 - `client/src/lib/components/StreamingIndicator.svelte` — animated working dots
 - `client/src/lib/components/InputBar.svelte` — prompt input with slash command integration, `/tree` response detection, optimistic-user-message skip for tree prompts, tree dialog opening
@@ -179,12 +184,12 @@ SvelteKit PWA rendering pi conversations in real time with session/folder browsi
 - `client/src/lib/components/ui/**` — shadcn-svelte primitives (button, badge, dialog, dropdown-menu, input, scroll-area, separator)
 - `client/src/lib/markdown-to-speech.ts` — pure function converting markdown to speakable plain text
 - `client/src/lib/markdown-to-speech.test.ts` — tests
-- `client/src/lib/smd-renderer.ts` — streaming-markdown renderer with highlight.js and URL scheme allowlisting
+- `client/src/lib/smd-renderer.ts` — streaming-markdown renderer with highlight.js and URL scheme allowlisting; fenced code highlights WHILE streaming (throttled `add_text` schedule) and on `end_token` (forced flush) via one `IncrementalHighlighter` per renderer
 - `client/src/lib/smd-renderer.test.ts`, `client/src/lib/smd-underscore-fix.test.ts` — tests
 - `client/src/lib/syntax-highlighter.ts` — highlight.js language registration (lazy-loaded subset)
 - `client/src/lib/codemirror-language.ts` — CodeMirror language extension loader
 - `client/src/lib/codemirror-theme.ts` — CodeMirror dark editor theme
-- `client/src/lib/editor-language.ts` — language detection for extension editor dialogs (from title/content heuristics)
+- `client/src/lib/editor-language.ts` — language detection for extension editor dialogs (from title/content heuristics); also pure `inferLanguageFromPath(path)` mapping a file extension to `EditorLanguage` via the existing `EXTENSION_LANGUAGE_MAP`
 - `client/src/lib/editor-language.test.ts` — tests
 - `client/src/lib/extension-dialog-state.ts` — extension dialog initial value logic (input vs editor prefill)
 - `client/src/lib/extension-dialog-state.test.ts` — tests
@@ -325,8 +330,9 @@ Top-level persistent manual-testing module (not a working artifact) — a growin
 
 **Files:**
 
-- `tools/manual-test/PLAN.md` — journey list with numbered procedures (current: journeys 1–9; journey 8 covers end-to-end voice call, journey 9 covers the Android App Actions / dialer-name-search / contact-card callable-project surfaces)
+- `tools/manual-test/PLAN.md` — journey list with numbered procedures (current: journeys 1–9; journey 2 names the `write`→`WriteFileBlock` render path alongside `edit` diffs and records streaming-code-highlight-smoke as its settled-state driver; journey 8 covers end-to-end voice call, journey 9 covers the Android App Actions / dialer-name-search / contact-card callable-project surfaces)
 - `tools/manual-test/README.md` — how to use the module, conventions for adding new journeys (topic-specific tools live under `tools/manual-test/<tool>/`)
 - `tools/manual-test/static-host-smoke/` — server-side static-host pipeline smoke driver (`static-host-smoke.mjs` + README): registry/store/gc/route/tool coverage without booting the full server or an LLM; drives static-resources tests 1–11
 - `tools/manual-test/static-host-pwa-smoke/` — client-side static-host smoke driver (`static-host-pwa-smoke.mjs` + README): boots `bin/pimote.js` in an isolated sandbox and drives the PWA to verify `Panel.svelte` `href` rendering, service-worker passthrough for `/s/*`, and browser-back behaviour; drives static-resources tests 12–14
+- `tools/manual-test/streaming-code-highlight-smoke/` — client-side `write`-tool render smoke driver (`streaming-code-highlight-smoke.mjs` + README): fabricates a pi session with completed `write` tool calls (code + markdown, short + long), boots `bin/pimote.js` in a sandbox, and drives the PWA via `agent-browser` to assert the finalized render contracts (mode routing by extension, raw-source copy in both modes, collapse in both modes, real hljs markup in code mode, rendered markdown + highlighted inner fence in markdown mode). Settled-state only — streaming-only behaviors are covered by client unit tests
 - `tools/manual-test/cost-accumulation-smoke/` — cost-accumulation smoke driver (`cost-accumulation-smoke.mjs` + README-registered usage): fabricates priced + zero-spend pi session JSONLs, verifies `get_session_meta.lifetimeCostUsd`, and asserts StatusBar cost rendering / hiding via `agent-browser`
