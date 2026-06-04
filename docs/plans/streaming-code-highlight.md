@@ -221,3 +221,203 @@ long files.
   fence afterward does not throw or lose content.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Implement `highlightToHtml` in `code-highlight.ts`
+
+Replace the `not implemented` stub for `highlightToHtml(text, language)` in
+`client/src/lib/code-highlight.ts`. Import the shared `hljs` instance from
+`./syntax-highlighter.js`.
+
+- When `language` is a non-null string that `hljs` recognizes, return
+  `hljs.highlight(text, { language }).value` (the HTML markup with `hljs-*`
+  span classes).
+- When `language` is null, or `hljs.highlight` throws (unregistered language),
+  return the HTML-escaped plain text — escape at least `&`, `<`, `>`, `"` so the
+  raw source renders verbatim with no spans. Add a small local `escapeHtml`
+  helper (or inline replace chain) for this fallback; it is the same fallback
+  path for both the null-language and the thrown-error cases.
+- Never throw. Empty input with null language must return `''`.
+
+Do not add the `hljs` CSS class here — this function returns markup only; class
+wiring lives in the callers (smd-renderer / WriteFileBlock).
+
+**Verify:** the `highlightToHtml` block in `client/src/lib/code-highlight.test.ts`
+passes (`npm test` in `client/`): span markup for typescript, escaped text for
+null/unregistered languages, no throw on unknown language, `''` for empty+null.
+**Status:** not started
+
+### Step 2: Implement `createIncrementalHighlighter` in `code-highlight.ts`
+
+Replace the `not implemented` stub for `createIncrementalHighlighter(opts?)` in
+`client/src/lib/code-highlight.ts`. Default `intervalMs` to `100`.
+
+The returned object satisfies the `IncrementalHighlighter` interface already
+declared in the file:
+
+- `schedule(el, text, language)` records the latest `(el, text, language)` as the
+  pending request. If no timer is currently pending, start a `setTimeout` for
+  `intervalMs`; on fire, run the pending highlight (set `el.innerHTML =
+highlightToHtml(text, language)` for the most recent values) and clear the
+  timer handle. Repeated `schedule` calls within the window must NOT reset the
+  timer — they only overwrite the pending values, so the window collapses to a
+  single trailing-edge pass using the latest text.
+- `flush()` immediately renders the latest pending request synchronously
+  (`el.innerHTML = highlightToHtml(text, language)`) and cancels any pending
+  timer. No-op (must not throw) when nothing is pending.
+- `dispose()` cancels any pending timer and clears pending state; idempotent.
+  After dispose, a previously pending highlight must not fire.
+
+Use `setTimeout`/`clearTimeout` (the smd-renderer mid-stream test drives this
+with `vi.useFakeTimers()`).
+
+**Verify:** the `createIncrementalHighlighter` block in
+`code-highlight.test.ts` passes — flush synchrony, latest-text-wins, null→escaped,
+trailing-edge collapse under fake timers, settle-without-flush, dispose cancels +
+idempotent, flush-with-nothing no-throw.
+**Status:** not started
+
+### Step 3: Implement `write-content.ts`
+
+Replace both `not implemented` stubs in `client/src/lib/write-content.ts`,
+mirroring `edit-diff.ts`.
+
+- `extractWriteContent(args)`: return `args.content` when `args` is a non-null
+  object whose `content` field is a string; otherwise return `''` (covers
+  missing content, non-string content, null/undefined, and non-object inputs).
+- `createWriteContentStreamer()`: construct a `JSONParser` from
+  `@streamparser/json` with `{ emitPartialTokens: true, emitPartialValues: true,
+paths: ['$.content'], keepStack: false }`. On each `onValue`, overwrite the
+  exposed `content` with the emitted string value (guard non-string). Swallow
+  parser construction errors and `write`/`onError` failures silently (set an
+  `errored` flag so `content` stops advancing — same shape as
+  `createEditDiffStreamer`). Expose `content` via a getter, `write(jsonDelta)`
+  that no-ops after error/dispose, and an idempotent `dispose()` that calls
+  `parser.end()` once and does not mutate `content`.
+
+**Verify:** `client/src/lib/write-content.test.ts` passes — finalized extraction
+cases, byte-identity for one-chunk vs one-char-at-a-time feeding, escaped-char
+preservation, progressive + monotonic growth, malformed-JSON no-throw, idempotent
+dispose.
+**Status:** not started
+
+### Step 4: Implement `inferLanguageFromPath` in `editor-language.ts`
+
+Replace the `not implemented` stub for `inferLanguageFromPath(path)` in
+`client/src/lib/editor-language.ts`. Split the extension off the end of `path`
+(last `.`-delimited segment of the final path component), lowercase it, and look
+it up in the existing module-level `EXTENSION_LANGUAGE_MAP`. Return the mapped
+`EditorLanguage`, or `null` when the path has no extension or the extension is
+unmapped. Do not touch `inferLanguageFromTitle` or the shared map.
+
+**Verify:** the `inferLanguageFromPath` block in
+`client/src/lib/editor-language.test.ts` passes — `.ts`→typescript, `.md`→markdown,
+`.svelte`→html, case-insensitive `README.MD`, null for `Makefile` and `.xyz`.
+**Status:** not started
+
+### Step 5: Mid-stream fenced-code highlighting in `smd-renderer.ts`
+
+Rework `client/src/lib/smd-renderer.ts` so fenced code highlights while it
+streams, not only at `end_token`. Create one `IncrementalHighlighter` (via
+`createIncrementalHighlighter()` from `./code-highlight.js`) per `createRenderer`
+call, captured in the closure.
+
+- Add an `add_text` override: call `smd.default_add_text(data, text)` first
+  (appends a fresh text node — smd holds element references only, never text
+  nodes, so this is safe), then if the current node
+  (`data.nodes[data.index]`) is a `<code>` inside a `<pre>`, ensure the
+  `hljs` class is on the code element and call
+  `highlighter.schedule(codeEl, codeEl.textContent ?? '', lang)` where `lang`
+  is derived from the code element's `language-<id>` class (regex match;
+  `null` when absent). The schedule re-reads the full buffer each pass.
+- Change `end_token`: for the closing `<code>`/`<pre>`, call
+  `highlighter.flush()` (forces the final synchronous highlight of the latest
+  buffer) instead of `hljs.highlightElement(codeEl)`. Keep adding the `hljs`
+  class and keep the existing `attachCopyButton(preEl, codeEl)` call and the
+  `try/catch` guard around the highlight so hljs errors never corrupt smd's
+  node stack. Then call `smd.default_end_token(data)` as today.
+- Keep `set_attr` URL sanitization unchanged. The `language-<id>` class is
+  still applied by smd's `set_attr(LANG)`; read the language from that class
+  rather than threading separate state.
+- Do not call `hljs.highlightElement` anywhere (it guards re-highlighting via
+  `data-highlighted` and would no-op on later passes) — all highlighting now
+  flows through the scheduler/flush, which call `highlightToHtml` internally.
+
+Note: the manual `hljs` class add is required because `highlightToHtml` returns
+markup only and no longer auto-adds the class the way `highlightElement` did —
+existing tests assert `code.classList.contains('hljs')`.
+
+**Verify:** `client/src/lib/smd-renderer.test.ts` passes in full, including the
+new `highlights fenced code mid-stream, before the closing fence arrives` case
+(fake timers, `hljs-` markup present pre-`end_token`) and the existing
+language/alias/no-language/streaming-close cases.
+**Status:** not started
+
+### Step 6: Implement `WriteFileBlock.svelte`
+
+Replace the interface-stub body of
+`client/src/lib/components/WriteFileBlock.svelte` with the real chrome. Keep the
+existing props contract (`content`, `mode: 'code' | 'markdown'`, `language`,
+`streaming?`). Own collapse + copy + render for both modes:
+
+- **code mode:** render a `<pre><code>` and drive it with a
+  `createIncrementalHighlighter()` instance in a `$effect`: while `streaming`,
+  `schedule(codeEl, content, language)` on each `content` change; when
+  `streaming` flips false, `flush()`; `dispose()` on teardown. Add the `hljs`
+  class to the code element (parity with smd-renderer / EditDiffBlock).
+- **markdown mode:** render `<TextBlock text={content} streaming={streaming}
+/>` (TextBlock inherits the Step 5 incremental fenced-code highlighting for
+  free).
+- **collapse (both modes):** wrap the rendered body in a show-more/less long-file
+  bound, following the `StreamingCollapsible.svelte` pattern (line-count
+  threshold, toggle button). The wrapper must apply in markdown mode too, not
+  only code mode.
+- **copy (both modes):** a copy button that writes `content` verbatim (raw
+  source — never rendered/highlighted text) via `navigator.clipboard.writeText`,
+  reusing the visual treatment of the smd-renderer copy button.
+- **auto-expand/auto-collapse:** expand while `streaming` is true and
+  auto-collapse when it ends — the ThinkingBlock / ToolCall-edit pattern
+  (`$effect` setting an `expanded` rune from `streaming`). Auto-scroll the code
+  body to the bottom while streaming, like `StreamingCollapsible`.
+
+No new unit test targets this component; correctness is covered by typecheck +
+build + manual testing.
+
+**Verify:** `npm run check` (svelte-check) in `client/` passes with no new
+errors; `npm run build` succeeds; the component renders both modes without
+runtime errors in dev.
+**Status:** not started
+
+### Step 7: Wire the `write` branch into `ToolCall.svelte`
+
+Add a `write` branch to `client/src/lib/components/ToolCall.svelte` parallel to
+the existing `edit` branch, using `WriteFileBlock`.
+
+- Add `isWrite = $derived(toolName === 'write')` and import
+  `createWriteContentStreamer` / `extractWriteContent` from `$lib/write-content.js`,
+  `inferLanguageFromPath` from `$lib/editor-language.js`, and `WriteFileBlock`.
+- Streaming body: mirror the edit streamer `$effect` — feed `content.text`
+  deltas into a `createWriteContentStreamer()` (write-on-growth via a written
+  cursor), snapshot the streamer's `content` into a `$state` string so Svelte
+  re-renders. Dispose + reset when `streaming` flips false.
+- Finalized body: `extractWriteContent(content.args)`. Prefer the finalized
+  value once `content.args` is present, falling back to the last streamed body
+  across the handoff (same prefer-finalized-else-streamed pattern as
+  `editEntries`).
+- Derive `path` from `content.args`/`content.text` as available; compute
+  `language = inferLanguageFromPath(path)` and
+  `isMarkdown = language === 'markdown'`.
+- Render `<WriteFileBlock content={body} mode={isMarkdown ? 'markdown' : 'code'}
+{language} streaming={streaming && !isCompleted} />` in the `write` branch of
+  the `{#if expanded}` content area, ahead of the generic Arguments/Result
+  fallback (which stays for non-write/edit tools). The `write` branch takes
+  priority over the `argsText` fallback, exactly like the edit branch does.
+- WriteFileBlock owns its own collapse/copy chrome, so the `write` branch does
+  not wrap the body in `StreamingCollapsible`.
+
+**Verify:** `npm run check` passes; `npm run build` succeeds; in dev, a streaming
+`write` tool call renders the file body highlighting as it streams (code paths)
+or as rendered markdown (`.md` paths), with working copy + collapse, and settles
+correctly on completion.
+**Status:** not started
