@@ -22,7 +22,7 @@ cosmetic/UX nits are noted below.
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/components/WriteFileBlock.svelte:150-153` (`.wfb-body.clamped`)
-- **Status:** open
+- **Status:** dismissed — the collapse functions and bounds long files in both modes; a mode-specific clamp would trade real complexity for invisible polish. Not worth it.
 
 The clamp `max-height: calc(20 * 1.5 * 0.875em + 24px)` is derived from the
 code-mode line-height/font-size. It is applied to `.wfb-body` in both modes, so
@@ -38,7 +38,7 @@ imprecise on the markdown path.
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/components/WriteFileBlock.svelte:55` (`let expanded = $derived(streaming)`)
-- **Status:** open
+- **Status:** dismissed — documented, intended "expand while streaming" behavior from the plan, not a defect.
 
 `expanded` is a writable `$derived(streaming)`. The toggle button reassigns it,
 but while `streaming` is true every `content` delta re-runs the derived and
