@@ -105,6 +105,7 @@ Once in a session, you can:
 - See **session context usage** and **lifetime cost** at a glance in the StatusBar
 - **Compact** the conversation to manage context window usage (also supports auto-compaction)
 - Use **slash commands** — type `/` to get autocomplete for skills, extension commands, and prompt templates
+- **Log in to model providers** with `/login` — an interactive dialog adds OAuth subscription providers (Claude Pro/Max, ChatGPT, GitHub Copilot) remotely, without SSHing into the server or hand-editing `auth.json` (API-key and custom providers are still configured manually)
 - Open **Tree Navigation** with `/tree` to browse session history, search/filter nodes, and edit labels (right-click on desktop, long-press on touch)
 - Pick a tree navigation mode: no summary, summarize, or a custom summary prompt (with in-dialog loading while summarization runs)
 - **Listen** to responses via per-message text-to-speech
