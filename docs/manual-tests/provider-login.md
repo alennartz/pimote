@@ -79,12 +79,92 @@ the auth-URL / device-code / paste step.
 
 ## Results
 
-_(populated after execution)_
+**Regression smoke suite (persistent journeys with drivers):**
+
+- **Server unit suite** (`server` vitest, 366 tests): **pass** after fixing 6
+  stale `get_commands` fixtures (see below). Initially **6 red** — plan step 5
+  added the `/login` built-in command but the ws-handler `get_commands` tests
+  still asserted the pre-login built-in list. **fixed-inline.**
+- **Client unit suite** (`client` vitest, 430 tests): **pass** (includes the 21
+  LoginStore tests, green after the two inline store fixes).
+- **cost-accumulation-smoke** (connect/open + StatusBar): **pass** — confirms the
+  client connect/open primary journey is regression-free under the store change.
+- **static-host-smoke** (server-side static-host pipeline): initially **red**
+  with `deps.emitNavigate is not a function` — a _pre-existing_ break from the
+  concurrent static-resources change (commit `83283b7` added the `emitNavigate`
+  dep without updating this harness), unrelated to provider-login.
+  **fixed-inline** (no-op `emitNavigate` stub per deps object). Now **pass**.
+- Browser-only journeys without drivers (1 folder picker, 3 ext-UI bridge, 4
+  takeover, 5 tree, 6 panels, 7 push, 9 Android) not re-driven — untouched by
+  this topic.
+
+**Topic-specific tests** (`provider-login-smoke`, full run **PASS**):
+
+1. **`/login` opens dialog, no prompt sent** — **pass.** Typing `/login` opens
+   "Provider Login"; no user message containing `/login` is posted.
+2. **Provider list loads, no credentials** — **pass.** `login_list` returns all
+   three OAuth providers (anthropic, github-copilot, openai-codex), all
+   `loggedIn:false`; picker shows no logged-in badge.
+3. **HEADLINE: paste-back auth link + paste field simultaneously** — **pass.**
+   Anthropic renders the "Open auth page" link (real
+   `claude.ai/oauth/authorize?...` URL) AND a working paste field + Submit at
+   the same time; the link survives pi's immediately-following manual-code
+   `prompt` step (driven against the _real_ `onAuth`→`onManualCodeInput`
+   double-emit, no stubbing). Coherence screenshot `02-anthropic-auth.png`.
+4. **Device-code provider** — **pass.** Copilot answers the enterprise-domain
+   prompt (blank) then renders the real device user code (`C0D3-DE30`) +
+   "Open verification page" link over real network. Screenshot
+   `03-copilot-device.png`.
+5. **Cancel** — **pass (fixed-inline).** Cancel now closes the dialog with no
+   stale "Login failed" screen (see fix #1 below).
+6. **Busy mid-flow** — **pass.** With a real Anthropic flow in-flight in the
+   browser, a second `login_begin` over a separate WS is rejected
+   `{ ok:false, reason:'busy' }`.
+
+**Coherence pass:**
+
+- Picker (`01-picker.png`): **looks coherent** — three OAuth providers listed by
+  friendly name, no badges, clean modal.
+- Anthropic auth screen (`02-anthropic-auth.png`): **looks coherent** — "Open
+  auth page" button, the connection-error warning copy, "Paste the
+  authorization code" field, and Submit all present together; matches the
+  brainstorm's paste-back UX and the plan's single-auth-screen intent.
+- Copilot device screen (`03-copilot-device.png`): **looks coherent** — "Enter
+  this code at the verification page", large mono code, verification link,
+  waiting spinner; matches the device-code UX in the brainstorm.
+
+**Fixes applied inline this run:**
+
+- **Fix #1 (client, `login.svelte.ts` `handleStep`):** cancelling a flow fired
+  the server AbortSignal, whose `runLogin` emits a terminal
+  `done{success:false}` step; `handleStep` flipped the just-cancelled dialog
+  into a stale "Login failed" screen. Guarded `handleStep` to ignore a terminal
+  `done` when the flow is already `idle`. (DR-worthy: cancel-vs-abort-echo race.)
+- **Fix #2 (client, `login.svelte.ts` `begin`):** providers whose first OAuth
+  callback fires synchronously inside the server's `login_begin` handling (e.g.
+  Copilot's `onPrompt`) emit a `login_step` that reaches the client _before_
+  the `login_begin` response resolves; `begin()` reset `currentStep=null`
+  _after_ the await, wiping the already-arrived step and leaving the dialog
+  stuck on a blank "Working…" screen. Moved the step-state reset to _before_
+  sending the command. Anthropic was unaffected (it awaits `startCallbackServer`
+  before `onAuth`). (DR-worthy: early-step-clobber race.)
+- **Fix #3 (server test, `ws-handler.test.ts`):** updated 6 stale `get_commands`
+  fixtures for the new `/login` built-in (regression from plan step 5).
+- **Fix #4 (harness, `static-host-smoke.mjs`):** added a no-op `emitNavigate`
+  stub to the deps objects (pre-existing break from concurrent static-resources
+  change `83283b7`).
 
 ## Plan Updates
 
-_(populated after execution)_
+- **Added journey 10 — "Interactive provider login (`/login`)"** to
+  `tools/manual-test/PLAN.md`. It is a new first-class capability (the only
+  client-side path to add an OAuth model provider), driven by the new
+  `provider-login-smoke` tool.
 
 ## Open Issues
 
-_(populated after execution)_
+None. All smoke-suite and topic-specific items are `pass` or `fixed-inline`.
+The only environment-bound surface — completing a _real_ OAuth token exchange
+— is out of reach without real subscription credentials and is covered by the
+unit suites up to the seams; the flow is exercised end-to-end up to the
+auth-URL / device-code / paste step as intended.

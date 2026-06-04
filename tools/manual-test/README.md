@@ -177,6 +177,57 @@ on any failure. On failure the sandbox is preserved and its path printed.
 writable `os.tmpdir()`. Tracks and kills only the child PID it spawns. No real
 LLM, speechmux, or network required.
 
+### provider-login-smoke
+
+**Purpose:** Exercise the interactive `/login` OAuth provider flow (the
+`provider-login` topic) end-to-end without real subscription credentials.
+Boots a real pimote against a sandboxed, credential-free HOME and drives the
+real PWA + real pi-SDK `AuthStorage.login` up to the auth-URL / device-code /
+paste step. Asserts: (1) typing `/login` opens the LoginDialog and posts no
+user message; (2) `getOAuthProviders` lists Anthropic / GitHub Copilot /
+ChatGPT with no logged-in badge in a fresh sandbox; (3) HEADLINE — the
+Anthropic (paste-back) flow renders the "Open auth page" link (real
+`claude.ai/oauth/authorize` URL) AND a working paste field simultaneously,
+with the link surviving pi's immediately-following manual-code prompt step
+(the review #1 critical fix / `authInfo` latch); (4) the GitHub Copilot
+device-code flow answers the enterprise prompt and renders the real device
+user code + verification link; (5) cancel closes the dialog with no stale
+"Login failed" screen; (6) a concurrent `login_begin` while a flow is
+in-flight is rejected `{ ok:false, reason:'busy' }` by the server
+single-flight guard.
+
+> Environment bound: completing a real token exchange needs real subscription
+> credentials, unreachable here. The harness stops at the auth-URL /
+> device-code / paste step and never submits a real code. Anthropic/OpenAI
+> auth-URL emission is fully local (PKCE + localhost callback); Copilot
+> device-code uses real network to `github.com/login/device/code`
+> (unauthenticated device-flow start) — if unavailable, test 4 reports
+> environment-bounded instead of failing.
+
+**Location:** `tools/manual-test/provider-login-smoke/provider-login-smoke.mjs`
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/provider-login-smoke/provider-login-smoke.mjs
+# Keep the coherence screenshots outside the (auto-removed) sandbox:
+PL_SHOTS=/tmp/pl-shots node tools/manual-test/provider-login-smoke/provider-login-smoke.mjs
+```
+
+**Inputs:** none (fresh `os.tmpdir()` sandbox with its own HOME + XDG dirs;
+`PL_SHOTS=<dir>` optionally redirects the screenshots outside the sandbox).
+
+**Outputs:** per-test ✓/✗/⊝ lines + `01-picker.png` / `02-anthropic-auth.png` /
+`02b-after-cancel.png` / `03-copilot-device.png` screenshots; non-zero exit on
+any hard failure (environment-bounded items do not fail the run). On failure
+the sandbox is preserved and its path printed.
+
+**Prerequisites:** workspaces built (`npm run build`), `agent-browser` on
+PATH, writable `os.tmpdir()`. Tracks and kills only the child PID it spawns.
+No real LLM, speechmux, or subscription credentials required; Copilot test 4
+uses real network to github.com (degrades to environment-bounded if absent).
+
 ### agent-browser (cross-repo skill)
 
 **Purpose:** Drive PWA user journeys end-to-end via a headless-Chromium

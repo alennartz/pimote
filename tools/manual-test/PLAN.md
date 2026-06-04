@@ -177,6 +177,32 @@ fulfillment — those need a physical device.
 
 **Driver:** manual on a physical Android device (no automation).
 
+### 10. Interactive provider login (`/login`)
+
+**What:** Typing `/login` in the InputBar opens the global LoginDialog
+(no prompt is sent to the agent). The provider picker lists the OAuth
+subscription providers (Anthropic Claude Pro/Max, GitHub Copilot,
+ChatGPT/Codex) from `getOAuthProviders`, marking logged-in status.
+Picking a paste-back provider (Anthropic/OpenAI) renders an "Open auth
+page" link **and** a working paste field simultaneously (the link must
+survive pi's immediately-following manual-code prompt step). Picking a
+device-code provider (Copilot) renders the user code + verification
+link. Cancel closes the dialog cleanly; a second login attempt while one
+is in-flight is rejected as busy. On a successful login the model picker
+re-pulls so new provider models appear.
+
+**Why:** This is the only way to add an interactive-OAuth model provider
+to a running pimote deployment from the client — without it, a remote
+operator must SSH in and hand-edit `auth.json`. Added by the
+`provider-login` topic.
+
+**Driver:** `tools/manual-test/provider-login-smoke/` drives the flow
+end-to-end via `agent-browser` + a direct WS probe for the busy guard,
+up to the auth-URL / device-code / paste step. Completing a real token
+exchange is environment-bounded (needs real subscription credentials);
+the terminal success + model re-pull are covered by the server + client
+unit suites.
+
 ## Automation gap (recorded, not an action item for this topic)
 
 Journeys 1–7 currently have no automation driver. This is a deliberate
