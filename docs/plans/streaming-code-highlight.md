@@ -354,7 +354,7 @@ existing tests assert `code.classList.contains('hljs')`.
 new `highlights fenced code mid-stream, before the closing fence arrives` case
 (fake timers, `hljs-` markup present pre-`end_token`) and the existing
 language/alias/no-language/streaming-close cases.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Implement `WriteFileBlock.svelte`
 
