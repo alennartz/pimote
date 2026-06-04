@@ -22,7 +22,7 @@ robustness/UX issues.
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `client/src/lib/stores/login.svelte.ts:103-122` (`handleStep`), `client/src/lib/components/LoginDialog.svelte:83-115` (auth branch); root cause spans `server/src/login-orchestrator.ts:120-167`
-- **Status:** open
+- **Status:** resolved
 
 For the authorization-code providers (Anthropic, OpenAI), pi calls `onAuth({url,...})` and
 then **immediately** `onManualCodeInput()` in the same tick (verified in
@@ -59,7 +59,7 @@ store has no place to keep the auth URL alongside the prompt.
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/ws-handler.ts:1408-1430` (`createLoginTransport` / `awaitInput`), `server/src/login-orchestrator.ts:169-181`
-- **Status:** open
+- **Status:** resolved
 
 `awaitInput` stores a `{resolve, reject}` in `pendingLoginInputs` and never removes it
 except via a matching `login_input` (resolve+delete) or `login_cancel` (reject+clear). If
@@ -76,7 +76,7 @@ client to send `login_cancel`.
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/ws-handler.ts:766-779` (`login_cancel`), `1406-1409` (`createLoginTransport`)
-- **Status:** open
+- **Status:** resolved
 
 `createLoginTransport` assigns `this.loginAbort = controller` but nothing clears it back to
 `null` on completion. A `login_cancel` issued after a flow has already finished calls
@@ -89,7 +89,7 @@ reports success without anything to cancel.
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `client/src/routes/+layout.svelte:11-12`, `client/src/lib/stores/login-store.ts`
-- **Status:** open
+- **Status:** resolved
 
 `voice-call-store` is wired with an explicit side-effect import (`import '$lib/stores/voice-call-store.js'`)
 in `+layout.svelte` so its event subscription registers at boot. `login-store.ts` has no
@@ -104,7 +104,7 @@ refactors that drop those component imports.
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/components/LoginDialog.svelte:11-13` (`pickProvider`), `client/src/lib/stores/login.svelte.ts:64-78` (`begin`)
-- **Status:** open
+- **Status:** resolved
 
 `begin()` correctly returns `false` and leaves the flow on `picking` when the server
 responds busy, but `pickProvider` discards the return value (`void loginStore.begin(id)`),

@@ -23,6 +23,15 @@ export interface LoginStoreState {
   providers: LoginProviderInfo[];
   /** The most recent step received from the server while running. */
   currentStep: LoginStep | null;
+  /**
+   * Persistent auth-URL info for the authorization-code (Claude/ChatGPT) flow.
+   * pi calls onAuth and then immediately onManualCodeInput, so the `auth` step is
+   * followed at once by a `prompt` step that overwrites currentStep. We latch the
+   * auth URL here so the "Open auth page" link stays reachable while the paste
+   * prompt is shown. Null for device-code (Copilot) flows. Cleared on each
+   * begin()/close().
+   */
+  authInfo: { url: string; instructions?: string } | null;
   /** Set when the flow ended; mirrors the terminal `done` step's success flag. */
   succeeded: boolean | null;
   /** Error string from a failed terminal step, if any. */
@@ -41,6 +50,7 @@ export class LoginStore {
     flow: 'idle',
     providers: [],
     currentStep: null,
+    authInfo: null,
     succeeded: null,
     error: null,
   });
@@ -74,6 +84,7 @@ export class LoginStore {
     }
     this.state.flow = 'running';
     this.state.currentStep = null;
+    this.state.authInfo = null;
     this.state.succeeded = null;
     this.state.error = null;
     return true;
@@ -117,6 +128,11 @@ export class LoginStore {
       }
       return;
     }
+    // Latch the auth URL so it survives the manual-code `prompt` step that pi
+    // emits immediately after `auth` (which would otherwise overwrite it).
+    if (step.kind === 'auth') {
+      this.state.authInfo = { url: step.url, instructions: step.instructions };
+    }
     this.state.currentStep = step;
   }
 
@@ -125,6 +141,7 @@ export class LoginStore {
     this.state.flow = 'idle';
     this.state.providers = [];
     this.state.currentStep = null;
+    this.state.authInfo = null;
     this.state.succeeded = null;
     this.state.error = null;
   }

@@ -2,14 +2,19 @@
   import { loginStore } from '$lib/stores/login-store.js';
 
   let inputValue = $state('');
+  let pickBusyMessage = $state('');
 
   const linkClass = 'bg-primary text-primary-foreground hover:bg-primary/85 rounded-md px-3 py-2 text-center font-medium';
 
   const view = $derived(loginStore.state);
   const step = $derived(view.currentStep);
 
-  function pickProvider(id: string): void {
-    void loginStore.begin(id);
+  async function pickProvider(id: string): Promise<void> {
+    pickBusyMessage = '';
+    const accepted = await loginStore.begin(id);
+    if (!accepted) {
+      pickBusyMessage = 'Another login is already in progress. Try again in a moment.';
+    }
   }
 
   function submitInput(): void {
@@ -61,11 +66,14 @@
         {#if view.providers.length === 0}
           <div class="text-muted-foreground text-sm">No OAuth providers are available.</div>
         {:else}
+          {#if pickBusyMessage}
+            <p class="text-destructive text-xs">{pickBusyMessage}</p>
+          {/if}
           <div class="flex flex-col gap-2">
             {#each view.providers as provider (provider.id)}
               <button
                 class="border-border hover:bg-accent flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-left text-sm transition-colors"
-                onclick={() => pickProvider(provider.id)}
+                onclick={() => void pickProvider(provider.id)}
               >
                 <span class="text-foreground font-medium">{provider.name}</span>
                 {#if provider.loggedIn}
@@ -76,37 +84,48 @@
           </div>
         {/if}
       {:else if view.flow === 'running'}
-        {#if !step || step.kind === 'progress'}
-          <div class="flex items-center gap-3 text-sm">
-            <span class="border-muted-foreground/40 border-t-foreground inline-block size-4 animate-spin rounded-full border-2"></span>
-            <span class="text-muted-foreground">{step?.kind === 'progress' ? step.message : 'Working…'}</span>
-          </div>
-        {:else if step.kind === 'auth'}
+        {#if view.authInfo}
+          <!-- Authorization-code (Claude/ChatGPT) flow: the auth link is latched in
+               view.authInfo so it stays reachable even after the manual-code `prompt`
+               step overwrites currentStep. The paste field is wired to that prompt
+               step (so its Submit resolves the correct requestId). -->
           <div class="flex flex-col gap-3 text-sm">
-            {#if step.instructions}
-              <p class="text-muted-foreground">{step.instructions}</p>
+            {#if view.authInfo.instructions}
+              <p class="text-muted-foreground">{view.authInfo.instructions}</p>
             {/if}
-            <!-- step.url is an external provider-hosted OAuth URL, not a SPA route, so resolve() does not apply. -->
+            <!-- view.authInfo.url is an external provider-hosted OAuth URL, not a SPA route, so resolve() does not apply. -->
             <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-            <a class={linkClass} href={step.url} target="_blank" rel="noopener noreferrer">Open auth page</a>
+            <a class={linkClass} href={view.authInfo.url} target="_blank" rel="noopener noreferrer">Open auth page</a>
             <p class="text-muted-foreground text-xs">
               After authorizing, your browser may show a connection-error page — that is expected. Copy the code shown (or from the page URL) and paste it below.
             </p>
-            <form
-              class="flex flex-col gap-2"
-              onsubmit={(e) => {
-                e.preventDefault();
-                submitInput();
-              }}
-            >
-              <input
-                class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring rounded-md border px-3 py-2 focus:ring-1 focus:outline-none"
-                type="text"
-                placeholder="Paste the authorization code"
-                bind:value={inputValue}
-              />
-              <button type="submit" class="bg-primary text-primary-foreground hover:bg-primary/85 rounded-md px-3 py-2 font-medium">Submit</button>
-            </form>
+            {#if step && step.kind === 'prompt'}
+              <form
+                class="flex flex-col gap-2"
+                onsubmit={(e) => {
+                  e.preventDefault();
+                  submitInput();
+                }}
+              >
+                <input
+                  class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring rounded-md border px-3 py-2 focus:ring-1 focus:outline-none"
+                  type="text"
+                  placeholder={step.placeholder ?? 'Paste the authorization code'}
+                  bind:value={inputValue}
+                />
+                <button type="submit" class="bg-primary text-primary-foreground hover:bg-primary/85 rounded-md px-3 py-2 font-medium">Submit</button>
+              </form>
+            {:else}
+              <div class="text-muted-foreground flex items-center gap-2 text-xs">
+                <span class="border-muted-foreground/40 border-t-foreground inline-block size-3 animate-spin rounded-full border-2"></span>
+                Preparing…
+              </div>
+            {/if}
+          </div>
+        {:else if !step || step.kind === 'progress'}
+          <div class="flex items-center gap-3 text-sm">
+            <span class="border-muted-foreground/40 border-t-foreground inline-block size-4 animate-spin rounded-full border-2"></span>
+            <span class="text-muted-foreground">{step?.kind === 'progress' ? step.message : 'Working…'}</span>
           </div>
         {:else if step.kind === 'device_code'}
           <div class="flex flex-col gap-3 text-sm">

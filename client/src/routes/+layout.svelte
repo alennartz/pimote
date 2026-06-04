@@ -8,6 +8,8 @@
   import InstallBanner from '$lib/components/InstallBanner.svelte';
   // Side-effect import: subscribes the voice-call store to server events at app boot.
   import '$lib/stores/voice-call-store.js';
+  // Side-effect import: subscribes the login store to `login_step` events at app boot.
+  import '$lib/stores/login-store.js';
   import TreeDialog from '$lib/components/TreeDialog.svelte';
   import LoginDialog from '$lib/components/LoginDialog.svelte';
   import Panel from '$lib/components/Panel.svelte';

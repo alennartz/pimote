@@ -755,12 +755,25 @@ export class WsHandler {
             break;
           }
           const transport = this.createLoginTransport();
+          const flowController = this.loginAbort;
           // Drive the flow async — it emits login_step events as it goes and a
           // terminal `done` step on completion. Respond `ok` immediately.
-          orchestrator.runLogin(command.providerId, transport).catch((err) => {
-            if (err instanceof LoginBusyError) return;
-            console.error('[WsHandler] login flow error:', err);
-          });
+          orchestrator
+            .runLogin(command.providerId, transport)
+            .catch((err) => {
+              if (err instanceof LoginBusyError) return;
+              console.error('[WsHandler] login flow error:', err);
+            })
+            .finally(() => {
+              // Settle any inputs still outstanding when the flow ends for a
+              // reason other than a client cancel (provider-side timeout,
+              // network error during the manual-input race) so the promises pi
+              // awaited don't dangle, and clear the now-completed controller.
+              this.settlePendingLoginInputs();
+              if (this.loginAbort === flowController) {
+                this.loginAbort = null;
+              }
+            });
           this.sendResponse(id, true, { ok: true });
           break;
         }
@@ -777,10 +790,7 @@ export class WsHandler {
 
         case 'login_cancel': {
           this.loginAbort?.abort();
-          for (const [, pending] of this.pendingLoginInputs) {
-            pending.reject(new Error('login cancelled'));
-          }
-          this.pendingLoginInputs.clear();
+          this.settlePendingLoginInputs('login cancelled');
           this.sendResponse(id, true);
           break;
         }
@@ -1403,6 +1413,16 @@ export class WsHandler {
     } catch (err) {
       console.error('[WsHandler] Failed to send event:', err);
     }
+  }
+
+  /** Reject + clear any outstanding login prompt/select inputs for this
+   *  connection. pi attaches a `.catch` to the manual-code promise, so rejecting
+   *  is safe and won't surface an unhandled rejection. */
+  private settlePendingLoginInputs(reason = 'login flow ended'): void {
+    for (const [, pending] of this.pendingLoginInputs) {
+      pending.reject(new Error(reason));
+    }
+    this.pendingLoginInputs.clear();
   }
 
   /** Build a connection-bound LoginTransport: events flow to this client, and
