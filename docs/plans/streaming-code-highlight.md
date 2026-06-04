@@ -422,4 +422,4 @@ the existing `edit` branch, using `WriteFileBlock`.
 `write` tool call renders the file body highlighting as it streams (code paths)
 or as rendered markdown (`.md` paths), with working copy + collapse, and settles
 correctly on completion.
-**Status:** not started
+**Status:** done

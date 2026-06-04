@@ -3,7 +3,10 @@
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import StreamingCollapsible from './StreamingCollapsible.svelte';
   import EditDiffBlock from './EditDiffBlock.svelte';
+  import WriteFileBlock from './WriteFileBlock.svelte';
   import { createEditDiffStreamer, type EditArgs, type EditEntry } from '$lib/edit-diff.js';
+  import { createWriteContentStreamer, extractWriteContent } from '$lib/write-content.js';
+  import { inferLanguageFromPath } from '$lib/editor-language.js';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import Wrench from '@lucide/svelte/icons/wrench';
   import CheckCircle from '@lucide/svelte/icons/check-circle-2';
@@ -32,6 +35,7 @@
   let isResult = $derived(content.type === 'tool_result');
   let isCompleted = $derived(isResult || result !== undefined);
   let isEdit = $derived(toolName === 'edit');
+  let isWrite = $derived(toolName === 'write');
 
   // Streaming-diff state used only when isEdit.
   let streamer: ReturnType<typeof createEditDiffStreamer> | undefined = $state();
@@ -78,6 +82,71 @@
       expanded = false;
     }
   });
+
+  // Streaming-body state used only when isWrite. Mirrors the edit streamer:
+  // feed `content.text` deltas into a write-content streamer (write-on-growth)
+  // and snapshot the body into $state so Svelte re-renders.
+  let writeStreamer: ReturnType<typeof createWriteContentStreamer> | undefined = $state();
+  let writeStreamerWritten = 0;
+  let streamingBody = $state('');
+
+  $effect(() => {
+    if (!isWrite) return;
+    if (!streaming) {
+      // Keep `streamingBody` so the finalized-else-streamed fallback covers the
+      // tick between `streaming` flipping off and `content.args` arriving.
+      if (writeStreamer) {
+        writeStreamer.dispose();
+        writeStreamer = undefined;
+        writeStreamerWritten = 0;
+      }
+      return;
+    }
+    const text = content.text ?? '';
+    if (!text) return;
+    if (!writeStreamer) {
+      writeStreamer = createWriteContentStreamer();
+      writeStreamerWritten = 0;
+    }
+    if (text.length > writeStreamerWritten) {
+      writeStreamer.write(text.slice(writeStreamerWritten));
+      writeStreamerWritten = text.length;
+    }
+    streamingBody = writeStreamer.content;
+  });
+
+  $effect(() => {
+    if (!isWrite) return;
+    if (streaming || inProgress) {
+      expanded = true;
+    } else {
+      expanded = false;
+    }
+  });
+
+  // Path: prefer finalized args; fall back to scanning the partial args JSON so
+  // markdown mode kicks in as soon as the path field has streamed through.
+  let writePath = $derived.by(() => {
+    const args = content.args as { path?: unknown } | undefined;
+    if (args && typeof args.path === 'string') return args.path;
+    const text = content.text ?? '';
+    const m = text.match(/"path"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (m) {
+      try {
+        return JSON.parse(`"${m[1]}"`) as string;
+      } catch {
+        return '';
+      }
+    }
+    return '';
+  });
+  let writeLanguage = $derived(isWrite ? inferLanguageFromPath(writePath) : null);
+  let isMarkdown = $derived(writeLanguage === 'markdown');
+
+  // Prefer the finalized body once args are available; fall back to the last
+  // streamed body otherwise (same prefer-finalized-else-streamed pattern as edit).
+  let finalizedBody = $derived<string | undefined>(isWrite && content.args ? extractWriteContent(content.args) : undefined);
+  let writeBody = $derived(isWrite ? (finalizedBody ?? streamingBody) : '');
 
   let finalizedEntries = $derived<ReadonlyArray<EditEntry> | undefined>(isEdit && content.args ? ((content.args as EditArgs).edits ?? []) : undefined);
   // Prefer the finalized view once args are available; fall back to the
@@ -163,6 +232,10 @@
       {#if isEdit && editEntries.length > 0}
         <div class="tool-section">
           <EditDiffBlock entries={editEntries} />
+        </div>
+      {:else if isWrite && (writeBody !== '' || content.args)}
+        <div class="tool-section">
+          <WriteFileBlock content={writeBody} mode={isMarkdown ? 'markdown' : 'code'} language={writeLanguage} streaming={streaming && !isCompleted} />
         </div>
       {:else if argsText}
         <div class="tool-section">
