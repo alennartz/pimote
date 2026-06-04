@@ -203,6 +203,13 @@ export class SessionRegistry {
 
       case 'agent_end': {
         const endEvent = event as AgentEndEvent;
+        // A `willRetry` agent_end is not a real end — the SDK detected a
+        // retryable error and will re-run the prompt after backoff (a fresh
+        // agent_start follows). Treating it as idle here flickers the session
+        // working→idle→working, drops the in-flight streaming message, and lights
+        // the "needs attention" badge for a transient blip. Ignore it; the
+        // terminal (willRetry=false) agent_end drives the real idle transition.
+        if (endEvent.willRetry) break;
         session.status = 'idle';
         session.isStreaming = false;
         // Clear any in-flight streaming message. The SDK does not emit message_end

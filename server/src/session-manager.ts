@@ -152,7 +152,13 @@ function createSessionState(
       state.status = 'working';
       state.idleSince = null;
       callbacks.onStatusChange?.(sessionId, folderPath);
-    } else if (event.type === 'agent_end' && state.status !== 'idle') {
+    } else if (event.type === 'agent_end' && !event.willRetry && state.status !== 'idle') {
+      // `willRetry` agent_end is not a real end — the SDK detected a retryable
+      // error and will re-run the prompt after backoff (a fresh agent_start
+      // follows). Treating it as idle here would fire a spurious completion
+      // push notification and start the idle-reap clock for a session that is
+      // still working. Skip it; the terminal (willRetry=false) agent_end will
+      // drive the real idle transition.
       state.status = 'idle';
       state.idleSince = Date.now();
       state.needsAttention = true;

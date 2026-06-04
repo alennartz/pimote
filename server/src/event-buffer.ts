@@ -132,7 +132,7 @@ export class EventBuffer {
         return { ...base, type: 'agent_start' };
 
       case 'agent_end':
-        return { ...base, type: 'agent_end', ...(sdkEvent.error ? { error: sdkEvent.error } : {}) };
+        return { ...base, type: 'agent_end', ...(sdkEvent.error ? { error: sdkEvent.error } : {}), ...(sdkEvent.willRetry ? { willRetry: true } : {}) };
 
       case 'turn_start':
         return { ...base, type: 'turn_start' };

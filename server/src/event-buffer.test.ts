@@ -292,6 +292,19 @@ describe('EventBuffer', () => {
       expect(typeof (liveEvents[1] as any).timestamp).toBe('string');
     });
 
+    it('forwards willRetry on agent_end so the client can distinguish a retry from a real end', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(makeSdkEvent('agent_end', { error: 'overloaded', willRetry: true }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('agent_end'), SESSION_ID, sendLive);
+
+      expect(liveEvents[0]).toEqual(expect.objectContaining({ type: 'agent_end', willRetry: true }));
+      // A real end omits the flag (no spurious willRetry: false on the wire).
+      expect((liveEvents[1] as any).willRetry).toBeUndefined();
+    });
+
     it('maps auto_compaction events correctly', () => {
       const buffer = new EventBuffer(10);
       const liveEvents: PimoteSessionEvent[] = [];

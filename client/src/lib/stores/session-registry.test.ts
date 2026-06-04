@@ -251,6 +251,27 @@ describe('SessionRegistry', () => {
       expect(session.streamingKey).toBeNull();
     });
 
+    it('agent_end with willRetry stays working (retry is not a real end)', () => {
+      // The SDK detected a retryable error and will re-run the prompt after
+      // backoff (a fresh agent_start follows). The session must stay working
+      // and keep its in-flight streaming message rather than flicker to idle.
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('agent_start', 's1'));
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          contentIndex: 0,
+          subtype: 'start',
+          content: { type: 'text', text: '' },
+        }),
+      );
+      registry.handleEvent(makeSessionEvent('agent_end', 's1', { willRetry: true }));
+      const session = registry.sessions['s1'];
+      expect(session.status).toBe('working');
+      expect(session.isStreaming).toBe(true);
+      expect(session.streamingMessage).not.toBeNull();
+    });
+
     it('events for unknown sessionId are ignored (no error)', () => {
       expect(() => registry.handleEvent(makeSessionEvent('agent_start', 'unknown'))).not.toThrow();
     });
@@ -617,6 +638,15 @@ describe('SessionRegistry', () => {
       registry.handleEvent(makeSessionEvent('agent_start', 's2'));
       registry.handleEvent(makeSessionEvent('agent_end', 's2'));
       expect(registry.sessions['s2'].needsAttention).toBe(true);
+    });
+
+    it('agent_end with willRetry does NOT set needsAttention on a non-viewed session', () => {
+      registry.addSession('s1', '/path/a', 'a');
+      registry.addSession('s2', '/path/b', 'b');
+      registry.switchTo('s1');
+      registry.handleEvent(makeSessionEvent('agent_start', 's2'));
+      registry.handleEvent(makeSessionEvent('agent_end', 's2', { willRetry: true }));
+      expect(registry.sessions['s2'].needsAttention).toBe(false);
     });
 
     it('agent_end does NOT set needsAttention when session IS the viewed session', () => {

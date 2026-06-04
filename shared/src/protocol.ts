@@ -533,6 +533,12 @@ export interface AgentStartEvent extends SessionEventBase {
 export interface AgentEndEvent extends SessionEventBase {
   type: 'agent_end';
   error?: string;
+  /** True when this `agent_end` is followed by an automated retry (the SDK
+   *  detected a retryable error and will re-run the prompt). When set, this
+   *  is NOT a real end — a fresh `agent_start` will follow after backoff, so
+   *  consumers must not treat it as the run finishing (no idle transition,
+   *  no "needs attention", no completion notification). */
+  willRetry?: boolean;
   /** Entry IDs for all messages, zipped 1:1 with the session message list.
    *  Sent so the client can enable fork targets on messages received via
    *  streaming events (which don't carry entry IDs individually). */

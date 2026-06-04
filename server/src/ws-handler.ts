@@ -120,8 +120,11 @@ function createCommandContextActions(slot: ManagedSlot): ExtensionCommandContext
     waitForIdle: () => {
       if (!slot.session.isStreaming) return Promise.resolve();
       return new Promise<void>((resolve) => {
-        const unsubscribe = slot.session.subscribe((event: { type: string }) => {
-          if (event.type === 'agent_end') {
+        const unsubscribe = slot.session.subscribe((event: { type: string; willRetry?: boolean }) => {
+          // A `willRetry` agent_end is not a real end — the SDK will re-run the
+          // prompt after backoff. Resolving here would hand control back mid-run.
+          // Wait for the terminal (willRetry=false) agent_end instead.
+          if (event.type === 'agent_end' && !event.willRetry) {
             unsubscribe();
             resolve();
           }
