@@ -14,9 +14,14 @@
  *     that re-highlights a target element at most once per `intervalMs`
  *     (trailing edge), plus a forced `flush()` for the guaranteed final pass.
  *
- * Built on the single shared `hljs` instance from `syntax-highlighter.ts`
- * (wired in during implementation).
+ * Built on the single shared `hljs` instance from `syntax-highlighter.ts`.
  */
+import { hljs } from './syntax-highlighter.js';
+
+/** HTML-escape a string for safe insertion as text content via innerHTML. */
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 /**
  * Highlight a complete code string to hljs HTML markup.
@@ -27,8 +32,15 @@
  *   HTML-escaped plain text with no spans.
  * - Never throws: any hljs error falls back to HTML-escaped plain text.
  */
-export function highlightToHtml(_text: string, _language: string | null): string {
-  throw new Error('not implemented');
+export function highlightToHtml(text: string, language: string | null): string {
+  if (language && hljs.getLanguage(language)) {
+    try {
+      return hljs.highlight(text, { language }).value;
+    } catch {
+      // Fall through to the escaped plain-text fallback.
+    }
+  }
+  return escapeHtml(text);
 }
 
 export interface IncrementalHighlighter {
@@ -61,6 +73,43 @@ export interface IncrementalHighlighter {
  *   the element content is final and correct regardless of prior timing.
  * - Default `intervalMs` is ~100.
  */
-export function createIncrementalHighlighter(_opts?: { intervalMs?: number }): IncrementalHighlighter {
-  throw new Error('not implemented');
+export function createIncrementalHighlighter(opts?: { intervalMs?: number }): IncrementalHighlighter {
+  const intervalMs = opts?.intervalMs ?? 100;
+
+  let pending: { el: HTMLElement; text: string; language: string | null } | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const run = () => {
+    if (!pending) return;
+    const { el, text, language } = pending;
+    el.innerHTML = highlightToHtml(text, language);
+  };
+
+  return {
+    schedule(el: HTMLElement, text: string, language: string | null) {
+      pending = { el, text, language };
+      // Trailing-edge throttle: do not reset an in-flight timer; repeated
+      // schedules within the window only overwrite the pending values.
+      if (timer === null) {
+        timer = setTimeout(() => {
+          timer = null;
+          run();
+        }, intervalMs);
+      }
+    },
+    flush() {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      run();
+    },
+    dispose() {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      pending = null;
+    },
+  };
 }

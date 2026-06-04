@@ -224,6 +224,8 @@ long files.
 
 ## Steps
 
+**Pre-implementation commit:** `0cd2976231aff1402cc8eb9411d6bebbd6c85797`
+
 ### Step 1: Implement `highlightToHtml` in `code-highlight.ts`
 
 Replace the `not implemented` stub for `highlightToHtml(text, language)` in
@@ -246,7 +248,7 @@ wiring lives in the callers (smd-renderer / WriteFileBlock).
 **Verify:** the `highlightToHtml` block in `client/src/lib/code-highlight.test.ts`
 passes (`npm test` in `client/`): span markup for typescript, escaped text for
 null/unregistered languages, no throw on unknown language, `''` for empty+null.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement `createIncrementalHighlighter` in `code-highlight.ts`
 
@@ -276,7 +278,7 @@ with `vi.useFakeTimers()`).
 `code-highlight.test.ts` passes — flush synchrony, latest-text-wins, null→escaped,
 trailing-edge collapse under fake timers, settle-without-flush, dispose cancels +
 idempotent, flush-with-nothing no-throw.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Implement `write-content.ts`
 
