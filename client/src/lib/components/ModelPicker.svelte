@@ -17,6 +17,7 @@
   import { untrack } from 'svelte';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
+  import type { SessionMeta } from '@pimote/shared';
 
   interface AvailableModel {
     provider: string;
@@ -83,6 +84,13 @@
       if (session) {
         session.model = { provider: model.provider, id: model.id, name: model.name };
       }
+      // Context window / token capacity is model-specific, so refresh meta now.
+      // Otherwise the displayed capacity stays stale until the next agent turn
+      // (which is the only other thing that refetches get_session_meta).
+      const metaRes = await connection.send({ type: 'get_session_meta', sessionId });
+      if (metaRes.success && metaRes.data) {
+        sessionRegistry.updateMeta(sessionId, (metaRes.data as { meta: SessionMeta }).meta);
+      }
     }
     open = false;
   }
@@ -106,7 +114,7 @@
       <ChevronDown class="size-3 shrink-0" />
     </Button>
   </DropdownMenuTrigger>
-  <DropdownMenuContent align="start" class="max-h-72 min-w-52 overflow-y-auto">
+  <DropdownMenuContent align="start" class="max-h-72 w-max max-w-[min(28rem,calc(100vw-1rem))] min-w-52 overflow-y-auto">
     <DropdownMenuLabel>Models</DropdownMenuLabel>
     <DropdownMenuSeparator />
     {#if loading && models.length === 0}
@@ -124,7 +132,7 @@
           <DropdownMenuGroupHeading>{provider}</DropdownMenuGroupHeading>
           {#each providerModels as model (model.id)}
             <DropdownMenuItem onclick={() => selectModel(model)} class="flex items-center justify-between gap-2">
-              <span class="truncate">{model.name}</span>
+              <span class="min-w-0 break-words">{model.name}</span>
               {#if isSelected(model)}
                 <Check class="text-primary size-3.5 shrink-0" />
               {/if}
