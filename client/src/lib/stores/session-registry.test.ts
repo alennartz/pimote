@@ -272,6 +272,47 @@ describe('SessionRegistry', () => {
       expect(session.streamingMessage).not.toBeNull();
     });
 
+    it('auto_retry_end with success:false ends streaming (user aborted during retry backoff)', () => {
+      // When the user aborts during the retry-sleep backoff, the SDK cancels
+      // the sleep and emits auto_retry_end{success:false}, but does NOT emit a
+      // terminal agent_end (the prior agent_end already went out as
+      // willRetry:true, which we intentionally ignore). Without handling this,
+      // isStreaming stays true forever and the Abort button appears to do
+      // nothing.
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('agent_start', 's1'));
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
+      registry.handleEvent(
+        makeSessionEvent('message_update', 's1', {
+          contentIndex: 0,
+          subtype: 'start',
+          content: { type: 'text', text: '' },
+        }),
+      );
+      registry.handleEvent(makeSessionEvent('agent_end', 's1', { willRetry: true }));
+      expect(registry.sessions['s1'].isStreaming).toBe(true);
+
+      registry.handleEvent(makeSessionEvent('auto_retry_end', 's1', { success: false, attempt: 1, finalError: 'Retry cancelled' }));
+      const session = registry.sessions['s1'];
+      expect(session.status).toBe('idle');
+      expect(session.isStreaming).toBe(false);
+      expect(session.streamingMessage).toBeNull();
+      expect(session.streamingKey).toBeNull();
+    });
+
+    it('auto_retry_end with success:true is a no-op (fresh agent_start follows)', () => {
+      // When a retry attempt succeeds, the SDK emits auto_retry_end{success:true}
+      // immediately followed by a fresh agent_start for the retried attempt.
+      // We must NOT flip to idle here or the working state would flicker.
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('agent_start', 's1'));
+      registry.handleEvent(makeSessionEvent('agent_end', 's1', { willRetry: true }));
+      registry.handleEvent(makeSessionEvent('auto_retry_end', 's1', { success: true, attempt: 1 }));
+      const session = registry.sessions['s1'];
+      expect(session.status).toBe('working');
+      expect(session.isStreaming).toBe(true);
+    });
+
     it('events for unknown sessionId are ignored (no error)', () => {
       expect(() => registry.handleEvent(makeSessionEvent('agent_start', 'unknown'))).not.toThrow();
     });

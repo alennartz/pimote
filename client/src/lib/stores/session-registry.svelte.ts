@@ -22,6 +22,7 @@ import type {
   ToolExecutionEndEvent,
   FullResyncEvent,
   AgentEndEvent,
+  AutoRetryEndEvent,
   SessionConflictEvent,
   SessionStateChangedEvent,
   SessionOpenedEvent,
@@ -200,6 +201,27 @@ export class SessionRegistry {
         session.status = 'working';
         session.isStreaming = true;
         break;
+
+      case 'auto_retry_end': {
+        // success:true is followed immediately by a fresh agent_start for the
+        // retried attempt — no-op so the working state doesn't flicker.
+        // success:false is the terminal signal we get when a retry is
+        // user-aborted during the backoff sleep: the SDK fires no subsequent
+        // agent_end in that path (the prior agent_end already went out as
+        // willRetry:true, which we intentionally ignored). Without handling
+        // this here, isStreaming would stay true forever and the Abort button
+        // would appear to do nothing. Treat success:false as terminal.
+        const retryEvent = event as AutoRetryEndEvent;
+        if (retryEvent.success) break;
+        session.status = 'idle';
+        session.isStreaming = false;
+        session.streamingMessage = null;
+        session.streamingKey = null;
+        if (sessionId !== this.viewedSessionId) {
+          session.needsAttention = true;
+        }
+        break;
+      }
 
       case 'agent_end': {
         const endEvent = event as AgentEndEvent;
