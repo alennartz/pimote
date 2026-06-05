@@ -98,6 +98,11 @@ class MainActivity : ComponentActivity() {
             // not waive permission checks for non-SyncAdapter callers.
             add(Manifest.permission.READ_CONTACTS)
             add(Manifest.permission.WRITE_CONTACTS)
+            // API 33+: the ongoing-call foreground service posts a CallStyle
+            // notification; without this grant it would be silently dropped.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
         }.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }

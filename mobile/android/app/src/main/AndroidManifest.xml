@@ -6,6 +6,12 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- API 34+: required to run the ongoing-call foreground service of type phoneCall. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <!-- API 33+: runtime-prompted in MainActivity so the call notification can post. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Required for the proximity-to-ear PROXIMITY_SCREEN_OFF_WAKE_LOCK. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!--
@@ -83,6 +89,16 @@
             android:launchMode="singleTask"
             android:showWhenLocked="true"
             android:turnScreenOn="true" />
+
+        <!--
+            Ongoing-call foreground service. Hosts the persistent CallStyle
+            notification (hang-up action + tap-to-reopen) while a call is in
+            progress. Type phoneCall pairs with our self-managed Telecom call.
+        -->
+        <service
+            android:name="com.pimote.android.call.CallForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="phoneCall" />
 
         <service
             android:name="com.pimote.android.telephony.PimoteConnectionService"

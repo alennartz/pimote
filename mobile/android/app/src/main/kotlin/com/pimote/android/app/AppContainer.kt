@@ -7,7 +7,10 @@ import android.os.Build
 import com.pimote.android.call.CallAudioRouter
 import com.pimote.android.call.CallController
 import com.pimote.android.call.CallControllerImpl
+import com.pimote.android.call.CallForegroundService
 import com.pimote.android.call.CallState
+import com.pimote.android.call.ProximityScreenLock
+import com.pimote.android.call.shouldHoldProximityLock
 import com.pimote.android.ui.call.InCallActivity
 import com.pimote.android.net.AccessAuthInterceptor
 import com.pimote.android.net.AndroidNetworkAvailabilityMonitor
@@ -225,7 +228,39 @@ class AppContainer(private val appContext: Context) {
     val callController: CallController =
         CallControllerImpl(wsClient, peerFactory, applicationScope, callAudioRouter)
 
+    /**
+     * Proximity-to-ear screen blanking. Acquired while the call is held to the
+     * head (Active + earpiece), released on speaker/BT/headset and when the
+     * call ends. See [shouldHoldProximityLock].
+     */
+    val proximityScreenLock: ProximityScreenLock = ProximityScreenLock(appContext)
+
     init {
+        // Drive the persistent call notification (foreground service, type
+        // phoneCall). Started on the edge where the call leaves Idle; the
+        // service self-stops once the call reaches Ended/Idle.
+        applicationScope.launch {
+            var prevOngoing = false
+            callController.state.collect { s ->
+                val ongoing = s !is CallState.Idle && s !is CallState.Ended
+                if (ongoing && !prevOngoing) {
+                    CallForegroundService.start(appContext)
+                }
+                prevOngoing = ongoing
+            }
+        }
+
+        // Drive the proximity-to-ear screen lock off call state + audio route.
+        applicationScope.launch {
+            kotlinx.coroutines.flow.combine(
+                callController.state,
+                callController.audioRoute,
+                callController.isSpeakerphoneOn,
+            ) { state, route, speakerOn ->
+                shouldHoldProximityLock(state, route, speakerOn)
+            }.collect { hold -> proximityScreenLock.apply(hold) }
+        }
+
         // Launch the custom in-call screen as soon as the controller leaves
         // Idle, so the user gets immediate feedback during Dialing/Binding/
         // Negotiating and on failure (Ended) — not only after Active.
