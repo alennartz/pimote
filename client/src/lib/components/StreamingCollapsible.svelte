@@ -11,7 +11,10 @@
     accent?: 'default' | 'purple';
   } = $props();
 
-  let expanded = $state(false);
+  // Auto-expand while streaming, auto-collapse when it settles (ThinkingBlock /
+  // WriteFileBlock pattern). Writable $derived: resets to `streaming` whenever it
+  // changes, but stays put under manual toggles once streaming has stopped.
+  let expanded = $derived(streaming);
   let contentEl: HTMLPreElement | undefined = $state();
 
   let lines = $derived(text.split('\n'));
