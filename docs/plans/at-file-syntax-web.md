@@ -59,8 +59,9 @@ Responsibilities:
 - Parse the incoming `@` prefix into its path components, mirroring TUI semantics:
   - Strip the leading `@` (and surrounding quotes for `@"…"`).
   - Support `~/`, `/abs`, `./`, `../`, and bare relative paths resolved against the session cwd.
-  - Treat a trailing `/` as "list contents of this directory".
-- Invoke `fd` to walk the tree (fast, `.gitignore`-aware): `--type f --type d --hidden --follow --exclude .git --max-results <N>`, switching to `--full-path` when the query contains a `/`, mirroring the TUI's `walkDirectoryWithFd`.
+  - **Scope by splitting at the last `/`:** the segment up to and including the last `/` is the directory scope (resolved against the session cwd, or `~/`/absolute), and the trailing segment after the last `/` becomes the fd query pattern. A prefix ending in `/` therefore yields an empty query ("list contents of this directory"); a bare single-segment prefix (`@comp`) yields no scope and queries from the cwd.
+  - We deliberately **do not** port the TUI's `statSync`-guarded fallback (where a multi-segment prefix whose directory doesn't exist falls back to a `--full-path` fuzzy search from the cwd). That branch is filesystem-coupled and obscure; pimote's narrowed scope doesn't need it.
+- Invoke `fd` to walk the tree (fast, `.gitignore`-aware): `--type f --type d --hidden --follow --exclude .git --max-results <N>`. Because the query is always the post-scope trailing segment, it never contains a `/`, so `--full-path` is **not** used for scoped multi-segment queries. (`walkDirectoryWithFd`'s `--full-path`-when-query-contains-`/` guard may be retained defensively, but the scoping above means it does not fire in normal operation.)
 - Map results to `AutocompleteResponseItem[]`: `value` is the token to insert (with `@` prefix, quoting when needed, trailing `/` for directories), `label` is the display path, `description` optional.
 - Degrade deterministically when `fd` is unavailable: return `[]` and signal that a one-time warning should be shown.
 
@@ -173,7 +174,7 @@ Emitted at most once per connection/session when autocomplete is requested and `
 - Always invokes fd asking for both files and directories, hidden, following symlinks (`--type f --type d --hidden --follow`).
 - Always excludes `.git` and caps results (`--exclude .git`, `--max-results`).
 - Passes a bare single-segment prefix (`@comp`) as the fd query pattern.
-- Enables `--full-path` exactly when the fd query it runs contains a path separator (consistency invariant across prefixes).
+- Scopes a multi-segment prefix by splitting at the last `/`: `@src/comp` queries fd with `query: 'comp'` and `baseDir: <cwd>/src`, and does **not** pass `--full-path` (the scoped query never contains a separator). Guards against a naive impl that sets `--full-path` off the raw prefix while scoping the query.
 - Resolves a bare relative prefix against the session cwd.
 - Treats a trailing `/` as "list the contents of this directory" (empty query, base = that directory) for named subdirs, `./`, `../`, absolute `/…`, and `~/`.
 - Expands `~/` to the home directory for the search root, while keeping the typed `~/` scope in the inserted token (not the expanded path).
@@ -189,3 +190,5 @@ Emitted at most once per connection/session when autocomplete is requested and `
 - Extracts only the token immediately before the cursor when multiple `@`-tokens are present.
 - Does not trigger on a mid-word `@` (e.g. an email address); triggers when `@` follows a non-space delimiter (e.g. `=`).
 - Captures an unclosed quoted `@"…"` token including its opening quote and any spaces inside it.
+
+**Review status:** approved

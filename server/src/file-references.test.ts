@@ -50,16 +50,33 @@ describe('completeFileRefs — fd invocation construction', () => {
     expect(calls[0]!.query).toBe('comp');
   });
 
-  it('enables --full-path exactly when the fd query spans path separators', async () => {
-    // The documented rule: switch to --full-path when the query contains a '/'.
-    // Asserted as a consistency invariant so it holds regardless of how the
-    // implementation scopes the query.
-    for (const prefix of ['@foo', '@src/comp', '@a/b/c']) {
-      const { runFd, calls } = fakeFd([]);
-      await completeFileRefs({ prefix, cwd: CWD, runFd });
-      const inv = calls[0]!;
-      expect(inv.args.includes('--full-path')).toBe(inv.query.includes('/'));
-    }
+  it('does not pass --full-path for a bare single-segment prefix', async () => {
+    const { runFd, calls } = fakeFd([]);
+    await completeFileRefs({ prefix: '@foo', cwd: CWD, runFd });
+    expect(calls[0]!.args).not.toContain('--full-path');
+  });
+
+  it('scopes a multi-segment prefix at the last slash: queries the trailing segment, no --full-path', async () => {
+    // pimote scopes by splitting at the last '/': the directory portion becomes
+    // the fd base directory and the trailing segment becomes the fd query, so
+    // the query never contains a separator and --full-path is never used. This
+    // guards against a naive impl that derives --full-path from the raw prefix
+    // while scoping the query.
+    const { runFd, calls } = fakeFd([]);
+    await completeFileRefs({ prefix: '@src/comp', cwd: CWD, runFd });
+    const inv = calls[0]!;
+    expect(inv.query).toBe('comp');
+    expect(inv.baseDir).toBe(join(CWD, 'src'));
+    expect(inv.args).not.toContain('--full-path');
+  });
+
+  it('scopes a deeply nested prefix at the last slash', async () => {
+    const { runFd, calls } = fakeFd([]);
+    await completeFileRefs({ prefix: '@a/b/c', cwd: CWD, runFd });
+    const inv = calls[0]!;
+    expect(inv.query).toBe('c');
+    expect(inv.baseDir).toBe(join(CWD, 'a', 'b'));
+    expect(inv.args).not.toContain('--full-path');
   });
 });
 
