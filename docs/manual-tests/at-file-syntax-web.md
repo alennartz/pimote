@@ -69,12 +69,68 @@ The `@`-file-path autocomplete added to the web InputBar. Two layers:
 
 ## Results
 
-_Populated during execution._
+Driver: `tools/manual-test/at-file-syntax-smoke/at-file-syntax-smoke.mjs`
+(new). Final run: **all assertions pass**.
+
+**Phase A — `complete_file_refs` over WS (against a real opened session,
+known on-disk tree):**
+
+- `@` lists the whole cwd tree; dir tokens carry trailing `/`
+  (`@src/`, `@docs/`), file tokens are terminal (`@top.txt`), the spaced
+  dir surfaces quoted (`@"my dir/"`). — **pass**
+- `@to` bare single-segment query → `@top.txt`. — **pass**
+- `@src/` last-slash scoping → `@src/index.ts` + `@src/util.ts`, labels
+  scope-relative (`index.ts` / `util.ts`). — **pass**
+- `@src/ind` scoped query → `@src/index.ts` only. — **pass**
+- `@"my d` quoted token with a space → `@"my dir/"`. — **pass**
+- `@"my dir/` quoted-directory drill-in → `@"my dir/note.txt"` (review
+  finding #2 regression guard, server side). — **pass**
+
+**Phase A2 — `fd` missing degradation:** second pimote booted with
+`fd`/`fdfind` stripped from `PATH`. `complete_file_refs` returns
+`items: []`, emits exactly one `extension_ui_request` notify warning
+(`notifyType: 'warning'`, message names `fd`), and does NOT re-emit on a
+second request (per-connection one-shot). — **pass.** (The focus hint
+flagged this path as likely unreachable because `fd` is present; the
+driver forces it reachable by sanitizing `PATH`, so it IS exercised.)
+
+**Phase B — InputBar interaction (agent-browser, real Chromium):**
+
+- Typing `@` opens the fd-backed dropdown (8 suggestions). — **pass**
+- Selecting a file inserts `@top.txt` and closes the menu. — **pass**
+- Selecting a directory inserts `@src/` and keeps the menu open; drilling
+  in offers `index.ts`/`util.ts`; selecting `index.ts` →
+  `@src/index.ts`. — **pass**
+- Quoted-directory drill-in (UI level, review finding #2): `@my` →
+  `my dir/` → inserts the open quoted token `@"my dir/`, menu stays open
+  with `note.txt`, selecting it → `@"my dir/note.txt"`. — **pass**
+- `@` triggers mid-line (`please read @to`). — **pass**
+- `/` opens the slash-command dropdown (`new`/`reload`/`tree`/`login`)
+  and shows no file refs — `@` and `/` mutually exclusive. — **pass**
+- Composed `check @top.txt now` sends; the optimistic user message shows
+  the literal `@top.txt` token unchanged (no server-side expansion). —
+  **pass**
+
+**Coherence (Phase B screenshot `at-file-syntax.png`, `AT_SHOT=`):**
+looks coherent — the dropdown renders fd paths cleanly, inserted tokens
+match the typed-scope reconstruction, and the sent message echoes
+`@top.txt` verbatim in the transcript with no `<file>` block or
+attachment chrome (matching the autocomplete-only intent).
+
+No issues were found; nothing fixed inline.
 
 ## Plan Updates
 
-_Populated during execution._
+Updated `tools/manual-test/PLAN.md` Journey 2 to note the `@`-file-path
+autocomplete as part of prompt composition and to name the new
+`at-file-syntax-smoke` driver for its settled (non-live-stream) behavior.
+No new standalone journey was promoted — `@` completion is an
+enhancement to the existing prompt-input path, not a separate primary
+journey.
 
 ## Open Issues
 
-_Populated during execution._
+None. All Phase A / A2 / B assertions pass; the `fd`-missing warning path
+was exercised (not left unreachable). `steer` / `follow_up` were not
+driven live — they share the same forward-`command.message`-unchanged
+handler as `prompt`, noted under Harness Limitations.

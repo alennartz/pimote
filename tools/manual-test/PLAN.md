@@ -37,7 +37,13 @@ calls render as live per-edit diffs, and `write` calls render via
 `WriteFileBlock` — syntax-highlighted code for code paths, live
 rendered markdown for `.md`/`.markdown` paths, each with a raw-source
 copy button and a show-more/collapse wrapper. `agent_end` leaves the
-session idle.
+session idle. Prompt _composition_ includes TUI-style `@`-file-path
+autocomplete: typing `@` (anywhere in the line) opens an `fd`-backed
+file/dir suggestion menu; picking a file inserts `@path`, picking a
+directory inserts `@path/` and keeps the menu open to drill in; quoted
+`@"…"` tokens cover paths with spaces; the literal `@path` text is sent
+unchanged (no server-side expansion) and stays mutually exclusive with
+the `/` slash menu.
 
 **Why:** The product's core loop. Correctness + latency here is the
 primary UX.
@@ -49,7 +55,11 @@ raw-source copy in both modes, collapse in both modes, code
 highlighting, markdown rendering). The streaming-only behaviors
 (auto-expand/collapse, mid-stream highlight in the write view) remain
 manual-browser / unit-tested — a disk-fabricated harness can't drive a
-live token stream.
+live token stream. `tools/manual-test/at-file-syntax-smoke/` drives the
+`@`-file-path autocomplete composition path end-to-end (the
+`complete_file_refs` endpoint + the real InputBar dropdown, file/dir
+insertion, mid-line trigger, slash mutual-exclusivity, and the
+`fd`-missing one-time warning).
 
 ### 3. Extension UI bridge
 

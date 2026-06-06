@@ -228,6 +228,58 @@ PATH, writable `os.tmpdir()`. Tracks and kills only the child PID it spawns.
 No real LLM, speechmux, or subscription credentials required; Copilot test 4
 uses real network to github.com (degrades to environment-bounded if absent).
 
+### at-file-syntax-smoke
+
+**Purpose:** Exercise TUI-style `@`-file-path autocomplete in the web
+InputBar (the `at-file-syntax-web` topic) end-to-end without a live LLM.
+Boots a real pimote against a sandboxed HOME with a fabricated on-disk pi
+session whose cwd is a known project tree (`src/`, `docs/`, a spaced
+`my dir/`, `top.txt`). Three layers: (A) drives the `complete_file_refs`
+WebSocket endpoint directly — `@` cwd listing, bare single-segment query,
+last-slash scoping (`@src/`, `@src/ind`), quoted spaced token (`@"my d` →
+`@"my dir/"`), and quoted-directory drill-in (`@"my dir/` →
+`@"my dir/note.txt"`, the review-finding-#2 guard); (A2) boots a second
+pimote with `fd`/`fdfind` stripped from `PATH` and asserts
+`complete_file_refs` returns `items: []` plus exactly one (one-time)
+`extension_ui_request` notify warning; (B) drives the real InputBar via
+`agent-browser` — `@` opens the fd-backed dropdown, file selection inserts
+`@path` and closes, directory selection inserts `@path/` and keeps the
+menu open to drill in (including the quoted `@"my dir/` case), `@` fires
+mid-line, `/` slash completion stays mutually exclusive, and the composed
+`@path` token appears verbatim in the optimistic user message (no
+server-side expansion). Drives the prompt-composition half of journey 2 in
+`PLAN.md`.
+
+> Harness limitation: no live LLM, so the _send_ path is verified via the
+> optimistic user-message echo plus the structural fact that
+> `prompt`/`steer`/`follow_up` forward `command.message` unchanged. `steer`
+> / `follow_up` are not driven live (same forward-unchanged handler as
+> `prompt`). See `docs/manual-tests/at-file-syntax-web.md`.
+
+**Location:** `tools/manual-test/at-file-syntax-smoke/at-file-syntax-smoke.mjs`
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/at-file-syntax-smoke/at-file-syntax-smoke.mjs
+# Keep the coherence screenshot outside the (auto-removed) sandbox:
+AT_SHOT=/tmp/at-file-syntax.png node tools/manual-test/at-file-syntax-smoke/at-file-syntax-smoke.mjs
+```
+
+**Inputs:** none (fresh `os.tmpdir()` sandbox with its own HOME + XDG
+dirs; `AT_SHOT=<path>` optionally redirects the coherence screenshot
+outside the sandbox).
+
+**Outputs:** per-test ✓/✗ lines + an `at-file-syntax.png` screenshot;
+non-zero exit on any failure. On failure the sandbox is preserved and its
+path printed.
+
+**Prerequisites:** workspaces built (`npm run build`), `agent-browser` on
+PATH, `fd` on PATH (Phase A/B need it; Phase A2 deliberately hides it),
+writable `os.tmpdir()`. Tracks and kills only the child PIDs it spawns —
+no pattern-based `pkill`. No real LLM, speechmux, or network required.
+
 ### agent-browser (cross-repo skill)
 
 **Purpose:** Drive PWA user journeys end-to-end via a headless-Chromium
