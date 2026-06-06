@@ -192,3 +192,100 @@ Emitted at most once per connection/session when autocomplete is requested and `
 - Captures an unclosed quoted `@"…"` token including its opening quote and any spaces inside it.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Implement `completeFileRefs` in `server/src/file-references.ts`
+
+Fill in the `completeFileRefs` body (currently `throw 'not implemented'`) so the existing `server/src/file-references.test.ts` passes. Keep the exported `CompleteFileRefsInput` / `CompleteFileRefsResult` / `FdRunner` / `FdInvocation` / `FdRunResult` contracts exactly as they already stand — only the function body and a default runner are added.
+
+Parse `input.prefix` into a typed scope + query, mirroring the plan's deterministic last-slash scoping:
+
+- Strip the leading `@`. If the next char is `"`, record `quoted = true` and strip that too (the closing quote, if any, is never present in an unclosed token — do not require one).
+- Split the remaining text at the **last** `/`: everything up to and including that slash is the typed _scope_ string; everything after is the fd _query_ pattern. A prefix with no `/` has an empty scope and the whole remainder as the query (`@comp` → scope `''`, query `comp`). A prefix ending in `/` has an empty query (`@src/` → scope `src/`, query `''`).
+- Resolve the scope to an absolute `baseDir` against `input.cwd`:
+  - `~/…` → expand the leading `~/` to `os.homedir()` for `baseDir`, but **keep the literal `~/` in the typed scope** used to reconstruct inserted tokens.
+  - `/abs/…` → absolute, used as-is.
+  - `./`, `../`, and bare relative scopes → `path.resolve(cwd, scope)` (so `@foo` → `baseDir == cwd`, `@./` → `cwd`, `@../` → `path.dirname(cwd)`, `@sub/` → `join(cwd, 'sub')`).
+  - Do **not** port the TUI's `statSync`-guarded `--full-path` fallback — scoping is purely textual.
+
+Build the `FdInvocation`:
+
+- `args` always includes `--type f --type d --hidden --follow --exclude .git --max-results <N>` and `--base-directory <baseDir>`, plus the positional `query` when non-empty.
+- `--full-path` is **never** added (the post-scope query never contains a separator). The tests assert its absence in single-segment, multi-segment, and nested cases.
+- Set `fdPath`, `baseDir`, and `query` on the invocation so tests can read them directly.
+
+Map `FdRunResult.lines` to `AutocompleteResponseItem[]`:
+
+- A line ending in `/` is a directory: the inserted token keeps the trailing `/`. Otherwise it's a file (terminal token, no trailing slash).
+- Reconstruct the full inserted `value` by prepending `@` + the **typed** scope (the literal `~/`, `src/`, etc.) + the line: `@src/` + `index.ts` → `@src/index.ts`; `@~/` + `notes.txt` → `@~/notes.txt`.
+- `label` is the raw `fd` line (display path relative to `baseDir`); `description` is omitted.
+- Quote the inserted token as `@"<scope><line>"` when `quoted` is true (prefix was already `@"…`) **or** when the reconstructed path contains a space. Quoting wraps the path portion after the `@`.
+
+Degrade per the contract:
+
+- `available === false` → return `{ items: [], fdAvailable: false }`.
+- `available === true` → return `{ items, fdAvailable: true }` (empty `items` when `lines` is empty).
+
+Add a default `runFd` (used when `input.runFd` is absent) that spawns the real `fd` binary via `node:child_process` (`execFile`, mirroring the existing `execFile`/`execFileSync` usage in `ws-handler.ts` / `git-branch.ts`), resolving `input.fdPath ?? 'fd'`. On spawn `ENOENT`, return `{ available: false, lines: [] }`; on any other failure return `{ available: true, lines: [] }`; on success split stdout into non-empty lines.
+
+Keep the function pure aside from the injected/real `runFd` seam — no module-level mutable state.
+
+**Verify:** `cd server && npx vitest run src/file-references.test.ts` is green (all invocation-construction, base-directory, item-mapping, quoting, and availability cases pass).
+**Status:** not started
+
+### Step 2: Implement `extractFileRefPrefix` in `client/src/lib/file-ref-prefix.ts`
+
+Fill in the `extractFileRefPrefix(textBeforeCursor)` body (currently `throw 'not implemented'`) so `client/src/lib/file-ref-prefix.test.ts` passes. Pure function, returns the `@`-token immediately before the cursor or `null`.
+
+Behavior dictated by the tests:
+
+- Find the last `@` in `textBeforeCursor` that sits at a **token boundary**: it is the first character, or the character before it is a path delimiter (whitespace, `"`, or `=`). A mid-word `@` (e.g. `user@host`) is not a boundary → `null`.
+- The token runs from that `@` to the end of `textBeforeCursor`. Return it verbatim, including the leading `@` and — for `@"…` — the opening quote and any spaces inside the still-open quoted token (`@"my dir` → `@"my dir`, `open @"src/a b` → `@"src/a b`).
+- For an **unquoted** token, a space terminates it: if the text after the boundary `@` contains a space, the token is already closed and the cursor is past it → `null` (`@done ` → `null`). For a quoted token, spaces are part of the token until a closing `"`.
+- Slash commands (`/help`) and plain text with no boundary `@` → `null`. A lone `@` → `@`. `x=@foo` → `@foo`.
+- When multiple `@`-tokens exist, return only the one nearest the cursor (`@one @two` → `@two`).
+
+**Verify:** `cd client && npx vitest run src/lib/file-ref-prefix.test.ts` is green (all boundary, quoted, and non-trigger cases pass).
+**Status:** not started
+
+### Step 3: Add a `fileRefs` mode to `client/src/lib/components/CommandAutocomplete.svelte`
+
+Extend the generic dropdown with a third mode so `@` results reuse its render/debounce/stale-discard machinery. No new component.
+
+- Widen the `mode` prop type from `'command' | 'args'` to `'command' | 'args' | 'fileRefs'`.
+- Add a debounced fetch effect for `fileRefs` mode that mirrors the existing `args` effect but sends `{ type: 'complete_file_refs', sessionId, prefix: query }` (the `query` prop carries the full `@`-token in this mode — see Step 4). Reuse the same stale-response sequence guard pattern (`++argsRequestSeq`-style). Store results in the same kind of `$state` array and discard stale responses.
+- In `displayItems`, treat `fileRefs` like `args`: map each `AutocompleteResponseItem` to `{ name: a.label, value: a.value, description: a.description }`. The `accept()`/`onselect` path is unchanged — it already forwards `value`/`label`.
+- Keep `command` mode (local fuzzy) and `args` mode (the `complete_args` fetch) exactly as-is.
+
+**Verify:** `cd client && npx vitest run` stays green and `npx svelte-check` passes; manual smoke in Step 5 confirms the dropdown renders `@` suggestions.
+**Status:** not started
+
+### Step 4: Wire the `@` trigger into `client/src/lib/components/InputBar.svelte`
+
+Add `@`-token detection alongside the existing slash flow, keeping the two mutually exclusive per token.
+
+- Import `extractFileRefPrefix` from `$lib/file-ref-prefix.js`.
+- Widen the local `autocompleteMode` state type to include `'fileRefs'`.
+- Add reactive state for the current file-ref prefix (the extracted `@`-token), e.g. `let fileRefPrefix: string | null = $state(null)`.
+- In `updateAutocomplete()`, before the slash gate: compute `textBeforeCursor = inputText.slice(0, textareaEl.selectionStart)` and `const at = extractFileRefPrefix(textBeforeCursor)`. If `at` is non-null, set `autocompleteVisible = true`, `autocompleteMode = 'fileRefs'`, `fileRefPrefix = at`, clear `selectedCommand`, and return. Otherwise clear `fileRefPrefix` and fall through to the existing slash/command/args logic unchanged. (The slash branch must not fire for `@` tokens, and `@` must work mid-line, so the `@` check runs first and is cursor-relative rather than `startsWith('/')`-gated.)
+- In `autocompleteQuery` ($derived): when `autocompleteMode === 'fileRefs'`, return `fileRefPrefix ?? ''` so the full `@`-token is passed to `CommandAutocomplete` as `query` (the server expects the whole token as `prefix`). Leave the command/args branches unchanged.
+- In `handleAutocompleteSelect`, add a `fileRefs` branch: replace the `@`-token immediately before the cursor with `item.value`. Compute `cursor = textareaEl.selectionStart`, `tokenStart = cursor - (fileRefPrefix?.length ?? 0)`, then `inputText = inputText.slice(0, tokenStart) + item.value + inputText.slice(cursor)` and place the caret after the inserted value. If `item.value` ends with `/` (a directory), keep the menu open in `fileRefs` mode and update `fileRefPrefix = item.value` so the next fetch drills into that directory; otherwise hide the menu (`autocompleteVisible = false`). Persist `draftText` and call `autoResize()` as the other branches do.
+- Leave the keyboard handling (`handleKeydown`) and the `CommandAutocomplete` template binding untouched — they already drive arrows/tab/enter/esc generically off `autocompleteVisible`, and the `mode`/`query` props now carry `fileRefs` through.
+
+No changes to send paths, optimistic-message handling, `connection.svelte.ts`, or the stores — the inserted `@path` is ordinary message text.
+
+**Verify:** `cd client && npx svelte-check` passes. Typing `@` in the input opens the dropdown with fd-backed suggestions; selecting a file inserts `@path`, selecting a directory inserts `@path/` and keeps the menu open to drill in; `/` slash completion is unaffected.
+**Status:** not started
+
+### Step 5: Full build, typecheck, and test verification
+
+Run the workspace gates to confirm nothing regressed end-to-end:
+
+- `cd shared && npm run build` (the `complete_file_refs` command + reused `AutocompleteResponseItem` are already in `protocol.ts`; this confirms `shared/dist` is current for the server import in `file-references.ts`).
+- `cd server && npx vitest run` and `npx tsc --noEmit` — server file-references tests green, ws-handler dispatch (already scaffolded) typechecks against the implemented module.
+- `cd client && npx vitest run` and `npx svelte-check` — client helper tests green, components typecheck.
+- Optionally exercise the live flow against a running server to confirm the fd-missing warning toast appears once when `fd` is absent.
+
+**Verify:** all four package gates pass with no new failures; `@` autocomplete works against a real session and degrades to a single warning when `fd` is missing.
+**Status:** not started
