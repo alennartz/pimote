@@ -105,6 +105,7 @@ Once in a session, you can:
 - See **session context usage** and **lifetime cost** at a glance in the StatusBar
 - **Compact** the conversation to manage context window usage (also supports auto-compaction)
 - Use **slash commands** — type `/` to get autocomplete for skills, extension commands, and prompt templates
+- **Reference files with `@`** — type `@` to get TUI-style path autocomplete (backed by `fd`); the literal `@path` is sent through to the agent, which reads the file with its own tools (no server-side inlining)
 - **Log in to model providers** with `/login` — an interactive dialog adds OAuth subscription providers (Claude Pro/Max, ChatGPT, GitHub Copilot) remotely, without SSHing into the server or hand-editing `auth.json` (API-key and custom providers are still configured manually)
 - Open **Tree Navigation** with `/tree` to browse session history, search/filter nodes, and edit labels (right-click on desktop, long-press on touch)
 - Pick a tree navigation mode: no summary, summarize, or a custom summary prompt (with in-dialog loading while summarization runs)
@@ -137,6 +138,7 @@ Network drops are handled transparently. The server buffers recent events per se
 - **Node.js** ≥ 22
 - **npm** ≥ 10
 - At least one LLM provider configured (pi is bundled as a dependency)
+- **`fd`** (fd-find) — optional, enables `@` file-path autocomplete in the composer. If absent, autocomplete returns no suggestions and Pimote shows a one-time warning toast; everything else works normally.
 
 ## Install
 
