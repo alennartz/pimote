@@ -249,7 +249,7 @@ Behavior dictated by the tests:
 - When multiple `@`-tokens exist, return only the one nearest the cursor (`@one @two` → `@two`).
 
 **Verify:** `cd client && npx vitest run src/lib/file-ref-prefix.test.ts` is green (all boundary, quoted, and non-trigger cases pass).
-**Status:** in progress
+**Status:** done
 
 ### Step 3: Add a `fileRefs` mode to `client/src/lib/components/CommandAutocomplete.svelte`
 
