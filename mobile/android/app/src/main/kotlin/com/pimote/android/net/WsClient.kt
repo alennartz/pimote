@@ -11,9 +11,13 @@ import com.pimote.android.protocol.PimoteEventSerializer
 import com.pimote.android.protocol.PimoteResponse
 import com.pimote.android.protocol.UnknownPimoteEventTypeException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,7 +25,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.jsonObject
@@ -155,135 +160,160 @@ class WsClientImpl(
     override val lastFailure: StateFlow<String?> = _lastFailure.asStateFlow()
 
     private val pending = ConcurrentHashMap<String, CompletableDeferred<PimoteResponse>>()
-    private var currentOrigin: String? = null
-    @Volatile private var currentConnection: WsTransport.Connection? = null
-    private var loopJob: Job? = null
-    private var netJob: Job? = null
-    @Volatile private var delayJob: Job? = null
-    @Volatile private var attempt = 0
-    @Volatile private var disconnected = false
+
+    /**
+     * All per-connect()-call lifetime state, held as an immutable record
+     * inside a single [MutableStateFlow]. When the slot is non-null the
+     * client is actively trying to maintain a connection; when null the
+     * client is fully disconnected.
+     *
+     * [scope] is a child of the constructor-injected scope. Every coroutine
+     * the client runs while connected (the connection loop, the retry-wake
+     * watcher) is launched into this scope, so [disconnect] just cancels it
+     * and everything stops together — no more manual juggling of three
+     * separate Job handles. [activeSocket] is the currently-open transport
+     * connection, or null between attempts. Reads from [send] go through
+     * this so the value is visible across threads without ad-hoc @Volatile.
+     */
+    private data class Session(
+        val origin: String,
+        val scope: CoroutineScope,
+        val activeSocket: MutableStateFlow<WsTransport.Connection?>,
+    )
+
+    private val session = MutableStateFlow<Session?>(null)
 
     @Synchronized
     override fun connect(pimoteOrigin: String) {
-        if (currentOrigin == pimoteOrigin && loopJob?.isActive == true && !disconnected) return
+        val current = session.value
+        if (current != null && current.origin == pimoteOrigin) return
         L.i("WS", "connect(origin=$pimoteOrigin)")
-        teardown(failPending = true)
-        disconnected = false
-        currentOrigin = pimoteOrigin
-        attempt = 0
+        closeSession(current, failPending = true)
+        val sessionScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+        val fresh = Session(
+            origin = pimoteOrigin,
+            scope = sessionScope,
+            activeSocket = MutableStateFlow(null),
+        )
+        session.value = fresh
         val url = wsUrl(pimoteOrigin)
-        loopJob = scope.launch(start = CoroutineStart.UNDISPATCHED) { connectionLoop(url) }
-        netJob = scope.launch(start = CoroutineStart.UNDISPATCHED) { observeNetwork() }
+        sessionScope.launch(start = CoroutineStart.UNDISPATCHED) { connectionLoop(fresh, url) }
     }
 
+    @Synchronized
     override fun disconnect() {
         L.i("WS", "disconnect()")
-        disconnected = true
-        teardown(failPending = true)
+        closeSession(session.value, failPending = true)
+        session.value = null
         _state.value = WsState.Disconnected
     }
 
-    private fun teardown(failPending: Boolean) {
-        delayJob?.cancel()
-        delayJob = null
-        loopJob?.cancel()
-        loopJob = null
-        netJob?.cancel()
-        netJob = null
-        try { currentConnection?.close() } catch (_: Throwable) { }
-        currentConnection = null
-        if (failPending) {
-            val toFail = pending.values.toList()
-            pending.clear()
-            toFail.forEach { it.completeExceptionally(WsConnectionLost()) }
-        }
+    /**
+     * Single-source-of-truth helper for releasing a [Session]: close the
+     * active socket, cancel the session's scope (which kills the connection
+     * loop and any nested coroutines), and optionally fail in-flight
+     * requests. Called by both [connect] (when reconfiguring origin) and
+     * [disconnect] so the close sequence cannot drift between sites.
+     */
+    private fun closeSession(target: Session?, failPending: Boolean) {
+        if (target == null) return
+        try { target.activeSocket.value?.close() } catch (_: Throwable) { }
+        target.activeSocket.value = null
+        target.scope.cancel()
+        if (failPending) failAllPending()
     }
 
-    private suspend fun connectionLoop(url: String) {
+    /**
+     * The connection loop. [attempt] is a local rather than a controller
+     * field — nothing outside the loop reads it. Wake-on-network is a child
+     * coroutine of the retry delay, not a separate top-level coroutine.
+     *
+     * Reads [Session.activeSocket] via the session passed in; never reaches
+     * for a controller field. Cancellation of [Session.scope] terminates
+     * this coroutine; that is the sole disconnect signal — the old
+     * `disconnected: Boolean` flag is gone.
+     */
+    private suspend fun connectionLoop(target: Session, url: String) {
+        var attempt = 0
         var firstIter = true
-        try {
-            while (!disconnected) {
-                if (firstIter) {
-                    _state.value = WsState.Connecting
-                    L.d("WS", "connecting -> $url")
-                }
-                firstIter = false
-                val conn: WsTransport.Connection = try {
-                    transport.open(url)
-                } catch (e: Throwable) {
-                    L.w("WS", "transport.open failed: ${e.message}", e)
-                    _lastFailure.value = e.message ?: e::class.java.simpleName
-                    if (disconnected) break
-                    scheduleRetry()
-                    continue
-                }
-                currentConnection = conn
-                try {
-                    conn.events.collect { ev ->
-                        when (ev) {
-                            is WsTransport.Event.Open -> {
-                                attempt = 0
-                                _state.value = WsState.Connected
-                                _lastFailure.value = null
-                                L.i("WS", "connected")
-                            }
-                            is WsTransport.Event.TextMessage -> handleMessage(ev.payload)
-                            is WsTransport.Event.Closed -> {
-                                _lastFailure.value = "closed: code=${ev.code} reason=${ev.reason}"
-                                L.w("WS", "closed code=${ev.code} reason=${ev.reason}")
-                                throw EndOfConnection
-                            }
-                            is WsTransport.Event.Failed -> {
-                                _lastFailure.value = ev.reason
-                                L.w("WS", "failed: ${ev.reason}")
-                                throw EndOfConnection
-                            }
+        while (true) {
+            if (firstIter) {
+                _state.value = WsState.Connecting
+                L.d("WS", "connecting -> $url")
+            }
+            firstIter = false
+            val conn: WsTransport.Connection = try {
+                transport.open(url)
+            } catch (e: Throwable) {
+                L.w("WS", "transport.open failed: ${e.message}", e)
+                _lastFailure.value = e.message ?: e::class.java.simpleName
+                attempt = waitForRetry(attempt)
+                continue
+            }
+            target.activeSocket.value = conn
+            try {
+                conn.events.collect { ev ->
+                    when (ev) {
+                        is WsTransport.Event.Open -> {
+                            attempt = 0
+                            _state.value = WsState.Connected
+                            _lastFailure.value = null
+                            L.i("WS", "connected")
+                        }
+                        is WsTransport.Event.TextMessage -> handleMessage(ev.payload)
+                        is WsTransport.Event.Closed -> {
+                            _lastFailure.value = "closed: code=${ev.code} reason=${ev.reason}"
+                            L.w("WS", "closed code=${ev.code} reason=${ev.reason}")
+                            throw EndOfConnection
+                        }
+                        is WsTransport.Event.Failed -> {
+                            _lastFailure.value = ev.reason
+                            L.w("WS", "failed: ${ev.reason}")
+                            throw EndOfConnection
                         }
                     }
-                } catch (_: EndOfConnection) {
-                    // expected — drop through to retry
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (_: Throwable) {
-                    // unexpected — drop through to retry
                 }
-                try { conn.close() } catch (_: Throwable) { }
-                if (currentConnection === conn) currentConnection = null
-                failAllPending()
-                if (disconnected) break
-                scheduleRetry()
+            } catch (_: EndOfConnection) {
+                // expected — drop through to retry
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                // unexpected — drop through to retry
             }
-        } finally {
-            if (disconnected) _state.value = WsState.Disconnected
+            try { conn.close() } catch (_: Throwable) { }
+            // Clear iff still ours (a concurrent disconnect may have nulled it).
+            target.activeSocket.compareAndSet(conn, null)
+            failAllPending()
+            attempt = waitForRetry(attempt)
         }
     }
 
-    private suspend fun scheduleRetry() {
-        attempt += 1
-        val d = computeReconnectDelayMs(attempt, random)
-        L.d("WS", "reconnect attempt=$attempt delay=${d}ms")
-        _state.value = WsState.Reconnecting(attempt, d)
-        kotlinx.coroutines.coroutineScope {
-            // run the delay as a child job so the network monitor can cancel it
-            val dj = launch { delay(d) }
-            delayJob = dj
-            try {
-                dj.join()
-            } finally {
-                delayJob = null
+    /**
+     * Sleep the next backoff delay, returning early if the network monitor
+     * reports availability flipping false→true. Returns the incremented
+     * attempt counter for the caller's next iteration.
+     */
+    private suspend fun waitForRetry(currentAttempt: Int): Int {
+        val next = currentAttempt + 1
+        val d = computeReconnectDelayMs(next, random)
+        L.d("WS", "reconnect attempt=$next delay=${d}ms")
+        _state.value = WsState.Reconnecting(next, d)
+        coroutineScope {
+            val delayJob = launch { delay(d) }
+            val wakeJob = launch {
+                // Wake early on a false→true edge so we don't sit on a long
+                // backoff while connectivity has been restored.
+                var prev: Boolean? = null
+                networkMonitor.available
+                    .filter { cur -> (prev == false && cur).also { prev = cur } }
+                    .first()
+                delayJob.cancel()
             }
+            delayJob.join()
+            wakeJob.cancel()
         }
-    }
-
-    private suspend fun observeNetwork() {
-        var prev: Boolean? = null
-        networkMonitor.available.collect { cur ->
-            if (prev == false && cur) {
-                attempt = 0
-                delayJob?.cancel()
-            }
-            prev = cur
-        }
+        // If a network wake reset us to attempt=0, callers handle it.
+        return next
     }
 
     private suspend fun handleMessage(payload: String) {
@@ -343,7 +373,7 @@ class WsClientImpl(
     }
 
     override suspend fun send(command: PimoteCommand) {
-        val conn = currentConnection ?: throw WsConnectionLost("not connected")
+        val conn = session.value?.activeSocket?.value ?: throw WsConnectionLost("not connected")
         if (_state.value !is WsState.Connected) throw WsConnectionLost("not connected")
         val text = encodeCommand(command)
         if (!conn.send(text)) throw WsConnectionLost("send failed")

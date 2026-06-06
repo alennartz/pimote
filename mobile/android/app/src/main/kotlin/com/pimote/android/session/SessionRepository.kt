@@ -10,14 +10,19 @@ import com.pimote.android.protocol.SessionDeletedEvent
 import com.pimote.android.protocol.SessionOpenedEvent
 import com.pimote.android.protocol.SessionRenamedEvent
 import com.pimote.android.protocol.SessionReplacedEvent
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.launch
 import com.pimote.android.net.WsState
 
@@ -218,13 +223,18 @@ class SessionRepositoryImpl(
     override val projects: StateFlow<List<ProjectMeta>> = _projects.asStateFlow()
     override val sessions: StateFlow<List<SessionMeta>> = _sessions.asStateFlow()
 
-    private var eventJob: Job? = null
-    private var stateJob: Job? = null
-    private var bootstrapJob: Job? = null
+    // The repository's collectors (events reducer + ws-state-edge refresher)
+    // share a child scope parented from the constructor-injected scope.
+    // start() installs a fresh scope; stop() cancels it, which kills all
+    // children together. Held in a MutableStateFlow so the field itself is
+    // not a raw mutable var — transitions go through atomic value writes.
+    private val collectors = MutableStateFlow<CoroutineScope?>(null)
 
     override fun start() {
-        if (eventJob?.isActive == true) return
-        eventJob = scope.launch(Dispatchers.Unconfined) {
+        if (collectors.value != null) return
+        val child = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+        collectors.value = child
+        child.launch(Dispatchers.Unconfined) {
             wsClient.events.collect { ev ->
                 val snap = SessionSnapshot(_projects.value, _sessions.value)
                 val out = reduceSessionEvent(snap, ev, nowProvider)
@@ -234,31 +244,29 @@ class SessionRepositoryImpl(
                 }
                 for (effect in out.effects) {
                     when (effect) {
-                        is SessionEffect.RefetchFolder -> scope.launch(Dispatchers.Unconfined) { refetchFolder(effect.folderPath) }
+                        is SessionEffect.RefetchFolder -> child.launch(Dispatchers.Unconfined) { refetchFolder(effect.folderPath) }
                     }
                 }
             }
         }
-        stateJob = scope.launch(Dispatchers.Unconfined) {
-            var prev: WsState? = null
-            wsClient.state.collect { cur ->
-                // Refresh on any non-Connected → Connected transition. The
-                // initial Disconnected/Connecting → Connected case is the
-                // common one (cold app launch); the Reconnecting → Connected
-                // case covers transient drops. Either way, the server's
-                // session/folder list is the source of truth post-connect.
-                if (prev !is WsState.Connected && cur is WsState.Connected) {
-                    runCatching { refresh() }
-                }
-                prev = cur
-            }
+        // Refresh on any non-Connected → Connected transition. The initial
+        // Disconnected/Connecting → Connected case is the common one (cold
+        // app launch); the Reconnecting → Connected case covers transient
+        // drops. runningFold keeps the previous emission immutably inside
+        // the pipeline so we don't need a `var prev` capture inside the
+        // collector lambda.
+        child.launch(Dispatchers.Unconfined) {
+            // StateFlow already deduplicates equal consecutive emissions.
+            wsClient.state
+                .runningFold<WsState, Pair<WsState?, WsState?>>(null to null) { acc, cur -> acc.second to cur }
+                .filter { (prev, cur) -> prev !is WsState.Connected && cur is WsState.Connected }
+                .collect { runCatching { refresh() } }
         }
     }
 
     override fun stop() {
-        eventJob?.cancel(); eventJob = null
-        stateJob?.cancel(); stateJob = null
-        bootstrapJob?.cancel(); bootstrapJob = null
+        collectors.value?.cancel()
+        collectors.value = null
     }
 
     override suspend fun refresh() {

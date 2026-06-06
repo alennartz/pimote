@@ -10,6 +10,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
@@ -33,13 +36,17 @@ class ShortcutsRunner(
     private val scope: CoroutineScope,
     private val debounceMs: Long = 2_000L,
 ) {
-    private var job: Job? = null
+    // Held in a StateFlow rather than a raw mutable `Job?` field so the
+    // run/stop transitions go through an explicit, atomic value write.
+    private val runner = MutableStateFlow<CoroutineScope?>(null)
 
     @FlowPreview
     @ExperimentalCoroutinesApi
     fun start() {
-        if (job?.isActive == true) return
-        job = scope.launch {
+        if (runner.value != null) return
+        val child = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+        runner.value = child
+        child.launch {
             combine(repository.projects, repository.sessions) { p, s -> p to s }
                 .debounce(debounceMs)
                 .collect { (projects, sessions) ->
@@ -50,8 +57,8 @@ class ShortcutsRunner(
     }
 
     fun stop() {
-        job?.cancel()
-        job = null
+        runner.value?.cancel()
+        runner.value = null
     }
 
     private fun reconcile(projects: List<ProjectMeta>, sessions: List<SessionMeta>) {
