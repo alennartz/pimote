@@ -1,8 +1,17 @@
-# Plan: @file syntax in web input with server autocomplete
+# Plan: @file path autocomplete in web input
 
 ## Context
 
-We are adding TUI-style `@file` references to Pimote's web client so users can autocomplete file references in the input and have references resolved server-side before forwarding to the SDK. This work follows `docs/brainstorms/at-file-syntax-web.md` and must preserve current web interaction patterns (including optimistic user messages) while matching TUI semantics for `@` handling.
+We are adding TUI-style `@` file-path autocomplete to Pimote's web client. When the user types `@` in the input, the client surfaces an `fd`-backed fuzzy list of files and directories under the session's working directory; picking one inserts the path token into the input. The literal `@path` text is then sent unchanged through the existing `prompt`/`steer`/`follow_up` commands — the agent reads referenced files with its own `read` tool.
+
+This deliberately matches pi's **interactive TUI** `@` behavior, which is autocomplete-only:
+
+- `@` completion shells out to `fd` and inserts the chosen path back into the editor (`@earendil-works/pi-tui` `CombinedAutocompleteProvider`).
+- At submit, the raw `@path` text is passed to `session.prompt(text)`. `session.prompt` expands `/` commands, skills, and prompt templates, but **does not** expand `@` references — they reach the model as plain text.
+
+It is **not** the CLI `pi @foo.png "…"` behavior (`processFileArguments`), which inlines text files as `<file>` blocks and attaches images. We are not building that. There is no server-side expansion, no `<file>` injection, no image/attachment materialization.
+
+This supersedes the earlier draft of this plan, which targeted CLI-style server-side expansion. That scope is dropped.
 
 ## Architecture
 
@@ -10,225 +19,133 @@ We are adding TUI-style `@file` references to Pimote's web client so users can a
 
 #### Client
 
-- **InputBar + autocomplete components** (`client/src/lib/components/InputBar.svelte`, `client/src/lib/components/CommandAutocomplete.svelte`)
-  - Extend from slash-command-only autocomplete to an additional `@` reference mode.
-  - Keep existing slash behavior unchanged while adding a separate request path for file ref suggestions.
-  - Maintain desktop keyboard flow (arrows/tab/enter/esc) and mobile tap flow.
+- **InputBar** (`client/src/lib/components/InputBar.svelte`)
+  - Today, autocomplete is hard-gated to text starting with `/` (slash commands) — there is no `@` detection.
+  - Add a second trigger: detect an `@`-prefixed token immediately before the cursor (including `@"…"` quoted tokens that contain spaces), extract it as the completion prefix, and request file-ref suggestions.
+  - Keep slash behavior unchanged. `@` and `/` are mutually exclusive per token; `@` can appear anywhere in the line, not just at the start.
+  - On accept, insert the chosen path token: `@<path>` for unquoted, `@"<path>"` when the path contains spaces, with a trailing `/` for directories. After accepting a directory, keep the menu open so the user can drill in (matches TUI).
+  - Preserve desktop keyboard flow (arrows / tab / enter / esc) and mobile tap flow — both already exist for slash mode and are reused.
 
-- **Connection + protocol consumers** (`client/src/lib/stores/connection.svelte.ts`, `client/src/lib/stores/session-registry.svelte.ts`)
-  - Send new `complete_file_refs` command with prefix extracted client-side.
-  - Keep optimistic message insertion/replacement behavior unchanged.
-  - Consume server warning via existing extension-style notify event (`extension_ui_request` + `notify`) and show toast through existing `ExtensionStatus` flow.
+- **CommandAutocomplete** (`client/src/lib/components/CommandAutocomplete.svelte`)
+  - Already a generic dropdown that renders `AutocompleteResponseItem[]` and handles debounced fetching, stale-response discard, selection, and rendering.
+  - Reused as-is for `@` results. The new request path lives in `InputBar`; the dropdown component does not need to know whether it is showing slash args or file refs.
 
-- **Message rendering** (`client/src/lib/components/Message.svelte`)
-  - Extend user-message rendering to support attachment metadata blocks while preserving current user bubble conventions.
-  - Keep text body rendering style and placement consistent with current UI conventions.
+No changes to `connection.svelte.ts`, `session-registry.svelte.ts`, `command-store.svelte.ts`, `Message.svelte`, optimistic-message handling, or any send path. The `@path` token is ordinary message text.
 
 #### Protocol
 
-- **Wire contracts** (`shared/src/protocol.ts`)
-  - Add a new command for file-reference autocomplete.
-  - Extend `steer`/`follow_up` command shapes to carry attachments payloads (mirroring `prompt`) for parity.
-  - Extend message content union to represent attachment metadata in user messages.
+- **Wire contract** (`shared/src/protocol.ts`)
+  - Add a single `complete_file_refs` command (client → server).
+  - Response reuses the existing `AutocompleteResponseItem` shape already used by the generic `complete_args` pipeline — no new item type.
+  - No changes to `PromptCommand` / `SteerCommand` / `FollowUpCommand`, no `images` additions, no message-content-union changes.
 
 #### Server
 
-- **Command handling/orchestration** (`server/src/ws-handler.ts`)
-  - Handle new `complete_file_refs` command.
-  - Route `prompt`, `steer`, and `follow_up` through shared file-reference expansion before SDK calls.
-  - Preserve existing built-in command interceptions and lifecycle behavior.
-
-- **Message mapping** (`server/src/message-mapper.ts`)
-  - Map SDK user content blocks into attachment-aware wire content blocks while preserving current tool/thinking mapping.
+- **Command handling** (`server/src/ws-handler.ts`)
+  - Add a `complete_file_refs` case that resolves the session's cwd (`ManagedSlot.folderPath`) and calls `completeFileRefs` from the new module, returning `AutocompleteResponseItem[]`.
+  - No change to `prompt` / `steer` / `follow_up` handlers — they continue to forward `command.message` unchanged.
 
 - **Session/runtime integration** (`server/src/session-manager.ts`)
-  - Reuse session cwd and connection-bound UI bridge for warning notifications.
-  - No change to slot ownership/lifecycle model; attach/ref expansion stays stateless per request.
+  - Reuse `ManagedSlot.folderPath` as the cwd for resolution and the existing connection-bound UI bridge for the one-time fd-missing warning. No lifecycle changes.
 
 ### New Modules
 
 #### `server/src/file-references.ts`
 
-Purpose: centralize all `@` reference behavior for server-side parity and reduce coupling in `ws-handler`.
+Purpose: encapsulate `fd`-backed file-path autocomplete so `ws-handler` stays thin.
 
 Responsibilities:
 
-- Parse `@` tokens from message text (including quoted paths with spaces and multiple refs in one message).
-- Resolve token paths relative to session cwd with TUI-compatible path semantics (`./`, `../`, `~/`, absolute) and `@`-prefix normalization.
-- Produce transformed text payload (`<file name="...">...</file>` blocks) and attachment payloads for media/document refs.
-- Provide autocomplete suggestions for `@` prefixes using `fd` when available.
-- Expose deterministic fallback behavior when `fd` is unavailable: return no suggestions and surface warning metadata for one-time client notification.
+- Parse the incoming `@` prefix into its path components, mirroring TUI semantics:
+  - Strip the leading `@` (and surrounding quotes for `@"…"`).
+  - Support `~/`, `/abs`, `./`, `../`, and bare relative paths resolved against the session cwd.
+  - Treat a trailing `/` as "list contents of this directory".
+- Invoke `fd` to walk the tree (fast, `.gitignore`-aware): `--type f --type d --hidden --follow --exclude .git --max-results <N>`, switching to `--full-path` when the query contains a `/`, mirroring the TUI's `walkDirectoryWithFd`.
+- Map results to `AutocompleteResponseItem[]`: `value` is the token to insert (with `@` prefix, quoting when needed, trailing `/` for directories), `label` is the display path, `description` optional.
+- Degrade deterministically when `fd` is unavailable: return `[]` and signal that a one-time warning should be shown.
 
-Proposed exported contracts (shape-level):
+Proposed exported contract (shape-level):
 
 ```ts
-export interface FileRefAutocompleteItem {
-  value: string;
-  label: string;
-  description?: string;
+import type { AutocompleteResponseItem } from '@pimote/shared';
+
+export interface CompleteFileRefsInput {
+  prefix: string; // the @-token as typed, e.g. '@src/', '@"my dir/'
+  cwd: string; // session working directory
+  fdPath?: string;
 }
 
-export interface FileRefAutocompleteResult {
-  items: FileRefAutocompleteItem[];
+export interface CompleteFileRefsResult {
+  items: AutocompleteResponseItem[];
   fdAvailable: boolean;
-  warning?: string;
 }
 
-export interface ExpandedFileRefs {
-  text: string;
-  images?: { type: 'image'; data: string; mimeType: string }[];
-  attachments: Array<{
-    path: string;
-    name: string;
-    mimeType?: string;
-    kind: 'text' | 'image' | 'document';
-  }>;
-}
-
-export async function completeFileRefs(input: { prefix: string; cwd: string; fdPath?: string }): Promise<FileRefAutocompleteResult>;
-
-export async function expandFileRefs(input: { text: string; cwd: string }): Promise<ExpandedFileRefs>;
+export async function completeFileRefs(input: CompleteFileRefsInput): Promise<CompleteFileRefsResult>;
 ```
+
+There is **no** `expandFileRefs` and no attachment/image handling in this module.
 
 ### Interfaces
 
-#### 1) Client → Server autocomplete for `@` refs
-
-New command:
+#### 1) Client → Server: file-ref autocomplete
 
 ```ts
 interface CompleteFileRefsCommand {
   type: 'complete_file_refs';
   sessionId: string;
-  prefix: string; // client-extracted token, includes leading @ or @"
+  prefix: string; // client-extracted @-token, including leading @ (and opening quote if quoted)
 }
 ```
 
 Response payload:
 
 ```ts
-interface CompleteFileRefsResponse {
-  items: Array<{
-    value: string; // token to insert into input
-    label: string; // human-readable filename/dir label
-    description?: string; // optional path context
-  }> | null;
+interface CompleteFileRefsResponseData {
+  items: AutocompleteResponseItem[]; // existing shared type: { value; label; description? }
 }
 ```
 
 Behavioral contract:
 
-- If prefix is not an `@` token, return `items: null`.
-- If `fd` unavailable, return `items: []` and server emits one notify event to client session (toast path).
-- Directory items keep trailing `/` semantics; file items are terminal insertions.
+- If `prefix` is not an `@`-token, the client does not send the command (gating is client-side).
+- If `fd` is unavailable, the server returns `items: []` and emits at most one `notify` warning per connection/session (toast via the existing extension UI bridge — `notify` is fire-and-forget and is **not** gated by voice mode, so the warning still surfaces during a voice call).
+- Directory items carry a trailing `/`; file items are terminal insertions.
 
-#### 2) Prompt/steer/follow-up send path with file-ref expansion
+#### 2) Warning transport (fd missing)
 
-Existing commands become attachment-capable:
-
-```ts
-interface PromptCommand {
-  type: 'prompt';
-  sessionId: string;
-  message: string;
-  images?: string[]; // existing
-}
-
-interface SteerCommand {
-  type: 'steer';
-  sessionId: string;
-  message: string;
-  images?: string[]; // new
-}
-
-interface FollowUpCommand {
-  type: 'follow_up';
-  sessionId: string;
-  message: string;
-  images?: string[]; // new
-}
-```
-
-Server orchestration contract:
-
-1. Parse/expand `@` refs in `message`.
-2. Merge expanded image/document attachments with incoming `images` payload (if any), preserving order semantics expected by SDK input blocks.
-3. Call SDK with transformed text + merged attachments for all three modes.
-
-Failure contract:
-
-- Use TUI-style resolution semantics; unresolved/invalid refs fail the command with error response (same send-time strictness as TUI file resolution path).
-
-#### 3) Server → Client message content for attachment UX
-
-Extend wire content union for user messages:
-
-```ts
-type PimoteMessageContent =
-  | { type: 'text'; text?: string }
-  | { type: 'thinking'; text?: string }
-  | { type: 'tool_call'; ... }
-  | { type: 'tool_result'; ... }
-  | {
-      type: 'attachment';
-      name: string;
-      path: string;
-      kind: 'text' | 'image' | 'document';
-      mimeType?: string;
-    };
-```
-
-Mapping contract:
-
-- User message content arrays received from SDK are transformed into text + attachment blocks for web rendering.
-- Current mappings for assistant/tool/custom roles remain unchanged.
-
-#### 4) Server warning transport via existing UI bridge channel
-
-Reuse existing event channel (no new top-level protocol event):
+Reuse the existing fire-and-forget bridge — no new protocol event:
 
 ```ts
 {
   type: 'extension_ui_request',
   sessionId,
   method: 'notify',
-  message: 'fd not found ... install guidance',
+  message: 'fd not found — file autocomplete is unavailable. Install fd to enable it.',
   notifyType: 'warning'
 }
 ```
 
-Behavioral contract:
+Emitted at most once per connection/session when autocomplete is requested and `fd` is missing. Client shows it via the existing `ExtensionStatus` notify handler.
 
-- Emitted at most once per session/runtime when file-ref autocomplete is requested and `fd` is unavailable.
-- Client shows toast via existing `ExtensionStatus` notify handler.
+## Technology Choices
 
-### Technology Choices
+### A) Dedicated `complete_file_refs` command vs reusing the generic `complete_args` pipeline
 
-#### A) Reuse pi-tui internals directly vs local implementation
+- **Option 1 (chosen): dedicated `complete_file_refs` command, reusing the generic response type + dropdown.**
+  - `@` is not a slash command, so it must not appear in `get_commands`, and its client-side trigger (an `@`-token anywhere in the line) differs from `complete_args` (which keys off `/command <args>`). A dedicated command keeps that boundary clean.
+  - It still reuses the shared `AutocompleteResponseItem` type and the existing `CommandAutocomplete` render/debounce machinery, so there's no duplicated UI plumbing.
 
-- **Option 1 (chosen): local Pimote implementation + `fd` usage**
-  - Reimplement parsing/expansion/autocomplete orchestration in `server/src/file-references.ts`, using stable public dependencies and `fd` binary invocation semantics.
-  - **Why chosen:** pi-tui and coding-agent internals for this flow are not reliably public APIs; direct dependency on internals is brittle under SDK upgrades.
+- **Option 2: fold `@` into `complete_args`.**
+  - Would force a synthetic pseudo-command and bend the slash-arg trigger model to cover mid-line `@` tokens. More coupling, no real savings.
 
-- **Option 2: call pi-tui/coding-agent internal modules directly**
-  - Lower initial code, but high break risk (exports and internal structure may change without compatibility guarantees).
+### B) `fd` missing behavior
 
-- **Option 3: patch upstream SDK to export stable APIs first**
-  - Best long-term abstraction, but blocks immediate feature delivery and introduces multi-repo coordination overhead.
+- **Option 1 (chosen): no suggestions + one-time warning toast.**
+  - Deterministic and simple; matches the TUI's non-blocking degradation (TUI returns `[]` when `fd` fails). The input still works — `@` text is just typed manually.
 
-#### B) `fd` missing behavior
+- **Option 2: fall back to a `readdirSync`-based listing.**
+  - The TUI does have a non-`fd` `getFileSuggestions` path, but reproducing it server-side adds complexity for a degraded-mode-only case. Deferred; revisit if `fd`-absent environments turn out to be common.
 
-- **Option 1 (chosen): no suggestions + warning toast**
-  - Keeps behavior deterministic and simple.
-  - Matches TUI's non-blocking degradation posture while keeping app usable.
+### C) Expansion / injection (explicitly out of scope)
 
-- **Option 2: fallback filesystem listing**
-  - More complexity and diverges from expected fuzzy behavior; harder to keep parity and performance.
-
-#### C) Warning transport path
-
-- **Option 1 (chosen): reuse extension notify bridge (`extension_ui_request` + `notify`)**
-  - No protocol event expansion needed; integrates with existing client toast stack.
-
-- **Option 2: add new server notice event**
-  - Semantically cleaner but unnecessary protocol surface for this targeted warning class.
+- We do **not** expand `@` refs into `<file>` blocks or attach images. That is the CLI `processFileArguments` behavior, not the interactive TUI behavior we are matching. The agent reads referenced files via its `read` tool. Dropping expansion removes the need for `message-mapper` changes, an `attachment` content block, `Message.svelte` attachment rendering, and `images` on `steer`/`follow_up`.
