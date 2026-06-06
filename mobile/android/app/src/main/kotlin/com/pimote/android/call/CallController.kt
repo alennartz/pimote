@@ -83,22 +83,22 @@ enum class CallEndReason {
  *
  * 1. `startOutgoing(target, connection)` → [CallState.Dialing].
  * 2. Resolve [target] to a `sessionId` — either existing, or via
- *    `wsClient.request(OpenSessionCommand)`. Failure → `connection.markFailed`,
+ *    `wsClient.request(OpenSessionCommand)`. Failure → `connection.disconnectWithError`,
  *    state = `Ended(null, BIND_FAILED)`.
  * 3. `wsClient.request(CallBindCommand(sessionId, force = false))` →
  *    [CallState.Binding]. On `call_bind_failed_owned`, retry once with
  *    `force = true` (single-owner displacement). Other failures →
- *    `connection.markFailed`, `Ended(sessionId, BIND_FAILED)`.
+ *    `connection.disconnectWithError`, `Ended(sessionId, BIND_FAILED)`.
  * 4. `speechmuxPeer.connect(signalUrl, sessionId)` → [CallState.Negotiating].
  *    Suspends until ICE Connected or fails.
  * 5. Await both `call_ready` for `sessionId` AND peer state == Connected →
- *    `connection.markActive()`, `Active(sessionId)`.
+ *    `connection.reportActive()`, `Active(sessionId)`.
  *
  * While `Active`:
- * - server `call_ended { reason }` → `connection.markEndedRemotely(reason)` →
+ * - server `call_ended { reason }` → `connection.disconnectAsRemoteEnded(reason)` →
  *   peer.disconnect() → `Ended(sessionId, mapped reason)`.
  * - peer state Failed → best-effort `wsClient.send(CallEndCommand)` →
- *   `connection.markFailed("peer_failed")` → `Ended(sessionId, PEER_FAILED)`.
+ *   `connection.disconnectWithError("peer_failed")` → `Ended(sessionId, PEER_FAILED)`.
  * - `endCurrentCall()` (Telecom user hangup) → best-effort
  *   `wsClient.send(CallEndCommand)` → peer.disconnect() →
  *   `Ended(sessionId, USER_HANGUP)`.
@@ -125,7 +125,7 @@ interface CallController {
     /** Begin an outgoing call against [target], using [connection] as the Telecom binding. */
     fun startOutgoing(target: SessionTarget, connection: CallConnection)
 
-    /** Hangup-from-the-app entry point (forwarded by [CallConnection.markFailed] caller path). */
+    /** Hangup-from-the-app entry point (forwarded by [CallConnection.disconnectWithError] caller path). */
     fun endCurrentCall()
 
     /**
@@ -354,12 +354,12 @@ class CallControllerImpl(
         try { peer?.disconnect() } catch (_: Throwable) { }
         try {
             when (reason) {
-                CallEndReason.USER_HANGUP -> conn?.markEndedLocally()
-                CallEndReason.PEER_FAILED -> conn?.markFailed(failureReason ?: "peer_failed")
-                CallEndReason.BIND_FAILED -> conn?.markFailed(failureReason ?: "bind_failed")
+                CallEndReason.USER_HANGUP -> conn?.disconnectAsLocalHangup()
+                CallEndReason.PEER_FAILED -> conn?.disconnectWithError(failureReason ?: "peer_failed")
+                CallEndReason.BIND_FAILED -> conn?.disconnectWithError(failureReason ?: "bind_failed")
                 CallEndReason.REMOTE_HANGUP,
                 CallEndReason.DISPLACED,
-                CallEndReason.SERVER_ENDED -> conn?.markEndedRemotely(reason)
+                CallEndReason.SERVER_ENDED -> conn?.disconnectAsRemoteEnded(reason)
             }
         } catch (_: Throwable) { }
         _state.value = terminalState
@@ -488,7 +488,7 @@ class CallControllerImpl(
         // Mirror that here — awaiting a real `CallReadyEvent` would hang
         // forever. `peer.connect` only returns once ICE is established,
         // so by the time we get here the peer is ready.
-        connection.markActive()
+        connection.reportActive()
         _state.value = CallState.Active(sessionId)
         // Re-apply mute state in case the user toggled mute during Negotiating
         // (peer.setMicMuted is a no-op before the audio track exists).

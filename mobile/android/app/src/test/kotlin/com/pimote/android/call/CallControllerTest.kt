@@ -151,7 +151,7 @@ class CallControllerTest {
     }
 
     @Test
-    fun `non-owned bind failure ends with BIND_FAILED and markFailed`() = runTest {
+    fun `non-owned bind failure ends with BIND_FAILED and disconnectWithError`() = runTest {
         val ws = FakeWsClient()
         val peer = FakeSpeechmuxPeer()
         val cc = newController(ws, peer, TestScope(StandardTestDispatcher(testScheduler)))
@@ -168,7 +168,7 @@ class CallControllerTest {
         val ended = cc.state.value
         assertTrue(ended is CallState.Ended)
         assertEquals(CallEndReason.BIND_FAILED, (ended as CallState.Ended).reason)
-        assertTrue(conn.transitions.any { it.startsWith("failed:") })
+        assertTrue(conn.transitions.any { it.startsWith("disconnectWithError:") })
     }
 
     @Test
@@ -213,12 +213,12 @@ class CallControllerTest {
         val ended = cc.state.value as CallState.Ended
         assertEquals(CallEndReason.PEER_FAILED, ended.reason)
         assertEquals("S1", ended.sessionId)
-        assertTrue(conn.transitions.any { it.startsWith("failed:") })
+        assertTrue(conn.transitions.any { it.startsWith("disconnectWithError:") })
         assertTrue(ws.sent.any { it is CallEndCommand })
     }
 
     @Test
-    fun `server call_ended while Active triggers markEndedRemotely and peer disconnect`() = runTest {
+    fun `server call_ended while Active triggers disconnectAsRemoteEnded and peer disconnect`() = runTest {
         val ws = FakeWsClient()
         val peer = FakeSpeechmuxPeer()
         val cc = newController(ws, peer, TestScope(StandardTestDispatcher(testScheduler)))
@@ -241,7 +241,7 @@ class CallControllerTest {
         val ended = cc.state.value as CallState.Ended
         assertEquals(CallEndReason.SERVER_ENDED, ended.reason)
         assertTrue(peer.disconnected)
-        assertTrue(conn.transitions.any { it.startsWith("endedRemotely:") })
+        assertTrue(conn.transitions.any { it.startsWith("disconnectAsRemoteEnded:") })
     }
 
     @Test
@@ -299,8 +299,8 @@ class CallControllerTest {
         // the system leaves MODE_IN_COMMUNICATION and releases the mic. Without
         // this, other apps see the mic as "already in use."
         assertTrue(
-            conn.transitions.contains("endedLocally"),
-            "expected endedLocally; got transitions=${conn.transitions}",
+            conn.transitions.contains("disconnectAsLocalHangup"),
+            "expected disconnectAsLocalHangup; got transitions=${conn.transitions}",
         )
     }
 
@@ -357,7 +357,7 @@ class CallControllerTest {
         val ended = cc.state.value as CallState.Ended
         assertEquals(CallEndReason.BIND_FAILED, ended.reason)
         assertEquals("S1", ended.sessionId)
-        assertTrue(conn.transitions.any { it.startsWith("failed:") })
+        assertTrue(conn.transitions.any { it.startsWith("disconnectWithError:") })
     }
 
     @Test
@@ -424,7 +424,7 @@ class CallControllerTest {
         assertEquals("S1", ended.sessionId)
         assertEquals(CallEndReason.DISPLACED, ended.reason)
         assertTrue(peer.disconnected)
-        assertTrue(conn.transitions.contains("endedRemotely:DISPLACED"))
+        assertTrue(conn.transitions.contains("disconnectAsRemoteEnded:DISPLACED"))
     }
 
     @Test

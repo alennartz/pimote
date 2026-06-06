@@ -12,16 +12,16 @@ package com.pimote.android.telephony
  */
 interface CallConnection {
     /** Move Telecom to "ringing" (`setRinging()`). */
-    fun markRinging()
+    fun reportRinging()
 
     /** Move Telecom to "active" (`setActive()`). */
-    fun markActive()
+    fun reportActive()
 
     /** Move Telecom to disconnected with an ERROR cause and destroy. */
-    fun markFailed(reason: String)
+    fun disconnectWithError(reason: String)
 
     /** Move Telecom to disconnected with the appropriate end cause and destroy. */
-    fun markEndedRemotely(reason: com.pimote.android.call.CallEndReason)
+    fun disconnectAsRemoteEnded(reason: com.pimote.android.call.CallEndReason)
 
     /**
      * Move Telecom to disconnected with a LOCAL cause and destroy. Used when the
@@ -31,7 +31,7 @@ interface CallConnection {
      * it the self-managed `Connection` stays alive, the system stays in
      * `MODE_IN_COMMUNICATION`, and the mic remains unavailable to other apps.
      */
-    fun markEndedLocally()
+    fun disconnectAsLocalHangup()
 
     /**
      * Request a route change on the underlying [android.telecom.Connection].

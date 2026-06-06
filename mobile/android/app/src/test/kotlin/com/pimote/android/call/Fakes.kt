@@ -103,24 +103,24 @@ class FakeCallConnection : CallConnection {
     val transitions = mutableListOf<String>()
     val routeRequests = mutableListOf<AudioRoute>()
 
-    override fun markRinging() {
+    override fun reportRinging() {
         transitions.add("ringing")
     }
 
-    override fun markActive() {
+    override fun reportActive() {
         transitions.add("active")
     }
 
-    override fun markFailed(reason: String) {
-        transitions.add("failed:$reason")
+    override fun disconnectWithError(reason: String) {
+        transitions.add("disconnectWithError:$reason")
     }
 
-    override fun markEndedRemotely(reason: CallEndReason) {
-        transitions.add("endedRemotely:$reason")
+    override fun disconnectAsRemoteEnded(reason: CallEndReason) {
+        transitions.add("disconnectAsRemoteEnded:$reason")
     }
 
-    override fun markEndedLocally() {
-        transitions.add("endedLocally")
+    override fun disconnectAsLocalHangup() {
+        transitions.add("disconnectAsLocalHangup")
     }
 
     override fun setAudioRoute(route: AudioRoute) {
