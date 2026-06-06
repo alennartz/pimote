@@ -195,6 +195,8 @@ Emitted at most once per connection/session when autocomplete is requested and `
 
 ## Steps
 
+**Pre-implementation commit:** `3188efa99a51847c9e9343620f7242cfcbb48d12`
+
 ### Step 1: Implement `completeFileRefs` in `server/src/file-references.ts`
 
 Fill in the `completeFileRefs` body (currently `throw 'not implemented'`) so the existing `server/src/file-references.test.ts` passes. Keep the exported `CompleteFileRefsInput` / `CompleteFileRefsResult` / `FdRunner` / `FdInvocation` / `FdRunResult` contracts exactly as they already stand — only the function body and a default runner are added.
@@ -232,7 +234,7 @@ Add a default `runFd` (used when `input.runFd` is absent) that spawns the real `
 Keep the function pure aside from the injected/real `runFd` seam — no module-level mutable state.
 
 **Verify:** `cd server && npx vitest run src/file-references.test.ts` is green (all invocation-construction, base-directory, item-mapping, quoting, and availability cases pass).
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement `extractFileRefPrefix` in `client/src/lib/file-ref-prefix.ts`
 
@@ -247,7 +249,7 @@ Behavior dictated by the tests:
 - When multiple `@`-tokens exist, return only the one nearest the cursor (`@one @two` → `@two`).
 
 **Verify:** `cd client && npx vitest run src/lib/file-ref-prefix.test.ts` is green (all boundary, quoted, and non-trigger cases pass).
-**Status:** not started
+**Status:** in progress
 
 ### Step 3: Add a `fileRefs` mode to `client/src/lib/components/CommandAutocomplete.svelte`
 

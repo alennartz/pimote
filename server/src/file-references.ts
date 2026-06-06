@@ -1,4 +1,10 @@
+import { execFile } from 'node:child_process';
+import { homedir } from 'node:os';
+import { isAbsolute, resolve } from 'node:path';
 import type { AutocompleteResponseItem } from '../../shared/dist/index.js';
+
+/** Cap on the number of fd results requested. */
+const MAX_RESULTS = 50;
 
 /**
  * `fd`-backed `@`-file-path autocomplete. Mirrors pi's interactive TUI `@`
@@ -75,6 +81,88 @@ export interface CompleteFileRefsResult {
  * against `cwd`. Returns `{ items: [], fdAvailable: false }` when `fd` is
  * missing so the caller can emit a one-time warning.
  */
-export async function completeFileRefs(_input: CompleteFileRefsInput): Promise<CompleteFileRefsResult> {
-  throw new Error('not implemented');
+export async function completeFileRefs(input: CompleteFileRefsInput): Promise<CompleteFileRefsResult> {
+  const { cwd, prefix } = input;
+  const fdPath = input.fdPath ?? 'fd';
+  const runFd = input.runFd ?? defaultRunFd;
+
+  const { quoted, scope, query } = parsePrefix(prefix);
+  const baseDir = resolveBaseDir(scope, cwd);
+
+  const args = ['--type', 'f', '--type', 'd', '--hidden', '--follow', '--exclude', '.git', '--max-results', String(MAX_RESULTS), '--base-directory', baseDir];
+  if (query !== '') {
+    args.push(query);
+  }
+
+  const invocation: FdInvocation = { fdPath, baseDir, query, args };
+  const { available, lines } = await runFd(invocation);
+
+  if (!available) {
+    return { items: [], fdAvailable: false };
+  }
+
+  const items = lines.map((line) => mapLineToItem(line, scope, quoted));
+  return { items, fdAvailable: true };
 }
+
+/**
+ * Parse the raw `@`-token into the quoting flag, the typed directory scope (the
+ * text up to and including the last `/`), and the fd query pattern (the trailing
+ * segment after the last `/`).
+ */
+function parsePrefix(prefix: string): { quoted: boolean; scope: string; query: string } {
+  let rest = prefix.startsWith('@') ? prefix.slice(1) : prefix;
+  let quoted = false;
+  if (rest.startsWith('"')) {
+    quoted = true;
+    rest = rest.slice(1);
+  }
+  const lastSlash = rest.lastIndexOf('/');
+  if (lastSlash === -1) {
+    return { quoted, scope: '', query: rest };
+  }
+  return { quoted, scope: rest.slice(0, lastSlash + 1), query: rest.slice(lastSlash + 1) };
+}
+
+/** Resolve the typed scope string to an absolute search root against `cwd`. */
+function resolveBaseDir(scope: string, cwd: string): string {
+  if (scope === '') {
+    return cwd;
+  }
+  if (scope === '~/' || scope.startsWith('~/')) {
+    return resolve(homedir(), scope.slice(2));
+  }
+  if (isAbsolute(scope)) {
+    return resolve(scope);
+  }
+  return resolve(cwd, scope);
+}
+
+/** Map one fd output line to an inserted-token autocomplete item. */
+function mapLineToItem(line: string, scope: string, quoted: boolean): AutocompleteResponseItem {
+  const path = scope + line;
+  const needsQuote = quoted || path.includes(' ');
+  const value = needsQuote ? `@"${path}"` : `@${path}`;
+  return { value, label: line };
+}
+
+/**
+ * Default fd runner: spawns the real `fd` binary. On spawn `ENOENT` reports
+ * `available: false`; on any other failure degrades to `available: true` with no
+ * lines; on success splits stdout into non-empty lines.
+ */
+const defaultRunFd: FdRunner = (invocation: FdInvocation): Promise<FdRunResult> =>
+  new Promise((resolvePromise) => {
+    execFile(invocation.fdPath, invocation.args, (error, stdout) => {
+      if (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          resolvePromise({ available: false, lines: [] });
+          return;
+        }
+        resolvePromise({ available: true, lines: [] });
+        return;
+      }
+      const lines = stdout.split('\n').filter((l) => l.length > 0);
+      resolvePromise({ available: true, lines });
+    });
+  });
