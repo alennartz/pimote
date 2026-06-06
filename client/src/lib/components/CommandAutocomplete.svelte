@@ -7,7 +7,7 @@
     items: CommandInfo[];
     query: string;
     visible: boolean;
-    mode: 'command' | 'args';
+    mode: 'command' | 'args' | 'fileRefs';
     sessionId: string;
     commandName: string;
     onselect: (item: { name: string; value?: string; label?: string; description?: string }) => void;
@@ -61,6 +61,43 @@
     return () => clearTimeout(argsDebounceTimer);
   });
 
+  // FileRefs mode: server-fetched @-file-path completion items
+  let fileRefsItems: AutocompleteResponseItem[] = $state([]);
+  let fileRefsDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let fileRefsRequestSeq = 0;
+
+  // Fetch file-ref completions on query change in fileRefs mode
+  $effect(() => {
+    if (mode !== 'fileRefs' || !visible) return;
+    const currentQuery = query;
+    const currentSessionId = sessionId;
+
+    clearTimeout(fileRefsDebounceTimer);
+    fileRefsDebounceTimer = setTimeout(async () => {
+      const seq = ++fileRefsRequestSeq;
+      try {
+        const res = await connection.send({
+          type: 'complete_file_refs',
+          sessionId: currentSessionId,
+          prefix: currentQuery,
+        });
+        // Discard stale responses — a newer request has been sent
+        if (seq !== fileRefsRequestSeq) return;
+        if (res.success && res.data) {
+          const result = (res.data as { items: AutocompleteResponseItem[] | null }).items;
+          fileRefsItems = result ?? [];
+        } else {
+          fileRefsItems = [];
+        }
+      } catch {
+        if (seq !== fileRefsRequestSeq) return;
+        fileRefsItems = [];
+      }
+    }, 200);
+
+    return () => clearTimeout(fileRefsDebounceTimer);
+  });
+
   // The display list depends on the mode
   let displayItems = $derived.by(() => {
     if (mode === 'command') {
@@ -69,7 +106,8 @@
         description: c.description,
       }));
     }
-    return argsItems.map((a) => ({
+    const sourceItems = mode === 'fileRefs' ? fileRefsItems : argsItems;
+    return sourceItems.map((a) => ({
       name: a.label,
       value: a.value,
       description: a.description,

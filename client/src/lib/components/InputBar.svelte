@@ -7,6 +7,7 @@
   import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
   import { loginStore } from '$lib/stores/login-store.js';
   import CommandAutocomplete from './CommandAutocomplete.svelte';
+  import { extractFileRefPrefix } from '$lib/file-ref-prefix.js';
   import type { CommandInfo } from '@pimote/shared';
   import Send from '@lucide/svelte/icons/send';
   import MessageSquare from '@lucide/svelte/icons/message-square';
@@ -28,13 +29,15 @@
 
   // Autocomplete state
   let autocompleteVisible = $state(false);
-  let autocompleteMode: 'command' | 'args' = $state('command');
+  let autocompleteMode: 'command' | 'args' | 'fileRefs' = $state('command');
   let selectedCommand: CommandInfo | null = $state(null);
+  let fileRefPrefix: string | null = $state(null);
 
   const commandItems = $derived(commandStore.getCommands(sessionRegistry.viewedSessionId ?? ''));
 
   const autocompleteQuery = $derived.by(() => {
     if (!autocompleteVisible) return '';
+    if (autocompleteMode === 'fileRefs') return fileRefPrefix ?? '';
     const text = inputText;
     if (!text.startsWith('/')) return '';
     const afterSlash = text.slice(1);
@@ -155,7 +158,27 @@
   }
 
   function updateAutocomplete() {
-    if (!inputText.startsWith('/') || !textareaEl) {
+    if (!textareaEl) {
+      autocompleteVisible = false;
+      selectedCommand = null;
+      fileRefPrefix = null;
+      return;
+    }
+
+    // `@`-file-path completion takes priority and works mid-line, so it is
+    // checked before the slash gate and is cursor-relative.
+    const textBeforeCursor = inputText.slice(0, textareaEl.selectionStart);
+    const at = extractFileRefPrefix(textBeforeCursor);
+    if (at !== null) {
+      autocompleteVisible = true;
+      autocompleteMode = 'fileRefs';
+      fileRefPrefix = at;
+      selectedCommand = null;
+      return;
+    }
+    fileRefPrefix = null;
+
+    if (!inputText.startsWith('/')) {
       autocompleteVisible = false;
       selectedCommand = null;
       return;
@@ -321,6 +344,26 @@
       if (selectedCommand?.hasArgCompletions) {
         autocompleteVisible = true;
         autocompleteMode = 'args';
+      } else {
+        autocompleteVisible = false;
+      }
+      tick().then(() => {
+        if (textareaEl) {
+          textareaEl.selectionStart = textareaEl.selectionEnd = cursorPos;
+        }
+      });
+    } else if (autocompleteMode === 'fileRefs') {
+      // FileRefs mode — replace the @-token immediately before the cursor
+      const cursor = textareaEl?.selectionStart ?? inputText.length;
+      const tokenStart = cursor - (fileRefPrefix?.length ?? 0);
+      const value = item.value ?? item.name;
+      inputText = inputText.slice(0, tokenStart) + value + inputText.slice(cursor);
+      const cursorPos = tokenStart + value.length;
+      if (value.endsWith('/')) {
+        // Directory — keep the menu open so the user can drill in
+        autocompleteVisible = true;
+        autocompleteMode = 'fileRefs';
+        fileRefPrefix = value;
       } else {
         autocompleteVisible = false;
       }

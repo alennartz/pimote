@@ -261,7 +261,7 @@ Extend the generic dropdown with a third mode so `@` results reuse its render/de
 - Keep `command` mode (local fuzzy) and `args` mode (the `complete_args` fetch) exactly as-is.
 
 **Verify:** `cd client && npx vitest run` stays green and `npx svelte-check` passes; manual smoke in Step 5 confirms the dropdown renders `@` suggestions.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Wire the `@` trigger into `client/src/lib/components/InputBar.svelte`
 
@@ -278,7 +278,7 @@ Add `@`-token detection alongside the existing slash flow, keeping the two mutua
 No changes to send paths, optimistic-message handling, `connection.svelte.ts`, or the stores — the inserted `@path` is ordinary message text.
 
 **Verify:** `cd client && npx svelte-check` passes. Typing `@` in the input opens the dropdown with fd-backed suggestions; selecting a file inserts `@path`, selecting a directory inserts `@path/` and keeps the menu open to drill in; `/` slash completion is unaffected.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Full build, typecheck, and test verification
 
