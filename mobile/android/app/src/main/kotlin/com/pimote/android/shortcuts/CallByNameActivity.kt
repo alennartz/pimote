@@ -4,7 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
-import com.pimote.android.app.AppContainer
+import com.pimote.android.app.pimoteContainer
 import com.pimote.android.app.MainActivity
 import com.pimote.android.session.buildSessionProjectGroups
 import com.pimote.android.telephony.PhoneAccountRules
@@ -38,7 +38,7 @@ class CallByNameActivity : Activity() {
     private fun dispatch() {
         val participantName = intent?.getStringExtra("participantName")?.trim().orEmpty()
         L.i("Shortcuts", "CallByNameActivity received participantName='$participantName'")
-        val container = AppContainer.instance
+        val container = pimoteContainer
         val repo = container.sessionRepository
         val projects = repo.projects.value
         val sessions = repo.sessions.value

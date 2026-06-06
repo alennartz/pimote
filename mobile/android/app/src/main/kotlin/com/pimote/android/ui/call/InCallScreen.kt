@@ -43,6 +43,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
 import com.pimote.android.R
 import com.pimote.android.app.AppContainer
+import com.pimote.android.app.pimoteContainer
 import com.pimote.android.call.AudioRoute
 import com.pimote.android.call.AudioRouteSnapshot
 import com.pimote.android.call.CallState
@@ -55,8 +56,15 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-class CallViewModel : ViewModel() {
-    private val container = AppContainer.instance
+class CallViewModel(private val container: AppContainer) : ViewModel() {
+    companion object {
+        fun factory(container: AppContainer): androidx.lifecycle.ViewModelProvider.Factory =
+            object : androidx.lifecycle.ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T = CallViewModel(container) as T
+            }
+    }
+
     val state: StateFlow<CallState> = container.callController.state
     val isMicMuted: StateFlow<Boolean> = container.callController.isMicMuted
     val audioRoute: StateFlow<AudioRouteSnapshot?> = container.callController.audioRoute
@@ -282,7 +290,7 @@ fun InCallScreen(
 class InCallActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
-        val vm: CallViewModel by viewModels()
+        val vm: CallViewModel by viewModels { CallViewModel.factory(pimoteContainer) }
         setContent { PimoteTheme { InCallScreen(vm, onClose = { finish() }) } }
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // Auto-finish only when the controller goes back to Idle. We

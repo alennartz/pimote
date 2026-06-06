@@ -20,6 +20,8 @@ import com.pimote.android.net.WsClientImpl
 import okhttp3.OkHttpClient
 import com.pimote.android.session.SessionRepository
 import com.pimote.android.session.SessionRepositoryImpl
+import com.pimote.android.util.onEdge
+import kotlinx.coroutines.flow.map
 import com.pimote.android.settings.Settings
 import com.pimote.android.settings.SettingsImpl
 import com.pimote.android.contacts.ContactSyncRunner
@@ -45,7 +47,7 @@ import org.webrtc.audio.JavaAudioDeviceModule
 
 /**
  * Manual-DI container. Constructed once in [PimoteApp.onCreate] and made
- * accessible via [AppContainer.instance] for framework-instantiated callers
+ * accessible via [Context.pimoteContainer] for framework-instantiated callers
  * (the Telecom [PimoteConnectionService]) that cannot receive constructor
  * injection.
  */
@@ -240,14 +242,10 @@ class AppContainer(private val appContext: Context) {
         // phoneCall). Started on the edge where the call leaves Idle; the
         // service self-stops once the call reaches Ended/Idle.
         applicationScope.launch {
-            var prevOngoing = false
-            callController.state.collect { s ->
-                val ongoing = s !is CallState.Idle && s !is CallState.Ended
-                if (ongoing && !prevOngoing) {
-                    CallForegroundService.start(appContext)
-                }
-                prevOngoing = ongoing
-            }
+            callController.state
+                .map { s -> s !is CallState.Idle && s !is CallState.Ended }
+                .onEdge { prev, cur -> cur && prev != true }
+                .collect { CallForegroundService.start(appContext) }
         }
 
         // Drive the proximity-to-ear screen lock off call state + audio route.
@@ -276,26 +274,21 @@ class AppContainer(private val appContext: Context) {
         // We only fire on the Idle→non-Idle edge so we don't restart the
         // activity for every intra-call state change.
         applicationScope.launch {
-            var prevIdle = true
-            callController.state.collect { s ->
-                val nowIdle = s is CallState.Idle
-                if (prevIdle && !nowIdle) {
+            callController.state
+                .map { it is CallState.Idle }
+                // Initial state is Idle, so treat the very first emission as
+                // "was already idle" — the cold-start case shouldn't fire
+                // the in-call activity. Hence prev == null → false.
+                .onEdge { prev, cur -> prev == true && !cur }
+                .collect {
                     val intent = Intent(appContext, InCallActivity::class.java)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     appContext.startActivity(intent)
                 }
-                prevIdle = nowIdle
-            }
         }
     }
 
     companion object {
-        @Volatile private var _instance: AppContainer? = null
-        val instance: AppContainer
-            get() = _instance ?: error("AppContainer not initialized")
-
-        internal fun install(c: AppContainer) { _instance = c }
-
         private fun audioModeName(mode: Int): String = when (mode) {
             android.media.AudioManager.MODE_NORMAL -> "NORMAL"
             android.media.AudioManager.MODE_RINGTONE -> "RINGTONE"

@@ -49,8 +49,7 @@ class MainActivity : ComponentActivity() {
         requestRuntimePermissionsIfNeeded()
 
         // Start on Setup if there's no saved config; otherwise jump straight to Contacts.
-        val container = AppContainer.instance
-        currentRoute = if (container.settings.current.value == null) Route.Setup else Route.Contacts
+        currentRoute = if (pimoteContainer.settings.current.value == null) Route.Setup else Route.Contacts
 
         // Back from Contacts -> Setup. Back from Setup -> finish (default).
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -115,11 +114,11 @@ class MainActivity : ComponentActivity() {
     private fun Root(route: Route, onNavigate: (Route) -> Unit) {
         when (route) {
             Route.Setup -> SetupScreen(
-                viewModel = viewModel<SetupViewModel>(),
+                viewModel = viewModel<SetupViewModel>(factory = SetupViewModel.factory(pimoteContainer)),
                 onConnected = { onNavigate(Route.Contacts) },
             )
             Route.Contacts -> ContactsScreen(
-                viewModel = viewModel<ContactsViewModel>(),
+                viewModel = viewModel<ContactsViewModel>(factory = ContactsViewModel.factory(pimoteContainer)),
                 onEditSettings = { onNavigate(Route.Setup) },
             )
         }

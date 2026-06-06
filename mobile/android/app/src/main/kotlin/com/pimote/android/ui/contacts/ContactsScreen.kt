@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import com.pimote.android.R
 import com.pimote.android.app.AppContainer
+import com.pimote.android.app.pimoteContainer
 import com.pimote.android.call.CallState
 import com.pimote.android.net.WsState
 import com.pimote.android.session.ProjectMeta
@@ -60,8 +61,15 @@ import com.pimote.android.util.L
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-class ContactsViewModel : ViewModel() {
-    private val container = AppContainer.instance
+class ContactsViewModel(private val container: AppContainer) : ViewModel() {
+    companion object {
+        fun factory(container: AppContainer): androidx.lifecycle.ViewModelProvider.Factory =
+            object : androidx.lifecycle.ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T = ContactsViewModel(container) as T
+            }
+    }
+
     val projects: StateFlow<List<ProjectMeta>> = container.sessionRepository.projects
     val sessions: StateFlow<List<SessionMeta>> = container.sessionRepository.sessions
     val wsState: StateFlow<WsState> = container.wsClient.state
@@ -247,7 +255,7 @@ fun ContactsScreen(viewModel: ContactsViewModel, onEditSettings: () -> Unit) {
                             val dispatched = CallByPimoteUri.placeCall(
                                 context = context,
                                 pimoteUri = "$PIMOTE_URI_SCHEME:$handleId",
-                                telecom = AppContainer.instance.telecomFacade,
+                                telecom = context.pimoteContainer.telecomFacade,
                             )
                             if (!dispatched) {
                                 loadingHandleId = null

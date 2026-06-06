@@ -6,7 +6,7 @@ import android.telecom.ConnectionService
 import android.telecom.DisconnectCause
 import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
-import com.pimote.android.app.AppContainer
+import com.pimote.android.app.pimoteContainer
 import com.pimote.android.call.SessionTarget
 
 /**
@@ -32,7 +32,7 @@ class PimoteConnectionService : ConnectionService() {
         connectionManagerPhoneAccount: PhoneAccountHandle?,
         request: ConnectionRequest?,
     ): Connection {
-        val container = AppContainer.instance
+        val container = pimoteContainer
         val uri = request?.address?.toString()
         val parsed = uri?.let { PhoneAccountRules.parseDialUri(it) }
 
@@ -76,7 +76,7 @@ class PimoteConnectionService : ConnectionService() {
      */
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
         try {
-            AppContainer.instance.callController.onAppShutdown()
+            pimoteContainer.callController.onAppShutdown()
         } catch (_: Throwable) {
             // AppContainer not initialized / already torn down — nothing to do.
         }

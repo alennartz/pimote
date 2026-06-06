@@ -23,10 +23,12 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
@@ -264,17 +266,10 @@ class CallControllerImpl(
         // router is null and this collector is a no-op.
         if (audioRouter != null) {
             scope.launch(Dispatchers.Unconfined) {
-                var routerActive = false
-                _state.collect { s ->
-                    val shouldBeActive = s !is CallState.Idle && s !is CallState.Ended
-                    if (shouldBeActive && !routerActive) {
-                        audioRouter.start()
-                        routerActive = true
-                    } else if (!shouldBeActive && routerActive) {
-                        audioRouter.stop()
-                        routerActive = false
-                    }
-                }
+                _state
+                    .map { s -> s !is CallState.Idle && s !is CallState.Ended }
+                    .distinctUntilChanged()
+                    .collect { active -> if (active) audioRouter.start() else audioRouter.stop() }
             }
         }
     }

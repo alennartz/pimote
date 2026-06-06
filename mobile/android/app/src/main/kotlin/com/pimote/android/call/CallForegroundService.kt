@@ -12,7 +12,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
-import com.pimote.android.app.AppContainer
+import com.pimote.android.app.pimoteContainer
 import com.pimote.android.ui.call.InCallActivity
 import com.pimote.android.util.L
 import kotlinx.coroutines.CoroutineScope
@@ -52,7 +52,7 @@ class CallForegroundService : Service() {
         when (intent?.action) {
             ACTION_HANGUP -> {
                 L.i("Call", "notification hang-up")
-                runCatching { AppContainer.instance.callController.endCurrentCall() }
+                runCatching { pimoteContainer.callController.endCurrentCall() }
                 return START_NOT_STICKY
             }
             ACTION_STOP -> {
@@ -71,7 +71,7 @@ class CallForegroundService : Service() {
 
     private fun startForegroundNow() {
         ensureChannel()
-        val controller = runCatching { AppContainer.instance.callController }.getOrNull()
+        val controller = runCatching { pimoteContainer.callController }.getOrNull()
         val notification = buildNotification(
             statusText = callNotificationStatusText(controller?.state?.value ?: CallState.Idle),
             displayName = "Pimote",
@@ -90,7 +90,7 @@ class CallForegroundService : Service() {
     private fun startCollecting() {
         if (collecting) return
         collecting = true
-        val container = runCatching { AppContainer.instance }.getOrNull() ?: run {
+        val container = runCatching { pimoteContainer }.getOrNull() ?: run {
             stopForegroundAndSelf()
             return
         }

@@ -19,10 +19,22 @@ import kotlinx.coroutines.launch
  */
 class PimoteApp : Application() {
 
+    /**
+     * The single [AppContainer] for this process, owned by [Application]
+     * itself — the legitimate process-scoped object Android already gives
+     * us. Framework-instantiated callers (Activity / Service /
+     * ConnectionService) reach this via
+     * `(applicationContext as PimoteApp).container` (see
+     * [Context.pimoteContainer]). There is no separate companion-object
+     * singleton and no @Volatile install() hop; the dependency graph is
+     * visible at every call site.
+     */
+    lateinit var container: AppContainer
+        private set
+
     override fun onCreate() {
         super.onCreate()
-        val container = AppContainer(applicationContext)
-        AppContainer.install(container)
+        container = AppContainer(applicationContext)
 
         // Bootstrap when (and only when) the user has configured an origin.
         container.applicationScope.launch {
@@ -38,3 +50,12 @@ class PimoteApp : Application() {
         }
     }
 }
+
+/**
+ * Resolve the process-wide [AppContainer] from any [android.content.Context].
+ * Uses the [android.app.Application] instance the platform already provides
+ * — not a separate global. Callable from Activity / Service /
+ * ConnectionService / Composable boundaries.
+ */
+val android.content.Context.pimoteContainer: AppContainer
+    get() = (applicationContext as PimoteApp).container

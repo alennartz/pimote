@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import com.pimote.android.app.AppContainer
 import com.pimote.android.net.WsState
 import com.pimote.android.settings.Settings
@@ -41,8 +42,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-class SetupViewModel : ViewModel() {
-    private val container = AppContainer.instance
+class SetupViewModel(private val container: AppContainer) : ViewModel() {
+    companion object {
+        fun factory(container: AppContainer): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = SetupViewModel(container) as T
+        }
+    }
+
     val current: StateFlow<Settings.Config?> = container.settings.current
     val wsState: StateFlow<WsState> = container.wsClient.state
 

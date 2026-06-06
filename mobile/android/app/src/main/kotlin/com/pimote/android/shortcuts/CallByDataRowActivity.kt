@@ -3,7 +3,7 @@ package com.pimote.android.shortcuts
 import android.app.Activity
 import android.os.Bundle
 import android.provider.ContactsContract
-import com.pimote.android.app.AppContainer
+import com.pimote.android.app.pimoteContainer
 import com.pimote.android.telephony.PhoneAccountRules
 import com.pimote.android.util.L
 
@@ -43,7 +43,7 @@ class CallByDataRowActivity : Activity() {
         CallByPimoteUri.placeCall(
             applicationContext,
             data1,
-            AppContainer.instance.telecomFacade,
+            pimoteContainer.telecomFacade,
         )
     }
 }
