@@ -119,6 +119,10 @@ class FakeCallConnection : CallConnection {
         transitions.add("endedRemotely:$reason")
     }
 
+    override fun markEndedLocally() {
+        transitions.add("endedLocally")
+    }
+
     override fun setAudioRoute(route: AudioRoute) {
         routeRequests.add(route)
     }

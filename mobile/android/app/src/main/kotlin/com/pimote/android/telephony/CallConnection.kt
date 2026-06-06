@@ -24,6 +24,16 @@ interface CallConnection {
     fun markEndedRemotely(reason: com.pimote.android.call.CallEndReason)
 
     /**
+     * Move Telecom to disconnected with a LOCAL cause and destroy. Used when the
+     * user hangs up from inside the app (in-call screen, persistent
+     * notification, pre-Active cancel). The single place [CallController] tells
+     * Telecom that an app-initiated end has fully torn the call down — without
+     * it the self-managed `Connection` stays alive, the system stays in
+     * `MODE_IN_COMMUNICATION`, and the mic remains unavailable to other apps.
+     */
+    fun markEndedLocally()
+
+    /**
      * Request a route change on the underlying [android.telecom.Connection].
      * No-op if the requested route isn't in the current supported mask;
      * Telecom will emit an `onCallAudioStateChanged` callback if it accepts.

@@ -23,9 +23,13 @@ class PimoteConnection(
 
     // Telecom → app callbacks
     override fun onDisconnect() {
+        // Telecom-driven hangup (system telephony UI / Android Auto / etc.).
+        // CallController's finishCall() routes the eventual teardown back
+        // through markEndedLocally(), which is the single point that calls
+        // setDisconnected + destroy — keeping the connection alive in the
+        // meantime so peer.disconnect() can release the mic before Telecom
+        // flips the audio mode back to MODE_NORMAL.
         callController.endCurrentCall()
-        setDisconnected(DisconnectCause(DisconnectCause.LOCAL))
-        destroy()
     }
 
     override fun onCallAudioStateChanged(state: CallAudioState?) {
@@ -63,6 +67,11 @@ class PimoteConnection(
 
     override fun markEndedRemotely(reason: CallEndReason) {
         setDisconnected(DisconnectCause(mapEndReasonToDisconnectCause(reason)))
+        destroy()
+    }
+
+    override fun markEndedLocally() {
+        setDisconnected(DisconnectCause(DisconnectCause.LOCAL))
         destroy()
     }
 

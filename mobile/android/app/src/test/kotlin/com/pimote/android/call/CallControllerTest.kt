@@ -295,6 +295,13 @@ class CallControllerTest {
         assertEquals(CallEndReason.USER_HANGUP, ended.reason)
         assertTrue(peer.disconnected)
         assertTrue(ws.sent.any { it is CallEndCommand })
+        // Critical: the Telecom connection must be torn down on user hangup so
+        // the system leaves MODE_IN_COMMUNICATION and releases the mic. Without
+        // this, other apps see the mic as "already in use."
+        assertTrue(
+            conn.transitions.contains("endedLocally"),
+            "expected endedLocally; got transitions=${conn.transitions}",
+        )
     }
 
     // -------------------------------------------------------------- event filtering

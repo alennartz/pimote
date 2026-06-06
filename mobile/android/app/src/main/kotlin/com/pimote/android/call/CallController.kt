@@ -232,6 +232,12 @@ class CallControllerImpl(
     private var currentPeer: SpeechmuxPeer? = null
     private var currentConnection: CallConnection? = null
 
+    // Idempotence guard for [finishCall]: every terminal path funnels into it,
+    // and several races can fire it more than once (e.g. endCurrentCall +
+    // runOutgoing's UserHangup branch, or PimoteConnection.onDisconnect +
+    // server call_ended). Reset to false on every startOutgoing.
+    private var finished: Boolean = false
+
     init {
         scope.launch(Dispatchers.Unconfined) {
             _state.collect { com.pimote.android.util.L.d("Call", "state -> $it") }
@@ -267,6 +273,7 @@ class CallControllerImpl(
         currentSessionId = null
         currentPeer = null
         currentConnection = connection
+        finished = false
         // Fresh call starts unmuted.
         _isMicMuted.value = false
         // Clear the previous call's route snapshot; Telecom will re-emit
@@ -279,22 +286,12 @@ class CallControllerImpl(
 
     override fun endCurrentCall() {
         com.pimote.android.util.L.i("Call", "endCurrentCall (state=${_state.value})")
+        // Two paths, both funnel into finishCall (idempotent):
+        //  - Active: complete the userHangup deferred so runOutgoing's
+        //    select-race wins on UserHangup and calls finishCall from there.
+        //  - Pre-Active: there's no select-race yet, so cancel the job and
+        //    call finishCall directly.
         userHangup?.complete(Unit)
-        // Plan §CallController step 6: if state is pre-Active, also cancel callJob and
-        // transition to Ended(currentSessionId, USER_HANGUP).
-        //
-        // For the Active branch we ALSO disconnect the peer synchronously here
-        // (in addition to the userHangup deferred above, which the
-        // runOutgoing select-race handles asynchronously). Reason: the
-        // caller of `endCurrentCall()` is typically `PimoteConnection.
-        // onDisconnect`, which then immediately calls
-        // `setDisconnected(...).destroy()` on Telecom — flipping the system
-        // audio mode back to MODE_NORMAL on the main thread. If we wait for
-        // the runOutgoing coroutine to dispose the audio source, AudioRecord
-        // can be torn down by Telecom before libwebrtc's ADM stops
-        // recording, leaving the system mic indicator stuck on. Calling
-        // disconnect here is safe because SpeechmuxPeerImpl.disconnect is
-        // idempotent (snapshots+nulls fields up front).
         when (_state.value) {
             is CallState.Dialing,
             is CallState.Binding,
@@ -302,14 +299,56 @@ class CallControllerImpl(
                 val sid = currentSessionId
                 callJob?.cancel()
                 callJob = null
-                try { currentPeer?.disconnect() } catch (_: Throwable) { }
-                _state.value = CallState.Ended(sid, CallEndReason.USER_HANGUP)
+                finishCall(sid, CallEndReason.USER_HANGUP, sendCallEnd = sid != null)
             }
-            is CallState.Active -> {
-                try { currentPeer?.disconnect() } catch (_: Throwable) { }
-            }
+            is CallState.Active -> { /* runOutgoing UserHangup branch → finishCall */ }
             else -> { /* Idle / Ended — no-op */ }
         }
+    }
+
+    /**
+     * Single point of call teardown. Every terminal path — user hangup,
+     * remote hangup, peer failure, bind failure — routes through here so the
+     * three pieces (server notify, mic release, Telecom connection teardown)
+     * happen in the right order, in one place. Idempotent: guarded by
+     * [finished], which is reset on the next [startOutgoing].
+     *
+     * Order matters: peer.disconnect() must run before the Telecom connection
+     * is destroyed, because destroying the Connection flips the system audio
+     * mode back to MODE_NORMAL — if AudioRecord is still open at that point
+     * the mic indicator stays lit and the mic stays held against other apps.
+     */
+    private fun finishCall(
+        sessionId: String?,
+        reason: CallEndReason,
+        sendCallEnd: Boolean,
+        failureReason: String? = null,
+    ) {
+        if (finished) return
+        finished = true
+
+        val peer = currentPeer
+        val conn = currentConnection
+        currentPeer = null
+        currentConnection = null
+
+        if (sendCallEnd && sessionId != null) {
+            scope.launch {
+                try { wsClient.send(CallEndCommand(id = newId(), sessionId = sessionId)) } catch (_: Throwable) { }
+            }
+        }
+        try { peer?.disconnect() } catch (_: Throwable) { }
+        try {
+            when (reason) {
+                CallEndReason.USER_HANGUP -> conn?.markEndedLocally()
+                CallEndReason.PEER_FAILED -> conn?.markFailed(failureReason ?: "peer_failed")
+                CallEndReason.BIND_FAILED -> conn?.markFailed(failureReason ?: "bind_failed")
+                CallEndReason.REMOTE_HANGUP,
+                CallEndReason.DISPLACED,
+                CallEndReason.SERVER_ENDED -> conn?.markEndedRemotely(reason)
+            }
+        } catch (_: Throwable) { }
+        _state.value = CallState.Ended(sessionId, reason)
     }
 
     override fun onAudioStateChanged(audioState: AudioRouteSnapshot) {
@@ -392,8 +431,12 @@ class CallControllerImpl(
                     OpenSessionResponseData.serializer(),
                 )
                 if (!resp.success || resp.data == null) {
-                    connection.markFailed(resp.error ?: "open_session_failed")
-                    _state.value = CallState.Ended(null, CallEndReason.BIND_FAILED)
+                    finishCall(
+                        sessionId = null,
+                        reason = CallEndReason.BIND_FAILED,
+                        sendCallEnd = false,
+                        failureReason = resp.error ?: "open_session_failed",
+                    )
                     return
                 }
                 resp.data.sessionId
@@ -415,8 +458,12 @@ class CallControllerImpl(
         }
         val bindData = bind.data
         if (!bind.success || bindData == null) {
-            connection.markFailed(bind.error ?: "call_bind_failed")
-            _state.value = CallState.Ended(sessionId, CallEndReason.BIND_FAILED)
+            finishCall(
+                sessionId = sessionId,
+                reason = CallEndReason.BIND_FAILED,
+                sendCallEnd = false,
+                failureReason = bind.error ?: "call_bind_failed",
+            )
             return
         }
 
@@ -428,9 +475,12 @@ class CallControllerImpl(
             peer.connect(bindData.webrtcSignalUrl, sessionId)
         } catch (e: PeerConnectionFailed) {
             com.pimote.android.util.L.w("Call", "peer connect failed: reason=${e.reason} signalUrl=${bindData.webrtcSignalUrl}", e)
-            try { wsClient.send(CallEndCommand(id = newId(), sessionId = sessionId)) } catch (_: Throwable) { }
-            connection.markFailed("peer_failed")
-            _state.value = CallState.Ended(sessionId, CallEndReason.PEER_FAILED)
+            finishCall(
+                sessionId = sessionId,
+                reason = CallEndReason.PEER_FAILED,
+                sendCallEnd = true,
+                failureReason = "peer_failed",
+            )
             return
         }
 
@@ -486,21 +536,22 @@ class CallControllerImpl(
         }
 
         when (outcome) {
-            is Outcome.RemoteEnded -> {
-                connection.markEndedRemotely(outcome.reason)
-                peer.disconnect()
-                _state.value = CallState.Ended(sessionId, outcome.reason)
-            }
-            is Outcome.PeerFailed -> {
-                try { wsClient.send(CallEndCommand(id = newId(), sessionId = sessionId)) } catch (_: Throwable) { }
-                connection.markFailed("peer_failed")
-                _state.value = CallState.Ended(sessionId, CallEndReason.PEER_FAILED)
-            }
-            is Outcome.UserHangup -> {
-                try { wsClient.send(CallEndCommand(id = newId(), sessionId = sessionId)) } catch (_: Throwable) { }
-                peer.disconnect()
-                _state.value = CallState.Ended(sessionId, CallEndReason.USER_HANGUP)
-            }
+            is Outcome.RemoteEnded -> finishCall(
+                sessionId = sessionId,
+                reason = outcome.reason,
+                sendCallEnd = false, // server already ended it
+            )
+            is Outcome.PeerFailed -> finishCall(
+                sessionId = sessionId,
+                reason = CallEndReason.PEER_FAILED,
+                sendCallEnd = true,
+                failureReason = "peer_failed",
+            )
+            is Outcome.UserHangup -> finishCall(
+                sessionId = sessionId,
+                reason = CallEndReason.USER_HANGUP,
+                sendCallEnd = true,
+            )
         }
     }
 
