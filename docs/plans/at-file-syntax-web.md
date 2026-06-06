@@ -149,3 +149,43 @@ Emitted at most once per connection/session when autocomplete is requested and `
 ### C) Expansion / injection (explicitly out of scope)
 
 - We do **not** expand `@` refs into `<file>` blocks or attach images. That is the CLI `processFileArguments` behavior, not the interactive TUI behavior we are matching. The agent reads referenced files via its `read` tool. Dropping expansion removes the need for `message-mapper` changes, an `attachment` content block, `Message.svelte` attachment rendering, and `images` on `steer`/`follow_up`.
+
+## Tests
+
+**Pre-test-write commit:** `58f8b4973c14bb245015401d265bf26983422e68`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — adds the `CompleteFileRefsCommand` (`type: 'complete_file_refs'`, `prefix`) and wires it into the `PimoteCommand` union. Response reuses the existing `AutocompleteResponseItem` shape. No `PromptCommand`/`SteerCommand`/`FollowUpCommand` changes, no `images`, no message-content changes.
+- `server/src/file-references.ts` — the `completeFileRefs` contract: `CompleteFileRefsInput` (`prefix`, `cwd`, optional `fdPath`, optional `runFd` test seam), `CompleteFileRefsResult` (`items`, `fdAvailable`), and the `FdRunner`/`FdInvocation`/`FdRunResult` seam types that surface the fd argument vector + resolved `baseDir`/`query` for substitution in tests. Skeleton only (`throw 'not implemented'`).
+- `server/src/ws-handler.ts` — integration scaffolding: `complete_file_refs` dispatch case resolving the session's `folderPath` as cwd, calling `completeFileRefs`, returning `{ items }`, and emitting a one-time fd-missing `notify` warning (`emitFdMissingWarning`, guarded by a per-connection `fdWarningEmitted` flag) over the existing fire-and-forget extension-UI bridge.
+- `client/src/lib/file-ref-prefix.ts` — the client-side `extractFileRefPrefix(textBeforeCursor)` pure helper contract (skeleton only).
+
+### Test Files
+
+- `server/src/file-references.test.ts` — exercises the `completeFileRefs` boundary via an injected capturing `runFd` seam: fd argument construction, base-directory resolution, item mapping/quoting, and fd-availability degradation.
+- `client/src/lib/file-ref-prefix.test.ts` — exercises `extractFileRefPrefix`: `@`-token boundary detection, quoted `@"…"` tokens, and non-trigger cases.
+
+### Behaviors Covered
+
+#### `completeFileRefs` (server file-references)
+
+- Always invokes fd asking for both files and directories, hidden, following symlinks (`--type f --type d --hidden --follow`).
+- Always excludes `.git` and caps results (`--exclude .git`, `--max-results`).
+- Passes a bare single-segment prefix (`@comp`) as the fd query pattern.
+- Enables `--full-path` exactly when the fd query it runs contains a path separator (consistency invariant across prefixes).
+- Resolves a bare relative prefix against the session cwd.
+- Treats a trailing `/` as "list the contents of this directory" (empty query, base = that directory) for named subdirs, `./`, `../`, absolute `/…`, and `~/`.
+- Expands `~/` to the home directory for the search root, while keeping the typed `~/` scope in the inserted token (not the expanded path).
+- Maps a file entry to an `@`-prefixed terminal token; gives directory entries a trailing `/` in the inserted token.
+- Reconstructs the full token by prepending the typed directory scope (e.g. `@src/` + `index.ts` → `@src/index.ts`).
+- Quotes the inserted token when the path contains a space, or when the prefix was already a quoted `@"…"` token.
+- Reports `fdAvailable: true` with mapped items when fd runs; `true` with no items when fd matches nothing; `false` with no items when the fd binary is missing (degradation + warning signal).
+
+#### `extractFileRefPrefix` (client)
+
+- Returns `null` for empty text, text with no `@`-token, slash commands, and a token already terminated by a trailing space.
+- Extracts a bare `@`-token at the start of the line, a lone `@`, and an `@`-token following whitespace mid-line.
+- Extracts only the token immediately before the cursor when multiple `@`-tokens are present.
+- Does not trigger on a mid-word `@` (e.g. an email address); triggers when `@` follows a non-space delimiter (e.g. `=`).
+- Captures an unclosed quoted `@"…"` token including its opening quote and any spaces inside it.

@@ -29,6 +29,7 @@ import type { FileSessionMetadataStore } from './session-metadata.js';
 import { mapAgentMessages, extractMessageEntryIds, applyEntryIds, type SdkSessionEntry } from './message-mapper.js';
 import { getGitBranch } from './git-branch.js';
 import { sumAssistantCostUsd, type CostBranchEntry } from './session-cost.js';
+import { completeFileRefs } from './file-references.js';
 import type { AgentSession, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { CallBindError } from './voice-orchestrator.js';
@@ -161,6 +162,7 @@ export type ClientRegistry = Map<string, WsHandler>;
 
 export class WsHandler {
   private subscribedSessions = new Set<string>();
+  private fdWarningEmitted = false;
   private viewedSessionId: string | null = null;
   /** Pending login prompt/select inputs keyed by requestId (mirrors pendingUiResponses). */
   private pendingLoginInputs = new Map<string, { resolve: (v: string) => void; reject: (e: unknown) => void }>();
@@ -732,6 +734,7 @@ export class WsHandler {
         case 'get_session_meta':
         case 'get_commands':
         case 'complete_args':
+        case 'complete_file_refs':
         case 'set_session_name':
         case 'dequeue_steering':
         case 'fork':
@@ -1054,6 +1057,15 @@ export class WsHandler {
         break;
       }
 
+      case 'complete_file_refs': {
+        const result = await completeFileRefs({ prefix: command.prefix, cwd: slot.folderPath });
+        if (!result.fdAvailable) {
+          this.emitFdMissingWarning(sessionId);
+        }
+        this.sendResponse(id, true, { items: result.items });
+        break;
+      }
+
       case 'set_session_name': {
         session.setSessionName(command.name);
         this.sendResponse(id, true);
@@ -1242,6 +1254,20 @@ export class WsHandler {
     // Broadcast sidebar updates for both old (now inactive) and new (now active)
     WsHandler.broadcastSidebarUpdate(oldSessionId, folderPath, this.sessionManager, this.clientRegistry);
     WsHandler.broadcastSidebarUpdate(newSessionId, folderPath, this.sessionManager, this.clientRegistry);
+  }
+
+  /** Surface the fd-missing warning at most once per connection (fire-and-forget toast). */
+  private emitFdMissingWarning(sessionId: string): void {
+    if (this.fdWarningEmitted) return;
+    this.fdWarningEmitted = true;
+    this.sendEvent({
+      type: 'extension_ui_request',
+      sessionId,
+      requestId: `fd-missing-${Date.now()}`,
+      method: 'notify',
+      message: 'fd not found — file autocomplete is unavailable. Install fd to enable it.',
+      notifyType: 'warning',
+    });
   }
 
   private buildFolderInfo(folderPath: string) {

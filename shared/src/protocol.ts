@@ -281,6 +281,20 @@ export interface CompleteArgsCommand extends CommandBase {
   prefix: string;
 }
 
+/**
+ * `@`-file-path autocomplete request (client → server). Mirrors pi's interactive
+ * TUI `@` behavior: the client extracts the `@`-token immediately before the
+ * cursor (including `@"…"` quoted tokens) and asks the server for `fd`-backed
+ * path suggestions resolved against the session's working directory. The
+ * response reuses the generic `AutocompleteResponseItem` shape. This is
+ * autocomplete-only — there is no server-side `@`-reference expansion.
+ */
+export interface CompleteFileRefsCommand extends CommandBase {
+  type: 'complete_file_refs';
+  /** The client-extracted `@`-token as typed, including the leading `@` (and opening quote if quoted), e.g. `@src/`, `@"my dir/`. */
+  prefix: string;
+}
+
 // -- Command / autocomplete response shapes --
 
 export interface CommandInfo {
@@ -528,6 +542,7 @@ export type PimoteCommand =
   | GetSessionMetaCommand
   | GetCommandsCommand
   | CompleteArgsCommand
+  | CompleteFileRefsCommand
   | SetSessionNameCommand
   | DequeueSteeringCommand
   | ForkCommand
