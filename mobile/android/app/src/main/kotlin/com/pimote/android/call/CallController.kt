@@ -16,6 +16,7 @@ import com.pimote.android.voice.PeerConnectionFailed
 import com.pimote.android.voice.PeerState
 import com.pimote.android.voice.SpeechmuxPeer
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -226,17 +228,30 @@ class CallControllerImpl(
     override val isSpeakerphoneOn: StateFlow<Boolean> =
         audioRouter?.speakerphoneOn ?: _legacySpeakerphoneOn.asStateFlow()
 
-    private var callJob: Job? = null
-    private var userHangup: CompletableDeferred<Unit>? = null
-    private var currentSessionId: String? = null
-    private var currentPeer: SpeechmuxPeer? = null
-    private var currentConnection: CallConnection? = null
+    /**
+     * Per-call state, held as an immutable record inside a single
+     * [MutableStateFlow]. When the slot is non-null a call is live; when it
+     * is null no call is in flight. Every per-call field that the old
+     * implementation kept as a separate mutable `var` lives on this record
+     * — the call's identity is one value, not six independent fields, so
+     * there is no way for them to drift.
+     *
+     * Transitions during the call (sessionId resolved, peer created) use
+     * [MutableStateFlow.update] which is atomic. Terminal transitions use
+     * [MutableStateFlow.compareAndSet] so concurrent terminations (e.g.
+     * user hangup racing the server's call_ended) cannot both fire the
+     * teardown effects — only the swap that wins runs them; the loser is a
+     * no-op. The old `finished: Boolean` idempotence flag goes away.
+     */
+    private data class Live(
+        val connection: CallConnection,
+        val callJob: Job,
+        val userHangup: CompletableDeferred<Unit>,
+        val sessionId: String?,
+        val peer: SpeechmuxPeer?,
+    )
 
-    // Idempotence guard for [finishCall]: every terminal path funnels into it,
-    // and several races can fire it more than once (e.g. endCurrentCall +
-    // runOutgoing's UserHangup branch, or PimoteConnection.onDisconnect +
-    // server call_ended). Reset to false on every startOutgoing.
-    private var finished: Boolean = false
+    private val live = MutableStateFlow<Live?>(null)
 
     init {
         scope.launch(Dispatchers.Unconfined) {
@@ -268,76 +283,103 @@ class CallControllerImpl(
 
     override fun startOutgoing(target: SessionTarget, connection: CallConnection) {
         com.pimote.android.util.L.i("Call", "startOutgoing target=$target")
-        callJob?.cancel()
-        userHangup = CompletableDeferred()
-        currentSessionId = null
-        currentPeer = null
-        currentConnection = connection
-        finished = false
+        // Cancel any prior live call's job before installing a fresh slot.
+        live.value?.callJob?.cancel()
         // Fresh call starts unmuted.
         _isMicMuted.value = false
         // Clear the previous call's route snapshot; Telecom will re-emit
         // `onCallAudioStateChanged` once this connection is registered.
         _audioRoute.value = null
-        callJob = scope.launch(Dispatchers.Unconfined) {
+        val hangup = CompletableDeferred<Unit>()
+        // LAZY + explicit start() lets us install the Live slot BEFORE
+        // runOutgoing runs its first line. With Dispatchers.Unconfined and
+        // an eager start, runOutgoing would race ahead and call live.update
+        // before the slot was even populated, dropping the resolved sessionId
+        // on the floor.
+        val job = scope.launch(Dispatchers.Unconfined, start = CoroutineStart.LAZY) {
             runOutgoing(target, connection)
         }
+        live.value = Live(
+            connection = connection,
+            callJob = job,
+            userHangup = hangup,
+            sessionId = null,
+            peer = null,
+        )
+        job.start()
     }
 
     override fun endCurrentCall() {
         com.pimote.android.util.L.i("Call", "endCurrentCall (state=${_state.value})")
-        // Two paths, both funnel into finishCall (idempotent):
-        //  - Active: complete the userHangup deferred so runOutgoing's
-        //    select-race wins on UserHangup and calls finishCall from there.
-        //  - Pre-Active: there's no select-race yet, so cancel the job and
-        //    call finishCall directly.
-        userHangup?.complete(Unit)
+        val current = live.value ?: return  // no live call — nothing to end
+        // Active: complete the userHangup deferred so runOutgoing's race
+        // resolves to UserHangup and calls terminate from there.
+        // Pre-Active: there's no race yet; terminate directly.
         when (_state.value) {
+            is CallState.Active -> current.userHangup.complete(Unit)
             is CallState.Dialing,
             is CallState.Binding,
             is CallState.Negotiating -> {
-                val sid = currentSessionId
-                callJob?.cancel()
-                callJob = null
-                finishCall(sid, CallEndReason.USER_HANGUP)
+                current.userHangup.complete(Unit)
+                terminate(CallEndReason.USER_HANGUP)
             }
-            is CallState.Active -> { /* runOutgoing UserHangup branch → finishCall */ }
             else -> { /* Idle / Ended — no-op */ }
         }
     }
 
     /**
      * Single point of call teardown. Every terminal path — user hangup,
-     * remote hangup, peer failure, bind failure — routes through here so the
-     * three pieces (server notify, mic release, Telecom connection teardown)
-     * happen in the right order, in one place. Idempotent: guarded by
-     * [finished], which is reset on the next [startOutgoing].
+     * remote hangup, peer failure, bind failure, app shutdown — routes
+     * through here. Atomic via `live.compareAndSet`: only the caller whose
+     * swap wins runs the teardown effects; concurrent callers see `live`
+     * already nulled out and return [TerminateResult.AlreadyDone] with no
+     * side effects.
      *
-     * Order matters: peer.disconnect() must run before the Telecom connection
-     * is destroyed, because destroying the Connection flips the system audio
-     * mode back to MODE_NORMAL — if AudioRecord is still open at that point
-     * the mic indicator stays lit and the mic stays held against other apps.
+     * Order matters: peer.disconnect() must run before the Telecom
+     * connection is destroyed, because destroying the Connection flips the
+     * system audio mode back to MODE_NORMAL — if AudioRecord is still open
+     * at that point the mic indicator stays lit and the mic stays held
+     * against other apps.
+     *
+     * @return [TerminateResult.Performed] with the snapshot the caller's
+     *   swap won against, or [TerminateResult.AlreadyDone] if the slot was
+     *   already empty / a peer beat this caller to the swap.
      */
-    private fun finishCall(
-        sessionId: String?,
+    private fun terminate(
         reason: CallEndReason,
         failureReason: String? = null,
-        terminalState: CallState = CallState.Ended(sessionId, reason),
+        terminalState: CallState? = null,
+    ): TerminateResult {
+        while (true) {
+            val current = live.value ?: return TerminateResult.AlreadyDone
+            if (!live.compareAndSet(current, null)) continue  // another caller swapped; retry to observe the new state
+            performTermination(current, reason, failureReason, terminalState)
+            return TerminateResult.Performed(current)
+        }
+    }
+
+    private sealed interface TerminateResult {
+        object AlreadyDone : TerminateResult
+        data class Performed(val snapshot: Live) : TerminateResult
+    }
+
+    /**
+     * Apply the teardown effects in the order the public contract requires.
+     * Pure-of-state w.r.t. the controller: reads only the snapshot handed in,
+     * mutates only `_state`. Called exactly once per call (the
+     * [terminate] compareAndSet gates entry).
+     */
+    private fun performTermination(
+        snapshot: Live,
+        reason: CallEndReason,
+        failureReason: String?,
+        terminalState: CallState?,
     ) {
-        if (finished) return
-        finished = true
-
-        val peer = currentPeer
-        val conn = currentConnection
-        currentPeer = null
-        currentConnection = null
-
-        // Policy: the server already knows the call is over iff the server is
-        // who told us. For BIND_FAILED there is no bound call to tell about.
-        // For everything else (user hangup, peer failure, app shutdown), we
-        // notify so the server can release the binding immediately rather
-        // than waiting for signaling timeout. Lives here so it can't drift
-        // between callers.
+        val sessionId = snapshot.sessionId
+        // Policy: the server already knows the call is over iff the server
+        // told us. For BIND_FAILED there is no bound call to tell about. For
+        // user hangup / peer failure we notify so the server can release the
+        // binding immediately rather than waiting for signaling timeout.
         val notifyServer = sessionId != null && when (reason) {
             CallEndReason.REMOTE_HANGUP,
             CallEndReason.DISPLACED,
@@ -351,18 +393,18 @@ class CallControllerImpl(
                 try { wsClient.send(CallEndCommand(id = newId(), sessionId = sessionId)) } catch (_: Throwable) { }
             }
         }
-        try { peer?.disconnect() } catch (_: Throwable) { }
+        try { snapshot.peer?.disconnect() } catch (_: Throwable) { }
         try {
             when (reason) {
-                CallEndReason.USER_HANGUP -> conn?.disconnectAsLocalHangup()
-                CallEndReason.PEER_FAILED -> conn?.disconnectWithError(failureReason ?: "peer_failed")
-                CallEndReason.BIND_FAILED -> conn?.disconnectWithError(failureReason ?: "bind_failed")
+                CallEndReason.USER_HANGUP -> snapshot.connection.disconnectAsLocalHangup()
+                CallEndReason.PEER_FAILED -> snapshot.connection.disconnectWithError(failureReason ?: "peer_failed")
+                CallEndReason.BIND_FAILED -> snapshot.connection.disconnectWithError(failureReason ?: "bind_failed")
                 CallEndReason.REMOTE_HANGUP,
                 CallEndReason.DISPLACED,
-                CallEndReason.SERVER_ENDED -> conn?.disconnectAsRemoteEnded(reason)
+                CallEndReason.SERVER_ENDED -> snapshot.connection.disconnectAsRemoteEnded(reason)
             }
         } catch (_: Throwable) { }
-        _state.value = terminalState
+        _state.value = terminalState ?: CallState.Ended(sessionId, reason)
     }
 
     override fun onAudioStateChanged(audioState: AudioRouteSnapshot) {
@@ -374,7 +416,7 @@ class CallControllerImpl(
     }
 
     override fun setAudioRoute(route: AudioRoute) {
-        try { currentConnection?.setAudioRoute(route) } catch (_: Throwable) { /* best-effort */ }
+        try { live.value?.connection?.setAudioRoute(route) } catch (_: Throwable) { /* best-effort */ }
     }
 
     override fun setSpeakerphone(enabled: Boolean) {
@@ -391,12 +433,12 @@ class CallControllerImpl(
 
     override fun setMicMuted(muted: Boolean) {
         _isMicMuted.value = muted
-        try { currentPeer?.setMicMuted(muted) } catch (_: Throwable) { /* idempotent best-effort */ }
+        try { live.value?.peer?.setMicMuted(muted) } catch (_: Throwable) { /* idempotent best-effort */ }
     }
 
     override fun onAppShutdown() {
         com.pimote.android.util.L.i("Call", "onAppShutdown (state=${_state.value})")
-        // Route through finishCall so the teardown sequence (notify server,
+        // Route through terminate so the teardown sequence (notify server,
         // release mic, destroy Telecom Connection) lives in exactly one
         // place. App-shutdown differs from a normal user hangup only in two
         // ways, both expressed as parameters here:
@@ -404,16 +446,14 @@ class CallControllerImpl(
         //    die; no subscriber will be alive to observe an Ended.
         //  - The DisconnectCause is LOCAL (via USER_HANGUP), not the
         //    misleading ERROR the previous open-coded path used.
-        callJob?.cancel()
-        callJob = null
-        userHangup?.complete(Unit)
-        userHangup = null
-        finishCall(
-            sessionId = currentSessionId,
-            reason = CallEndReason.USER_HANGUP,
-            terminalState = CallState.Idle,
-        )
-        currentSessionId = null
+        val current = live.value ?: run {
+            // No call in flight — just make sure state is Idle and bail.
+            _state.value = CallState.Idle
+            return
+        }
+        current.callJob.cancel()
+        current.userHangup.complete(Unit)
+        terminate(CallEndReason.USER_HANGUP, terminalState = CallState.Idle)
     }
 
     private suspend fun runOutgoing(target: SessionTarget, connection: CallConnection) {
@@ -428,17 +468,19 @@ class CallControllerImpl(
                     OpenSessionResponseData.serializer(),
                 )
                 if (!resp.success || resp.data == null) {
-                    finishCall(
-                        sessionId = null,
-                        reason = CallEndReason.BIND_FAILED,
-                        failureReason = resp.error ?: "open_session_failed",
-                    )
+                    terminate(CallEndReason.BIND_FAILED, failureReason = resp.error ?: "open_session_failed")
                     return
                 }
                 resp.data.sessionId
             }
         }
-        currentSessionId = sessionId
+        // Record the resolved sessionId on the live slot. update is atomic;
+        // if the slot was already torn down (concurrent user hangup or
+        // app shutdown), the lambda's `it` will be null, copy is skipped,
+        // and the slot stays null. Subsequent terminate calls become no-ops
+        // via compareAndSet, so it is safe to fall through.
+        live.update { it?.copy(sessionId = sessionId) }
+        if (live.value == null) return
 
         // 2) call_bind, with single retry on `call_bind_failed_owned`.
         _state.value = CallState.Binding(sessionId)
@@ -454,27 +496,25 @@ class CallControllerImpl(
         }
         val bindData = bind.data
         if (!bind.success || bindData == null) {
-            finishCall(
-                sessionId = sessionId,
-                reason = CallEndReason.BIND_FAILED,
-                failureReason = bind.error ?: "call_bind_failed",
-            )
+            terminate(CallEndReason.BIND_FAILED, failureReason = bind.error ?: "call_bind_failed")
             return
         }
 
         // 3) Peer connect.
         val peer = peerFactory()
-        currentPeer = peer
+        live.update { it?.copy(peer = peer) }
+        if (live.value == null) {
+            // Slot was torn down between sessionId and now — dispose the
+            // peer we just created and bail.
+            try { peer.disconnect() } catch (_: Throwable) { }
+            return
+        }
         _state.value = CallState.Negotiating(sessionId)
         try {
             peer.connect(bindData.webrtcSignalUrl, sessionId)
         } catch (e: PeerConnectionFailed) {
             com.pimote.android.util.L.w("Call", "peer connect failed: reason=${e.reason} signalUrl=${bindData.webrtcSignalUrl}", e)
-            finishCall(
-                sessionId = sessionId,
-                reason = CallEndReason.PEER_FAILED,
-                failureReason = "peer_failed",
-            )
+            terminate(CallEndReason.PEER_FAILED, failureReason = "peer_failed")
             return
         }
 
@@ -502,7 +542,7 @@ class CallControllerImpl(
         // `session_closed` rather than `call_ended`. Without this branch
         // the call would sit in Active forever and Telecom would keep the
         // VoIP audio mode on. See docs/plans/android-call-displacement.md.
-        val hangup = userHangup ?: CompletableDeferred<Unit>().also { userHangup = it }
+        val hangup = live.value?.userHangup ?: return  // slot already torn down
         val outcome: Outcome = coroutineScope {
             val winner = CompletableDeferred<Outcome>()
             val w1 = launch(Dispatchers.Unconfined) {
@@ -530,9 +570,9 @@ class CallControllerImpl(
         }
 
         when (outcome) {
-            is Outcome.RemoteEnded -> finishCall(sessionId, outcome.reason)
-            is Outcome.PeerFailed -> finishCall(sessionId, CallEndReason.PEER_FAILED, failureReason = "peer_failed")
-            is Outcome.UserHangup -> finishCall(sessionId, CallEndReason.USER_HANGUP)
+            is Outcome.RemoteEnded -> terminate(outcome.reason)
+            is Outcome.PeerFailed -> terminate(CallEndReason.PEER_FAILED, failureReason = "peer_failed")
+            is Outcome.UserHangup -> terminate(CallEndReason.USER_HANGUP)
         }
     }
 
