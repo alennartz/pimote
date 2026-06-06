@@ -299,7 +299,7 @@ class CallControllerImpl(
                 val sid = currentSessionId
                 callJob?.cancel()
                 callJob = null
-                finishCall(sid, CallEndReason.USER_HANGUP, sendCallEnd = sid != null)
+                finishCall(sid, CallEndReason.USER_HANGUP)
             }
             is CallState.Active -> { /* runOutgoing UserHangup branch → finishCall */ }
             else -> { /* Idle / Ended — no-op */ }
@@ -321,8 +321,8 @@ class CallControllerImpl(
     private fun finishCall(
         sessionId: String?,
         reason: CallEndReason,
-        sendCallEnd: Boolean,
         failureReason: String? = null,
+        terminalState: CallState = CallState.Ended(sessionId, reason),
     ) {
         if (finished) return
         finished = true
@@ -332,7 +332,21 @@ class CallControllerImpl(
         currentPeer = null
         currentConnection = null
 
-        if (sendCallEnd && sessionId != null) {
+        // Policy: the server already knows the call is over iff the server is
+        // who told us. For BIND_FAILED there is no bound call to tell about.
+        // For everything else (user hangup, peer failure, app shutdown), we
+        // notify so the server can release the binding immediately rather
+        // than waiting for signaling timeout. Lives here so it can't drift
+        // between callers.
+        val notifyServer = sessionId != null && when (reason) {
+            CallEndReason.REMOTE_HANGUP,
+            CallEndReason.DISPLACED,
+            CallEndReason.SERVER_ENDED,
+            CallEndReason.BIND_FAILED -> false
+            CallEndReason.USER_HANGUP,
+            CallEndReason.PEER_FAILED -> true
+        }
+        if (notifyServer && sessionId != null) {
             scope.launch {
                 try { wsClient.send(CallEndCommand(id = newId(), sessionId = sessionId)) } catch (_: Throwable) { }
             }
@@ -348,7 +362,7 @@ class CallControllerImpl(
                 CallEndReason.SERVER_ENDED -> conn?.markEndedRemotely(reason)
             }
         } catch (_: Throwable) { }
-        _state.value = CallState.Ended(sessionId, reason)
+        _state.value = terminalState
     }
 
     override fun onAudioStateChanged(audioState: AudioRouteSnapshot) {
@@ -382,41 +396,24 @@ class CallControllerImpl(
 
     override fun onAppShutdown() {
         com.pimote.android.util.L.i("Call", "onAppShutdown (state=${_state.value})")
-        // Snapshot + null out everything up front so this is idempotent and a
-        // concurrent endCurrentCall / runOutgoing race can't double-fire the
-        // teardown.
-        val peer = currentPeer
-        val conn = currentConnection
-        val sid = currentSessionId
-        currentPeer = null
-        currentConnection = null
-        currentSessionId = null
+        // Route through finishCall so the teardown sequence (notify server,
+        // release mic, destroy Telecom Connection) lives in exactly one
+        // place. App-shutdown differs from a normal user hangup only in two
+        // ways, both expressed as parameters here:
+        //  - terminalState is Idle, not Ended(...). The process is about to
+        //    die; no subscriber will be alive to observe an Ended.
+        //  - The DisconnectCause is LOCAL (via USER_HANGUP), not the
+        //    misleading ERROR the previous open-coded path used.
         callJob?.cancel()
         callJob = null
         userHangup?.complete(Unit)
         userHangup = null
-
-        // 1) Best-effort tell the server we're gone so it can release the call
-        //    binding immediately rather than waiting on signaling timeout.
-        //    `wsClient.send` is suspend; fire-and-forget on the application scope
-        //    because onAppShutdown itself is non-suspending (called from the
-        //    Telecom Service's onTaskRemoved on the main thread).
-        if (sid != null) {
-            scope.launch {
-                try { wsClient.send(CallEndCommand(id = newId(), sessionId = sid)) } catch (_: Throwable) { }
-            }
-        }
-        // 2) Release the mic. SpeechmuxPeerImpl.disconnect is idempotent and
-        //    disposes the AudioSource (which is what actually stops the
-        //    AudioRecord — see the comment in SpeechmuxPeerImpl.disconnect).
-        try { peer?.disconnect() } catch (_: Throwable) { }
-        // 3) Destroy the Telecom Connection so the ConnectionService can be
-        //    unbound and the process is allowed to die. Without this the
-        //    self-managed Connection keeps the service alive after the task is
-        //    removed, which is the original bug we're closing here.
-        try { conn?.markFailed("app_shutdown") } catch (_: Throwable) { }
-
-        _state.value = CallState.Idle
+        finishCall(
+            sessionId = currentSessionId,
+            reason = CallEndReason.USER_HANGUP,
+            terminalState = CallState.Idle,
+        )
+        currentSessionId = null
     }
 
     private suspend fun runOutgoing(target: SessionTarget, connection: CallConnection) {
@@ -434,7 +431,6 @@ class CallControllerImpl(
                     finishCall(
                         sessionId = null,
                         reason = CallEndReason.BIND_FAILED,
-                        sendCallEnd = false,
                         failureReason = resp.error ?: "open_session_failed",
                     )
                     return
@@ -461,7 +457,6 @@ class CallControllerImpl(
             finishCall(
                 sessionId = sessionId,
                 reason = CallEndReason.BIND_FAILED,
-                sendCallEnd = false,
                 failureReason = bind.error ?: "call_bind_failed",
             )
             return
@@ -478,7 +473,6 @@ class CallControllerImpl(
             finishCall(
                 sessionId = sessionId,
                 reason = CallEndReason.PEER_FAILED,
-                sendCallEnd = true,
                 failureReason = "peer_failed",
             )
             return
@@ -536,22 +530,9 @@ class CallControllerImpl(
         }
 
         when (outcome) {
-            is Outcome.RemoteEnded -> finishCall(
-                sessionId = sessionId,
-                reason = outcome.reason,
-                sendCallEnd = false, // server already ended it
-            )
-            is Outcome.PeerFailed -> finishCall(
-                sessionId = sessionId,
-                reason = CallEndReason.PEER_FAILED,
-                sendCallEnd = true,
-                failureReason = "peer_failed",
-            )
-            is Outcome.UserHangup -> finishCall(
-                sessionId = sessionId,
-                reason = CallEndReason.USER_HANGUP,
-                sendCallEnd = true,
-            )
+            is Outcome.RemoteEnded -> finishCall(sessionId, outcome.reason)
+            is Outcome.PeerFailed -> finishCall(sessionId, CallEndReason.PEER_FAILED, failureReason = "peer_failed")
+            is Outcome.UserHangup -> finishCall(sessionId, CallEndReason.USER_HANGUP)
         }
     }
 

@@ -1,11 +1,8 @@
 package com.pimote.android.ui.contacts
 
-import android.content.ComponentName
+
 import android.content.Context
-import android.net.Uri
-import android.os.Bundle
-import android.telecom.PhoneAccountHandle
-import android.telecom.TelecomManager
+
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -48,10 +45,9 @@ import com.pimote.android.session.buildSessionProjectGroups
 import com.pimote.android.session.cwdLabelFor
 import com.pimote.android.session.formatRelativeTime
 import com.pimote.android.session.sessionDisplayName
-import com.pimote.android.telephony.PIMOTE_SERVICE_HANDLE_ID
-import com.pimote.android.telephony.PIMOTE_URI_SCHEME
 import com.pimote.android.telephony.PhoneAccountRules
-import com.pimote.android.telephony.PimoteConnectionService
+import com.pimote.android.shortcuts.CallByPimoteUri
+import com.pimote.android.telephony.PIMOTE_URI_SCHEME
 import com.pimote.android.ui.components.EmptyState
 import com.pimote.android.ui.components.EmptyStateCta
 import com.pimote.android.ui.components.PimoteSnackbarHost
@@ -244,23 +240,19 @@ fun ContactsScreen(viewModel: ContactsViewModel, onEditSettings: () -> Unit) {
                         val onCall: () -> Unit = onCall@{
                             if (context == null) return@onCall
                             loadingHandleId = handleId
-                            try {
-                                placeCall(context, handleId)
-                                // Don't clear loadingHandleId here — placeCall returns
-                                // synchronously but the call dispatch is async. The
-                                // LaunchedEffect(callState) above clears the spinner once
-                                // the controller leaves Idle.
-                            } catch (e: SecurityException) {
+                            // Single source of truth for placing a pimote call lives
+                            // in CallByPimoteUri.placeCall. Don't clear loadingHandleId
+                            // on success — dispatch is async; LaunchedEffect(callState)
+                            // above clears the spinner once the controller leaves Idle.
+                            val dispatched = CallByPimoteUri.placeCall(
+                                context = context,
+                                pimoteUri = "$PIMOTE_URI_SCHEME:$handleId",
+                                telecom = AppContainer.instance.telecomFacade,
+                            )
+                            if (!dispatched) {
                                 loadingHandleId = null
-                                L.w("Contacts", "placeCall SecurityException", e)
                                 scope.launch {
-                                    snackbar.showSnackbar("Permission missing for placeCall")
-                                }
-                            } catch (e: Throwable) {
-                                loadingHandleId = null
-                                L.w("Contacts", "placeCall failed: ${e.message}", e)
-                                scope.launch {
-                                    snackbar.showSnackbar("Failed: ${e.message}")
+                                    snackbar.showSnackbar("Couldn't place call")
                                 }
                             }
                         }
@@ -323,16 +315,3 @@ private fun ContactsEmptyState(state: WsState, onEditSettings: () -> Unit) {
 
 @Composable
 private fun LocalContextOrNull(): Context? = androidx.compose.ui.platform.LocalContext.current
-
-private fun placeCall(context: Context, sourceId: String) {
-    val tm = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
-    val component = ComponentName(context.applicationContext, PimoteConnectionService::class.java)
-    // The single Pimote service PhoneAccount handles all `pimote:` URIs.
-    val handle = PhoneAccountHandle(component, PIMOTE_SERVICE_HANDLE_ID)
-    val uri = Uri.fromParts(PIMOTE_URI_SCHEME, sourceId, null)
-    val extras = Bundle().apply {
-        putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, handle)
-    }
-    L.i("Contacts", "placeCall sourceId=$sourceId uri=$uri")
-    tm.placeCall(uri, extras)
-}
