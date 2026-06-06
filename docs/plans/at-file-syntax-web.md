@@ -290,4 +290,4 @@ Run the workspace gates to confirm nothing regressed end-to-end:
 - Optionally exercise the live flow against a running server to confirm the fd-missing warning toast appears once when `fd` is absent.
 
 **Verify:** all four package gates pass with no new failures; `@` autocomplete works against a real session and degrades to a single warning when `fd` is missing.
-**Status:** not started
+**Status:** done
