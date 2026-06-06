@@ -42,3 +42,35 @@ export function extractFileRefPrefix(textBeforeCursor: string): string | null {
 
   return token;
 }
+
+/** Outcome of applying a selected `@`-file-ref autocomplete item to the input. */
+export interface FileRefSelection {
+  /** Text to insert in place of the current `@`-token. */
+  insertedText: string;
+  /** True when the selection is a directory — the menu stays open to drill in. */
+  isDirectory: boolean;
+  /** For a directory, the still-open token to re-arm as the next prefix; else null. */
+  nextPrefix: string | null;
+}
+
+/**
+ * Decide how a selected `@`-file-ref item is applied to the input.
+ *
+ * `value` is the server-produced inserted token: `@path`, `@path/`,
+ * `@"quoted path"`, or `@"quoted dir/"`. Note the closing quote on a quoted
+ * directory falls *after* the trailing slash (`@"my dir/"`), so directory
+ * detection tests the path portion, not the raw value's last character.
+ *
+ * For a directory drill-in the inserted text is the *still-open* token (no
+ * closing quote for quoted tokens) so continued typing extends the same
+ * `@`-token; a terminal file keeps the closed form as-is.
+ */
+export function resolveFileRefSelection(value: string): FileRefSelection {
+  const isQuoted = value.startsWith('@"') && value.endsWith('"');
+  const path = isQuoted ? value.slice(2, -1) : value.slice(1);
+  if (!path.endsWith('/')) {
+    return { insertedText: value, isDirectory: false, nextPrefix: null };
+  }
+  const openToken = isQuoted ? `@"${path}` : `@${path}`;
+  return { insertedText: openToken, isDirectory: true, nextPrefix: openToken };
+}

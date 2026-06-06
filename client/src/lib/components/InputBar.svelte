@@ -7,7 +7,7 @@
   import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
   import { loginStore } from '$lib/stores/login-store.js';
   import CommandAutocomplete from './CommandAutocomplete.svelte';
-  import { extractFileRefPrefix } from '$lib/file-ref-prefix.js';
+  import { extractFileRefPrefix, resolveFileRefSelection } from '$lib/file-ref-prefix.js';
   import type { CommandInfo } from '@pimote/shared';
   import Send from '@lucide/svelte/icons/send';
   import MessageSquare from '@lucide/svelte/icons/message-square';
@@ -357,13 +357,14 @@
       const cursor = textareaEl?.selectionStart ?? inputText.length;
       const tokenStart = cursor - (fileRefPrefix?.length ?? 0);
       const value = item.value ?? item.name;
-      inputText = inputText.slice(0, tokenStart) + value + inputText.slice(cursor);
-      const cursorPos = tokenStart + value.length;
-      if (value.endsWith('/')) {
+      const selection = resolveFileRefSelection(value);
+      inputText = inputText.slice(0, tokenStart) + selection.insertedText + inputText.slice(cursor);
+      const cursorPos = tokenStart + selection.insertedText.length;
+      if (selection.isDirectory) {
         // Directory — keep the menu open so the user can drill in
         autocompleteVisible = true;
         autocompleteMode = 'fileRefs';
-        fileRefPrefix = value;
+        fileRefPrefix = selection.nextPrefix;
       } else {
         autocompleteVisible = false;
       }

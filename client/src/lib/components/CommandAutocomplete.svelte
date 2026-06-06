@@ -22,80 +22,52 @@
     return fuzzyFilter(items, query, (item) => item.name).slice(0, 10);
   });
 
-  // Args mode: server-fetched completion items
-  let argsItems: AutocompleteResponseItem[] = $state([]);
-  let argsDebounceTimer: ReturnType<typeof setTimeout> | undefined;
-  let argsRequestSeq = 0;
+  // Server-fetched completion items for the two server-backed modes (args and
+  // fileRefs). Both modes run the same debounced-fetch-with-stale-discard
+  // operation, differing only in the request payload, so they share one effect.
+  let serverItems: AutocompleteResponseItem[] = $state([]);
+  let serverDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let serverRequestSeq = 0;
 
-  // Fetch arg completions on query change in args mode
+  // Fetch server completions on query change in args / fileRefs modes
   $effect(() => {
-    if (mode !== 'args' || !visible) return;
+    if ((mode !== 'args' && mode !== 'fileRefs') || !visible) return;
+    const currentMode = mode;
     const currentQuery = query;
     const currentCommandName = commandName;
     const currentSessionId = sessionId;
 
-    clearTimeout(argsDebounceTimer);
-    argsDebounceTimer = setTimeout(async () => {
-      const seq = ++argsRequestSeq;
+    clearTimeout(serverDebounceTimer);
+    serverDebounceTimer = setTimeout(async () => {
+      const seq = ++serverRequestSeq;
       try {
-        const res = await connection.send({
-          type: 'complete_args',
-          sessionId: currentSessionId,
-          commandName: currentCommandName,
-          prefix: currentQuery,
-        });
+        const res = await (currentMode === 'fileRefs'
+          ? connection.send({
+              type: 'complete_file_refs',
+              sessionId: currentSessionId,
+              prefix: currentQuery,
+            })
+          : connection.send({
+              type: 'complete_args',
+              sessionId: currentSessionId,
+              commandName: currentCommandName,
+              prefix: currentQuery,
+            }));
         // Discard stale responses — a newer request has been sent
-        if (seq !== argsRequestSeq) return;
+        if (seq !== serverRequestSeq) return;
         if (res.success && res.data) {
           const result = (res.data as { items: AutocompleteResponseItem[] | null }).items;
-          argsItems = result ?? [];
+          serverItems = result ?? [];
         } else {
-          argsItems = [];
+          serverItems = [];
         }
       } catch {
-        if (seq !== argsRequestSeq) return;
-        argsItems = [];
+        if (seq !== serverRequestSeq) return;
+        serverItems = [];
       }
     }, 200);
 
-    return () => clearTimeout(argsDebounceTimer);
-  });
-
-  // FileRefs mode: server-fetched @-file-path completion items
-  let fileRefsItems: AutocompleteResponseItem[] = $state([]);
-  let fileRefsDebounceTimer: ReturnType<typeof setTimeout> | undefined;
-  let fileRefsRequestSeq = 0;
-
-  // Fetch file-ref completions on query change in fileRefs mode
-  $effect(() => {
-    if (mode !== 'fileRefs' || !visible) return;
-    const currentQuery = query;
-    const currentSessionId = sessionId;
-
-    clearTimeout(fileRefsDebounceTimer);
-    fileRefsDebounceTimer = setTimeout(async () => {
-      const seq = ++fileRefsRequestSeq;
-      try {
-        const res = await connection.send({
-          type: 'complete_file_refs',
-          sessionId: currentSessionId,
-          prefix: currentQuery,
-        });
-        // Discard stale responses — a newer request has been sent
-        if (seq !== fileRefsRequestSeq) return;
-        if (res.success && res.data) {
-          const result = (res.data as { items: AutocompleteResponseItem[] | null }).items;
-          fileRefsItems = result ?? [];
-        } else {
-          fileRefsItems = [];
-        }
-      } catch {
-        if (seq !== fileRefsRequestSeq) return;
-        fileRefsItems = [];
-      }
-    }, 200);
-
-    return () => clearTimeout(fileRefsDebounceTimer);
+    return () => clearTimeout(serverDebounceTimer);
   });
 
   // The display list depends on the mode
@@ -106,8 +78,7 @@
         description: c.description,
       }));
     }
-    const sourceItems = mode === 'fileRefs' ? fileRefsItems : argsItems;
-    return sourceItems.map((a) => ({
+    return serverItems.map((a) => ({
       name: a.label,
       value: a.value,
       description: a.description,

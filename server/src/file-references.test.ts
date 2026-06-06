@@ -50,6 +50,23 @@ describe('completeFileRefs — fd invocation construction', () => {
     expect(calls[0]!.query).toBe('comp');
   });
 
+  it('separates the positional query with -- so a leading-dash query is not parsed as an fd flag', async () => {
+    const { runFd, calls } = fakeFd([]);
+    await completeFileRefs({ prefix: '@-dash', cwd: CWD, runFd });
+    const { args } = calls[0]!;
+    // The `--` end-of-options marker must immediately precede the query.
+    const sep = args.indexOf('--');
+    expect(sep).toBeGreaterThanOrEqual(0);
+    expect(args[sep + 1]).toBe('-dash');
+    expect(args[args.length - 1]).toBe('-dash');
+  });
+
+  it('omits the -- separator when there is no positional query', async () => {
+    const { runFd, calls } = fakeFd([]);
+    await completeFileRefs({ prefix: '@', cwd: CWD, runFd });
+    expect(calls[0]!.args).not.toContain('--');
+  });
+
   it('does not pass --full-path for a bare single-segment prefix', async () => {
     const { runFd, calls } = fakeFd([]);
     await completeFileRefs({ prefix: '@foo', cwd: CWD, runFd });
@@ -168,6 +185,15 @@ describe('completeFileRefs — quoting', () => {
     const { items } = await completeFileRefs({ prefix: '@"src/', cwd: CWD, runFd });
 
     expect(items[0]!.value).toBe('@"src/index.ts"');
+  });
+
+  it('wraps a quoted directory with the closing quote AFTER the trailing slash', async () => {
+    // The client's drill-in directory check must cope with this ordering:
+    // the value ends in `"`, not `/`, even though it is a directory.
+    const { runFd } = fakeFd(['my dir/']);
+    const { items } = await completeFileRefs({ prefix: '@', cwd: CWD, runFd });
+
+    expect(items[0]!.value).toBe('@"my dir/"');
   });
 });
 

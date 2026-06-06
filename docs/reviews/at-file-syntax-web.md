@@ -15,7 +15,7 @@ The implementation faithfully follows the plan across all five steps: a dedicate
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/file-references.ts:90-93` (`if (query !== '') { args.push(query); }`)
-- **Status:** open
+- **Status:** resolved
 
 The query pattern is appended as a bare positional argument with no `--` end-of-options separator. `execFile` builds an argv vector (so this is **not** a shell-injection vector — there is no shell, and the query is always a single argv element, which also rules out splitting an injected `-x`/`--exec` into a separate command argument), but `fd`'s own clap parser still treats any argument beginning with `-` as an option. Verified against real `fd`: `fd --base-directory . '-dash'` fails with `invalid value 'ash' for '--max-depth'`, while `fd --base-directory . -- '-dash'` returns the file correctly. Consequences: (a) any legitimate file/dir whose name starts with `-` cannot be completed — `fd` errors, the runner swallows it as `available:true, lines:[]`, and the user sees an empty menu; (b) defense-in-depth — user-controlled text is fed directly into `fd`'s flag parser. Fix: emit `--` immediately before the positional query (e.g. `args.push('--', query)`), matching the standard hardening the TUI's `walkDirectoryWithFd` applies. Note the tests assert flag _absence_ (`--full-path`) but none cover a `-`-leading query, so this passed CI.
 
@@ -24,7 +24,7 @@ The query pattern is appended as a bare positional argument with no `--` end-of-
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/components/InputBar.svelte:359-366`; interacts with `server/src/file-references.ts:146-150` (`mapLineToItem`)
-- **Status:** open
+- **Status:** resolved
 
 The plan specifies that "selecting a directory keeps the menu open so the user can drill in," and the implementation detects directories via `value.endsWith('/')`. But `mapLineToItem` wraps quoted tokens as `@"<scope><line>"` with the closing quote _after_ the trailing slash, so a quoted directory item's `value` is `@"my dir/"` — it ends with `"`, not `/`. Quoting fires whenever the path contains a space **or** the prefix was already a quoted `@"…` token, so this hits every directory reached through a spaced/quoted scope. Result: `value.endsWith('/')` is `false`, the menu closes instead of drilling in, and the user must re-type to continue. Worse, if the check ever did pass, `fileRefPrefix = value` would carry the embedded closing quote (`@"my dir/"`), which `parsePrefix` would then mis-split (query becomes `"`). The drill-in directory check needs to recognize quoted directory tokens (e.g. test the path portion, or strip a trailing quote before the `endsWith('/')` test) and the re-armed `fileRefPrefix` must be the open-quoted form without the closing quote.
 
@@ -33,7 +33,7 @@ The plan specifies that "selecting a directory keeps the menu open so the user c
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/components/CommandAutocomplete.svelte:65-103` (vs `args` effect at 27-61)
-- **Status:** open
+- **Status:** resolved
 
 The debounced-fetch-with-stale-discard operation now exists twice, differing only in the command `type` and the presence of `commandName`. Per AGENTS.md principle #6 ("each business operation lives in one function"), this is the same operation reachable two ways and will drift — a fix to one debounce/seq path won't reach the other. The plan explicitly directed "mirror the existing `args` effect," so this is plan-conformant, but the structural smell stands: a single parameterized fetch effect (command type + optional `commandName` as inputs, writing into a mode-selected `$state` array) would collapse both. Noting per the AGENTS.md directive to flag such duplication rather than propagate it.
 
@@ -42,7 +42,7 @@ The debounced-fetch-with-stale-discard operation now exists twice, differing onl
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/file-references.ts:135` (`if (scope === '~/' || scope.startsWith('~/'))`)
-- **Status:** open
+- **Status:** resolved
 
 `'~/'.startsWith('~/')` is already `true`, so the first comparison is dead. Harmless, but the `||` reads as if `'~/'` were a distinct case the `startsWith` misses. Drop the redundant disjunct.
 

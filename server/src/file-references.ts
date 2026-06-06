@@ -91,7 +91,9 @@ export async function completeFileRefs(input: CompleteFileRefsInput): Promise<Co
 
   const args = ['--type', 'f', '--type', 'd', '--hidden', '--follow', '--exclude', '.git', '--max-results', String(MAX_RESULTS), '--base-directory', baseDir];
   if (query !== '') {
-    args.push(query);
+    // `--` ends fd's option parsing so a query starting with `-` is treated as a
+    // positional pattern, not a flag (matches the TUI's walkDirectoryWithFd).
+    args.push('--', query);
   }
 
   const invocation: FdInvocation = { fdPath, baseDir, query, args };
@@ -129,7 +131,7 @@ function resolveBaseDir(scope: string, cwd: string): string {
   if (scope === '') {
     return cwd;
   }
-  if (scope === '~/' || scope.startsWith('~/')) {
+  if (scope.startsWith('~/')) {
     return resolve(homedir(), scope.slice(2));
   }
   if (isAbsolute(scope)) {
