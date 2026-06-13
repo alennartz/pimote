@@ -288,3 +288,179 @@ android:resource="@xml/automotive_app_desc" />` and a new `res/xml/automotive_ap
 - Returns `null` when there is content to show.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Add the Android for Cars App Library dependencies
+
+In `mobile/android/app/build.gradle.kts`, add two `implementation` lines to the
+`dependencies { }` block (a new "Android Auto" group is fine):
+
+```kotlin
+implementation("androidx.car.app:app:1.7.0")
+implementation("androidx.car.app:app-projected:1.7.0")
+```
+
+These are hand-edited Gradle coordinates (no CLI for this ecosystem). `1.7.0` is the
+latest **stable** per the architecture; do not pick a `1.8.x`/`1.9.x` alpha/beta. Both
+artifacts live on Google Maven, which the project's repositories already include.
+`compileSdk = 36` / `minSdk = 26` are compatible.
+
+**Verify:** `make android-build` resolves the new artifacts (no unresolved-dependency
+error); the build proceeds to compilation.
+**Status:** not started
+
+### Step 2: Implement the three `CarRowModels` helpers
+
+Replace the three `TODO("not implemented")` bodies in
+`mobile/android/app/src/main/kotlin/com/pimote/android/car/CarRowModels.kt`. This is the
+step that turns `CarRowModelsTest` green. Compose the existing pure helpers — import
+`PhoneAccountRules` (`com.pimote.android.telephony`), `sessionDisplayName` /
+`formatRelativeTime` (`com.pimote.android.session`). No Android framework types.
+
+- **`projectCallRows(projects, sessions, nowMillis, limit)`** — one `CarRow` per project.
+  - Per-project last-activity = max `modified` (ISO-8601 string; parse via `Instant.parse`,
+    or compare the ISO strings lexically since they're zulu-normalized) over that project's
+    sessions (matched by `session.folderPath == project.folderPath`); `null` when the
+    project has no sessions.
+  - Order: projects **with** sessions first, by last-activity descending; projects **without**
+    sessions last, ordered ascending by the title string (see below). The test
+    `sorts no-session projects last ordered by title` pins this ("work alpha" < "work zeta").
+  - `title` = `<root> <folderName>` where `root = PhoneAccountRules.rootSegmentOf(folderPath)`;
+    when `root == null`, fall back to the bare `folderName`. Mirrors `ContactsSync`.
+  - `key` = `PhoneAccountRules.projectHandleId(folderPath)` (the `project:<b64>` handle).
+  - `dialUri` = `"pimote:" + PhoneAccountRules.projectHandleId(folderPath)`.
+  - `subtitle` = `"No sessions yet"` when no sessions; otherwise
+    `"<n> session(s) · <relative>"` — singular `"1 session"` vs plural `"3 sessions"`, and
+    `formatRelativeTime(lastActivityIso, nowMillis)` for the `· 5m ago` tail. The test only
+    asserts `contains("3 sessions")`, `contains("1 session")` (and not `"1 sessions"`), and
+    `contains("5m ago")`, so the `·` separator is the natural choice but only the substrings
+    are pinned.
+  - Truncate to `limit` rows **after** sorting.
+- **`resumeSessionRows(sessions, nowMillis, limit)`** — flat, not grouped.
+  - Order by `modified` descending across all projects.
+  - `key` = `PhoneAccountRules.sessionHandleId(sessionId)` (`session:<id>`).
+  - `dialUri` = `"pimote:" + PhoneAccountRules.sessionHandleId(sessionId)`.
+  - `title` = `sessionDisplayName(session)`.
+  - `subtitle` = `formatRelativeTime(session.modified, nowMillis)` (non-empty).
+  - Truncate to `limit` after sorting. Empty input → empty list.
+- **`carListMessage(originConfigured, connected, hasProjects)`** — precedence: origin →
+  connection → emptiness.
+  - `originConfigured == false` → a fixed message that mentions "phone" and never the word
+    "connecting" (test lowercases and asserts `contains("phone")` + `!contains("connecting")`),
+    returned regardless of `connected`/`hasProjects`. Suggested: `"Set the Pimote server
+address on your phone"`.
+  - else `connected == false` → a non-empty disconnected message, independent of
+    `hasProjects` (e.g. `"Connecting to Pimote…"` or `"Pimote offline"`).
+  - else `hasProjects == false` → exactly `"No projects yet"`.
+  - else → `null`.
+
+**Verify:** `make android-test` runs `CarRowModelsTest` and all its cases pass.
+**Status:** not started
+
+### Step 3: Add the `automotive_app_desc` resource
+
+Create `mobile/android/app/src/main/res/xml/automotive_app_desc.xml` declaring the templated
+(non-media, non-navigation) capability:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<automotiveApp>
+    <uses name="template" />
+</automotiveApp>
+```
+
+This is referenced by the application-level meta-data added in Step 5.
+
+**Verify:** file exists under `res/xml/`; `make android-build` packages resources without an
+"resource not found" error once Step 5 references it.
+**Status:** not started
+
+### Step 4: Implement the `CarAppService` / `Session` / `Screen` framework glue
+
+Create four files under
+`mobile/android/app/src/main/kotlin/com/pimote/android/car/` (package
+`com.pimote.android.car`). These are framework-instantiated and read the process-wide
+container via `carContext.pimoteContainer` (the `Context.pimoteContainer` extension already
+exists). Not unit-tested — they are thin shells over `CarRowModels` (Step 2) and the existing
+call machinery.
+
+- **`PimoteCarAppService.kt`** — `class PimoteCarAppService : CarAppService()`.
+  - `createHostValidator()` → a permissive validator acceptable for a sideloaded personal
+    build (`HostValidator.ALLOW_ALL_HOSTS_VALIDATOR`).
+  - `onCreateSession()` → `PimoteCarSession()`.
+- **`PimoteCarSession.kt`** — `class PimoteCarSession : Session()`.
+  - `onCreateScreen(intent: Intent): Screen` → `ProjectListScreen(carContext)`.
+- **`ProjectListScreen.kt`** — `class ProjectListScreen(carContext: CarContext) : Screen(carContext)`.
+  - In `init`, launch a collector on `lifecycleScope` (the `Screen` is a `LifecycleOwner`) that
+    combines `container.sessionRepository.projects` and `.sessions` and calls `invalidate()` on
+    each emission. Capture the screen instance (final), not a reassignable slot — extract the
+    collector into a function or use the `Screen`'s own scope per coding-principle #4.
+  - `onGetTemplate(): Template`:
+    - Read `container.sessionRepository.projects.value` / `.sessions.value`,
+      `container.settings.current.value?.pimoteOrigin` (origin configured = non-blank), and
+      `container.wsClient.state.value is WsState.Connected`.
+    - Get the row limit:
+      `carContext.getCarService(ConstraintManager::class.java).getContentLimit(ConstraintManager.CONTENT_LIMIT_TYPE_LIST)`.
+    - Build rows via `CarRowModels.projectCallRows(projects, sessions, System.currentTimeMillis(), limit)`.
+    - If `CarRowModels.carListMessage(originConfigured, connected, hasProjects = projects.isNotEmpty()) != null`,
+      return a `MessageTemplate` with that string (+ a title/header). Otherwise return a
+      `ListTemplate` whose `ItemList` maps each `CarRow` to a `Row` (`title`, `addText(subtitle)`)
+      with an `onClick` that calls
+      `CallByPimoteUri.placeCall(carContext, row.dialUri, container.telecomFacade)` then shows
+      `CarToast.makeText(carContext, "Calling…", CarToast.LENGTH_SHORT).show()`.
+    - Give the template a header `ActionStrip` with a "Sessions" `Action` whose handler does
+      `screenManager.push(ResumeSessionsScreen(carContext))`.
+- **`ResumeSessionsScreen.kt`** — `class ResumeSessionsScreen(carContext: CarContext) : Screen(carContext)`.
+  - Same lifecycle/invalidate wiring, but collecting only `container.sessionRepository.sessions`.
+  - `onGetTemplate()` builds rows via
+    `CarRowModels.resumeSessionRows(sessions, System.currentTimeMillis(), limit)`; same row-tap
+    `placeCall` + `CarToast`. A flat `ListTemplate` with a back-enabled header (`Action.BACK`).
+
+All four reuse the existing dial-URI path unchanged: `placeCall` → `PimoteConnectionService` →
+`PhoneAccountRules.parseDialUri` → `CallController`. No new container fields, no new call logic.
+
+**Verify:** `make android-build` compiles the four new classes against `androidx.car.app`
+(Step 1) with no unresolved symbols.
+**Status:** not started
+
+### Step 5: Wire the `CarAppService` and car-app meta-data into the manifest
+
+In `mobile/android/app/src/main/AndroidManifest.xml`, inside `<application>`, add the
+`CarAppService` declaration and the application-level car meta-data. No new permissions.
+
+- Service:
+  ```xml
+  <service
+      android:name=".car.PimoteCarAppService"
+      android:exported="true">
+      <intent-filter>
+          <action android:name="androidx.car.app.CarAppService" />
+          <category android:name="androidx.car.app.category.POI" />
+      </intent-filter>
+      <meta-data
+          android:name="androidx.car.app.minCarApiLevel"
+          android:value="1" />
+  </service>
+  ```
+- Application-level meta-data (sibling of the existing services, direct child of
+  `<application>`):
+  ```xml
+  <meta-data
+      android:name="com.google.android.gms.car.application"
+      android:resource="@xml/automotive_app_desc" />
+  ```
+
+**Verify:** `make android-build` produces a debug APK with the merged manifest containing the
+`PimoteCarAppService` (POI category) and the `automotive_app_desc` reference; no manifest-merger
+errors.
+**Status:** not started
+
+### Step 6: Full build + test gate
+
+Run the Docker-based build and test from the repo root to confirm the module compiles end to
+end and the previously-failing test now passes alongside the existing suite.
+
+**Verify:** `make android-test` is green (all of `CarRowModelsTest` plus the existing tests) and
+`make android-build` produces an APK.
+**Status:** not started
