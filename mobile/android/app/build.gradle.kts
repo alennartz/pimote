@@ -17,11 +17,17 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Diagnostic outbound-audio telemetry over the speechmux-control
+        // channel. Off by default; debug builds turn it on (see below).
+        buildConfigField("boolean", "AUDIO_TELEMETRY", "false")
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+        }
+        debug {
+            buildConfigField("boolean", "AUDIO_TELEMETRY", "true")
         }
     }
 
@@ -88,6 +94,10 @@ dependencies {
 
     // WebRTC (1.3.x ships 16 KB-aligned native libraries for Android 15+)
     implementation("io.getstream:stream-webrtc-android:1.3.10")
+
+    // Android Auto (templated POI surface; 1.7.0 is the latest stable)
+    implementation("androidx.car.app:app:1.7.0")
+    implementation("androidx.car.app:app-projected:1.7.0")
 
     // Tests
     testImplementation("org.junit.jupiter:junit-jupiter-api:6.0.3")

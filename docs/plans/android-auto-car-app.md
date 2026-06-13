@@ -291,6 +291,8 @@ android:resource="@xml/automotive_app_desc" />` and a new `res/xml/automotive_ap
 
 ## Steps
 
+**Pre-implementation commit:** `8df1e3f99ccfc38370e698da51351c8851d420dd`
+
 ### Step 1: Add the Android for Cars App Library dependencies
 
 In `mobile/android/app/build.gradle.kts`, add two `implementation` lines to the
@@ -308,7 +310,7 @@ artifacts live on Google Maven, which the project's repositories already include
 
 **Verify:** `make android-build` resolves the new artifacts (no unresolved-dependency
 error); the build proceeds to compilation.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement the three `CarRowModels` helpers
 
@@ -356,7 +358,7 @@ address on your phone"`.
   - else → `null`.
 
 **Verify:** `make android-test` runs `CarRowModelsTest` and all its cases pass.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Add the `automotive_app_desc` resource
 
@@ -374,7 +376,7 @@ This is referenced by the application-level meta-data added in Step 5.
 
 **Verify:** file exists under `res/xml/`; `make android-build` packages resources without an
 "resource not found" error once Step 5 references it.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Implement the `CarAppService` / `Session` / `Screen` framework glue
 
@@ -422,7 +424,7 @@ All four reuse the existing dial-URI path unchanged: `placeCall` → `PimoteConn
 
 **Verify:** `make android-build` compiles the four new classes against `androidx.car.app`
 (Step 1) with no unresolved symbols.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Wire the `CarAppService` and car-app meta-data into the manifest
 
@@ -454,7 +456,7 @@ In `mobile/android/app/src/main/AndroidManifest.xml`, inside `<application>`, ad
 **Verify:** `make android-build` produces a debug APK with the merged manifest containing the
 `PimoteCarAppService` (POI category) and the `automotive_app_desc` reference; no manifest-merger
 errors.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Full build + test gate
 
@@ -463,4 +465,4 @@ end and the previously-failing test now passes alongside the existing suite.
 
 **Verify:** `make android-test` is green (all of `CarRowModelsTest` plus the existing tests) and
 `make android-build` produces an APK.
-**Status:** not started
+**Status:** done

@@ -2,6 +2,9 @@ package com.pimote.android.car
 
 import com.pimote.android.session.ProjectMeta
 import com.pimote.android.session.SessionMeta
+import com.pimote.android.session.formatRelativeTime
+import com.pimote.android.session.sessionDisplayName
+import com.pimote.android.telephony.PhoneAccountRules
 
 /**
  * One rendered list row for a car `ListTemplate`.
@@ -50,7 +53,47 @@ object CarRowModels {
         sessions: List<SessionMeta>,
         nowMillis: Long,
         limit: Int,
-    ): List<CarRow> = TODO("not implemented")
+    ): List<CarRow> {
+        val rows = projects.map { project ->
+            val projectSessions = sessions.filter { it.folderPath == project.folderPath }
+            val lastActivity = projectSessions.maxOfOrNull { it.modified }
+            CarProjectRow(
+                title = projectTitle(project.folderPath, project.folderName),
+                lastActivity = lastActivity,
+                row = CarRow(
+                    key = PhoneAccountRules.projectHandleId(project.folderPath),
+                    title = projectTitle(project.folderPath, project.folderName),
+                    subtitle = projectSubtitle(projectSessions.size, lastActivity, nowMillis),
+                    dialUri = "pimote:" + PhoneAccountRules.projectHandleId(project.folderPath),
+                ),
+            )
+        }
+        val withSessions = rows
+            .filter { it.lastActivity != null }
+            .sortedByDescending { it.lastActivity }
+        val withoutSessions = rows
+            .filter { it.lastActivity == null }
+            .sortedBy { it.title }
+        return (withSessions + withoutSessions).map { it.row }.take(limit)
+    }
+
+    private data class CarProjectRow(
+        val title: String,
+        val lastActivity: String?,
+        val row: CarRow,
+    )
+
+    /** "<root> <basename>" via rootSegmentOf, bare basename when no root segment. */
+    private fun projectTitle(folderPath: String, folderName: String): String {
+        val root = PhoneAccountRules.rootSegmentOf(folderPath)
+        return if (root != null) "$root $folderName" else folderName
+    }
+
+    private fun projectSubtitle(count: Int, lastActivity: String?, nowMillis: Long): String {
+        if (count == 0 || lastActivity == null) return "No sessions yet"
+        val noun = if (count == 1) "1 session" else "$count sessions"
+        return "$noun · ${formatRelativeTime(lastActivity, nowMillis)}"
+    }
 
     /**
      * Resume rows for Screen 2. Flat, NOT grouped by project.
@@ -65,7 +108,18 @@ object CarRowModels {
         sessions: List<SessionMeta>,
         nowMillis: Long,
         limit: Int,
-    ): List<CarRow> = TODO("not implemented")
+    ): List<CarRow> =
+        sessions
+            .sortedByDescending { it.modified }
+            .take(limit)
+            .map { session ->
+                CarRow(
+                    key = PhoneAccountRules.sessionHandleId(session.sessionId),
+                    title = sessionDisplayName(session),
+                    subtitle = formatRelativeTime(session.modified, nowMillis),
+                    dialUri = "pimote:" + PhoneAccountRules.sessionHandleId(session.sessionId),
+                )
+            }
 
     /**
      * Degraded-state message for an otherwise-empty list, or null when there is
@@ -80,5 +134,10 @@ object CarRowModels {
         originConfigured: Boolean,
         connected: Boolean,
         hasProjects: Boolean,
-    ): String? = TODO("not implemented")
+    ): String? = when {
+        !originConfigured -> "Set the Pimote server address on your phone"
+        !connected -> "Connecting to Pimote…"
+        !hasProjects -> "No projects yet"
+        else -> null
+    }
 }
