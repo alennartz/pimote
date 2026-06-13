@@ -72,7 +72,7 @@ class ProjectListScreen(carContext: CarContext) : Screen(carContext) {
             limit = limit,
         )
         val itemList = ItemList.Builder().apply {
-            rows.forEach { row -> addItem(buildRow(row)) }
+            rows.forEach { row -> addItem(buildCarRow(carContext, row)) }
         }.build()
 
         return ListTemplate.Builder()
@@ -91,21 +91,25 @@ class ProjectListScreen(carContext: CarContext) : Screen(carContext) {
             )
             .build()
     }
-
-    private fun buildRow(row: CarRow): Row =
-        Row.Builder()
-            .setTitle(row.title)
-            .addText(row.subtitle)
-            .setOnClickListener { placeCarCall(carContext, row.dialUri) }
-            .build()
 }
+
+/**
+ * Shared `CarRow` → tappable car `Row` builder for the car screens. Single home
+ * for "turn a row model into a tappable row" so both screens stay in lockstep.
+ */
+internal fun buildCarRow(carContext: CarContext, row: CarRow): Row =
+    Row.Builder()
+        .setTitle(row.title)
+        .addText(row.subtitle)
+        .setOnClickListener { placeCarCall(carContext, row.dialUri) }
+        .build()
 
 /**
  * Shared row-tap dispatch for the car screens: place the call via the existing
  * machinery and show a transient toast. Android Auto's own in-call UI takes
  * over afterward.
  */
-internal fun Screen.placeCarCall(carContext: CarContext, dialUri: String) {
+internal fun placeCarCall(carContext: CarContext, dialUri: String) {
     CallByPimoteUri.placeCall(carContext, dialUri, carContext.pimoteContainer.telecomFacade)
     CarToast.makeText(carContext, "Calling\u2026", CarToast.LENGTH_SHORT).show()
 }

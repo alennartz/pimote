@@ -6,7 +6,6 @@ import androidx.car.app.constraints.ConstraintManager
 import androidx.car.app.model.Action
 import androidx.car.app.model.ItemList
 import androidx.car.app.model.ListTemplate
-import androidx.car.app.model.Row
 import androidx.car.app.model.Template
 import androidx.lifecycle.lifecycleScope
 import com.pimote.android.app.pimoteContainer
@@ -41,7 +40,7 @@ class ResumeSessionsScreen(carContext: CarContext) : Screen(carContext) {
             limit = limit,
         )
         val itemList = ItemList.Builder().apply {
-            rows.forEach { row -> addItem(buildRow(row)) }
+            rows.forEach { row -> addItem(buildCarRow(carContext, row)) }
         }.build()
 
         return ListTemplate.Builder()
@@ -50,11 +49,4 @@ class ResumeSessionsScreen(carContext: CarContext) : Screen(carContext) {
             .setHeaderAction(Action.BACK)
             .build()
     }
-
-    private fun buildRow(row: CarRow): Row =
-        Row.Builder()
-            .setTitle(row.title)
-            .addText(row.subtitle)
-            .setOnClickListener { placeCarCall(carContext, row.dialUri) }
-            .build()
 }

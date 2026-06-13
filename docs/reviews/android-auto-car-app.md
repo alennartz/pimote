@@ -22,7 +22,7 @@ unrelated change that rode along in `build.gradle.kts`.
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/car/ProjectListScreen.kt:93-98`, `ResumeSessionsScreen.kt:55-60`
-- **Status:** open
+- **Status:** resolved
 
 Both screens carry a byte-identical private `buildRow(row: CarRow): Row` (title +
 `addText(subtitle)` + `setOnClickListener { placeCarCall(...) }`). "Turn a `CarRow` into a
@@ -37,7 +37,7 @@ risk today because they're identical, but they will drift.
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/car/ProjectListScreen.kt:106-109`
-- **Status:** open
+- **Status:** resolved
 
 `internal fun Screen.placeCarCall(carContext: CarContext, dialUri: String)` never references
 its `Screen` receiver — `carContext` is passed explicitly. The receiver is dead weight that
