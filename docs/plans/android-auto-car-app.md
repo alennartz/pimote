@@ -96,9 +96,11 @@ object CarRowModels {
      *
      * Ordering: by most-recent session activity (max `modified` over the
      * project's sessions) descending; projects with no sessions sort last,
-     * ordered by title.
-     * Title: project label (basename; `<root> <basename>` style optional via
-     *   existing helpers — implementer's choice, must be stable & non-empty).
+     * ordered by the `<root> <basename>` title string.
+     * Title: `<root> <basename>` via PhoneAccountRules.rootSegmentOf(folderPath)
+     *   + folderName, falling back to the bare folderName when there is no root
+     *   segment (mirrors ContactsSync; aligns with DR-025's display-name form).
+     *   Stable & non-empty.
      * Subtitle: session count + relative last-activity, e.g. "3 sessions · 5m ago";
      *   "No sessions yet" when the project has none.
      * dialUri: "pimote:" + PhoneAccountRules.projectHandleId(folderPath).
@@ -153,8 +155,10 @@ object CarRowModels {
 
 **Behavioral contracts the test writer must pin:**
 
-- `projectCallRows`: emits one row per project; recency ordering with no-session projects last;
-  correct `dialUri` (`pimote:project:<b64>`); subtitle pluralization and "No sessions yet" branch;
+- `projectCallRows`: emits one row per project; recency ordering with no-session projects last
+  (tiebreak by the `<root> <basename>` title); correct `dialUri` (`pimote:project:<b64>`);
+  title is the `<root> <basename>` form (bare basename when no root segment); subtitle
+  pluralization and "No sessions yet" branch;
   truncation honors `limit` (e.g. `limit = 2` over 5 projects → first 2 by recency).
 - `resumeSessionRows`: flat recency order across all projects (a session in project B newer than
   one in project A sorts first); correct `dialUri` (`pimote:session:<id>`); truncation honors
@@ -252,12 +256,13 @@ android:resource="@xml/automotive_app_desc" />` and a new `res/xml/automotive_ap
 
 - Emits exactly one row per project.
 - Orders projects by most-recent session activity (max `modified`) descending.
-- Sorts projects with no sessions last, ordered alphabetically by title.
+- Sorts projects with no sessions last, ordered alphabetically by the `<root> <basename>` title.
 - Builds the project dial URI `pimote:project:<b64>` and uses the project handle as the row key.
 - Subtitle pluralizes the session count (`1 session` vs `3 sessions`) and appends relative
   last-activity (`· 5m ago`).
 - Subtitle reads `No sessions yet` for empty projects.
-- Titles are stable and non-empty.
+- Title is the `<root> <basename>` display form (mirrors ContactsSync), falling back to the bare
+  basename when there is no root segment; stable and non-empty.
 - Truncates to `limit` rows after recency sorting (e.g. `limit = 2` over 5 projects → newest 2).
 - Returns an empty list when there are no projects.
 
@@ -281,3 +286,5 @@ android:resource="@xml/automotive_app_desc" />` and a new `res/xml/automotive_ap
   project presence.
 - When configured, connected, and no projects, returns `No projects yet`.
 - Returns `null` when there is content to show.
+
+**Review status:** approved

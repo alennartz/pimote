@@ -49,6 +49,13 @@ class CarRowModelsTest {
     private fun projectDialUri(folderPath: String) =
         "pimote:" + PhoneAccountRules.projectHandleId(folderPath)
 
+    // Mirrors ContactsSync: title = "<root> <basename>" via rootSegmentOf,
+    // falling back to the bare basename when there is no parent segment.
+    private fun projectTitle(folderPath: String, folderName: String): String {
+        val root = PhoneAccountRules.rootSegmentOf(folderPath)
+        return if (root != null) "$root $folderName" else folderName
+    }
+
     private fun sessionDialUri(sessionId: String) =
         "pimote:" + PhoneAccountRules.sessionHandleId(sessionId)
 
@@ -86,14 +93,23 @@ class CarRowModelsTest {
     @Test
     fun `projectCallRows sorts no-session projects last ordered by title`() {
         val rows = CarRowModels.projectCallRows(
-            projects = listOf(project("/z", "zeta"), project("/a", "alpha"), project("/b", "beta")),
-            sessions = listOf(session("b1", "/b", "2026-04-05T10:00:00.000Z")),
+            projects = listOf(
+                project("/work/zeta", "zeta"),
+                project("/work/alpha", "alpha"),
+                project("/work/beta", "beta"),
+            ),
+            sessions = listOf(session("b1", "/work/beta", "2026-04-05T10:00:00.000Z")),
             nowMillis = now,
             limit = 10,
         )
-        // beta has the only session → first. alpha & zeta empty → alphabetical by title.
+        // beta has the only session → first. alpha & zeta empty → alphabetical
+        // by the "<root> <basename>" title ("work alpha" < "work zeta").
         assertEquals(
-            listOf("beta", "alpha", "zeta"),
+            listOf(
+                projectTitle("/work/beta", "beta"),
+                projectTitle("/work/alpha", "alpha"),
+                projectTitle("/work/zeta", "zeta"),
+            ),
             rows.map { it.title },
         )
     }
@@ -164,14 +180,30 @@ class CarRowModelsTest {
     }
 
     @Test
-    fun `projectCallRows titles are stable and non-empty`() {
+    fun `projectCallRows title is the '_root basename_' display form`() {
         val rows = CarRowModels.projectCallRows(
             projects = listOf(project("/work/repo", "repo")),
             sessions = emptyList(),
             nowMillis = now,
             limit = 10,
         )
+        // Mirrors ContactsSync: "<root> <basename>" → "work repo".
+        assertEquals(projectTitle("/work/repo", "repo"), rows.single().title)
+        assertEquals("work repo", rows.single().title)
         assertTrue(rows.single().title.isNotBlank())
+    }
+
+    @Test
+    fun `projectCallRows title falls back to bare basename without a root segment`() {
+        val rows = CarRowModels.projectCallRows(
+            projects = listOf(project("/repo", "repo")),
+            sessions = emptyList(),
+            nowMillis = now,
+            limit = 10,
+        )
+        // No parent segment → rootSegmentOf == null → bare basename.
+        assertEquals(projectTitle("/repo", "repo"), rows.single().title)
+        assertEquals("repo", rows.single().title)
     }
 
     @Test

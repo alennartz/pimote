@@ -36,7 +36,10 @@ object CarRowModels {
      *
      * Ordering: by most-recent session activity (max `modified` over the
      * project's sessions) descending; projects with no sessions sort last,
-     * ordered by title.
+     * ordered by the `<root> <basename>` title string.
+     * Title: "<root> <basename>" via PhoneAccountRules.rootSegmentOf(folderPath)
+     *   + folderName, falling back to the bare folderName when there is no root
+     *   segment (mirrors ContactsSync).
      * Subtitle: session count + relative last-activity, e.g. "3 sessions · 5m ago";
      *   "No sessions yet" when the project has none.
      * dialUri: "pimote:" + PhoneAccountRules.projectHandleId(folderPath).
