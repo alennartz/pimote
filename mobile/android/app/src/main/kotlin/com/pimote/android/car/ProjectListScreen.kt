@@ -106,10 +106,13 @@ internal fun buildCarRow(carContext: CarContext, row: CarRow): Row =
 
 /**
  * Shared row-tap dispatch for the car screens: place the call via the existing
- * machinery and show a transient toast. Android Auto's own in-call UI takes
- * over afterward.
+ * machinery and show a transient toast reflecting the dispatch outcome.
+ * Mirrors `ContactsScreen`, which gates on the same `placeCall` boolean.
+ * Android Auto's own in-call UI takes over on success.
  */
 internal fun placeCarCall(carContext: CarContext, dialUri: String) {
-    CallByPimoteUri.placeCall(carContext, dialUri, carContext.pimoteContainer.telecomFacade)
-    CarToast.makeText(carContext, "Calling\u2026", CarToast.LENGTH_SHORT).show()
+    val dispatched =
+        CallByPimoteUri.placeCall(carContext, dialUri, carContext.pimoteContainer.telecomFacade)
+    val message = if (dispatched) "Calling\u2026" else "Couldn't place call"
+    CarToast.makeText(carContext, message, CarToast.LENGTH_SHORT).show()
 }

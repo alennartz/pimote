@@ -50,7 +50,7 @@ pass.
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `mobile/android/app/src/main/kotlin/com/pimote/android/car/ProjectListScreen.kt:106-109`
-- **Status:** open
+- **Status:** resolved
 
 `CallByPimoteUri.placeCall(...)` returns a `Boolean` success flag, but `placeCarCall` ignores
 it and always shows `CarToast` "Calling…". A rejected dispatch still tells the user the call is
