@@ -225,3 +225,59 @@ android:resource="@xml/automotive_app_desc" />` and a new `res/xml/automotive_ap
   the origin, so the message must direct the user to their phone. The screen reads
   `originConfigured` from the container's `Settings` config (non-blank `pimoteOrigin`) and
   `connected` from `WsClient` state.
+
+## Tests
+
+**Pre-test-write commit:** `13d9e609b559451780ef88084fae95d63588e548`
+
+### Interface Files
+
+- `mobile/android/app/src/main/kotlin/com/pimote/android/car/CarRowModels.kt` — the pure
+  `car/` seam: the `CarRow` view-model data class and the `CarRowModels` object with three
+  stubbed helpers (`projectCallRows`, `resumeSessionRows`, `carListMessage`). Bodies are
+  `TODO("not implemented")` — no business logic yet. Composes existing pure DTOs
+  (`ProjectMeta`, `SessionMeta`) and helpers (`PhoneAccountRules`, `sessionDisplayName`,
+  `formatRelativeTime`); carries no Android framework types.
+
+### Test Files
+
+- `mobile/android/app/src/test/kotlin/com/pimote/android/car/CarRowModelsTest.kt` — behavioral
+  unit tests for all three `CarRowModels` helpers, following the existing pure-helper style
+  (`SessionListGroupsTest`, `SessionDisplayTest`). Deterministic: injects a fixed `now` and
+  asserts dial URIs via `PhoneAccountRules` rather than hardcoded base64.
+
+### Behaviors Covered
+
+#### `CarRowModels.projectCallRows`
+
+- Emits exactly one row per project.
+- Orders projects by most-recent session activity (max `modified`) descending.
+- Sorts projects with no sessions last, ordered alphabetically by title.
+- Builds the project dial URI `pimote:project:<b64>` and uses the project handle as the row key.
+- Subtitle pluralizes the session count (`1 session` vs `3 sessions`) and appends relative
+  last-activity (`· 5m ago`).
+- Subtitle reads `No sessions yet` for empty projects.
+- Titles are stable and non-empty.
+- Truncates to `limit` rows after recency sorting (e.g. `limit = 2` over 5 projects → newest 2).
+- Returns an empty list when there are no projects.
+
+#### `CarRowModels.resumeSessionRows`
+
+- Flat recency ordering by `modified` descending across all projects (a newer session in
+  project B sorts ahead of older ones in project A).
+- Builds the session dial URI `pimote:session:<id>` and uses the session handle as the row key.
+- Title is the session display name (`sessionDisplayName`).
+- Subtitle is a non-empty relative-time string (`formatRelativeTime`).
+- Truncates to `limit` rows after sorting.
+- Returns an empty list when there are no sessions.
+
+#### `CarRowModels.carListMessage`
+
+- Origin-not-configured takes precedence over connection and content — same message regardless
+  of `connected`/`hasProjects`.
+- The origin message names a phone-side fix (mentions "phone") and is not a transient
+  connection state (never reads "Connecting…").
+- When configured but not connected, returns a non-empty disconnected message independent of
+  project presence.
+- When configured, connected, and no projects, returns `No projects yet`.
+- Returns `null` when there is content to show.
