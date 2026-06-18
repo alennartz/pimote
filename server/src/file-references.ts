@@ -1,7 +1,45 @@
 import { execFile } from 'node:child_process';
+import { accessSync, constants } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, resolve } from 'node:path';
+import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import type { AutocompleteResponseItem } from '../../shared/dist/index.js';
+
+/**
+ * Candidate executable names for `fd`. Debian/Ubuntu ship the binary as
+ * `fdfind` to avoid a name clash, so both are tried.
+ */
+const FD_BINARY_NAMES = ['fd', 'fdfind'];
+
+/**
+ * Common install directories to probe in addition to `PATH`. The server process
+ * is often launched with a minimal `PATH` that omits these, so an `fd` installed
+ * via cargo, Homebrew, or pi's own bin dir would otherwise be invisible.
+ */
+function fdSearchDirs(): string[] {
+  const home = homedir();
+  const pathDirs = (process.env.PATH ?? '').split(delimiter).filter((d) => d.length > 0);
+  const extraDirs = [join(home, '.pi', 'agent', 'bin'), join(home, '.cargo', 'bin'), join(home, '.local', 'bin'), '/usr/local/bin', '/usr/bin', '/opt/homebrew/bin'];
+  return [...pathDirs, ...extraDirs];
+}
+
+/**
+ * Resolve an `fd` executable to an absolute path, probing `PATH` and common
+ * install dirs for both `fd` and `fdfind`. Returns `null` when none is found.
+ */
+export function resolveFdPath(dirs: string[] = fdSearchDirs()): string | null {
+  for (const dir of dirs) {
+    for (const name of FD_BINARY_NAMES) {
+      const candidate = join(dir, name);
+      try {
+        accessSync(candidate, constants.X_OK);
+        return candidate;
+      } catch {
+        // Not here; keep probing.
+      }
+    }
+  }
+  return null;
+}
 
 /** Cap on the number of fd results requested. */
 const MAX_RESULTS = 50;
@@ -56,7 +94,8 @@ export interface CompleteFileRefsInput {
   prefix: string;
   /** Session working directory; bare/relative/`./`/`../` prefixes resolve against this. */
   cwd: string;
-  /** Optional `fd` executable path; defaults to looking up `fd` on PATH. */
+  /** Optional `fd` executable path; defaults to probing PATH and common install
+   * dirs for `fd`/`fdfind` via {@link resolveFdPath}. */
   fdPath?: string;
   /** Optional `fd` runner seam; defaults to a real spawn-based runner. */
   runFd?: FdRunner;
@@ -83,7 +122,7 @@ export interface CompleteFileRefsResult {
  */
 export async function completeFileRefs(input: CompleteFileRefsInput): Promise<CompleteFileRefsResult> {
   const { cwd, prefix } = input;
-  const fdPath = input.fdPath ?? 'fd';
+  const fdPath = input.fdPath ?? resolveFdPath() ?? 'fd';
   const runFd = input.runFd ?? defaultRunFd;
 
   const { quoted, scope, query } = parsePrefix(prefix);
