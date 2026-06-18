@@ -241,15 +241,20 @@
   }
 
   .panel-collapse {
-    font-size: 0.85rem;
+    font-size: 1.25rem;
     line-height: 1;
     color: var(--muted-foreground);
     background: none;
-    border: none;
+    border: 1px solid var(--border);
     cursor: pointer;
-    opacity: 0.7;
-    padding: 2px 8px;
-    border-radius: 4px;
+    opacity: 0.9;
+    min-width: 36px;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 10px;
+    border-radius: 6px;
   }
 
   .panel-collapse:hover {
