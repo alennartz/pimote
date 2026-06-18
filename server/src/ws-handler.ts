@@ -991,7 +991,12 @@ export class WsHandler {
         const meta: SessionMeta = {
           gitBranch: getGitBranch(slot.folderPath),
           contextUsage: contextUsage ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow } : null,
-          lifetimeCostUsd: sumAssistantCostUsd(session.sessionManager.getBranch() as unknown as CostBranchEntry[]),
+          // getEntries() (not getBranch()) so cost spans ALL branches in the
+          // session file, not just the current leaf's branch. Survives live
+          // switches and reload-from-disk because it is recomputed from the
+          // session manager's rehydrated entries every call. See session-cost.ts
+          // for what this figure excludes.
+          lifetimeCostUsd: sumAssistantCostUsd(session.sessionManager.getEntries() as unknown as CostBranchEntry[]),
         };
         this.sendResponse(id, true, { meta });
         break;
