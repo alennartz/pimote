@@ -2,7 +2,6 @@ package com.pimote.android.app
 
 import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
 import android.os.Build
 import com.pimote.android.call.CallAudioRouter
 import com.pimote.android.call.CallController
@@ -11,7 +10,6 @@ import com.pimote.android.call.CallForegroundService
 import com.pimote.android.call.CallState
 import com.pimote.android.call.ProximityScreenLock
 import com.pimote.android.call.shouldHoldProximityLock
-import com.pimote.android.ui.call.InCallActivity
 import com.pimote.android.net.AccessAuthInterceptor
 import com.pimote.android.net.AndroidNetworkAvailabilityMonitor
 import com.pimote.android.net.OkHttpWsTransport
@@ -125,17 +123,27 @@ class AppContainer(private val appContext: Context) {
     // playback and AudioRecord with VOICE_COMMUNICATION input — both aligned
     // with the call audio path the OS expects for VoIP.
     //
-    // Audio source is VOICE_COMMUNICATION (the JavaADM default). This is the
-    // source that follows the active communication device selected by
-    // `AudioManager.setCommunicationDevice`, which is what makes BT HFP/SCO
-    // routing work for Bluetooth headsets and Android Auto. The previous
-    // VOICE_RECOGNITION workaround — chosen to bypass Pixel's FORTEMEDIA
-    // "AMixMODEM" telephony DSP gain-zero bug on local-mic capture — had the
-    // side effect of pinning capture to the builtin mic and breaking AA. If
-    // the Pixel uplink-gain-zero issue resurfaces on speakerphone-only calls
-    // it should be addressed at its real root (e.g. disabling platform AEC/NS
-    // effects on the AudioRecord session, or using UNPROCESSED source), not
-    // by re-pinning the source.
+    // Audio source is VOICE_RECOGNITION. VOICE_COMMUNICATION (the JavaADM
+    // default) routes capture through Pixel/Tensor's FORTEMEDIA "AMixMODEM"
+    // telephony DSP in MODE_IN_COMMUNICATION, which zeroes the uplink gain a
+    // few seconds into a call (kernel: `[AMixMODEM] pGainUL_: 0`; server
+    // traces: phone capture at digital silence RMS ~3e-6 for 40+s mid-call).
+    // VOICE_RECOGNITION keeps that chain out of our AudioSession; libwebrtc's
+    // software AEC3 + NS3 own echo/noise/AGC entirely in user space. This is
+    // the workaround used by Linphone / Jami / Briar on Pixel.
+    //
+    // We deliberately run a SINGLE processing stack (software APM on a
+    // raw-ish source), not two: stacking the platform comms DSP on top of
+    // libwebrtc's APM let two AGC/AEC chains fight and clamp the mic. Output
+    // routing (BT HFP/SCO, Android Auto) is owned by `CallAudioRouter` via
+    // `AudioManager.setCommunicationDevice` on API 31+. That selection routes
+    // *output* only; the capture AudioRecord does not follow it on its own and
+    // with VOICE_RECOGNITION would strand on the builtin mic, going silent the
+    // instant duplex SCO comes up at playback start. `CallAudioRouter` also
+    // publishes the matching capture device (`preferredInputDevice`), which
+    // SpeechmuxPeerImpl binds to the ADM's AudioRecord via
+    // `setPreferredInputDevice` so the mic follows the route (BT SCO/BLE
+    // earbud mic, AA car mic) live, including the mid-call flip.
     //
     // HW AEC + HW NS remain disabled — WebRTC's software AEC3 + NS3 in the
     // APM run by default (createAudioSource constraints) and handle echo /
@@ -154,7 +162,7 @@ class AppContainer(private val appContext: Context) {
     private fun newPeerConnectionFactoryAndAdm(): Pair<PeerConnectionFactory, org.webrtc.audio.JavaAudioDeviceModule> {
         webrtcInitialized
         val adm = JavaAudioDeviceModule.builder(appContext)
-            .setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+            .setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION)
             .setUseHardwareAcousticEchoCanceler(false)
             .setUseHardwareNoiseSuppressor(false)
             .setAudioRecordStateCallback(object : org.webrtc.audio.JavaAudioDeviceModule.AudioRecordStateCallback {
@@ -209,7 +217,12 @@ class AppContainer(private val appContext: Context) {
 
     val peerFactory: () -> SpeechmuxPeer = {
         val (factory, adm) = newPeerConnectionFactoryAndAdm()
-        SpeechmuxPeerImpl(factory, adm, httpClient = httpClient)
+        SpeechmuxPeerImpl(
+            factory,
+            adm,
+            httpClient = httpClient,
+            preferredInputDevice = callAudioRouter?.preferredInputDevice,
+        )
     }
 
     /**
@@ -238,9 +251,16 @@ class AppContainer(private val appContext: Context) {
     val proximityScreenLock: ProximityScreenLock = ProximityScreenLock(appContext)
 
     init {
-        // Drive the persistent call notification (foreground service, type
-        // phoneCall). Started on the edge where the call leaves Idle; the
-        // service self-stops once the call reaches Ended/Idle.
+        // "Call started" is one business operation that has two visible
+        // effects: the persistent call notification and the in-call screen.
+        // Both live inside [CallForegroundService] so they fire from one
+        // handler with one ordering guarantee — the foreground service is up
+        // (BAL exemption granted) before the activity launch is attempted,
+        // and the notification carries a fullScreenIntent fallback for the
+        // cases where the OS still blocks the activity launch.
+        //
+        // The service starts on the Idle→non-Idle edge and self-stops once
+        // the call returns to Ended/Idle.
         applicationScope.launch {
             callController.state
                 .map { s -> s !is CallState.Idle && s !is CallState.Ended }
@@ -257,34 +277,6 @@ class AppContainer(private val appContext: Context) {
             ) { state, route, speakerOn ->
                 shouldHoldProximityLock(state, route, speakerOn)
             }.collect { hold -> proximityScreenLock.apply(hold) }
-        }
-
-        // Launch the custom in-call screen as soon as the controller leaves
-        // Idle, so the user gets immediate feedback during Dialing/Binding/
-        // Negotiating and on failure (Ended) — not only after Active.
-        //
-        // Plan step 16 prescribed an `android.intent.action.MAIN` +
-        // `android.intent.category.CALL_LAUNCHER` filter to make Telecom drive
-        // this — but `CALL_LAUNCHER` is not a real Android category, so the
-        // mechanism the plan named would not fire. The standard
-        // `SelfManagedConnectionService` pattern is to launch the custom UI
-        // explicitly when the call transitions out of Idle; the activity's
-        // `showWhenLocked` / `turnScreenOn` manifest flags handle wake/lock.
-        //
-        // We only fire on the Idle→non-Idle edge so we don't restart the
-        // activity for every intra-call state change.
-        applicationScope.launch {
-            callController.state
-                .map { it is CallState.Idle }
-                // Initial state is Idle, so treat the very first emission as
-                // "was already idle" — the cold-start case shouldn't fire
-                // the in-call activity. Hence prev == null → false.
-                .onEdge { prev, cur -> prev == true && !cur }
-                .collect {
-                    val intent = Intent(appContext, InCallActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    appContext.startActivity(intent)
-                }
         }
     }
 

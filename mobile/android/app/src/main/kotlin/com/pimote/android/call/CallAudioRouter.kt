@@ -45,6 +45,19 @@ class CallAudioRouter(
     /** Whether the active communication device is the builtin loudspeaker. */
     val speakerphoneOn: StateFlow<Boolean> = _speakerphoneOn.asStateFlow()
 
+    private val _preferredInputDevice = MutableStateFlow<AudioDeviceInfo?>(null)
+    /**
+     * The capture device that matches the currently selected communication
+     * device. `setCommunicationDevice` routes *output* to the chosen device,
+     * but the WebRTC `AudioRecord` does not follow that selection on its own —
+     * it stays bound to whatever input it opened against. The ADM owner
+     * (SpeechmuxPeerImpl) observes this flow and re-points capture via
+     * `setPreferredInputDevice` so the mic follows the route: the BT SCO /
+     * BLE earbud mic, the Android Auto car mic, or the builtin mic. Null means
+     * "no opinion" — let the OS/WebRTC default stand.
+     */
+    val preferredInputDevice: StateFlow<AudioDeviceInfo?> = _preferredInputDevice.asStateFlow()
+
     private val executor: Executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "call-audio-router").apply { isDaemon = true }
     }
@@ -56,6 +69,10 @@ class CallAudioRouter(
         AudioManager.OnCommunicationDeviceChangedListener { device ->
             val onSpeaker = device?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
             _speakerphoneOn.value = onSpeaker
+            // The OS-confirmed comm device is authoritative — this fires on the
+            // mid-call A2DP->HFP/SCO flip and on Android Auto hand-offs. Keep
+            // the capture device in lockstep so the mic follows.
+            updatePreferredInput(device)
             L.i(
                 "Audio",
                 "comm device changed -> type=${device?.type} name=${device?.productName} " +
@@ -102,6 +119,7 @@ class CallAudioRouter(
         active = false
         speakerphoneRequested = false
         _speakerphoneOn.value = false
+        _preferredInputDevice.value = null
         try { audioManager.removeOnCommunicationDeviceChangedListener(commDeviceListener) } catch (_: Throwable) {}
         try { audioManager.unregisterAudioDeviceCallback(deviceCallback) } catch (_: Throwable) {}
         try { audioManager.clearCommunicationDevice() } catch (t: Throwable) {
@@ -133,6 +151,9 @@ class CallAudioRouter(
             return
         }
         val target = pickBest(available, speakerphoneRequested) ?: return
+        // Keep capture pointed at the input matching our chosen output device,
+        // even when the comm device is already correct (early-return below).
+        updatePreferredInput(target)
         val current = try { audioManager.communicationDevice } catch (_: Throwable) { null }
         if (current?.id == target.id) return
         val ok = try {
@@ -147,6 +168,22 @@ class CallAudioRouter(
                 "ok=$ok speakerReq=$speakerphoneRequested " +
                 "available=${available.joinToString { it.type.toString() }}",
         )
+    }
+
+    /**
+     * Resolve the capture device that matches [comm] and publish it on
+     * [preferredInputDevice]. Side-effecting shell around the pure
+     * [pickInputDevice]; enumerates the current input devices and stores the
+     * match (or null when there is no sensible match — leave the default).
+     */
+    private fun updatePreferredInput(comm: AudioDeviceInfo?) {
+        val inputs: List<AudioDeviceInfo> = try {
+            audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).toList()
+        } catch (t: Throwable) {
+            L.w("Audio", "getDevices(INPUTS) threw", t)
+            emptyList()
+        }
+        _preferredInputDevice.value = pickInputDevice(comm, inputs)
     }
 
     /**
@@ -181,5 +218,51 @@ class CallAudioRouter(
             devices.firstOrNull { it.type == t }?.let { return it }
         }
         return devices.firstOrNull()
+    }
+
+    companion object {
+        /**
+         * Map the selected communication ([comm]) device to the capture device
+         * the AudioRecord should bind to, given the available [inputs]
+         * (`GET_DEVICES_INPUTS`). Pure: no Android calls, fully testable.
+         *
+         * `setCommunicationDevice` takes an output-oriented endpoint; for a
+         * headset the matching mic is the same physical device, matched by
+         * type and — for BT, where several may be present — by `address`.
+         * Builtin earpiece/speaker output maps to the builtin mic. An unknown
+         * or absent comm device yields null ("no opinion": leave the default),
+         * which is safer than forcing a guess.
+         */
+        internal fun pickInputDevice(
+            comm: AudioDeviceInfo?,
+            inputs: List<AudioDeviceInfo>,
+        ): AudioDeviceInfo? {
+            if (comm == null) return null
+            fun match(vararg types: Int): AudioDeviceInfo? {
+                for (t in types) {
+                    inputs.firstOrNull { it.type == t && it.address == comm.address }?.let { return it }
+                }
+                for (t in types) {
+                    inputs.firstOrNull { it.type == t }?.let { return it }
+                }
+                return null
+            }
+            return when (comm.type) {
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> match(AudioDeviceInfo.TYPE_BLUETOOTH_SCO)
+                AudioDeviceInfo.TYPE_BLE_HEADSET -> match(AudioDeviceInfo.TYPE_BLE_HEADSET)
+                AudioDeviceInfo.TYPE_WIRED_HEADSET -> match(AudioDeviceInfo.TYPE_WIRED_HEADSET)
+                AudioDeviceInfo.TYPE_USB_HEADSET ->
+                    match(AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE)
+                AudioDeviceInfo.TYPE_USB_DEVICE ->
+                    match(AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET)
+                AudioDeviceInfo.TYPE_HEARING_AID ->
+                    match(AudioDeviceInfo.TYPE_HEARING_AID, AudioDeviceInfo.TYPE_BLUETOOTH_SCO)
+                AudioDeviceInfo.TYPE_BUILTIN_EARPIECE,
+                AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
+                ->
+                    inputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
+                else -> null
+            }
+        }
     }
 }

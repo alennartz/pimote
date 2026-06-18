@@ -1,5 +1,6 @@
 package com.pimote.android.voice
 
+import com.pimote.android.BuildConfig
 import com.pimote.android.util.L
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +34,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import android.media.AudioDeviceInfo
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
 import org.webrtc.DataChannel
@@ -77,6 +79,14 @@ class SpeechmuxPeerImpl(
     private val adm: org.webrtc.audio.JavaAudioDeviceModule,
     private val httpClient: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
+    // The capture device the AudioRecord must follow, decided by
+    // CallAudioRouter. Null on API < 31 (no router). When present, we bind the
+    // ADM's AudioRecord to each emitted device via setPreferredInputDevice so
+    // capture follows the comm-device route (BT SCO earbud mic, Android Auto)
+    // instead of being orphaned on whatever device it opened against. Without
+    // this the record opens on the builtin mic and goes silent the instant the
+    // OS brings up duplex SCO at playback start.
+    private val preferredInputDevice: StateFlow<AudioDeviceInfo?>? = null,
 ) : SpeechmuxPeer {
 
     private val _state = MutableStateFlow<PeerState>(PeerState.Idle)
@@ -99,6 +109,7 @@ class SpeechmuxPeerImpl(
     // speechmux/docs/webrtc-protocol.md, Phase 3.
     private var controlChannel: DataChannel? = null
     private var playheadJob: Job? = null
+    private var audioStatsJob: Job? = null
     private var inboundAudioReceiver: RtpReceiver? = null
     private var lastReportedPlayhead: Long = -1L
     @Volatile private var muteRestoreToken: Long = 0L
@@ -229,6 +240,27 @@ class SpeechmuxPeerImpl(
             audioTrack = track
             audioSender = pc.addTrack(track, listOf("pimote-stream"))
 
+            // Make capture follow the comm-device route. CallAudioRouter emits
+            // the input device that matches its current communication device;
+            // we bind the ADM's AudioRecord to it. setPreferredInputDevice
+            // applies to a live, already-started record, so a mid-call route
+            // flip (duplex SCO coming up at playback start, an Android Auto
+            // hand-off) re-routes capture instead of stranding it on the
+            // device the record happened to open against. The collector lives
+            // on `scope`, which disconnect() cancels.
+            preferredInputDevice?.let { flow ->
+                scope.launch {
+                    flow.collect { dev ->
+                        try {
+                            adm.setPreferredInputDevice(dev)
+                            L.i("Peer", "setPreferredInputDevice type=${dev?.type} id=${dev?.id}")
+                        } catch (t: Throwable) {
+                            L.w("Peer", "setPreferredInputDevice threw", t)
+                        }
+                    }
+                }
+            }
+
             // Create the speechmux-control DataChannel BEFORE the offer is
             // built so the m=application section is part of the SDP. If we
             // don't, speechmux degrades to whole-turn walk-back on barge-in
@@ -250,9 +282,12 @@ class SpeechmuxPeerImpl(
                         L.i("Peer", "control DC state=$s")
                         if (s == DataChannel.State.OPEN) {
                             startPlayheadReporter()
+                            startOutboundAudioReporter()
                         } else if (s == DataChannel.State.CLOSED || s == DataChannel.State.CLOSING) {
                             playheadJob?.cancel()
                             playheadJob = null
+                            audioStatsJob?.cancel()
+                            audioStatsJob = null
                         }
                     }
                     override fun onMessage(buffer: DataChannel.Buffer?) {
@@ -584,6 +619,8 @@ class SpeechmuxPeerImpl(
         inboundAudioReceiver = null
         playheadJob?.cancel()
         playheadJob = null
+        audioStatsJob?.cancel()
+        audioStatsJob = null
         _state.value = PeerState.Closed
         scope.cancel()
         // libwebrtc forbids peer.close() being called re-entrantly from within an active
@@ -712,6 +749,94 @@ class SpeechmuxPeerImpl(
                 cont.resume(null)
             }
         }
+
+    /**
+     * Diagnostic Probe 2 (default off; see `BuildConfig.AUDIO_TELEMETRY`).
+     * Every ~1 s, report the captured mic level *after* the local APM but
+     * *before* Opus encode (`media-source.audioLevel` / `totalAudioEnergy`)
+     * plus cumulative `outbound-rtp` byte/packet counts, over the same
+     * speechmux-control channel the playhead uses. The server logs these to
+     * `voice_trace`, timeline-aligned with its pre-decode RTP heartbeat, so
+     * a mic clamp (level flatlines while AudioRecord is still started) is
+     * distinguishable from network loss or a decode problem.
+     */
+    private fun startOutboundAudioReporter() {
+        if (!BuildConfig.AUDIO_TELEMETRY) return
+        if (audioStatsJob?.isActive == true) return
+        audioStatsJob = scope.launch {
+            while (isActive) {
+                val pcRef = peer
+                val ch = controlChannel
+                if (pcRef == null || ch == null || ch.state() != DataChannel.State.OPEN) break
+                val stats = readOutboundAudioStats(pcRef)
+                if (stats != null) {
+                    val frame = buildJsonObject {
+                        put("v", SIGNAL_PROTOCOL_VERSION)
+                        put("type", "client_audio")
+                        put("audio_level", stats.audioLevel)
+                        put("total_energy", stats.totalEnergy)
+                        put("bytes_sent", stats.bytesSent)
+                        put("packets_sent", stats.packetsSent)
+                    }.toString()
+                    sendControlText(frame)
+                    L.i(
+                        "Audio",
+                        "outbound level=${stats.audioLevel} energy=${stats.totalEnergy} " +
+                            "bytesSent=${stats.bytesSent} packetsSent=${stats.packetsSent}",
+                    )
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    private data class OutboundAudioStats(
+        val audioLevel: Double,
+        val totalEnergy: Double,
+        val bytesSent: Long,
+        val packetsSent: Long,
+    )
+
+    private suspend fun readOutboundAudioStats(pc: PeerConnection): OutboundAudioStats? =
+        suspendCancellableCoroutine { cont ->
+            try {
+                pc.getStats { report: RTCStatsReport ->
+                    if (cont.isCompleted) return@getStats
+                    var level = 0.0
+                    var energy = 0.0
+                    var bytes = 0L
+                    var packets = 0L
+                    for (stat in report.statsMap.values) {
+                        val kind = stat.members["kind"] as? String
+                            ?: stat.members["mediaType"] as? String
+                        when (stat.type) {
+                            "media-source" -> {
+                                if (kind != "audio") continue
+                                (stat.members["audioLevel"] as? Number)?.let { level = it.toDouble() }
+                                (stat.members["totalAudioEnergy"] as? Number)?.let {
+                                    energy = it.toDouble()
+                                }
+                            }
+                            "outbound-rtp" -> {
+                                if (kind != "audio") continue
+                                coerceLong(stat.members["bytesSent"])?.let { bytes = it }
+                                coerceLong(stat.members["packetsSent"])?.let { packets = it }
+                            }
+                        }
+                    }
+                    cont.resume(OutboundAudioStats(level, energy, bytes, packets))
+                }
+            } catch (t: Throwable) {
+                cont.resume(null)
+            }
+        }
+
+    private fun coerceLong(raw: Any?): Long? = when (raw) {
+        is BigInteger -> raw.toLong()
+        is Long -> raw
+        is Number -> raw.toLong()
+        else -> null
+    }
 
     private fun sendControlText(json: String) {
         val ch = controlChannel ?: return
