@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <!-- API 33+: runtime-prompted in MainActivity so the call notification can post. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Enables the call notification's fullScreenIntent fallback so the in-call screen
+         pops even when the OS blocks our direct startActivity (background activity launch). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- Required for the proximity-to-ear PROXIMITY_SCREEN_OFF_WAKE_LOCK. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />

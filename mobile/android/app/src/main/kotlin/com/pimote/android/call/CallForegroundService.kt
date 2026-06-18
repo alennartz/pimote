@@ -85,6 +85,21 @@ class CallForegroundService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+        // Launch the in-call screen NOW, while the service is provably in the
+        // foreground state. The phoneCall foreground-service type grants the
+        // BAL exemption, so this startActivity call is allowed even when the
+        // app has no resumed activity (e.g. cold-start from a CallByName /
+        // contact-card trampoline, or from the Android Auto car-app surface).
+        // The notification's fullScreenIntent (see [buildNotification]) is
+        // the fallback if the OS still blocks the launch.
+        launchInCallActivity()
+    }
+
+    private fun launchInCallActivity() {
+        val intent = Intent(this, InCallActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        runCatching { startActivity(intent) }
+            .onFailure { L.w("Call", "InCallActivity launch failed: ${it.message}") }
     }
 
     private fun startCollecting() {
@@ -140,6 +155,11 @@ class CallForegroundService : Service() {
             .setContentTitle(displayName)
             .setContentText(statusText)
             .setContentIntent(contentIntent)
+            // fullScreenIntent fallback: if [launchInCallActivity] is blocked
+            // (lockscreen, OEM-specific BAL hardening), the system pops the
+            // in-call surface on our behalf for CATEGORY_CALL + IMPORTANCE_HIGH
+            // notifications. Requires USE_FULL_SCREEN_INTENT in the manifest.
+            .setFullScreenIntent(contentIntent, true)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setStyle(NotificationCompat.CallStyle.forOngoingCall(caller, hangUpIntent))
