@@ -152,6 +152,14 @@ class WsClientImpl(
     private val random: kotlin.random.Random = kotlin.random.Random.Default,
     private val idGenerator: () -> String = { java.util.UUID.randomUUID().toString() },
 ) : WsClient {
+    private companion object {
+        /** Consecutive failed connection attempts before the loop surfaces
+         *  [WsState.Failed]. Below this, sustained retries show as
+         *  [WsState.Reconnecting]; a transient single drop that reconnects
+         *  quickly never reaches Failed. Not terminal — the loop keeps retrying. */
+        const val FAILED_AFTER_ATTEMPTS = 3
+    }
+
     private val _state = MutableStateFlow<WsState>(WsState.Disconnected)
     private val _events = MutableSharedFlow<PimoteEvent>(extraBufferCapacity = 64)
     private val _lastFailure = MutableStateFlow<String?>(null)
@@ -313,7 +321,15 @@ class WsClientImpl(
         val next = currentAttempt + 1
         val d = computeReconnectDelayMs(next, random)
         L.d("WS", "reconnect attempt=$next delay=${d}ms")
-        setState(target, WsState.Reconnecting(next, d))
+        // Surface Failed once we've failed several times in a row so the UI (setup
+        // connection-test, status pill) gets honest feedback instead of an endless
+        // "reconnecting". A network-availability wake resets `attempt` to 0, so a
+        // recovered link drops back below the threshold on its next cycle.
+        if (next >= FAILED_AFTER_ATTEMPTS) {
+            setState(target, WsState.Failed(_lastFailure.value ?: "connection failed"))
+        } else {
+            setState(target, WsState.Reconnecting(next, d))
+        }
         var wokeByNetwork = false
         coroutineScope {
             val delayJob = launch { delay(d) }

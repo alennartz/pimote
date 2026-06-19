@@ -203,32 +203,13 @@ class ContactSyncRunner(
                 val rawId = c.getLong(idIdx)
                 val sourceId = c.getString(srcIdx) ?: continue
                 val (display, uri) = readContactDataFor(rawId)
-                // Defensive: a raw_contacts row with no StructuredName /
-                // callable data row is an orphan from a previously-failed
-                // insert. Surface it with a sourceId the desired set won't
-                // match ("orphan:<rawId>") so diff() puts it in toDelete and
-                // reconcile cleans it up on the next pass. Reinsertion of
-                // the real contact happens because the canonical sourceId
-                // is no longer in the existing set.
-                if (display.isNullOrBlank() && uri.isNullOrBlank()) {
-                    out.add(
-                        ContactsSync.ExistingContact(
-                            sourceId = "orphan:$rawId",
-                            rawContactId = rawId,
-                            displayName = "",
-                            pimoteUri = "",
-                        ),
-                    )
-                } else {
-                    out.add(
-                        ContactsSync.ExistingContact(
-                            sourceId = sourceId,
-                            rawContactId = rawId,
-                            displayName = display.orEmpty(),
-                            pimoteUri = uri.orEmpty(),
-                        ),
-                    )
-                }
+                // Classify (pure): a row missing EITHER the StructuredName or the
+                // callable data row is an orphan (failed insert, or an external
+                // edit that deleted one row). It is surfaced under an
+                // "orphan:<rawId>" sourceId so diff() deletes it and the canonical
+                // contact is reinserted fresh — an in-place update can't repair a
+                // missing data row. See ContactsSync.classifyExisting.
+                out.add(ContactsSync.classifyExisting(sourceId, rawId, display, uri))
             }
         }
         return out

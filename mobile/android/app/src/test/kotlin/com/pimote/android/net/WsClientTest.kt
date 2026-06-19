@@ -217,6 +217,42 @@ class WsClientTest {
     }
 
     @Test
+    fun `surfaces Failed after repeated consecutive failures and recovers to Connected`() = runTest {
+        val transport = FakeWsTransport()
+        val c1 = transport.nextConnection()
+        val c2 = transport.nextConnection()
+        val c3 = transport.nextConnection()
+        val c4 = transport.nextConnection()
+        val net = FakeNetworkMonitor().apply { emit(true) }
+        val scope = TestScope(StandardTestDispatcher(testScheduler))
+        val client = WsClientImpl(transport, net, scope, random = Random(0))
+        client.connect("https://pimote.example.com")
+        advanceUntilIdle()
+
+        // First two failures stay in Reconnecting (transient drops shouldn't alarm).
+        c1.emit(WsTransport.Event.Failed("dns-1"))
+        advanceUntilIdle()
+        assertTrue(client.state.value is WsState.Reconnecting, "after 1 failure: ${client.state.value}")
+
+        c2.emit(WsTransport.Event.Failed("dns-2"))
+        advanceUntilIdle()
+        assertTrue(client.state.value is WsState.Reconnecting, "after 2 failures: ${client.state.value}")
+
+        // Third consecutive failure surfaces Failed (with the latest reason).
+        c3.emit(WsTransport.Event.Failed("dns-3"))
+        advanceUntilIdle()
+        val failed = client.state.value
+        assertTrue(failed is WsState.Failed, "after 3 failures: $failed")
+        failed as WsState.Failed
+        assertEquals("dns-3", failed.reason)
+
+        // Not terminal: a subsequent successful open returns to Connected.
+        c4.emit(WsTransport.Event.Open)
+        advanceUntilIdle()
+        assertEquals(WsState.Connected, client.state.value)
+    }
+
+    @Test
     fun `network availability resumes immediately resetting backoff`() = runTest {
         val transport = FakeWsTransport()
         val first = transport.nextConnection()

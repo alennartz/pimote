@@ -155,4 +155,52 @@ class ContactsSyncTest {
         assertTrue(ops.toDelete.isEmpty())
         assertTrue(ops.toUpdate.isEmpty())
     }
+
+    // ------------------------------------------------- classifyExisting
+
+    @Test
+    fun `classifyExisting keeps a healthy row under its canonical source id`() {
+        val e = ContactsSync.classifyExisting("project:a", 42L, "A", "pimote:project:a")
+        assertEquals("project:a", e.sourceId)
+        assertEquals(42L, e.rawContactId)
+        assertEquals("A", e.displayName)
+        assertEquals("pimote:project:a", e.pimoteUri)
+    }
+
+    @Test
+    fun `classifyExisting marks a full orphan (both rows missing)`() {
+        val e = ContactsSync.classifyExisting("project:a", 7L, null, null)
+        assertEquals("orphan:7", e.sourceId)
+        assertEquals(7L, e.rawContactId)
+    }
+
+    @Test
+    fun `classifyExisting marks a half-orphan missing the name row`() {
+        val e = ContactsSync.classifyExisting("project:a", 7L, null, "pimote:project:a")
+        assertEquals("orphan:7", e.sourceId)
+    }
+
+    @Test
+    fun `classifyExisting marks a half-orphan missing the callable row`() {
+        val e = ContactsSync.classifyExisting("project:a", 7L, "A", "")
+        assertEquals("orphan:7", e.sourceId)
+    }
+
+    @Test
+    fun `half-orphan converges via delete plus reinsert, not a no-op update`() {
+        // Regression for audit L1: a contact whose callable row was deleted
+        // externally must NOT produce an UpdatePair (whose update matches zero
+        // rows and re-emits forever). classifyExisting surfaces it as an orphan,
+        // so diff deletes the broken raw contact and reinserts the canonical one.
+        val desired = listOf(
+            ContactsSync.DesiredContact("project:a", "A", "pimote:project:a", "Call A"),
+        )
+        val existing = listOf(
+            ContactsSync.classifyExisting("project:a", 42L, "A", null),
+        )
+        val ops = ContactsSync.diff(desired, existing)
+        assertEquals(listOf(42L), ops.toDelete)
+        assertEquals(listOf("project:a"), ops.toInsert.map { it.sourceId })
+        assertTrue(ops.toUpdate.isEmpty())
+    }
 }

@@ -94,6 +94,47 @@ object ContactsSync {
     }
 
     /**
+     * Classify a raw_contacts row read back from ContactsContract into an
+     * [ExistingContact]. A healthy synced contact always carries BOTH a
+     * StructuredName ([displayName]) and a callable ([pimoteUri]) data row
+     * — [computeDesiredContacts] never produces a contact missing either.
+     *
+     * If EITHER row is missing/blank the contact is an orphan: a full orphan
+     * (both blank) from a failed insert, or a half-orphan (one blank) from an
+     * external edit (the user deleted the name or callable row via the
+     * Contacts app). An in-place update cannot repair a missing data row — the
+     * update selection matches zero rows, silently no-ops, and the diff
+     * re-emits the same UpdatePair on every reconcile forever, leaving the
+     * contact permanently wrong/uncallable.
+     *
+     * So we surface any orphan under a synthetic `"orphan:<rawId>"` sourceId
+     * the desired set can never match: [diff] routes it to `toDelete`, and the
+     * canonical contact is reinserted because its real sourceId is no longer
+     * present in the existing set — converging to a fresh, complete contact.
+     */
+    fun classifyExisting(
+        sourceId: String,
+        rawContactId: Long,
+        displayName: String?,
+        pimoteUri: String?,
+    ): ExistingContact =
+        if (!displayName.isNullOrBlank() && !pimoteUri.isNullOrBlank()) {
+            ExistingContact(
+                sourceId = sourceId,
+                rawContactId = rawContactId,
+                displayName = displayName,
+                pimoteUri = pimoteUri,
+            )
+        } else {
+            ExistingContact(
+                sourceId = "orphan:$rawContactId",
+                rawContactId = rawContactId,
+                displayName = "",
+                pimoteUri = "",
+            )
+        }
+
+    /**
      * Diff the desired set against the existing set. Stable on [sourceId]:
      *
      * - sourceId in desired but not existing → insert
