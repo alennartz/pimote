@@ -19,6 +19,10 @@ export interface CallAudioCues {
   playMuteOff(): void;
   /** Distinct double-beep — played to confirm an agent abort. */
   playAbortConfirm(): void;
+  /** Close the underlying AudioContext (if one was created) and release it.
+   *  Browsers cap concurrent AudioContexts, so this must run when the owning
+   *  component unmounts. Idempotent and safe to call before any cue played. */
+  dispose(): void;
 }
 
 /**
@@ -69,6 +73,13 @@ export function createCallAudioCues(audioContextFactory?: () => AudioContext): C
       // Two beeps, ~120ms apart, to differentiate from the single mute cue.
       beep(660, 80, 0);
       beep(660, 80, 120);
+    },
+    dispose(): void {
+      if (ctx) {
+        // close() returns a promise; we don't await it — fire and forget.
+        void ctx.close().catch(() => {});
+        ctx = null;
+      }
     },
   };
 }

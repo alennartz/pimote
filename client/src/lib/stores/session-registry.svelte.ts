@@ -743,9 +743,15 @@ export async function openExistingSession(sessionId: string, folderPath: string,
         if (session) session.pendingTakeover = true;
         return false;
       }
-      sessionRegistry.removeSession(sessionId);
-      connection.removeSubscribedSession(sessionId);
-      commandStore.removeSession(sessionId);
+      // Only tear down registry state for a session WE just added here. If the
+      // session was already open (takeover/notification-adopt path), a transient
+      // failure must not wipe the user's tab, draft, or pending steering — the
+      // reconnect cycle retries restores.
+      if (!alreadyTracked) {
+        sessionRegistry.removeSession(sessionId);
+        connection.removeSubscribedSession(sessionId);
+        commandStore.removeSession(sessionId);
+      }
       return false;
     }
 
@@ -756,9 +762,11 @@ export async function openExistingSession(sessionId: string, folderPath: string,
     return true;
   } catch (err) {
     console.error('[SessionRegistry] Failed to open existing session:', err);
-    sessionRegistry.removeSession(sessionId);
-    connection.removeSubscribedSession(sessionId);
-    commandStore.removeSession(sessionId);
+    if (!alreadyTracked) {
+      sessionRegistry.removeSession(sessionId);
+      connection.removeSubscribedSession(sessionId);
+      commandStore.removeSession(sessionId);
+    }
     return false;
   }
 }

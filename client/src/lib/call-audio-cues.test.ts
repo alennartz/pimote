@@ -122,6 +122,25 @@ describe('createCallAudioCues', () => {
     expect(ctx.destinationConnected).toBe(true);
   });
 
+  it('dispose() closes the created AudioContext and is safe to repeat', () => {
+    const ctx = fakeAudioContext();
+    (ctx as any).close = vi.fn(() => Promise.resolve());
+    const cues = createCallAudioCues(() => ctx);
+    cues.playMuteOn();
+    cues.dispose();
+    expect((ctx as any).close).toHaveBeenCalledTimes(1);
+    // Second dispose is a no-op (context already released).
+    cues.dispose();
+    expect((ctx as any).close).toHaveBeenCalledTimes(1);
+  });
+
+  it('dispose() before any cue does not create a context', () => {
+    const factory = vi.fn(() => fakeAudioContext());
+    const cues = createCallAudioCues(factory);
+    cues.dispose();
+    expect(factory).not.toHaveBeenCalled();
+  });
+
   it('each beep schedules a finite duration (stop > start)', () => {
     const ctx = fakeAudioContext();
     const cues = createCallAudioCues(() => ctx);

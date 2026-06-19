@@ -87,12 +87,18 @@ function attachCopyButton(preEl: HTMLElement, codeEl: HTMLElement): void {
   wrapper.appendChild(btn);
 }
 
-export function createRenderer(container: HTMLElement): smd.Default_Renderer {
+export function createRenderer(container: HTMLElement): smd.Default_Renderer & { dispose: () => void } {
   const base = smd.default_renderer(container);
   const highlighter = createIncrementalHighlighter();
 
   return {
     ...base,
+    // Release the highlighter's trailing-edge timer. smd never calls this; the
+    // owning component must call it on teardown so a pending re-highlight can't
+    // fire into a detached node after the component is destroyed.
+    dispose() {
+      highlighter.dispose();
+    },
     set_attr(data: smd.Default_Renderer_Data, type: smd.Attr, value: string) {
       // Sanitize href/src to prevent javascript: and other dangerous URL schemes
       if (type === smd.Attr.Href || type === smd.Attr.Src) {

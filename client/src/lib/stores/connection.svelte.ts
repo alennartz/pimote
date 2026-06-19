@@ -15,7 +15,7 @@ const clientId =
     return id;
   })();
 
-class ConnectionStore {
+export class ConnectionStore {
   readonly clientId: string = clientId;
   status: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' = $state('disconnected');
   /** True only after WebSocket is open AND all session reconnects have completed. */
@@ -28,11 +28,14 @@ class ConnectionStore {
   syncProgress: { done: number; total: number } | null = $state(null);
   /** Human-readable restore detail for reconnect sync. */
   syncDetail: string | null = $state(null);
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive internal bookkeeping; no template reads it
   private sessionCursors: Map<string, number> = new Map();
   subscribedSessions: Map<string, string> = $state(new SvelteMap());
 
   private ws: WebSocket | null = null;
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
   private pending = new Map<string, { resolve: (r: PimoteResponse) => void; reject: (e: Error) => void }>();
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- event-listener set, not reactive UI state
   private listeners = new Set<EventListener>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private countdownInterval: ReturnType<typeof setInterval> | null = null;
@@ -56,6 +59,25 @@ class ConnectionStore {
       return;
     }
 
+    // Starting a fresh connection. Any existing socket here is CLOSING/CLOSED
+    // (OPEN/CONNECTING bailed above). Abandon it deterministically:
+    //  - detach its listeners so a late `onclose` can't null `this.ws` (the new
+    //    socket) or reject the new connection's pending requests;
+    //  - reject its still-pending requests *here* rather than relying on the
+    //    racing stale `onclose` (send() has no timeout, so they'd otherwise hang);
+    //  - clear any prior intentional-close intent (we now intend to be connected).
+    // Each handler/continuation below also guards on its own socket identity
+    // (`this.ws !== ws`), which additionally covers a plain drop-into-backoff
+    // where no replacement socket exists yet.
+    if (this.ws) {
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+    }
+    this.rejectAllPending('WebSocket replaced');
+    this.intentionalClose = false;
+
     this.installLifecycleListeners();
     this.ready = false;
     this.clearCountdownInterval();
@@ -64,8 +86,13 @@ class ConnectionStore {
     this.syncDetail = null;
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.ws = new WebSocket(`${protocol}//${location.host}/ws?clientId=${clientId}&version=${encodeURIComponent(version)}`);
+    // Identity of THIS socket. Handlers and the async restore continuation
+    // capture it and no-op once `this.ws` points elsewhere (replaced) or is
+    // null (dropped into backoff).
+    const ws = this.ws;
 
     this.ws.onopen = () => {
+      if (this.ws !== ws) return;
       this.status = 'connected';
       this.reconnectDelay = 1000;
 
@@ -121,6 +148,10 @@ class ConnectionStore {
       // After all restores, restore correct viewed session on the server.
       // Import is circular so we use the onReconnected callback instead.
       Promise.all(restorePromises).then(() => {
+        // Bail if this socket was superseded while restores were in flight
+        // (dropped mid-sync) — otherwise we'd flip the store to ready/'ready'
+        // and fire onReconnected() while actually disconnected and backing off.
+        if (this.ws !== ws) return;
         this.ready = true;
         this.phase = 'ready';
         this.syncProgress = null;
@@ -139,6 +170,7 @@ class ConnectionStore {
     };
 
     this.ws.onmessage = (ev) => {
+      if (this.ws !== ws) return;
       let msg: PimoteServerMessage;
       try {
         msg = JSON.parse(ev.data as string);
@@ -196,13 +228,10 @@ class ConnectionStore {
     };
 
     this.ws.onclose = () => {
+      if (this.ws !== ws) return;
       this.ws = null;
       this.ready = false;
-      // Reject all pending requests
-      for (const [, pending] of this.pending) {
-        pending.reject(new Error('WebSocket closed'));
-      }
-      this.pending.clear();
+      this.rejectAllPending('WebSocket closed');
 
       if (!this.intentionalClose) {
         this.status = 'reconnecting';
@@ -322,6 +351,15 @@ class ConnectionStore {
       clearInterval(this.countdownInterval);
       this.countdownInterval = null;
     }
+  }
+
+  /** Reject and clear every in-flight request. Single home for pending
+   *  teardown so connect()-time replacement and onclose stay in sync. */
+  private rejectAllPending(reason: string): void {
+    for (const [, pending] of this.pending) {
+      pending.reject(new Error(reason));
+    }
+    this.pending.clear();
   }
 
   private scheduleReconnect(): void {

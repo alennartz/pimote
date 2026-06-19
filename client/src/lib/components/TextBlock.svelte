@@ -40,6 +40,9 @@
       if (!ended) {
         smd.parser_end(parser);
       }
+      // Cancel the renderer's pending highlight timer so it can't fire into the
+      // detached container after teardown.
+      renderer.dispose();
       // eslint-disable-next-line svelte/no-dom-manipulating -- smd owns the container's DOM; cleanup is intentional
       container.innerHTML = '';
     };

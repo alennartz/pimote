@@ -5,6 +5,7 @@
   import OctagonX from '@lucide/svelte/icons/octagon-x';
   import Mic from '@lucide/svelte/icons/mic';
   import MicOff from '@lucide/svelte/icons/mic-off';
+  import { onDestroy } from 'svelte';
   import { voiceCallStore } from '$lib/stores/voice-call-store.js';
   import { createCallAudioCues, type CallAudioCues } from '$lib/call-audio-cues.js';
   import { recognizeCallGesture, type PointerSample } from './call-gesture.js';
@@ -16,6 +17,14 @@
     if (!cues) cues = createCallAudioCues();
     return cues;
   }
+
+  // CallingMode (and thus this component) mounts per call; close the cached
+  // AudioContext on unmount so contexts don't accumulate across calls and hit
+  // the browser's concurrent-AudioContext cap.
+  onDestroy(() => {
+    cues?.dispose();
+    cues = null;
+  });
 
   let activePointerId = $state<number | null>(null);
   // Element that received setPointerCapture on pointerdown. We must release
