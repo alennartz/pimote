@@ -92,8 +92,9 @@ data class TypedResponse<T>(
  *   socket drops before a response is received.
  *
  * Backoff schedule (ms): `min(30_000, 500 * 2^(attempt-1))` with ±20% jitter.
- * No attempt cap. Network-availability events reset `attempt` to 0 and trigger
- * an immediate retry.
+ * No attempt cap. A network-availability (false→true) edge cancels the current
+ * backoff delay for an immediate retry and resets `attempt` to 0, so a fresh
+ * failure after reconnecting restarts the schedule from the base delay.
  */
 interface WsClient {
     val state: StateFlow<WsState>
@@ -159,8 +160,6 @@ class WsClientImpl(
     override val events: SharedFlow<PimoteEvent> = _events.asSharedFlow()
     override val lastFailure: StateFlow<String?> = _lastFailure.asStateFlow()
 
-    private val pending = ConcurrentHashMap<String, CompletableDeferred<PimoteResponse>>()
-
     /**
      * All per-connect()-call lifetime state, held as an immutable record
      * inside a single [MutableStateFlow]. When the slot is non-null the
@@ -179,6 +178,13 @@ class WsClientImpl(
         val origin: String,
         val scope: CoroutineScope,
         val activeSocket: MutableStateFlow<WsTransport.Connection?>,
+        /**
+         * In-flight request map, scoped to THIS connect() lifetime. Previously
+         * client-wide, which let a dying loop's tail `failAllPending()` fail
+         * requests issued against the *next* session. Per-session, the old
+         * loop only ever fails its own requests. (M3)
+         */
+        val pending: ConcurrentHashMap<String, CompletableDeferred<PimoteResponse>> = ConcurrentHashMap(),
     )
 
     private val session = MutableStateFlow<Session?>(null)
@@ -220,7 +226,17 @@ class WsClientImpl(
         try { target.activeSocket.value?.close() } catch (_: Throwable) { }
         target.activeSocket.value = null
         target.scope.cancel()
-        if (failPending) failAllPending()
+        if (failPending) failAllPending(target)
+    }
+
+    /**
+     * Write [s] into the public state flow only if [target] is still the
+     * current session. Stops a just-cancelled loop's non-suspending tail
+     * (e.g. `waitForRetry` setting Reconnecting) from clobbering a newer
+     * session's state. (M3)
+     */
+    private fun setState(target: Session, s: WsState) {
+        if (session.value === target) _state.value = s
     }
 
     /**
@@ -238,7 +254,7 @@ class WsClientImpl(
         var firstIter = true
         while (true) {
             if (firstIter) {
-                _state.value = WsState.Connecting
+                setState(target, WsState.Connecting)
                 L.d("WS", "connecting -> $url")
             }
             firstIter = false
@@ -247,7 +263,7 @@ class WsClientImpl(
             } catch (e: Throwable) {
                 L.w("WS", "transport.open failed: ${e.message}", e)
                 _lastFailure.value = e.message ?: e::class.java.simpleName
-                attempt = waitForRetry(attempt)
+                attempt = waitForRetry(target, attempt)
                 continue
             }
             target.activeSocket.value = conn
@@ -256,11 +272,11 @@ class WsClientImpl(
                     when (ev) {
                         is WsTransport.Event.Open -> {
                             attempt = 0
-                            _state.value = WsState.Connected
+                            setState(target, WsState.Connected)
                             _lastFailure.value = null
                             L.i("WS", "connected")
                         }
-                        is WsTransport.Event.TextMessage -> handleMessage(ev.payload)
+                        is WsTransport.Event.TextMessage -> handleMessage(target, ev.payload)
                         is WsTransport.Event.Closed -> {
                             _lastFailure.value = "closed: code=${ev.code} reason=${ev.reason}"
                             L.w("WS", "closed code=${ev.code} reason=${ev.reason}")
@@ -283,8 +299,8 @@ class WsClientImpl(
             try { conn.close() } catch (_: Throwable) { }
             // Clear iff still ours (a concurrent disconnect may have nulled it).
             target.activeSocket.compareAndSet(conn, null)
-            failAllPending()
-            attempt = waitForRetry(attempt)
+            failAllPending(target)
+            attempt = waitForRetry(target, attempt)
         }
     }
 
@@ -293,11 +309,12 @@ class WsClientImpl(
      * reports availability flipping false→true. Returns the incremented
      * attempt counter for the caller's next iteration.
      */
-    private suspend fun waitForRetry(currentAttempt: Int): Int {
+    private suspend fun waitForRetry(target: Session, currentAttempt: Int): Int {
         val next = currentAttempt + 1
         val d = computeReconnectDelayMs(next, random)
         L.d("WS", "reconnect attempt=$next delay=${d}ms")
-        _state.value = WsState.Reconnecting(next, d)
+        setState(target, WsState.Reconnecting(next, d))
+        var wokeByNetwork = false
         coroutineScope {
             val delayJob = launch { delay(d) }
             val wakeJob = launch {
@@ -307,23 +324,28 @@ class WsClientImpl(
                 networkMonitor.available
                     .filter { cur -> (prev == false && cur).also { prev = cur } }
                     .first()
+                wokeByNetwork = true
                 delayJob.cancel()
             }
             delayJob.join()
             wakeJob.cancel()
         }
-        // If a network wake reset us to attempt=0, callers handle it.
-        return next
+        // A network-availability wake means connectivity was just restored, so
+        // restart the backoff schedule (return attempt 0) per the documented
+        // contract — otherwise a single post-wake failure would jump straight to
+        // the 30s cap instead of the base delay. A normal delay expiry keeps
+        // incrementing. (M4)
+        return if (wokeByNetwork) 0 else next
     }
 
-    private suspend fun handleMessage(payload: String) {
+    private suspend fun handleMessage(target: Session, payload: String) {
         val element = try { json.parseToJsonElement(payload) } catch (_: Throwable) { return }
         val obj = (element as? kotlinx.serialization.json.JsonObject) ?: element.jsonObject
         if (obj.containsKey("success")) {
             val resp = try {
                 json.decodeFromJsonElement(PimoteResponse.serializer(), element)
             } catch (_: Throwable) { return }
-            pending.remove(resp.id)?.complete(resp)
+            target.pending.remove(resp.id)?.complete(resp)
         } else {
             val ev = try {
                 json.decodeFromJsonElement(PimoteEventSerializer, element)
@@ -332,9 +354,9 @@ class WsClientImpl(
         }
     }
 
-    private fun failAllPending() {
-        val toFail = pending.values.toList()
-        pending.clear()
+    private fun failAllPending(target: Session) {
+        val toFail = target.pending.values.toList()
+        target.pending.clear()
         toFail.forEach { it.completeExceptionally(WsConnectionLost()) }
     }
 
@@ -343,12 +365,16 @@ class WsClientImpl(
         responseSerializer: KSerializer<T>,
         timeoutMillis: Long,
     ): TypedResponse<T> {
+        // Register the pending entry on the CURRENT session so a reconnect that
+        // replaces the session fails THIS request via that session's
+        // failAllPending, never a later session's. (M3)
+        val sess = session.value ?: throw WsConnectionLost("not connected")
         val def = CompletableDeferred<PimoteResponse>()
-        pending[command.id] = def
+        sess.pending[command.id] = def
         try {
             send(command)
         } catch (e: Throwable) {
-            pending.remove(command.id)
+            sess.pending.remove(command.id)
             throw e
         }
         // Watchdog uses Dispatchers.IO so its delay runs on wall-clock time, not the
@@ -361,7 +387,7 @@ class WsClientImpl(
         val resp: PimoteResponse = try {
             def.await()
         } catch (e: Throwable) {
-            pending.remove(command.id)
+            sess.pending.remove(command.id)
             watchdog.cancel()
             throw e
         }

@@ -15,6 +15,7 @@ import com.pimote.android.telephony.CallConnection
 import com.pimote.android.voice.PeerConnectionFailed
 import com.pimote.android.voice.PeerState
 import com.pimote.android.voice.SpeechmuxPeer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -48,9 +49,9 @@ sealed interface SessionTarget {
  *
  *     Idle → Dialing → Binding → Negotiating → Active → Ended → Idle
  *
- * Failures collapse to [Ended] from any state. Once [Ended], the controller
- * resets back to [Idle] (state goes back to Idle after the held connection is
- * released) so the next call may begin.
+ * Failures collapse to [Ended] from any state. The controller lingers in
+ * [Ended] so the in-call screen can show the failure reason, then returns to
+ * [Idle] at the start of the next call (and on app shutdown).
  */
 sealed interface CallState {
     object Idle : CallState
@@ -278,8 +279,18 @@ class CallControllerImpl(
 
     override fun startOutgoing(target: SessionTarget, connection: CallConnection) {
         com.pimote.android.util.L.i("Call", "startOutgoing target=$target")
-        // Cancel any prior live call's job before installing a fresh slot.
-        live.value?.callJob?.cancel()
+        // Reset a lingering terminal state from the previous call so each new
+        // call begins from a clean Idle, per the documented lifecycle. (H1)
+        if (_state.value is CallState.Ended) _state.value = CallState.Idle
+        // Tear down any prior LIVE call through the single terminate path before
+        // installing a fresh slot. Cancelling the job alone does NOT run the
+        // teardown effects, so the old peer (mic) and Telecom Connection would
+        // leak. (H2)
+        live.value?.let { prev ->
+            prev.callJob.cancel()
+            prev.userHangup.complete(Unit)
+            terminate(CallEndReason.USER_HANGUP)
+        }
         // Fresh call starts unmuted.
         _isMicMuted.value = false
         // Clear the previous call's route snapshot; Telecom will re-emit
@@ -452,7 +463,29 @@ class CallControllerImpl(
     }
 
     private suspend fun runOutgoing(target: SessionTarget, connection: CallConnection) {
+        // A WS request (open_session / call_bind) can throw WsRequestTimeout or
+        // WsConnectionLost mid dial/bind. Unhandled, that exception propagates to
+        // applicationScope's default handler and crashes the process — and
+        // terminate never runs, leaking the Telecom Connection and stranding
+        // state in Dialing/Binding. Route any such failure through terminate.
+        // CancellationException must propagate so coroutine cancellation still
+        // unwinds normally. (C1)
+        try {
+            runOutgoingInner(target, connection)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            com.pimote.android.util.L.w("Call", "runOutgoing failed", e)
+            terminate(CallEndReason.BIND_FAILED, failureReason = e.message ?: "call_setup_failed")
+        }
+    }
+
+    private suspend fun runOutgoingInner(target: SessionTarget, connection: CallConnection) {
         _state.value = CallState.Dialing(target)
+        // Move the Telecom Connection out of INITIALIZING promptly so in-car /
+        // Bluetooth surfaces show the call as dialing during setup. Best-effort
+        // and cosmetic — don't let a framework hiccup abort the call. (L2)
+        try { connection.reportDialing() } catch (_: Throwable) { }
 
         // 1) Resolve sessionId.
         val sessionId: String = when (target) {
@@ -512,6 +545,11 @@ class CallControllerImpl(
             terminate(CallEndReason.PEER_FAILED, failureReason = "peer_failed")
             return
         }
+        // If the call was torn down (user hangup / displacement) while ICE was
+        // connecting, terminate already nulled the slot and disconnected the
+        // peer — do NOT reportActive on a destroyed Connection (which would
+        // strand state in Active forever). (H3)
+        if (live.value == null) return
 
         // 4) Peer is locally connected — that *is* call-ready.
         //

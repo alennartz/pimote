@@ -11,8 +11,10 @@ package com.pimote.android.telephony
  * logic can be exercised without spinning up Telecom.
  */
 interface CallConnection {
-    /** Move Telecom to "ringing" (`setRinging()`). */
-    fun reportRinging()
+    /** Move Telecom to "dialing" (`setDialing()`). Called once outgoing dispatch
+     *  begins so connected surfaces (Android Auto, BT HFP) show the call as
+     *  dialing during the dial/bind/negotiate window rather than "initializing". */
+    fun reportDialing()
 
     /** Move Telecom to "active" (`setActive()`). */
     fun reportActive()

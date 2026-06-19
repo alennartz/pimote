@@ -52,8 +52,8 @@ class PimoteConnection(
     }
 
     // App → Telecom transitions (CallConnection)
-    override fun reportRinging() {
-        setRinging()
+    override fun reportDialing() {
+        setDialing()
     }
 
     override fun reportActive() {
@@ -96,7 +96,12 @@ class PimoteConnection(
     }
 
     private fun mapEndReasonToDisconnectCause(reason: CallEndReason): Int = when (reason) {
-        CallEndReason.USER_HANGUP, CallEndReason.REMOTE_HANGUP -> DisconnectCause.REMOTE
+        // USER_HANGUP is unreachable via this path (local hangups go through
+        // disconnectAsLocalHangup → LOCAL), but map it to LOCAL rather than the
+        // previous REMOTE so it can never mislabel a local end if some future
+        // path reaches it.
+        CallEndReason.USER_HANGUP -> DisconnectCause.LOCAL
+        CallEndReason.REMOTE_HANGUP -> DisconnectCause.REMOTE
         CallEndReason.DISPLACED -> DisconnectCause.CANCELED
         CallEndReason.SERVER_ENDED -> DisconnectCause.REMOTE
         CallEndReason.PEER_FAILED, CallEndReason.BIND_FAILED -> DisconnectCause.ERROR

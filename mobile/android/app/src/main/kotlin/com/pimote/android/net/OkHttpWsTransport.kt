@@ -1,6 +1,7 @@
 package com.pimote.android.net
 
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import okhttp3.OkHttpClient
@@ -28,17 +29,22 @@ private class OkHttpConnection(
     @Volatile private var socket: WebSocket? = null
 
     override val events: Flow<WsTransport.Event> = callbackFlow {
+        // Use trySendBlocking (not trySend): if the collector falls behind and
+        // the channel fills, blocking the OkHttp listener thread applies
+        // backpressure rather than silently dropping frames — dropped frames
+        // include command responses, which would surface as spurious
+        // WsRequestTimeouts. OkHttp listener threads tolerate blocking. (L4)
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                trySend(WsTransport.Event.Open)
+                trySendBlocking(WsTransport.Event.Open)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                trySend(WsTransport.Event.TextMessage(text))
+                trySendBlocking(WsTransport.Event.TextMessage(text))
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                trySend(WsTransport.Event.Closed(code, reason))
+                trySendBlocking(WsTransport.Event.Closed(code, reason))
                 close()
             }
 
@@ -47,7 +53,7 @@ private class OkHttpConnection(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                trySend(WsTransport.Event.Failed(t.message ?: t::class.java.simpleName))
+                trySendBlocking(WsTransport.Event.Failed(t.message ?: t::class.java.simpleName))
                 close()
             }
         }

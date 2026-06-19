@@ -103,8 +103,8 @@ class FakeCallConnection : CallConnection {
     val transitions = mutableListOf<String>()
     val routeRequests = mutableListOf<AudioRoute>()
 
-    override fun reportRinging() {
-        transitions.add("ringing")
+    override fun reportDialing() {
+        transitions.add("dialing")
     }
 
     override fun reportActive() {

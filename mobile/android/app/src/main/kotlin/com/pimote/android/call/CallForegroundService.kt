@@ -55,10 +55,6 @@ class CallForegroundService : Service() {
                 runCatching { pimoteContainer.callController.endCurrentCall() }
                 return START_NOT_STICKY
             }
-            ACTION_STOP -> {
-                stopForegroundAndSelf()
-                return START_NOT_STICKY
-            }
             else -> {
                 // ACTION_START (or a restart). Must post a foreground
                 // notification synchronously to satisfy the 5s window.
@@ -197,7 +193,6 @@ class CallForegroundService : Service() {
         private const val NOTIFICATION_ID = 0xCA11
 
         const val ACTION_START = "com.pimote.android.call.action.START"
-        const val ACTION_STOP = "com.pimote.android.call.action.STOP"
         const val ACTION_HANGUP = "com.pimote.android.call.action.HANGUP"
 
         fun start(context: Context) {
@@ -208,12 +203,6 @@ class CallForegroundService : Service() {
             } else {
                 context.startService(intent)
             }
-        }
-
-        fun stop(context: Context) {
-            context.startService(
-                Intent(context, CallForegroundService::class.java).setAction(ACTION_STOP),
-            )
         }
 
         private fun sessionIdOf(state: CallState): String? = when (state) {

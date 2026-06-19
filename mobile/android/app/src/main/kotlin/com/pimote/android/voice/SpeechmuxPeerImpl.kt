@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -48,6 +50,7 @@ import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import java.math.BigInteger
 import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicBoolean
 import java.nio.charset.StandardCharsets
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -94,6 +97,11 @@ class SpeechmuxPeerImpl(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
+    /** Gate so the per-call native teardown runs exactly once even under a
+     *  concurrent disconnect() race (terminate vs the connect() error path). (M2) */
+    private val closed = AtomicBoolean(false)
+    /** Pending grace timer for a transient ICE DISCONNECTED, if any. (M1) */
+    private var iceDisconnectGraceJob: Job? = null
 
     private var peer: PeerConnection? = null
     private var signalingSocket: WebSocket? = null
@@ -174,15 +182,31 @@ class SpeechmuxPeerImpl(
                     when (s) {
                         PeerConnection.IceConnectionState.CONNECTED,
                         PeerConnection.IceConnectionState.COMPLETED -> {
+                            // Recovered (or first connect) — cancel any pending
+                            // ICE-disconnect grace timer. (M1)
+                            iceDisconnectGraceJob?.cancel()
+                            iceDisconnectGraceJob = null
                             _state.value = PeerState.Connected
                             connectedDeferred.complete(Unit)
                         }
                         PeerConnection.IceConnectionState.FAILED -> {
+                            iceDisconnectGraceJob?.cancel()
+                            iceDisconnectGraceJob = null
                             _state.value = PeerState.Failed("ice_failed")
                             connectedDeferred.completeExceptionally(PeerConnectionFailed("ice_failed"))
                         }
                         PeerConnection.IceConnectionState.DISCONNECTED -> {
-                            _state.value = PeerState.Failed("ice_disconnected")
+                            // DISCONNECTED is usually transient (Wi-Fi↔cellular
+                            // handoff, brief RF loss); libwebrtc often recovers to
+                            // CONNECTED on its own. Hold the call and only fail if
+                            // it hasn't recovered within the grace window. (M1)
+                            if (iceDisconnectGraceJob == null) {
+                                iceDisconnectGraceJob = scope.launch {
+                                    delay(ICE_DISCONNECT_GRACE_MS)
+                                    _state.value = PeerState.Failed("ice_disconnected")
+                                    connectedDeferred.completeExceptionally(PeerConnectionFailed("ice_disconnected"))
+                                }
+                            }
                         }
                         else -> { /* ignore */ }
                     }
@@ -361,17 +385,33 @@ class SpeechmuxPeerImpl(
                 Request.Builder().url(signalUrl).build(),
                 sigListener,
             )
-            signalConnected.await()
+            // Bound signaling + ICE negotiation with an overall deadline so a
+            // stalled session/answer/ICE can't suspend connect() forever, leaving
+            // the call in Negotiating until a manual hangup. (M1)
+            withTimeout(NEGOTIATION_TIMEOUT_MS) {
+                signalConnected.await()
 
-            _state.value = PeerState.Negotiating
+                _state.value = PeerState.Negotiating
 
-            // We do NOT create or send the offer here. The offer is sent
-            // from `applySessionFrame` once speechmux's `session` envelope
-            // has delivered the per-call TURN config — otherwise ICE
-            // gathering produces only host candidates and connectivity
-            // fails on symmetric NATs.
-            connectedDeferred.await()
+                // We do NOT create or send the offer here. The offer is sent
+                // from `applySessionFrame` once speechmux's `session` envelope
+                // has delivered the per-call TURN config — otherwise ICE
+                // gathering produces only host candidates and connectivity
+                // fails on symmetric NATs.
+                connectedDeferred.await()
+            }
         } catch (e: PeerConnectionFailed) {
+            disconnect()
+            throw e
+        } catch (e: TimeoutCancellationException) {
+            // Signaling/ICE didn't complete within the deadline — surface as a
+            // peer failure rather than a bare cancellation. (M1)
+            disconnect()
+            throw PeerConnectionFailed("negotiation_timeout")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Cooperative cancellation (e.g. the callJob was cancelled) must
+            // unwind as cancellation, not be rewritten into PeerConnectionFailed
+            // — otherwise the caller takes the error/terminate path. (L3)
             disconnect()
             throw e
         } catch (e: Throwable) {
@@ -603,6 +643,11 @@ class SpeechmuxPeerImpl(
         }
 
     override fun disconnect() {
+        // Only the first caller runs teardown. A concurrent second disconnect()
+        // (e.g. connect()'s error path racing terminate's snapshot.peer.disconnect())
+        // would otherwise double-dispose the native peer/factory/ADM and SIGSEGV
+        // — which the try/catch wrappers below cannot catch. (M2)
+        if (!closed.compareAndSet(false, true)) return
         // Snapshot and null out fields up-front so a second disconnect() is a no-op.
         val peerToClose = peer
         val sigToClose = signalingSocket
@@ -940,5 +985,10 @@ class SpeechmuxPeerImpl(
         /** Wire-protocol version accepted by speechmux `/signal`. */
         const val SIGNAL_PROTOCOL_VERSION = 1
         val EMPTY_PAYLOAD: JsonObject = JsonObject(emptyMap())
+        /** Grace period for a transient ICE DISCONNECTED before declaring the
+         *  peer failed. (M1) */
+        const val ICE_DISCONNECT_GRACE_MS = 5_000L
+        /** Overall deadline for signaling + ICE negotiation in connect(). (M1) */
+        const val NEGOTIATION_TIMEOUT_MS = 15_000L
     }
 }
