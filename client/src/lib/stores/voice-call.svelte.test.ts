@@ -142,6 +142,60 @@ describe('VoiceCallStore.startCall', () => {
   });
 });
 
+describe('VoiceCallStore.startCall races (#2)', () => {
+  it('abandons the call when call_ended arrives during getUserMedia (no zombie + mic released)', async () => {
+    let resolveGum!: (v: { stream: unknown; tracks: unknown[] }) => void;
+    const gum = new Promise<{ stream: unknown; tracks: unknown[] }>((r) => (resolveGum = r));
+    const peer = fakePeer();
+    const track = { kind: 'audio', stop: vi.fn() };
+    const { store, seams } = setupStore({
+      createPeerConnection: () => peer,
+      getUserMedia: vi.fn(() => gum),
+    });
+
+    const p = store.startCall('s-1');
+    await vi.waitFor(() => expect(seams.getUserMedia).toHaveBeenCalled());
+
+    // Displacement tears the call down while the mic prompt is open.
+    store.handleServerEvent({ type: 'call_ended', sessionId: 's-1', reason: 'displaced' } as any);
+    expect(store.state.phase).toBe('idle');
+
+    // Mic finally resolves — startCall must abandon, not resurrect a zombie.
+    resolveGum({ stream: {}, tracks: [track] });
+    await p;
+
+    expect(seams.openSignaling).not.toHaveBeenCalled();
+    expect(peer.closed).toBe(true);
+    expect(track.stop).toHaveBeenCalled();
+    expect(store.state.phase).toBe('idle');
+    expect(store.state.sessionId).toBeNull();
+  });
+
+  it('does not regress phase or wipe startedAt when call_ready arrives during getUserMedia', async () => {
+    let resolveGum!: (v: { stream: unknown; tracks: unknown[] }) => void;
+    const gum = new Promise<{ stream: unknown; tracks: unknown[] }>((r) => (resolveGum = r));
+    const { store, seams } = setupStore({
+      getUserMedia: vi.fn(() => gum),
+      now: () => 12345,
+    });
+
+    const p = store.startCall('s-1');
+    await vi.waitFor(() => expect(seams.getUserMedia).toHaveBeenCalled());
+
+    // Server reports ready mid-prompt → connected, startedAt stamped.
+    store.handleServerEvent({ type: 'call_ready', sessionId: 's-1' } as any);
+    expect(store.state.phase).toBe('connected');
+    expect(store.state.startedAt).toBe(12345);
+
+    resolveGum({ stream: {}, tracks: [{ kind: 'audio' }] });
+    await p;
+
+    // startCall's tail must not undo the connected/startedAt the event set.
+    expect(store.state.phase).toBe('connected');
+    expect(store.state.startedAt).toBe(12345);
+  });
+});
+
 describe('VoiceCallStore.handleServerEvent', () => {
   it('call_ready moves connecting → connected', async () => {
     const { store } = setupStore();

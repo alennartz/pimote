@@ -83,6 +83,10 @@ export class VoiceCallStore {
 
   private peer: VoicePeerConnection | null = null;
   private signaling: VoiceSignalingSocket | null = null;
+  /** Monotonic per-call token. Bumped on every startCall, and on endCall /
+   *  server call_ended so an in-flight startCall can detect it was superseded
+   *  across an await and abandon instead of resuming into a zombie call. */
+  private callGen = 0;
   /** Local mic tracks from getUserMedia. Held so we can stop() them on teardown
    *  — RTCPeerConnection.close() does NOT stop tracks; they continue to capture
    *  (and the browser's mic indicator stays on) until explicitly stopped. */
@@ -101,6 +105,7 @@ export class VoiceCallStore {
       throw new Error('voice_call_already_in_progress');
     }
 
+    const gen = ++this.callGen;
     this.state = { phase: 'binding', sessionId, micMuted: false, lastError: null, startedAt: null };
 
     let response: PimoteResponse<Omit<CallBindResponse, 'type' | 'id'>>;
@@ -111,9 +116,15 @@ export class VoiceCallStore {
         sessionId,
       });
     } catch (err) {
-      this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: (err as Error).message, startedAt: null };
+      // Only clobber state to idle if we are still the current call — a
+      // call_ended/endCall during the await already set the correct state.
+      if (gen === this.callGen) {
+        this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: (err as Error).message, startedAt: null };
+      }
       throw err;
     }
+    // Superseded during the bind await — abandon without touching state.
+    if (gen !== this.callGen) return;
 
     if (!response.success || !response.data) {
       this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: response.error ?? 'call_bind_failed', startedAt: null };
@@ -122,12 +133,54 @@ export class VoiceCallStore {
 
     const { webrtcSignalUrl } = response.data;
 
-    // Peer and signalling setup — all testable via injected seams.
+    // Build peer + mic in locals and commit to this.* only AFTER the post-await
+    // generation check, so a superseded call never installs its resources over
+    // a newer call (getUserMedia can block for seconds on the mic prompt).
+    let peer: VoicePeerConnection | null = null;
+    let stream: unknown;
+    let tracks: unknown[];
     try {
-      this.peer = this.seams.createPeerConnection();
-      const { stream, tracks } = await this.seams.getUserMedia();
-      this.localTracks = tracks;
-      for (const track of tracks) this.peer.addTrack(track, stream);
+      peer = this.seams.createPeerConnection();
+      ({ stream, tracks } = await this.seams.getUserMedia());
+    } catch (err) {
+      // Close the local peer ourselves — it isn't committed to this.peer yet,
+      // so teardown() wouldn't reach it.
+      try {
+        peer?.close();
+      } catch {
+        /* ignore */
+      }
+      if (gen === this.callGen) {
+        this.teardown();
+        this.state = { phase: 'idle', sessionId: null, micMuted: false, lastError: (err as Error).message, startedAt: null };
+      }
+      throw err;
+    }
+
+    if (gen !== this.callGen) {
+      // Superseded during getUserMedia — abandon the resources we just built
+      // (the current call, if any, owns its own peer/tracks).
+      for (const track of tracks) {
+        try {
+          (track as { stop: () => void }).stop();
+        } catch {
+          /* ignore */
+        }
+      }
+      try {
+        peer?.close();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    // peer is non-null once getUserMedia resolved (createPeerConnection ran).
+    if (!peer) return;
+
+    this.peer = peer;
+    this.localTracks = tracks;
+    try {
+      for (const track of tracks) peer.addTrack(track, stream);
       this.signaling = this.seams.openSignaling(webrtcSignalUrl);
     } catch (err) {
       this.teardown();
@@ -135,7 +188,12 @@ export class VoiceCallStore {
       throw err;
     }
 
-    this.state = { phase: 'connecting', sessionId, micMuted: false, lastError: null, startedAt: null };
+    // Guard the final transition: only advance binding → connecting. If a server
+    // call_ready raced in during the awaits it already moved us to 'connected'
+    // (with startedAt) — don't regress the phase or wipe startedAt.
+    if (this.state.phase === 'binding') {
+      this.state = { ...this.state, phase: 'connecting' };
+    }
   }
 
   /** Send call_end and tear down. */
@@ -143,6 +201,8 @@ export class VoiceCallStore {
     const sessionId = this.state.sessionId;
     voiceTrace('voice_call', 'endCall', { data: { sessionId, prevPhase: this.state.phase } });
     if (!sessionId || this.state.phase === 'idle') return;
+    // Supersede any in-flight startCall so it abandons instead of resuming.
+    this.callGen++;
     this.state = { ...this.state, phase: 'ending' };
 
     try {
@@ -193,6 +253,8 @@ export class VoiceCallStore {
     }
     if (event.type === 'call_ended') {
       if (event.sessionId !== this.state.sessionId) return;
+      // Supersede any in-flight startCall so it abandons instead of resuming.
+      this.callGen++;
       this.teardown();
       this.state = {
         phase: 'idle',
