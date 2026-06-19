@@ -1,8 +1,11 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { PanelHandle } from './types.js';
 
-/** Tracks active state per key so re-detection deactivates the old handle. */
-const handles = new Map<string, { active: boolean }>();
+/** Tracks active state per key so re-detection deactivates the old handle.
+ *  Scoped per ExtensionAPI instance (one per pi session) via a WeakMap, so two
+ *  sessions in the same process that detect() the same key don't deactivate
+ *  each other's handles. */
+const handlesByApi = new WeakMap<ExtensionAPI, Map<string, { active: boolean }>>();
 
 /**
  * Detect whether running inside pimote. Returns a scoped handle for pushing
@@ -23,7 +26,12 @@ export function detect(pi: ExtensionAPI, key: string): PanelHandle | null {
 
   if (!detected) return null;
 
-  // Deactivate previous handle for this key
+  // Deactivate previous handle for this key (scoped to this pi instance)
+  let handles = handlesByApi.get(pi);
+  if (!handles) {
+    handles = new Map<string, { active: boolean }>();
+    handlesByApi.set(pi, handles);
+  }
   const prev = handles.get(key);
   if (prev) prev.active = false;
 
