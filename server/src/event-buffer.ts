@@ -42,6 +42,9 @@ interface SdkEvent {
   success?: boolean;
   finalError?: string;
   extensionName?: string;
+  /** tree_navigation_start fields (synthetic events injected by the handler) */
+  targetId?: string;
+  summarizing?: boolean;
 }
 
 interface BufferEntry {
@@ -271,6 +274,17 @@ export class EventBuffer {
           error: sdkEvent.error ?? '',
           ...(sdkEvent.extensionName ? { extensionName: sdkEvent.extensionName } : {}),
         };
+
+      case 'tree_navigation_start':
+        return {
+          ...base,
+          type: 'tree_navigation_start',
+          targetId: sdkEvent.targetId ?? '',
+          summarizing: sdkEvent.summarizing ?? false,
+        };
+
+      case 'tree_navigation_end':
+        return { ...base, type: 'tree_navigation_end' };
 
       default:
         // Unknown event type — pass through as agent_start (shouldn't happen)

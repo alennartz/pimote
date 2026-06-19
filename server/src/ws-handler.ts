@@ -196,6 +196,13 @@ export class WsHandler {
       return;
     }
 
+    // Guard against non-object payloads (e.g. `null`, a bare number/string):
+    // dereferencing `command.id` on those throws outside the response try block.
+    if (command === null || typeof command !== 'object') {
+      this.sendResponse('unknown', false, undefined, 'Invalid command');
+      return;
+    }
+
     const id = command.id ?? 'unknown';
 
     try {
@@ -878,7 +885,14 @@ export class WsHandler {
       case 'abort': {
         // Resolve pending UI responses first so stuck dialogs unblock
         resolveAllSlotPendingUi(slot);
-        const abortResult = await Promise.race([session.abort().then(() => 'ok' as const), new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 30_000))]);
+        let abortWatchdog: ReturnType<typeof setTimeout> | undefined;
+        const abortResult = await Promise.race([
+          session.abort().then(() => 'ok' as const),
+          new Promise<'timeout'>((resolve) => {
+            abortWatchdog = setTimeout(() => resolve('timeout'), 30_000);
+          }),
+        ]);
+        if (abortWatchdog !== undefined) clearTimeout(abortWatchdog);
         if (abortResult === 'timeout') {
           console.error(`[WsHandler] session.abort() did not resolve within 30s (sessionId=${sessionId})`);
         }
@@ -1382,7 +1396,9 @@ export class WsHandler {
     // orchestrator bookkeeping and surface `call_ended { reason: 'displaced' }`
     // so their VoiceCallStore tears down alongside the session_closed.
     if (this.voiceOrchestrator?.isCallActive(sessionId)) {
-      void this.voiceOrchestrator.endCall({ sessionId, reason: 'displaced' });
+      this.voiceOrchestrator.endCall({ sessionId, reason: 'displaced' }).catch((err) => {
+        console.warn('[voice] endCall on displace failed', err);
+      });
       this.sendEvent({
         type: 'call_ended',
         sessionId,
@@ -1600,6 +1616,12 @@ export class WsHandler {
   }
 
   cleanup(): void {
+    // If this connection had a login flow in flight, abort it and settle any
+    // dangling input promises (mirror of `login_cancel`). The LoginOrchestrator
+    // is single-flight and server-wide, so leaving it busy would wedge logins
+    // for every client until restart.
+    this.loginAbort?.abort();
+    this.settlePendingLoginInputs('connection closed');
     for (const sid of this.subscribedSessions) {
       const slot = this.sessionManager.getSession(sid);
       if (slot) {

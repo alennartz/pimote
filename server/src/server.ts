@@ -169,7 +169,15 @@ export async function createServer(
   const clientRegistry: ClientRegistry = new Map();
 
   httpServer.on('upgrade', (req, socket, head) => {
-    const url = new URL(req.url ?? '', `http://${req.headers.host}`);
+    // Only pathname/searchParams are read, so a fixed base is sufficient — and
+    // avoids an uncaught `new URL` throw when a malformed Host header arrives.
+    let url: URL;
+    try {
+      url = new URL(req.url ?? '/', 'http://localhost');
+    } catch {
+      socket.destroy();
+      return;
+    }
     if (url.pathname === '/ws') {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit('connection', ws, req);
@@ -180,7 +188,13 @@ export async function createServer(
   });
 
   wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
-    const url = new URL(req.url ?? '', `http://${req.headers.host}`);
+    let url: URL;
+    try {
+      url = new URL(req.url ?? '/', 'http://localhost');
+    } catch {
+      ws.close();
+      return;
+    }
     const clientId = url.searchParams.get('clientId') ?? crypto.randomUUID();
     console.log(`[pimote] WebSocket client connected (clientId=${clientId})`);
 

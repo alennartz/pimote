@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import type { CardColor } from '../../../shared/dist/index.js';
 import type { StaticHostRegistry } from './registry.js';
 import type { StaticHostStore, StaticHostStoreEntry, StaticHostStoreFile } from './store.js';
@@ -106,6 +106,10 @@ export async function executeRegisterTool(input: RegisterToolInput, deps: ToolDe
   if (typeof input.folder !== 'string' || !isAbsolute(input.folder)) {
     throw new Error(`folder must be an absolute path: ${JSON.stringify(input.folder)}`);
   }
+  // Normalize before stat/persist/register: a trailing slash or internal `..`
+  // segment would otherwise break the http-handler's containment check (which
+  // compares a resolved request path against `folderPath + path.sep`).
+  input.folder = resolve(input.folder);
 
   let folderStat;
   try {

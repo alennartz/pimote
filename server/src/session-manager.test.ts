@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { PimoteSessionManager } from './session-manager.js';
+import { PimoteSessionManager, singleFlight } from './session-manager.js';
 import type { ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
 import type { PimoteConfig } from './config.js';
 import type { PushNotificationService } from './push-notification.js';
@@ -406,5 +406,55 @@ describe('PimoteSessionManager — idle reaper', () => {
     expect(closeSessionSpy).toHaveBeenCalledWith('restart-1');
 
     manager.stopIdleCheck();
+  });
+});
+
+describe('singleFlight', () => {
+  it('coalesces concurrent calls with the same key into one run', async () => {
+    const map = new Map<string, Promise<string>>();
+    let runs = 0;
+    let resolveFn!: (v: string) => void;
+    const run = () => {
+      runs++;
+      return new Promise<string>((r) => {
+        resolveFn = r;
+      });
+    };
+    const p1 = singleFlight(map, 'k', run);
+    const p2 = singleFlight(map, 'k', run);
+    expect(runs).toBe(1); // second caller shares the in-flight promise
+    resolveFn('done');
+    expect(await p1).toBe('done');
+    expect(await p2).toBe('done');
+    // entry cleared after settle — a later call re-runs
+    const p3 = singleFlight(map, 'k', run);
+    expect(runs).toBe(2);
+    resolveFn('again');
+    expect(await p3).toBe('again');
+  });
+
+  it('runs independently for distinct keys', async () => {
+    const map = new Map<string, Promise<string>>();
+    let runs = 0;
+    const run = (v: string) => () => {
+      runs++;
+      return Promise.resolve(v);
+    };
+    const [a, b] = await Promise.all([singleFlight(map, 'a', run('A')), singleFlight(map, 'b', run('B'))]);
+    expect([a, b]).toEqual(['A', 'B']);
+    expect(runs).toBe(2);
+  });
+});
+
+describe('PimoteSessionManager — openSession reuse (#5)', () => {
+  it('returns the already-open session id without building a second runtime', async () => {
+    const manager = new PimoteSessionManager(createTestConfig(), createMockPushService());
+    const slot = createFakeSlot({ id: 'sess-x' });
+    (slot.runtime.session as any).sessionFile = '/sessions/x.json';
+    injectSession(manager, slot);
+    // If the short-circuit failed, doOpenSession would try to build a real pi
+    // runtime against a non-existent file and throw/hang.
+    const id = await manager.openSession('/folder', '/sessions/x.json');
+    expect(id).toBe('sess-x');
   });
 });

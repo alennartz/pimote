@@ -235,11 +235,31 @@ function scheduleSlotPanelPush(state: SessionState, sessionId: string, sendEvent
   }, 200);
 }
 
+/**
+ * Coalesce concurrent async operations keyed by `key`: while one is in flight,
+ * callers passing the same key share its promise instead of starting a second
+ * run. The map entry is cleared once the operation settles, so a later call
+ * with the same key runs fresh.
+ */
+export async function singleFlight<V>(map: Map<string, Promise<V>>, key: string, run: () => Promise<V>): Promise<V> {
+  const inflight = map.get(key);
+  if (inflight) return inflight;
+  const p = run().finally(() => {
+    map.delete(key);
+  });
+  map.set(key, p);
+  return p;
+}
+
 export class PimoteSessionManager {
   private readonly authStorage: AuthStorage;
   private readonly modelRegistry: ModelRegistry;
   private readonly loginOrchestrator: LoginOrchestrator;
   private readonly sessions = new Map<string, ManagedSlot>();
+  /** In-flight `openSession` promises keyed by session file path, so two
+   *  concurrent opens of the same on-disk session share one runtime instead
+   *  of building (and leaking) a second one over the same file. */
+  private readonly inFlightOpens = new Map<string, Promise<string>>();
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
   private gitBranchCheckHandle: ReturnType<typeof setInterval> | null = null;
   private lastKnownGitBranchBySession = new Map<string, string | null>();
@@ -292,7 +312,37 @@ export class PimoteSessionManager {
     });
   }
 
+  /**
+   * Open (or reopen) a session, returning its id.
+   *
+   * For an existing on-disk session (`sessionFilePath` provided), this guards
+   * against ever binding a SECOND pi runtime to the same session file: it
+   * returns the already-open session's id when it's live in memory, and
+   * coalesces concurrent opens of the same file into a single runtime. Without
+   * this, a reconnect double-fire or two devices opening the same session race
+   * between the (miss) existence check and the eventual `sessions.set`, spawn
+   * two runtimes appending to one file (corrupting history), and leak the
+   * first. New sessions (no file) create a fresh file each time, so they need
+   * no coalescing.
+   */
   async openSession(folderPath: string, sessionFilePath?: string): Promise<string> {
+    if (!sessionFilePath) {
+      return this.doOpenSession(folderPath);
+    }
+    const alreadyOpenId = this.findSlotIdBySessionFile(sessionFilePath);
+    if (alreadyOpenId) return alreadyOpenId;
+    return singleFlight(this.inFlightOpens, sessionFilePath, () => this.doOpenSession(folderPath, sessionFilePath));
+  }
+
+  /** Find the id of an open slot bound to the given session file, if any. */
+  private findSlotIdBySessionFile(sessionFilePath: string): string | undefined {
+    for (const [sid, slot] of this.sessions) {
+      if (slot.session.sessionFile === sessionFilePath) return sid;
+    }
+    return undefined;
+  }
+
+  private async doOpenSession(folderPath: string, sessionFilePath?: string): Promise<string> {
     const eventBusRef: { current: EventBusController | null } = { current: null };
     const sharedAuthStorage = this.authStorage;
     const sharedModelRegistry = this.modelRegistry;

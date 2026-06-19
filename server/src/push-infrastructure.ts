@@ -67,7 +67,17 @@ export class WebPushSender implements PushSender {
   }
 
   async sendNotification(subscription: PushSubscriptionRecord, payload: string): Promise<{ statusCode: number }> {
-    const response = await webpush.sendNotification(subscription, payload);
-    return { statusCode: response.statusCode };
+    try {
+      const response = await webpush.sendNotification(subscription, payload);
+      return { statusCode: response.statusCode };
+    } catch (err) {
+      // web-push rejects with a WebPushError for any non-2xx status (including
+      // 404/410 for dead subscriptions). Surface the status code so callers can
+      // prune expired subscriptions; rethrow anything that isn't an HTTP error.
+      if (err instanceof webpush.WebPushError) {
+        return { statusCode: err.statusCode };
+      }
+      throw err;
+    }
   }
 }

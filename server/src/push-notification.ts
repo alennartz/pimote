@@ -90,7 +90,8 @@ export class PushNotificationService {
     for (const sub of this.subscriptions) {
       try {
         const result = await this.sender.sendNotification(sub, payloadStr);
-        if (result.statusCode === 410) {
+        // 404 Not Found and 410 Gone both mean the subscription is dead.
+        if (result.statusCode === 404 || result.statusCode === 410) {
           expiredEndpoints.push(sub.endpoint);
         }
       } catch (err) {

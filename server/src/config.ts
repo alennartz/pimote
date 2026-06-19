@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { PIMOTE_CONFIG_PATH } from './paths.js';
 
@@ -137,7 +137,10 @@ export async function ensureVapidKeys(config: PimoteConfig): Promise<PimoteConfi
   existing.vapidPrivateKey = keys.privateKey;
 
   await mkdir(dirname(CONFIG_PATH), { recursive: true });
-  await writeFile(CONFIG_PATH, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
+  // Atomic write (tmp + rename) so a crash mid-write can't corrupt the config.
+  const tmpPath = CONFIG_PATH + '.tmp';
+  await writeFile(tmpPath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
+  await rename(tmpPath, CONFIG_PATH);
 
   return config;
 }

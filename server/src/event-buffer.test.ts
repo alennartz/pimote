@@ -75,6 +75,29 @@ describe('EventBuffer', () => {
     });
   });
 
+  describe('tree navigation events', () => {
+    it('maps tree_navigation_start to the wire event (not agent_start)', () => {
+      const buffer = new EventBuffer(10);
+      const live: PimoteSessionEvent[] = [];
+      buffer.onEvent(makeSdkEvent('tree_navigation_start', { targetId: 'entry-7', summarizing: true }), SESSION_ID, (e) => live.push(e));
+      expect(live).toHaveLength(1);
+      expect(live[0]).toMatchObject({
+        type: 'tree_navigation_start',
+        sessionId: SESSION_ID,
+        targetId: 'entry-7',
+        summarizing: true,
+      });
+    });
+
+    it('maps tree_navigation_end to the wire event (not agent_start)', () => {
+      const buffer = new EventBuffer(10);
+      const live: PimoteSessionEvent[] = [];
+      buffer.onEvent(makeSdkEvent('tree_navigation_end'), SESSION_ID, (e) => live.push(e));
+      expect(live).toHaveLength(1);
+      expect(live[0]).toMatchObject({ type: 'tree_navigation_end', sessionId: SESSION_ID });
+    });
+  });
+
   describe('currentCursor', () => {
     it('starts at 0', () => {
       const buffer = new EventBuffer(10);

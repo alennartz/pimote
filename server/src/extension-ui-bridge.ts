@@ -66,34 +66,50 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
 
     const racers: Promise<T>[] = [responsePromise];
 
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    let abortListener: (() => void) | undefined;
+    const signal = opts?.signal;
+
     if (opts?.timeout) {
-      racers.push(new Promise<T>((resolve) => setTimeout(() => resolve(fallback), opts.timeout)));
+      racers.push(
+        new Promise<T>((resolve) => {
+          timeoutHandle = setTimeout(() => resolve(fallback), opts.timeout);
+        }),
+      );
     }
 
-    if (opts?.signal) {
-      if (opts.signal.aborted) {
+    if (signal) {
+      if (signal.aborted) {
         // Remove the pending entry we just created — no one will respond to it
         slot.sessionState.pendingUiResponses.delete(requestId);
         return fallback;
       }
       racers.push(
         new Promise<T>((resolve) => {
-          opts.signal!.addEventListener('abort', () => resolve(fallback), { once: true });
+          abortListener = () => resolve(fallback);
+          signal.addEventListener('abort', abortListener, { once: true });
         }),
       );
     }
 
     if (racers.length === 1) return responsePromise;
 
-    const result = await Promise.race(racers);
+    try {
+      const result = await Promise.race(racers);
 
-    // If timeout or abort won the race, the pending entry is stale — the server
-    // has already moved on. Remove it so it won't be replayed on reconnect.
-    if (slot.sessionState.pendingUiResponses.has(requestId)) {
-      slot.sessionState.pendingUiResponses.delete(requestId);
+      // If timeout or abort won the race, the pending entry is stale — the server
+      // has already moved on. Remove it so it won't be replayed on reconnect.
+      if (slot.sessionState.pendingUiResponses.has(requestId)) {
+        slot.sessionState.pendingUiResponses.delete(requestId);
+      }
+
+      return result;
+    } finally {
+      // Clear the timeout timer (keeps the event loop from staying alive / firing
+      // pointlessly) and detach the abort listener if the response won the race.
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      if (signal && abortListener) signal.removeEventListener('abort', abortListener);
     }
-
-    return result;
   }
 
   const ui: ExtensionUIContext = {
