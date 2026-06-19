@@ -56,16 +56,50 @@ export interface VoiceOrchestratorOptions {
   displaceOwner: (sessionId: string, newOwner: ClientConnection) => Promise<void>;
   /** Check whether a session is currently owned by a voice-call client. */
   isOwnedByVoiceCall: (sessionId: string) => boolean;
+  /**
+   * Notify the owning client that a call ended without the client (or the
+   * server's own `call_end`) initiating it — i.e. the voice extension
+   * self-deactivated because the speechmux WS failed or dropped. Lets the
+   * client tear its VoiceCallStore down instead of waiting for WebRTC to die.
+   */
+  notifyCallEnded?: (sessionId: string) => void;
 }
 
 export class VoiceOrchestrator {
   private readonly activeCalls = new Set<string>();
+  /** Per-session unsubscribe fns for the `pimote:voice:deactivate` bus
+   *  listener installed on bind (so the server learns of extension-initiated
+   *  deactivations — speechmux drop / open failure). */
+  private readonly deactivateUnsubs = new Map<string, () => void>();
 
   constructor(private readonly opts: VoiceOrchestratorOptions) {}
 
   /** Drop all active-call bookkeeping. Idempotent. Called on server shutdown. */
   async stop(): Promise<void> {
+    for (const unsub of this.deactivateUnsubs.values()) {
+      try {
+        unsub();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.deactivateUnsubs.clear();
     this.activeCalls.clear();
+  }
+
+  /**
+   * Handle a `pimote:voice:deactivate` the voice extension emitted on its own
+   * (speechmux WS failed/dropped mid-call). Our own `endCall` removes the
+   * session from `activeCalls` *before* emitting deactivate, so the
+   * `activeCalls.has` guard distinguishes an extension-initiated deactivate
+   * from our own — preventing a feedback loop and a duplicate `call_ended`.
+   */
+  private handleExtensionDeactivated(sessionId: string): void {
+    if (!this.activeCalls.has(sessionId)) return;
+    this.activeCalls.delete(sessionId);
+    this.deactivateUnsubs.get(sessionId)?.();
+    this.deactivateUnsubs.delete(sessionId);
+    this.opts.notifyCallEnded?.(sessionId);
   }
 
   /** Called by ws-handler for CallBindCommand. */
@@ -98,14 +132,22 @@ export class VoiceOrchestrator {
       throw new CallBindError('call_bind_failed_internal', 'Session has no EventBus');
     }
 
+    // Subscribe to extension-initiated deactivate BEFORE activating so a
+    // self-deactivate during/after activation is never missed. Replace any
+    // prior subscription for this session (force-rebind).
+    this.deactivateUnsubs.get(args.sessionId)?.();
+    this.deactivateUnsubs.set(
+      args.sessionId,
+      bus.on('pimote:voice:deactivate', () => this.handleExtensionDeactivated(args.sessionId)),
+    );
+    this.activeCalls.add(args.sessionId);
+
     const activate: VoiceActivateMessage = {
       type: 'pimote:voice:activate',
       sessionId: args.sessionId,
       speechmuxWsUrl: llmWsUrl,
     };
     bus.emit(activate.type, activate);
-
-    this.activeCalls.add(args.sessionId);
 
     return {
       sessionId: args.sessionId,
@@ -117,6 +159,11 @@ export class VoiceOrchestrator {
   async endCall(args: EndCallArgs): Promise<void> {
     if (!this.activeCalls.has(args.sessionId)) return;
     this.activeCalls.delete(args.sessionId);
+
+    // Drop our deactivate subscription before emitting so our own emit can't
+    // loop back into handleExtensionDeactivated.
+    this.deactivateUnsubs.get(args.sessionId)?.();
+    this.deactivateUnsubs.delete(args.sessionId);
 
     const bus = this.opts.busResolver.getEventBus(args.sessionId);
     if (bus) {

@@ -78,6 +78,13 @@ export type BlockState =
  */
 export interface MessageStreamState {
   blocks: Map<number, BlockState>;
+  /**
+   * Set when a barge-in (speechmux `abort`/`rollback`) is received mid-turn.
+   * While set, the streaming reducer suppresses further outbound `token`/`end`
+   * frames — speechmux has stopped playback for this utterance and isn't
+   * expecting more tokens. Reset on the next `message_start` (new turn).
+   */
+  interrupted: boolean;
 }
 
 // ---- Concern C: Walkback --------------------------------------------------
@@ -126,7 +133,7 @@ export interface RuntimeState {
 export function initialState(): RuntimeState {
   return {
     lifecycle: { kind: 'dormant' },
-    message: { blocks: new Map() },
+    message: { blocks: new Map(), interrupted: false },
     walkback: { kind: 'idle' },
     interpreterApplied: false,
     lastEmittedSpeakId: null,

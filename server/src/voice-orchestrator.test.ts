@@ -60,6 +60,7 @@ function makeOrchestrator(options?: {
   configOverrides?: Partial<PimoteConfig>;
   displace?: (sessionId: string, newOwner: ClientConnection) => Promise<void>;
   isOwnedByVoiceCall?: (id: string) => boolean;
+  notifyCallEnded?: (sessionId: string) => void;
 }) {
   const slots = options?.slotLookup ?? new Map<string, ManagedSlot>([['s-1', fakeSlot('s-1')]]);
   const buses = options?.busLookup ?? new Map([['s-1', fakeBus()]]);
@@ -78,6 +79,7 @@ function makeOrchestrator(options?: {
     busResolver: resolver,
     displaceOwner,
     isOwnedByVoiceCall,
+    notifyCallEnded: options?.notifyCallEnded,
   });
 
   return { orchestrator, buses, slots, displaceOwner };
@@ -182,5 +184,39 @@ describe('VoiceOrchestrator.endCall', () => {
     await orchestrator.endCall({ sessionId: 's-1', reason: 'server_ended' });
     const bus = buses.get('s-1')!;
     expect(bus.emitted).toEqual([]);
+  });
+});
+
+describe('VoiceOrchestrator extension self-deactivation (H4)', () => {
+  it('a deactivate emitted by the extension clears state and notifies the owner', async () => {
+    const notifyCallEnded = vi.fn();
+    const { orchestrator, buses } = makeOrchestrator({ notifyCallEnded });
+    await orchestrator.bindCall({ sessionId: 's-1', clientConnection: fakeConnection(), force: false });
+    expect(orchestrator.isCallActive('s-1')).toBe(true);
+
+    // Simulate the voice extension self-deactivating (speechmux WS dropped).
+    const bus = buses.get('s-1')!;
+    bus.emit('pimote:voice:deactivate', { type: 'pimote:voice:deactivate', sessionId: 's-1' });
+
+    expect(orchestrator.isCallActive('s-1')).toBe(false);
+    expect(notifyCallEnded).toHaveBeenCalledWith('s-1');
+  });
+
+  it('our own endCall does not trigger notifyCallEnded (no feedback loop)', async () => {
+    const notifyCallEnded = vi.fn();
+    const { orchestrator } = makeOrchestrator({ notifyCallEnded });
+    await orchestrator.bindCall({ sessionId: 's-1', clientConnection: fakeConnection(), force: false });
+    await orchestrator.endCall({ sessionId: 's-1', reason: 'user_hangup' });
+    expect(notifyCallEnded).not.toHaveBeenCalled();
+  });
+
+  it('a deactivate after the call already ended is ignored', async () => {
+    const notifyCallEnded = vi.fn();
+    const { orchestrator, buses } = makeOrchestrator({ notifyCallEnded });
+    await orchestrator.bindCall({ sessionId: 's-1', clientConnection: fakeConnection(), force: false });
+    await orchestrator.endCall({ sessionId: 's-1', reason: 'user_hangup' });
+    // A late/duplicate deactivate must not re-notify.
+    buses.get('s-1')!.emit('pimote:voice:deactivate', { type: 'pimote:voice:deactivate', sessionId: 's-1' });
+    expect(notifyCallEnded).not.toHaveBeenCalled();
   });
 });

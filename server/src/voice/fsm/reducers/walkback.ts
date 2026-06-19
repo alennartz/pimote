@@ -20,7 +20,7 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { Action } from '../actions.js';
 import type { Event } from '../events.js';
-import type { RuntimeState, WalkbackState } from '../state.js';
+import type { LifecycleState, RuntimeState, WalkbackState } from '../state.js';
 import { VOICE_INTERRUPT_CUSTOM_TYPE } from '../../../../../shared/dist/index.js';
 import type { VoiceInterruptEntryData } from '../../../../../shared/dist/index.js';
 import { walkBack } from '../../walk-back.js';
@@ -30,27 +30,41 @@ export interface WalkbackResult {
   actions: Action[];
 }
 
-/** Resolve which speak() id to walk back to. Prefers what speechmux
- *  echoes; falls back to runtime-tracked latest. Returns null if neither
- *  is available (we'll degrade gracefully — abort the agent but skip
- *  the rewrite). */
-function resolveTarget(frameSpeakId: string | undefined, lastEmittedSpeakId: string | null): string | null {
-  if (frameSpeakId) return frameSpeakId;
-  return lastEmittedSpeakId;
+/** Context the walkback reducer needs beyond its own state. */
+export interface WalkbackContext {
+  /** Speak whose `end` frame was most recently emitted (back-compat fallback). */
+  lastEmittedSpeakId: string | null;
+  /** Speak currently mid-stream, if any — the likeliest interrupt target when
+   *  the frame omits a speak_id, since it hasn't ended (so isn't lastEmitted). */
+  currentStreamingSpeakId: string | null;
+  lifecycleKind: LifecycleState['kind'];
 }
 
-export function reduceWalkback(prev: WalkbackState, lastEmittedSpeakId: string | null, event: Event): WalkbackResult {
+/** Resolve which speak() id to walk back to. Prefers what speechmux echoes;
+ *  then the in-flight speak; then the last fully-emitted one. Returns null if
+ *  none is available (degrade gracefully — abort the agent, skip the rewrite). */
+function resolveTarget(frameSpeakId: string | undefined, ctx: WalkbackContext): string | null {
+  return frameSpeakId ?? ctx.currentStreamingSpeakId ?? ctx.lastEmittedSpeakId;
+}
+
+export function reduceWalkback(prev: WalkbackState, event: Event, ctx: WalkbackContext): WalkbackResult {
   switch (event.type) {
     case 'ws:incoming': {
       const f = event.frame;
       if (f.type === 'user') return { next: prev, actions: [] };
+      // Only honour barge-in (abort/rollback) while a call is live. A frame
+      // arriving when dormant (e.g. in flight during teardown, or from a
+      // just-discarded client) must not abort an unrelated text-mode turn. (H3)
+      if (ctx.lifecycleKind !== 'active' && ctx.lifecycleKind !== 'activating') {
+        return { next: prev, actions: [] };
+      }
 
       const heardText = f.type === 'rollback' ? f.heard_text : '';
       const data: VoiceInterruptEntryData = {
         heard_text: heardText,
         kind: f.type === 'rollback' ? 'rollback' : 'abort',
       };
-      const target = resolveTarget((f as { speak_id?: string }).speak_id, lastEmittedSpeakId);
+      const target = resolveTarget((f as { speak_id?: string }).speak_id, ctx);
 
       const actions: Action[] = [{ kind: 'abort_agent' }, { kind: 'append_custom_entry', customType: VOICE_INTERRUPT_CUSTOM_TYPE, data }];
 

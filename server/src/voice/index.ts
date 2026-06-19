@@ -122,11 +122,21 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     let state: RuntimeState = initialState();
     let lastCtx: ExtensionContext | null = null;
     let speechmuxClient: SpeechmuxClient | null = null;
-    /** Slot read by the `context` hook to return rewritten messages. */
-    let pendingContextRewrite: AgentMessage[] | null = null;
+    // Monotonic generation tag for the speechmux client. Bumped on every
+    // open_ws and close_ws so a discarded client's late callbacks (frame /
+    // disconnect) and an in-flight connect that the call already abandoned
+    // can detect they are stale and no-op. See voice lifecycle review (H1/H2).
+    let clientGeneration = 0;
+    // Detaches the current client's onFrame/onDisconnect listeners. Captured
+    // on open so we can unsubscribe when discarding the client.
+    let detachClientListeners: (() => void) | null = null;
 
     // ---- Reducer driver --------------------------------------------------
-    const dispatch = async (event: FsmEvent): Promise<void> => {
+    // Synchronous core: reduce + write back state + trace. Returns the actions
+    // to execute. Split out from `dispatch` so the `context` hook can run a
+    // reduction and read the resulting rewrite synchronously — pi's context
+    // hook must return the rewritten messages inline, and `dispatch` is async. (M5)
+    const reduceAndApply = (event: FsmEvent): FsmAction[] => {
       const evtTrace = traceEvent(event);
       const lifecycleBefore = state.lifecycle.kind;
       const { next, actions } = reduce(state, event, {
@@ -144,6 +154,11 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
           }),
         );
       }
+      return actions;
+    };
+
+    const dispatch = async (event: FsmEvent): Promise<void> => {
+      const actions = reduceAndApply(event);
       for (const action of actions) {
         try {
           await execute(action);
@@ -170,6 +185,18 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         }
 
         case 'send_user_message': {
+          // Steer-on-activate (deliverAs:'steer'): preserve in-flight work
+          // rather than aborting it. When the agent is busy, inject the
+          // message into the running turn (no abort); when idle there's no
+          // turn to steer into, so send normally to trigger the turn. (M7)
+          if (action.deliverAs === 'steer') {
+            if (lastCtx && !lastCtx.isIdle()) {
+              pi.sendUserMessage(action.text, { deliverAs: 'steer' });
+            } else {
+              pi.sendUserMessage(action.text);
+            }
+            return;
+          }
           // Ensure the agent is idle before sending. If it isn't, fire
           // a synthesized barge-in (ctx.abort()) and wait for teardown
           // — covers the case where the user spoke while the worker
@@ -203,24 +230,48 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         }
 
         case 'open_ws': {
-          // Reentrancy guard: close any prior client first.
+          // Invalidate any prior client: bump the generation so its in-flight
+          // callbacks no-op, detach its listeners, and close it.
+          clientGeneration++;
+          detachClientListeners?.();
+          detachClientListeners = null;
           try {
             speechmuxClient?.close();
           } catch {
             /* ignore */
           }
           speechmuxClient = null;
+
+          const gen = clientGeneration;
           try {
             const client = await clientFactory({ wsUrl: action.url });
+            // If the call ended (or another open started) while we were
+            // connecting, this client is stale — close it and bail. (H2)
+            if (gen !== clientGeneration) {
+              try {
+                client.close();
+              } catch {
+                /* ignore */
+              }
+              return;
+            }
             speechmuxClient = client;
-            client.onFrame((frame) => {
+            const offFrame = client.onFrame((frame) => {
+              if (gen !== clientGeneration) return;
               void dispatch({ type: 'ws:incoming', frame });
             });
-            client.onDisconnect(() => {
+            const offDisconnect = client.onDisconnect(() => {
+              if (gen !== clientGeneration) return;
               void dispatch({ type: 'ws:disconnected' });
             });
+            detachClientListeners = () => {
+              offFrame();
+              offDisconnect();
+            };
             await dispatch({ type: 'ws:opened' });
           } catch (err) {
+            // A stale open's failure is irrelevant — the FSM has moved on.
+            if (gen !== clientGeneration) return;
             console.warn('[voice] speechmux open failed', err);
             await dispatch({ type: 'ws:open_failed', error: err });
           }
@@ -228,6 +279,12 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         }
 
         case 'close_ws': {
+          // Bump the generation so a client still mid-connect (and any late
+          // close/frame callbacks from the current one) is invalidated and
+          // auto-cleaned. (H1/H2)
+          clientGeneration++;
+          detachClientListeners?.();
+          detachClientListeners = null;
           try {
             speechmuxClient?.close();
           } catch {
@@ -263,18 +320,14 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         }
 
         case 'emit_deactivate_request': {
-          const sessionId = state.lifecycle.kind === 'active' || state.lifecycle.kind === 'activating' ? state.lifecycle.sessionId : '';
+          // sessionId is carried on the action (populated by the reducer from
+          // the pre-transition state) — reading it from `state` here would be
+          // too late, since the lifecycle has already gone dormant. (M1)
           const msg: VoiceDeactivateMessage = {
             type: 'pimote:voice:deactivate',
-            sessionId,
+            sessionId: action.sessionId,
           };
           pi.events.emit('pimote:voice:deactivate', msg);
-          return;
-        }
-
-        case 'rewrite_context': {
-          // Stash; the `context` hook below reads this on its return.
-          pendingContextRewrite = action.messages;
           return;
         }
       }
@@ -384,38 +437,42 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     });
 
     pi.on('turn_end', (event: TurnEndEvent) => {
-      if (state.lifecycle.kind !== 'active' || !speechmuxClient) return;
+      // Route through the FSM so the floor_released frame is buffered when the
+      // greeting turn ends before the WS handshake completes, instead of being
+      // dropped. Only dispatch when the turn actually spoke. (M2)
       const lastSpeakResult = [...event.toolResults].reverse().find((result) => result.toolName === 'speak');
       if (!lastSpeakResult) return;
-      try {
-        speechmuxClient.send(typeof lastSpeakResult.toolCallId === 'string' ? { type: 'floor_released', speak_id: lastSpeakResult.toolCallId } : { type: 'floor_released' });
-      } catch (err) {
-        console.warn('[voice] speechmux send failed', 'floor_released', err);
-      }
+      void dispatch({
+        type: 'sdk:turn_end',
+        lastSpeakToolCallId: typeof lastSpeakResult.toolCallId === 'string' ? lastSpeakResult.toolCallId : null,
+      });
     });
 
     pi.on('agent_end', (event: AgentEndEvent) => {
-      if (state.lifecycle.kind !== 'active' || !speechmuxClient) return;
+      // Route through the FSM (same buffering rationale as turn_end). (M2)
       const error = (event as AgentEndEvent & { error?: unknown }).error;
-      if (typeof error !== 'string' || error.length === 0) return;
-      try {
-        speechmuxClient.send({ type: 'error', message: error });
-      } catch (err) {
-        console.warn('[voice] speechmux send failed', 'error', err);
-      }
+      void dispatch({ type: 'sdk:agent_end', error: typeof error === 'string' && error.length > 0 ? error : null });
     });
 
     pi.on('context', (event: ContextEvent, ctx: ExtensionContext) => {
       lastCtx = ctx;
-      // The walkback reducer always runs walkBack (even when no rewrite
-      // is pending — to strip aborted-empty-assistants). It writes the
-      // result into `pendingContextRewrite` via the `rewrite_context`
-      // action, which we read below.
-      void dispatch({ type: 'sdk:context', messages: event.messages });
-      const result = pendingContextRewrite;
-      pendingContextRewrite = null;
-      if (result) return { messages: result };
-      return undefined;
+      // The walkback reducer always runs walkBack (even when no rewrite is
+      // pending — to strip aborted-empty assistants) and emits the result as a
+      // `rewrite_context` action. Drive the reduction synchronously and read
+      // the rewrite straight off the returned actions: no module-level slot,
+      // no dependence on action ordering or on `execute` staying side-effect
+      // free before the rewrite. (M5)
+      const actions = reduceAndApply({ type: 'sdk:context', messages: event.messages });
+      let rewritten: AgentMessage[] | undefined;
+      for (const action of actions) {
+        if (action.kind === 'rewrite_context') {
+          rewritten = action.messages;
+        } else {
+          // Any other side effects still run on the normal async path.
+          void execute(action);
+        }
+      }
+      return rewritten ? { messages: rewritten } : undefined;
     });
   };
 }

@@ -128,47 +128,98 @@ function rewriteByToolCallId(messages: AgentMessage[], heardText: string, target
     return messages;
   }
 
+  // Walkback is about what the user *heard* (speech), not about undoing the
+  // agent's real work. So we surgically prune only speak() calls from the
+  // target onward — truncate/drop the target, drop later speaks — and keep
+  // every other tool call (and its result) and other content intact. Results
+  // of pruned speaks are dropped too (a tool_result with no tool_use is the
+  // riskier dangling direction). `stopReason` is preserved, not synthesised:
+  // the target is no longer necessarily the last message.
+  const droppedSpeakIds = new Set<string>();
+
   const targetMsg = messages[targetMsgIdx]!;
   const targetContent = contentOf(targetMsg);
   const targetBlock = targetContent[targetBlockIdx]!;
   const originalText = getSpeakText(targetBlock);
 
+  // Blocks before the target were spoken/heard earlier in the turn — keep.
   const newBlocks: ContentBlock[] = targetContent.slice(0, targetBlockIdx);
-  const droppedToolUseIds = new Set<string>();
 
   if (heardText.length === 0) {
-    // Nothing was heard of this speak. Drop the block and its paired
-    // tool_result (if any).
-    droppedToolUseIds.add(targetId);
+    droppedSpeakIds.add(targetId); // nothing heard — drop the speak + its result
   } else if (heardText.length >= originalText.length) {
-    // Entire utterance was heard. Keep block intact.
-    newBlocks.push(targetBlock);
+    newBlocks.push(targetBlock); // whole utterance heard — keep intact (+ its result)
   } else {
-    // Partial. Truncate text in-place and drop the paired tool_result
-    // (per the contract — a truncated speak's result is no longer
-    // grounded in what the user heard).
-    newBlocks.push(replaceSpeakText(targetBlock, heardText));
-    droppedToolUseIds.add(targetId);
+    newBlocks.push(replaceSpeakText(targetBlock, heardText)); // partial — truncate
+    droppedSpeakIds.add(targetId); // a truncated speak's result is no longer grounded
   }
 
-  // Anything in this message AFTER the target block was emitted after
-  // the heard prefix and so was not heard.
+  // Blocks after the target in the same message: drop later speaks, keep the rest.
   for (let j = targetBlockIdx + 1; j < targetContent.length; j++) {
-    const id = getToolCallId(targetContent[j]!);
-    if (id) droppedToolUseIds.add(id);
+    const block = targetContent[j]!;
+    if (isSpeakToolCall(block)) {
+      const id = getToolCallId(block);
+      if (id) droppedSpeakIds.add(id);
+    } else {
+      newBlocks.push(block);
+    }
   }
 
-  const rewrittenTarget = {
-    ...(targetMsg as object),
-    content: newBlocks,
-    stopReason: 'aborted',
-  } as unknown as AgentMessage;
+  const out: AgentMessage[] = messages.slice(0, targetMsgIdx);
+  if (newBlocks.length > 0) {
+    out.push({ ...(targetMsg as object), content: newBlocks } as unknown as AgentMessage);
+  }
 
-  // Anything AFTER the target message in the array was emitted by the
-  // agent after the interrupted speak — drop it. This includes any
-  // tool_result messages whose paired speak we just truncated, plus
-  // any subsequent assistant messages.
-  return [...messages.slice(0, targetMsgIdx), rewrittenTarget];
+  // Subsequent messages: keep them, but drop speak tool calls (and the
+  // tool_results of any dropped speak). Forward iteration guarantees a speak's
+  // id is recorded before its (later) result message is examined.
+  for (let i = targetMsgIdx + 1; i < messages.length; i++) {
+    const kept = filterPrunedSpeaks(messages[i]!, droppedSpeakIds);
+    if (kept) out.push(kept);
+  }
+  return out;
+}
+
+/**
+ * Drop pruned-speak content from a trailing message: removes speak tool calls
+ * (recording their ids) and the tool_results of any dropped speak, keeping all
+ * other content. Returns the (possibly rewritten) message, or null if it ends
+ * up empty.
+ */
+function filterPrunedSpeaks(msg: AgentMessage, droppedSpeakIds: Set<string>): AgentMessage | null {
+  // pi's runtime shape: a tool result is its own message (role 'toolResult')
+  // referencing one toolCallId at the message level.
+  if (isToolResultMessage(msg)) {
+    const ref = toolResultMessageRefId(msg);
+    return ref && droppedSpeakIds.has(ref) ? null : msg;
+  }
+
+  const content = contentOf(msg);
+  if (content.length === 0) return msg;
+
+  let changed = false;
+  const kept: ContentBlock[] = [];
+  for (const block of content) {
+    if (isSpeakToolCall(block)) {
+      const id = getToolCallId(block);
+      if (id) droppedSpeakIds.add(id);
+      changed = true;
+      continue;
+    }
+    // Block-level tool_result (Anthropic shape) for a dropped speak.
+    if (isToolResultBlock(block)) {
+      const ref = toolResultBlockRefId(block);
+      if (ref && droppedSpeakIds.has(ref)) {
+        changed = true;
+        continue;
+      }
+    }
+    kept.push(block);
+  }
+
+  if (!changed) return msg;
+  if (kept.length === 0) return null;
+  return { ...(msg as object), content: kept } as unknown as AgentMessage;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +257,26 @@ export function isSpeakToolCall(block: ContentBlock): boolean {
 function getToolCallId(block: ContentBlock): string | undefined {
   const id = (block as { id?: unknown }).id;
   return typeof id === 'string' ? id : undefined;
+}
+
+/** pi runtime tool-result message (role 'toolResult', message-level toolCallId). */
+function isToolResultMessage(msg: AgentMessage): boolean {
+  return (msg as { role?: string }).role === 'toolResult';
+}
+
+function toolResultMessageRefId(msg: AgentMessage): string | undefined {
+  const id = (msg as { toolCallId?: unknown }).toolCallId;
+  return typeof id === 'string' ? id : undefined;
+}
+
+/** Block-level tool result (Anthropic `tool_result` / pi `toolResult`). */
+function isToolResultBlock(block: ContentBlock): boolean {
+  return block.type === 'tool_result' || block.type === 'toolResult';
+}
+
+function toolResultBlockRefId(block: ContentBlock): string | undefined {
+  const ref = (block as { tool_use_id?: unknown }).tool_use_id ?? (block as { toolCallId?: unknown }).toolCallId;
+  return typeof ref === 'string' ? ref : undefined;
 }
 
 function getSpeakText(block: ContentBlock): string {

@@ -21,7 +21,7 @@ export type Action =
   | { kind: 'inject_silent_user_message'; customType: string; text: string }
   | { kind: 'open_ws'; url: string }
   | { kind: 'close_ws' }
-  | { kind: 'emit_deactivate_request' }
+  | { kind: 'emit_deactivate_request'; sessionId: string }
 
   // ---- Outbound to speechmux ----
   // Only emitted when the lifecycle is `active` (or as a flush-on-open

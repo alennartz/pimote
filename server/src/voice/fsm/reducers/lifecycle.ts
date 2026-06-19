@@ -54,7 +54,11 @@ export function reduceLifecycle(prev: LifecycleState, event: Event, ctx: { inter
           modelId: ctx.config.defaultInterpreterModel.modelId,
         });
       }
-      actions.push({ kind: 'send_user_message', text: VOICE_CALL_STARTED_SENTINEL });
+      // Steer the start sentinel rather than aborting: if the agent is mid-task
+      // when the call binds, preserve that work. The executor injects into the
+      // running turn when busy, and sends normally (triggering the greeting)
+      // when idle. (M7)
+      actions.push({ kind: 'send_user_message', text: VOICE_CALL_STARTED_SENTINEL, deliverAs: 'steer' });
       actions.push({ kind: 'open_ws', url: event.msg.speechmuxWsUrl });
       return {
         next: {
@@ -117,11 +121,12 @@ export function reduceLifecycle(prev: LifecycleState, event: Event, ctx: { inter
         return { next: prev, interpreterAppliedNow: false, actions: [] };
       }
       // Drop any buffered frames; the shell will rebuild from scratch
-      // on the next activate.
+      // on the next activate. Carry the sessionId on the action from the
+      // pre-transition state — after this we're dormant. (M1)
       return {
         next: { kind: 'dormant' },
         interpreterAppliedNow: false,
-        actions: [{ kind: 'emit_deactivate_request' }],
+        actions: [{ kind: 'emit_deactivate_request', sessionId: prev.sessionId }],
       };
     }
 
@@ -129,10 +134,11 @@ export function reduceLifecycle(prev: LifecycleState, event: Event, ctx: { inter
       if (prev.kind === 'dormant') {
         return { next: prev, interpreterAppliedNow: false, actions: [] };
       }
+      // prev is activating|active here — both carry sessionId. (M1)
       return {
         next: { kind: 'dormant' },
         interpreterAppliedNow: false,
-        actions: [{ kind: 'emit_deactivate_request' }],
+        actions: [{ kind: 'emit_deactivate_request', sessionId: prev.sessionId }],
       };
     }
 

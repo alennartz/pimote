@@ -65,18 +65,44 @@ const noFrames = (next: MessageStreamState): StreamingResult => ({
 export function reduceStreaming(prev: MessageStreamState, event: Event): StreamingResult {
   switch (event.type) {
     case 'sdk:message_start':
-      // Assistant message starts → wipe per-block state. (Filtering on
+      // Assistant message starts → wipe per-block state and clear the
+      // interrupt latch (a new turn can emit again). (Filtering on
       // role==='assistant' happens at the dispatcher.)
-      return noFrames({ blocks: new Map() });
+      return noFrames({ blocks: new Map(), interrupted: false });
+
+    case 'ws:incoming':
+      // A barge-in latches `interrupted` so we stop feeding speechmux tokens
+      // for an utterance it already aborted. Reset on the next message_start.
+      if (event.frame.type === 'abort' || event.frame.type === 'rollback') {
+        return noFrames({ ...prev, interrupted: true });
+      }
+      return noFrames(prev);
 
     case 'sdk:toolcall_start':
+      if (prev.interrupted) return noFrames(prev);
       return noFrames(setBlock(prev, event.contentIndex, blockFromPartial(event.contentIndex, event.partial)));
 
     case 'sdk:toolcall_delta':
+      if (prev.interrupted) return noFrames(prev);
       return reduceDelta(prev, event.contentIndex, event.delta, event.partial);
 
     case 'sdk:toolcall_end':
+      if (prev.interrupted) return noFrames(prev);
       return reduceEnd(prev, event.contentIndex, event.toolCall);
+
+    case 'sdk:turn_end':
+      // Release the floor for the turn's last spoken utterance. Routed as a
+      // frame so the lifecycle layer buffers it during `activating` and passes
+      // it during `active` — the same discipline as token/end frames. (M2)
+      return {
+        next: prev,
+        frames: [event.lastSpeakToolCallId ? { type: 'floor_released', speak_id: event.lastSpeakToolCallId } : { type: 'floor_released' }],
+        endedSpeakIds: [],
+      };
+
+    case 'sdk:agent_end':
+      // Surface a harness-side error to speechmux. (M2)
+      return event.error ? { next: prev, frames: [{ type: 'error', message: event.error }], endedSpeakIds: [] } : noFrames(prev);
 
     default:
       return noFrames(prev);
@@ -200,7 +226,17 @@ function setBlock(state: MessageStreamState, idx: number, block: BlockState): Me
   if (state.blocks.get(idx) === block) return state;
   const blocks = new Map(state.blocks);
   blocks.set(idx, block);
-  return { blocks };
+  return { ...state, blocks };
+}
+
+/** Toolcall id of the speak() block currently mid-stream (if any). The most
+ *  likely walkback target when speechmux's frame omits a speak_id: an in-flight
+ *  speak hasn't emitted its `end`, so it isn't in `lastEmittedSpeakId` yet. */
+export function currentStreamingSpeakId(message: MessageStreamState): string | null {
+  for (const block of message.blocks.values()) {
+    if (block.kind === 'speak_streaming' && block.toolCallId) return block.toolCallId;
+  }
+  return null;
 }
 
 function partialBlock(partial: PartialAssistantMessage, idx: number): PartialContentBlock | undefined {

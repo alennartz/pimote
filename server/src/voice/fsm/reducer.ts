@@ -21,7 +21,7 @@
 
 import { reduceLifecycle, applyLifecycleResult, bufferOrPassFrame } from './reducers/lifecycle.js';
 import type { LifecycleConfig } from './reducers/lifecycle.js';
-import { reduceStreaming } from './reducers/streaming.js';
+import { reduceStreaming, currentStreamingSpeakId } from './reducers/streaming.js';
 import { reduceWalkback, applyWalkbackResult } from './reducers/walkback.js';
 import type { Action } from './actions.js';
 import type { Event } from './events.js';
@@ -71,7 +71,19 @@ export function reduce(prev: RuntimeState, event: Event, reducers: Reducers): Re
   }
 
   // ---- Walkback ----------------------------------------------------------
-  const wb = reduceWalkback(state.walkback, state.lastEmittedSpeakId, event);
+  // Pass:
+  //  - lifecycle kind, so abort/rollback frames arriving when no call is active
+  //    are dropped (e.g. in flight during teardown) — a stray abort would
+  //    otherwise abort a text-mode turn. (H3)
+  //  - the in-flight speak id, so an interrupt targeting a still-streaming
+  //    speak resolves correctly when the frame omits a speak_id. (gap 2)
+  // `state.message` is post-streaming here, so its blocks still hold the
+  // in-flight speak (ws:incoming doesn't clear them).
+  const wb = reduceWalkback(state.walkback, event, {
+    lastEmittedSpeakId: state.lastEmittedSpeakId,
+    currentStreamingSpeakId: currentStreamingSpeakId(state.message),
+    lifecycleKind: state.lifecycle.kind,
+  });
   state = applyWalkbackResult(state, wb);
   actions.push(...wb.actions);
 

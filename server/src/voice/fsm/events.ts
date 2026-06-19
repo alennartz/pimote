@@ -56,5 +56,14 @@ export type Event =
   | { type: 'sdk:toolcall_delta'; contentIndex: number; delta: string; partial: PartialAssistantMessage }
   | { type: 'sdk:toolcall_end'; contentIndex: number; toolCall: ToolCallEnded }
 
+  // ---- SDK turn / agent lifecycle ----
+  // Routed through the FSM (rather than sent directly from the shell) so the
+  // floor-release / error frames go through the same activating-phase buffer
+  // as token/end frames. `lastSpeakToolCallId` is null when the turn spoke but
+  // the speak result carried no id; the shell only dispatches turn_end when a
+  // speak result existed. (M2)
+  | { type: 'sdk:turn_end'; lastSpeakToolCallId: string | null }
+  | { type: 'sdk:agent_end'; error: string | null }
+
   // ---- SDK context rewrite hook ----
   | { type: 'sdk:context'; messages: AgentMessage[] };

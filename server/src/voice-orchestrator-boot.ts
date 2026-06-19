@@ -67,6 +67,15 @@ export function buildVoiceOrchestrator(args: {
       existing?.sendDisplacedEvent(sessionId);
     },
     isOwnedByVoiceCall: (sessionId: string): boolean => orchestrator.isCallActive(sessionId),
+    notifyCallEnded: (sessionId: string) => {
+      // The voice extension self-deactivated (speechmux WS failed/dropped).
+      // Tell the owning client so its VoiceCallStore tears down instead of
+      // waiting for WebRTC to time out. (review finding H4)
+      const slot = sessionManager.getSlot(sessionId);
+      const ownerClientId = slot?.connection?.connectedClientId;
+      if (!ownerClientId) return;
+      clientRegistry.get(ownerClientId)?.sendCallEndedEvent(sessionId, 'error');
+    },
   });
 
   return {
