@@ -3,6 +3,8 @@
 Date: 2026-06-12
 Method: four parallel read-only reviewers (server core, in-server extensions, client PWA, Android). All findings were verified against the actual code by the reviewers; none are speculative. File:line references are as reported and may drift as the code changes.
 
+**Remediation status (updated 2026-06-18):** a remediation pass addressed most findings — each handled item is marked inline below with **✅ Handled** (or **◑ Partially handled**). The Android findings were re-verified against current code before fixing; see `docs/reviews/android-audit-recheck.md`. Still open: server #6, #7, #8, #9, #11, #13 (and #1's test-double cleanup); extensions M4 and L1–L4 plus L5 (= server #9); client #2 and #7; Android L1 and L5c.
+
 ## Cross-cutting themes
 
 - **Stop writing production fallbacks for test doubles.** Server findings #1 (tree-nav events) and #2 (push 410 pruning) both exist because the test fakes diverge from real dependency behavior, and production code grew paths that only exist to satisfy the mocks.
@@ -37,11 +39,15 @@ Added after the fact. `lifetimeCostUsd` is computed by `sumAssistantCostUsd` (`s
 
 ### 1. `tree_navigation_start/end` events are rewritten to `agent_start` by the real EventBuffer
 
+**◑ Partially handled** — production fix done: explicit `tree_navigation_start/end` cases added to `mapEvent` (+ unit test). The test-double fallback cleanup (rewiring ws-handler tests to a real `EventBuffer`) is still open.
+
 **server/src/event-buffer.ts:283-286 (default case of `mapEvent`), exercised via ws-handler.ts `emitBufferedSessionEvent` (~line 1110)**
 `emitBufferedSessionEvent` feeds `{type: 'tree_navigation_start'|'tree_navigation_end'}` into `EventBuffer.onEvent`, but `mapEvent` has no case for those types — the default branch returns `{...base, type: 'agent_start'}`. In production, clients receive spurious `agent_start` events (flipping the session into "working") and never receive the tree-navigation lifecycle events at all; the bogus `agent_start`s are also buffered for replay. The tests pass only because they use a mock EventBuffer whose `onEvent` no-ops, hitting the "test doubles" fallback in `emitBufferedSessionEvent` that preserves the raw type — i.e. the tests test the fallback, not production behavior. The codemap's claim that event-buffer maps "buffered `tree_navigation_*` lifecycle events" is false.
 **Fix:** add explicit `tree_navigation_start`/`tree_navigation_end` cases to `mapEvent` (and make the default case a pass-through or a dropped/logged event, never `agent_start`). Delete the test-double fallback in `emitBufferedSessionEvent` and test against the real buffer.
 
 ### 2. Expired push subscriptions are never pruned — the 410 branch is dead code in production
+
+**✅ Handled** — `WebPushSender` catches `WebPushError` and returns its `statusCode`; `notify()` prunes on 404/410.
 
 **server/src/push-notification.ts:93-97 + server/src/push-infrastructure.ts:69-72**
 `web-push`'s `sendNotification` _rejects_ with a `WebPushError` for any non-2xx status, including 410 Gone. So `WebPushSender.sendNotification` never returns `{statusCode: 410}` — the rejection lands in `notify()`'s `catch`, which only logs. `expiredEndpoints` is always empty; dead subscriptions accumulate forever, every notification fan-out re-sends to them and logs a warning. The unit tests pass because the fake sender returns `{statusCode: 410}` directly — a shape the real sender can't produce.
@@ -49,11 +55,15 @@ Added after the fact. `lifetimeCostUsd` is computed by `sumAssistantCostUsd` (`s
 
 ### 3. Client disconnect mid-login permanently wedges the server-wide LoginOrchestrator
 
+**✅ Handled** — `cleanup()` now aborts `loginAbort` and settles pending login inputs (mirrors `login_cancel`).
+
 **server/src/ws-handler.ts:`cleanup()` (~line 1595) vs `pendingLoginInputs`/`loginAbort`**
 `cleanup()` releases sessions but never aborts `loginAbort` or settles `pendingLoginInputs`. If the client disconnects while the flow is awaiting `requestInput`/`requestSelect` (e.g. the manual-code paste prompt), the promise dangles forever and `LoginOrchestrator.busy` stays `true` — login is single-flight and server-wide, so **all** future `login_begin`s from every client return `busy` until the server restarts. Reconnecting doesn't help: the new `WsHandler` has a fresh, empty `pendingLoginInputs` map, so `login_input` can't resolve the orphaned request.
 **Fix:** in `cleanup()`, call `this.loginAbort?.abort()` and `this.settlePendingLoginInputs('connection closed')` (mirroring `login_cancel`).
 
 ### 4. Malformed `Host` header crashes the process via uncaught `new URL` throw
+
+**✅ Handled** — both `new URL` calls use a fixed base inside try/catch.
 
 **server/src/server.ts:172 (`upgrade` handler) and :183 (`connection` handler)**
 `new URL(req.url ?? '', \`http://${req.headers.host}\`)`throws`TypeError: Invalid URL`when the Host header contains characters illegal in a URL authority (spaces, etc.) — values Node's HTTP parser accepts. A synchronous throw inside an`'upgrade'`/`'connection'`listener is an uncaughtException → process exit. One crafted request kills the server (mitigated only if the edge proxy sanitizes Host).
@@ -62,6 +72,8 @@ Added after the fact. `lifetimeCostUsd` is computed by `sumAssistantCostUsd` (`s
 ## Medium
 
 ### 5. Concurrent `open_session` for the same on-disk session leaks a live runtime
+
+**✅ Handled** — `openSession` is single-flight per session file and short-circuits to the already-open id, so a second runtime is never built for the same file (+ tests).
 
 **server/src/ws-handler.ts `open_session` disk path (~line 380) + session-manager.ts `openSession`**
 The `getSession(requestedSessionId)` existence check and the eventual `this.sessions.set(sessionId, slot)` are separated by long awaits (`resolveSessionPath`, full runtime construction). Two near-simultaneous opens of the same session file (two devices, or a reconnect double-fire) both pass the check, build two runtimes for the same session file, and the second `sessions.set` overwrites the first slot. The first runtime is never disposed: its event subscription, EventBus, and file handle live until process exit, and two pi runtimes append to the same session file.
@@ -93,6 +105,8 @@ Any connected client can end any session's voice call. Worse, the `call_ended` e
 
 ### 10. `void endCall()` in `sendDisplacedEvent` risks an unhandled rejection; displace-time call-teardown is duplicated
 
+**✅ Handled** — the `sendDisplacedEvent` `endCall` now has a `.catch`. (The principle-6 dedup of the two displace-teardown sites was left as-is.)
+
 **server/src/ws-handler.ts:~1375 (`sendDisplacedEvent`) vs :~1180 (`displaceOwner` stale-handler branch)**
 `void this.voiceOrchestrator.endCall(...)` discards the promise without a `.catch`; if `endCall` rejects (a bus listener throwing in `emit`), it's an unhandled rejection — process exit under default Node settings. The sibling path in `displaceOwner` does attach `.catch`, which also shows the same business operation ("tear down call on displacement") implemented in two places that have already drifted.
 **Fix:** add `.catch` (or extract one `endCallOnDisplace(sessionId)` helper used by both sites).
@@ -107,6 +121,8 @@ If `switchSession`/fork lands on a session ID that is already open in another sl
 
 ### 12. Timer/listener leaks in dialog and abort races
 
+**✅ Handled** — `dialogWithTimeout` clears the timeout and detaches the abort listener in a `finally`; the abort-watchdog timer is cleared once `session.abort()` wins.
+
 **server/src/extension-ui-bridge.ts:`dialogWithTimeout` (~line 70); ws-handler.ts `abort` case (~line 790)**
 The timeout `setTimeout` is never cleared when the response wins (keeps the process alive / fires pointlessly), the abort listener stays registered on long-lived signals, and the 30s abort-watchdog timer in the `abort` handler isn't cleared when `session.abort()` wins. All benign individually but accumulate under load.
 **Fix:** capture timer handles, clear them in a `finally`, and remove the abort listener after the race settles.
@@ -119,10 +135,14 @@ The timeout `setTimeout` is never cleared when the response wins (keeps the proc
 
 ### 14. `handleMessage` throws before the response-sending try block on `JSON.parse("null")`
 
+**✅ Handled** — a non-object command is rejected with an error response before `command.id` is dereferenced.
+
 **server/src/ws-handler.ts:~200**
 `command.id` is dereferenced outside the second try/catch; a raw `null` payload throws `TypeError`, is caught only by the outer logger in server.ts, and the client gets no response (a hung request on their side). Trivial to fix by validating `command` is a non-null object right after parse.
 
 ### 15. `ensureVapidKeys` writes the config file non-atomically
+
+**✅ Handled** — config write is now tmp + rename (atomic).
 
 **server/src/config.ts:~130**
 Direct `writeFile` of the merged config (no tmp+rename, unlike the other stores). A crash mid-write corrupts the user's config. Boot-time only, hence low.
@@ -137,11 +157,15 @@ Direct `writeFile` of the merged config (no tmp+rename, unlike the other stores)
 
 ### H1. Stale speechmux client's `close` event tears down the _next_ call
 
+**✅ Handled** — the shell generation-tags each speechmux client and detaches its `onFrame`/`onDisconnect` listeners on discard; stale `close`/frame callbacks check their generation and no-op.
+
 **server/src/voice/index.ts:205-236 + server/src/voice/speechmux-client.ts (close/notifyDisconnect) + server/src/voice/fsm/reducers/lifecycle.ts (`ws:disconnected`)**
 The shell never unsubscribes `onFrame`/`onDisconnect` when it discards a client (`close_ws` just calls `close()` and nulls the slot). `client.close()` initiates a WS close handshake; the underlying `'close'` event fires milliseconds later and calls `notifyDisconnect()` (which is _not_ suppressed for locally-initiated closes), dispatching `ws:disconnected` into the FSM. If a new call has activated within that window, the lifecycle reducer sees `activating`/`active`, transitions to `dormant`, and emits `emit_deactivate_request` — killing the brand-new call. This window is reliably hit by the force-rebind flow (deactivate and re-activate are back-to-back), which is exactly the Android client's documented "single-retry on owned-displacement" path.
 **Fix:** Capture the unsubscribe fns returned by `onFrame`/`onDisconnect` and call them in `close_ws`/`open_ws`'s discard path; or tag dispatched WS events with a client generation and drop events from non-current clients. Also consider suppressing `notifyDisconnect` after a local `close()`.
 
 ### H2. Deactivate during in-flight `open_ws` leaks a live speechmux socket
+
+**✅ Handled** — after `await clientFactory(...)`, `open_ws` checks the generation and closes the just-built socket if the call was superseded/ended mid-connect.
 
 **server/src/voice/index.ts:205-228 (`open_ws`), server/src/voice/fsm/reducers/lifecycle.ts:99-104 (`ws:opened` in non-activating)**
 `open_ws` awaits `clientFactory(...)`. If `eb:deactivate` (or `ws:open_failed`-driven teardown) arrives during that await, `close_ws` runs against a `null` slot — a no-op. When the factory resolves, the shell unconditionally assigns `speechmuxClient = client` and dispatches `ws:opened`; the reducer in `dormant` does nothing (the comment even says "Close the new connection if we somehow have one" but emits no close action). Result: an open, connected speechmux WS sits assigned with live frame listeners after the call has ended, until the next call's reentrancy guard happens to close it.
@@ -149,17 +173,23 @@ The shell never unsubscribes `onFrame`/`onDisconnect` when it discards a client 
 
 ### H3. Walkback reducer is not gated on lifecycle — stale frames abort the agent in text mode
 
+**✅ Handled** — `reduceWalkback` takes the lifecycle kind and drops `abort`/`rollback` frames unless `active`/`activating`.
+
 **server/src/voice/fsm/reducers/walkback.ts:46-75**
 `reduceWalkback` handles `ws:incoming` `abort`/`rollback` frames unconditionally — unlike the cross-cutting `user`-frame handling in `reducer.ts:85-92`, which checks `lifecycle.kind === 'active'`. Combined with H1/H2 (leaked sockets with attached listeners), or simply frames in flight during teardown, an `abort` frame arriving while `dormant` fires `abort_agent` (killing whatever text-mode turn is running) and appends a `VOICE_INTERRUPT_CUSTOM_TYPE` entry into the conversation history of a session that's no longer in a call.
 **Fix:** Gate the `ws:incoming` abort/rollback branch on lifecycle (pass it in like the top-level reducer does for user frames), dropping frames when not `active`/`activating`.
 
 ### H4. Server never learns when the extension self-deactivates — orchestrator state orphaned
 
+**✅ Handled** — the orchestrator subscribes to `pimote:voice:deactivate` on bind and routes an extension-initiated deactivate into `endCall` + `call_ended` (the `activeCalls` guard distinguishes it from its own teardown).
+
 **server/src/voice-orchestrator.ts (`activeCalls`), server/src/voice/index.ts:265-274 (`emit_deactivate_request`)**
 On `ws:open_failed` or `ws:disconnected` the extension emits `pimote:voice:deactivate` on the session bus — but the only subscriber to that event is _the extension itself_ (grep confirms: nothing in `ws-handler.ts`, `session-manager.ts`, `server.ts`, or `index.ts` listens). So when the speechmux WS fails or drops mid-call: the extension goes dormant, but `VoiceOrchestrator.activeCalls` still contains the session. Consequences: `isCallActive` stays true → the extension UI bridge stays permanently gated (`UI_BRIDGE_DISABLED_IN_VOICE_MODE`), a subsequent `call_bind` without `force` fails with `call_bind_failed_owned`, and the client never receives `call_ended`/`call_status`.
 **Fix:** Subscribe the server side (orchestrator or session manager) to `pimote:voice:deactivate` on each session bus and route it into `endCall(...)` + `sendCallEndedEvent(...)`. (See M1: the emitted message's `sessionId` must be fixed first.)
 
 ### H5. `@pimote/panels` `detect()`: module-level mutable map causes cross-session handle deactivation
+
+**✅ Handled** — the handle registry is now a `WeakMap<ExtensionAPI, …>` scoped per pi instance.
 
 **packages/panels/src/detect.ts:5**
 `handles` is a module-scoped mutable `Map` keyed only by `key`. The pimote server hosts many `AgentSession`s in one process, all sharing this module. Two sessions whose extensions both call `detect(pi, 'mytool')` collide: the second `detect()` sets `prev.active = false` on the _first session's_ handle, silently stopping its panel updates forever. This is the package's primary multi-session use case, and it also violates the "no module-level mutable business state" principle (AGENTS.md §3).
@@ -169,17 +199,23 @@ On `ws:open_failed` or `ws:disconnected` the extension emits `pimote:voice:deact
 
 ### M1. `emit_deactivate_request` always emits `sessionId: ''`
 
+**✅ Handled** — the action now carries `sessionId`, populated by the reducer from the pre-transition state.
+
 **server/src/voice/index.ts:265-274**
 Actions execute _after_ `state = next`. For `ws:disconnected`/`ws:open_failed` the reducer has already transitioned to `dormant`, so the executor's `state.lifecycle.kind === 'active' || 'activating'` check is always false and the emitted `VoiceDeactivateMessage.sessionId` is always `''`. Latent today only because nothing consumes the message (H4); it becomes a live bug the moment H4 is fixed.
 **Fix:** Carry the sessionId on the action itself (`{ kind: 'emit_deactivate_request', sessionId }`), populated by the reducer from the pre-transition state.
 
 ### M2. `turn_end` / `agent_end` sends bypass the FSM's activating-phase buffer
 
+**✅ Handled** — both now dispatch `sdk:turn_end`/`sdk:agent_end` FSM events whose reducer emits `send_frame`, so they go through buffer-or-pass routing.
+
 **server/src/voice/index.ts:386-410**
 These hooks call `speechmuxClient.send(...)` directly and bail when `state.lifecycle.kind !== 'active'`. Activation deliberately runs the greeting turn in parallel with the WS handshake; if the greeting turn ends before `ws:opened`, the `floor_released` frame is silently dropped (the buffered `token`/`end` frames flush on open, but not this). Speechmux is then never told the harness released the floor for the first utterance. Same gap for `agent_end` error frames. Structurally, this is a second emission path around the `bufferOrPassFrame` design the FSM exists to enforce.
 **Fix:** Route these as FSM events (`sdk:turn_end`, `sdk:agent_end`) whose reducer emits `send_frame` actions, so they go through the standard buffer-or-pass routing.
 
 ### M3. Static-host: unnormalized `folderPath` breaks the containment check → everything 404s
+
+**✅ Handled** — `executeRegisterTool` normalizes `input.folder` via `path.resolve(...)` before stat/persist/register.
 
 **server/src/static-host/tools.ts:104-110 (no normalization), server/src/static-host/http-handler.ts:111-114**
 `executeRegisterTool` accepts any absolute path verbatim — including a trailing slash (`/tmp/site/`) or internal `..` segments (`/tmp/a/../site`). The handler computes `resolved = path.resolve(folderPath, decoded)` (normalized) and compares against the _unnormalized_ `folderPath + path.sep`. With a trailing slash, `'/tmp/site/index.html'.startsWith('/tmp/site//')` is false → every request, including `/s/<slug>/`, returns 404, despite the register tool reporting success. Persisted and replayed, the breakage survives restarts.
@@ -193,17 +229,23 @@ Bundles are served from the pimote origin with no `Content-Security-Policy`, no 
 
 ### M5. Context rewrite relies on a fragile "first action executes synchronously" invariant
 
+**✅ Handled** — the `context` hook now drives a synchronous reduce and reads the rewrite straight off the returned actions; the `pendingContextRewrite` module slot is gone.
+
 **server/src/voice/index.ts:126, 277, 404-418**
 The `context` hook calls `void dispatch({type:'sdk:context',...})` and then synchronously reads `pendingContextRewrite`. This works only because (a) `reduce` is synchronous, (b) `rewrite_context` happens to be the _first_ action with no `await` before it in `execute`, and (c) no other sub-reducer currently emits an earlier action for `sdk:context`. Any of those changing — an action emitted before `rewrite_context`, or an `await` added to that `execute` branch — silently disables walk-back surgery with no error. This is exactly the closure-over-reassignable-slot hazard AGENTS.md §4 warns about.
 **Fix:** Don't route the rewrite through `dispatch`/actions at all: call `reduce` synchronously in the hook (or expose a synchronous `computeContextRewrite(state, messages)`), return `{ messages }` directly, and dispatch the state update separately.
 
 ### M6. `walkBack`: `droppedToolUseIds` is dead code; fully-heard speak's tool_result is still dropped
 
+**✅ Handled** — walkback now prunes only speak calls (truncate target + drop later speaks + their results), keeps other tool calls, and preserves `stopReason`. Also added in-flight-speak targeting and post-interrupt token suppression (+ tests).
+
 **server/src/voice/walk-back.ts:137-173**
-`droppedToolUseIds` is populated in three places and never read — the function unconditionally returns `[...messages.slice(0, targetMsgIdx), rewrittenTarget]`, dropping _all_ subsequent messages. Consequences: (1) in the `heardText >= originalText` branch ("keep block intact"), the kept speak `toolCall`'s paired tool_result message is dropped anyway, leaving a dangling toolCall — the "keep intact" intent isn't actually honored; (2) earlier fully-heard speak blocks in the same message likewise lose their results. This is survivable only if pi tolerates `stopReason:'aborted'` assistants with dangling toolCalls on every provider — an assumption the dead set suggests was meant to be handled and wasn't.
-**Fix:** Either delete the dead set and document the dangling-toolCall reliance explicitly, or finish the intended logic: retain subsequent tool_result messages whose ids are _not_ in `droppedToolUseIds`.
+`droppedToolUseIds` is populated in three places and never read — the function unconditionally returns `[...messages.slice(0, targetMsgIdx), rewrittenTarget]`, dropping _all_ subsequent messages. Consequences: (1) in the `heardText >= originalText` branch ("keep block intact"), the kept speak `toolCall`'s paired tool*result message is dropped anyway, leaving a dangling toolCall — the "keep intact" intent isn't actually honored; (2) earlier fully-heard speak blocks in the same message likewise lose their results. This is survivable only if pi tolerates `stopReason:'aborted'` assistants with dangling toolCalls on every provider — an assumption the dead set suggests was meant to be handled and wasn't.
+**Fix:** Either delete the dead set and document the dangling-toolCall reliance explicitly, or finish the intended logic: retain subsequent tool_result messages whose ids are \_not* in `droppedToolUseIds`.
 
 ### M7. Binding a voice call aborts in-flight agent work
+
+**✅ Handled** — the activation sentinel is delivered with `deliverAs:'steer'`: steered into a running turn when busy (preserving the work), sent normally to trigger the greeting when idle.
 
 **server/src/voice/index.ts:172-189 + fsm/reducers/lifecycle.ts:60 (activate emits plain `send_user_message`)**
 The activation sentinel is delivered via `send_user_message` without `deliverAs`, so the executor runs `ensureIdleWithImplicitAbort` — if the agent is mid-task (e.g. a long text-mode run) when the user starts a call, the task is silently `ctx.abort()`ed. Barge-in abort is right for mid-call user frames; it's questionable for call _start_, where steering (`deliverAs: 'steer'`) would preserve the running work. If the abort is deliberate, it deserves a comment; if not, it loses work.
@@ -250,6 +292,8 @@ Any connected client can end any session's voice call (and receives a success + 
 
 ### 1. `connection.svelte.ts` — socket callbacks have no connection-identity guard; stale closures corrupt singleton state
 
+**✅ Handled** — each socket is captured and `onopen`/`onmessage`/`onclose` + the restore-`Promise.all` continuation early-return when `this.ws !== ws`; `connect()` deterministically detaches the prior socket and rejects its pending; CLOSING handled (+ tests).
+
 **client/src/lib/stores/connection.svelte.ts (onopen ~line 73–140, onclose ~line 200, connect guard ~line 57)**
 Two concrete manifestations of the same structural flaw — every `ws.on*` handler and the restore `Promise.all` continuation mutate `this.*` without checking whether their socket is still the current one:
 
@@ -270,11 +314,15 @@ Two concrete manifestations of the same structural flaw — every `ws.on*` handl
 
 ### 3. `session-registry.svelte.ts` — `openExistingSession` removes an already-tracked session on transient failure
 
+**✅ Handled** — the remove-cleanup in both failure paths is now gated on `!alreadyTracked`.
+
 **client/src/lib/stores/session-registry.svelte.ts (`openExistingSession`, ~lines 600–640)**
 `alreadyTracked` is computed but never used in the cleanup paths: both the `!response.success` (non-`session_owned`) branch and the `catch` branch call `removeSession(sessionId)` unconditionally. `confirmTakeover` and the notification-adopt path route through this function for sessions the user already has open — a transient WS error (e.g. socket dropped mid-request, which `connection.send` turns into a rejection) deletes the user's tab, draft text, and pending steering messages, and unpersists the session.
 **Fix:** only run the remove-cleanup when `!alreadyTracked`; for a previously tracked session, leave registry state intact (the reconnect cycle already retries restores).
 
 ### 4. `CallGestureZone.svelte` + `call-audio-cues.ts` — one leaked `AudioContext` per call
+
+**✅ Handled** — `CallAudioCues` gained `dispose()` (closes the cached context), called from `CallGestureZone`'s `onDestroy` (+ tests).
 
 **client/src/lib/components/CallGestureZone.svelte:14-18, client/src/lib/call-audio-cues.ts**
 `CallingMode` (and thus `CallGestureZone`) mounts per call. The first gesture creates an `AudioContext` via `createCallAudioCues()`, and nothing ever closes it — `CallAudioCues` has no dispose API and the component has no destroy cleanup. Browsers cap concurrent `AudioContext`s (mobile Safari ~4; Chrome warns and eventually refuses): after a handful of calls in one PWA session, cue beeps silently stop working and audio resources accumulate.
@@ -284,11 +332,15 @@ Two concrete manifestations of the same structural flaw — every `ws.on*` handl
 
 ### 5. `extension-ui-queue.svelte.ts` — `sendResponse` drops the request on send failure and leaks an unhandled rejection
 
+**✅ Handled** — `sendResponse` `.catch`es the send and re-queues the entry on failure; queue entries are pruned on `session_closed`.
+
 **client/src/lib/stores/extension-ui-queue.svelte.ts (`sendResponse`, ~line 60)**
 `connection.send(...)` is fire-and-forget with no `.catch`. If the WS is down (exactly when stale dialogs are likely to be answered), the promise rejects unhandled _and_ the request is removed from the queue anyway — the extension's dialog stays unresolved server-side with no client-side affordance left to answer it. Separately, queue entries for sessions that get closed are never pruned, so `hasRequestForSession` can stay true forever for dead sessions.
 **Fix:** `.catch` the send and keep (or re-queue) the entry on failure; prune queue entries in the `session_closed` handler.
 
 ### 6. `TextBlock.svelte` / `smd-renderer.ts` — renderer's `IncrementalHighlighter` never disposed
+
+**✅ Handled** — `createRenderer` exposes `dispose()` (releases the highlighter timer), called in `TextBlock`'s effect cleanup.
 
 **client/src/lib/smd-renderer.ts:93 (created), client/src/lib/components/TextBlock.svelte:40-46 (cleanup)**
 `createRenderer` creates a highlighter with a 100 ms trailing timer, but the renderer exposes no dispose surface and `TextBlock`'s effect cleanup only clears `container.innerHTML`. A component destroyed mid-stream leaves a pending timer that fires and writes `innerHTML` into a detached node. Harmless today, but `dispose()` exists and `WriteFileBlock` already does this correctly — the asymmetry will bite if the highlighter ever grows heavier state.
@@ -314,6 +366,8 @@ Every focus/visibility/online/pageshow event during backoff resets `reconnectDel
 
 ### C1. Unhandled `WsConnectionLost` / `WsRequestTimeout` in `runOutgoing` crashes the process and leaks the Telecom Connection
 
+**✅ Handled** — `runOutgoing` wraps the dial/bind body in `try/catch (Throwable)` routing to `terminate(BIND_FAILED)`, rethrowing `CancellationException`.
+
 **call/CallController.kt:454–495 (`runOutgoing`, steps 1–2)**
 `wsClient.request(...)` at lines 461, 482, and 487 throws `WsRequestTimeout` (10 s watchdog) or `WsConnectionLost` (socket drop mid-request — see `net/WsClient.kt:335` `failAllPending`). `runOutgoing` only catches `PeerConnectionFailed` around `peer.connect`. The coroutine is launched into `applicationScope` (`SupervisorJob`, no `CoroutineExceptionHandler` — `app/AppContainer.kt:57`), so any WS hiccup while dialing/binding propagates to the default handler and **kills the app**. Even ignoring the crash, `terminate(...)` is never called: the Telecom `Connection` is never destroyed (system keeps an in-call state), the `Live` slot persists, and state sticks in `Dialing`/`Binding`. This is trivially reachable: place a call while the server is briefly unreachable, or have the WS drop during `open_session`.
 **Fix:** wrap the body of `runOutgoing` (or each `wsClient.request`) in a `try/catch (Throwable)` that routes to `terminate(BIND_FAILED, failureReason = ...)`, rethrowing `CancellationException`.
@@ -321,6 +375,8 @@ Every focus/visibility/online/pageshow event during backoff resets `reconnectDel
 ## High
 
 ### H1. `CallState` never returns from `Ended` to `Idle` — the in-call UI never launches for the second call
+
+**✅ Handled** — `startOutgoing` resets a lingering `Ended` to `Idle` (the documented reset); KDoc corrected. (The headline consequence was already mitigated earlier by the FGS-driven launch.)
 
 **call/CallController.kt:376 (`performTermination` sets `Ended`), app/AppContainer.kt:288**
 Nothing transitions `Ended → Idle` except `onAppShutdown` (line 446/451). The interface doc ("state goes back to Idle after the held connection is released") and the codemap both promise the reset; it isn't implemented. Consequences:
@@ -331,11 +387,15 @@ Nothing transitions `Ended → Idle` except `onAppShutdown` (line 446/451). The 
 
 ### H2. `startOutgoing` overwrites a live call without terminating it — leaks the old peer (mic) and Telecom Connection
 
+**✅ Handled** — `startOutgoing` routes any prior live call through `terminate(USER_HANGUP)` before installing the new slot.
+
 **call/CallController.kt:279–304**
 `startOutgoing` does `live.value?.callJob?.cancel()` then `live.value = Live(...)`. Cancelling `callJob` does **not** run teardown: if the old call was `Active` (suspended in the outcome race), cancellation just kills the watcher coroutines — `terminate` never runs for the old call. The old `SpeechmuxPeer` is never `disconnect()`ed (AudioRecord/ADM stay allocated, mic indicator stays lit) and the old `PimoteConnection` is never `setDisconnected`/`destroy`ed (Telecom keeps the call). The new `Live` simply replaces the slot, dropping the only references. Telecom _usually_ prevents a second outgoing self-managed call, but `CallByNameActivity`/Assistant fulfillment makes a second `placeCall` while one is active entirely plausible.
 **Fix:** call `terminate(CallEndReason.USER_HANGUP)` (or a dedicated reason) on the existing slot before installing the new one — the single-business-operation rule says this must go through `terminate`, not a bare `cancel()`.
 
 ### H3. Missing torn-down check after `peer.connect` — hangup racing ICE-connected leaves state stuck in `Active` on a destroyed Connection
+
+**✅ Handled** — `if (live.value == null) return` guard added between `peer.connect` returning and `reportActive()`.
 
 **call/CallController.kt:508–527**
 `runOutgoing` checks `live.value == null` after resolving the sessionId and after creating the peer, but **not** after `peer.connect(...)` returns. Sequence: user hangs up during `Negotiating` → `endCurrentCall` calls `terminate` directly (line ~315) → connection destroyed, peer disconnected, state = `Ended`. If ICE reached `CONNECTED` concurrently, `connectedDeferred` completes successfully and `peer.connect` returns normally — then line 526–527 call `connection.reportActive()` on a **destroyed** Connection and force `_state = Active(sessionId)`. Line 540 (`live.value?.userHangup ?: return`) then bails, so the state machine is stuck in `Active` forever: foreground service stays up, proximity lock can blank the screen, and no path can terminate (the `Live` slot is already null).
@@ -345,6 +405,8 @@ Nothing transitions `Ended → Idle` except `onAppShutdown` (line 446/451). The 
 
 ### M1. `SpeechmuxPeerImpl` treats transient ICE `DISCONNECTED` as fatal, and has no negotiation timeout
 
+**✅ Handled** — ICE `DISCONNECTED` starts a 5s grace timer (cancelled on recovery) before failing; the connect sequence is wrapped in `withTimeout(15s)` → `PeerConnectionFailed("negotiation_timeout")`.
+
 **voice/SpeechmuxPeerImpl.kt:175–177, 343**
 
 - `IceConnectionState.DISCONNECTED` → `PeerState.Failed("ice_disconnected")`. DISCONNECTED is frequently transient (Wi-Fi↔cellular handoff, brief RF loss) and libwebrtc routinely recovers to `CONNECTED`; the controller's watcher (`peer.state.first { it is PeerState.Failed }`) ends the call immediately. Every short network blip kills an active call that would have survived. Note `DISCONNECTED` also doesn't complete `connectedDeferred`, so a pre-connect DISCONNECTED that never progresses leaves `connect()` suspended.
@@ -353,17 +415,23 @@ Nothing transitions `Ended → Idle` except `onAppShutdown` (line 446/451). The 
 
 ### M2. `SpeechmuxPeerImpl.disconnect()` is not actually idempotent under concurrency — double native dispose possible
 
+**✅ Handled** — `disconnect()` is gated by an `AtomicBoolean.compareAndSet`, so the native teardown runs exactly once.
+
 **voice/SpeechmuxPeerImpl.kt:575–660**
 The comment claims "a second disconnect() is a no-op," but the snapshot-then-null sequence is plain, unsynchronized field access on non-volatile `var`s. Two threads can race it: `terminate` → `snapshot.peer?.disconnect()` (caller thread) concurrently with `connect()`'s `catch` → `disconnect()` (IO thread). Both can snapshot the same non-null `peer`/`factory` and spawn two cleanup threads, each calling `peer.close()`, `factory.dispose()`, `adm.release()`. The `try/catch (Throwable)` wrappers don't help against a native use-after-free SIGSEGV from double-dispose.
 **Fix:** gate disconnect with an `AtomicBoolean.compareAndSet` (or move the per-call fields into one `AtomicReference<Snapshot?>` swapped to null, matching the `CallControllerImpl.Live` pattern this codebase already uses).
 
 ### M3. `WsClientImpl.pending` is global across sessions — a dying connection loop can fail the new session's in-flight requests
 
+**✅ Handled** — `pending` moved into the per-connect `Session` record; `_state` writes scoped via `setState(target, …)` that no-ops unless `target` is still current.
+
 **net/WsClient.kt:162, 283–287**
 `pending` is client-wide, but `failAllPending()` runs in the old loop's non-suspending tail (after `conn.events.collect` exits, line 286). When `connect(newOrigin)` cancels the old session's scope, the old loop on another thread can still execute that tail (cancellation only takes effect at suspension points) and clear/fail requests issued against the _new_ session. Same window lets the old loop's `waitForRetry` stamp `_state = Reconnecting(...)` over the new session's `Connecting`. Narrow window, but it's exactly the closure-over-shared-slot hazard the rest of this file was refactored to remove.
 **Fix:** move `pending` (and ideally `_state` writes) into the per-connect `Session` record, or have the tail check `session.value === target` before calling `failAllPending`/touching `_state`.
 
 ### M4. WsClient contract lies about backoff reset on network availability
+
+**✅ Handled** — `waitForRetry` returns attempt 0 when a network-availability wake fired, restarting the schedule; KDoc updated to match.
 
 **net/WsClient.kt:95, 296–318**
 Interface doc: "Network-availability events reset `attempt` to 0 and trigger an immediate retry." The wake-watcher in `waitForRetry` only cuts the _current_ delay short; `attempt` keeps incrementing (the trailing comment "If a network wake reset us to attempt=0, callers handle it" is false — nothing resets it). After a long outage, the immediate post-wake attempt is fine, but if it fails (server still booting after the phone regained network) the next delay is the full 30 s cap instead of restarting the schedule.
@@ -379,11 +447,15 @@ Updates use `newUpdate` with a selection on `RAW_CONTACT_ID + MIMETYPE`. If the 
 
 ### L2. `PimoteConnection` is left in `STATE_INITIALIZING` until `Active` — `setDialing()` is never called
 
+**✅ Handled** — added a `reportDialing()` seam (→ `setDialing()`), called from `runOutgoing` when dialing begins (replacing the dead `reportRinging`).
+
 **telephony/PimoteConnectionService.kt:52, call/CallController.kt**
 `onCreateOutgoingConnection` calls `conn.setInitializing()` and nothing transitions the Connection until `reportActive()` (potentially 10+ s later, or never on the C1 bug). The self-managed contract expects the app to move an outgoing connection to `STATE_DIALING` promptly; Telecom and connected surfaces (Android Auto, BT HFP) display call state from the Connection, which here reads "initializing" through the whole dial/bind/negotiate phase. It evidently works on the tested device, but it's off-contract and gives wrong state to in-car UIs.
 **Fix:** call `setDialing()` (e.g. from `startOutgoing` via a `reportDialing()` on the `CallConnection` seam) once dispatch begins.
 
 ### L3. `SpeechmuxPeerImpl.connect` swallows `CancellationException`
+
+**✅ Handled** — a `catch (CancellationException) { disconnect(); throw e }` now sits ahead of the generic `Throwable` catch.
 
 **voice/SpeechmuxPeerImpl.kt:347–350**
 `catch (e: Throwable) { disconnect(); throw PeerConnectionFailed(...) }` converts cooperative cancellation into a `PeerConnectionFailed`, so a cancelled `callJob` takes the error path (`terminate(PEER_FAILED)`) instead of unwinding as cancelled. Mostly masked by `terminate`'s CAS today, but it's the standard catch-Throwable-without-rethrowing-cancellation bug and will bite any future caller.
@@ -391,11 +463,15 @@ Updates use `newUpdate` with a selection on `RAW_CONTACT_ID + MIMETYPE`. If the 
 
 ### L4. `OkHttpWsTransport` can silently drop inbound WS frames under backpressure
 
+**✅ Handled** — the callbackFlow uses `trySendBlocking` so OkHttp listener threads apply backpressure instead of dropping frames.
+
 **net/OkHttpWsTransport.kt:33–58**
 `callbackFlow` + `trySend` with the default 64-element channel: if the collector (`connectionLoop` → `handleMessage` → `_events.emit`, which suspends when the shared flow's 64-slot buffer is full with a slow subscriber) falls behind, `trySend` drops messages — including command **responses**, which then surface as spurious `WsRequestTimeout`s. Unlikely at current message rates, but it's silent data loss.
 **Fix:** use `trySendBlocking`/`sendBlocking` (OkHttp listener threads tolerate it) or a `Channel.UNLIMITED` buffer on the callbackFlow.
 
 ### L5. Principle violations / dead code worth a pass
+
+**◑ Partially handled** — L5a (dead `ACTION_STOP`/`stop()`) removed; L5b (`mapEndReasonToDisconnectCause` `USER_HANGUP` → `LOCAL`) fixed. L5c (`WsState.Failed` never emitted) is still open — note it's actually _consumed_ by `SetupScreen`/`ContactsScreen`, so it needs wiring up (deciding when the client surfaces `Failed`), not removal.
 
 - **call/CallForegroundService.kt:180, 192–196** — `ACTION_STOP` + companion `stop()` are dead (no callers); the service self-stops. Also `stop()` uses `startService`, which throws from the background on O+ — delete or fix before someone uses it.
 - **telephony/PimoteConnection.kt:103–108** — `mapEndReasonToDisconnectCause` maps `USER_HANGUP → DisconnectCause.REMOTE`; the branch is unreachable (local hangup goes through `disconnectAsLocalHangup`), but the mapping is wrong on its face and will mislead the next reader. Make the unreachable reasons `error("unreachable")` or fix the mapping.
