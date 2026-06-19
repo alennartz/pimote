@@ -164,6 +164,12 @@ export async function createServer(
   sessionManager.onGitBranchChange = (sessionId, folderPath) => {
     WsHandler.broadcastSidebarUpdate(sessionId, folderPath, sessionManager, clientRegistry);
   };
+  // A re-key collision is about to evict the slot holding this ID. Tell its
+  // owning client its session went away before the runtime is disposed.
+  sessionManager.onSlotEvicted = (sessionId) => {
+    const ownerClientId = sessionManager.getSlot(sessionId)?.connection?.connectedClientId;
+    if (ownerClientId) clientRegistry.get(ownerClientId)?.sendDisplacedEvent(sessionId);
+  };
 
   const wss = new WebSocketServer({ noServer: true });
   const clientRegistry: ClientRegistry = new Map();

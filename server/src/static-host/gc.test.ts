@@ -53,6 +53,18 @@ describe('gcStaticHostStore', () => {
     expect(await readdir(dir)).toEqual([]);
   });
 
+  it('deletes orphan .json.tmp write artifacts regardless of validSessionIds', async () => {
+    await touch('alive.json');
+    // A crash between writeFile and rename leaves this behind; GC must sweep it
+    // even though its sessionId is still valid.
+    await writeFile(join(dir, 'alive.json.tmp'), '{ half', 'utf-8');
+    await writeFile(join(dir, 'dead.json.tmp'), '{ half', 'utf-8');
+
+    await gcStaticHostStore({ storeDir: dir, validSessionIds: new Set(['alive']) });
+
+    expect((await readdir(dir)).sort()).toEqual(['alive.json']);
+  });
+
   it('leaves unrelated non-json files alone', async () => {
     await touch('a.json');
     await mkdir(join(dir, 'subdir'), { recursive: true });

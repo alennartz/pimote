@@ -1,6 +1,6 @@
 import type http from 'node:http';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { stat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { StaticHostRegistry } from './registry.js';
 
@@ -137,11 +137,37 @@ export async function serveStaticHostRoute(req: http.IncomingMessage, res: http.
     return true;
   }
 
+  // Symlink containment: stat()/createReadStream() follow symlinks, so a symlink
+  // INSIDE the bundle could point outside it (the `..` and path.resolve checks
+  // above are lexical and cannot see this). Resolve symlinks on both the target
+  // and the registered folder and require the real target to stay within.
+  try {
+    const [realTarget, realFolder] = await Promise.all([realpath(resolved), realpath(folderPath)]);
+    if (realTarget !== realFolder && !realTarget.startsWith(realFolder + path.sep)) {
+      send404(res);
+      return true;
+    }
+  } catch {
+    send404(res);
+    return true;
+  }
+
   const ext = path.extname(resolved).toLowerCase();
   const mime = MIME_TYPES[ext] || 'application/octet-stream';
   res.writeHead(200, {
     'Content-Type': mime,
     'Cache-Control': 'no-cache, no-store, must-revalidate',
+    // Agent-authored content served same-origin with the control PWA. Two
+    // hardening headers (review finding M4):
+    //  - nosniff: never let the browser MIME-sniff a bundle file into a script.
+    //  - CSP connect-src http:/https: blocks ws:/wss:, so a (prompt-injected)
+    //    bundle cannot open pimote's authenticated WebSocket and drive sessions.
+    //    We stay same-origin (not sandboxed) so bundles keep localStorage and
+    //    same-origin asset fetches; same-origin HTTP fetch + storage reads remain
+    //    possible but are contained by the single-user model + edge auth. Full
+    //    isolation would require serving bundles from a separate origin.
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': 'connect-src http: https:',
   });
 
   if (req.method === 'HEAD') {

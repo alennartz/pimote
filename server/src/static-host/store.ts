@@ -51,7 +51,15 @@ export class FileStaticHostStore implements StaticHostStore {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
       throw err;
     }
-    return JSON.parse(raw) as StaticHostStoreFile;
+    try {
+      return JSON.parse(raw) as StaticHostStoreFile;
+    } catch (err) {
+      // A truncated/corrupt file must not reject out of the async session_start
+      // handler (which could break session load). Treat it as "no state" — the
+      // next write overwrites it atomically.
+      console.warn(`[static-host] ignoring corrupt store file ${path}:`, (err as Error).message ?? err);
+      return undefined;
+    }
   }
 
   async write(sessionId: string, file: StaticHostStoreFile): Promise<void> {

@@ -35,10 +35,18 @@ export interface PendingUiEntry {
   event: PimoteEvent;
 }
 
+/** Outcome of a session reset, passed to the owning connection's notify
+ *  callback so it can react without re-deriving old/new IDs (the slot's state
+ *  has already been rebuilt to the new session by the time notify runs). */
+export type SessionResetOutcome = { kind: 'unchanged' } | { kind: 'rekeyed'; oldId: string; newId: string; folderPath: string };
+
 export interface ClientConnection {
   ws: EventSocket;
   connectedClientId: string;
-  onSessionReset: ((slot: ManagedSlot) => Promise<void>) | null;
+  /** Notify-only hook the owning connection installs to react to a reset that
+   *  has already been reconciled in the session map. Never performs the map
+   *  reconcile itself — that lives in SessionManager.applySessionReset. */
+  onSessionReset: ((slot: ManagedSlot, outcome: SessionResetOutcome) => Promise<void>) | null;
 }
 
 export interface SessionState {
@@ -271,6 +279,11 @@ export class PimoteSessionManager {
    *  reap, explicit close). Consumers use this to drop external bookkeeping
    *  (e.g. `VoiceOrchestrator.endCall`) while the session is still addressable. */
   onBeforeSessionClose?: (sessionId: string, folderPath: string) => Promise<void> | void;
+  /** Fired when a re-key collision evicts the slot currently holding the target
+   *  session ID, BEFORE that slot is closed. Consumers notify the evicted slot's
+   *  owning client (e.g. a `session_closed`/displaced event) while it is still
+   *  addressable via getSlot. */
+  onSlotEvicted?: (sessionId: string) => void;
 
   private readonly staticHostFactory?: ExtensionFactory;
 
@@ -442,7 +455,7 @@ export class PimoteSessionManager {
     slotRef.slot = slot;
 
     this.sessions.set(sessionId, slot);
-    this.lastKnownGitBranchBySession.set(sessionId, getGitBranch(effectiveFolderPath));
+    this.lastKnownGitBranchBySession.set(sessionId, await getGitBranch(effectiveFolderPath));
     return sessionId;
   }
 
@@ -528,6 +541,52 @@ export class PimoteSessionManager {
     this.lastKnownGitBranchBySession.set(newId, lastKnown);
   }
 
+  /** Sync read of the cached git branch for a session. Refreshed every 3s by the
+   *  branch-check poll and seeded on open, so hot paths (sidebar broadcasts,
+   *  get_session_meta) read this instead of shelling out to git on the event loop.
+   *  May be up to ~3s stale; branch changes are rare so this is invisible in practice. */
+  getLastKnownGitBranch(sessionId: string): string | null {
+    return this.lastKnownGitBranchBySession.get(sessionId) ?? null;
+  }
+
+  /** The single "session was replaced" business operation. Reconciles the session
+   *  map (rebuild state, evict any collision, re-key) ALWAYS — regardless of whether
+   *  a client owns the slot — so a reset triggered with no live owner can never leave
+   *  the map keyed under a stale ID. Then notifies whatever connection currently owns
+   *  the slot (never the issuer). All reset entry points (newSession/fork/navigateTree/
+   *  switchSession, via WS commands or extension command-context) funnel here. */
+  async applySessionReset(slot: ManagedSlot): Promise<void> {
+    const newId = slot.runtime.session.sessionId;
+    const oldId = slot.sessionState.id;
+
+    // navigateTree stays in the same file — same session ID, nothing to re-key.
+    if (newId === oldId) {
+      await slot.connection?.onSessionReset?.(slot, { kind: 'unchanged' });
+      return;
+    }
+
+    // Rebuild session state (tears down old, creates new from runtime.session).
+    // Refreshes slot.folderPath from the new session header cwd (fork-from can
+    // change cwd, e.g. the worktree extension), so read folderPath after this.
+    this.rebuildSessionState(slot);
+
+    // Collision: another live slot already holds newId. This happens when an
+    // extension calls ctx.switchSession(path) onto a session file already open in
+    // a different slot (the new ID is the target file's existing ID, not a fresh
+    // one like fork's). Without eviction, reKeySession would overwrite the
+    // occupant's map entry and orphan its runtime — two runtimes on one file.
+    // Treat it as a takeover: notify the occupant's owner, then dispose it.
+    const occupant = this.sessions.get(newId);
+    if (occupant && occupant !== slot) {
+      this.onSlotEvicted?.(newId);
+      await this.closeSession(newId);
+    }
+
+    this.reKeySession(slot, oldId, newId);
+
+    await slot.connection?.onSessionReset?.(slot, { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath });
+  }
+
   /** Rebuild a slot's SessionState after session replacement.
    *  Tears down the old state and creates a new one from the current runtime.session.
    *  Also refreshes slot.folderPath from the new session's header cwd, since fork-from
@@ -597,16 +656,20 @@ export class PimoteSessionManager {
     }, 60_000);
 
     this.gitBranchCheckHandle = setInterval(() => {
-      for (const [sessionId, slot] of this.sessions) {
-        if (!slot.connection?.connectedClientId) continue;
-
-        const next = getGitBranch(slot.folderPath);
-        const prev = this.lastKnownGitBranchBySession.get(sessionId) ?? null;
-        if (next !== prev) {
-          this.lastKnownGitBranchBySession.set(sessionId, next);
-          this.onGitBranchChange?.(sessionId, slot.folderPath);
-        }
-      }
+      // Snapshot connected sessions and refresh their branches in parallel. The
+      // lookups are async (execFile) so the poll never blocks the event loop;
+      // hot-path readers consume the cache via getLastKnownGitBranch.
+      const connected = [...this.sessions].filter(([, slot]) => slot.connection?.connectedClientId);
+      void Promise.all(
+        connected.map(async ([sessionId, slot]) => {
+          const next = await getGitBranch(slot.folderPath);
+          const prev = this.lastKnownGitBranchBySession.get(sessionId) ?? null;
+          if (next !== prev) {
+            this.lastKnownGitBranchBySession.set(sessionId, next);
+            this.onGitBranchChange?.(sessionId, slot.folderPath);
+          }
+        }),
+      );
     }, 3000);
   }
 

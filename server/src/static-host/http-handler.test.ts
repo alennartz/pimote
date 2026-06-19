@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AddressInfo } from 'node:net';
@@ -11,6 +11,8 @@ interface FetchResult {
   status: number;
   contentType: string | null;
   cacheControl: string | null;
+  nosniff: string | null;
+  csp: string | null;
   body: string;
   handled: boolean;
 }
@@ -30,6 +32,8 @@ describe('serveStaticHostRoute', () => {
       status: res.status,
       contentType: res.headers.get('content-type'),
       cacheControl: res.headers.get('cache-control'),
+      nosniff: res.headers.get('x-content-type-options'),
+      csp: res.headers.get('content-security-policy'),
       body,
       handled: lastHandled !== false,
     };
@@ -150,6 +154,41 @@ describe('serveStaticHostRoute', () => {
     expect(rWin.handled).toBe(true);
     expect(rWin.status).toBe(404);
     expect(rWin.body).not.toContain('SECRET');
+  });
+
+  it('rejects a symlink inside the bundle that escapes the folder', async () => {
+    const folder = await bundle('demo', { 'index.html': 'safe' });
+    // Secret sibling outside the bundle, and a symlink inside the bundle to it.
+    await writeFile(join(root, 'secret.txt'), 'SECRET', 'utf-8');
+    await symlink(join(root, 'secret.txt'), join(folder, 'leak.txt'));
+    registry.register({ slug: 'demo', folderPath: folder, sessionId: 's', cardMetadata: { title: 'D' } });
+
+    const r = await get('/s/demo/leak.txt');
+    expect(r.handled).toBe(true);
+    expect(r.status).toBe(404);
+    expect(r.body).not.toContain('SECRET');
+  });
+
+  it('still serves a symlink that stays inside the bundle', async () => {
+    const folder = await bundle('demo', { 'index.html': 'safe', 'real.txt': 'INSIDE' });
+    await symlink(join(folder, 'real.txt'), join(folder, 'alias.txt'));
+    registry.register({ slug: 'demo', folderPath: folder, sessionId: 's', cardMetadata: { title: 'D' } });
+
+    const r = await get('/s/demo/alias.txt');
+    expect(r.status).toBe(200);
+    expect(r.body).toBe('INSIDE');
+  });
+
+  it('sets hardening headers (nosniff + CSP blocking websockets) on served files', async () => {
+    const folder = await bundle('demo', { 'index.html': 'hi' });
+    registry.register({ slug: 'demo', folderPath: folder, sessionId: 's', cardMetadata: { title: 'D' } });
+
+    const r = await get('/s/demo/');
+    expect(r.nosniff).toBe('nosniff');
+    // connect-src has no ws:/wss: source, so WebSocket() is blocked; http/https
+    // (same-origin + external fetch) still allowed.
+    expect(r.csp).toBe('connect-src http: https:');
+    expect(r.csp).not.toMatch(/wss?:/);
   });
 
   it('sets a no-cache response for served files', async () => {

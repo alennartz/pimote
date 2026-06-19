@@ -3,7 +3,8 @@ import { Type } from 'typebox';
 import type { Card } from '../../../shared/dist/index.js';
 import type { StaticHostRegistry } from './registry.js';
 import type { StaticHostStore } from './store.js';
-import { executeRegisterTool, executeRemoveTool, type RegisterToolInput, type RemoveToolInput, type ToolDeps } from './tools.js';
+import { executeRegisterTool, executeRemoveTool, resolveSlugCollision, type RegisterToolInput, type RemoveToolInput, type ToolDeps } from './tools.js';
+import type { StaticHostStoreEntry } from './store.js';
 import { STATIC_HOST_TOOL_DESCRIPTION } from './prompt.js';
 
 export { InMemoryStaticHostRegistry } from './registry.js';
@@ -116,21 +117,33 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
       const sessionId = ctx.sessionManager.getSessionId();
       const file = await store.read(sessionId);
       if (!file) return;
+      // Replay persisted entries, re-suffixing any slug already taken (another
+      // session persisted the same slug, or this session reloaded earlier this
+      // boot). Re-suffixing keeps the bundle reachable; the old behaviour left a
+      // phantom entry in the file that the remove tool could never match (its
+      // registry lookup failed) and that got re-appended on every future write.
+      const replayed: StaticHostStoreEntry[] = [];
+      let mutated = false;
       for (const entry of file.entries) {
-        try {
-          registry.register({
-            slug: entry.slug,
-            folderPath: entry.folderPath,
-            sessionId,
-            cardMetadata: entry.cardMetadata,
-          });
-        } catch (err) {
-          // Defensive: a slug conflict (e.g. two sessions persisted the same
-          // slug, or another session reloaded earlier this boot) must not
-          // abort the whole replay loop and leave the session partially
-          // loaded. Skip the conflicting entry and continue.
-          console.warn(`[static-host] session_start: skipping persisted entry ${entry.slug} for session ${sessionId}`, err);
+        let slug = entry.slug;
+        if (registry.has(slug)) {
+          slug = resolveSlugCollision(slug, registry);
+          mutated = true;
         }
+        try {
+          registry.register({ slug, folderPath: entry.folderPath, sessionId, cardMetadata: entry.cardMetadata });
+          replayed.push(slug === entry.slug ? entry : { ...entry, slug });
+        } catch (err) {
+          // Couldn't register even after re-suffixing — drop it from the file so
+          // it doesn't linger as a phantom on the next write.
+          mutated = true;
+          console.warn(`[static-host] session_start: dropping unregisterable entry ${entry.slug} for session ${sessionId}`, err);
+        }
+      }
+      // Persist the reconciled list only if something changed, so the common
+      // conflict-free replay performs no write.
+      if (mutated) {
+        await store.write(sessionId, { version: 1, entries: replayed });
       }
       emitPanelCards(pi, sessionId);
     });

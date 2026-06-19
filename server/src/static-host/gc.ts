@@ -24,6 +24,17 @@ export async function gcStaticHostStore(args: { storeDir: string; validSessionId
   }
   const suffix = '.json';
   for (const name of entries) {
+    // Orphan write tmp file (`<sessionId>.json.tmp`) left by a crash between
+    // writeFile and rename. GC runs at boot before any write, so a leftover
+    // .tmp is always stale — unlink unconditionally.
+    if (name.endsWith('.json.tmp')) {
+      try {
+        await unlink(join(storeDir, name));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      }
+      continue;
+    }
     if (!name.endsWith(suffix)) continue;
     const sessionId = name.slice(0, -suffix.length);
     if (validSessionIds.has(sessionId)) continue;

@@ -17,7 +17,7 @@ import type {
   SessionStateChangedEvent,
   PimoteTreeNode,
 } from '../../shared/dist/index.js';
-import type { PimoteSessionManager, ManagedSlot } from './session-manager.js';
+import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome } from './session-manager.js';
 import { resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests } from './session-manager.js';
 import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
@@ -27,7 +27,6 @@ import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js'
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
 import { mapAgentMessages, extractMessageEntryIds, applyEntryIds, type SdkSessionEntry } from './message-mapper.js';
-import { getGitBranch } from './git-branch.js';
 import { sumAssistantCostUsd, type CostBranchEntry } from './session-cost.js';
 import { completeFileRefs } from './file-references.js';
 import type { AgentSession, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
@@ -114,10 +113,11 @@ export function mapTreeNodes(nodes: SessionTreeNode[]): PimoteTreeNode[] {
 /**
  * Create command context actions for extension commands.
  * Captures the ManagedSlot (stable lifetime), not a transient handler.
- * Session resets are routed through slot.connection.onSessionReset which the
- * current handler sets on claim and clears on cleanup.
+ * Session resets funnel through sessionManager.applySessionReset, which always
+ * reconciles the session map and then notifies the slot's current owner (if any)
+ * via slot.connection.onSessionReset — so a reset with no live owner still re-keys.
  */
-function createCommandContextActions(slot: ManagedSlot): ExtensionCommandContextActions {
+function createCommandContextActions(slot: ManagedSlot, sessionManager: PimoteSessionManager): ExtensionCommandContextActions {
   return {
     waitForIdle: () => {
       if (!slot.session.isStreaming) return Promise.resolve();
@@ -135,22 +135,22 @@ function createCommandContextActions(slot: ManagedSlot): ExtensionCommandContext
     },
     newSession: async (options) => {
       const result = await slot.runtime.newSession(options);
-      if (!result.cancelled) await slot.connection?.onSessionReset?.(slot);
+      if (!result.cancelled) await sessionManager.applySessionReset(slot);
       return { cancelled: result.cancelled };
     },
     fork: async (entryId) => {
       const result = await slot.runtime.fork(entryId);
-      if (!result.cancelled) await slot.connection?.onSessionReset?.(slot);
+      if (!result.cancelled) await sessionManager.applySessionReset(slot);
       return { cancelled: result.cancelled };
     },
     navigateTree: async (targetId, options) => {
       const result = await slot.session.navigateTree(targetId, options);
-      if (!result.cancelled) await slot.connection?.onSessionReset?.(slot);
+      if (!result.cancelled) await sessionManager.applySessionReset(slot);
       return { cancelled: result.cancelled };
     },
     switchSession: async (sessionPath) => {
       const result = await slot.runtime.switchSession(sessionPath);
-      if (!result.cancelled) await slot.connection?.onSessionReset?.(slot);
+      if (!result.cancelled) await sessionManager.applySessionReset(slot);
       return { cancelled: result.cancelled };
     },
     reload: () => slot.session.reload(),
@@ -583,7 +583,7 @@ export class WsHandler {
           const connection: import('./session-manager.js').ClientConnection = {
             ws: this.ws as import('./session-manager.js').EventSocket,
             connectedClientId: this.clientId,
-            onSessionReset: (s) => this.handleSessionReset(s),
+            onSessionReset: (s, outcome) => this.handleSessionReset(s, outcome),
           };
           try {
             const data = await this.voiceOrchestrator.bindCall({
@@ -605,9 +605,15 @@ export class WsHandler {
         }
 
         case 'call_end': {
+          // Route call_ended to the call's OWNER, not necessarily the requester:
+          // a non-owner ending the call must still tear down the owner's
+          // VoiceCallStore (otherwise it stays `active` until WebRTC dies). In the
+          // normal flow requester === owner, so this targets the same socket.
+          const ownerClientId = this.sessionManager.getSlot(command.sessionId)?.connection?.connectedClientId;
           await this.voiceOrchestrator?.endCall({ sessionId: command.sessionId, reason: 'user_hangup' });
           this.sendResponse(id, true);
-          this.sendEvent({ type: 'call_ended', sessionId: command.sessionId, reason: 'user_hangup' });
+          const ownerHandler = ownerClientId ? this.clientRegistry.get(ownerClientId) : undefined;
+          (ownerHandler ?? this).sendCallEndedEvent(command.sessionId, 'user_hangup');
           break;
         }
 
@@ -837,7 +843,7 @@ export class WsHandler {
         const trimmed = command.message.trim();
         if (trimmed === '/new') {
           const result = await slot.runtime.newSession();
-          if (!result.cancelled) await slot.connection?.onSessionReset?.(slot);
+          if (!result.cancelled) await this.sessionManager.applySessionReset(slot);
           this.sendResponse(id, true, { success: !result.cancelled });
           break;
         }
@@ -989,7 +995,7 @@ export class WsHandler {
 
       case 'new_session': {
         const result = await slot.runtime.newSession();
-        if (!result.cancelled) await slot.connection?.onSessionReset?.(slot);
+        if (!result.cancelled) await this.sessionManager.applySessionReset(slot);
         this.sendResponse(id, true, { success: !result.cancelled });
         break;
       }
@@ -1003,7 +1009,7 @@ export class WsHandler {
       case 'get_session_meta': {
         const contextUsage = session.getContextUsage();
         const meta: SessionMeta = {
-          gitBranch: getGitBranch(slot.folderPath),
+          gitBranch: this.sessionManager.getLastKnownGitBranch(sessionId),
           contextUsage: contextUsage ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow } : null,
           // getEntries() (not getBranch()) so cost spans ALL branches in the
           // session file, not just the current leaf's branch. Survives live
@@ -1098,7 +1104,7 @@ export class WsHandler {
         }
         const forkResult = await slot.runtime.fork(command.entryId);
         if (!forkResult.cancelled) {
-          await this.handleSessionReset(slot);
+          await this.sessionManager.applySessionReset(slot);
         }
         const forkData: { cancelled: boolean; selectedText?: string } = { cancelled: forkResult.cancelled };
         if (forkResult.selectedText !== undefined) {
@@ -1144,7 +1150,7 @@ export class WsHandler {
         }
 
         if (!result.cancelled) {
-          await this.handleSessionReset(slot);
+          await this.sessionManager.applySessionReset(slot);
         }
 
         const data: { cancelled: boolean; editorText?: string } = { cancelled: result.cancelled };
@@ -1189,12 +1195,14 @@ export class WsHandler {
   }
 
   /** Bind a slot to this client — sets ownership, WebSocket routing,
-   *  and subscribes to events. Extensions are bound once on first claim. */
-  private async claimSession(sessionId: string, slot: ManagedSlot): Promise<void> {
+   *  and subscribes to events. Extensions are bound once on first claim. Public
+   *  so the voice force-bind path (displaceOwner wiring) can transfer ownership
+   *  through this same single operation, exactly like open_session does. */
+  async claimSession(sessionId: string, slot: ManagedSlot): Promise<void> {
     const connection: import('./session-manager.js').ClientConnection = {
       ws: this.ws as import('./session-manager.js').EventSocket,
       connectedClientId: this.clientId,
-      onSessionReset: (s) => this.handleSessionReset(s),
+      onSessionReset: (s, outcome) => this.handleSessionReset(s, outcome),
     };
     slot.connection = connection;
     // Note: do NOT touch `idleSince` here. Idleness is an agent-level concept driven by
@@ -1208,7 +1216,7 @@ export class WsHandler {
       const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
         isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(sessionId) ?? false,
       });
-      const commandContextActions = createCommandContextActions(slot);
+      const commandContextActions = createCommandContextActions(slot, this.sessionManager);
       await slot.session.bindExtensions({ uiContext, commandContextActions });
       slot.sessionState.extensionsBound = true;
     }
@@ -1217,50 +1225,39 @@ export class WsHandler {
     replaySlotPendingUiRequests(slot);
   }
 
-  /** Handle a session reset (newSession, fork, switchSession).
-   *  Called via slot.connection.onSessionReset after the runtime has replaced the session. */
-  private async handleSessionReset(slot: ManagedSlot): Promise<void> {
-    const newSessionId = slot.runtime.session.sessionId;
-    const oldSessionId = slot.sessionState.id;
-
-    // navigateTree stays in the same file — same session ID, just resync
-    if (newSessionId === oldSessionId) {
-      this.sendFullResyncForSession(oldSessionId, slot);
+  /** Notify-only reaction to a session reset that the session manager has ALREADY
+   *  reconciled in the map (rebuild + collision-evict + re-key). Installed as the
+   *  owning connection's onSessionReset; runs only for the slot's current owner.
+   *  Does no map mutation itself — see SessionManager.applySessionReset. */
+  private async handleSessionReset(slot: ManagedSlot, outcome: SessionResetOutcome): Promise<void> {
+    // navigateTree stays in the same file — same session ID, just resync.
+    if (outcome.kind === 'unchanged') {
+      this.sendFullResyncForSession(slot.sessionState.id, slot);
       return;
     }
 
-    // Session ID changed — rebuild session state in-place on the same slot.
-    // rebuildSessionState refreshes slot.folderPath from the new session's header cwd,
-    // so capture folderPath AFTER the rebuild to pick up the new value (fork-from can
-    // change cwd, e.g. the worktree extension).
-
-    // Rebuild session state (tears down old, creates new from runtime.session)
-    this.sessionManager.rebuildSessionState(slot);
-    const folderPath = slot.folderPath;
-
-    // Re-key the session map
-    this.sessionManager.reKeySession(slot, oldSessionId, newSessionId);
+    const { oldId, newId, folderPath } = outcome;
 
     // Update handler bookkeeping
-    this.subscribedSessions.delete(oldSessionId);
-    this.subscribedSessions.add(newSessionId);
-    if (this.viewedSessionId === oldSessionId) {
-      this.viewedSessionId = newSessionId;
+    this.subscribedSessions.delete(oldId);
+    this.subscribedSessions.add(newId);
+    if (this.viewedSessionId === oldId) {
+      this.viewedSessionId = newId;
     }
 
     // Rebind extension UI bridge (new session state for dialog routing)
     const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
-      isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(newSessionId) ?? false,
+      isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(newId) ?? false,
     });
-    const commandContextActions = createCommandContextActions(slot);
+    const commandContextActions = createCommandContextActions(slot, this.sessionManager);
     await slot.session.bindExtensions({ uiContext, commandContextActions });
     slot.sessionState.extensionsBound = true;
 
     // Notify owning client: session replaced (client re-keys in place)
     this.sendEvent({
       type: 'session_replaced',
-      oldSessionId,
-      newSessionId,
+      oldSessionId: oldId,
+      newSessionId: newId,
       folder: {
         path: folderPath,
         name: folderPath.split('/').pop() ?? folderPath,
@@ -1271,8 +1268,8 @@ export class WsHandler {
     });
 
     // Broadcast sidebar updates for both old (now inactive) and new (now active)
-    WsHandler.broadcastSidebarUpdate(oldSessionId, folderPath, this.sessionManager, this.clientRegistry);
-    WsHandler.broadcastSidebarUpdate(newSessionId, folderPath, this.sessionManager, this.clientRegistry);
+    WsHandler.broadcastSidebarUpdate(oldId, folderPath, this.sessionManager, this.clientRegistry);
+    WsHandler.broadcastSidebarUpdate(newId, folderPath, this.sessionManager, this.clientRegistry);
   }
 
   /** Surface the fd-missing warning at most once per connection (fire-and-forget toast). */
@@ -1498,7 +1495,6 @@ export class WsHandler {
   }
 
   private emitBufferedSessionEvent(slot: ManagedSlot, sessionId: string, sdkEvent: { type: string; [key: string]: unknown }): void {
-    let forwarded = false;
     slot.sessionState.eventBuffer.onEvent(
       sdkEvent,
       sessionId,
@@ -1509,23 +1505,10 @@ export class WsHandler {
           const entryIds = extractMessageEntryIds(slot.session.sessionManager.getBranch() as unknown as SdkSessionEntry[]);
           (event as unknown as Record<string, unknown>).messageEntryIds = entryIds;
         }
-        forwarded = true;
         this.sendEvent(event);
       },
       () => slot.session.messages[slot.session.messages.length - 1],
     );
-
-    // Test doubles for EventBuffer may no-op on onEvent().
-    // Fallback keeps lifecycle visibility in tests while real runtime uses buffered forwarding above.
-    if (!forwarded) {
-      const cursorBase = slot.sessionState.eventBuffer.currentCursor;
-      const cursor = typeof cursorBase === 'number' ? cursorBase + 1 : 1;
-      this.sendEvent({
-        ...(sdkEvent as Record<string, unknown>),
-        sessionId,
-        cursor,
-      } as PimoteEvent);
-    }
   }
 
   /** Send a full_resync event to the client for the given managed session.
@@ -1607,7 +1590,7 @@ export class WsHandler {
       sessionName,
       firstMessage,
       messageCount,
-      gitBranch: slot ? getGitBranch(slot.folderPath) : null,
+      gitBranch: slot ? sessionManager.getLastKnownGitBranch(sessionId) : null,
     };
 
     for (const [, handler] of clientRegistry) {

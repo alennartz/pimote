@@ -67,10 +67,10 @@ describe('FileStaticHostStore', () => {
     await expect(store.remove('ghost')).resolves.toBeUndefined();
   });
 
-  it('read of a corrupt JSON file rejects (does not silently return)', async () => {
+  it('read of a corrupt JSON file returns undefined (does not reject out of session_start)', async () => {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'corrupt.json'), '{ not json', 'utf-8');
-    await expect(store.read('corrupt')).rejects.toBeDefined();
+    await expect(store.read('corrupt')).resolves.toBeUndefined();
   });
 
   it('stores files under one-file-per-session naming', async () => {

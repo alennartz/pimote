@@ -84,23 +84,30 @@ export class PushNotificationService {
     if (this.suppressionPredicate?.(payload.sessionId)) {
       return;
     }
-    const expiredEndpoints: string[] = [];
     const payloadStr = JSON.stringify(payload);
 
-    for (const sub of this.subscriptions) {
-      try {
-        const result = await this.sender.sendNotification(sub, payloadStr);
-        // 404 Not Found and 410 Gone both mean the subscription is dead.
-        if (result.statusCode === 404 || result.statusCode === 410) {
-          expiredEndpoints.push(sub.endpoint);
-        }
-      } catch (err) {
-        console.warn('[PushNotificationService] Failed to send notification:', (err as Error).message ?? err);
-      }
-    }
+    // Snapshot deliberately: `this.subscriptions` is reassigned by add/remove,
+    // and we hold this list across awaits. Fan out in parallel rather than
+    // serializing behind the slowest endpoint.
+    const subs = this.subscriptions;
+    const results = await Promise.allSettled(subs.map((sub) => this.sender.sendNotification(sub, payloadStr)));
 
-    if (expiredEndpoints.length > 0) {
-      this.subscriptions = this.subscriptions.filter((s) => !expiredEndpoints.includes(s.endpoint));
+    const expired = new Set<string>();
+    results.forEach((result, i) => {
+      if (result.status === 'fulfilled') {
+        // 404 Not Found and 410 Gone both mean the subscription is dead.
+        if (result.value.statusCode === 404 || result.value.statusCode === 410) {
+          expired.add(subs[i].endpoint);
+        }
+      } else {
+        console.warn('[PushNotificationService] Failed to send notification:', (result.reason as Error)?.message ?? result.reason);
+      }
+    });
+
+    if (expired.size > 0) {
+      // Prune against the CURRENT array (which may have changed during the
+      // awaits), removing only the endpoints we just found dead.
+      this.subscriptions = this.subscriptions.filter((s) => !expired.has(s.endpoint));
       await this.store.save(this.subscriptions);
     }
   }

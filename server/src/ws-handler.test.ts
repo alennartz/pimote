@@ -3,7 +3,7 @@ import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { PimoteSessionManager, ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
 import type { FolderIndex } from './folder-index.js';
 import type { PushNotificationService } from './push-notification.js';
-import type { EventBuffer } from './event-buffer.js';
+import { EventBuffer } from './event-buffer.js';
 import type { PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
 
 // --- Mock factories ---
@@ -93,8 +93,9 @@ function createMockSlot(
 }
 
 function createMockSessionManager(sessions: Map<string, ManagedSlot> = new Map()): PimoteSessionManager {
-  return {
+  const manager = {
     getSession: (id: string) => sessions.get(id),
+    getSlot: (id: string) => sessions.get(id) ?? null,
     getAllSessions: () => Array.from(sessions.values()),
     openSession: async () => 'new-session-id',
     closeSession: async (id: string) => {
@@ -108,7 +109,30 @@ function createMockSessionManager(sessions: Map<string, ManagedSlot> = new Map()
       sessions.delete(oldId);
       sessions.set(newId, slot);
     },
-  } as unknown as PimoteSessionManager;
+    getLastKnownGitBranch: () => null,
+    onSlotEvicted: undefined as undefined | ((sessionId: string) => void),
+    // Mirrors the real SessionManager.applySessionReset: reconcile the map ALWAYS
+    // (dispatching through the manager so test overrides of rebuild/close/reKey take
+    // effect), then notify the slot's current owner. Kept faithful so ws-handler
+    // tests exercise the real notify-only handleSessionReset.
+    applySessionReset: async (slot: ManagedSlot) => {
+      const newId = slot.runtime.session.sessionId;
+      const oldId = slot.sessionState.id;
+      if (newId === oldId) {
+        await slot.connection?.onSessionReset?.(slot, { kind: 'unchanged' });
+        return;
+      }
+      manager.rebuildSessionState(slot);
+      const occupant = manager.getSession(newId);
+      if (occupant && occupant !== slot) {
+        manager.onSlotEvicted?.(newId);
+        await manager.closeSession(newId);
+      }
+      manager.reKeySession(slot, oldId, newId);
+      await slot.connection?.onSessionReset?.(slot, { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath });
+    },
+  };
+  return manager as unknown as PimoteSessionManager;
 }
 
 function createMockFolderIndex(roots: string[] = []): FolderIndex {
@@ -1549,6 +1573,174 @@ describe('WsHandler', () => {
       expect(sessions.has('new-session')).toBe(true);
     });
 
+    it('reconciles the session map even when the slot has no owner (#6a — no phantom)', async () => {
+      // No connection on the slot (owner disconnected; reset fired via extension).
+      // The old code's `slot.connection?.onSessionReset?.()` would no-op, leaving the
+      // map keyed under the stale ID. applySessionReset must re-key regardless.
+      const mockAgentSession = {
+        subscribe: () => () => {},
+        dispose: () => {},
+        messages: [],
+        model: null,
+        sessionId: 'orphan-old',
+        bindExtensions: async () => {},
+        clearQueue: () => ({ steering: [], followUp: [] }),
+        sessionManager: { getBranch: () => [] },
+      } as any;
+      const slot = createMockSlot({ id: 'orphan-old', session: mockAgentSession, connectedClientId: null });
+      (slot.runtime as any).newSession = async () => {
+        mockAgentSession.sessionId = 'orphan-new';
+        return { cancelled: false };
+      };
+      const sessions = new Map([['orphan-old', slot]]);
+      const { handler } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(JSON.stringify({ type: 'new_session', sessionId: 'orphan-old', id: 'req-ns' }));
+
+      expect(sessions.has('orphan-old')).toBe(false);
+      expect(sessions.has('orphan-new')).toBe(true);
+    });
+
+    it('notifies the owning client on reset, not the issuing client (#6b)', async () => {
+      const mockAgentSession = {
+        subscribe: () => () => {},
+        dispose: () => {},
+        messages: [],
+        model: null,
+        thinkingLevel: 'default',
+        getAvailableThinkingLevels: () => [],
+        isStreaming: false,
+        isCompacting: false,
+        sessionFile: undefined,
+        sessionId: 'shared-old',
+        sessionName: undefined,
+        autoCompactionEnabled: false,
+        bindExtensions: async () => {},
+        modelRegistry: { getAvailable: () => [] },
+        clearQueue: () => ({ steering: [], followUp: [] }),
+        navigateTree: async () => ({ cancelled: false }),
+        sessionManager: { getBranch: () => [] },
+      } as any;
+      const slot = createMockSlot({ id: 'shared-old', session: mockAgentSession, connectedClientId: null });
+      (slot.runtime as any).fork = async () => {
+        mockAgentSession.sessionId = 'shared-new';
+        return { cancelled: false };
+      };
+      const sessions = new Map([['shared-old', slot]]);
+      const clientRegistry: ClientRegistry = new Map();
+
+      // Owner A claims the session.
+      const { handler: handlerA, sent: sentA } = createTestHandler('A', { sessions, clientRegistry });
+      await handlerA.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/project', sessionId: 'shared-old', id: 'req-claim' }));
+
+      // Issuer B (a different client) issues fork on the same session.
+      const { handler: handlerB, sent: sentB } = createTestHandler('B', { sessions, clientRegistry });
+      sentA.length = 0;
+      sentB.length = 0;
+      await handlerB.handleMessage(JSON.stringify({ type: 'fork', sessionId: 'shared-old', entryId: 'e1', id: 'req-fork' }));
+
+      // The owner (A) is told its session was replaced; the issuer (B) is not.
+      expect(findEvents(sentA, 'session_replaced')).toHaveLength(1);
+      expect(findEvents(sentB, 'session_replaced')).toHaveLength(0);
+    });
+
+    it('displaces a colliding occupant when the reset lands on an already-open session ID', async () => {
+      // Simulates an extension calling ctx.switchSession(path) onto a file that is
+      // already open in another slot: the new ID collides with a live map entry.
+      let capturedOnReset: (() => Promise<void>) | undefined;
+      const mockAgentSession = {
+        sessionId: 'old-session',
+        subscribe: () => () => {},
+        dispose: () => {},
+        messages: [],
+        model: null,
+        thinkingLevel: 'default',
+        getAvailableThinkingLevels: () => [],
+        isStreaming: false,
+        isCompacting: false,
+        sessionFile: undefined,
+        sessionName: undefined,
+        autoCompactionEnabled: false,
+        bindExtensions: async (bindings: any) => {
+          if (bindings.commandContextActions) {
+            capturedOnReset = async () => {
+              mockAgentSession.sessionId = 'target-session';
+              await bindings.commandContextActions.newSession();
+            };
+          }
+        },
+        modelRegistry: { getAvailable: () => [] },
+        clearQueue: () => ({ steering: [], followUp: [] }),
+        navigateTree: async () => ({ cancelled: false }),
+        sessionManager: { getBranch: () => [] },
+      } as any;
+
+      const slot = createMockSlot({ id: 'old-session', session: mockAgentSession, connectedClientId: null });
+      (slot.runtime as any).newSession = async () => {
+        mockAgentSession.sessionId = 'target-session';
+        return { cancelled: false };
+      };
+
+      // Occupant slot already holding 'target-session', owned by another client.
+      const occupant = createMockSlot({ id: 'target-session', connectedClientId: 'other-client' });
+
+      const sessions = new Map([
+        ['old-session', slot],
+        ['target-session', occupant],
+      ]);
+      const sessionManager = createMockSessionManager(sessions);
+      (sessionManager as any).rebuildSessionState = (s: ManagedSlot) => {
+        s.sessionState = { ...s.sessionState, id: s.runtime.session.sessionId };
+      };
+      const closeSpy = vi.fn(async (id: string) => {
+        sessions.delete(id);
+      });
+      (sessionManager as any).closeSession = closeSpy;
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { ws, sent } = createMockWs();
+      const handler = new WsHandler(sessionManager, createMockFolderIndex(), ws, createMockPushService(), createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
+      clientRegistry.set('my-client', handler);
+
+      // Eviction notify is wired at boot in server.ts; mirror it here.
+      (sessionManager as any).onSlotEvicted = (sessionId: string) => {
+        const ownerClientId = sessions.get(sessionId)?.connection?.connectedClientId;
+        if (ownerClientId) clientRegistry.get(ownerClientId)?.sendDisplacedEvent(sessionId);
+      };
+
+      // Register the occupant's owning handler so it receives the displaced event.
+      const { ws: otherWs, sent: otherSent } = createMockWs();
+      const otherHandler = new WsHandler(
+        sessionManager,
+        createMockFolderIndex(),
+        otherWs,
+        createMockPushService(),
+        createMockSessionMetadataStore() as any,
+        'other-client',
+        clientRegistry,
+      );
+      clientRegistry.set('other-client', otherHandler);
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/project', sessionId: 'old-session', id: 'req-open' }));
+      sent.length = 0;
+      otherSent.length = 0;
+
+      expect(capturedOnReset).toBeDefined();
+      await capturedOnReset!();
+
+      // Occupant's owner was notified its session went away.
+      const displaced = findEvents(otherSent, 'session_closed').filter((e: any) => e.reason === 'displaced');
+      expect(displaced).toHaveLength(1);
+      expect((displaced[0] as any).sessionId).toBe('target-session');
+
+      // The occupant's runtime was disposed before re-keying.
+      expect(closeSpy).toHaveBeenCalledWith('target-session');
+
+      // The switching slot now owns the target key.
+      expect(sessions.get('target-session')).toBe(slot);
+      expect(sessions.has('old-session')).toBe(false);
+    });
+
     it('sends full_resync (not session_replaced) when session ID stays the same (navigateTree)', async () => {
       let capturedBindings: any;
       const mockAgentSession = {
@@ -1759,6 +1951,9 @@ describe('WsHandler', () => {
       const session = createMockSlot({
         id: 'session-tree-nav',
         connectedClientId: 'client-1',
+        // Real EventBuffer (not the no-op mock) so tree_navigation lifecycle events
+        // flow through the production mapEvent path, not a test-only fallback.
+        eventBuffer: new EventBuffer(100),
         session: {
           subscribe: () => () => {},
           dispose: () => {},
@@ -1788,6 +1983,11 @@ describe('WsHandler', () => {
       const sessions = new Map([['session-tree-nav', session]]);
       const { handler, sent } = createTestHandler('client-1', { sessions });
 
+      // Claim the session so client-1 is the owner whose onSessionReset fires.
+      // navigate_tree now routes the resync through the owner (not the issuer).
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/project', sessionId: 'session-tree-nav', id: 'req-claim' }));
+      sent.length = 0;
+
       await handler.handleMessage(
         JSON.stringify({
           type: 'navigate_tree',
@@ -1815,6 +2015,7 @@ describe('WsHandler', () => {
           type: 'tree_navigation_start',
           sessionId: 'session-tree-nav',
           cursor: expect.any(Number),
+          timestamp: expect.any(String),
           targetId: 'entry-target',
           summarizing: true,
         },
@@ -1824,6 +2025,7 @@ describe('WsHandler', () => {
           type: 'tree_navigation_end',
           sessionId: 'session-tree-nav',
           cursor: expect.any(Number),
+          timestamp: expect.any(String),
         },
       ]);
 
@@ -1848,6 +2050,7 @@ describe('WsHandler', () => {
       const slot = createMockSlot({
         id: 'session-tree-cancel',
         connectedClientId: 'client-1',
+        eventBuffer: new EventBuffer(100),
         session: {
           subscribe: () => () => {},
           dispose: () => {},
@@ -1898,6 +2101,7 @@ describe('WsHandler', () => {
           type: 'tree_navigation_start',
           sessionId: 'session-tree-cancel',
           cursor: expect.any(Number),
+          timestamp: expect.any(String),
           targetId: 'entry-cancel',
           summarizing: false,
         },
@@ -1907,6 +2111,7 @@ describe('WsHandler', () => {
           type: 'tree_navigation_end',
           sessionId: 'session-tree-cancel',
           cursor: expect.any(Number),
+          timestamp: expect.any(String),
         },
       ]);
 
@@ -1930,6 +2135,7 @@ describe('WsHandler', () => {
       const session = createMockSlot({
         id: 'session-tree-overlap',
         connectedClientId: 'client-1',
+        eventBuffer: new EventBuffer(100),
         session: {
           subscribe: () => () => {},
           dispose: () => {},
@@ -2052,6 +2258,81 @@ describe('WsHandler', () => {
         success: true,
         data: { success: true },
       });
+    });
+  });
+
+  describe('call_end', () => {
+    it('routes call_ended to the call owner, not the requesting client (#9)', async () => {
+      const slot = createMockSlot({ id: 'call-session', connectedClientId: 'A' });
+      const sessions = new Map([['call-session', slot]]);
+      const sessionManager = createMockSessionManager(sessions);
+      const clientRegistry: ClientRegistry = new Map();
+
+      const endCall = vi.fn(async () => {});
+      const orchestrator = { endCall, isCallActive: () => true } as any;
+
+      const { ws: wsA, sent: sentA } = createMockWs();
+      const handlerA = new WsHandler(
+        sessionManager,
+        createMockFolderIndex(),
+        wsA,
+        createMockPushService(),
+        createMockSessionMetadataStore() as any,
+        'A',
+        clientRegistry,
+        orchestrator,
+      );
+      clientRegistry.set('A', handlerA);
+
+      const { ws: wsB, sent: sentB } = createMockWs();
+      const handlerB = new WsHandler(
+        sessionManager,
+        createMockFolderIndex(),
+        wsB,
+        createMockPushService(),
+        createMockSessionMetadataStore() as any,
+        'B',
+        clientRegistry,
+        orchestrator,
+      );
+      clientRegistry.set('B', handlerB);
+
+      // Non-owner B ends the call.
+      await handlerB.handleMessage(JSON.stringify({ type: 'call_end', sessionId: 'call-session', id: 'req-end' }));
+
+      expect(endCall).toHaveBeenCalledWith({ sessionId: 'call-session', reason: 'user_hangup' });
+      // Owner A is told the call ended; requester B is not.
+      expect(findEvents(sentA, 'call_ended')).toHaveLength(1);
+      expect(findEvents(sentB, 'call_ended')).toHaveLength(0);
+      // B still gets its command response.
+      expect(findResponse(sentB, 'req-end')!.success).toBe(true);
+    });
+  });
+
+  describe('get_session_meta', () => {
+    it('returns the cached git branch (no synchronous git shell-out on the hot path)', async () => {
+      const session = createMockSlot({
+        id: 'session-meta',
+        session: {
+          subscribe: () => () => {},
+          dispose: () => {},
+          messages: [],
+          model: null,
+          sessionId: 'session-meta',
+          getContextUsage: () => null,
+          sessionManager: { getEntries: () => [] },
+        },
+      });
+      const sessions = new Map([['session-meta', session]]);
+      const { handler, sent, sessionManager } = createTestHandler('client-1', { sessions });
+      // Cache populated by the branch poll / open seed; hot path reads it.
+      (sessionManager as any).getLastKnownGitBranch = (id: string) => (id === 'session-meta' ? 'feature-x' : null);
+
+      await handler.handleMessage(JSON.stringify({ type: 'get_session_meta', sessionId: 'session-meta', id: 'req-meta' }));
+
+      const resp = findResponse(sent, 'req-meta');
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).meta.gitBranch).toBe('feature-x');
     });
   });
 

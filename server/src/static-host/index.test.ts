@@ -148,6 +148,32 @@ describe('createStaticHostExtension', () => {
     expect(registry.listForSession('sess-fresh')).toEqual([]);
   });
 
+  it('on session_start, re-suffixes a slug already taken and rewrites the file (no phantom)', async () => {
+    // Another session already owns the slug.
+    const otherFolder = await bundle('taken-other');
+    registry.register({ slug: 'taken', folderPath: otherFolder, sessionId: 'sess-other', cardMetadata: { title: 'Other' } });
+
+    const folder = await bundle('taken-mine');
+    await store.write('sess-X', {
+      version: 1,
+      entries: [{ slug: 'taken', folderPath: folder, cardMetadata: { title: 'Mine' } }],
+    });
+
+    await pi.handlers.get('session_start')!({ type: 'session_start', reason: 'startup' }, makeCtx('sess-X'));
+
+    // Re-suffixed registration owned by this session, reachable (not a phantom).
+    expect(registry.has('taken-2')).toBe(true);
+    expect(registry.lookup('taken-2')?.sessionId).toBe('sess-X');
+    // File rewritten to the resolved slug, so the remove tool can match it and
+    // it is not re-appended/duplicated on future writes.
+    const file = await store.read('sess-X');
+    expect(file?.entries.map((e) => e.slug)).toEqual(['taken-2']);
+
+    const removeTool = pi.toolDefs.find((t) => t.name === 'pimote_static_host_remove')!;
+    const out = await removeTool.execute('c', { slug: 'taken-2' }, undefined, undefined, makeCtx('sess-X'));
+    expect((out.details as { removed: boolean }).removed).toBe(true);
+  });
+
   function navigateEvents(): Array<{ url: string }> {
     return pi.emitted.filter((e) => e.type === 'pimote:navigate').map((e) => e.payload as { url: string });
   }

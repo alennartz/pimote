@@ -59,12 +59,19 @@ export function buildVoiceOrchestrator(args: {
     config,
     sessionManager,
     busResolver,
-    displaceOwner: async (sessionId, _newOwner: ClientConnection) => {
+    displaceOwner: async (sessionId, newOwner: ClientConnection) => {
       const slot = sessionManager.getSlot(sessionId);
-      const existingClientId = slot?.connection?.connectedClientId;
-      if (!existingClientId) return;
-      const existing = clientRegistry.get(existingClientId);
-      existing?.sendDisplacedEvent(sessionId);
+      if (!slot) return;
+      // Notify the displaced owner (if a different client), then transfer
+      // ownership to the new caller through the SAME claim path open_session
+      // uses — sets slot.connection, subscribes, rebinds extensions, replays
+      // pending UI. Without the claim, slot.connection stayed the displaced
+      // client: events streamed to a dead socket and idle-reap never fired.
+      const existingClientId = slot.connection?.connectedClientId;
+      if (existingClientId && existingClientId !== newOwner.connectedClientId) {
+        clientRegistry.get(existingClientId)?.sendDisplacedEvent(sessionId);
+      }
+      await clientRegistry.get(newOwner.connectedClientId)?.claimSession(sessionId, slot);
     },
     isOwnedByVoiceCall: (sessionId: string): boolean => orchestrator.isCallActive(sessionId),
     notifyCallEnded: (sessionId: string) => {
