@@ -227,9 +227,10 @@
     const text = inputText.trim();
     if (!canSend) return;
 
-    // Intercept the bare `/login` command client-side: open the login dialog
-    // instead of sending a prompt to the agent.
-    if (text === '/login') {
+    // Intercept the bare `/login` and `/logout` commands client-side: open the
+    // providers dialog instead of sending a prompt to the agent. Both open the
+    // same picker — tap a provider to log in, tap "Log out" to sign out.
+    if (text === '/login' || text === '/logout') {
       void loginStore.open();
       inputText = '';
       autocompleteVisible = false;

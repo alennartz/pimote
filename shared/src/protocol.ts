@@ -499,6 +499,12 @@ export interface LoginCancelCommand extends CommandBase {
   type: 'login_cancel';
 }
 
+/** Log out from a provider (clears its stored credential). resp: LogoutResponseData */
+export interface LogoutCommand extends CommandBase {
+  type: 'logout';
+  providerId: string;
+}
+
 export interface LoginListResponseData {
   providers: LoginProviderInfo[];
 }
@@ -507,6 +513,10 @@ export interface LoginBeginResponseData {
   ok: boolean;
   /** Present when ok === false because a login flow is already in progress. */
   reason?: 'busy';
+}
+
+export interface LogoutResponseData {
+  ok: boolean;
 }
 
 // -- Extension UI commands --
@@ -575,7 +585,8 @@ export type PimoteCommand =
   | LoginListCommand
   | LoginBeginCommand
   | LoginInputCommand
-  | LoginCancelCommand;
+  | LoginCancelCommand
+  | LogoutCommand;
 
 // ----------------------------------------------------------------------------
 // Server → Client Events

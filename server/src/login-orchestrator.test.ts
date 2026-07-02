@@ -14,6 +14,7 @@ interface FakeAuthOptions {
 
 function fakeAuthStorage(opts: FakeAuthOptions = {}): LoginAuthStorage & {
   loginCalls: Array<{ providerId: string; callbacks: LoginOAuthCallbacks }>;
+  logoutCalls: string[];
 } {
   const providers = opts.providers ?? [
     { id: 'anthropic', name: 'Claude' },
@@ -21,13 +22,19 @@ function fakeAuthStorage(opts: FakeAuthOptions = {}): LoginAuthStorage & {
   ];
   const loggedIn = new Set(opts.loggedIn ?? []);
   const loginCalls: Array<{ providerId: string; callbacks: LoginOAuthCallbacks }> = [];
+  const logoutCalls: string[] = [];
   return {
     loginCalls,
+    logoutCalls,
     getOAuthProviders: () => providers,
     getAuthStatus: (provider: string) => ({ configured: loggedIn.has(provider) }),
     login: async (providerId: string, callbacks: LoginOAuthCallbacks) => {
       loginCalls.push({ providerId, callbacks });
       if (opts.login) return opts.login(providerId, callbacks);
+    },
+    logout: (provider: string) => {
+      logoutCalls.push(provider);
+      loggedIn.delete(provider);
     },
   };
 }
@@ -137,6 +144,40 @@ describe('LoginOrchestrator in-flight guard', () => {
     await orch.runLogin('anthropic', fakeTransport());
     await orch.runLogin('openai', fakeTransport());
     expect(auth.loginCalls.map((c) => c.providerId)).toEqual(['anthropic', 'openai']);
+  });
+});
+
+// =============================================================================
+// logout
+// =============================================================================
+
+describe('LoginOrchestrator.logout', () => {
+  it('clears the credential for the requested provider', () => {
+    const auth = fakeAuthStorage({ loggedIn: ['anthropic'] });
+    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
+    orch.logout('anthropic');
+    expect(auth.logoutCalls).toEqual(['anthropic']);
+    expect(orch.listProviders().find((p) => p.id === 'anthropic')?.loggedIn).toBe(false);
+  });
+
+  it('refreshes the model registry after logout', () => {
+    const registry = fakeModelRegistry();
+    const orch = new LoginOrchestrator(fakeAuthStorage({ loggedIn: ['anthropic'] }), registry);
+    orch.logout('anthropic');
+    expect(registry.refreshCount).toBe(1);
+  });
+
+  it('is independent of the login single-flight guard', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const auth = fakeAuthStorage({ login: async () => gate, loggedIn: ['openai'] });
+    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
+    const running = orch.runLogin('anthropic', fakeTransport());
+    expect(orch.isBusy()).toBe(true);
+    orch.logout('openai');
+    expect(auth.logoutCalls).toEqual(['openai']);
+    release();
+    await running;
   });
 });
 

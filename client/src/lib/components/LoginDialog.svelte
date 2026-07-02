@@ -17,6 +17,11 @@
     }
   }
 
+  function logout(id: string): void {
+    pickBusyMessage = '';
+    void loginStore.logout(id);
+  }
+
   function submitInput(): void {
     const value = inputValue;
     inputValue = '';
@@ -56,7 +61,7 @@
       onkeydown={(e) => e.stopPropagation()}
     >
       <div class="flex items-center justify-between gap-3">
-        <h2 class="text-foreground text-base font-semibold">Provider Login</h2>
+        <h2 class="text-foreground text-base font-semibold">Providers</h2>
         <button class="text-muted-foreground hover:text-foreground rounded-md px-2 py-1 text-sm" onclick={() => (view.flow === 'done' ? close() : cancel())}>Close</button>
       </div>
 
@@ -71,15 +76,19 @@
           {/if}
           <div class="flex flex-col gap-2">
             {#each view.providers as provider (provider.id)}
-              <button
-                class="border-border hover:bg-accent flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-left text-sm transition-colors"
-                onclick={() => void pickProvider(provider.id)}
-              >
-                <span class="text-foreground font-medium">{provider.name}</span>
+              <div class="border-border flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-sm">
+                <button class="hover:text-primary flex-1 text-left transition-colors" onclick={() => void pickProvider(provider.id)}>
+                  <span class="text-foreground font-medium">{provider.name}</span>
+                </button>
                 {#if provider.loggedIn}
-                  <span class="bg-primary/15 text-primary rounded px-1.5 py-0.5 text-[10px] font-medium">logged in</span>
+                  <button
+                    class="border-border hover:bg-accent text-muted-foreground hover:text-foreground rounded-md border px-2 py-1 text-xs transition-colors"
+                    onclick={() => logout(provider.id)}
+                  >
+                    Log out
+                  </button>
                 {/if}
-              </button>
+              </div>
             {/each}
           </div>
         {/if}

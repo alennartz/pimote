@@ -14,7 +14,7 @@
 // `done` step moves to state 'done', and on success the store re-pulls
 // get_available_models for the viewed session so the model picker refreshes.
 
-import type { LoginStep, LoginProviderInfo, LoginListResponseData, LoginBeginResponseData, PimoteCommand, PimoteResponse } from '@pimote/shared';
+import type { LoginStep, LoginProviderInfo, LoginListResponseData, LoginBeginResponseData, LogoutResponseData, PimoteCommand, PimoteResponse } from '@pimote/shared';
 
 export type LoginFlowState = 'idle' | 'listing' | 'picking' | 'running' | 'done';
 
@@ -97,6 +97,36 @@ export class LoginStore {
     return true;
   }
 
+  /**
+   * Log out from `providerId`. On success, re-pull the provider list (to refresh
+   * the logged-in badges) and the viewed session's available models (so the
+   * provider's models drop out of the picker). Returns whether logout succeeded.
+   */
+  async logout(providerId: string): Promise<boolean> {
+    const resp = await this.seams.sendCommand<LogoutResponseData>({
+      type: 'logout',
+      id: crypto.randomUUID(),
+      providerId,
+    });
+    if (!resp.data?.ok) {
+      return false;
+    }
+    const list = await this.seams.sendCommand<LoginListResponseData>({
+      type: 'login_list',
+      id: crypto.randomUUID(),
+    });
+    this.state.providers = list.data?.providers ?? this.state.providers;
+    const sessionId = this.seams.getViewedSessionId();
+    if (sessionId) {
+      void this.seams.sendCommand({
+        type: 'get_available_models',
+        id: crypto.randomUUID(),
+        sessionId,
+      });
+    }
+    return true;
+  }
+
   /** Submit a value for the current prompt/select step (keyed by its requestId). */
   async submitInput(value: string): Promise<void> {
     const step = this.state.currentStep;
@@ -163,4 +193,4 @@ export class LoginStore {
 }
 
 // Type-only references so unused-import checks stay quiet until implementation.
-export type { LoginListResponseData, LoginBeginResponseData };
+export type { LoginListResponseData, LoginBeginResponseData, LogoutResponseData };

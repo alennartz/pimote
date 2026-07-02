@@ -20,18 +20,28 @@ interface SetupOptions {
   providers?: LoginProviderInfo[];
   /** Response for login_begin (defaults to { ok: true }). */
   beginData?: { ok: boolean; reason?: 'busy' };
+  /** Response for logout (defaults to { ok: true }). */
+  logoutData?: { ok: boolean };
+  /** Provider list returned by login_list AFTER a logout (defaults to `providers`). */
+  providersAfterLogout?: LoginProviderInfo[];
   viewedSessionId?: string | null;
 }
 
 function setupStore(opts: SetupOptions = {}) {
   const sent: PimoteCommand[] = [];
+  let logoutSeen = false;
   const sendCommand = vi.fn(async (cmd: PimoteCommand): Promise<PimoteResponse> => {
     sent.push(cmd);
     switch (cmd.type) {
-      case 'login_list':
-        return okResponse({ providers: opts.providers ?? PROVIDERS });
+      case 'login_list': {
+        const providers = logoutSeen ? (opts.providersAfterLogout ?? opts.providers ?? PROVIDERS) : (opts.providers ?? PROVIDERS);
+        return okResponse({ providers });
+      }
       case 'login_begin':
         return okResponse(opts.beginData ?? { ok: true });
+      case 'logout':
+        logoutSeen = true;
+        return okResponse(opts.logoutData ?? { ok: true });
       default:
         return okResponse({});
     }
@@ -69,6 +79,54 @@ describe('LoginStore.open', () => {
     const { store } = setupStore();
     await store.open();
     expect(store.state.flow).toBe('picking');
+  });
+});
+
+// =============================================================================
+// logout
+// =============================================================================
+
+describe('LoginStore.logout', () => {
+  it('sends a logout command carrying the provider id', async () => {
+    const { store, sent } = setupStore();
+    await store.open();
+    await store.logout('openai');
+    expect(sent.find((c) => c.type === 'logout')).toMatchObject({ type: 'logout', providerId: 'openai' });
+  });
+
+  it('re-pulls the provider list after a successful logout', async () => {
+    const { store } = setupStore({
+      providersAfterLogout: [
+        { id: 'anthropic', name: 'Claude', loggedIn: false },
+        { id: 'openai', name: 'ChatGPT', loggedIn: false },
+      ],
+    });
+    await store.open();
+    await store.logout('openai');
+    expect(store.state.providers.find((p) => p.id === 'openai')?.loggedIn).toBe(false);
+  });
+
+  it('re-pulls the viewed session models after a successful logout', async () => {
+    const { store, sent } = setupStore({ viewedSessionId: 's-1' });
+    await store.open();
+    await store.logout('openai');
+    expect(sent.find((c) => c.type === 'get_available_models')).toMatchObject({ type: 'get_available_models', sessionId: 's-1' });
+  });
+
+  it('returns false and does not re-pull when logout fails', async () => {
+    const { store, sent } = setupStore({ logoutData: { ok: false } });
+    await store.open();
+    const ok = await store.logout('openai');
+    expect(ok).toBe(false);
+    expect(sent.filter((c) => c.type === 'login_list')).toHaveLength(1);
+    expect(sent.some((c) => c.type === 'get_available_models')).toBe(false);
+  });
+
+  it('does not re-pull models when no session is viewed', async () => {
+    const { store, sent } = setupStore({ viewedSessionId: null });
+    await store.open();
+    await store.logout('openai');
+    expect(sent.some((c) => c.type === 'get_available_models')).toBe(false);
   });
 });
 

@@ -811,6 +811,12 @@ export class WsHandler {
           break;
         }
 
+        case 'logout': {
+          this.sessionManager.getLoginOrchestrator().logout(command.providerId);
+          this.sendResponse(id, true, { ok: true });
+          break;
+        }
+
         default: {
           this.sendResponse(id, false, undefined, `Unknown command type: ${(command as { type: string }).type}`);
         }
@@ -1060,6 +1066,7 @@ export class WsHandler {
           { name: 'reload', description: 'Reload extensions and skills', hasArgCompletions: false },
           { name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false },
           { name: 'login', description: 'Log in to a model provider', hasArgCompletions: false },
+          { name: 'logout', description: 'Log out from a model provider', hasArgCompletions: false },
         );
 
         this.sendResponse(id, true, { commands });

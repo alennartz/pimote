@@ -57,6 +57,7 @@ export interface LoginAuthStorage {
   getOAuthProviders(): Array<{ id: string; name: string }>;
   getAuthStatus(provider: string): { configured: boolean };
   login(providerId: string, callbacks: LoginOAuthCallbacks): Promise<void>;
+  logout(provider: string): void;
 }
 
 export interface LoginModelRegistry {
@@ -107,6 +108,16 @@ export class LoginOrchestrator {
   /** Whether a login flow is currently running. */
   isBusy(): boolean {
     return this.busy;
+  }
+
+  /**
+   * Log out from `providerId`: clear its stored credential and refresh the
+   * model registry so the provider's models drop out of selection. Synchronous
+   * on the AuthStorage side; independent of the single-flight login guard.
+   */
+  logout(providerId: string): void {
+    this.authStorage.logout(providerId);
+    this.modelRegistry.refresh();
   }
 
   /**
