@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatSessionCost } from './session-summary.js';
+import { formatSessionCost, formatCombinedCost } from './session-summary.js';
 
 describe('formatSessionCost', () => {
   describe('no-spend sentinel', () => {
@@ -43,5 +43,26 @@ describe('formatSessionCost', () => {
     it('pads whole-dollar amounts to two decimal places', () => {
       expect(formatSessionCost(12)).toBe('$12.00');
     });
+  });
+});
+
+describe('formatCombinedCost', () => {
+  it('returns null when there is no lifetime cost to show', () => {
+    expect(formatCombinedCost(0, 0.03)).toBeNull();
+    expect(formatCombinedCost(0, null)).toBeNull();
+  });
+
+  it('returns the base cost alone when there is no next-round-trip figure', () => {
+    expect(formatCombinedCost(1.23, null)).toBe('$1.23');
+    expect(formatCombinedCost(1.23, 0)).toBe('$1.23');
+    expect(formatCombinedCost(1.23, undefined)).toBe('$1.23');
+  });
+
+  it('appends the next-round-trip lower bound in parentheses', () => {
+    expect(formatCombinedCost(1.23, 0.03)).toBe('$1.23 (+$0.03)');
+  });
+
+  it('renders a sub-cent increment as "+<$0.01"', () => {
+    expect(formatCombinedCost(1.23, 0.004)).toBe('$1.23 (+<$0.01)');
   });
 });

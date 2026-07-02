@@ -146,6 +146,7 @@ describe('SessionRegistry', () => {
         gitBranch: 'feature/live-branch',
         contextUsage: { percent: 12, contextWindow: 128000 },
         lifetimeCostUsd: 0,
+        nextRoundtripCostUsd: null,
       });
 
       expect(registry.sessions['s1'].gitBranch).toBe('feature/live-branch');
@@ -162,6 +163,7 @@ describe('SessionRegistry', () => {
         gitBranch: null,
         contextUsage: null,
         lifetimeCostUsd: 1.23,
+        nextRoundtripCostUsd: null,
       });
 
       expect(registry.sessions['s1'].lifetimeCostUsd).toBe(1.23);

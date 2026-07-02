@@ -72,6 +72,8 @@ export interface PerSessionState {
   contextUsage: { percent: number | null; contextWindow: number } | null;
   /** Total USD cost summed over the session branch; 0 when no spend. */
   lifetimeCostUsd: number;
+  /** Lower-bound USD cost of the next round trip (context re-sent at cache-read rate); null when unknown. */
+  nextRoundtripCostUsd: number | null;
   draftText: string;
   pendingSteeringMessages: string[];
   lastBotActivityTimestamp: string | null;
@@ -132,6 +134,7 @@ export class SessionRegistry {
       gitBranch: null,
       contextUsage: null,
       lifetimeCostUsd: 0,
+      nextRoundtripCostUsd: null,
       draftText: '',
       pendingSteeringMessages: [],
       lastBotActivityTimestamp: null,
@@ -595,6 +598,7 @@ export class SessionRegistry {
     // same folder.
     session.contextUsage = meta.contextUsage;
     session.lifetimeCostUsd = meta.lifetimeCostUsd;
+    session.nextRoundtripCostUsd = meta.nextRoundtripCostUsd;
     for (const candidate of Object.values(this.sessions)) {
       if (candidate.folderPath === session.folderPath) {
         candidate.gitBranch = meta.gitBranch;

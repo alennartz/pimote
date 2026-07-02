@@ -5,7 +5,7 @@
   import { Separator } from '$lib/components/ui/separator/index.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { getContextDisplay, getContextTone, getSessionDisplayName, formatSessionCost } from '$lib/session-summary.js';
+  import { getContextDisplay, getContextTone, getSessionDisplayName, formatCombinedCost } from '$lib/session-summary.js';
   import { getRestoreModeLabel } from '$lib/restore-status.js';
   import { statusRowSpacerClass } from './status-bar-layout.js';
   import { GitBranch } from '@lucide/svelte';
@@ -29,7 +29,7 @@
 
   let contextDisplay = $derived(getContextDisplay(sessionRegistry.viewed));
 
-  let costDisplay = $derived(formatSessionCost(sessionRegistry.viewed?.lifetimeCostUsd ?? 0));
+  let costDisplay = $derived(formatCombinedCost(sessionRegistry.viewed?.lifetimeCostUsd ?? 0, sessionRegistry.viewed?.nextRoundtripCostUsd));
 
   let contextColor = $derived(
     getContextTone(contextPercent) === 'critical' ? 'text-red-400' : getContextTone(contextPercent) === 'warning' ? 'text-amber-400' : 'text-muted-foreground',
@@ -84,7 +84,7 @@
 
     <!-- Session cost (desktop only — shown in row 2 on mobile) -->
     {#if costDisplay}
-      <span class="text-muted-foreground hidden items-center gap-1 md:flex" title="Session cost">
+      <span class="text-muted-foreground hidden items-center gap-1 md:flex" title="Session cost (next round-trip lower bound)">
         {costDisplay}
       </span>
     {/if}
@@ -173,7 +173,7 @@
       {/if}
 
       {#if costDisplay}
-        <span class="text-muted-foreground flex shrink-0 items-center gap-1" title="Session cost">
+        <span class="text-muted-foreground flex shrink-0 items-center gap-1" title="Session cost (next round-trip lower bound)">
           {costDisplay}
         </span>
       {/if}

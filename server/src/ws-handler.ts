@@ -1014,6 +1014,14 @@ export class WsHandler {
 
       case 'get_session_meta': {
         const contextUsage = session.getContextUsage();
+        // Lower bound on the next round trip: the whole current context is
+        // re-sent as the cached prefix, so the cheapest it can be billed is the
+        // cache-read rate (cost.cacheRead is USD per MILLION tokens) — NOT the
+        // full input rate, which only applies if the cache has expired. Ignores
+        // the new input/output tokens the next turn adds, so it is a floor.
+        const contextTokens = contextUsage?.tokens ?? null;
+        const cacheReadCostPerMillion = session.model?.cost?.cacheRead ?? null;
+        const nextRoundtripCostUsd = contextTokens != null && cacheReadCostPerMillion != null ? (contextTokens * cacheReadCostPerMillion) / 1_000_000 : null;
         const meta: SessionMeta = {
           gitBranch: this.sessionManager.getLastKnownGitBranch(sessionId),
           contextUsage: contextUsage ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow } : null,
@@ -1023,6 +1031,7 @@ export class WsHandler {
           // session manager's rehydrated entries every call. See session-cost.ts
           // for what this figure excludes.
           lifetimeCostUsd: sumAssistantCostUsd(session.sessionManager.getEntries() as unknown as CostBranchEntry[]),
+          nextRoundtripCostUsd,
         };
         this.sendResponse(id, true, { meta });
         break;

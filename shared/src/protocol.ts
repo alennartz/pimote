@@ -269,6 +269,15 @@ export interface SessionMeta {
   } | null;
   /** Total USD cost summed over the session branch; 0 when no spend / nothing to show. Always a number, never null. */
   lifetimeCostUsd: number;
+  /**
+   * Lower-bound USD cost of the next server round trip: the current context
+   * token count re-priced at the model's cache-read rate (the whole context is
+   * re-sent as the cached prefix, so cache-read is the cheapest it can bill).
+   * Ignores the new input/output tokens the next turn will add (unknowable), so
+   * it is a floor on the next turn's spend. null when context tokens or model
+   * cache-read pricing are unknown.
+   */
+  nextRoundtripCostUsd: number | null;
 }
 
 export interface GetCommandsCommand extends CommandBase {

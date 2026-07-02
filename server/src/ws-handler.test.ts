@@ -2334,6 +2334,52 @@ describe('WsHandler', () => {
       expect(resp!.success).toBe(true);
       expect((resp!.data as any).meta.gitBranch).toBe('feature-x');
     });
+
+    it('prices the next round-trip lower bound at the model cache-read rate', async () => {
+      const session = createMockSlot({
+        id: 'session-cost',
+        session: {
+          subscribe: () => () => {},
+          dispose: () => {},
+          messages: [],
+          // cacheRead is USD per MILLION tokens.
+          model: { cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
+          sessionId: 'session-cost',
+          getContextUsage: () => ({ tokens: 50_000, contextWindow: 200_000, percent: 25 }),
+          sessionManager: { getEntries: () => [] },
+        },
+      });
+      const sessions = new Map([['session-cost', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(JSON.stringify({ type: 'get_session_meta', sessionId: 'session-cost', id: 'req-cost' }));
+
+      const meta = (findResponse(sent, 'req-cost')!.data as any).meta;
+      // 50_000 tokens * 0.3 / 1e6 = 0.015
+      expect(meta.nextRoundtripCostUsd).toBeCloseTo(0.015, 10);
+    });
+
+    it('reports a null next round-trip cost when context tokens or pricing are unknown', async () => {
+      const session = createMockSlot({
+        id: 'session-nocost',
+        session: {
+          subscribe: () => () => {},
+          dispose: () => {},
+          messages: [],
+          model: null,
+          sessionId: 'session-nocost',
+          getContextUsage: () => ({ tokens: null, contextWindow: 200_000, percent: null }),
+          sessionManager: { getEntries: () => [] },
+        },
+      });
+      const sessions = new Map([['session-nocost', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(JSON.stringify({ type: 'get_session_meta', sessionId: 'session-nocost', id: 'req-nocost' }));
+
+      const meta = (findResponse(sent, 'req-nocost')!.data as any).meta;
+      expect(meta.nextRoundtripCostUsd).toBeNull();
+    });
   });
 
   describe('fork command', () => {
