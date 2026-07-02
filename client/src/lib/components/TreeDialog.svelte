@@ -37,6 +37,7 @@
   let summaryMode: SummaryMode = $state('none');
   let customInstructions = $state('');
   let navigating = $state(false);
+  let navError: string | null = $state(null);
 
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   let suppressedTapNodeId: string | null = null;
@@ -63,6 +64,7 @@
       navigating = false;
       labelEditor = null;
       labelEditorSaving = false;
+      navError = null;
       return;
     }
 
@@ -323,6 +325,7 @@
 
     try {
       navigating = true;
+      navError = null;
       treeDialogStore.setLoading(summarize);
 
       const response = await connection.send({
@@ -337,6 +340,7 @@
       treeDialogStore.setLoading(false);
 
       if (!response.success || !response.data) {
+        navError = response.error ?? 'Navigation failed.';
         clearCloseOnResync(sessionId);
         return;
       }
@@ -353,6 +357,7 @@
 
       treeDialogStore.closeDialog();
     } catch (error) {
+      navError = error instanceof Error ? error.message : 'Navigation failed.';
       clearCloseOnResync(sessionId);
       treeDialogStore.setLoading(false);
       console.error('Failed to navigate tree:', error);
@@ -517,6 +522,8 @@
 
         {#if treeDialogStore.state.loading}
           <div class="text-muted-foreground text-xs">Summarizing and navigating…</div>
+        {:else if navError}
+          <div class="text-destructive text-xs" role="alert">{navError}</div>
         {/if}
       </footer>
     </div>
