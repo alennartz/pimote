@@ -7,6 +7,7 @@
   import { createEditDiffStreamer, type EditArgs, type EditEntry } from '$lib/edit-diff.js';
   import { createWriteContentStreamer, extractWriteContent } from '$lib/write-content.js';
   import { inferLanguageFromPath } from '$lib/editor-language.js';
+  import { observeFullyOffscreen } from '$lib/auto-collapse.js';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import Wrench from '@lucide/svelte/icons/wrench';
   import CheckCircle from '@lucide/svelte/icons/check-circle-2';
@@ -30,6 +31,7 @@
   } = $props();
 
   let expanded = $state(false);
+  let rootEl: HTMLDivElement | undefined = $state();
 
   let toolName = $derived(content.toolName ?? 'unknown');
   let isResult = $derived(content.type === 'tool_result');
@@ -74,13 +76,26 @@
     streamingEntries = streamer.entries.map((e) => ({ oldText: e.oldText, newText: e.newText }));
   });
 
+  // Edit and write tool sections render expanded while active (streaming or the
+  // result is still in progress). See the delayed-collapse effect below.
   $effect(() => {
-    if (!isEdit) return;
+    if (!isEdit && !isWrite) return;
     if (streaming || inProgress) {
       expanded = true;
-    } else {
-      expanded = false;
     }
+  });
+
+  // Once an edit/write section settles, keep it expanded and collapse it the
+  // first time it fully scrolls out of view, rather than snapping shut on
+  // completion.
+  $effect(() => {
+    if (!isEdit && !isWrite) return;
+    if (streaming || inProgress) return;
+    if (!expanded) return;
+    if (!rootEl) return;
+    return observeFullyOffscreen(rootEl, () => {
+      expanded = false;
+    });
   });
 
   // Streaming-body state used only when isWrite. Mirrors the edit streamer:
@@ -113,15 +128,6 @@
       writeStreamerWritten = text.length;
     }
     streamingBody = writeStreamer.content;
-  });
-
-  $effect(() => {
-    if (!isWrite) return;
-    if (streaming || inProgress) {
-      expanded = true;
-    } else {
-      expanded = false;
-    }
   });
 
   // Path: prefer finalized args; fall back to scanning the partial args JSON so
@@ -204,7 +210,7 @@
   let resultText = $derived(isResult ? formatData(content.result) : result !== undefined ? formatData(result) : partialResult);
 </script>
 
-<div class="tool-block" class:tool-result={isResult} class:tool-completed={isCompleted} class:tool-error={isError} class:in-progress={inProgress}>
+<div class="tool-block" bind:this={rootEl} class:tool-result={isResult} class:tool-completed={isCompleted} class:tool-error={isError} class:in-progress={inProgress}>
   <button class="tool-header" onclick={() => (expanded = !expanded)}>
     <ChevronRight class="shrink-0 transition-transform duration-150 {expanded ? 'rotate-90' : ''}" size={14} />
     {#if inProgress}

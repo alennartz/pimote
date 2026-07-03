@@ -8,12 +8,15 @@
    *   - `markdown` — rendered through `TextBlock` (which inherits incremental
    *                  fenced-code highlighting for free).
    *
-   * Owns the collapse + copy chrome and the auto-expand-while-streaming /
-   * auto-collapse-on-completion behavior for both modes. In both modes the
+   * Owns the collapse + copy chrome and the auto-expand-while-streaming
+   * behavior for both modes. Rather than re-clamping the moment streaming ends,
+   * a settled block stays expanded until it first fully scrolls out of view. In
+   * both modes the
    * copy button copies `content` verbatim (raw source, never rendered text),
    * and a show-more/collapse wrapper bounds long files.
    */
   import { createIncrementalHighlighter } from '$lib/code-highlight.js';
+  import { observeFullyOffscreen } from '$lib/auto-collapse.js';
   import TextBlock from './TextBlock.svelte';
   import '$lib/highlight-theme.css';
 
@@ -37,14 +40,31 @@
 
   let codeEl: HTMLElement | undefined = $state();
   let bodyEl: HTMLElement | undefined = $state();
+  let rootEl: HTMLElement | undefined = $state();
 
   let lineCount = $derived(content.split('\n').length);
   let needsCollapse = $derived(lineCount > MAX_COLLAPSED_LINES);
 
-  // Auto-expand while streaming, auto-collapse when it settles (ThinkingBlock /
-  // ToolCall-edit pattern). Writable $derived: resets to `streaming` whenever it
-  // changes, but stays put under manual toggles once streaming has stopped.
-  let expanded = $derived(streaming);
+  // Auto-expand while streaming (ThinkingBlock / ToolCall-edit pattern). Once
+  // streaming settles the block stays expanded and only collapses the first
+  // time it fully scrolls out of view (see the delayed-collapse effect below),
+  // instead of re-clamping immediately.
+  let expanded = $state(false);
+
+  $effect(() => {
+    if (streaming) {
+      expanded = true;
+    }
+  });
+
+  $effect(() => {
+    if (streaming) return;
+    if (!expanded) return;
+    if (!rootEl) return;
+    return observeFullyOffscreen(rootEl, () => {
+      expanded = false;
+    });
+  });
 
   let clamped = $derived(needsCollapse && !expanded);
   let scrollable = $derived(needsCollapse && expanded);
@@ -104,7 +124,7 @@
   }
 </script>
 
-<div class="write-file-block" data-mode={mode}>
+<div class="write-file-block" data-mode={mode} bind:this={rootEl}>
   <button type="button" class="code-copy-btn" class:copied aria-label="Copy file contents" title="Copy file contents" onclick={copy}>
     {copied ? 'Copied' : 'Copy'}
   </button>

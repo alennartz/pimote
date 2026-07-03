@@ -1,19 +1,30 @@
 <script lang="ts">
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import BrainCircuit from '@lucide/svelte/icons/brain-circuit';
+  import { observeFullyOffscreen } from '$lib/auto-collapse.js';
 
   let { text, streaming = false }: { text: string; streaming?: boolean } = $props();
 
   // $state instead of $derived so manual toggle during streaming isn't snapped back
   let expanded = $state(false);
+  let rootEl: HTMLDivElement | undefined = $state();
 
-  // Auto-expand when streaming starts, auto-collapse when it ends
+  // Auto-expand while streaming.
   $effect(() => {
     if (streaming) {
       expanded = true;
-    } else {
-      expanded = false;
     }
+  });
+
+  // Once streaming ends, keep the block expanded and collapse it the first time
+  // it fully scrolls out of view, rather than snapping shut immediately.
+  $effect(() => {
+    if (streaming) return;
+    if (!expanded) return;
+    if (!rootEl) return;
+    return observeFullyOffscreen(rootEl, () => {
+      expanded = false;
+    });
   });
 
   // Auto-scroll content to bottom during streaming
@@ -39,7 +50,7 @@
   });
 </script>
 
-<div class="thinking-block">
+<div class="thinking-block" bind:this={rootEl}>
   <button class="thinking-header" onclick={() => (expanded = !expanded)}>
     <ChevronRight class="shrink-0 transition-transform duration-150 {expanded ? 'rotate-90' : ''}" size={14} />
     <BrainCircuit size={14} class="shrink-0" />
