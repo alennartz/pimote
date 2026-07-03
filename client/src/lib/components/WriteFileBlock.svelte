@@ -70,11 +70,20 @@
     }
   });
 
-  // Auto-scroll the code body to the bottom while streaming (StreamingCollapsible).
+  // Auto-scroll the body to the bottom while streaming. Reacting to `content`
+  // is not enough: in code mode the DOM update is deferred by the throttled
+  // highlighter, so we'd scroll against a stale height. Observe the rendered
+  // content's actual size instead and pin to the bottom whenever it grows.
   $effect(() => {
-    if (mode !== 'code' || !streaming || !scrollable || !bodyEl) return;
-    void content;
-    bodyEl.scrollTop = bodyEl.scrollHeight;
+    if (!streaming || !scrollable || !bodyEl) return;
+    const body = bodyEl;
+    const target = body.firstElementChild ?? body;
+    const observer = new ResizeObserver(() => {
+      body.scrollTop = body.scrollHeight;
+    });
+    observer.observe(target);
+    body.scrollTop = body.scrollHeight;
+    return () => observer.disconnect();
   });
 
   let copied = $state(false);
