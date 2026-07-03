@@ -1,3 +1,4 @@
+<!-- Mobile counterpart of the desktop-only StatusBar — stat displays changed there likely need a twin change here. -->
 <script lang="ts">
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -6,7 +7,7 @@
   import CallButton from './CallButton.svelte';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
-  import { getContextDisplay, getContextTone, formatSessionCost } from '$lib/session-summary.js';
+  import { getContextDisplay, getContextTone, formatCombinedCost } from '$lib/session-summary.js';
   import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import X from '@lucide/svelte/icons/x';
 
@@ -15,7 +16,7 @@
   let session = $derived(sessionRegistry.viewed);
   let contextDisplay = $derived(getContextDisplay(session));
   let contextTone = $derived(getContextTone(session?.contextUsage?.percent));
-  let costDisplay = $derived(formatSessionCost(session?.lifetimeCostUsd ?? 0));
+  let costDisplay = $derived(formatCombinedCost(session?.lifetimeCostUsd ?? 0, session?.nextRoundtripCostUsd));
 
   let connectionLabel = $derived(connection.phaseLabel);
 

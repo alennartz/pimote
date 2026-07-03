@@ -1,3 +1,4 @@
+<!-- Desktop-only (mounted under `hidden md:block`). Mobile shows these stats in SessionSettingsDialog. -->
 <script lang="ts">
   import ModelPicker from './ModelPicker.svelte';
   import ThinkingPicker from './ThinkingPicker.svelte';
@@ -7,7 +8,6 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import { getContextDisplay, getContextTone, getSessionDisplayName, formatCombinedCost } from '$lib/session-summary.js';
   import { getRestoreModeLabel } from '$lib/restore-status.js';
-  import { statusRowSpacerClass } from './status-bar-layout.js';
   import { GitBranch } from '@lucide/svelte';
   import SessionRenameDialog from './SessionRenameDialog.svelte';
   import CallButton from './CallButton.svelte';
@@ -39,7 +39,6 @@
 </script>
 
 <div class="border-border bg-muted/30 text-muted-foreground shrink-0 border-b text-xs">
-  <!-- Row 1: controls + status -->
   <div class="flex h-9 items-center gap-1 px-2">
     <!-- Model picker -->
     <ModelPicker />
@@ -49,12 +48,11 @@
     <!-- Thinking level picker -->
     <ThinkingPicker />
 
-    <!-- Session name (desktop: flexes into actual available space) -->
-    <div class={statusRowSpacerClass(!!sessionDisplayName)}></div>
-
-    {#if sessionDisplayName}
-      <Separator orientation="vertical" class="mx-0.5 hidden h-4 md:block" />
-      <div class="hidden min-w-0 flex-1 md:flex">
+    {#if !sessionDisplayName}
+      <div class="flex-1"></div>
+    {:else}
+      <Separator orientation="vertical" class="mx-0.5 h-4" />
+      <div class="flex min-w-0 flex-1">
         <SessionRenameDialog
           sessionId={sessionRegistry.viewed?.sessionId}
           folderPath={sessionRegistry.viewed?.folderPath}
@@ -75,28 +73,28 @@
       </div>
     {/if}
 
-    <!-- Context usage (desktop only — shown in row 2 on mobile) -->
+    <!-- Context usage -->
     {#if contextDisplay}
-      <span class="hidden items-center gap-1 md:flex {contextColor}" title="Context window usage">
+      <span class="flex items-center gap-1 {contextColor}" title="Context window usage">
         {contextDisplay}
       </span>
     {/if}
 
-    <!-- Session cost (desktop only — shown in row 2 on mobile) -->
+    <!-- Session cost -->
     {#if costDisplay}
-      <span class="text-muted-foreground hidden items-center gap-1 md:flex" title="Session cost (next round-trip lower bound)">
+      <span class="text-muted-foreground flex items-center gap-1" title="Session cost (next round-trip lower bound)">
         {costDisplay}
       </span>
     {/if}
 
-    <!-- Git branch (desktop only — shown in row 2 on mobile) -->
+    <!-- Git branch -->
     {#if sessionRegistry.viewed?.gitBranch}
-      <span class="text-muted-foreground hidden items-center gap-1 md:flex" title="Git branch">
+      <span class="text-muted-foreground flex items-center gap-1" title="Git branch">
         <GitBranch class="size-3" />
         <span class="max-w-[8rem] truncate">{sessionRegistry.viewed.gitBranch}</span>
       </span>
 
-      <Separator orientation="vertical" class="mx-0.5 hidden h-4 md:block" />
+      <Separator orientation="vertical" class="mx-0.5 h-4" />
     {/if}
 
     <!-- Voice call button -->
@@ -132,51 +130,7 @@
         {/if}
         <span class="relative inline-flex size-2 rounded-full {connectionColor}"></span>
       </span>
-      <span class="hidden text-xs sm:inline">{connectionLabel}</span>
+      <span class="text-xs">{connectionLabel}</span>
     </div>
   </div>
-
-  <!-- Row 2: session name + git branch + context usage (mobile only) -->
-  {#if sessionDisplayName || sessionRegistry.viewed?.gitBranch || contextDisplay || costDisplay}
-    <div class="border-border/50 flex h-7 items-center gap-2 border-t px-2 md:hidden">
-      {#if sessionDisplayName}
-        <SessionRenameDialog
-          sessionId={sessionRegistry.viewed?.sessionId}
-          folderPath={sessionRegistry.viewed?.folderPath}
-          sessionName={sessionRegistry.viewed?.sessionName}
-          displayName={sessionDisplayName}
-        >
-          {#snippet children({ openRenameDialog })}
-            <button
-              type="button"
-              class="text-muted-foreground hover:text-foreground min-w-0 flex-1 truncate text-left transition-colors select-none"
-              title={`Rename session: ${sessionDisplayName}`}
-              onclick={openRenameDialog}
-            >
-              {sessionDisplayName}
-            </button>
-          {/snippet}
-        </SessionRenameDialog>
-      {/if}
-
-      {#if sessionRegistry.viewed?.gitBranch}
-        <span class="text-muted-foreground flex shrink-0 items-center gap-1" title="Git branch">
-          <GitBranch class="size-3" />
-          <span class="max-w-[6rem] truncate">{sessionRegistry.viewed.gitBranch}</span>
-        </span>
-      {/if}
-
-      {#if contextDisplay}
-        <span class="flex shrink-0 items-center gap-1 {contextColor}" title="Context window usage">
-          {contextDisplay}
-        </span>
-      {/if}
-
-      {#if costDisplay}
-        <span class="text-muted-foreground flex shrink-0 items-center gap-1" title="Session cost (next round-trip lower bound)">
-          {costDisplay}
-        </span>
-      {/if}
-    </div>
-  {/if}
 </div>
