@@ -21,7 +21,7 @@ describe('EventBuffer', () => {
       const events = [
         makeSdkEvent('agent_start'),
         makeSdkEvent('turn_start'),
-        makeSdkEvent('message_start', { role: 'assistant' }),
+        makeSdkEvent('message_start', { message: { role: 'assistant', content: [] } }),
         makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'Hello ', contentIndex: 0 } }),
         makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'world', contentIndex: 0 } }),
         makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: '!', contentIndex: 0 } }),
@@ -115,7 +115,7 @@ describe('EventBuffer', () => {
       expect(buffer.currentCursor).toBe(2);
 
       // message_update also increments cursor (it's forwarded live, just not buffered)
-      buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_start', { message: { role: 'assistant', content: [] } }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'hi', contentIndex: 0 } }), SESSION_ID, sendLive);
       expect(buffer.currentCursor).toBe(4);
     });
@@ -250,7 +250,7 @@ describe('EventBuffer', () => {
       const buffer = new EventBuffer(100);
       const sendLive = vi.fn();
 
-      buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_start', { message: { role: 'assistant', content: [] } }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_delta', delta: 'Let me think...', contentIndex: 0 } }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'The answer is 42', contentIndex: 1 } }), SESSION_ID, sendLive);
       buffer.onEvent(
@@ -294,7 +294,7 @@ describe('EventBuffer', () => {
       const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
 
       buffer.onEvent(makeSdkEvent('agent_start'), SESSION_ID, sendLive);
-      buffer.onEvent(makeSdkEvent('agent_end', { error: 'something failed' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('agent_end', { messages: [] }), SESSION_ID, sendLive);
 
       expect(liveEvents[0]).toEqual(
         expect.objectContaining({
@@ -309,9 +309,10 @@ describe('EventBuffer', () => {
           type: 'agent_end',
           sessionId: SESSION_ID,
           cursor: 2,
-          error: 'something failed',
         }),
       );
+      // The real agent_end has no `error` field — it must not appear on the wire event.
+      expect((liveEvents[1] as any).error).toBeUndefined();
       expect(typeof (liveEvents[1] as any).timestamp).toBe('string');
     });
 
@@ -320,21 +321,23 @@ describe('EventBuffer', () => {
       const liveEvents: PimoteSessionEvent[] = [];
       const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
 
-      buffer.onEvent(makeSdkEvent('agent_end', { error: 'overloaded', willRetry: true }), SESSION_ID, sendLive);
-      buffer.onEvent(makeSdkEvent('agent_end'), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('agent_end', { messages: [], willRetry: true }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('agent_end', { messages: [] }), SESSION_ID, sendLive);
 
       expect(liveEvents[0]).toEqual(expect.objectContaining({ type: 'agent_end', willRetry: true }));
       // A real end omits the flag (no spurious willRetry: false on the wire).
       expect((liveEvents[1] as any).willRetry).toBeUndefined();
     });
 
-    it('maps auto_compaction events correctly', () => {
+    it('maps SDK compaction_start/end onto the wire auto_compaction_* events', () => {
       const buffer = new EventBuffer(10);
       const liveEvents: PimoteSessionEvent[] = [];
       const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
 
-      buffer.onEvent(makeSdkEvent('auto_compaction_start', { reason: 'overflow' }), SESSION_ID, sendLive);
-      buffer.onEvent(makeSdkEvent('auto_compaction_end', { result: {}, aborted: false, willRetry: false }), SESSION_ID, sendLive);
+      // The SDK emits `compaction_start` / `compaction_end`; pimote's wire
+      // contract names these `auto_compaction_*`.
+      buffer.onEvent(makeSdkEvent('compaction_start', { reason: 'overflow' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('compaction_end', { reason: 'overflow', result: {}, aborted: false, willRetry: false }), SESSION_ID, sendLive);
 
       expect(liveEvents[0].type).toBe('auto_compaction_start');
       expect((liveEvents[0] as any).reason).toBe('overflow');
@@ -355,31 +358,12 @@ describe('EventBuffer', () => {
       expect((liveEvents[1] as any).success).toBe(true);
     });
 
-    it('maps extension_error events correctly', () => {
-      const buffer = new EventBuffer(10);
-      const liveEvents: PimoteSessionEvent[] = [];
-      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
-
-      buffer.onEvent(makeSdkEvent('extension_error', { error: 'ext failed', extensionName: 'my-ext' }), SESSION_ID, sendLive);
-
-      expect(liveEvents[0]).toEqual(
-        expect.objectContaining({
-          type: 'extension_error',
-          sessionId: SESSION_ID,
-          cursor: 1,
-          error: 'ext failed',
-          extensionName: 'my-ext',
-        }),
-      );
-      expect(typeof (liveEvents[0] as any).timestamp).toBe('string');
-    });
-
     it('maps text_delta with contentIndex and subtype', () => {
       const buffer = new EventBuffer(10);
       const liveEvents: PimoteSessionEvent[] = [];
       const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
 
-      buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_start', { message: { role: 'assistant', content: [] } }), SESSION_ID, sendLive);
       expect((liveEvents[0] as any).role).toBe('assistant');
 
       buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'hi', contentIndex: 0 } }), SESSION_ID, sendLive);
@@ -394,7 +378,7 @@ describe('EventBuffer', () => {
       const liveEvents: PimoteSessionEvent[] = [];
       const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
 
-      buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_start', { message: { role: 'assistant', content: [] } }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_delta', delta: 'Let me reason...', contentIndex: 0 } }), SESSION_ID, sendLive);
       const update = liveEvents[1] as any;
       expect(update.content).toEqual({ type: 'thinking', text: 'Let me reason...' });
@@ -528,12 +512,12 @@ describe('EventBuffer', () => {
       const sendLive = vi.fn();
 
       // First message
-      buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_start', { message: { role: 'assistant', content: [] } }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'a', contentIndex: 0 } }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_end', { message: { role: 'assistant', content: [{ type: 'text', text: 'a' }] } }), SESSION_ID, sendLive);
 
       // Second message
-      buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_start', { message: { role: 'assistant', content: [] } }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'b', contentIndex: 0 } }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_end', { message: { role: 'assistant', content: [{ type: 'text', text: 'b' }] } }), SESSION_ID, sendLive);
 
@@ -550,7 +534,7 @@ describe('EventBuffer', () => {
       const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
 
       // Simulate: thinking (index 0) → text (index 1) → tool_call (index 2)
-      buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_start', { message: { role: 'assistant', content: [] } }), SESSION_ID, sendLive);
 
       buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 } }), SESSION_ID, sendLive);
       buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_delta', delta: 'Hmm...', contentIndex: 0 } }), SESSION_ID, sendLive);
@@ -639,7 +623,7 @@ describe('EventBuffer', () => {
       const buffer = new EventBuffer(100);
       const sendLive = vi.fn();
 
-      buffer.onEvent(makeSdkEvent('message_start', { role: 'assistant' }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_start', { message: { role: 'assistant', content: [] } }), SESSION_ID, sendLive);
 
       // Thinking at index 0
       buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'thinking_delta', delta: 'part1 ', contentIndex: 0 } }), SESSION_ID, sendLive);
@@ -680,12 +664,12 @@ describe('EventBuffer', () => {
       expect((liveEvents[0] as any).contentIndex).toBe(0);
     });
 
-    it('defaults to text type and delta subtype when assistantMessageEvent is missing', () => {
+    it('defaults contentIndex/subtype when a delta event omits optional fields', () => {
       const buffer = new EventBuffer(10);
       const liveEvents: PimoteSessionEvent[] = [];
       const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
 
-      buffer.onEvent(makeSdkEvent('message_update', {}), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('message_update', { assistantMessageEvent: { type: 'text_delta' } }), SESSION_ID, sendLive);
       const update = liveEvents[0] as any;
       expect(update.contentIndex).toBe(0);
       expect(update.subtype).toBe('delta');

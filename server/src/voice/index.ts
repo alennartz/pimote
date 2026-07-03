@@ -17,14 +17,7 @@
 // `assistantMessageEvent` that never fires inside `message_update`). The
 // FSM split + correct reset-on-message_start eliminates that bug class.
 
-import type { ExtensionAPI, ExtensionContext, ExtensionFactory, BeforeAgentStartEvent, ContextEvent, TurnEndEvent, AgentEndEvent } from '@earendil-works/pi-coding-agent';
-
-/** Local mirror of pi-coding-agent's `MessageStartEvent` (not re-exported
- *  at the package root in this version). Kept narrow to what we use. */
-interface MessageStartEvent {
-  type: 'message_start';
-  message: AgentMessage;
-}
+import type { ExtensionAPI, ExtensionContext, ExtensionFactory, BeforeAgentStartEvent, ContextEvent, TurnEndEvent } from '@earendil-works/pi-coding-agent';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 
@@ -53,7 +46,7 @@ function traceEvent(event: FsmEvent): string | null {
     case 'ws:incoming':
       return `ws:incoming(${event.frame.type}${event.frame.type === 'user' ? `, textLen=${event.frame.text.length}` : ''})`;
     case 'sdk:message_start':
-      return `sdk:message_start(role=${(event.message as { role?: string }).role})`;
+      return `sdk:message_start(role=${event.message.role})`;
     case 'sdk:context':
       return `sdk:context(messages=${event.messages.length})`;
     case 'eb:activate':
@@ -383,55 +376,34 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     // reducer is the sole emitter of speak frames; bulk-emission via
     // tool_call was the source of the double-emit class of bugs.
 
-    pi.on('message_start', (event: MessageStartEvent) => {
+    pi.on('message_start', (event) => {
       // Only assistant messages reset the streaming state. User and
       // tool-result messages don't have content blocks we care about.
-      if ((event.message as { role?: string }).role !== 'assistant') return;
+      if (event.message.role !== 'assistant') return;
       void dispatch({ type: 'sdk:message_start', message: event.message });
     });
 
-    pi.on('message_update', (event, ctx: ExtensionContext) => {
+    pi.on('message_update', (event, ctx) => {
       lastCtx = ctx;
       // Walkback no longer needs a captured snapshot — it operates on
       // the messages array passed to `sdk:context` directly.
       if (state.lifecycle.kind === 'dormant') return;
 
-      const ame = (event as { assistantMessageEvent?: unknown }).assistantMessageEvent as
-        | {
-            type: string;
-            contentIndex?: number;
-            delta?: string;
-            partial?: { content?: unknown[] };
-            toolCall?: { id?: string; name?: string; arguments?: { text?: unknown } };
-          }
-        | undefined;
-      if (!ame || typeof ame.contentIndex !== 'number') return;
-
+      // event.assistantMessageEvent is the real pi-ai AssistantMessageEvent
+      // union; narrowing on `type` gives typed contentIndex/delta/partial/toolCall.
+      const ame = event.assistantMessageEvent;
       switch (ame.type) {
         case 'toolcall_start':
-          void dispatch({
-            type: 'sdk:toolcall_start',
-            contentIndex: ame.contentIndex,
-            partial: (ame.partial ?? {}) as Parameters<typeof dispatch>[0] extends { partial: infer P } ? P : never,
-          });
+          void dispatch({ type: 'sdk:toolcall_start', contentIndex: ame.contentIndex, partial: ame.partial });
           return;
         case 'toolcall_delta':
-          void dispatch({
-            type: 'sdk:toolcall_delta',
-            contentIndex: ame.contentIndex,
-            delta: typeof ame.delta === 'string' ? ame.delta : '',
-            partial: (ame.partial ?? {}) as Parameters<typeof dispatch>[0] extends { partial: infer P } ? P : never,
-          });
+          void dispatch({ type: 'sdk:toolcall_delta', contentIndex: ame.contentIndex, delta: ame.delta, partial: ame.partial });
           return;
         case 'toolcall_end':
-          void dispatch({
-            type: 'sdk:toolcall_end',
-            contentIndex: ame.contentIndex,
-            toolCall: (ame.toolCall ?? {}) as Parameters<typeof dispatch>[0] extends { toolCall: infer T } ? T : never,
-          });
+          void dispatch({ type: 'sdk:toolcall_end', contentIndex: ame.contentIndex, toolCall: ame.toolCall });
           return;
         default:
-          // text_*, thinking_* — not relevant to outbound streaming.
+          // start / text_* / thinking_* / done / error — not relevant to outbound streaming.
           return;
       }
     });
@@ -448,10 +420,12 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
       });
     });
 
-    pi.on('agent_end', (event: AgentEndEvent) => {
+    pi.on('agent_end', () => {
       // Route through the FSM (same buffering rationale as turn_end). (M2)
-      const error = (event as AgentEndEvent & { error?: unknown }).error;
-      void dispatch({ type: 'sdk:agent_end', error: typeof error === 'string' && error.length > 0 ? error : null });
+      // The extension agent_end event carries only { messages } — no error
+      // field — so there is never error text to forward here (a failed turn's
+      // error surfaces via the assistant message instead).
+      void dispatch({ type: 'sdk:agent_end', error: null });
     });
 
     pi.on('context', (event: ContextEvent, ctx: ExtensionContext) => {

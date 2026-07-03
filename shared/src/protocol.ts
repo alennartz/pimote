@@ -699,7 +699,7 @@ export interface ToolExecutionEndEvent extends SessionEventBase {
 
 export interface AutoCompactionStartEvent extends SessionEventBase {
   type: 'auto_compaction_start';
-  reason: 'threshold' | 'overflow';
+  reason: 'manual' | 'threshold' | 'overflow';
 }
 
 export interface AutoCompactionEndEvent extends SessionEventBase {

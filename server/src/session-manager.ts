@@ -12,7 +12,6 @@ import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgent
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
 import type { PimoteEvent, Card } from '../../shared/dist/index.js';
-import type { SdkMessage } from './message-mapper.js';
 import type { PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import type { PanelBusMessage } from './panel-state.js';
@@ -185,7 +184,7 @@ function createSessionState(
       event,
       sessionId,
       (e) => callbacks.sendEvent(e),
-      () => session.messages[session.messages.length - 1] as SdkMessage,
+      () => session.messages[session.messages.length - 1],
     );
   });
 

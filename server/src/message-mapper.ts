@@ -1,62 +1,45 @@
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 import type { PimoteAgentMessage, PimoteMessageContent } from '../../shared/dist/index.js';
 
 /**
- * Minimal structural type for SDK messages consumed by the mapper.
- * Uses an index signature so duck-typed property access works without
- * importing the full AgentMessage union from the SDK.
+ * The element type of any array-shaped AgentMessage content, derived from the
+ * real union rather than hand-mirrored. Resolves to the pi-ai
+ * TextContent | ThinkingContent | ToolCall | ImageContent union.
  */
-export interface SdkMessage {
-  id?: string;
-  role?: string;
-  content?: unknown;
-  customType?: string;
-  display?: boolean;
-  toolCallId?: string;
-  toolName?: string;
-  isError?: boolean;
-  /** Pi-agent-core sets this to 'aborted' for turns interrupted by session.abort(). */
-  stopReason?: string;
-  /** Provider / model failure surfaced by pi-agent-core on failed assistant turns. */
-  errorMessage?: string;
-}
+type AgentContentItem = Extract<Extract<AgentMessage, { role: 'assistant' | 'user' | 'toolResult' | 'custom' }>['content'], readonly unknown[]>[number];
+
+/** Session entries whose relative order must match buildSessionContext's message list. */
+export type SdkSessionEntry = SessionEntry;
 
 /**
  * Convert raw pi SDK AgentMessage objects to PimoteAgentMessage format.
  * Used both for bulk message retrieval (get_messages) and for live
  * message_end events so the client always receives a consistent shape.
  */
-export function mapAgentMessages(messages: SdkMessage[]): PimoteAgentMessage[] {
+export function mapAgentMessages(messages: AgentMessage[]): PimoteAgentMessage[] {
   return messages.map(mapAgentMessage);
 }
 
 /**
- * Structural type for session entries consumed by entry-ID extraction.
- * Only the fields needed for matching buildSessionContext's message ordering.
- */
-export interface SdkSessionEntry {
-  id: string;
-  type: string;
-  parentId: string | null;
-  summary?: string;
-  firstKeptEntryId?: string;
-}
-
-/**
  * Extract entry IDs from branch entries in the same order that
- * buildSessionContext produces messages.  This mirrors the SDK's
- * compaction/branch-summary logic so IDs can be zipped 1:1 with
+ * buildSessionContext produces messages. This mirrors the SDK's
+ * compaction/branch-summary ordering so IDs can be zipped 1:1 with
  * the mapped PimoteAgentMessage array.
+ *
+ * (buildSessionContext() itself returns only messages, not their entry IDs,
+ * so this ordering must be reproduced here — see the SDK's session-manager.)
  */
-export function extractMessageEntryIds(branch: SdkSessionEntry[]): string[] {
+export function extractMessageEntryIds(branch: SessionEntry[]): string[] {
   // Find the last compaction entry on the path
-  let compaction: SdkSessionEntry | null = null;
+  let compaction: Extract<SessionEntry, { type: 'compaction' }> | null = null;
   for (const entry of branch) {
     if (entry.type === 'compaction') compaction = entry;
   }
 
   const ids: string[] = [];
 
-  const appendId = (entry: SdkSessionEntry) => {
+  const appendId = (entry: SessionEntry) => {
     if (entry.type === 'message') {
       ids.push(entry.id);
     } else if (entry.type === 'custom_message') {
@@ -122,93 +105,92 @@ export function applyEntryIds(messages: PimoteAgentMessage[], entryIds: string[]
   }
 }
 
-export function mapAgentMessage(msg: SdkMessage): PimoteAgentMessage {
-  const role = msg.role ?? 'unknown';
-  const content: PimoteMessageContent[] = [];
-
-  if (typeof msg.content === 'string') {
-    content.push({ type: 'text', text: msg.content });
-  } else if (Array.isArray(msg.content)) {
-    for (const item of msg.content) {
-      switch (item.type) {
-        case 'text':
-          content.push({ type: 'text', text: item.text ?? '' });
-          break;
-        case 'thinking':
-          content.push({ type: 'thinking', text: item.thinking ?? '' });
-          break;
-        case 'toolCall':
-          content.push({
-            type: 'tool_call',
-            toolCallId: item.id,
-            toolName: item.name,
-            args: item.arguments,
-          });
-          break;
-        case 'image':
-          // Images in user messages — map as text placeholder
-          content.push({ type: 'text', text: '[image]' });
-          break;
-        default:
-          // Unknown content type — pass through as text
-          content.push({ type: 'text', text: item.text ?? JSON.stringify(item) });
-          break;
-      }
+/** Map an AgentMessage content array (or bare string) to wire content blocks. */
+function mapContentBlocks(content: string | readonly AgentContentItem[]): PimoteMessageContent[] {
+  if (typeof content === 'string') {
+    return content ? [{ type: 'text', text: content }] : [];
+  }
+  const out: PimoteMessageContent[] = [];
+  for (const item of content) {
+    switch (item.type) {
+      case 'text':
+        out.push({ type: 'text', text: item.text });
+        break;
+      case 'thinking':
+        out.push({ type: 'thinking', text: item.thinking });
+        break;
+      case 'toolCall':
+        out.push({ type: 'tool_call', toolCallId: item.id, toolName: item.name, args: item.arguments });
+        break;
+      case 'image':
+        // Images map to a text placeholder (the client renders no inline images here).
+        out.push({ type: 'text', text: '[image]' });
+        break;
     }
-  } else if (msg.content !== undefined && msg.content !== null) {
-    // Unexpected content type — log and convert to text
-    console.warn('[message-mapper] Unexpected content type:', typeof msg.content, 'role:', role);
-    console.warn('[message-mapper] Content value:', msg.content);
-    content.push({ type: 'text', text: `[Unexpected content type: ${typeof msg.content}]` });
   }
+  return out;
+}
 
-  // Aborted assistant turns are a real signal in voice mode (every barge-in
-  // produces one via pi-agent-core's handleRunFailure) and shouldn't be
-  // confused with malformed messages. Log the empty-content warning only
-  // when it's NOT an expected aborted turn.
-  const aborted = role === 'assistant' && msg.stopReason === 'aborted';
-  if (content.length === 0 && !aborted) {
-    console.warn('[message-mapper] Empty content array for message:', { role, content: msg.content });
-  }
-
-  // Handle custom messages — preserve customType and display flag for the client
-  if (role === 'custom') {
-    return { role, content, entryId: msg.id, customType: msg.customType, display: msg.display ?? true };
-  }
-
-  // Handle tool result messages
-  if (role === 'toolResult') {
-    const resultContent: PimoteMessageContent[] = [];
-    if (Array.isArray(msg.content)) {
-      for (const item of msg.content) {
-        if (item.type === 'text') {
-          resultContent.push({ type: 'text', text: item.text ?? '' });
+export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
+  switch (msg.role) {
+    case 'toolResult': {
+      let text: string | undefined;
+      for (const c of msg.content) {
+        if (c.type === 'text') {
+          text = c.text;
+          break;
         }
       }
+      return {
+        role: 'toolResult',
+        content: [
+          {
+            type: 'tool_result',
+            toolCallId: msg.toolCallId,
+            toolName: msg.toolName,
+            result: text,
+            isError: msg.isError || undefined,
+          },
+        ],
+      };
     }
-    return {
-      role,
-      content: [
-        {
-          type: 'tool_result' as const,
-          toolCallId: msg.toolCallId,
-          toolName: msg.toolName,
-          result: resultContent.length > 0 ? resultContent[0].text : undefined,
-          isError: msg.isError || undefined,
-        },
-      ],
-      entryId: msg.id,
-    };
-  }
 
-  // Note: msg.id is typically undefined for standard SDK messages (UserMessage,
-  // AssistantMessage, ToolResultMessage).  Entry IDs are applied separately via
-  // applyEntryIds() using the session manager's branch entries.
-  return {
-    role,
-    content,
-    ...(msg.id ? { entryId: msg.id } : {}),
-    ...(aborted ? { aborted: true } : {}),
-    ...(role === 'assistant' && typeof msg.errorMessage === 'string' ? { errorMessage: msg.errorMessage } : {}),
-  };
+    case 'custom':
+      return { role: 'custom', content: mapContentBlocks(msg.content), customType: msg.customType, display: msg.display };
+
+    case 'assistant': {
+      const content = mapContentBlocks(msg.content);
+      // Aborted assistant turns are a real signal in voice mode (every barge-in
+      // produces one via pi-agent-core's handleRunFailure) and shouldn't be
+      // confused with malformed messages. Log the empty-content warning only
+      // when it's NOT an expected aborted turn.
+      const aborted = msg.stopReason === 'aborted';
+      if (content.length === 0 && !aborted) {
+        console.warn('[message-mapper] Empty content array for assistant message');
+      }
+      return {
+        role: 'assistant',
+        content,
+        ...(aborted ? { aborted: true } : {}),
+        ...(typeof msg.errorMessage === 'string' ? { errorMessage: msg.errorMessage } : {}),
+      };
+    }
+
+    case 'user':
+      return { role: 'user', content: mapContentBlocks(msg.content) };
+
+    case 'bashExecution':
+      return { role: 'bashExecution', content: [{ type: 'text', text: `$ ${msg.command}\n${msg.output}` }] };
+
+    case 'branchSummary':
+    case 'compactionSummary':
+      return { role: msg.role, content: msg.summary ? [{ type: 'text', text: msg.summary }] : [] };
+
+    default: {
+      // Exhaustiveness guard: a new AgentMessage role fails to compile here.
+      const _exhaustive: never = msg;
+      void _exhaustive;
+      return { role: 'unknown', content: [] };
+    }
+  }
 }

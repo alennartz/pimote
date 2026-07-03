@@ -1,109 +1,72 @@
 import { describe, it, expect } from 'vitest';
-import { mapAgentMessage, mapAgentMessages, extractMessageEntryIds, applyEntryIds, type SdkMessage, type SdkSessionEntry } from './message-mapper.js';
+import { mapAgentMessage, mapAgentMessages, extractMessageEntryIds, applyEntryIds, type SdkSessionEntry } from './message-mapper.js';
 
 describe('mapAgentMessage', () => {
-  describe('entryId pass-through', () => {
-    it('preserves SDK message id as entryId for user messages', () => {
-      const msg: SdkMessage = {
-        id: 'entry-abc-123',
-        role: 'user',
-        content: [{ type: 'text', text: 'Hello' }],
-      };
+  // AgentMessage is a discriminated union with many required fields per role;
+  // the mapper only reads a subset, so tests construct minimal shapes and cast.
+  const m = (o: Record<string, unknown>) => mapAgentMessage(o as never);
 
-      const result = mapAgentMessage(msg);
-
-      expect(result.entryId).toBe('entry-abc-123');
+  describe('field mapping', () => {
+    it('maps user message text content', () => {
+      const result = m({ role: 'user', content: [{ type: 'text', text: 'Hello' }] });
       expect(result.role).toBe('user');
+      expect(result.content).toEqual([{ type: 'text', text: 'Hello' }]);
     });
 
-    it('preserves SDK message id as entryId for assistant messages', () => {
-      const msg: SdkMessage = {
-        id: 'entry-def-456',
-        role: 'assistant',
-        content: [{ type: 'text', text: 'Hi there' }],
-      };
-
-      const result = mapAgentMessage(msg);
-
-      expect(result.entryId).toBe('entry-def-456');
+    it('maps assistant message text content', () => {
+      const result = m({ role: 'assistant', content: [{ type: 'text', text: 'Hi there' }] });
       expect(result.role).toBe('assistant');
+      expect(result.content).toEqual([{ type: 'text', text: 'Hi there' }]);
     });
 
-    it('omits entryId when SDK message has no id', () => {
-      const msg: SdkMessage = {
-        role: 'user',
-        content: [{ type: 'text', text: 'No id' }],
-      };
-
-      const result = mapAgentMessage(msg);
-
-      expect(result.entryId).toBeUndefined();
-    });
-
-    it('preserves entryId for custom messages', () => {
-      const msg: SdkMessage = {
-        id: 'entry-custom-789',
-        role: 'custom',
-        customType: 'agent-complete',
-        display: true,
-        content: [{ type: 'text', text: 'Done' }],
-      };
-
-      const result = mapAgentMessage(msg);
-
-      expect(result.entryId).toBe('entry-custom-789');
+    it('preserves customType and display for custom messages', () => {
+      const result = m({ role: 'custom', customType: 'agent-complete', display: true, content: [{ type: 'text', text: 'Done' }] });
+      expect(result.role).toBe('custom');
       expect(result.customType).toBe('agent-complete');
+      expect(result.display).toBe(true);
     });
 
-    it('preserves entryId for tool result messages', () => {
-      const msg: SdkMessage = {
-        id: 'entry-tool-999',
-        role: 'toolResult',
-        toolCallId: 'tc-1',
-        toolName: 'read',
-        content: [{ type: 'text', text: 'file contents' }],
-      };
-
-      const result = mapAgentMessage(msg);
-
-      expect(result.entryId).toBe('entry-tool-999');
+    it('maps tool result messages to a tool_result block', () => {
+      const result = m({ role: 'toolResult', toolCallId: 'tc-1', toolName: 'read', content: [{ type: 'text', text: 'file contents' }] });
       expect(result.role).toBe('toolResult');
+      expect(result.content).toEqual([{ type: 'tool_result', toolCallId: 'tc-1', toolName: 'read', result: 'file contents', isError: undefined }]);
     });
 
     it('preserves provider error text for failed assistant messages', () => {
-      const msg: SdkMessage = {
-        id: 'entry-err-1',
+      const result = m({
         role: 'assistant',
         content: [],
         stopReason: 'error',
         errorMessage: '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
-      };
-
-      const result = mapAgentMessage(msg);
-
-      expect(result.entryId).toBe('entry-err-1');
+      });
       expect(result.role).toBe('assistant');
       expect(result.content).toEqual([]);
       expect(result.errorMessage).toBe('{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}');
       expect(result.aborted).toBeUndefined();
     });
+
+    it('marks aborted assistant turns', () => {
+      const result = m({ role: 'assistant', content: [], stopReason: 'aborted' });
+      expect(result.aborted).toBe(true);
+    });
+
+    it('does not assign entryId (entry IDs are applied separately via applyEntryIds)', () => {
+      const result = m({ role: 'user', content: [{ type: 'text', text: 'x' }] });
+      expect(result.entryId).toBeUndefined();
+    });
   });
 });
 
 describe('mapAgentMessages', () => {
-  it('preserves entryId across all messages in the array', () => {
-    const messages: SdkMessage[] = [
-      { id: 'entry-1', role: 'user', content: [{ type: 'text', text: 'Hello' }] },
-      { id: 'entry-2', role: 'assistant', content: [{ type: 'text', text: 'Hi' }] },
-      { role: 'user', content: [{ type: 'text', text: 'No id' }] },
-    ];
+  it('maps every message in the array preserving order and role', () => {
+    const results = mapAgentMessages([
+      { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'Hi' }] },
+    ] as never);
 
-    const results = mapAgentMessages(messages);
-
-    expect(results).toHaveLength(3);
-    expect(results[0].entryId).toBe('entry-1');
-    expect(results[1].entryId).toBe('entry-2');
-    expect(results[2].entryId).toBeUndefined();
+    expect(results).toHaveLength(2);
+    expect(results[0].role).toBe('user');
+    expect(results[1].role).toBe('assistant');
   });
 });
 

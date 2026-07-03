@@ -14,21 +14,22 @@ import type { VoiceActivateMessage, VoiceDeactivateMessage } from '../state-mach
  * toolcall_* event. We only need the `content[i].name` / `id` for
  * disambiguation, but typing it open-ended keeps the shell simple.
  */
+// These are intentionally loose structural snapshots (not SDK imports) so the
+// pure FSM stays decoupled from pi-ai types. The shell passes the real
+// AssistantMessage / ToolCall values in — they satisfy these shapes — and the
+// reducers only ever read the named fields below.
 export interface PartialContentBlock {
   name?: unknown;
   id?: unknown;
-  [k: string]: unknown;
 }
 export interface PartialAssistantMessage {
   content?: PartialContentBlock[] | unknown;
-  [k: string]: unknown;
 }
 
 export interface ToolCallEnded {
   id?: unknown;
   name?: unknown;
-  arguments?: { text?: unknown; [k: string]: unknown } | unknown;
-  [k: string]: unknown;
+  arguments?: { text?: unknown } | unknown;
 }
 
 export type Event =

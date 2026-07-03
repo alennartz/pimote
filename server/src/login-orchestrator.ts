@@ -12,44 +12,14 @@
 // LoginModelRegistry), which the real pi-SDK classes satisfy. Tests inject
 // in-memory fakes plus a fake LoginTransport.
 
+import type { AuthStorage } from '@earendil-works/pi-coding-agent';
 import type { LoginProviderInfo, LoginStep } from '../../shared/dist/index.js';
 
-// --- pi OAuth callback shape (mirrors @earendil-works/pi-ai OAuthLoginCallbacks) ---
-// Re-declared locally so the orchestrator stays self-contained and unit-testable
-// without a deep pi-ai import. The real AuthStorage.login accepts this shape.
-
-export interface LoginOAuthAuthInfo {
-  url: string;
-  instructions?: string;
-}
-
-export interface LoginOAuthDeviceCodeInfo {
-  userCode: string;
-  verificationUri: string;
-  intervalSeconds?: number;
-  expiresInSeconds?: number;
-}
-
-export interface LoginOAuthPrompt {
-  message: string;
-  placeholder?: string;
-  allowEmpty?: boolean;
-}
-
-export interface LoginOAuthSelectPrompt {
-  message: string;
-  options: { id: string; label: string }[];
-}
-
-export interface LoginOAuthCallbacks {
-  onAuth: (info: LoginOAuthAuthInfo) => void;
-  onDeviceCode: (info: LoginOAuthDeviceCodeInfo) => void;
-  onPrompt: (prompt: LoginOAuthPrompt) => Promise<string>;
-  onProgress?: (message: string) => void;
-  onManualCodeInput?: () => Promise<string>;
-  onSelect: (prompt: LoginOAuthSelectPrompt) => Promise<string | undefined>;
-  signal?: AbortSignal;
-}
+// --- pi OAuth callback shape ---
+// Derived directly from the real AuthStorage.login signature (pi-ai's
+// OAuthLoginCallbacks) rather than hand-mirrored, so any upstream change to the
+// callback shape surfaces at compile time here instead of failing at runtime.
+export type LoginOAuthCallbacks = Parameters<AuthStorage['login']>[1];
 
 // --- Dependency seams (real pi-SDK AuthStorage / ModelRegistry satisfy these) ---
 

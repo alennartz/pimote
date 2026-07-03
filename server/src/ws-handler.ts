@@ -26,8 +26,9 @@ import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
-import { mapAgentMessages, extractMessageEntryIds, applyEntryIds, type SdkSessionEntry } from './message-mapper.js';
-import { sumAssistantCostUsd, type CostBranchEntry } from './session-cost.js';
+import { mapAgentMessages, extractMessageEntryIds, applyEntryIds } from './message-mapper.js';
+import type { TreeNavigationStartEvent, TreeNavigationEndEvent } from './event-buffer.js';
+import { sumAssistantCostUsd } from './session-cost.js';
 import { completeFileRefs } from './file-references.js';
 import type { AgentSession, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
@@ -993,7 +994,7 @@ export class WsHandler {
 
       case 'get_messages': {
         const messages = mapAgentMessages(session.messages);
-        const entryIds = extractMessageEntryIds(session.sessionManager.getBranch() as unknown as SdkSessionEntry[]);
+        const entryIds = extractMessageEntryIds(session.sessionManager.getBranch());
         applyEntryIds(messages, entryIds);
         this.sendResponse(id, true, { messages });
         break;
@@ -1030,7 +1031,7 @@ export class WsHandler {
           // switches and reload-from-disk because it is recomputed from the
           // session manager's rehydrated entries every call. See session-cost.ts
           // for what this figure excludes.
-          lifetimeCostUsd: sumAssistantCostUsd(session.sessionManager.getEntries() as unknown as CostBranchEntry[]),
+          lifetimeCostUsd: sumAssistantCostUsd(session.sessionManager.getEntries()),
           nextRoundtripCostUsd,
         };
         this.sendResponse(id, true, { meta });
@@ -1510,7 +1511,7 @@ export class WsHandler {
     };
   }
 
-  private emitBufferedSessionEvent(slot: ManagedSlot, sessionId: string, sdkEvent: { type: string; [key: string]: unknown }): void {
+  private emitBufferedSessionEvent(slot: ManagedSlot, sessionId: string, sdkEvent: TreeNavigationStartEvent | TreeNavigationEndEvent): void {
     slot.sessionState.eventBuffer.onEvent(
       sdkEvent,
       sessionId,
@@ -1518,8 +1519,7 @@ export class WsHandler {
         // Augment agent_end with message entry IDs so the client can enable
         // fork targets on messages that arrived via streaming (without IDs).
         if (event.type === 'agent_end') {
-          const entryIds = extractMessageEntryIds(slot.session.sessionManager.getBranch() as unknown as SdkSessionEntry[]);
-          (event as unknown as Record<string, unknown>).messageEntryIds = entryIds;
+          event.messageEntryIds = extractMessageEntryIds(slot.session.sessionManager.getBranch());
         }
         this.sendEvent(event);
       },
@@ -1545,7 +1545,7 @@ export class WsHandler {
       messageCount: session.messages.length,
     };
     const messages = mapAgentMessages(session.messages);
-    const entryIds = extractMessageEntryIds(session.sessionManager.getBranch() as unknown as SdkSessionEntry[]);
+    const entryIds = extractMessageEntryIds(session.sessionManager.getBranch());
     applyEntryIds(messages, entryIds);
     const fullResyncEvent: FullResyncEvent = {
       type: 'full_resync',

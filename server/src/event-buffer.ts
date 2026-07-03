@@ -1,51 +1,30 @@
+import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { PimoteSessionEvent } from '../../shared/dist/index.js';
-import { mapAgentMessage, type SdkMessage } from './message-mapper.js';
+import { mapAgentMessage } from './message-mapper.js';
 
 /**
- * Structural type for SDK events consumed by the event mapper.
- * All properties except `type` are optional to accommodate the full
- * AgentSessionEvent union without importing it.
+ * Tree-navigation lifecycle events are synthesized by the ws-handler (they are
+ * NOT part of the SDK's AgentSessionEvent union) and fed through the same
+ * buffer so reconnect replay sees the navigation boundary.
  */
-/**
- * Structural type for the pi-ai AssistantMessageEvent carried
- * on message_update events. Only the fields we need are listed.
- */
-interface SdkAssistantMessageEvent {
-  type: string;
-  contentIndex?: number;
-  delta?: string;
-  /** The partial AssistantMessage — used to extract tool call metadata on toolcall_start */
-  partial?: { content?: Array<{ type?: string; id?: string; name?: string }> };
+export interface TreeNavigationStartEvent {
+  type: 'tree_navigation_start';
+  targetId: string;
+  summarizing: boolean;
+}
+export interface TreeNavigationEndEvent {
+  type: 'tree_navigation_end';
 }
 
-interface SdkEvent {
-  type: string;
-  error?: string;
-  role?: string;
-  message?: SdkMessage;
-  /** pi-ai AssistantMessageEvent carried on message_update events */
-  assistantMessageEvent?: SdkAssistantMessageEvent;
-  toolName?: string;
-  toolCallId?: string;
-  args?: unknown;
-  result?: unknown;
-  isError?: boolean;
-  /** Partial result from tool execution updates */
-  partialResult?: unknown;
-  reason?: string;
-  aborted?: boolean;
-  willRetry?: boolean;
-  errorMessage?: string;
-  attempt?: number;
-  maxAttempts?: number;
-  delayMs?: number;
-  success?: boolean;
-  finalError?: string;
-  extensionName?: string;
-  /** tree_navigation_start fields (synthetic events injected by the handler) */
-  targetId?: string;
-  summarizing?: boolean;
-}
+/**
+ * Everything EventBuffer.onEvent accepts: the real SDK session-event union plus
+ * the two synthetic tree-navigation events pimote injects. Typing against the
+ * real union means the mapper's per-event field access is compiler-checked, so
+ * any upstream event rename/field change surfaces here instead of silently
+ * falling through to a mismapped event.
+ */
+export type IncomingSdkEvent = AgentSessionEvent | TreeNavigationStartEvent | TreeNavigationEndEvent;
 
 interface BufferEntry {
   cursor: number;
@@ -77,11 +56,15 @@ export class EventBuffer {
   /**
    * Process an SDK event: assign cursor, map to PimoteSessionEvent, forward live, and buffer (coalesced).
    */
-  onEvent(sdkEvent: SdkEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void, getLastMessage?: () => SdkMessage | undefined): void {
+  onEvent(sdkEvent: IncomingSdkEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void, getLastMessage?: () => AgentMessage | undefined): void {
     this._cursor++;
     const cursor = this._cursor;
 
     const pimoteEvent = this.mapEvent(sdkEvent, sessionId, cursor, getLastMessage);
+    // Some SDK events (queue_update, session_info_changed, thinking_level_changed)
+    // have no pimote wire representation — mapEvent returns null and we drop them
+    // rather than mis-emitting a bogus agent_start.
+    if (!pimoteEvent) return;
     sendLive(pimoteEvent);
     this.coalesceAndBuffer(pimoteEvent);
   }
@@ -127,7 +110,7 @@ export class EventBuffer {
 
   // ---- Private helpers ----
 
-  private mapEvent(sdkEvent: SdkEvent, sessionId: string, cursor: number, getLastMessage?: () => SdkMessage | undefined): PimoteSessionEvent {
+  private mapEvent(sdkEvent: IncomingSdkEvent, sessionId: string, cursor: number, getLastMessage?: () => AgentMessage | undefined): PimoteSessionEvent | null {
     const base = { sessionId, cursor, timestamp: new Date().toISOString() };
 
     switch (sdkEvent.type) {
@@ -135,7 +118,10 @@ export class EventBuffer {
         return { ...base, type: 'agent_start' };
 
       case 'agent_end':
-        return { ...base, type: 'agent_end', ...(sdkEvent.error ? { error: sdkEvent.error } : {}), ...(sdkEvent.willRetry ? { willRetry: true } : {}) };
+        // The real agent_end carries { messages, willRetry } — there is no `error`
+        // field on it. Error text reaches the client via the failed assistant
+        // message (message_end), not here.
+        return { ...base, type: 'agent_end', ...(sdkEvent.willRetry ? { willRetry: true } : {}) };
 
       case 'turn_start':
         return { ...base, type: 'turn_start' };
@@ -144,29 +130,30 @@ export class EventBuffer {
         return { ...base, type: 'turn_end' };
 
       case 'message_start':
-        return { ...base, type: 'message_start', role: sdkEvent.role ?? 'assistant' };
+        // The role lives on the event's message, not a top-level `role` field.
+        return { ...base, type: 'message_start', role: sdkEvent.message.role };
 
       case 'message_update': {
         const ame = sdkEvent.assistantMessageEvent;
-        const contentIndex = ame?.contentIndex ?? 0;
+        const contentIndex = 'contentIndex' in ame ? ame.contentIndex : 0;
 
         // Determine content type from the sub-event
         let contentType: 'text' | 'thinking' | 'tool_call' = 'text';
-        if (ame?.type?.startsWith('thinking_')) {
+        if (ame.type.startsWith('thinking_')) {
           contentType = 'thinking';
-        } else if (ame?.type?.startsWith('toolcall_')) {
+        } else if (ame.type.startsWith('toolcall_')) {
           contentType = 'tool_call';
         }
 
         // Determine subtype from the sub-event suffix
         let subtype: 'start' | 'delta' | 'end' = 'delta';
-        if (ame?.type?.endsWith('_start')) {
+        if (ame.type.endsWith('_start')) {
           subtype = 'start';
-        } else if (ame?.type?.endsWith('_end')) {
+        } else if (ame.type.endsWith('_end')) {
           subtype = 'end';
         }
 
-        const delta = ame?.delta ?? '';
+        const delta = 'delta' in ame ? ame.delta : '';
 
         const result: PimoteSessionEvent & { type: 'message_update' } = {
           ...base,
@@ -180,7 +167,7 @@ export class EventBuffer {
         };
 
         // Extract tool call metadata on toolcall_start from the partial message
-        if (contentType === 'tool_call' && subtype === 'start' && ame?.partial?.content) {
+        if (contentType === 'tool_call' && subtype === 'start' && 'partial' in ame) {
           const block = ame.partial.content[contentIndex];
           if (block && block.type === 'toolCall') {
             result.toolCallId = block.id;
@@ -194,8 +181,9 @@ export class EventBuffer {
       case 'message_end': {
         // Some providers (e.g. OpenAI) send message_end with empty content — the actual
         // message is only available in session.messages. Use getLastMessage() fallback.
-        let message = sdkEvent.message;
-        if ((!message || !message.content || (Array.isArray(message.content) && message.content.length === 0)) && getLastMessage) {
+        let message: AgentMessage | undefined = sdkEvent.message;
+        const isEmpty = (m: AgentMessage | undefined): boolean => !m || !('content' in m) || !m.content || (Array.isArray(m.content) && m.content.length === 0);
+        if (isEmpty(message) && getLastMessage) {
           message = getLastMessage();
         }
         return {
@@ -209,8 +197,8 @@ export class EventBuffer {
         return {
           ...base,
           type: 'tool_execution_start',
-          toolName: sdkEvent.toolName ?? '',
-          toolCallId: sdkEvent.toolCallId ?? '',
+          toolName: sdkEvent.toolName,
+          toolCallId: sdkEvent.toolCallId,
           args: sdkEvent.args,
         };
 
@@ -218,7 +206,7 @@ export class EventBuffer {
         return {
           ...base,
           type: 'tool_execution_update',
-          toolCallId: sdkEvent.toolCallId ?? '',
+          toolCallId: sdkEvent.toolCallId,
           content: typeof sdkEvent.partialResult === 'string' ? sdkEvent.partialResult : '',
         };
 
@@ -226,25 +214,27 @@ export class EventBuffer {
         return {
           ...base,
           type: 'tool_execution_end',
-          toolCallId: sdkEvent.toolCallId ?? '',
+          toolCallId: sdkEvent.toolCallId,
           result: sdkEvent.result,
           isError: sdkEvent.isError || undefined,
         };
 
-      case 'auto_compaction_start':
+      // The SDK emits `compaction_start` / `compaction_end`; pimote's wire
+      // contract with the client names these `auto_compaction_*`.
+      case 'compaction_start':
         return {
           ...base,
           type: 'auto_compaction_start',
-          reason: (sdkEvent.reason ?? 'threshold') as 'threshold' | 'overflow',
+          reason: sdkEvent.reason,
         };
 
-      case 'auto_compaction_end':
+      case 'compaction_end':
         return {
           ...base,
           type: 'auto_compaction_end',
           result: sdkEvent.result,
-          aborted: sdkEvent.aborted ?? false,
-          willRetry: sdkEvent.willRetry ?? false,
+          aborted: sdkEvent.aborted,
+          willRetry: sdkEvent.willRetry,
           ...(sdkEvent.errorMessage ? { errorMessage: sdkEvent.errorMessage } : {}),
         };
 
@@ -252,43 +242,46 @@ export class EventBuffer {
         return {
           ...base,
           type: 'auto_retry_start',
-          attempt: sdkEvent.attempt ?? 0,
-          maxAttempts: sdkEvent.maxAttempts ?? 0,
-          delayMs: sdkEvent.delayMs ?? 0,
-          errorMessage: sdkEvent.errorMessage ?? '',
+          attempt: sdkEvent.attempt,
+          maxAttempts: sdkEvent.maxAttempts,
+          delayMs: sdkEvent.delayMs,
+          errorMessage: sdkEvent.errorMessage,
         };
 
       case 'auto_retry_end':
         return {
           ...base,
           type: 'auto_retry_end',
-          success: sdkEvent.success ?? false,
-          attempt: sdkEvent.attempt ?? 0,
+          success: sdkEvent.success,
+          attempt: sdkEvent.attempt,
           ...(sdkEvent.finalError ? { finalError: sdkEvent.finalError } : {}),
-        };
-
-      case 'extension_error':
-        return {
-          ...base,
-          type: 'extension_error',
-          error: sdkEvent.error ?? '',
-          ...(sdkEvent.extensionName ? { extensionName: sdkEvent.extensionName } : {}),
         };
 
       case 'tree_navigation_start':
         return {
           ...base,
           type: 'tree_navigation_start',
-          targetId: sdkEvent.targetId ?? '',
-          summarizing: sdkEvent.summarizing ?? false,
+          targetId: sdkEvent.targetId,
+          summarizing: sdkEvent.summarizing,
         };
 
       case 'tree_navigation_end':
         return { ...base, type: 'tree_navigation_end' };
 
-      default:
-        // Unknown event type — pass through as agent_start (shouldn't happen)
-        return { ...base, type: 'agent_start' };
+      // Real SDK events with no pimote wire representation. Dropped rather than
+      // mis-emitted; wire them up here if the client grows a use for them.
+      case 'queue_update':
+      case 'session_info_changed':
+      case 'thinking_level_changed':
+        return null;
+
+      default: {
+        // Exhaustiveness guard: if the SDK adds a new AgentSessionEvent member,
+        // this line fails to compile until it's handled above.
+        const _exhaustive: never = sdkEvent;
+        void _exhaustive;
+        return null;
+      }
     }
   }
 

@@ -51,7 +51,9 @@ export async function autoDrainOnAbort(
   lastMessage: AgentMessage | undefined,
   onError: (err: unknown) => void = (err) => console.warn('[pimote] auto-drain after abort failed', err),
 ): Promise<void> {
-  if (!lastMessage || (lastMessage as { stopReason?: string }).stopReason !== 'aborted') {
+  // stopReason lives only on the assistant variant of AgentMessage; narrow by
+  // role rather than casting so the field access is type-checked.
+  if (!lastMessage || lastMessage.role !== 'assistant' || lastMessage.stopReason !== 'aborted') {
     return;
   }
   try {
