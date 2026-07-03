@@ -36,7 +36,7 @@ function log(...args) {
   console.log('[pwa-smoke]', ...args);
 }
 
-async function getFreePort() {
+async function _getFreePort() {
   return await new Promise((resolve, reject) => {
     const srv = createConnection({ port: 0 }, () => {});
     srv.on('error', () => {
@@ -143,13 +143,11 @@ async function abCmd(args, { allowFailure = false, retries = 2, timeoutMs = 20_0
   throw new Error('unreachable');
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _readClientVersion() {
   const raw = await readFile(join(REPO_ROOT, 'client', 'build', '_app', 'version.json'), 'utf-8');
   return JSON.parse(raw).version;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _openSessionViaWs({ port, folderPath, version }) {
   // Uses the global WebSocket from Node >=22.
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?clientId=pwa-smoke-fixture&version=${encodeURIComponent(version)}`);
@@ -394,7 +392,7 @@ async function main() {
     failures++;
     try {
       await abCmd(['close'], { allowFailure: true });
-    } catch {}
+    } catch { /* ignore */ }
   } finally {
     await stopPimote(child).catch(() => {});
     log('pimote log path:', logPath);

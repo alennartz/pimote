@@ -443,10 +443,10 @@ async function main() {
     try {
       const tail = await readFile(logPath, 'utf-8').catch(() => '');
       if (tail) console.error('[sch-smoke] pimote.log tail:\n' + tail.slice(-2000));
-    } catch {}
+    } catch { /* ignore */ }
     try {
       await abCmd(['close'], { allowFailure: true });
-    } catch {}
+    } catch { /* ignore */ }
   } finally {
     await stopPimote(child).catch(() => {});
     log('pimote log path:', logPath);

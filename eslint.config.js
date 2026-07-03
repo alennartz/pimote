@@ -118,7 +118,7 @@ export default ts.config(
   // ── Node.js scripts / config ───────────────────────────────────────────────
 
   {
-    files: ['bin/**/*.js', '*.config.js', '*.config.ts', 'client/*.config.*', 'server/*.config.*'],
+    files: ['bin/**/*.js', '*.config.js', '*.config.ts', 'client/*.config.*', 'server/*.config.*', 'scripts/**/*.mjs', 'tools/**/*.mjs'],
     languageOptions: {
       globals: {
         ...globals.node,

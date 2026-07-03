@@ -604,7 +604,7 @@ async function main() {
     failures++;
     try {
       await abCmd(['close'], { allowFailure: true });
-    } catch {}
+    } catch { /* ignore */ }
   } finally {
     await stopPimote(fdMissingChild).catch(() => {});
     await stopPimote(child).catch(() => {});

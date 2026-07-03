@@ -493,7 +493,7 @@ async function main() {
     failures++;
     try {
       await abCmd(['close'], { allowFailure: true });
-    } catch {}
+    } catch { /* ignore */ }
   } finally {
     await stopPimote(child).catch(() => {});
     log('pimote log path:', logPath);
