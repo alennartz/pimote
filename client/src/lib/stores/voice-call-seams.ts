@@ -281,7 +281,11 @@ export function createBrowserVoiceCallSeams(opts: BrowserVoiceCallSeamsOptions):
       const waitForStablePlayhead = async (): Promise<number> => {
         let last = (await readJitterBufferEmittedCount()) ?? latestPlayedSamples48k;
         let stableSince = performance.now();
-        const deadline = stableSince + 1500;
+        // Cap well under speechmux's ~1s turn_ready window (TURN_READY_TIMEOUT);
+        // reply with the latest playhead if the quiet window hasn't settled by
+        // then. A slightly-early baseline beats a reply that lands after the
+        // server has already closed the window and discarded it.
+        const deadline = stableSince + 600;
         while (true) {
           await new Promise((resolve) => setTimeout(resolve, 25));
           const next = (await readJitterBufferEmittedCount()) ?? last;

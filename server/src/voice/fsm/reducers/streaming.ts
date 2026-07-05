@@ -91,6 +91,12 @@ export function reduceStreaming(prev: MessageStreamState, event: Event): Streami
       return reduceEnd(prev, event.contentIndex, event.toolCall);
 
     case 'sdk:turn_end':
+      // After a barge-in (interrupted latch set) the harness must stop
+      // emitting frames for the turn — floor_released included. Speechmux
+      // would discard a late floor_released via speak_id attribution, but the
+      // protocol asks us not to send it at all. Reset happens on the next
+      // message_start.
+      if (prev.interrupted) return noFrames(prev);
       // Release the floor for the turn's last spoken utterance. Routed as a
       // frame so the lifecycle layer buffers it during `activating` and passes
       // it during `active` — the same discipline as token/end frames. (M2)
@@ -101,6 +107,9 @@ export function reduceStreaming(prev: MessageStreamState, event: Event): Streami
       };
 
     case 'sdk:agent_end':
+      // Same interrupted-latch discipline as turn_end: no error frame for a
+      // turn speechmux already aborted.
+      if (prev.interrupted) return noFrames(prev);
       // Surface a harness-side error to speechmux. (M2)
       return event.error ? { next: prev, frames: [{ type: 'error', message: event.error }], endedSpeakIds: [] } : noFrames(prev);
 

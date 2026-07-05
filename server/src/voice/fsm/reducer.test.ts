@@ -105,3 +105,13 @@ describe('voice FSM — walkback gated on lifecycle (H3)', () => {
     expect(actions.some((a) => a.kind === 'abort_agent')).toBe(true);
   });
 });
+
+describe('voice FSM — session_closed is not a barge-in', () => {
+  it('session_closed while active does NOT abort the agent, record an interrupt, or arm walkback', () => {
+    const state = activate('sess-1');
+    const { next, actions } = step(state, { type: 'ws:incoming', frame: { type: 'abort', reason: 'session_closed' } });
+    expect(actions.some((a) => a.kind === 'abort_agent')).toBe(false);
+    expect(actions.some((a) => a.kind === 'append_custom_entry')).toBe(false);
+    expect(next.walkback.kind).toBe('idle');
+  });
+});

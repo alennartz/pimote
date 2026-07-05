@@ -52,6 +52,16 @@ export function reduceWalkback(prev: WalkbackState, event: Event, ctx: WalkbackC
     case 'ws:incoming': {
       const f = event.frame;
       if (f.type === 'user') return { next: prev, actions: [] };
+      // `session_closed` is a session-level teardown signal, not a turn-level
+      // barge-in. Deactivation handles session end; treating it as a barge-in
+      // would abort the agent, record a spurious interrupt entry, and walk the
+      // last spoken turn back to empty text — truncating the assistant's final
+      // utterance out of the persisted history that survives into text mode.
+      // Ignore it here; the streaming reducer's `interrupted` latch already
+      // stops further token emission.
+      if (f.type === 'abort' && f.reason === 'session_closed') {
+        return { next: prev, actions: [] };
+      }
       // Only honour barge-in (abort/rollback) while a call is live. A frame
       // arriving when dormant (e.g. in flight during teardown, or from a
       // just-discarded client) must not abort an unrelated text-mode turn. (H3)

@@ -26,6 +26,21 @@ describe('streaming reducer — post-interrupt suppression (gap 1)', () => {
     const { next } = reduceStreaming({ blocks: new Map(), interrupted: true }, { type: 'sdk:message_start', message: { role: 'assistant', content: [] } as never });
     expect(next.interrupted).toBe(false);
   });
+
+  it('turn_end emits floor_released normally', () => {
+    const { frames } = reduceStreaming(fresh(), { type: 'sdk:turn_end', lastSpeakToolCallId: 's1' });
+    expect(frames).toEqual([{ type: 'floor_released', speak_id: 's1' }]);
+  });
+
+  it('once interrupted, turn_end suppresses floor_released', () => {
+    const { frames } = reduceStreaming({ blocks: new Map(), interrupted: true }, { type: 'sdk:turn_end', lastSpeakToolCallId: 's1' });
+    expect(frames).toEqual([]);
+  });
+
+  it('once interrupted, agent_end suppresses the error frame', () => {
+    const { frames } = reduceStreaming({ blocks: new Map(), interrupted: true }, { type: 'sdk:agent_end', error: 'boom' });
+    expect(frames).toEqual([]);
+  });
 });
 
 describe('currentStreamingSpeakId', () => {

@@ -587,6 +587,15 @@ class CallControllerImpl(
                 peer.state.first { it is PeerState.Failed }
                 winner.complete(Outcome.PeerFailed)
             }
+            val w5 = launch(Dispatchers.Unconfined) {
+                // A server-initiated signaling `bye` drives the peer to Closed
+                // (see SpeechmuxPeerImpl's bye handling). During an active call
+                // the only thing that closes the peer is that external teardown,
+                // so treat it as the server ending the call rather than a local
+                // failure.
+                peer.state.first { it is PeerState.Closed }
+                winner.complete(Outcome.RemoteEnded(CallEndReason.SERVER_ENDED))
+            }
             val w3 = launch(Dispatchers.Unconfined) {
                 hangup.await()
                 winner.complete(Outcome.UserHangup)
@@ -598,7 +607,7 @@ class CallControllerImpl(
                 winner.complete(Outcome.RemoteEnded(CallEndReason.DISPLACED))
             }
             val r = winner.await()
-            w1.cancel(); w2.cancel(); w3.cancel(); w4.cancel()
+            w1.cancel(); w2.cancel(); w3.cancel(); w4.cancel(); w5.cancel()
             r
         }
 

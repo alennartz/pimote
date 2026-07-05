@@ -355,7 +355,9 @@ class SpeechmuxPeerImpl(
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     L.w("Peer", "signaling onClosed code=$code reason=$reason")
                     val failReason = "signaling_closed:$code"
-                    if (_state.value !is PeerState.Closed) {
+                    // Don't clobber a more specific Failed set from an `error`
+                    // frame that arrived just before this close.
+                    if (_state.value !is PeerState.Closed && _state.value !is PeerState.Failed) {
                         _state.value = PeerState.Failed(failReason)
                     }
                     if (!signalConnected.isCompleted) {
@@ -476,7 +478,13 @@ class SpeechmuxPeerImpl(
                 L.w("Peer", "signaling error frame: ${env.payload}")
             }
             "bye" -> {
-                L.i("Peer", "signaling bye frame")
+                // Server-initiated shutdown (daemon exit, keepalive timeout,
+                // peer-connection failure). The protocol intends this to tear
+                // the call down client side; the WS close that follows is only a
+                // backstop. Drive local teardown now so the peer reaches a
+                // terminal state promptly rather than waiting on the close.
+                L.i("Peer", "signaling bye frame — tearing down")
+                disconnect()
             }
         }
     }
