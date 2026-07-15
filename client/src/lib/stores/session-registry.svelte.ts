@@ -29,6 +29,7 @@ import type {
   SessionRenamedEvent,
   SessionReplacedEvent,
   PanelUpdateEvent,
+  DownloadItem,
   NavigateEvent,
   SessionRestoreEvent,
   Card,
@@ -68,6 +69,8 @@ export interface PerSessionState {
   restoreMode: RestoreMode | null;
   isRestoring: boolean;
   panelCards: Card[];
+  /** Pending user-approved file downloads offered for this session. */
+  downloads: DownloadItem[];
   widgetCards: Record<string, Card>;
   contextUsage: { percent: number | null; contextWindow: number } | null;
   /** Total USD cost summed over the session branch; 0 when no spend. */
@@ -130,6 +133,7 @@ export class SessionRegistry {
       restoreMode: null,
       isRestoring: false,
       panelCards: [],
+      downloads: [],
       widgetCards: {},
       gitBranch: null,
       contextUsage: null,
@@ -495,6 +499,10 @@ export class SessionRegistry {
         }
         break;
       }
+
+      case 'download_update':
+        // The download snapshot reducer is the next implementation boundary.
+        throw new Error('not implemented');
 
       case 'pimote_navigate': {
         // Only honor navigation for the currently viewed session — don't

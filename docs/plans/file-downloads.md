@@ -167,3 +167,59 @@ On an `offered` update, the server also sends the existing VAPID push notificati
 Each per-session client state gains `downloads: DownloadItem[]`. A `download_update` fully replaces that session's list; the client does not merge or persist it independently of the server. The viewed session's fallback inbox reads only its own list.
 
 For `cause: 'offered'`, the client shows a toast containing filename and formatted initial size. Its primary Download action is a native `<a href={item.href}>` attachment request, so the usual case is one explicit user click from notification to browser download. The fallback inbox renders the same native links for pending items after the toast is missed or more than one file is available. No click automatically follows an URL, including a system-notification click.
+
+## Tests
+
+**Pre-test-write commit:** `1ae92c102105a0a8359fd5fd6fd29985c5823574`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — `DownloadUpdateCause`, `DownloadItem`, and `DownloadUpdateEvent` wire contracts, included in `PimoteEvent`.
+- `server/src/session-json-store.ts` — generic per-session JSON persistence seam, filesystem adapter boundary, and orphan-GC contract.
+- `server/src/file-download/manager.ts` — persisted registration shapes, `DownloadManager` lifecycle/offer/cancel/claim seam, and factory boundary.
+- `server/src/file-download/tools.ts` — send/cancel tool input/output contracts and adapter boundaries.
+- `server/src/file-download/prompt.ts` — model-facing tool description boundary.
+- `server/src/file-download/index.ts` — extension-factory boundary and public file-download exports.
+- `server/src/file-download/http-handler.ts` — one-shot attachment route boundary.
+- `server/src/session-manager.ts` — session-local pending-download snapshot state field.
+- `server/src/push-notification.ts` — download push reason and presentation-only metadata shape.
+- `client/src/lib/stores/session-registry.svelte.ts` — per-session pending-download state field and reducer boundary.
+- `client/src/lib/download-presentation.ts` — toast and viewed-session inbox presentation seams, including registration-size formatting.
+
+### Test Files
+
+- `server/src/session-json-store.test.ts` — JSON persistence round trips, atomic replacement, corruption handling, removal, and orphan cleanup.
+- `server/src/file-download/manager.test.ts` — registration validation/persistence, session replay, ownership cancellation, snapshot publication, and single-use claims.
+- `server/src/file-download/tools.test.ts` — send/cancel agent-tool delegation and server-derived metadata contract.
+- `server/src/file-download/index.test.ts` — extension tool registration, lifecycle activation/deactivation, EventBus publication, and session context wiring.
+- `server/src/file-download/http-handler.test.ts` — route recognition, claim-before-open, attachment streaming, path validation, and consumed failure behavior.
+- `client/src/lib/stores/session-registry.test.ts` — full-replacement download snapshots and per-session isolation.
+- `client/src/lib/download-presentation.test.ts` — offer-toast, native-link inbox, cause filtering, viewed-session gating, and size-copy contracts.
+
+### Behaviors Covered
+
+#### Session JSON storage
+
+- Missing session documents read as `undefined`, while typed documents round-trip without shape changes.
+- Writes replace complete documents atomically, create parent directories, and leave no temporary sibling after success.
+- Removal is idempotent; corrupt JSON is treated as absent state rather than rejecting session recovery.
+- Boot GC removes orphan JSON and temporary files, preserves valid session records, tolerates a missing directory, and leaves unrelated files alone.
+
+#### Download manager
+
+- Session activation rehydrates registrations and emits one full `restored` snapshot; deactivation drops process ownership without deleting persistence.
+- Offers accept regular files within the captured workspace, support contained absolute paths, derive filename/size/opaque href metadata, and persist server-only source details.
+- Offers reject missing paths, directories, and lexical or real-path escapes outside the workspace.
+- Cancellation is session-owned, source-preserving, idempotently reports unknown IDs, and emits a full `revoked` snapshot.
+- Claims return server-only source details only after durable single-use consumption, publish `consumed` before resolution, and return `undefined` for unknown or raced IDs.
+
+#### Agent extension and HTTP route
+
+- The extension exposes only `pimote_send_file` and `pimote_cancel_file_send`, passes session cwd/ownership into the manager, replays lifecycle state, and emits updates on `pimote:downloads`.
+- The route falls through for unrelated paths, recognizes exactly one opaque ID segment, claims before opening the live source, streams a native attachment with no-cache headers, safely encodes filenames, and consumes registrations even when click-time validation fails.
+
+#### Client session state
+
+- A `download_update` replaces the owning session's pending list for every cause (`offered`, `restored`, `consumed`, `revoked`) without affecting other sessions.
+- Newly offered items produce one actionable toast with filename, formatted size, and native href; replay/removal causes stay silent.
+- The fallback inbox exposes only pending items for the viewed session, hides for background/empty sessions, and preserves native hrefs.

@@ -1139,4 +1139,38 @@ describe('SessionRegistry', () => {
       expect(registry.isActiveSession('new-id')).toBe(true);
     });
   });
+
+  // --------------------------------------------------------------------------
+  // File downloads
+  // --------------------------------------------------------------------------
+  describe('File downloads', () => {
+    const offered = {
+      id: 'opaque-1',
+      filename: 'report.pdf',
+      sizeBytes: 42,
+      href: '/d/opaque-1',
+    };
+
+    it('reduces an offered download update to the owning session snapshot', () => {
+      registry.addSession('s1', '/workspace/project', 'project');
+      registry.handleEvent({ type: 'download_update', sessionId: 's1', cause: 'offered', downloads: [offered] });
+      expect(registry.sessions['s1'].downloads).toEqual([offered]);
+    });
+
+    it('replaces the full snapshot for restored, consumed, and revoked causes', () => {
+      registry.addSession('s1', '/workspace/project', 'project');
+      registry.handleEvent({ type: 'download_update', sessionId: 's1', cause: 'restored', downloads: [offered] });
+      registry.handleEvent({ type: 'download_update', sessionId: 's1', cause: 'consumed', downloads: [] });
+      expect(registry.sessions['s1'].downloads).toEqual([]);
+      registry.handleEvent({ type: 'download_update', sessionId: 's1', cause: 'revoked', downloads: [offered] });
+      expect(registry.sessions['s1'].downloads).toEqual([offered]);
+    });
+
+    it('keeps download snapshots isolated between sessions', () => {
+      registry.addSession('s1', '/workspace/one', 'one');
+      registry.addSession('s2', '/workspace/two', 'two');
+      registry.handleEvent({ type: 'download_update', sessionId: 's1', cause: 'offered', downloads: [offered] });
+      expect(registry.sessions['s2'].downloads).toEqual([]);
+    });
+  });
 });

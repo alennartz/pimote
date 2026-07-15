@@ -11,7 +11,7 @@ import {
 import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory } from '@earendil-works/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
-import type { PimoteEvent, Card } from '../../shared/dist/index.js';
+import type { PimoteEvent, Card, DownloadItem } from '../../shared/dist/index.js';
 import type { PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import type { PanelBusMessage } from './panel-state.js';
@@ -61,6 +61,8 @@ export interface SessionState {
   pendingUiResponses: Map<string, PendingUiEntry>;
   extensionsBound: boolean;
   panelState: Map<string, Card[]>;
+  /** Current pending file-download snapshot for this session. */
+  downloads: DownloadItem[];
   panelListenerUnsubs: (() => void)[];
   panelThrottleTimer: ReturnType<typeof setTimeout> | null;
   /** True while a tree navigation + optional summarization is in progress. */
@@ -149,6 +151,7 @@ function createSessionState(
     pendingUiResponses: new Map(),
     extensionsBound: false,
     panelState: new Map(),
+    downloads: [],
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
     treeNavigationInProgress: false,

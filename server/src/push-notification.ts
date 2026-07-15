@@ -20,15 +20,22 @@ export interface PushNotificationPayload {
   sessionId: string;
   sessionName?: string;
   firstMessage?: string;
-  reason: 'idle' | 'interaction';
+  reason: 'idle' | 'interaction' | 'download';
   // For idle:
   lastAgentMessage?: string;
   // For interaction:
+
   interaction?: {
     method: string; // 'select' | 'confirm' | 'input' | 'editor'
     title: string;
     options?: string[];
     message?: string; // for confirm
+  };
+  // For download: presentation metadata only; never include the one-shot href.
+  download?: {
+    downloadId: string;
+    filename: string;
+    sizeBytes: number;
   };
 }
 

@@ -880,6 +880,30 @@ export interface PanelUpdateEvent {
   cards: Card[];
 }
 
+// -- File download events --
+
+export type DownloadUpdateCause = 'offered' | 'restored' | 'consumed' | 'revoked';
+
+/** A pending, user-approved file download offered by the agent. */
+export interface DownloadItem {
+  /** Server-generated opaque, single-use registration identifier. */
+  id: string;
+  /** Filename derived from the validated source path. */
+  filename: string;
+  /** File size captured when the registration was offered. */
+  sizeBytes: number;
+  /** Same-origin, single-use attachment route. */
+  href: string;
+}
+
+/** Full replacement snapshot of a session's pending file downloads. */
+export interface DownloadUpdateEvent {
+  type: 'download_update';
+  sessionId: string;
+  cause: DownloadUpdateCause;
+  downloads: DownloadItem[];
+}
+
 /**
  * Server-initiated client navigation request. Emitted by extensions that
  * register a new same-origin surface (e.g. `pimote_static_host`) and want
@@ -1007,6 +1031,8 @@ export type PimoteEvent =
   | FullResyncEvent
   // Panel
   | PanelUpdateEvent
+  // File downloads
+  | DownloadUpdateEvent
   // Navigation
   | NavigateEvent
   // Voice
