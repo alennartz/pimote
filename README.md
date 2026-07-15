@@ -62,7 +62,7 @@ Pimote is published as the app package `@pimote/pimote` at the repo root, backed
 | **client**           | `client/`          | SvelteKit PWA (Svelte 5, Tailwind CSS, shadcn-svelte)                |
 | **`@pimote/panels`** | `packages/panels/` | Standalone library extensions can import to push card data to the UI |
 
-The `shared/` directory holds TypeScript types for the WebSocket wire protocol shared between server and client — it's a tsc-only project, not a published package. The voice-mode pi extension lives at `server/src/voice/` and is loaded into each session only when voice is configured (see [Voice mode](#voice-mode)). The static-host pi extension lives at `server/src/static-host/` and is loaded unconditionally — it exposes the `pimote_static_host` / `pimote_static_host_remove` agent tools that publish a local folder under `/s/<slug>/` and push a tappable card to the panel UI.
+The `shared/` directory holds TypeScript types for the WebSocket wire protocol shared between server and client — it's a tsc-only project, not a published package. The voice-mode pi extension lives at `server/src/voice/` and is loaded into each session only when voice is configured (see [Voice mode](#voice-mode)). The static-host pi extension lives at `server/src/static-host/` and is loaded unconditionally — it exposes the `pimote_static_host` / `pimote_static_host_remove` agent tools that publish a local folder under `/s/<slug>/` and push a tappable card to the panel UI. The file-download extension is also loaded into every session; it lets the agent offer an individual project file as a one-time, user-approved browser download.
 
 A separate **native Android client** lives at `mobile/android/` — a voice-first Kotlin app that places calls through the system telephony stack (`SelfManagedConnectionService`), and exposes your projects as Android system contacts so they're callable by name from Google Assistant / Gemini ("Hey Google, call <project>") and from the dialer's name search. It also ships an **Android Auto** surface (`CarAppService`, currently dev-mode / sideloaded) with a project list that places a new-session call on tap and a recency list that resumes a past session. Independent Gradle project, Docker-based build (`make android-test` / `make android-build`), not part of the npm workspace; speaks the same WebSocket protocol as the PWA. See `mobile/android/README.md`.
 
@@ -110,6 +110,7 @@ Once in a session, you can:
 - Open **Tree Navigation** with `/tree` to browse session history, search/filter nodes, and edit labels (right-click on desktop, long-press on touch)
 - Pick a tree navigation mode: no summary, summarize, or a custom summary prompt (with in-dialog loading while summarization runs)
 - **Listen** to responses via per-message text-to-speech
+- **Download files** when the agent offers one — approve the native browser download from the toast or the session's Downloads inbox
 
 ### Extensions
 
@@ -121,13 +122,15 @@ Pimote bridges all of pi's UI extension mechanisms over WebSocket:
 
 This means any pi extension that uses the standard UI APIs works in Pimote without modification.
 
-Pimote also ships an in-server pi extension that gives the agent two tools, `pimote_static_host` and `pimote_static_host_remove`, for publishing a local folder of static files (built PWA, report, demo, etc.) at `/s/<slug>/` on the same origin as the Pimote UI. Each registration emits a tappable panel card pointing at the bundle. Bundle registrations are persisted per session under `~/.local/state/pimote/static-host/` and garbage-collected on server boot.
+Pimote also ships in-server pi extensions. The static-host extension gives the agent two tools, `pimote_static_host` and `pimote_static_host_remove`, for publishing a local folder of static files (built PWA, report, demo, etc.) at `/s/<slug>/` on the same origin as the Pimote UI. Each registration emits a tappable panel card pointing at the bundle. Bundle registrations are persisted per session under `~/.local/state/pimote/static-host/` and garbage-collected on server boot.
+
+The file-download extension gives the agent `pimote_send_file({ path })` and `pimote_cancel_file_send({ id })`. Sending a file registers the existing project file for a single native download; Pimote never copies or deletes the source. The browser asks for an explicit click in the in-app toast or the session-local Downloads inbox, and the one-shot link is consumed even if the file later disappears. Offers are session-scoped and are not exposed to the Android client.
 
 ### Multi-Device and Conflict Handling
 
 - **Session takeover** — if a project has an external pi process running (e.g., from a terminal), Pimote detects it and offers to kill it and take over
 - **Device switching** — if you open the same session from another browser/device, the new connection displaces the old one
-- **Push notifications** — enable notifications to get alerted when a background session finishes working (useful when switching away from the browser)
+- **Push notifications** — enable notifications to get alerted when a background session finishes working (useful when switching away from the browser); a file offer opens that session's Downloads inbox rather than downloading automatically
 
 ### Reconnect
 
