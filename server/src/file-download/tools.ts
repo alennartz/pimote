@@ -4,7 +4,8 @@ export interface SendFileToolInput {
   path: string;
 }
 
-export type SendFileToolOutput = DownloadItem;
+/** Agent-facing metadata; the one-shot href is reserved for the client event. */
+export type SendFileToolOutput = Pick<DownloadItem, 'id' | 'filename' | 'sizeBytes'>;
 
 export interface CancelFileSendToolInput {
   id: string;

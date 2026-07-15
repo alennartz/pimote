@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PushNotificationService } from './push-notification.js';
 import type { PimoteConfig } from './config.js';
 
-const { runtimeArgs, openedSessionManagers, gitBranchSpy } = vi.hoisted(() => ({
+const { runtimeArgs, serviceArgs, openedSessionManagers, gitBranchSpy } = vi.hoisted(() => ({
   runtimeArgs: [] as Array<{ cwd: string; agentDir: string; sessionManager: { getCwd(): string } }>,
+  serviceArgs: [] as Array<{ resourceLoaderOptions?: { extensionFactories?: unknown[] } }>,
   openedSessionManagers: [] as Array<{ getCwd(): string }>,
   gitBranchSpy: vi.fn(() => 'main'),
 }));
@@ -37,15 +38,18 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       on: vi.fn(() => () => {}),
       emit: vi.fn(() => undefined),
     })),
-    createAgentSessionServices: vi.fn(async ({ cwd, agentDir }: { cwd: string; agentDir: string }) => ({
-      cwd,
-      agentDir,
-      authStorage: {},
-      settingsManager: {},
-      modelRegistry: {},
-      resourceLoader: {},
-      diagnostics: [],
-    })),
+    createAgentSessionServices: vi.fn(async (args: { cwd: string; agentDir: string; resourceLoaderOptions?: { extensionFactories?: unknown[] } }) => {
+      serviceArgs.push(args);
+      return {
+        cwd: args.cwd,
+        agentDir: args.agentDir,
+        authStorage: {},
+        settingsManager: {},
+        modelRegistry: {},
+        resourceLoader: {},
+        diagnostics: [],
+      };
+    }),
     createAgentSessionFromServices: vi.fn(async () => ({
       session: fakeSession,
     })),
@@ -103,6 +107,7 @@ function createTestConfig(overrides: Partial<PimoteConfig> = {}): PimoteConfig {
 describe('PimoteSessionManager.openSession', () => {
   it('uses the reopened session cwd instead of the requested folder path when opening a session file', async () => {
     runtimeArgs.length = 0;
+    serviceArgs.length = 0;
     openedSessionManagers.length = 0;
     gitBranchSpy.mockClear();
 
@@ -115,5 +120,19 @@ describe('PimoteSessionManager.openSession', () => {
     expect(runtimeArgs[0]?.cwd).toBe('/tmp/pi-repro-resume-cwd/demo');
     expect(slot?.folderPath).toBe('/tmp/pi-repro-resume-cwd/demo');
     expect(gitBranchSpy).toHaveBeenCalledWith('/tmp/pi-repro-resume-cwd/demo');
+    expect(slot?.sessionState.downloads).toEqual([]);
+  });
+
+  it('threads the dedicated download extension factory alongside static hosting into every runtime', async () => {
+    runtimeArgs.length = 0;
+    serviceArgs.length = 0;
+    const staticHostFactory = (() => undefined) as any;
+    const fileDownloadFactory = (() => undefined) as any;
+    const manager = new PimoteSessionManager(createTestConfig(), createMockPushService(), { staticHostFactory, fileDownloadFactory });
+
+    await manager.openSession('/home/user/project');
+
+    expect(serviceArgs).toHaveLength(1);
+    expect(serviceArgs[0]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory]);
   });
 });

@@ -44,7 +44,7 @@ describe('FileSessionJsonStore', () => {
 
   it('leaves no temporary sibling after a successful atomic write', async () => {
     await store.write('session-a', { version: 1, entries: [] });
-    const names = await readdir(dir);
+    const names = (await readdir(dir)).sort();
     expect(names).toEqual(['session-a.json']);
   });
 
@@ -87,21 +87,21 @@ describe('gcSessionJsonStore', () => {
     await writeFile(join(dir, 'alive.json'), '{}', 'utf8');
     await writeFile(join(dir, 'orphan.json'), '{}', 'utf8');
     await gcSessionJsonStore({ storeDir: dir, validSessionIds: new Set(['alive']) });
-    await expect(readdir(dir)).resolves.toEqual(['alive.json']);
+    await expect(readdir(dir).then((names) => names.sort())).resolves.toEqual(['alive.json']);
   });
 
   it('keeps every document whose session id is still valid', async () => {
     await writeFile(join(dir, 'a.json'), '{}', 'utf8');
     await writeFile(join(dir, 'b.json'), '{}', 'utf8');
     await gcSessionJsonStore({ storeDir: dir, validSessionIds: new Set(['a', 'b']) });
-    await expect(readdir(dir)).resolves.toEqual(['a.json', 'b.json']);
+    await expect(readdir(dir).then((names) => names.sort())).resolves.toEqual(['a.json', 'b.json']);
   });
 
   it('removes abandoned temporary files even for valid sessions', async () => {
     await writeFile(join(dir, 'alive.json'), '{}', 'utf8');
     await writeFile(join(dir, 'alive.json.tmp'), '{ half', 'utf8');
     await gcSessionJsonStore({ storeDir: dir, validSessionIds: new Set(['alive']) });
-    await expect(readdir(dir)).resolves.toEqual(['alive.json']);
+    await expect(readdir(dir).then((names) => names.sort())).resolves.toEqual(['alive.json']);
   });
 
   it('does not fail when the storage directory does not exist', async () => {
@@ -114,6 +114,6 @@ describe('gcSessionJsonStore', () => {
     await mkdir(join(dir, 'nested'));
     await writeFile(join(dir, 'orphan.json'), '{}', 'utf8');
     await gcSessionJsonStore({ storeDir: dir, validSessionIds: new Set() });
-    await expect(readdir(dir)).resolves.toEqual(['README', 'nested']);
+    await expect(readdir(dir).then((names) => names.sort())).resolves.toEqual(['README', 'nested']);
   });
 });

@@ -56,7 +56,7 @@ The module also owns its model-facing tool descriptions, download route handler,
 
 #### Client download UI
 
-New Client modules, approximately a download store/coordinator plus `DownloadInbox` and `DownloadToast` components, own presentation and native-link invocation. They consume typed protocol state rather than infer downloads from tool-call rendering or panel cards.
+New Client modules, approximately a download store/coordinator plus `DownloadInbox` and `DownloadToast` components, own presentation and native-link invocation. They consume typed protocol state rather than infer downloads from tool-call rendering or panel cards. A small notification-intent coordinator owns the existing-session versus adopt-then-open split, so an OS download notification can open the owning session's local inbox without following its one-shot link. A service-worker push-planning seam chooses no visible action for a focused client (the live event already toasts) and an OS notification carrying only session/inbox intent for a background client.
 
 ### Interfaces
 
@@ -86,15 +86,26 @@ interface DownloadItem {
   href: string; // One-shot same-origin route, e.g. `/d/<id>`.
 }
 
-interface DownloadUpdateEvent {
+interface DownloadOfferedUpdateEvent {
   type: 'download_update';
   sessionId: string;
-  cause: DownloadUpdateCause;
-  downloads: DownloadItem[]; // Full replacement snapshot for this session.
+  cause: 'offered';
+  /** Identifies the newly offered member of this full snapshot. */
+  offeredDownloadId: string;
+  downloads: DownloadItem[];
 }
+
+interface DownloadSnapshotUpdateEvent {
+  type: 'download_update';
+  sessionId: string;
+  cause: Exclude<DownloadUpdateCause, 'offered'>;
+  downloads: DownloadItem[];
+}
+
+type DownloadUpdateEvent = DownloadOfferedUpdateEvent | DownloadSnapshotUpdateEvent;
 ```
 
-The client receives no absolute path, workspace root, or server-only source metadata. `offered` permits the toast coordinator to prompt the user; `restored`, `consumed`, and `revoked` replace state without a new toast. `sizeBytes` is deliberately not refreshed when the source changes because the registration is live, not a snapshot.
+The client receives no absolute path, workspace root, or server-only source metadata. Every event carries a full replacement snapshot, but only `offered` also carries `offeredDownloadId`; the toast coordinator finds that exact item rather than depending on snapshot ordering. `restored`, `consumed`, and `revoked` replace state without a new toast. `sizeBytes` is deliberately not refreshed when the source changes because the registration is live, not a snapshot.
 
 #### Download manager seam
 
@@ -128,7 +139,7 @@ interface DownloadManager {
 
 `cancel` succeeds only for a registration owned by the requesting session. It removes the persistent and in-memory entry and publishes a `revoked` snapshot. It never touches the source file.
 
-`claim` is the single-use authorization operation. It synchronously reserves the ID against concurrent requests, durably removes it from the session document, removes it from the active registry, and publishes `consumed` before resolving its server-only claim. If durable removal cannot complete, it serves no bytes. Once `claim` resolves, no later browser can obtain the file with that ID, even if streaming later fails.
+`claim` is the single-use authorization operation. It synchronously reserves the ID against concurrent requests, durably removes it from the session document, removes it from the active registry, and publishes `consumed` before resolving its server-only claim. If durable removal cannot complete, `claim` rejects; the HTTP route returns a generic `500` without opening or streaming the source. Once `claim` resolves, no later browser can obtain the file with that ID, even if streaming later fails.
 
 #### Agent tools
 
@@ -158,15 +169,64 @@ For a valid source, the route streams a native attachment with the registration-
 
 #### EventBus, Server state, and push contract
 
-The extension emits full download snapshots on a dedicated `pimote:downloads` EventBus channel. `PimoteSessionManager` stores the current snapshot in `SessionState`, routes it as `download_update` to the slot owner, and explicitly sends the current snapshot after recovery or view changes. This gives direct HTTP consumption a way to remove a pending item from the current owner's PWA without coupling the route to client code.
+The extension emits full download snapshots on a dedicated `pimote:downloads` EventBus channel. `PimoteSessionManager` stores the current snapshot in `SessionState`, routes it as `download_update` only to the current slot owner, and sends a silent `restored` snapshot after every recovery boundary: full resync, incremental reconnect, viewed-session change, and ownership takeover. `/new`, fork, and replacement construct a fresh session state with no migrated registrations. This gives direct HTTP consumption a way to remove a pending item from the current owner's PWA without coupling the route to client code.
 
-On an `offered` update, the server also sends the existing VAPID push notification with a download-specific reason and `{ downloadId, filename, sizeBytes }` presentation data. The service worker uses its established focus policy: background clients receive an OS notification; a focused client avoids a duplicate toast because the live `download_update` already produced the actionable prompt. Tapping the OS notification opens/adopts the owning session, where the registration remains pending for an explicit download click.
+Server boot creates one download manager/store/extension factory, skips its orphan GC when session enumeration fails, threads the factory into every pi session, and mounts the manager's `/d/<id>` route before SPA fallback. On an `offered` update, the server also sends the existing VAPID push notification with a download-specific reason and `{ downloadId, filename, sizeBytes }` presentation data; it never includes the one-shot href. The service worker uses its established focus policy: a focused client receives no extra download prompt because the live `download_update` already produced the actionable toast, while a background client receives an OS notification. That notification carries an `openDownloads` intent only; tapping it opens/adopts the owning session and then its session-local fallback inbox, without consuming a link.
+
+#### Delivery, bootstrap, and notification seams
+
+```ts
+interface DownloadEventBus {
+  on(type: 'pimote:downloads', listener: (update: unknown) => void | Promise<void>): () => void;
+}
+
+interface RouteSlotDownloadUpdateOptions {
+  sessionId: string;
+  folderPath: string;
+  sessionName?: string;
+  state: { downloads: DownloadItem[] };
+  send(event: DownloadUpdateEvent): void;
+  notify(payload: PushNotificationPayload): Promise<void>;
+}
+
+function setupSlotDownloadListener(eventBus: DownloadEventBus, options: RouteSlotDownloadUpdateOptions): () => void;
+
+function routeSlotDownloadUpdate(update: DownloadUpdateEvent, options: RouteSlotDownloadUpdateOptions): Promise<void>;
+
+function makeDownloadSnapshot(sessionId: string, downloads: DownloadItem[]): DownloadSnapshotUpdateEvent;
+
+interface FileDownloadBootstrap {
+  manager: DownloadManager;
+  extensionFactory: ExtensionFactory;
+}
+
+function bootstrapFileDownloads(args: { storeDir: string; validSessionIds: Set<string> | null }): Promise<FileDownloadBootstrap>;
+
+interface DownloadNotificationIntent {
+  sessionId: string;
+  folderPath?: string;
+  openDownloads: true;
+}
+
+interface NotificationSessionPort {
+  hasSession(sessionId: string): boolean;
+  switchToSession(sessionId: string): void;
+  openExistingSession(sessionId: string, folderPath: string): Promise<boolean>;
+  openDownloadInbox(sessionId: string): void;
+}
+
+function handleDownloadNotificationIntent(intent: DownloadNotificationIntent, port: NotificationSessionPort): Promise<void>;
+```
+
+`routeSlotDownloadUpdate` is the EventBus-to-owner boundary: it replaces state and sends exactly one wire event to the owner, then sends VAPID only for an offered item resolved through `offeredDownloadId`. `makeDownloadSnapshot` is the silent recovery/view handoff. `bootstrapFileDownloads` is the index boot boundary and is dependency-injectable in tests so GC/factory ownership is observable without booting pi. The notification port makes the async adopt-before-open ordering explicit.
+
+A client download coordinator consumes post-reducer updates and calls the toast presentation seam only for the offered item. The service-worker push planner consumes only download presentation metadata and returns either no focused-client delivery or a background OS notification whose click data is `DownloadNotificationIntent`.
 
 #### Client state and interaction contract
 
-Each per-session client state gains `downloads: DownloadItem[]`. A `download_update` fully replaces that session's list; the client does not merge or persist it independently of the server. The viewed session's fallback inbox reads only its own list.
+Each per-session client state gains `downloads: DownloadItem[]`. A `download_update` fully replaces that session's list; the client does not merge or persist it independently of the server. The registry forwards the typed update to the download coordinator after reducing it. The viewed session's fallback inbox reads only its own list.
 
-For `cause: 'offered'`, the client shows a toast containing filename and formatted initial size. Its primary Download action is a native `<a href={item.href}>` attachment request, so the usual case is one explicit user click from notification to browser download. The fallback inbox renders the same native links for pending items after the toast is missed or more than one file is available. No click automatically follows an URL, including a system-notification click.
+For `cause: 'offered'`, the coordinator finds `offeredDownloadId` in the snapshot and shows one toast containing that file's filename and formatted initial size. Its primary Download action is a native `<a href={item.href}>` attachment request, so the usual case is one explicit user click from notification to browser download. The fallback inbox renders the same native links for pending items after the toast is missed or more than one file is available. A notification-click coordinator switches an already-open session or awaits adoption of a closed one before opening that same session's inbox. No click automatically follows an URL, including a system-notification click.
 
 ## Tests
 
@@ -174,27 +234,43 @@ For `cause: 'offered'`, the client shows a toast containing filename and formatt
 
 ### Interface Files
 
-- `shared/src/protocol.ts` — `DownloadUpdateCause`, `DownloadItem`, and `DownloadUpdateEvent` wire contracts, included in `PimoteEvent`.
+- `shared/src/protocol.ts` — `DownloadUpdateCause`, `DownloadItem`, and discriminated `DownloadUpdateEvent` wire contracts (`offeredDownloadId` on offers only), included in `PimoteEvent`.
 - `server/src/session-json-store.ts` — generic per-session JSON persistence seam, filesystem adapter boundary, and orphan-GC contract.
-- `server/src/file-download/manager.ts` — persisted registration shapes, `DownloadManager` lifecycle/offer/cancel/claim seam, and factory boundary.
+- `server/src/file-download/manager.ts` — persisted registration shapes, `DownloadManager` lifecycle/offer/cancel/claim seam (including durable-failure rejection), and factory boundary.
 - `server/src/file-download/tools.ts` — send/cancel tool input/output contracts and adapter boundaries.
 - `server/src/file-download/prompt.ts` — model-facing tool description boundary.
 - `server/src/file-download/index.ts` — extension-factory boundary and public file-download exports.
 - `server/src/file-download/http-handler.ts` — one-shot attachment route boundary.
-- `server/src/session-manager.ts` — session-local pending-download snapshot state field.
+- `server/src/file-download/bootstrap.ts` — process-lifetime manager/store/factory boot seam with injectable GC dependencies.
+- `server/src/server.ts` — `/d` route injection/mount boundary before SPA fallback.
+- `server/src/session-manager.ts` — session-local pending-download state plus EventBus-to-owner routing and silent snapshot seams.
 - `server/src/push-notification.ts` — download push reason and presentation-only metadata shape.
-- `client/src/lib/stores/session-registry.svelte.ts` — per-session pending-download state field and reducer boundary.
+- `client/src/lib/stores/session-registry.svelte.ts` — per-session pending-download state, reducer, and post-reducer coordinator callback boundary.
+- `client/src/lib/stores/connection.svelte.ts` — notification-driven pending-adopt `openDownloads` intent handoff.
 - `client/src/lib/download-presentation.ts` — toast and viewed-session inbox presentation seams, including registration-size formatting.
+- `client/src/lib/download-coordinator.ts` — typed update-to-toast coordinator boundary.
+- `client/src/lib/download-push.ts` — focus-aware service-worker download-push planning seam.
+- `client/src/lib/download-notification-intent.ts` — switch/adopt-then-open-inbox notification intent boundary.
 
 ### Test Files
 
 - `server/src/session-json-store.test.ts` — JSON persistence round trips, atomic replacement, corruption handling, removal, and orphan cleanup.
-- `server/src/file-download/manager.test.ts` — registration validation/persistence, session replay, ownership cancellation, snapshot publication, and single-use claims.
+- `server/src/file-download/manager.test.ts` — registration validation/persistence, session replay, ownership cancellation, snapshot publication, single-use claims, and durable-removal failure.
 - `server/src/file-download/tools.test.ts` — send/cancel agent-tool delegation and server-derived metadata contract.
 - `server/src/file-download/index.test.ts` — extension tool registration, lifecycle activation/deactivation, EventBus publication, and session context wiring.
-- `server/src/file-download/http-handler.test.ts` — route recognition, claim-before-open, attachment streaming, path validation, and consumed failure behavior.
-- `client/src/lib/stores/session-registry.test.ts` — full-replacement download snapshots and per-session isolation.
-- `client/src/lib/download-presentation.test.ts` — offer-toast, native-link inbox, cause filtering, viewed-session gating, and size-copy contracts.
+- `server/src/file-download/http-handler.test.ts` — route recognition, claim-before-open, attachment streaming, path validation, consumed failure behavior, and generic durable-claim failure.
+- `server/src/file-download/bootstrap.test.ts` — boot GC safety plus manager/factory singleton ownership.
+- `server/src/index.test.ts` — main-process handoff of the enumerated allow-list, extension factory, and shared manager.
+- `server/src/server.test.ts` — `/d` route mount before SPA fallback with the process-lifetime manager.
+- `server/src/session-manager.test.ts` — EventBus routing, owner-only snapshot state, push metadata, recovery snapshots, and reset isolation seams.
+- `server/src/session-manager-open-session.test.ts` — download extension factory injection into runtime resources.
+- `server/src/ws-handler.test.ts` — full/incremental recovery, viewed-session, and takeover snapshot delivery.
+- `server/src/push-notification.test.ts` — download VAPID serialization without an href.
+- `client/src/lib/stores/session-registry.test.ts` — full-replacement download snapshots, per-session/reset isolation, and post-reducer coordinator handoff.
+- `client/src/lib/download-presentation.test.ts` — exact-offer toast selection, native-link inbox, cause filtering, viewed-session gating, and size-copy contracts.
+- `client/src/lib/download-coordinator.test.ts` — one-toast coordinator behavior for an offered ID in a multi-item snapshot.
+- `client/src/lib/download-push.test.ts` — focused/background push deduplication and no-href inbox intent.
+- `client/src/lib/download-notification-intent.test.ts` — existing-session and adopt-then-open session-local inbox flow.
 
 ### Behaviors Covered
 
@@ -208,18 +284,28 @@ For `cause: 'offered'`, the client shows a toast containing filename and formatt
 #### Download manager
 
 - Session activation rehydrates registrations and emits one full `restored` snapshot; deactivation drops process ownership without deleting persistence.
-- Offers accept regular files within the captured workspace, support contained absolute paths, derive filename/size/opaque href metadata, and persist server-only source details.
+- Offers accept regular files within the captured workspace, including contained absolute paths and symlinks that resolve inside it; derive filename/size/opaque href metadata; persist server-only source details; and publish an `offered` full snapshot.
 - Offers reject missing paths, directories, and lexical or real-path escapes outside the workspace.
 - Cancellation is session-owned, source-preserving, idempotently reports unknown IDs, and emits a full `revoked` snapshot.
-- Claims return server-only source details only after durable single-use consumption, publish `consumed` before resolution, and return `undefined` for unknown or raced IDs.
+- Claims return server-only source details only after durable single-use consumption, publish `consumed` before resolution, return `undefined` for unknown or raced IDs, and reject rather than expose source details when durable removal fails.
 
 #### Agent extension and HTTP route
 
-- The extension exposes only `pimote_send_file` and `pimote_cancel_file_send`, passes session cwd/ownership into the manager, replays lifecycle state, and emits updates on `pimote:downloads`.
-- The route falls through for unrelated paths, recognizes exactly one opaque ID segment, claims before opening the live source, streams a native attachment with no-cache headers, safely encodes filenames, and consumes registrations even when click-time validation fails.
+- The extension exposes only `pimote_send_file` and `pimote_cancel_file_send`, passes session cwd/ownership into the manager, returns only the agent-facing ID/filename/size metadata (not the one-shot href), replays lifecycle state, and emits updates on `pimote:downloads`.
+- The route falls through for unrelated or non-`GET` requests, recognizes exactly one opaque ID segment, claims before opening the live source, streams the source as it exists at click time as a native attachment with no-cache headers, safely encodes filenames, consumes registrations even when click-time validation fails, and returns a generic `500` with no source/error bytes on durable-claim failure.
+- Bootstrap skips GC after failed enumeration, shares one manager between the extension and HTTP route, threads the extension into each runtime, and mounts `/d` before SPA fallback.
+
+#### Server delivery and push
+
+- The dedicated EventBus listener accepts only its owning session's update, replaces its state, routes one full snapshot to that slot's current owner, and sends download VAPID only for an offered ID present in the snapshot.
+- Recovery sends silent `restored` snapshots after incremental reconnect, full resync, viewed-session changes, and takeover. New/fork/replaced sessions do not inherit old registrations.
+- Download VAPID contains only ID/filename/size presentation metadata, never an href.
 
 #### Client session state
 
 - A `download_update` replaces the owning session's pending list for every cause (`offered`, `restored`, `consumed`, `revoked`) without affecting other sessions.
-- Newly offered items produce one actionable toast with filename, formatted size, and native href; replay/removal causes stay silent.
+- Newly offered items produce one actionable toast for `offeredDownloadId` with filename, formatted size, and native href; replay/removal causes stay silent even when their snapshots contain items.
 - The fallback inbox exposes only pending items for the viewed session, hides for background/empty sessions, and preserves native hrefs.
+- A focused push adds no second prompt; a background push carries only an `openDownloads` session intent. Its click switches or adopts the owner first, then opens that session's inbox without following a link.
+
+**Review status:** approved

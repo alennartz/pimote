@@ -1,7 +1,7 @@
 import type { DownloadItem, DownloadUpdateEvent } from '../../../shared/dist/index.js';
 import type { SessionJsonStore } from '../session-json-store.js';
 
-export type { DownloadItem, DownloadUpdateCause, DownloadUpdateEvent } from '../../../shared/dist/index.js';
+export type { DownloadItem, DownloadOfferedUpdateEvent, DownloadSnapshotUpdateEvent, DownloadUpdateCause, DownloadUpdateEvent } from '../../../shared/dist/index.js';
 
 /** Persisted server-only registration data. Never sent over the wire. */
 export interface DownloadStoreEntry {
@@ -37,6 +37,7 @@ export interface DownloadManager {
   deactivate(sessionId: string): void;
   offer(input: OfferDownloadInput): Promise<DownloadItem>;
   cancel(sessionId: string, id: string): Promise<{ cancelled: boolean }>;
+  /** Rejects when durable single-use removal cannot complete; callers must serve no bytes. */
   claim(id: string): Promise<DownloadClaim | undefined>;
   snapshot(sessionId: string): DownloadItem[];
 }

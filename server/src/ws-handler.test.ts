@@ -4,7 +4,7 @@ import type { PimoteSessionManager, ManagedSlot, SessionState, ClientConnection 
 import type { FolderIndex } from './folder-index.js';
 import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer } from './event-buffer.js';
-import type { PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
+import type { DownloadItem, PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
 
 // --- Mock factories ---
 
@@ -38,6 +38,7 @@ function createMockSlot(
     extensionsBound: boolean;
     session: any;
     panelState: Map<string, any>;
+    downloads: DownloadItem[];
   }> = {},
 ): ManagedSlot {
   const id = overrides.id ?? 'session-1';
@@ -70,6 +71,7 @@ function createMockSlot(
     pendingUiResponses: new Map(),
     extensionsBound: overrides.extensionsBound ?? false,
     panelState: overrides.panelState ?? new Map(),
+    downloads: overrides.downloads ?? [],
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
     treeNavigationInProgress: false,
@@ -228,6 +230,8 @@ function findEvents(sent: Array<any>, type: string): PimoteEvent[] {
   return sent.filter((m) => 'type' in m && m.type === type);
 }
 
+const pendingDownload: DownloadItem = { id: 'opaque-1', filename: 'report.pdf', sizeBytes: 42, href: '/d/opaque-1' };
+
 // --- Tests ---
 
 describe('WsHandler', () => {
@@ -269,6 +273,7 @@ describe('WsHandler', () => {
         id: 'session-1',
         connectedClientId: 'client-1',
         eventBuffer: createMockEventBuffer({ replayResult: bufferedEvents }),
+        downloads: [pendingDownload],
       });
 
       const sessions = new Map([['session-1', session]]);
@@ -290,6 +295,12 @@ describe('WsHandler', () => {
 
       const restored = findEvents(sent, 'connection_restored');
       expect(restored).toHaveLength(1);
+      expect(findEvents(sent, 'download_update')).toContainEqual({
+        type: 'download_update',
+        sessionId: 'session-1',
+        cause: 'restored',
+        downloads: [pendingDownload],
+      });
 
       const resp = findResponse(sent, 'req-2');
       expect(resp).toBeDefined();
@@ -301,6 +312,7 @@ describe('WsHandler', () => {
         id: 'session-1',
         connectedClientId: 'client-1',
         eventBuffer: createMockEventBuffer({ replayResult: [] }),
+        downloads: [pendingDownload],
       });
 
       const sessions = new Map([['session-1', session]]);
@@ -318,6 +330,12 @@ describe('WsHandler', () => {
       const resync = findEvents(sent, 'full_resync');
       expect(resync).toHaveLength(1);
       expect((resync[0] as any).sessionId).toBe('session-1');
+      expect(findEvents(sent, 'download_update')).toContainEqual({
+        type: 'download_update',
+        sessionId: 'session-1',
+        cause: 'restored',
+        downloads: [pendingDownload],
+      });
 
       const resp = findResponse(sent, 'req-3');
       expect(resp!.success).toBe(true);
@@ -530,6 +548,36 @@ describe('WsHandler', () => {
       expect(oldClosedEvents).toHaveLength(1);
       expect((oldClosedEvents[0] as any).sessionId).toBe('session-1');
       expect((oldClosedEvents[0] as any).reason).toBe('displaced');
+    });
+
+    it('sends the pending snapshot only to the new owner after takeover', async () => {
+      const session = createMockSlot({
+        id: 'session-1',
+        connectedClientId: 'old-client',
+        downloads: [pendingDownload],
+      });
+      const sessions = new Map([['session-1', session]]);
+      const clientRegistry: ClientRegistry = new Map();
+      const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
+      const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
+
+      await newCtx.handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-1',
+          force: true,
+          id: 'req-download-takeover',
+        }),
+      );
+
+      expect(findEvents(newCtx.sent, 'download_update')).toContainEqual({
+        type: 'download_update',
+        sessionId: 'session-1',
+        cause: 'restored',
+        downloads: [pendingDownload],
+      });
+      expect(findEvents(oldCtx.sent, 'download_update')).toEqual([]);
     });
 
     it('reclaims session already owned by same client without displacement', async () => {
@@ -1340,6 +1388,25 @@ describe('WsHandler', () => {
 
       const buffered = findEvents(sent, 'buffered_events');
       expect(buffered).toHaveLength(0);
+    });
+  });
+
+  describe('view_session — download snapshot', () => {
+    it('sends the viewed session pending-download snapshot without treating it as a new offer', async () => {
+      const session = createMockSlot({ id: 'session-1', connectedClientId: 'client-1', downloads: [pendingDownload] });
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(JSON.stringify({ type: 'view_session', sessionId: 'session-1', id: 'req-view-downloads' }));
+
+      expect(findEvents(sent, 'download_update')).toEqual([
+        {
+          type: 'download_update',
+          sessionId: 'session-1',
+          cause: 'restored',
+          downloads: [pendingDownload],
+        },
+      ]);
     });
   });
 

@@ -62,8 +62,9 @@ describe('serveFileDownloadRoute', () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  async function get(path: string): Promise<FetchResult> {
-    const response = await fetch(`http://127.0.0.1:${port}${path}`);
+  async function request(path: string, init?: RequestInit): Promise<FetchResult> {
+    lastHandled = null;
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, init);
     return {
       status: response.status,
       body: await response.text(),
@@ -72,6 +73,10 @@ describe('serveFileDownloadRoute', () => {
       contentType: response.headers.get('content-type'),
       handled: lastHandled === true,
     };
+  }
+
+  function get(path: string): Promise<FetchResult> {
+    return request(path);
   }
 
   function claim(id: string, overrides: Partial<DownloadClaim> = {}): void {
@@ -93,6 +98,14 @@ describe('serveFileDownloadRoute', () => {
     expect(result.handled).toBe(false);
     expect(result.status).toBe(599);
     expect(result.body).toBe('fell-through');
+    expect(manager.claim).not.toHaveBeenCalled();
+  });
+
+  it('falls through for a non-GET request without claiming its opaque id', async () => {
+    claim('opaque-1');
+    const result = await request('/d/opaque-1', { method: 'POST' });
+    expect(result.handled).toBe(false);
+    expect(result.status).toBe(599);
     expect(manager.claim).not.toHaveBeenCalled();
   });
 
@@ -120,6 +133,17 @@ describe('serveFileDownloadRoute', () => {
     expect(result.status).toBe(404);
   });
 
+  it('returns a generic 500 without opening source bytes when durable claim removal fails', async () => {
+    (manager.claim as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('durable removal failed'));
+
+    const result = await get('/d/opaque-1');
+
+    expect(manager.claim).toHaveBeenCalledWith('opaque-1');
+    expect(result.status).toBe(500);
+    expect(result.body).not.toContain('download body');
+    expect(result.body).not.toContain('durable removal failed');
+  });
+
   it('streams a valid source as a native attachment without caching', async () => {
     claim('opaque-1');
     const result = await get('/d/opaque-1');
@@ -130,6 +154,16 @@ describe('serveFileDownloadRoute', () => {
     expect(result.cacheControl?.toLowerCase()).toMatch(/no-(cache|store)/);
     expect(result.contentType).toMatch(/octet-stream|application\/pdf/);
     await expect(access(join(root, 'report.pdf'))).resolves.toBeUndefined();
+  });
+
+  it('streams the source as it exists when the browser claims it', async () => {
+    claim('live');
+    await writeFile(join(root, 'report.pdf'), 'changed before click', 'utf8');
+
+    const result = await get('/d/live');
+
+    expect(result.status).toBe(200);
+    expect(result.body).toBe('changed before click');
   });
 
   it('uses the registration filename with safe content-disposition encoding', async () => {
@@ -161,9 +195,9 @@ describe('serveFileDownloadRoute', () => {
     }
   });
 
-  it('does not permit a request path to select a source file', async () => {
+  it('does not permit an encoded request path to select a source file', async () => {
     claim('opaque-1');
-    const result = await get('/d/opaque-1/../report.pdf');
+    const result = await get('/d/opaque-1/%2E%2E%2Freport.pdf');
     expect(result.handled).toBe(false);
     expect(manager.claim).not.toHaveBeenCalled();
   });

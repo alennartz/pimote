@@ -30,6 +30,7 @@ import type {
   SessionReplacedEvent,
   PanelUpdateEvent,
   DownloadItem,
+  DownloadUpdateEvent,
   NavigateEvent,
   SessionRestoreEvent,
   Card,
@@ -84,6 +85,9 @@ export interface PerSessionState {
 }
 
 export class SessionRegistry {
+  /** Receives typed updates after their owning session snapshot has been reduced. */
+  constructor(private readonly onDownloadUpdate?: (event: DownloadUpdateEvent) => void) {}
+
   sessions: Record<string, PerSessionState> = $state({});
   viewedSessionId: string | null = $state(null);
   /** Temporary ID of an optimistic "new session" placeholder awaiting server confirmation. */
@@ -500,9 +504,13 @@ export class SessionRegistry {
         break;
       }
 
-      case 'download_update':
-        // The download snapshot reducer is the next implementation boundary.
+      case 'download_update': {
+        const update = event as DownloadUpdateEvent;
+        // The reducer must replace session.downloads, then forward `update` to
+        // onDownloadUpdate so presentation can toast the exact offered member.
+        void update;
         throw new Error('not implemented');
+      }
 
       case 'pimote_navigate': {
         // Only honor navigation for the currently viewed session — don't

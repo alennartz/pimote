@@ -11,8 +11,8 @@ import {
 import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory } from '@earendil-works/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
-import type { PimoteEvent, Card, DownloadItem } from '../../shared/dist/index.js';
-import type { PushNotificationService } from './push-notification.js';
+import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, DownloadUpdateEvent } from '../../shared/dist/index.js';
+import type { PushNotificationPayload, PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import type { PanelBusMessage } from './panel-state.js';
 import { getGitBranch } from './git-branch.js';
@@ -89,6 +89,40 @@ export function sendSlotEvent(slot: ManagedSlot, event: PimoteEvent): void {
   } catch {
     // WebSocket send failed — ignore (client disconnecting)
   }
+}
+
+/** Dependencies for routing one extension download update to its owning client. */
+export interface DownloadEventBus {
+  on(type: 'pimote:downloads', listener: (update: unknown) => void | Promise<void>): () => void;
+}
+
+export interface RouteSlotDownloadUpdateOptions {
+  sessionId: string;
+  folderPath: string;
+  sessionName?: string;
+  state: Pick<SessionState, 'downloads'>;
+  send(event: DownloadUpdateEvent): void;
+  notify(payload: PushNotificationPayload): Promise<void>;
+}
+
+/** Subscribe one session state to extension download updates. */
+export function setupSlotDownloadListener(_eventBus: DownloadEventBus, _options: RouteSlotDownloadUpdateOptions): () => void {
+  throw new Error('not implemented');
+}
+
+/** Build the silent full snapshot used after reconnect, resync, and view changes. */
+export function makeDownloadSnapshot(_sessionId: string, _downloads: DownloadItem[]): DownloadSnapshotUpdateEvent {
+  throw new Error('not implemented');
+}
+
+/**
+ * Apply an extension update to session-local state, route it to the current
+ * owner, and emit VAPID only for a newly offered item. The implementation
+ * validates that the update belongs to this session and resolves
+ * `offeredDownloadId` from the full snapshot before notifying.
+ */
+export function routeSlotDownloadUpdate(_update: DownloadUpdateEvent, _options: RouteSlotDownloadUpdateOptions): Promise<void> {
+  throw new Error('not implemented');
 }
 
 /** Create a pending promise for a UI dialog response. Stores the request event for replay on reconnect. */
@@ -288,16 +322,18 @@ export class PimoteSessionManager {
   onSlotEvicted?: (sessionId: string) => void;
 
   private readonly staticHostFactory?: ExtensionFactory;
+  private readonly fileDownloadFactory?: ExtensionFactory;
 
   constructor(
     private readonly config: PimoteConfig,
     private readonly pushNotificationService: PushNotificationService,
-    options: { staticHostFactory?: ExtensionFactory } = {},
+    options: { staticHostFactory?: ExtensionFactory; fileDownloadFactory?: ExtensionFactory } = {},
   ) {
     this.authStorage = AuthStorage.create();
     this.modelRegistry = ModelRegistry.create(this.authStorage);
     this.loginOrchestrator = new LoginOrchestrator(this.authStorage, this.modelRegistry);
     this.staticHostFactory = options.staticHostFactory;
+    this.fileDownloadFactory = options.fileDownloadFactory;
   }
 
   /**
@@ -366,7 +402,12 @@ export class PimoteSessionManager {
 
     const voiceExtensionFactory = this.buildVoiceExtensionFactory();
     const staticHostFactory = this.staticHostFactory;
-    const extensionFactories = [...(voiceExtensionFactory ? [voiceExtensionFactory] : []), ...(staticHostFactory ? [staticHostFactory] : [])];
+    const fileDownloadFactory = this.fileDownloadFactory;
+    const extensionFactories = [
+      ...(voiceExtensionFactory ? [voiceExtensionFactory] : []),
+      ...(staticHostFactory ? [staticHostFactory] : []),
+      ...(fileDownloadFactory ? [fileDownloadFactory] : []),
+    ];
 
     const factory: CreateAgentSessionRuntimeFactory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
       const eventBus = createEventBus();

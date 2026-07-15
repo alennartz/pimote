@@ -11,6 +11,7 @@ import type { FileSessionMetadataStore } from './session-metadata.js';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { serveStaticHostRoute, type StaticHostRegistry } from './static-host/index.js';
+import { serveFileDownloadRoute, type DownloadManager } from './file-download/index.js';
 import crypto from 'node:crypto';
 import type { VersionMismatchEvent } from '../../shared/dist/index.js';
 
@@ -109,6 +110,7 @@ export async function createServer(
   sessionMetadataStore: FileSessionMetadataStore,
   voiceOrchestrator: VoiceOrchestrator | undefined,
   staticHostRegistry: StaticHostRegistry,
+  fileDownloads: DownloadManager,
 ): Promise<PimoteServer> {
   const clientVersion = await loadClientVersion();
   if (clientVersion) {
@@ -137,7 +139,14 @@ export async function createServer(
       if (served) return;
     }
 
-    // 3b. Static-host route — /s/<slug>/* serves agent-registered bundles.
+    // 3b. One-shot file downloads — handled before SPA fallback and never
+    // selected by a filesystem path supplied in the request.
+    if (req.method === 'GET') {
+      const handled = await serveFileDownloadRoute(req, res, fileDownloads);
+      if (handled) return;
+    }
+
+    // 3c. Static-host route — /s/<slug>/* serves agent-registered bundles.
     // Unknown slugs return 404 from the handler and do NOT fall through to the SPA.
     if (req.method === 'GET' || req.method === 'HEAD') {
       const handled = await serveStaticHostRoute(req, res, staticHostRegistry);

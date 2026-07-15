@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { PimoteSessionManager, singleFlight } from './session-manager.js';
+import { makeDownloadSnapshot, PimoteSessionManager, routeSlotDownloadUpdate, setupSlotDownloadListener, singleFlight } from './session-manager.js';
 import type { ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
 import type { PimoteConfig } from './config.js';
 import type { PushNotificationService } from './push-notification.js';
@@ -57,6 +57,7 @@ function createFakeSlot(
     pendingUiResponses: new Map(),
     extensionsBound: false,
     panelState: new Map(),
+    downloads: [],
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
     treeNavigationInProgress: overrides.treeNavigationInProgress ?? false,
@@ -443,6 +444,133 @@ describe('singleFlight', () => {
     const [a, b] = await Promise.all([singleFlight(map, 'a', run('A')), singleFlight(map, 'b', run('B'))]);
     expect([a, b]).toEqual(['A', 'B']);
     expect(runs).toBe(2);
+  });
+});
+
+describe('PimoteSessionManager — download delivery seam', () => {
+  const older = { id: 'opaque-old', filename: 'old.txt', sizeBytes: 1, href: '/d/opaque-old' };
+  const offered = { id: 'opaque-new', filename: 'report.pdf', sizeBytes: 42, href: '/d/opaque-new' };
+
+  it('subscribes the session state to the dedicated EventBus channel and routes its update', async () => {
+    const on = vi.fn();
+    const unsubscribe = vi.fn();
+    const state = { downloads: [] as (typeof offered)[] };
+    const send = vi.fn();
+    const notify = vi.fn(async () => undefined);
+    setupSlotDownloadListener(
+      {
+        on: ((type: 'pimote:downloads', listener: (update: unknown) => void | Promise<void>) => {
+          on(type, listener);
+          return unsubscribe;
+        }) as any,
+      },
+      { sessionId: 'session-1', folderPath: '/workspace/project', state, send, notify },
+    );
+
+    expect(on).toHaveBeenCalledWith('pimote:downloads', expect.any(Function));
+    const listener = on.mock.calls[0]?.[1] as (update: unknown) => void | Promise<void>;
+    await listener({ type: 'download_update', sessionId: 'session-1', cause: 'offered', offeredDownloadId: offered.id, downloads: [offered] });
+
+    expect(state.downloads).toEqual([offered]);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'download_update', cause: 'offered' }));
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('builds a silent restored snapshot for recovery and viewed-session handoff', () => {
+    expect(makeDownloadSnapshot('session-1', [older])).toEqual({
+      type: 'download_update',
+      sessionId: 'session-1',
+      cause: 'restored',
+      downloads: [older],
+    });
+  });
+
+  it('replaces state, routes an offered full snapshot to the sole owner, and sends presentation-only push metadata', async () => {
+    const state = { downloads: [] as (typeof offered)[] };
+    const send = vi.fn();
+    const notify = vi.fn(async () => undefined);
+    const update = {
+      type: 'download_update' as const,
+      sessionId: 'session-1',
+      cause: 'offered' as const,
+      offeredDownloadId: offered.id,
+      downloads: [older, offered],
+    };
+
+    await routeSlotDownloadUpdate(update, {
+      sessionId: 'session-1',
+      folderPath: '/workspace/project',
+      sessionName: 'Report work',
+      state,
+      send,
+      notify,
+    });
+
+    expect(state.downloads).toEqual([older, offered]);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(update);
+    expect(notify).toHaveBeenCalledWith({
+      projectName: 'project',
+      folderPath: '/workspace/project',
+      sessionId: 'session-1',
+      sessionName: 'Report work',
+      reason: 'download',
+      download: { downloadId: 'opaque-new', filename: 'report.pdf', sizeBytes: 42 },
+    });
+    expect(notify.mock.calls[0]?.[0]?.download).not.toHaveProperty('href');
+  });
+
+  it('routes silent snapshots without a duplicate push notification', async () => {
+    const state = { downloads: [] as (typeof offered)[] };
+    const send = vi.fn();
+    const notify = vi.fn(async () => undefined);
+    const update = { type: 'download_update' as const, sessionId: 'session-1', cause: 'consumed' as const, downloads: [older] };
+
+    await routeSlotDownloadUpdate(update, {
+      sessionId: 'session-1',
+      folderPath: '/workspace/project',
+      state,
+      send,
+      notify,
+    });
+
+    expect(state.downloads).toEqual([older]);
+    expect(send).toHaveBeenCalledWith(update);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('ignores an event for a different session instead of mutating or notifying the owner', async () => {
+    const state = { downloads: [] as (typeof offered)[] };
+    const send = vi.fn();
+    const notify = vi.fn(async () => undefined);
+
+    await routeSlotDownloadUpdate(
+      {
+        type: 'download_update',
+        sessionId: 'other-session',
+        cause: 'offered',
+        offeredDownloadId: offered.id,
+        downloads: [offered],
+      },
+      { sessionId: 'session-1', folderPath: '/workspace/project', state, send, notify },
+    );
+
+    expect(state.downloads).toEqual([]);
+    expect(send).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('starts rebuilt session state without registrations from the prior session identity', () => {
+    const manager = new PimoteSessionManager(createTestConfig(), createMockPushService());
+    const slot = createFakeSlot({ id: 'old-session' });
+    slot.sessionState.downloads = [offered];
+    slot.eventBusRef.current = { on: vi.fn(() => () => {}), emit: vi.fn() } as any;
+    (slot.runtime.session as any).sessionManager = { getCwd: () => '/home/user/replaced-project' };
+
+    manager.rebuildSessionState(slot);
+
+    expect(slot.sessionState.id).toBe('old-session');
+    expect(slot.sessionState.downloads).toEqual([]);
   });
 });
 

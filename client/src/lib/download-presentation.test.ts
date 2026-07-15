@@ -9,7 +9,18 @@ const item: DownloadItem = {
   href: '/d/opaque-1',
 };
 
-function update(cause: DownloadUpdateEvent['cause'], downloads: DownloadItem[] = [item]): DownloadUpdateEvent {
+const olderItem: DownloadItem = {
+  id: 'opaque-old',
+  filename: 'older.txt',
+  sizeBytes: 10,
+  href: '/d/opaque-old',
+};
+
+function offeredUpdate(downloads: DownloadItem[] = [item], offeredDownloadId = item.id): DownloadUpdateEvent {
+  return { type: 'download_update', sessionId: 'session-1', cause: 'offered', offeredDownloadId, downloads };
+}
+
+function silentUpdate(cause: Exclude<DownloadUpdateEvent['cause'], 'offered'>, downloads: DownloadItem[] = [item]): DownloadUpdateEvent {
   return { type: 'download_update', sessionId: 'session-1', cause, downloads };
 }
 
@@ -27,8 +38,8 @@ describe('download presentation', () => {
   });
 
   describe('buildDownloadToast', () => {
-    it('creates an actionable native-link toast for a newly offered item', () => {
-      expect(buildDownloadToast(update('offered'))).toEqual({
+    it('creates an actionable native-link toast for the exact newly offered item in a multi-item snapshot', () => {
+      expect(buildDownloadToast(offeredUpdate([olderItem, item], item.id))).toEqual({
         item,
         filename: 'report.pdf',
         sizeLabel: expect.any(String),
@@ -37,11 +48,11 @@ describe('download presentation', () => {
     });
 
     it.each(['restored', 'consumed', 'revoked'] as const)('does not toast a %s snapshot replay', (cause) => {
-      expect(buildDownloadToast(update(cause))).toBeUndefined();
+      expect(buildDownloadToast(silentUpdate(cause))).toBeUndefined();
     });
 
-    it('does not produce a toast when the offered snapshot is empty', () => {
-      expect(buildDownloadToast(update('offered', []))).toBeUndefined();
+    it('does not produce a toast when the offered item is absent from its snapshot', () => {
+      expect(buildDownloadToast(offeredUpdate([], item.id))).toBeUndefined();
     });
   });
 

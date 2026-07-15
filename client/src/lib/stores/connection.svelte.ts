@@ -6,6 +6,13 @@ import { getClientId, setClientId } from './persistence.js';
 
 type EventListener = (event: PimoteEvent) => void;
 
+/** Notification-driven session adoption may also request its local download inbox. */
+export interface PendingSessionAdopt {
+  sessionId: string;
+  folderPath: string;
+  openDownloads?: boolean;
+}
+
 let nextId = 1;
 const clientId =
   getClientId() ??
@@ -49,10 +56,10 @@ export class ConnectionStore {
   onSessionOwned: ((sessionId: string) => void) | null = null;
 
   /** Called after connection restore when a notification-driven adopt should begin. */
-  onPendingAdopt: ((sessionId: string, folderPath: string) => void) | null = null;
+  onPendingAdopt: ((sessionId: string, folderPath: string, options: { openDownloads?: boolean }) => void) | null = null;
 
   /** Session to adopt after next successful connection (set from notification URL param or click). */
-  pendingAdopt: { sessionId: string; folderPath: string } | null = null;
+  pendingAdopt: PendingSessionAdopt | null = null;
 
   connect(): void {
     if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
@@ -159,9 +166,9 @@ export class ConnectionStore {
         this.onReconnected?.();
 
         if (this.pendingAdopt) {
-          const { sessionId: sid, folderPath } = this.pendingAdopt;
+          const { sessionId: sid, folderPath, openDownloads } = this.pendingAdopt;
           this.pendingAdopt = null;
-          this.onPendingAdopt?.(sid, folderPath);
+          this.onPendingAdopt?.(sid, folderPath, { openDownloads });
         }
       });
 

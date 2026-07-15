@@ -14,6 +14,8 @@ export type {
   DownloadClaim,
   DownloadItem,
   DownloadManager,
+  DownloadOfferedUpdateEvent,
+  DownloadSnapshotUpdateEvent,
   DownloadStoreDocument,
   DownloadStoreEntry,
   DownloadUpdateCause,

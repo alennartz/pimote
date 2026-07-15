@@ -896,13 +896,25 @@ export interface DownloadItem {
   href: string;
 }
 
-/** Full replacement snapshot of a session's pending file downloads. */
-export interface DownloadUpdateEvent {
+/** An offered snapshot identifies the exact newly offered item without relying on list order. */
+export interface DownloadOfferedUpdateEvent {
   type: 'download_update';
   sessionId: string;
-  cause: DownloadUpdateCause;
+  cause: 'offered';
+  offeredDownloadId: string;
   downloads: DownloadItem[];
 }
+
+/** A silent full replacement snapshot after restore, consumption, or revocation. */
+export interface DownloadSnapshotUpdateEvent {
+  type: 'download_update';
+  sessionId: string;
+  cause: Exclude<DownloadUpdateCause, 'offered'>;
+  downloads: DownloadItem[];
+}
+
+/** Full replacement snapshot of a session's pending file downloads. */
+export type DownloadUpdateEvent = DownloadOfferedUpdateEvent | DownloadSnapshotUpdateEvent;
 
 /**
  * Server-initiated client navigation request. Emitted by extensions that

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile, symlink } from 'node:fs/promises';
+import { access, mkdtemp, rm, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { DownloadManager, DownloadStoreDocument, DownloadUpdateEvent, OfferDownloadInput } from './manager.js';
@@ -55,14 +55,20 @@ function makeOffer(workspaceRoot: string, overrides: Partial<OfferDownloadInput>
 describe('createDownloadManager', () => {
   let store: ReturnType<typeof makeStore>;
   let manager: DownloadManager;
+  let fixtureRoot: string;
   let workspaceRoot: string;
 
   beforeEach(async () => {
-    workspaceRoot = await mkdtemp(join(tmpdir(), 'file-download-manager-'));
+    fixtureRoot = await mkdtemp(join(tmpdir(), 'file-download-manager-'));
+    workspaceRoot = join(fixtureRoot, 'workspace');
+    const outsideRoot = join(fixtureRoot, 'outside');
     await mkdir(join(workspaceRoot, 'reports'), { recursive: true });
+    await mkdir(outsideRoot, { recursive: true });
     await writeFile(join(workspaceRoot, 'reports', 'report.pdf'), 'report', 'utf8');
     await writeFile(join(workspaceRoot, 'secret.txt'), 'secret', 'utf8');
-    await symlink(join(workspaceRoot, 'secret.txt'), join(workspaceRoot, 'reports', 'linked-secret.txt'));
+    await writeFile(join(outsideRoot, 'secret.txt'), 'secret', 'utf8');
+    await symlink(join(outsideRoot, 'secret.txt'), join(workspaceRoot, 'reports', 'linked-secret.txt'));
+    await symlink(join(workspaceRoot, 'secret.txt'), join(workspaceRoot, 'reports', 'linked-inside.txt'));
     store = makeStore({
       'session-1': {
         ...restoredDocument,
@@ -73,12 +79,13 @@ describe('createDownloadManager', () => {
   });
 
   afterEach(async () => {
-    await rm(workspaceRoot, { recursive: true, force: true });
+    await rm(fixtureRoot, { recursive: true, force: true });
   });
 
   it('restores a session document and publishes one complete restored snapshot', async () => {
     const publish = vi.fn<(event: DownloadUpdateEvent) => void>();
     await manager.activate('session-1', publish);
+    expect(publish).toHaveBeenCalledTimes(1);
     expect(publish).toHaveBeenCalledWith({
       type: 'download_update',
       sessionId: 'session-1',
@@ -90,6 +97,7 @@ describe('createDownloadManager', () => {
   it('publishes an empty restored snapshot when the session has no document', async () => {
     const publish = vi.fn<(event: DownloadUpdateEvent) => void>();
     await manager.activate('new-session', publish);
+    expect(publish).toHaveBeenCalledTimes(1);
     expect(publish).toHaveBeenCalledWith({
       type: 'download_update',
       sessionId: 'new-session',
@@ -122,6 +130,23 @@ describe('createDownloadManager', () => {
     expect(item.filename).toBe('report.pdf');
   });
 
+  it('publishes a complete offered snapshot after registering an active session', async () => {
+    const publish = vi.fn<(event: DownloadUpdateEvent) => void>();
+    await manager.activate('new-session', publish);
+    publish.mockClear();
+
+    const item = await manager.offer(makeOffer(workspaceRoot, { sessionId: 'new-session' }));
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith({
+      type: 'download_update',
+      sessionId: 'new-session',
+      cause: 'offered',
+      offeredDownloadId: item.id,
+      downloads: [item],
+    });
+  });
+
   it('rejects a missing source path', async () => {
     await expect(manager.offer(makeOffer(workspaceRoot, { path: 'missing.bin' }))).rejects.toThrow();
   });
@@ -131,11 +156,16 @@ describe('createDownloadManager', () => {
   });
 
   it('rejects a path that resolves outside the workspace root', async () => {
-    await expect(manager.offer(makeOffer(workspaceRoot, { path: '../secrets.txt' }))).rejects.toThrow();
+    await expect(manager.offer(makeOffer(workspaceRoot, { path: '../outside/secret.txt' }))).rejects.toThrow();
   });
 
   it('rejects a symlink whose real path escapes the workspace root', async () => {
     await expect(manager.offer(makeOffer(workspaceRoot, { path: 'reports/linked-secret.txt' }))).rejects.toThrow();
+  });
+
+  it('accepts a symlink whose real path remains inside the workspace root', async () => {
+    const item = await manager.offer(makeOffer(workspaceRoot, { path: 'reports/linked-inside.txt' }));
+    expect(item.id).toBeTruthy();
   });
 
   it('persists the lexical source, root, derived filename, size, and opaque id', async () => {
@@ -151,22 +181,44 @@ describe('createDownloadManager', () => {
     });
   });
 
-  it('snapshot returns only the pending public items for the requested session', () => {
+  it('rehydrates an offered registration after the manager restarts', async () => {
+    const item = await manager.offer(makeOffer(workspaceRoot, { sessionId: 'session-2' }));
+    const restarted = createDownloadManager({ store });
+    const publish = vi.fn<(event: DownloadUpdateEvent) => void>();
+
+    await restarted.activate('session-2', publish);
+
+    expect(restarted.snapshot('session-2')).toEqual([item]);
+    expect(publish).toHaveBeenCalledWith({
+      type: 'download_update',
+      sessionId: 'session-2',
+      cause: 'restored',
+      downloads: [item],
+    });
+  });
+
+  it('snapshot returns only the pending public items for an active requested session', async () => {
+    await manager.activate('session-1', vi.fn());
     expect(manager.snapshot('session-1')).toEqual([{ id: 'opaque-1', filename: 'report.pdf', sizeBytes: 42, href: '/d/opaque-1' }]);
     expect(manager.snapshot('other-session')).toEqual([]);
   });
 
-  it('cancel removes an owned registration and publishes a revoked full snapshot', async () => {
+  it('cancel removes an owned registration, preserves its source, and publishes a revoked full snapshot', async () => {
     const publish = vi.fn<(event: DownloadUpdateEvent) => void>();
     await manager.activate('session-1', publish);
     const result = await manager.cancel('session-1', 'opaque-1');
     expect(result).toEqual({ cancelled: true });
+    await expect(access(join(workspaceRoot, 'reports', 'report.pdf'))).resolves.toBeUndefined();
     expect(publish).toHaveBeenLastCalledWith({
       type: 'download_update',
       sessionId: 'session-1',
       cause: 'revoked',
       downloads: [],
     });
+
+    const restarted = createDownloadManager({ store });
+    await restarted.activate('session-1', vi.fn());
+    expect(restarted.snapshot('session-1')).toEqual([]);
   });
 
   it('cancel returns false for an unknown registration', async () => {
@@ -183,6 +235,8 @@ describe('createDownloadManager', () => {
     const order: string[] = [];
     const publish = vi.fn<(event: DownloadUpdateEvent) => void>(() => order.push('published'));
     await manager.activate('session-1', publish);
+    order.length = 0;
+    publish.mockClear();
     const claimPromise = manager.claim('opaque-1').then((claim) => {
       order.push('resolved');
       return claim;
@@ -201,6 +255,29 @@ describe('createDownloadManager', () => {
       cause: 'consumed',
       downloads: [],
     });
+
+    const restarted = createDownloadManager({ store });
+    await restarted.activate('session-1', vi.fn());
+    expect(restarted.snapshot('session-1')).toEqual([]);
+  });
+
+  it('rejects a claim when durable removal fails, so a route cannot obtain source details', async () => {
+    const failingStore = makeStore({
+      'session-1': {
+        ...restoredDocument,
+        downloads: [{ ...restoredDocument.downloads[0], workspaceRoot }],
+      },
+    });
+    failingStore.write = async () => {
+      throw new Error('durable removal failed');
+    };
+    failingStore.remove = async () => {
+      throw new Error('durable removal failed');
+    };
+    const failingManager = createDownloadManager({ store: failingStore });
+    await failingManager.activate('session-1', vi.fn());
+
+    await expect(failingManager.claim('opaque-1')).rejects.toThrow('durable removal failed');
   });
 
   it('claim is single-use when two callers race for the same id', async () => {

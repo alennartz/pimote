@@ -6,10 +6,11 @@ import { PimoteSessionManager } from './session-manager.js';
 import { FolderIndex } from './folder-index.js';
 import { PushNotificationService } from './push-notification.js';
 import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore } from './push-infrastructure.js';
-import { LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_SESSION_METADATA_PATH, PIMOTE_STATIC_HOST_DIR } from './paths.js';
+import { LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_FILE_DOWNLOAD_DIR, PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_SESSION_METADATA_PATH, PIMOTE_STATIC_HOST_DIR } from './paths.js';
 import { FileSessionMetadataStore } from './session-metadata.js';
 import { buildVoiceOrchestrator } from './voice-orchestrator-boot.js';
 import { InMemoryStaticHostRegistry, FileStaticHostStore, gcStaticHostStore, createStaticHostExtension } from './static-host/index.js';
+import { bootstrapFileDownloads } from './file-download/bootstrap.js';
 
 export interface StartOptions {
   portOverride?: number;
@@ -58,8 +59,9 @@ export async function main(options: StartOptions = {}) {
   const staticHostRegistry = new InMemoryStaticHostRegistry();
   const staticHostStore = new FileStaticHostStore(PIMOTE_STATIC_HOST_DIR);
   const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore });
+  const fileDownloads = await bootstrapFileDownloads({ storeDir: PIMOTE_FILE_DOWNLOAD_DIR, validSessionIds });
 
-  const sessionManager = new PimoteSessionManager(config, pushNotificationService, { staticHostFactory });
+  const sessionManager = new PimoteSessionManager(config, pushNotificationService, { staticHostFactory, fileDownloadFactory: fileDownloads.extensionFactory });
 
   // Build the voice orchestrator before createServer so each WsHandler can be
   // handed a reference. The orchestrator needs a client-registry lookup, but
@@ -79,7 +81,16 @@ export async function main(options: StartOptions = {}) {
     console.log('[voice] dormant: voice config absent (set voice.speechmuxSignalUrl and voice.speechmuxLlmWsUrl to enable)');
   }
 
-  const server = await createServer(config, sessionManager, folderIndex, pushNotificationService, sessionMetadataStore, voiceBoot?.orchestrator, staticHostRegistry);
+  const server = await createServer(
+    config,
+    sessionManager,
+    folderIndex,
+    pushNotificationService,
+    sessionMetadataStore,
+    voiceBoot?.orchestrator,
+    staticHostRegistry,
+    fileDownloads.manager,
+  );
   clientRegistryRef.current = server.clientRegistry;
 
   if (voiceBoot) {

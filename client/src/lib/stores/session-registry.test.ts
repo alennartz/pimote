@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { PimoteEvent, PimoteAgentMessage } from '@pimote/shared';
 import { SessionRegistry } from './session-registry.svelte.js';
 
@@ -1071,6 +1071,7 @@ describe('SessionRegistry', () => {
       old.firstMessage = 'hello';
       old.messageCount = 2;
       old.status = 'working';
+      old.downloads = [{ id: 'old-download', filename: 'old.txt', sizeBytes: 1, href: '/d/old-download' }];
 
       registry.replaceSession('old-id', 'new-id', '/home/user/project', 'project');
 
@@ -1093,6 +1094,7 @@ describe('SessionRegistry', () => {
       expect(newSession.streamingMessage).toBeNull();
       expect(newSession.draftText).toBe('');
       expect(newSession.pendingSteeringMessages).toEqual([]);
+      expect(newSession.downloads).toEqual([]);
       // Preserved from old session
       expect(newSession.model).toEqual({ provider: 'test', id: 'model-1', name: 'Test Model' });
       expect(newSession.thinkingLevel).toBe('high');
@@ -1153,7 +1155,7 @@ describe('SessionRegistry', () => {
 
     it('reduces an offered download update to the owning session snapshot', () => {
       registry.addSession('s1', '/workspace/project', 'project');
-      registry.handleEvent({ type: 'download_update', sessionId: 's1', cause: 'offered', downloads: [offered] });
+      registry.handleEvent({ type: 'download_update', sessionId: 's1', cause: 'offered', offeredDownloadId: offered.id, downloads: [offered] });
       expect(registry.sessions['s1'].downloads).toEqual([offered]);
     });
 
@@ -1169,8 +1171,22 @@ describe('SessionRegistry', () => {
     it('keeps download snapshots isolated between sessions', () => {
       registry.addSession('s1', '/workspace/one', 'one');
       registry.addSession('s2', '/workspace/two', 'two');
-      registry.handleEvent({ type: 'download_update', sessionId: 's1', cause: 'offered', downloads: [offered] });
+      registry.handleEvent({ type: 'download_update', sessionId: 's1', cause: 'offered', offeredDownloadId: offered.id, downloads: [offered] });
       expect(registry.sessions['s2'].downloads).toEqual([]);
+    });
+
+    it('forwards the typed update to the presentation coordinator after reducing its owning snapshot', () => {
+      const onDownloadUpdate = vi.fn(() => {
+        expect(registry.sessions['s1'].downloads).toEqual([offered]);
+      });
+      registry = new SessionRegistry(onDownloadUpdate);
+      registry.addSession('s1', '/workspace/project', 'project');
+      const update = { type: 'download_update' as const, sessionId: 's1', cause: 'offered' as const, offeredDownloadId: offered.id, downloads: [offered] };
+
+      registry.handleEvent(update);
+
+      expect(onDownloadUpdate).toHaveBeenCalledTimes(1);
+      expect(onDownloadUpdate).toHaveBeenCalledWith(update);
     });
   });
 });

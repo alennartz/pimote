@@ -318,6 +318,29 @@ describe('PushNotificationService', () => {
       expect(sender.calls).toHaveLength(1);
     });
 
+    it('notify() sends download presentation metadata without a one-shot href', async () => {
+      const sub = makeSubscription('https://push.example.com/1');
+      const { service, sender } = createService({ initial: [sub] });
+      await service.initialize();
+
+      await service.notify({
+        projectName: 'project',
+        folderPath: '/home/user/project',
+        sessionId: 'session-download',
+        reason: 'download',
+        download: { downloadId: 'opaque-1', filename: 'report.pdf', sizeBytes: 42 },
+      });
+
+      expect(sender.calls).toHaveLength(1);
+      const sentPayload = JSON.parse(sender.calls[0].payload);
+      expect(sentPayload).toMatchObject({
+        reason: 'download',
+        sessionId: 'session-download',
+        download: { downloadId: 'opaque-1', filename: 'report.pdf', sizeBytes: 42 },
+      });
+      expect(JSON.stringify(sentPayload)).not.toContain('href');
+    });
+
     it('notify() sends interaction payload correctly', async () => {
       const sub = makeSubscription('https://push.example.com/1');
       const { service, sender } = createService({ initial: [sub] });

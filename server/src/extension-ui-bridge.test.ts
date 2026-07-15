@@ -35,6 +35,7 @@ function createMockSlot(): { slot: ManagedSlot; sent: PimoteEvent[] } {
       pendingUiResponses: new Map(),
       extensionsBound: false,
       panelState: new Map(),
+      downloads: [],
       panelListenerUnsubs: [],
       panelThrottleTimer: null,
       treeNavigationInProgress: false,

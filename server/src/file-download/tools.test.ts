@@ -3,6 +3,7 @@ import { executeCancelFileSendTool, executeSendFileTool, type FileDownloadToolCo
 import type { DownloadManager } from './manager.js';
 
 const offered = { id: 'opaque-1', filename: 'report.pdf', sizeBytes: 42, href: '/d/opaque-1' };
+const agentResult = { id: 'opaque-1', filename: 'report.pdf', sizeBytes: 42 };
 
 function makeManager(): DownloadManager & {
   offer: ReturnType<typeof vi.fn>;
@@ -22,7 +23,7 @@ describe('file-download agent tool adapters', () => {
   it('pimote_send_file accepts only a path and returns server-derived metadata', async () => {
     const manager = makeManager();
     const context: FileDownloadToolContext = { manager, sessionId: 'session-1', workspaceRoot: '/workspace/project' };
-    await expect(executeSendFileTool({ path: 'reports/report.pdf' }, context)).resolves.toEqual(offered);
+    await expect(executeSendFileTool({ path: 'reports/report.pdf' }, context)).resolves.toEqual(agentResult);
     expect(manager.offer).toHaveBeenCalledWith({
       sessionId: 'session-1',
       workspaceRoot: '/workspace/project',
@@ -34,7 +35,7 @@ describe('file-download agent tool adapters', () => {
     const manager = makeManager();
     const context: FileDownloadToolContext = { manager, sessionId: 'session-1', workspaceRoot: '/workspace/project' };
     const result = await executeSendFileTool({ path: 'report.pdf' }, context);
-    expect(result.id).toBe('opaque-1');
+    expect(result).toEqual(agentResult);
     expect(manager.offer).toHaveBeenCalledTimes(1);
   });
 
