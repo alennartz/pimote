@@ -280,6 +280,40 @@ PATH, `fd` on PATH (Phase A/B need it; Phase A2 deliberately hides it),
 writable `os.tmpdir()`. Tracks and kills only the child PIDs it spawns —
 no pattern-based `pkill`. No real LLM, speechmux, or network required.
 
+### file-downloads-smoke
+
+**Purpose:** Exercise the PWA file-download journey against a real sandboxed
+pimote server: an offered multi-item snapshot produces one exact-item toast,
+dismissing it leaves a session-local inbox, the native link downloads live
+bytes and consumes its opaque id once, sibling registrations survive, another
+session cannot see the inbox, and a server restart/reopen silently restores the
+pending item. The harness uses a tiny sandbox-only pi extension to emit the
+same typed offer event a live `pimote_send_file` call would publish; the
+manager, HTTP route, WebSocket reducer, and PWA are real.
+
+**Location:** `tools/manual-test/file-downloads-smoke/file-downloads-smoke.mjs`
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/file-downloads-smoke/file-downloads-smoke.mjs
+# Optional coherence screenshot outside the auto-removed sandbox:
+FD_SHOT=/tmp/file-downloads.png node tools/manual-test/file-downloads-smoke/file-downloads-smoke.mjs
+```
+
+**Inputs:** none (fresh `os.tmpdir()` sandbox; `FD_SHOT` optionally chooses a
+screenshot path).
+
+**Outputs:** per-check ✓/✗ lines, a coherence screenshot, and a non-zero exit
+on hard failure. On failure the sandbox is preserved and its server log/path
+are printed. The source fixture is never deleted by the route.
+
+**Prerequisites:** workspaces built (`npm run build`), `agent-browser` on
+`PATH`, writable `os.tmpdir()`. No live LLM or OS push subscription is
+required; focused/background push planning and notification-intent contracts
+are covered by the client unit tests.
+
 ### agent-browser (cross-repo skill)
 
 **Purpose:** Drive PWA user journeys end-to-end via a headless-Chromium

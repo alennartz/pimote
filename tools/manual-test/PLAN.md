@@ -213,6 +213,29 @@ exchange is environment-bounded (needs real subscription credentials);
 the terminal success + model re-pull are covered by the server + client
 unit suites.
 
+### 11. File offer → native download / session inbox
+
+**What:** In a PWA session, an agent offers a project file. The user sees one
+actionable toast for the exact offered item, can dismiss it into the viewed
+session's Downloads inbox, and clicks a native same-origin attachment link.
+The browser receives the live file once; the source remains on the server,
+and a second redemption is unavailable. Pending sibling files are scoped to
+their owning session, survive reconnect/reopen, and restore silently without a
+duplicate toast. A background notification opens/adopts the owning session's
+overview/inbox intent without following the one-shot URL.
+
+**Why:** This is the PWA's user-approved file-transfer path. The offer,
+one-shot capability, session-local fallback, and recovery semantics are
+load-bearing; a regression either loses the file or causes an unsolicited/
+stale action.
+
+**Driver:** `tools/manual-test/file-downloads-smoke/` drives the real server,
+HTTP route, WebSocket state, and PWA via `agent-browser`. The harness uses a
+sandbox-only pi extension to synthesize the typed offer event in lieu of a live
+LLM/tool turn. Focused/background push planning and inbox-adoption contracts
+are covered by the client unit tests; OS Web Push delivery remains
+environment-bounded in headless Chromium.
+
 ## Automation gap (recorded, not an action item for this topic)
 
 Journeys 1–7 currently have no automation driver. This is a deliberate
