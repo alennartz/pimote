@@ -85,7 +85,7 @@ function createMockSlot(
     bindExtensions: async () => {},
     modelRegistry: { getAvailable: () => [] },
     clearQueue: () => ({ steering: [], followUp: [] }),
-    sessionManager: { getBranch: () => [] },
+    sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
   };
 
   const sessionState: SessionState = {
@@ -665,7 +665,7 @@ describe('WsHandler', () => {
             bindExtensions: async () => {},
             modelRegistry: { getAvailable: () => [] },
             clearQueue: () => ({ steering: [], followUp: [] }),
-            sessionManager: { getBranch: () => [] },
+            sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
           } as any,
         });
         sessions.set(reopenedSessionId, reopened);
@@ -1265,7 +1265,7 @@ describe('WsHandler', () => {
             bindExtensions: async () => {},
             modelRegistry: { getAvailable: () => [] },
             clearQueue: () => ({ steering: [], followUp: [] }),
-            sessionManager: { getBranch: () => [] },
+            sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
           } as any,
         });
         sessions.set(reopenedSessionId, reopened);
@@ -1606,7 +1606,7 @@ describe('WsHandler', () => {
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         navigateTree: async () => ({ cancelled: false }),
-        sessionManager: { getBranch: () => [] },
+        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({
@@ -1679,7 +1679,7 @@ describe('WsHandler', () => {
         sessionId: 'orphan-old',
         bindExtensions: async () => {},
         clearQueue: () => ({ steering: [], followUp: [] }),
-        sessionManager: { getBranch: () => [] },
+        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
       const slot = createMockSlot({ id: 'orphan-old', session: mockAgentSession, connectedClientId: null });
       (slot.runtime as any).newSession = async () => {
@@ -1713,7 +1713,7 @@ describe('WsHandler', () => {
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         navigateTree: async () => ({ cancelled: false }),
-        sessionManager: { getBranch: () => [] },
+        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
       const slot = createMockSlot({ id: 'shared-old', session: mockAgentSession, connectedClientId: null });
       (slot.runtime as any).fork = async () => {
@@ -1766,7 +1766,7 @@ describe('WsHandler', () => {
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         navigateTree: async () => ({ cancelled: false }),
-        sessionManager: { getBranch: () => [] },
+        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({ id: 'old-session', session: mockAgentSession, connectedClientId: null });
@@ -1856,7 +1856,7 @@ describe('WsHandler', () => {
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         navigateTree: async () => ({ cancelled: false }),
-        sessionManager: { getBranch: () => [] },
+        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({
@@ -2103,6 +2103,7 @@ describe('WsHandler', () => {
             getTree: () => [],
             getLeafId: () => null,
             getBranch: () => [],
+            buildContextEntries: () => [],
           },
         } as any,
       });
@@ -2200,6 +2201,7 @@ describe('WsHandler', () => {
             getTree: () => [],
             getLeafId: () => null,
             getBranch: () => [],
+            buildContextEntries: () => [],
           },
         } as any,
       });
@@ -2285,6 +2287,7 @@ describe('WsHandler', () => {
             getTree: () => [],
             getLeafId: () => null,
             getBranch: () => [],
+            buildContextEntries: () => [],
           },
         } as any,
       });
@@ -2590,7 +2593,7 @@ describe('WsHandler', () => {
         bindExtensions: async () => {},
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
-        sessionManager: { getBranch: () => [] },
+        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({
@@ -2663,7 +2666,7 @@ describe('WsHandler', () => {
         bindExtensions: async () => {},
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
-        sessionManager: { getBranch: () => [] },
+        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({
@@ -2737,7 +2740,7 @@ describe('WsHandler', () => {
         bindExtensions: async () => {},
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
-        sessionManager: { getBranch: () => [] },
+        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({
@@ -2812,7 +2815,7 @@ describe('WsHandler', () => {
         bindExtensions: async () => {},
         modelRegistry: { getAvailable: () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
-        sessionManager: { getBranch: () => [] },
+        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
 
       const slot = createMockSlot({

@@ -1,5 +1,5 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
-import type { SessionEntry } from '@earendil-works/pi-coding-agent';
+import { sessionEntryToContextMessages, type SessionEntry } from '@earendil-works/pi-coding-agent';
 import type { PimoteAgentMessage, PimoteMessageContent } from '../../shared/dist/index.js';
 
 /**
@@ -12,13 +12,20 @@ type AgentContentItem = Extract<Extract<AgentMessage, { role: 'assistant' | 'use
 /** Session entries whose relative order must match buildSessionContext's message list. */
 export type SdkSessionEntry = SessionEntry;
 
-/**
- * Convert raw pi SDK AgentMessage objects to PimoteAgentMessage format.
- * Used both for bulk message retrieval (get_messages) and for live
- * message_end events so the client always receives a consistent shape.
- */
+/** Convert raw pi SDK AgentMessage objects to PimoteAgentMessage format. */
 export function mapAgentMessages(messages: AgentMessage[]): PimoteAgentMessage[] {
   return messages.map(mapAgentMessage);
+}
+
+/**
+ * Map the SDK's compaction-aware context entries to durable wire messages.
+ *
+ * `sessionEntryToContextMessages` owns entry-to-message semantics; this
+ * mapper only adapts its output and keeps each message paired with its source
+ * entry ID. Entries that produce no context message are omitted.
+ */
+export function mapContextEntries(entries: readonly SessionEntry[]): PimoteAgentMessage[] {
+  return entries.flatMap((entry) => sessionEntryToContextMessages(entry).map((message) => ({ ...mapAgentMessage(message), entryId: entry.id })));
 }
 
 /**

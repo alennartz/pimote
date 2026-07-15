@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapAgentMessage, mapAgentMessages, extractMessageEntryIds, applyEntryIds, type SdkSessionEntry } from './message-mapper.js';
+import { mapAgentMessage, mapAgentMessages, mapContextEntries, extractMessageEntryIds, applyEntryIds, type SdkSessionEntry } from './message-mapper.js';
 
 describe('mapAgentMessage', () => {
   // AgentMessage is a discriminated union with many required fields per role;
@@ -67,6 +67,47 @@ describe('mapAgentMessages', () => {
     expect(results).toHaveLength(2);
     expect(results[0].role).toBe('user');
     expect(results[1].role).toBe('assistant');
+  });
+});
+
+describe('mapContextEntries', () => {
+  it('uses SDK context semantics and attaches each source entry ID', () => {
+    const messages = mapContextEntries([
+      { id: 'user-1', parentId: null, timestamp: '2026-01-01T00:00:00.000Z', type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } },
+      {
+        id: 'custom-1',
+        parentId: 'user-1',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        type: 'custom_message',
+        customType: 'agent-complete',
+        content: [{ type: 'text', text: 'done' }],
+        display: true,
+      },
+      {
+        id: 'compact-1',
+        parentId: 'custom-1',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        type: 'compaction',
+        summary: 'Earlier context',
+        firstKeptEntryId: 'user-1',
+        tokensBefore: 100,
+      },
+      {
+        id: 'bash-1',
+        parentId: 'compact-1',
+        timestamp: '2026-01-01T00:00:03.000Z',
+        type: 'message',
+        message: { role: 'bashExecution', command: 'pwd', output: '/tmp', timestamp: 0 },
+      },
+      { id: 'model-1', parentId: 'bash-1', timestamp: '2026-01-01T00:00:04.000Z', type: 'model_change', provider: 'test', modelId: 'test-model' },
+    ] as never);
+
+    expect(messages).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'hello' }], entryId: 'user-1' },
+      { role: 'custom', customType: 'agent-complete', display: true, content: [{ type: 'text', text: 'done' }], entryId: 'custom-1' },
+      { role: 'compactionSummary', content: [{ type: 'text', text: 'Earlier context' }], entryId: 'compact-1' },
+      { role: 'bashExecution', content: [{ type: 'text', text: '$ pwd\n/tmp' }], entryId: 'bash-1' },
+    ]);
   });
 });
 
