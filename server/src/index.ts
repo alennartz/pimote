@@ -41,9 +41,13 @@ export async function main(options: StartOptions = {}) {
   // and unregister against it as they load and shut down.
   let validSessionIds: Set<string> | null = new Set<string>();
   try {
-    const folders = await folderIndex.scan();
+    // GC must only run from a complete session enumeration. The normal
+    // FolderIndex APIs intentionally degrade to partial results for UI calls;
+    // boot uses strict mode so an inaccessible root/session directory skips
+    // the sweep instead of treating omitted sessions as orphans.
+    const folders = await folderIndex.scan({ failOnError: true });
     for (const folder of folders) {
-      const records = await folderIndex.listSessionRecords(folder.path);
+      const records = await folderIndex.listSessionRecords(folder.path, { failOnError: true });
       for (const rec of records) validSessionIds.add(rec.id);
     }
   } catch (err) {

@@ -32,9 +32,31 @@ precacheAndRoute(self.__WB_MANIFEST);
 const isWindows = /Windows/.test(self.navigator.userAgent);
 let clientHasFocus = false;
 
+interface ClientFocusState {
+  hasFocus: boolean;
+  connectionReady: boolean;
+  subscribedSessionIds: string[];
+}
+
+// Keep state per WindowClient: a focused tab can be reconnecting while another
+// tab is subscribed and healthy, and a download push must only be suppressed
+// when the focused client can actually receive that session's live event.
+const clientFocusStates = new Map<string, ClientFocusState>();
+let lastFocusState: ClientFocusState | null = null;
+
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'focus_state') {
-    clientHasFocus = event.data.hasFocus === true;
+    const state: ClientFocusState = {
+      hasFocus: event.data.hasFocus === true,
+      connectionReady: event.data.connectionReady === true,
+      subscribedSessionIds: Array.isArray(event.data.subscribedSessionIds) ? event.data.subscribedSessionIds.filter((id: unknown): id is string => typeof id === 'string') : [],
+    };
+    clientHasFocus = state.hasFocus;
+    lastFocusState = state;
+
+    const source = event.source;
+    const sourceId = source && 'id' in source && typeof source.id === 'string' ? source.id : undefined;
+    if (sourceId) clientFocusStates.set(sourceId, state);
   }
 });
 
@@ -145,12 +167,22 @@ self.addEventListener('push', (event) => {
       const appInFocus = isWindows ? clientHasFocus : clients.some((c) => c.focused);
 
       if (data.reason === 'download') {
-        // A live download_update owns the focused-client toast. Background
-        // delivery opens the session-local inbox; it never carries or follows
-        // the one-shot download URL.
+        // Suppress only when a focused window has a ready WebSocket and this
+        // session is subscribed on that socket. A focused-but-reconnecting tab
+        // otherwise loses the only actionable offer notification.
+        const downloadSessionId = typeof data.sessionId === 'string' ? data.sessionId : '';
+        const focusedReadyForDownload = clients.some((client) => {
+          const state = clientFocusStates.get(client.id) ?? (clients.length === 1 ? lastFocusState : null);
+          const focused = isWindows ? state?.hasFocus === true : client.focused;
+          return focused && state?.connectionReady === true && state.subscribedSessionIds.includes(downloadSessionId);
+        });
+
+        // A live download_update owns the focused-client toast only when the
+        // above readiness check succeeds. Background delivery opens the
+        // session-local inbox; it never carries or follows the one-shot URL.
         const delivery = planDownloadPushDelivery({
           payload: data as DownloadPushPayload,
-          appInFocus,
+          appInFocus: focusedReadyForDownload,
         });
         if (delivery.kind === 'none') return;
 

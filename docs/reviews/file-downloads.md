@@ -33,7 +33,7 @@ The diff changes completion/idle transitions and push/reaping from `agent_end` t
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/index.ts:42-62`; `server/src/folder-index.ts:24-34, 65-71`
-- **Status:** open
+- **Status:** resolved
 
 Boot relies on an exception to turn the GC allow-list into `null`, but `FolderIndex.scan()` skips inaccessible roots and `listSessionRecords()` converts failures into an empty list. A transiently unavailable root can therefore produce a partial or empty non-null allow-list; static-host and download GC then classify omitted sessions as orphans and delete their persisted registrations. The safety contract requires skipping GC whenever session enumeration is not complete.
 
@@ -42,7 +42,7 @@ Boot relies on an exception to turn the GC allow-list into `null`, but `FolderIn
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/file-download/source.ts:43-62`; `server/src/file-download/http-handler.ts:94-111`
-- **Status:** open
+- **Status:** resolved
 
 The route validates and stats a pathname, then passes that pathname to `createReadStream`. A process with write access to the workspace can replace the file with a symlink between those operations; the stream follows the replacement target, which may be outside the captured workspace. This defeats the route's real-path containment guarantee and can expose an unintended file.
 
@@ -51,7 +51,7 @@ The route validates and stats a pathname, then passes that pathname to `createRe
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/download-coordinator.ts:13-15`; `client/src/lib/stores/download-ui.svelte.ts:19-26`; `client/src/lib/stores/session-registry.svelte.ts:521-528`
-- **Status:** open
+- **Status:** resolved
 
 Only `offered` updates reach the download UI store. `consumed`, `revoked`, full-resync, and session-removal updates do not prune the toast queue, so a toast can continue showing a one-shot link after another browser downloaded it, the agent cancelled it, or the session was replaced. Clicking the stale action then produces a dead capability/404 instead of removing the obsolete prompt.
 
@@ -60,7 +60,7 @@ Only `offered` updates reach the download UI store. `consumed`, `revoked`, full-
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/sw.ts:140-155`
-- **Status:** open
+- **Status:** resolved
 
 Every focused client maps a download push to `{ kind: 'none' }`, without checking whether its WebSocket is connected and subscribed. If the focused PWA is reconnecting when the offer occurs, the live `download_update` may never arrive, while reconnection supplies only a silent `restored` snapshot. The user then receives neither the actionable toast nor an OS notification.
 
@@ -69,7 +69,7 @@ Every focused client maps a download push to `{ kind: 'none' }`, without checkin
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/routes/+layout.svelte:129-137`; `client/src/lib/stores/session-registry.svelte.ts:768-780, 794-846`
-- **Status:** open
+- **Status:** resolved
 
 Cold-start notification intents use `connection.pendingAdopt`, but service-worker click messages route through `routeNotificationIntent()` immediately. When the owning session is inactive and the WebSocket is closed or reconnecting, `openExistingSession()` rejects, removes the newly added session, and does not queue the inbox request for the next successful connection. The notification click therefore appears to do nothing.
 

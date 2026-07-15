@@ -39,8 +39,20 @@
     navigator.serviceWorker?.controller?.postMessage({
       type: 'focus_state',
       hasFocus: document.hasFocus(),
+      // A focused window may still be reconnecting. The service worker uses
+      // these session-level facts before suppressing a download push.
+      connectionReady: connection.ready,
+      subscribedSessionIds: [...connection.subscribedSessions.keys()],
     });
   }
+
+  // Keep the service worker's readiness/subscription view current while a
+  // focused tab reconnects or restores sessions, even without a focus event.
+  $effect(() => {
+    connection.ready;
+    [...connection.subscribedSessions.keys()];
+    if (typeof navigator !== 'undefined') sendFocusState();
+  });
 
   onMount(() => {
     // A window opened from a notification must wait until persisted sessions

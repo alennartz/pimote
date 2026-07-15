@@ -1,6 +1,5 @@
 import type http from 'node:http';
-import { createReadStream } from 'node:fs';
-import { validateDownloadSource } from './source.js';
+import { openDownloadSource, type OpenedDownloadSource } from './source.js';
 import type { DownloadManager } from './manager.js';
 
 const DOWNLOAD_PATH = /^\/d\/([^/]+)$/;
@@ -44,12 +43,22 @@ function closeResponse(res: http.ServerResponse): void {
   if (!res.destroyed) res.destroy();
 }
 
-async function streamDownload(res: http.ServerResponse, sourcePath: string): Promise<void> {
+async function streamDownload(res: http.ServerResponse, source: OpenedDownloadSource): Promise<void> {
   await new Promise<void>((resolve) => {
-    const stream = createReadStream(sourcePath);
-    // Promise settlement is idempotent, so every terminal stream/response
-    // event can share this completion callback without a mutable guard.
-    const settle = () => resolve();
+    // The descriptor was opened and containment-checked before headers were
+    // sent. Stream from that descriptor instead of reopening a mutable path.
+    const stream = source.handle.createReadStream({ autoClose: false });
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      // autoClose is disabled so the FileHandle wrapper can be closed exactly
+      // once here, including response-abort and stream-error paths.
+      void source.handle
+        .close()
+        .catch(() => undefined)
+        .finally(resolve);
+    };
 
     stream.once('error', () => {
       closeResponse(res);
@@ -91,9 +100,9 @@ export async function serveFileDownloadRoute(req: http.IncomingMessage, res: htt
     return true;
   }
 
-  let source;
+  let source: OpenedDownloadSource;
   try {
-    source = await validateDownloadSource({
+    source = await openDownloadSource({
       sourcePath: claim.sourcePath,
       workspaceRoot: claim.workspaceRoot,
     });
@@ -108,6 +117,6 @@ export async function serveFileDownloadRoute(req: http.IncomingMessage, res: htt
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
   });
-  await streamDownload(res, source.resolvedPath);
+  await streamDownload(res, source);
   return true;
 }

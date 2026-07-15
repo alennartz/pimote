@@ -1,3 +1,4 @@
+import type { DownloadUpdateEvent } from '@pimote/shared';
 import type { DownloadToastSink } from '../download-coordinator.js';
 import type { DownloadToastModel } from '../download-presentation.js';
 
@@ -11,6 +12,11 @@ import type { DownloadToastModel } from '../download-presentation.js';
 export class DownloadUiStore implements DownloadToastSink {
   toastQueue: DownloadToastModel[] = $state([]);
   inboxOpenSessionId: string | null = $state(null);
+  // Toast models intentionally stay presentation-focused (and keep their
+  // existing test/UI shape), so retain ownership in a private index for
+  // session-removal pruning.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- internal ownership index, not template state
+  private readonly toastSessionIds = new Map<string, string>();
 
   get currentToast(): DownloadToastModel | null {
     return this.toastQueue[0] ?? null;
@@ -18,6 +24,35 @@ export class DownloadUiStore implements DownloadToastSink {
 
   showDownloadToast(toast: DownloadToastModel): void {
     this.toastQueue = [...this.toastQueue, toast];
+  }
+
+  reconcileDownloadUpdate(event: DownloadUpdateEvent): void {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- ephemeral comparison set, not UI state
+    const liveIds = new Set(event.downloads.map((item) => item.id));
+    for (const item of event.downloads) {
+      this.toastSessionIds.set(item.id, event.sessionId);
+    }
+
+    // Every protocol update is a full replacement snapshot. Remove only
+    // queued offers belonging to this session that are no longer actionable;
+    // offers from other sessions remain visible.
+    this.toastQueue = this.toastQueue.filter((toast) => {
+      const owner = this.toastSessionIds.get(toast.item.id);
+      return owner !== event.sessionId || liveIds.has(toast.item.id);
+    });
+
+    for (const [id, owner] of this.toastSessionIds) {
+      if (owner === event.sessionId && !liveIds.has(id)) this.toastSessionIds.delete(id);
+    }
+  }
+
+  /** Remove actionable offers when their owning session leaves the registry. */
+  clearSession(sessionId: string): void {
+    this.toastQueue = this.toastQueue.filter((toast) => this.toastSessionIds.get(toast.item.id) !== sessionId);
+    for (const [id, owner] of this.toastSessionIds) {
+      if (owner === sessionId) this.toastSessionIds.delete(id);
+    }
+    if (this.inboxOpenSessionId === sessionId) this.inboxOpenSessionId = null;
   }
 
   dismissDownloadToast(toastId?: string): void {

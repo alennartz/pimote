@@ -6,6 +6,15 @@ import type { FolderInfo, SessionInfo as PimoteSessionInfo } from '../../shared/
 /** Project marker files/directories that identify a folder as a project. */
 const PROJECT_MARKERS = ['.git', 'package.json'] as const;
 
+export interface FolderScanOptions {
+  /** Throw on an I/O error instead of returning a partial result. */
+  failOnError?: boolean;
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 'ENOENT';
+}
+
 /**
  * Scans configured root directories for project folders and lists their sessions.
  */
@@ -21,14 +30,16 @@ export class FolderIndex {
    * Scan all roots one level deep for project directories.
    * A subdirectory is a "project" if it contains .git or package.json.
    */
-  async scan(): Promise<FolderInfo[]> {
+  async scan(options: FolderScanOptions = {}): Promise<FolderInfo[]> {
     const folders: FolderInfo[] = [];
+    const failOnError = options.failOnError === true;
 
     for (const root of this._roots) {
       let entries: string[];
       try {
         entries = await readdir(root);
-      } catch {
+      } catch (error) {
+        if (failOnError) throw error;
         console.warn(`[FolderIndex] Root directory not accessible, skipping: ${root}`);
         continue;
       }
@@ -39,11 +50,12 @@ export class FolderIndex {
         try {
           const info = await stat(fullPath);
           if (!info.isDirectory()) continue;
-        } catch {
+        } catch (error) {
+          if (failOnError) throw error;
           continue;
         }
 
-        const isProject = await this.hasProjectMarker(fullPath);
+        const isProject = await this.hasProjectMarker(fullPath, failOnError);
         if (!isProject) continue;
 
         folders.push({
@@ -62,10 +74,11 @@ export class FolderIndex {
   /**
    * List raw pi session records for a given folder path.
    */
-  async listSessionRecords(folderPath: string): Promise<PiSessionInfo[]> {
+  async listSessionRecords(folderPath: string, options: FolderScanOptions = {}): Promise<PiSessionInfo[]> {
     try {
       return await SessionManager.list(folderPath);
     } catch (err) {
+      if (options.failOnError) throw err;
       console.warn(`[FolderIndex] Failed to list sessions for ${folderPath}:`, err);
       return [];
     }
@@ -123,13 +136,15 @@ export class FolderIndex {
   /**
    * Check if a directory contains any project markers.
    */
-  private async hasProjectMarker(dirPath: string): Promise<boolean> {
+  private async hasProjectMarker(dirPath: string, failOnError = false): Promise<boolean> {
     for (const marker of PROJECT_MARKERS) {
       try {
         await stat(join(dirPath, marker));
         return true;
-      } catch {
-        // Marker doesn't exist, try next
+      } catch (error) {
+        // A missing marker is expected; any other error means that a strict
+        // enumeration cannot prove the folder's state safely.
+        if (failOnError && !isMissingPathError(error)) throw error;
       }
     }
     return false;

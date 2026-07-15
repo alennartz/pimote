@@ -565,6 +565,9 @@ export class SessionRegistry {
 
   /** Remove a session from the registry */
   removeSession(sessionId: string): void {
+    // A session removal has no download_update event to reconcile against;
+    // explicitly drop any queued one-shot actions owned by that session.
+    downloadUi.clearSession(sessionId);
     const wasViewed = this.viewedSessionId === sessionId;
     // Reassign rather than delete to reliably trigger Svelte 5 $state reactivity
     const { [sessionId]: _, ...rest } = this.sessions;
@@ -584,6 +587,10 @@ export class SessionRegistry {
   replaceSession(oldSessionId: string, newSessionId: string, folderPath: string, projectName: string): void {
     const old = this.sessions[oldSessionId];
     if (!old) return;
+
+    // A reset/replacement creates a new session identity and does not migrate
+    // one-shot registrations or their actionable toasts.
+    downloadUi.clearSession(oldSessionId);
 
     // Remove old entry, add new entry with clean state but same slot identity
     const { [oldSessionId]: _, ...rest } = this.sessions;
@@ -760,6 +767,21 @@ export interface AppNotificationIntent {
   openDownloads?: boolean;
 }
 
+function queueDownloadNotificationIntent(intent: DownloadNotificationIntent): void {
+  const folderPath = intent.folderPath ?? sessionRegistry.sessions[intent.sessionId]?.folderPath;
+  if (!folderPath) return;
+
+  // Keep the intent in the connection layer until a socket is open and all
+  // existing subscriptions have been restored. This avoids adding/removing a
+  // temporary session when a notification click lands during reconnect.
+  connection.pendingAdopt = {
+    sessionId: intent.sessionId,
+    folderPath,
+    openDownloads: true,
+  };
+  connection.connect();
+}
+
 /**
  * Route every OS notification click through one app-level adapter. Download
  * intents open only the owning session's inbox; ordinary notifications retain
@@ -772,12 +794,26 @@ export async function routeNotificationIntent(intent: AppNotificationIntent): Pr
       ...(intent.folderPath ? { folderPath: intent.folderPath } : {}),
       openDownloads: true,
     };
+
+    // A focused existing window can be in backoff or mid-restore. Queue the
+    // inbox intent instead of attempting open_session over a dead socket.
+    if (!connection.ready) {
+      queueDownloadNotificationIntent(downloadIntent);
+      return;
+    }
+
     await handleDownloadNotificationIntent(downloadIntent, {
       hasSession: (sessionId) => sessionRegistry.isActiveSession(sessionId),
       switchToSession,
       openExistingSession: (sessionId, folderPath) => openExistingSession(sessionId, folderPath, { force: true, switchTo: true }),
       openDownloadInbox: (sessionId) => downloadUi.openDownloadInbox(sessionId),
     });
+
+    // The socket may have dropped during the adoption request. Preserve the
+    // intent for the next successful restore rather than losing the click.
+    if (!connection.ready && !sessionRegistry.isActiveSession(intent.sessionId)) {
+      queueDownloadNotificationIntent(downloadIntent);
+    }
     return;
   }
 
