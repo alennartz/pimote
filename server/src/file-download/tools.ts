@@ -22,11 +22,21 @@ export interface FileDownloadToolContext {
 }
 
 /** Adapter boundary for the `pimote_send_file` tool. */
-export function executeSendFileTool(_input: SendFileToolInput, _context: FileDownloadToolContext): Promise<SendFileToolOutput> {
-  throw new Error('not implemented');
+export async function executeSendFileTool(input: SendFileToolInput, context: FileDownloadToolContext): Promise<SendFileToolOutput> {
+  const offered = await context.manager.offer({
+    sessionId: context.sessionId,
+    workspaceRoot: context.workspaceRoot,
+    path: input.path,
+  });
+
+  // The href is deliberately withheld from the agent. It is a one-shot
+  // capability intended for the client-side user-approval flow, while the
+  // agent only needs the server-derived presentation metadata.
+  const { id, filename, sizeBytes } = offered;
+  return { id, filename, sizeBytes };
 }
 
 /** Adapter boundary for the `pimote_cancel_file_send` tool. */
-export function executeCancelFileSendTool(_input: CancelFileSendToolInput, _context: FileDownloadToolContext): Promise<CancelFileSendToolOutput> {
-  throw new Error('not implemented');
+export async function executeCancelFileSendTool(input: CancelFileSendToolInput, context: FileDownloadToolContext): Promise<CancelFileSendToolOutput> {
+  return context.manager.cancel(context.sessionId, input.id);
 }

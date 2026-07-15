@@ -312,19 +312,21 @@ For `cause: 'offered'`, the coordinator finds `offeredDownloadId` in the snapsho
 
 ## Steps
 
+**Pre-implementation commit:** `abbf2d14d5e4ab09cc3ef04e031013b58bbf6147`
+
 ### Step 1: Implement the common session JSON store
 
 Complete `FileSessionJsonStore<TDocument>` and `gcSessionJsonStore` in `server/src/session-json-store.ts`. Store each document at `<storeDir>/<sessionId>.json`; return `undefined` for missing or corrupt JSON; create the directory on write; write a complete JSON document to `<sessionId>.json.tmp` and atomically rename it over the final file; and make removal idempotent. The GC function must tolerate a missing directory, delete abandoned `.json.tmp` files and JSON documents whose session ID is absent from `validSessionIds`, and leave valid documents, unrelated files, and directories untouched.
 
 **Verify:** `npm test --workspace=@pimote/server -- --run src/session-json-store.test.ts`
-**Status:** not started
+**Status:** done
 
 ### Step 2: Move static hosting onto the common store
 
 Replace the duplicated filesystem implementation in `server/src/static-host/store.ts` with a typed adapter over `SessionJsonStore<StaticHostStoreFile>` and `FileSessionJsonStore<StaticHostStoreFile>`, while retaining the existing `StaticHostStoreEntry`, `StaticHostStoreFile`, `StaticHostStore`, and `FileStaticHostStore` names used by the extension. Make `server/src/static-host/gc.ts` delegate to or re-export `gcSessionJsonStore` as `gcStaticHostStore`. Keep `server/src/static-host/index.ts` and `server/src/static-host/tools.ts` feature-specific: they still own static-host document shapes, replay, registry, and tool behavior, but no longer own JSON filesystem mechanics.
 
 **Verify:** `npm test --workspace=@pimote/server -- --run src/static-host/store.test.ts src/static-host/gc.test.ts src/static-host/tools.test.ts src/static-host/index.test.ts`
-**Status:** not started
+**Status:** done
 
 ### Step 3: Implement the download manager
 
@@ -339,7 +341,7 @@ Keep the process-lifetime mutable state private to the manager: active per-sessi
 - `snapshot` derives fresh public `DownloadItem` values only from the requested active session and never includes `sourcePath` or `workspaceRoot`.
 
 **Verify:** `npm test --workspace=@pimote/server -- --run src/file-download/manager.test.ts`
-**Status:** not started
+**Status:** done
 
 ### Step 4: Implement the agent tools and extension lifecycle
 
@@ -348,7 +350,7 @@ In `server/src/file-download/tools.ts`, make `executeSendFileTool` pass `{ sessi
 Implement `createFileDownloadExtension` in `server/src/file-download/index.ts` using TypeBox schemas that expose exactly `pimote_send_file({ path })` and `pimote_cancel_file_send({ id })`. Resolve `ctx.sessionManager.getSessionId()` and `ctx.cwd` at execution time, return the adapters' values in both text content and `details`, call `manager.activate` on `session_start`, publish its updates as `pimote:downloads`, and call `manager.deactivate` on `session_shutdown` without deleting persistence.
 
 **Verify:** `npm test --workspace=@pimote/server -- --run src/file-download/tools.test.ts src/file-download/index.test.ts`
-**Status:** not started
+**Status:** done
 
 ### Step 5: Implement the one-shot attachment route
 
@@ -357,14 +359,14 @@ Complete `serveFileDownloadRoute` in `server/src/file-download/http-handler.ts`.
 After a successful claim, reuse the file-download source validator to resolve the persisted lexical path against the captured root and re-check that the live target is a contained regular file. Treat validation failure as a handled `404` while leaving the claim consumed. Stream the current file with `Content-Disposition: attachment` using a CR/LF/quote-safe ASCII fallback plus RFC 5987 UTF-8 filename encoding, `application/octet-stream` (or a safe derived type), and no-cache headers. Preserve the source file and contain post-header stream errors by closing the response rather than rejecting the server request.
 
 **Verify:** `npm test --workspace=@pimote/server -- --run src/file-download/http-handler.test.ts`
-**Status:** not started
+**Status:** done
 
 ### Step 6: Complete process bootstrap and route composition
 
 Finish the process-level composition across `server/src/file-download/bootstrap.ts`, `server/src/paths.ts`, `server/src/index.ts`, and `server/src/server.ts`. `bootstrapFileDownloads` must construct one `FileSessionJsonStore<DownloadStoreDocument>`, skip orphan GC when `validSessionIds` is `null`, otherwise sweep `PIMOTE_FILE_DOWNLOAD_DIR`, and create one manager captured by one extension factory. In `main`, enumerate session IDs once with the existing failure-to-`null` safety, pass the extension factory into `PimoteSessionManager`, and pass the same manager into `createServer`. Keep `PIMOTE_FILE_DOWNLOAD_DIR` separate from static-host state. Mount `serveFileDownloadRoute` with that manager after client static-file lookup but before static-host/SPA fallback so an unknown handled download never becomes the PWA shell.
 
 **Verify:** `npm test --workspace=@pimote/server -- --run src/file-download/bootstrap.test.ts src/index.test.ts src/server.test.ts`
-**Status:** not started
+**Status:** done
 
 ### Step 7: Route download updates through session state
 
@@ -373,14 +375,14 @@ Implement `setupSlotDownloadListener`, `makeDownloadSnapshot`, and `routeSlotDow
 For an accepted update, replace `state.downloads`, send that exact full `download_update` through the slot's current-owner send closure, and send VAPID only for `cause: 'offered'` when `offeredDownloadId` resolves to an item in the new snapshot. Build the push payload from the slot's session/folder metadata and only `{ downloadId, filename, sizeBytes }`; never copy `href`. A push failure must not undo the state replacement or wire event. Make `makeDownloadSnapshot` return the silent `restored` variant. Ensure new and rebuilt session states start with `downloads: []`, and retain the file-download extension factory after the voice/static-host factories in every runtime's `resourceLoaderOptions`.
 
 **Verify:** `npm test --workspace=@pimote/server -- --run src/session-manager.test.ts src/session-manager-open-session.test.ts src/push-notification.test.ts`
-**Status:** not started
+**Status:** done
 
 ### Step 8: Deliver silent snapshots at every WebSocket recovery boundary
 
 In `server/src/ws-handler.ts`, add one private operation that sends `makeDownloadSnapshot(slot.sessionState.id, slot.sessionState.downloads)` directly to this handler. Invoke it exactly once after a slot is claimed by a connection so incremental reconnects, full-resync reconnects, forced takeovers, and direct ownership transfers all receive the current snapshot only on the new owner. Also invoke it after same-slot session reset/replacement resync and from `view_session` after switching the viewed session. Do not send through the client registry or broadcast to displaced/background clients; live consumption continues to flow through the slot owner installed in Step 7.
 
 **Verify:** `npm test --workspace=@pimote/server -- --run src/ws-handler.test.ts`
-**Status:** not started
+**Status:** done
 
 ### Step 9: Implement client reduction and presentation models
 
@@ -389,7 +391,7 @@ Complete `client/src/lib/download-presentation.ts` with deterministic binary-uni
 In `client/src/lib/stores/session-registry.svelte.ts`, make `download_update` replace the owning session's array before invoking `onDownloadUpdate`. Keep snapshots isolated per session, initialize new sessions with an empty array, and continue resetting downloads rather than migrating them in `replaceSession` and `full_resync`; the subsequent server `restored` event is authoritative.
 
 **Verify:** `npm test --workspace=client -- --run src/lib/download-presentation.test.ts src/lib/download-coordinator.test.ts src/lib/stores/session-registry.test.ts`
-**Status:** not started
+**Status:** done
 
 ### Step 10: Build the toast and session-local inbox surfaces
 
@@ -398,7 +400,7 @@ Add a rune-based UI state holder at `client/src/lib/stores/download-ui.svelte.ts
 Create `client/src/lib/components/DownloadToast.svelte` and `client/src/lib/components/DownloadInbox.svelte`. The global toast shows filename and formatted registration size, has dismiss behavior, and uses a plain same-origin `<a href={item.href}>` for its primary Download action. The inbox reads only `sessionRegistry.viewed.downloads`, renders the same native links and size copy, shows a pending-count affordance, and honors an inbox-open request only after that exact session is viewed. Mount the toast globally in `client/src/routes/+layout.svelte`; place the compact inbox dropdown in `client/src/lib/components/StatusBar.svelte`; and add the conditional mobile inbox control to the current-session header in `client/src/routes/+layout.svelte`. Hide both inbox controls when the viewed session has no pending items.
 
 **Verify:** `npm test --workspace=client -- --run src/lib/download-presentation.test.ts src/lib/download-coordinator.test.ts src/lib/stores/session-registry.test.ts && npm run check --workspace=client`
-**Status:** not started
+**Status:** done
 
 ### Step 11: Implement push planning and inbox notification intent
 
@@ -407,7 +409,7 @@ Complete `planDownloadPushDelivery` in `client/src/lib/download-push.ts`: focuse
 Complete `handleDownloadNotificationIntent` in `client/src/lib/download-notification-intent.ts`. If the session is already active, switch to it and then open only that session's inbox. Otherwise require `folderPath`, await `openExistingSession`, and open the inbox only after successful adoption. Never navigate to a download URL.
 
 **Verify:** `npm test --workspace=client -- --run src/lib/download-push.test.ts src/lib/download-notification-intent.test.ts`
-**Status:** not started
+**Status:** done
 
 ### Step 12: Wire service-worker delivery and notification adoption
 
@@ -416,4 +418,4 @@ Integrate the pure push planner into `client/src/sw.ts` without changing idle/in
 In `client/src/routes/+layout.svelte`, parse that cold-start flag and pass notification-click messages through one shared app adapter over `handleDownloadNotificationIntent`. In `client/src/lib/stores/connection.svelte.ts` and `client/src/lib/stores/session-registry.svelte.ts`, carry `PendingSessionAdopt.openDownloads` through reconnect and use the same adapter after subscribed-session restoration, with ports backed by `switchToSession`, `openExistingSession(..., { force: true, switchTo: true })`, and the download UI holder's `openDownloadInbox`. Keep ordinary notification clicks working and never follow `DownloadItem.href` from a system notification.
 
 **Verify:** `npm test --workspace=client -- --run && npm test --workspace=@pimote/server -- --run && npm run check && npm run build`
-**Status:** not started
+**Status:** done

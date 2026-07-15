@@ -18,7 +18,7 @@ import type {
   PimoteTreeNode,
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome } from './session-manager.js';
-import { resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests } from './session-manager.js';
+import { makeDownloadSnapshot, resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests } from './session-manager.js';
 import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
 import type { FolderIndex } from './folder-index.js';
@@ -120,20 +120,13 @@ export function mapTreeNodes(nodes: SessionTreeNode[]): PimoteTreeNode[] {
  */
 function createCommandContextActions(slot: ManagedSlot, sessionManager: PimoteSessionManager): ExtensionCommandContextActions {
   return {
-    waitForIdle: () => {
-      if (!slot.session.isStreaming) return Promise.resolve();
-      return new Promise<void>((resolve) => {
-        const unsubscribe = slot.session.subscribe((event: { type: string; willRetry?: boolean }) => {
-          // A `willRetry` agent_end is not a real end — the SDK will re-run the
-          // prompt after backoff. Resolving here would hand control back mid-run.
-          // Wait for the terminal (willRetry=false) agent_end instead.
-          if (event.type === 'agent_end' && !event.willRetry) {
-            unsubscribe();
-            resolve();
-          }
-        });
-      });
-    },
+    // Delegate to the SDK's native settle-aware primitive (0.80.7+): it resolves
+    // only when the session is genuinely idle (no active run, retry,
+    // auto-compaction, or queued continuation), which is exactly the boundary we
+    // want. Previously reimplemented by watching for a terminal agent_end, but
+    // that resolved one step early (before settlement / through a queued
+    // continuation).
+    waitForIdle: () => slot.session.waitForIdle(),
     newSession: async (options) => {
       const result = await slot.runtime.newSession(options);
       if (!result.cancelled) await sessionManager.applySessionReset(slot);
@@ -661,6 +654,7 @@ export class WsHandler {
             viewedSlot.sessionState.needsAttention = false;
             // Always send current panel state so the client syncs after switching sessions
             this.sendEvent({ type: 'panel_update', sessionId: command.sessionId, cards: getMergedPanelCards(viewedSlot.sessionState.panelState) });
+            this.sendSilentDownloadSnapshot(viewedSlot);
           }
           this.sendResponse(id, true);
           break;
@@ -855,7 +849,9 @@ export class WsHandler {
           break;
         }
         if (trimmed === '/reload') {
-          session.reload();
+          await session.reload();
+          this.sendFullResyncForSession(sessionId, slot);
+          this.sendSilentDownloadSnapshot(slot);
           this.sendResponse(id, true);
           break;
         }
@@ -1240,6 +1236,7 @@ export class WsHandler {
 
     // Re-deliver any pending UI requests to the new client (recovers lost dialogs)
     replaySlotPendingUiRequests(slot);
+    this.sendSilentDownloadSnapshot(slot);
   }
 
   /** Notify-only reaction to a session reset that the session manager has ALREADY
@@ -1250,6 +1247,7 @@ export class WsHandler {
     // navigateTree stays in the same file — same session ID, just resync.
     if (outcome.kind === 'unchanged') {
       this.sendFullResyncForSession(slot.sessionState.id, slot);
+      this.sendSilentDownloadSnapshot(slot);
       return;
     }
 
@@ -1283,6 +1281,7 @@ export class WsHandler {
         activeStatus: 'idle',
       },
     });
+    this.sendSilentDownloadSnapshot(slot);
 
     // Broadcast sidebar updates for both old (now inactive) and new (now active)
     WsHandler.broadcastSidebarUpdate(oldId, folderPath, this.sessionManager, this.clientRegistry);
@@ -1525,6 +1524,11 @@ export class WsHandler {
       },
       () => slot.session.messages[slot.session.messages.length - 1],
     );
+  }
+
+  /** Send the current download state without treating any item as newly offered. */
+  private sendSilentDownloadSnapshot(slot: ManagedSlot): void {
+    this.sendEvent(makeDownloadSnapshot(slot.sessionState.id, slot.sessionState.downloads));
   }
 
   /** Send a full_resync event to the client for the given managed session.

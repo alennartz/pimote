@@ -1,6 +1,5 @@
-import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
 import type { CardColor } from '../../../shared/dist/index.js';
+import { FileSessionJsonStore, type SessionJsonStore } from '../session-json-store.js';
 
 /** One persisted entry; the in-memory `StaticHostRegistration.sessionId` is implicit from the filename. */
 export interface StaticHostStoreEntry {
@@ -18,64 +17,29 @@ export interface StaticHostStoreFile {
 /**
  * Per-session JSON persistence for the static-host extension.
  *
- * Files live at `${storeDir}/${sessionId}.json`. Writes are atomic
- * (write-to-tmp + rename) so a crash mid-write never leaves a half-written file.
+ * Static hosting owns the persisted document shape while the common session
+ * store owns filesystem mechanics such as atomic replacement and corrupt-file
+ * handling.
  */
-export interface StaticHostStore {
-  /** Read state for a session, or `undefined` if no file exists. */
-  read(sessionId: string): Promise<StaticHostStoreFile | undefined>;
+export type StaticHostStore = SessionJsonStore<StaticHostStoreFile>;
 
-  /** Atomically write state. Creates the directory tree if missing. */
-  write(sessionId: string, file: StaticHostStoreFile): Promise<void>;
-
-  /** Delete the file for a session. No-op if absent. */
-  remove(sessionId: string): Promise<void>;
-}
-
-/**
- * Filesystem-backed `StaticHostStore`. One file per sessionId under `storeDir`.
- */
+/** Filesystem-backed adapter for the static-host persistence contract. */
 export class FileStaticHostStore implements StaticHostStore {
-  constructor(private readonly storeDir: string) {}
+  private readonly delegate: SessionJsonStore<StaticHostStoreFile>;
 
-  private pathFor(sessionId: string): string {
-    return join(this.storeDir, `${sessionId}.json`);
+  constructor(storeDir: string) {
+    this.delegate = new FileSessionJsonStore<StaticHostStoreFile>(storeDir);
   }
 
-  async read(sessionId: string): Promise<StaticHostStoreFile | undefined> {
-    const path = this.pathFor(sessionId);
-    let raw: string;
-    try {
-      raw = await readFile(path, 'utf-8');
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-      throw err;
-    }
-    try {
-      return JSON.parse(raw) as StaticHostStoreFile;
-    } catch (err) {
-      // A truncated/corrupt file must not reject out of the async session_start
-      // handler (which could break session load). Treat it as "no state" — the
-      // next write overwrites it atomically.
-      console.warn(`[static-host] ignoring corrupt store file ${path}:`, (err as Error).message ?? err);
-      return undefined;
-    }
+  read(sessionId: string): Promise<StaticHostStoreFile | undefined> {
+    return this.delegate.read(sessionId);
   }
 
-  async write(sessionId: string, file: StaticHostStoreFile): Promise<void> {
-    await mkdir(this.storeDir, { recursive: true });
-    const finalPath = this.pathFor(sessionId);
-    const tmpPath = finalPath + '.tmp';
-    await writeFile(tmpPath, JSON.stringify(file, null, 2) + '\n', 'utf-8');
-    await rename(tmpPath, finalPath);
+  write(sessionId: string, file: StaticHostStoreFile): Promise<void> {
+    return this.delegate.write(sessionId, file);
   }
 
-  async remove(sessionId: string): Promise<void> {
-    try {
-      await unlink(this.pathFor(sessionId));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-      throw err;
-    }
+  remove(sessionId: string): Promise<void> {
+    return this.delegate.remove(sessionId);
   }
 }

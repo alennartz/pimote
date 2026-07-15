@@ -10,8 +10,9 @@ export interface DownloadToastSink {
  * Turn a post-reducer download update into one visible in-app offer prompt.
  * Silent snapshots intentionally do not reach the toast surface.
  */
-export function coordinateDownloadUpdate(_event: DownloadUpdateEvent, _sink: DownloadToastSink): void {
-  throw new Error('not implemented');
+export function coordinateDownloadUpdate(event: DownloadUpdateEvent, sink: DownloadToastSink): void {
+  const toast = buildDownloadToast(event);
+  if (toast) sink.showDownloadToast(toast);
 }
 
 export { buildDownloadToast };

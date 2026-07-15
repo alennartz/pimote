@@ -17,6 +17,19 @@ export interface NotificationSessionPort {
  * Switch or adopt the owning session before opening its session-local inbox.
  * A missing folder path cannot be adopted, so it is intentionally a no-op.
  */
-export function handleDownloadNotificationIntent(_intent: DownloadNotificationIntent, _port: NotificationSessionPort): Promise<void> {
-  throw new Error('not implemented');
+export async function handleDownloadNotificationIntent(intent: DownloadNotificationIntent, port: NotificationSessionPort): Promise<void> {
+  if (port.hasSession(intent.sessionId)) {
+    port.switchToSession(intent.sessionId);
+    port.openDownloadInbox(intent.sessionId);
+    return;
+  }
+
+  if (!intent.folderPath) {
+    return;
+  }
+
+  const adopted = await port.openExistingSession(intent.sessionId, intent.folderPath);
+  if (adopted) {
+    port.openDownloadInbox(intent.sessionId);
+  }
 }

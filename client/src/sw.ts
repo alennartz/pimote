@@ -10,6 +10,7 @@ declare global {
 
 import { clientsClaim } from 'workbox-core';
 import { precacheAndRoute } from 'workbox-precaching';
+import { planDownloadPushDelivery, type DownloadPushPayload } from './lib/download-push.js';
 
 declare let self: ServiceWorkerGlobalScope;
 
@@ -143,6 +144,26 @@ self.addEventListener('push', (event) => {
       // use the native client.focused which works correctly.
       const appInFocus = isWindows ? clientHasFocus : clients.some((c) => c.focused);
 
+      if (data.reason === 'download') {
+        // A live download_update owns the focused-client toast. Background
+        // delivery opens the session-local inbox; it never carries or follows
+        // the one-shot download URL.
+        const delivery = planDownloadPushDelivery({
+          payload: data as DownloadPushPayload,
+          appInFocus,
+        });
+        if (delivery.kind === 'none') return;
+
+        return self.registration.showNotification(delivery.title, {
+          body: delivery.body,
+          data: delivery.data,
+          icon: '/pwa/icon-192.png',
+          badge: '/pwa/badge-96.png',
+          tag: delivery.tag,
+          renotify: true,
+        });
+      }
+
       if (appInFocus && clients.length > 0) {
         // In-app: post message to client for in-app handling
         const target = clients.find((c) => c.focused) ?? clients[0];
@@ -174,21 +195,30 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const sessionId = event.notification.data?.sessionId;
   const folderPath = event.notification.data?.folderPath;
+  const openDownloads = event.notification.data?.openDownloads === true;
+
   event.waitUntil(
     self.clients.matchAll({ type: 'window' }).then((clients) => {
       if (clients.length > 0) {
         const client = clients[0];
         client.focus();
         if (sessionId) {
-          client.postMessage({ type: 'notification_click', sessionId, folderPath });
+          client.postMessage({
+            type: 'notification_click',
+            sessionId,
+            folderPath,
+            ...(openDownloads ? { openDownloads: true } : {}),
+          });
         }
-      } else {
-        const params = new URLSearchParams();
-        if (sessionId) params.set('sessionId', sessionId);
-        if (folderPath) params.set('folderPath', folderPath);
-        const query = params.toString();
-        self.clients.openWindow(query ? `/?${query}` : '/');
+        return;
       }
+
+      const params = new URLSearchParams();
+      if (sessionId) params.set('sessionId', sessionId);
+      if (folderPath) params.set('folderPath', folderPath);
+      if (openDownloads) params.set('openDownloads', 'true');
+      const query = params.toString();
+      return self.clients.openWindow(query ? `/?${query}` : '/');
     }),
   );
 });

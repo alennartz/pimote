@@ -63,6 +63,8 @@ export interface SessionState {
   panelState: Map<string, Card[]>;
   /** Current pending file-download snapshot for this session. */
   downloads: DownloadItem[];
+  /** Removes this state's dedicated download EventBus listener during teardown. */
+  downloadListenerUnsub?: () => void;
   panelListenerUnsubs: (() => void)[];
   panelThrottleTimer: ReturnType<typeof setTimeout> | null;
   /** True while a tree navigation + optional summarization is in progress. */
@@ -105,14 +107,35 @@ export interface RouteSlotDownloadUpdateOptions {
   notify(payload: PushNotificationPayload): Promise<void>;
 }
 
+/** True when an untrusted EventBus payload has the public download-item shape. */
+function isDownloadItem(value: unknown): value is DownloadItem {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.id === 'string' && typeof item.filename === 'string' && typeof item.sizeBytes === 'number' && Number.isFinite(item.sizeBytes) && typeof item.href === 'string';
+}
+
+/** True when an untrusted EventBus payload has one of the download-update shapes. */
+function isDownloadUpdateEvent(value: unknown): value is DownloadUpdateEvent {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const update = value as Record<string, unknown>;
+  if (update.type !== 'download_update' || typeof update.sessionId !== 'string' || !Array.isArray(update.downloads) || !update.downloads.every(isDownloadItem)) {
+    return false;
+  }
+  if (update.cause === 'offered') return typeof update.offeredDownloadId === 'string';
+  return update.cause === 'restored' || update.cause === 'consumed' || update.cause === 'revoked';
+}
+
 /** Subscribe one session state to extension download updates. */
-export function setupSlotDownloadListener(_eventBus: DownloadEventBus, _options: RouteSlotDownloadUpdateOptions): () => void {
-  throw new Error('not implemented');
+export function setupSlotDownloadListener(eventBus: DownloadEventBus, options: RouteSlotDownloadUpdateOptions): () => void {
+  return eventBus.on('pimote:downloads', async (update) => {
+    if (!isDownloadUpdateEvent(update) || update.sessionId !== options.sessionId) return;
+    await routeSlotDownloadUpdate(update, options);
+  });
 }
 
 /** Build the silent full snapshot used after reconnect, resync, and view changes. */
-export function makeDownloadSnapshot(_sessionId: string, _downloads: DownloadItem[]): DownloadSnapshotUpdateEvent {
-  throw new Error('not implemented');
+export function makeDownloadSnapshot(sessionId: string, downloads: DownloadItem[]): DownloadSnapshotUpdateEvent {
+  return { type: 'download_update', sessionId, cause: 'restored', downloads };
 }
 
 /**
@@ -121,8 +144,33 @@ export function makeDownloadSnapshot(_sessionId: string, _downloads: DownloadIte
  * validates that the update belongs to this session and resolves
  * `offeredDownloadId` from the full snapshot before notifying.
  */
-export function routeSlotDownloadUpdate(_update: DownloadUpdateEvent, _options: RouteSlotDownloadUpdateOptions): Promise<void> {
-  throw new Error('not implemented');
+export async function routeSlotDownloadUpdate(update: DownloadUpdateEvent, options: RouteSlotDownloadUpdateOptions): Promise<void> {
+  if (update.sessionId !== options.sessionId) return;
+
+  options.state.downloads = update.downloads;
+  options.send(update);
+
+  if (update.cause !== 'offered') return;
+  const offered = update.downloads.find((download) => download.id === update.offeredDownloadId);
+  if (!offered) return;
+
+  const projectName = options.folderPath.split('/').filter(Boolean).at(-1) ?? 'Unknown';
+  try {
+    await options.notify({
+      projectName,
+      folderPath: options.folderPath,
+      sessionId: options.sessionId,
+      sessionName: options.sessionName,
+      reason: 'download',
+      download: {
+        downloadId: offered.id,
+        filename: offered.filename,
+        sizeBytes: offered.sizeBytes,
+      },
+    });
+  } catch (error) {
+    console.error('[SessionManager] Download push notification error:', error);
+  }
 }
 
 /** Create a pending promise for a UI dialog response. Stores the request event for replay on reconnect. */
@@ -166,8 +214,9 @@ function createSessionState(
   config: PimoteConfig,
   callbacks: {
     onStatusChange?: (sessionId: string, folderPath: string) => void;
-    onAgentEnd?: (sessionId: string, slot: ManagedSlot) => void;
+    onSessionIdle?: (sessionId: string, slot: ManagedSlot) => void;
     sendEvent: (event: PimoteEvent) => void;
+    notify: (payload: PushNotificationPayload) => Promise<void>;
   },
   slotRef: { slot: ManagedSlot | null },
   folderPath: string,
@@ -186,6 +235,7 @@ function createSessionState(
     extensionsBound: false,
     panelState: new Map(),
     downloads: [],
+    downloadListenerUnsub: undefined,
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
     treeNavigationInProgress: false,
@@ -197,25 +247,29 @@ function createSessionState(
       state.status = 'working';
       state.idleSince = null;
       callbacks.onStatusChange?.(sessionId, folderPath);
-    } else if (event.type === 'agent_end' && !event.willRetry && state.status !== 'idle') {
-      // `willRetry` agent_end is not a real end — the SDK detected a retryable
-      // error and will re-run the prompt after backoff (a fresh agent_start
-      // follows). Treating it as idle here would fire a spurious completion
-      // push notification and start the idle-reap clock for a session that is
-      // still working. Skip it; the terminal (willRetry=false) agent_end will
-      // drive the real idle transition.
+    } else if (event.type === 'agent_end' && !event.willRetry) {
+      // Content/attempt-boundary work that must run at `agent_end`, NOT at the
+      // later `agent_settled` idle boundary: if the run ended via abort and
+      // there are queued steering / follow-up messages, drain them —
+      // pi-agent-core's runLoop skips its trailing queue poll on the abort exit
+      // path, so without this queued messages would sit until the next prompt()
+      // call. Universal across pimote (not voice-specific) so typed-mode users
+      // also benefit. See `auto-drain-on-abort.ts` for rationale.
+      //
+      // `willRetry` agent_end is not a real end (a retry re-runs the prompt), so
+      // it is skipped here — matched by the guard above.
+      void autoDrainOnAbort(session, event.messages[event.messages.length - 1]);
+    } else if (event.type === 'agent_settled' && state.status !== 'idle') {
+      // Authoritative idle boundary: raised only when the session is genuinely
+      // quiescent (no active run, retry, auto-compaction, or queued
+      // continuation). Driving the completion push + idle-reap clock off this
+      // rather than the terminal `agent_end` avoids a premature "done" push /
+      // reap when a queued follow-up continues the session after `agent_end`.
       state.status = 'idle';
       state.idleSince = Date.now();
       state.needsAttention = true;
-      if (slotRef.slot) callbacks.onAgentEnd?.(sessionId, slotRef.slot);
+      if (slotRef.slot) callbacks.onSessionIdle?.(sessionId, slotRef.slot);
       callbacks.onStatusChange?.(sessionId, folderPath);
-      // If the run ended via abort and there are queued steering /
-      // follow-up messages, drain them — pi-agent-core's runLoop skips
-      // its trailing queue poll on the abort exit path, so without this
-      // queued messages would sit until the next prompt() call. Universal
-      // across pimote (not voice-specific) so typed-mode users also
-      // benefit. See `auto-drain-on-abort.ts` for rationale.
-      void autoDrainOnAbort(session, event.messages[event.messages.length - 1]);
     }
     eventBuffer.onEvent(
       event,
@@ -227,8 +281,16 @@ function createSessionState(
 
   state.unsubscribe = unsubscribe;
 
-  // Set up panel listeners on the EventBus
+  // Bind feature EventBus listeners after the state holder exists.
   state.panelListenerUnsubs = setupSlotPanelListeners(eventBus, state, sessionId, callbacks.sendEvent);
+  state.downloadListenerUnsub = setupSlotDownloadListener(eventBus, {
+    sessionId,
+    folderPath,
+    sessionName: session.sessionName,
+    state,
+    send: callbacks.sendEvent,
+    notify: callbacks.notify,
+  });
 
   return state;
 }
@@ -244,7 +306,9 @@ function teardownSessionState(state: SessionState): void {
   // Clear panel throttle timer
   if (state.panelThrottleTimer) clearTimeout(state.panelThrottleTimer);
 
-  // Remove panel listeners
+  // Remove feature EventBus listeners.
+  state.downloadListenerUnsub?.();
+  state.downloadListenerUnsub = undefined;
   for (const unsub of state.panelListenerUnsubs) unsub();
   state.panelListenerUnsubs = [];
 
@@ -478,8 +542,9 @@ export class PimoteSessionManager {
       this.config,
       {
         onStatusChange: (sid, fp) => this.onStatusChange?.(sid, fp),
-        onAgentEnd: (sid, s) => this.handleAgentEnd(sid, s),
+        onSessionIdle: (sid, s) => this.handleSessionIdle(sid, s),
         sendEvent: (e) => sendSlotEvent(slot, e),
+        notify: (payload) => this.pushNotificationService.notify(payload),
       },
       slotRef,
       effectiveFolderPath,
@@ -502,7 +567,7 @@ export class PimoteSessionManager {
     return sessionId;
   }
 
-  private handleAgentEnd(sessionId: string, slot: ManagedSlot): void {
+  private handleSessionIdle(sessionId: string, slot: ManagedSlot): void {
     const folderPath = slot.folderPath;
     const projectName = folderPath.split('/').pop() ?? 'Unknown';
     const firstMessage = this.extractFirstMessage(slot);
@@ -648,8 +713,9 @@ export class PimoteSessionManager {
       this.config,
       {
         onStatusChange: (sid, fp) => this.onStatusChange?.(sid, fp),
-        onAgentEnd: (sid, s) => this.handleAgentEnd(sid, s),
+        onSessionIdle: (sid, s) => this.handleSessionIdle(sid, s),
         sendEvent: (e) => sendSlotEvent(slot, e),
+        notify: (payload) => this.pushNotificationService.notify(payload),
       },
       slotRef,
       slot.folderPath,

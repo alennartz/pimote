@@ -11,6 +11,7 @@
   import { GitBranch } from '@lucide/svelte';
   import SessionRenameDialog from './SessionRenameDialog.svelte';
   import CallButton from './CallButton.svelte';
+  import DownloadInbox from './DownloadInbox.svelte';
 
   let restoreLabel = $derived(sessionRegistry.viewed?.isRestoring ? getRestoreModeLabel(sessionRegistry.viewed.restoreMode) : null);
   let connectionLabel = $derived(restoreLabel ?? connection.phaseLabel);
@@ -95,6 +96,11 @@
       </span>
 
       <Separator orientation="vertical" class="mx-0.5 h-4" />
+    {/if}
+
+    {#if sessionRegistry.viewed?.downloads.length}
+      <Separator orientation="vertical" class="mx-0.5 h-4" />
+      <DownloadInbox />
     {/if}
 
     <!-- Voice call button -->

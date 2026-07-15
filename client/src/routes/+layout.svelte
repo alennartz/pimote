@@ -13,6 +13,8 @@
   import TreeDialog from '$lib/components/TreeDialog.svelte';
   import LoginDialog from '$lib/components/LoginDialog.svelte';
   import Panel from '$lib/components/Panel.svelte';
+  import DownloadToast from '$lib/components/DownloadToast.svelte';
+  import DownloadInbox from '$lib/components/DownloadInbox.svelte';
   import SessionSettingsDialog from '$lib/components/SessionSettingsDialog.svelte';
   import SessionRenameDialog from '$lib/components/SessionRenameDialog.svelte';
   import { getContextDisplay, getContextTone, getSessionDisplayName } from '$lib/session-summary.js';
@@ -20,7 +22,7 @@
   import X from '@lucide/svelte/icons/x';
   import PanelRight from '@lucide/svelte/icons/panel-right';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { routeNotificationIntent, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
   import { pushSharedImages } from '$lib/stores/input-bar.svelte.js';
   import { resolveAppViewportHeight } from '$lib/app-viewport.js';
@@ -41,6 +43,21 @@
   }
 
   onMount(() => {
+    // A window opened from a notification must wait until persisted sessions
+    // finish restoring before it adopts the notification's owner.
+    const urlParams = new URLSearchParams(window.location.search);
+    const notificationSessionId = urlParams.get('sessionId');
+    const notificationFolderPath = urlParams.get('folderPath');
+    const openDownloads = urlParams.get('openDownloads') === 'true';
+    if (notificationSessionId && notificationFolderPath) {
+      window.history.replaceState({}, '', window.location.pathname);
+      connection.pendingAdopt = {
+        sessionId: notificationSessionId,
+        folderPath: notificationFolderPath,
+        ...(openDownloads ? { openDownloads: true } : {}),
+      };
+    }
+
     connection.connect();
 
     let delayedAppHeightUpdate: ReturnType<typeof setTimeout> | null = null;
@@ -65,15 +82,6 @@
     window.addEventListener('focus', scheduleAppHeightUpdate);
     window.addEventListener('focusin', scheduleAppHeightUpdate);
     window.addEventListener('focusout', scheduleAppHeightUpdate);
-
-    // Handle ?sessionId=xxx&folderPath=xxx from notification click (app was closed)
-    const urlParams = new URLSearchParams(window.location.search);
-    const notificationSessionId = urlParams.get('sessionId');
-    const notificationFolderPath = urlParams.get('folderPath');
-    if (notificationSessionId && notificationFolderPath) {
-      window.history.replaceState({}, '', window.location.pathname);
-      connection.pendingAdopt = { sessionId: notificationSessionId, folderPath: notificationFolderPath };
-    }
 
     // Handle ?share=pending from Web Share Target (app was not open)
     if (urlParams.get('share') === 'pending') {
@@ -104,7 +112,7 @@
       navigator.serviceWorker.ready.then(() => sendFocusState());
 
       // Handle messages from service worker
-      navigator.serviceWorker.addEventListener('message', async (event) => {
+      navigator.serviceWorker.addEventListener('message', (event) => {
         if (event.data?.type === 'push_notification') {
           const sid = event.data.sessionId;
           if (sid) {
@@ -119,17 +127,14 @@
             pushSharedImages(images);
           }
         } else if (event.data?.type === 'notification_click') {
-          const sid = event.data.sessionId;
-          const fp = event.data.folderPath;
-          if (sid) {
-            const { switchToSession, sessionRegistry: reg, openExistingSession } = await import('$lib/stores/session-registry.svelte.js');
-            if (reg.sessions[sid]) {
-              // Already open — just switch to it
-              switchToSession(sid);
-            } else if (fp) {
-              // Not open — adopt via unified open path
-              void openExistingSession(sid, fp, { force: true, switchTo: true });
-            }
+          const sessionId = event.data.sessionId;
+          const folderPath = event.data.folderPath;
+          if (typeof sessionId === 'string' && sessionId) {
+            void routeNotificationIntent({
+              sessionId,
+              ...(typeof folderPath === 'string' && folderPath ? { folderPath } : {}),
+              ...(event.data.openDownloads === true ? { openDownloads: true } : {}),
+            });
           }
         }
       });
@@ -259,6 +264,10 @@
         </span>
       {/if}
 
+      {#if sessionRegistry.viewed?.downloads.length}
+        <DownloadInbox variant="mobile" />
+      {/if}
+
       {#if panelStore.hasCards}
         <button
           class="text-muted-foreground hover:text-foreground border-border bg-background relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg border"
@@ -303,6 +312,9 @@
   {/if}
 
   <!-- Mobile panel opener now lives in the mobile header to avoid bottom-right control collisions. -->
+
+  <!-- Download offer prompt (global overlay) -->
+  <DownloadToast />
 
   <!-- Extension UI dialogs (global overlay) -->
   <ExtensionDialog />

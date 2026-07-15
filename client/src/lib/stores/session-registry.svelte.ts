@@ -39,6 +39,9 @@ import type {
 import { connection } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
 import { panelStore } from './panel-store.svelte.js';
+import { downloadUi } from './download-ui.svelte.js';
+import { coordinateDownloadUpdate } from '../download-coordinator.js';
+import { handleDownloadNotificationIntent, type DownloadNotificationIntent } from '../download-notification-intent.js';
 import { getActiveSessions, setActiveSessions, getViewedSessionId, setViewedSessionId } from './persistence.js';
 
 export interface PerSessionState {
@@ -234,26 +237,37 @@ export class SessionRegistry {
         break;
       }
 
+      case 'agent_settled': {
+        // Authoritative idle boundary: raised only when the session is genuinely
+        // quiescent (no active run, retry, auto-compaction, or queued
+        // continuation). This — not the terminal `agent_end` — drives the idle
+        // status transition, so the UI stays "working" continuously through a
+        // retry, compaction, or queued follow-up instead of flickering
+        // working→idle→working. Content cleanup (clearing the stray streaming
+        // placeholder, entry IDs, meta) happens on `agent_end` below.
+        session.status = 'idle';
+        session.isStreaming = false;
+        if (sessionId !== this.viewedSessionId) {
+          session.needsAttention = true;
+        }
+        break;
+      }
+
       case 'agent_end': {
         const endEvent = event as AgentEndEvent;
         // A `willRetry` agent_end is not a real end — the SDK detected a
         // retryable error and will re-run the prompt after backoff (a fresh
-        // agent_start follows). Treating it as idle here flickers the session
-        // working→idle→working, drops the in-flight streaming message, and lights
-        // the "needs attention" badge for a transient blip. Ignore it; the
-        // terminal (willRetry=false) agent_end drives the real idle transition.
+        // agent_start follows). Skipping it avoids dropping the in-flight
+        // streaming message mid-retry. The idle status transition is driven by
+        // `agent_settled`, not here — this branch only does per-attempt content
+        // cleanup for a genuine (non-retry) end.
         if (endEvent.willRetry) break;
-        session.status = 'idle';
-        session.isStreaming = false;
         // Clear any in-flight streaming message. The SDK does not emit message_end
         // for a partial message when a run ends abnormally (e.g. user abort during a
         // thinking block), so without this the streaming placeholder would linger
         // indefinitely and the UI would continue to look "streaming".
         session.streamingMessage = null;
         session.streamingKey = null;
-        if (sessionId !== this.viewedSessionId) {
-          session.needsAttention = true;
-        }
         // Apply entry IDs so fork targets work on messages received via streaming.
         //
         // Same alignment subtlety as server/src/message-mapper.ts::applyEntryIds:
@@ -506,10 +520,13 @@ export class SessionRegistry {
 
       case 'download_update': {
         const update = event as DownloadUpdateEvent;
-        // The reducer must replace session.downloads, then forward `update` to
-        // onDownloadUpdate so presentation can toast the exact offered member.
-        void update;
-        throw new Error('not implemented');
+        // Every update is a complete replacement snapshot. Copy the array so
+        // subsequent protocol-object mutation cannot leak into this session's
+        // reactive state, then notify presentation after reduction so it can
+        // inspect the authoritative pending list.
+        session.downloads = [...update.downloads];
+        this.onDownloadUpdate?.(update);
+        break;
       }
 
       case 'pimote_navigate': {
@@ -668,7 +685,9 @@ export class SessionRegistry {
 }
 
 // Create singleton instance — fields are reactive via $state() runes above
-export const sessionRegistry = new SessionRegistry();
+export const sessionRegistry = new SessionRegistry((event) => {
+  coordinateDownloadUpdate(event, downloadUi);
+});
 
 async function fetchFullSessionData(sessionId: string): Promise<void> {
   try {
@@ -732,6 +751,43 @@ async function refreshSessionMetaAndCommands(sessionId: string): Promise<void> {
     }
   } catch (err) {
     console.error('[SessionRegistry] Failed to refresh session meta/commands:', err);
+  }
+}
+
+export interface AppNotificationIntent {
+  sessionId: string;
+  folderPath?: string;
+  openDownloads?: boolean;
+}
+
+/**
+ * Route every OS notification click through one app-level adapter. Download
+ * intents open only the owning session's inbox; ordinary notifications retain
+ * their existing session-switch/adopt behavior.
+ */
+export async function routeNotificationIntent(intent: AppNotificationIntent): Promise<void> {
+  if (intent.openDownloads === true) {
+    const downloadIntent: DownloadNotificationIntent = {
+      sessionId: intent.sessionId,
+      ...(intent.folderPath ? { folderPath: intent.folderPath } : {}),
+      openDownloads: true,
+    };
+    await handleDownloadNotificationIntent(downloadIntent, {
+      hasSession: (sessionId) => sessionRegistry.isActiveSession(sessionId),
+      switchToSession,
+      openExistingSession: (sessionId, folderPath) => openExistingSession(sessionId, folderPath, { force: true, switchTo: true }),
+      openDownloadInbox: (sessionId) => downloadUi.openDownloadInbox(sessionId),
+    });
+    return;
+  }
+
+  if (sessionRegistry.isActiveSession(intent.sessionId)) {
+    switchToSession(intent.sessionId);
+    return;
+  }
+
+  if (intent.folderPath) {
+    await openExistingSession(intent.sessionId, intent.folderPath, { force: true, switchTo: true });
   }
 }
 
@@ -847,8 +903,12 @@ connection.onSessionOwned = (sessionId) => {
   }
 };
 
-connection.onPendingAdopt = (sessionId, folderPath) => {
-  void openExistingSession(sessionId, folderPath, { force: true, switchTo: true });
+connection.onPendingAdopt = (sessionId, folderPath, { openDownloads }) => {
+  void routeNotificationIntent({
+    sessionId,
+    folderPath,
+    ...(openDownloads ? { openDownloads: true } : {}),
+  });
 };
 
 // After restore completes, refresh per-session supplemental data and restore
