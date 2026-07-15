@@ -15,7 +15,7 @@ The twelve file-download steps are represented in the implementation, and the pl
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `server/src/session-manager.ts:250-270`; `server/src/ws-handler.ts:121-129`; `client/src/lib/stores/session-registry.svelte.ts:240-253`; `server/src/event-buffer.ts:268-281`; `shared/src/protocol.ts:620-634`
-- **Status:** open
+- **Status:** resolved
 
 The reviewed code consumes the SDK 0.80.7 `agent_settled` event and `AgentSession.waitForIdle()`, while the committed lockfile installs 0.80.3. The shared protocol and event buffer also do not define a corresponding `agent_settled` wire event. In a clean checkout, type checking reports that the event is outside the SDK event union, `waitForIdle` is missing, and the client event is not a `PimoteEvent`; if type checking is bypassed, SDK 0.80.3 never emits the event, so completion pushes, attention state, and idle reaping can stop running.
 
@@ -24,7 +24,7 @@ The reviewed code consumes the SDK 0.80.7 `agent_settled` event and `AgentSessio
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `server/src/session-manager.ts:250-273`; `client/src/lib/stores/session-registry.svelte.ts:240-264`; `server/src/ws-handler.ts:123-129, 849-855`
-- **Status:** open
+- **Status:** dismissed — intentional concurrent worker changes; not treated as a file-download plan deviation
 
 The diff changes completion/idle transitions and push/reaping from `agent_end` to `agent_settled`, replaces the existing idle wait with an SDK primitive, and changes `/reload` to await and send a full resync. None of these changes is part of the file-download plan, so they expand the review scope and introduce unrelated behavior and compatibility risk into the feature commit.
 
