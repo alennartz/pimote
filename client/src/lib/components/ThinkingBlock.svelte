@@ -2,6 +2,7 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import BrainCircuit from '@lucide/svelte/icons/brain-circuit';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
+  import { shouldRenderThinkingBlock } from '$lib/thinking-content.js';
 
   let { text, streaming = false }: { text: string; streaming?: boolean } = $props();
 
@@ -48,32 +49,36 @@
       .filter((w) => w.length > 0);
     return words.length;
   });
+
+  let shouldRender = $derived(shouldRenderThinkingBlock(text, streaming));
 </script>
 
-<div class="thinking-block" bind:this={rootEl}>
-  <button class="thinking-header" onclick={() => (expanded = !expanded)}>
-    <ChevronRight class="shrink-0 transition-transform duration-150 {expanded ? 'rotate-90' : ''}" size={14} />
-    <BrainCircuit size={14} class="shrink-0" />
-    <span class="thinking-label">
-      {streaming ? 'Thinking…' : 'Thought process'}
-    </span>
-    {#if previewWords}
-      <span class="thinking-preview">{previewWords}</span>
-    {/if}
-    {#if wordCount > 0}
-      <span class="thinking-word-count">{wordCount.toLocaleString()} words</span>
-    {/if}
-    {#if streaming}
-      <span class="streaming-dot"></span>
-    {/if}
-  </button>
+{#if shouldRender}
+  <div class="thinking-block" bind:this={rootEl}>
+    <button class="thinking-header" onclick={() => (expanded = !expanded)}>
+      <ChevronRight class="shrink-0 transition-transform duration-150 {expanded ? 'rotate-90' : ''}" size={14} />
+      <BrainCircuit size={14} class="shrink-0" />
+      <span class="thinking-label">
+        {streaming ? 'Thinking…' : 'Thought process'}
+      </span>
+      {#if previewWords}
+        <span class="thinking-preview">{previewWords}</span>
+      {/if}
+      {#if wordCount > 0}
+        <span class="thinking-word-count">{wordCount.toLocaleString()} words</span>
+      {/if}
+      {#if streaming}
+        <span class="streaming-dot"></span>
+      {/if}
+    </button>
 
-  {#if expanded}
-    <div class="thinking-content" bind:this={contentEl}>
-      <pre class="thinking-text">{text}</pre>
-    </div>
-  {/if}
-</div>
+    {#if expanded}
+      <div class="thinking-content" bind:this={contentEl}>
+        <pre class="thinking-text">{text}</pre>
+      </div>
+    {/if}
+  </div>
+{/if}
 
 <style>
   .thinking-block {
