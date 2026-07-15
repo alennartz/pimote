@@ -98,6 +98,23 @@ describe('EventBuffer', () => {
     });
   });
 
+  describe('idle boundary events', () => {
+    it('maps agent_settled to the wire event (the authoritative idle boundary)', () => {
+      const buffer = new EventBuffer(10);
+      const live: PimoteSessionEvent[] = [];
+      buffer.onEvent(makeSdkEvent('agent_settled'), SESSION_ID, (e) => live.push(e));
+      expect(live).toHaveLength(1);
+      expect(live[0]).toMatchObject({ type: 'agent_settled', sessionId: SESSION_ID });
+    });
+
+    it('drops entry_appended (deferred refactor — no wire representation yet)', () => {
+      const buffer = new EventBuffer(10);
+      const live: PimoteSessionEvent[] = [];
+      buffer.onEvent(makeSdkEvent('entry_appended', { entry: { id: 'e1', type: 'message' } }), SESSION_ID, (e) => live.push(e));
+      expect(live).toHaveLength(0);
+    });
+  });
+
   describe('currentCursor', () => {
     it('starts at 0', () => {
       const buffer = new EventBuffer(10);

@@ -96,11 +96,12 @@ describe('SessionRegistry', () => {
 
     it('switchTo() clears needsAttention on the target session', () => {
       registry.addSession('s1', '/path', 'proj');
-      // Simulate needsAttention being set (agent_end on non-viewed session)
+      // Simulate needsAttention being set (agent_settled on non-viewed session)
       registry.addSession('s2', '/path2', 'proj2');
       registry.switchTo('s1');
       registry.handleEvent(makeSessionEvent('agent_start', 's2'));
       registry.handleEvent(makeSessionEvent('agent_end', 's2'));
+      registry.handleEvent(makeSessionEvent('agent_settled', 's2'));
       expect(registry.sessions['s2'].needsAttention).toBe(true);
       registry.switchTo('s2');
       expect(registry.sessions['s2'].needsAttention).toBe(false);
@@ -213,10 +214,17 @@ describe('SessionRegistry', () => {
       expect(session.isStreaming).toBe(true);
     });
 
-    it('agent_end event sets session status to idle and isStreaming to false', () => {
+    it('agent_settled drives the idle transition; agent_end alone stays working', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.handleEvent(makeSessionEvent('agent_start', 's1'));
+      // Terminal agent_end is a per-attempt content boundary, not the idle
+      // boundary — a queued continuation or compaction may still follow, so the
+      // session stays "working" until it genuinely settles.
       registry.handleEvent(makeSessionEvent('agent_end', 's1'));
+      expect(registry.sessions['s1'].status).toBe('working');
+      expect(registry.sessions['s1'].isStreaming).toBe(true);
+      // agent_settled is the authoritative idle boundary.
+      registry.handleEvent(makeSessionEvent('agent_settled', 's1'));
       const session = registry.sessions['s1'];
       expect(session.status).toBe('idle');
       expect(session.isStreaming).toBe(false);
@@ -248,7 +256,9 @@ describe('SessionRegistry', () => {
 
       registry.handleEvent(makeSessionEvent('agent_end', 's1'));
       const session = registry.sessions['s1'];
-      expect(session.isStreaming).toBe(false);
+      // Content cleanup runs on agent_end; the idle transition waits for
+      // agent_settled, so isStreaming is still true here.
+      expect(session.isStreaming).toBe(true);
       expect(session.streamingMessage).toBeNull();
       expect(session.streamingKey).toBeNull();
     });
@@ -608,6 +618,7 @@ describe('SessionRegistry', () => {
           { type: 'agent_start', sessionId: 's1', cursor: 1 },
           { type: 'message_end', sessionId: 's1', cursor: 2, message: msg } as any,
           { type: 'agent_end', sessionId: 's1', cursor: 3 },
+          { type: 'agent_settled', sessionId: 's1', cursor: 4 },
         ],
       });
       const session = registry.sessions['s1'];
@@ -674,12 +685,13 @@ describe('SessionRegistry', () => {
       expect(registry.sessions['s1'].needsAttention).toBe(false);
     });
 
-    it('agent_end sets needsAttention=true when session is NOT the viewed session', () => {
+    it('agent_settled sets needsAttention=true when session is NOT the viewed session', () => {
       registry.addSession('s1', '/path/a', 'a');
       registry.addSession('s2', '/path/b', 'b');
       registry.switchTo('s1');
       registry.handleEvent(makeSessionEvent('agent_start', 's2'));
       registry.handleEvent(makeSessionEvent('agent_end', 's2'));
+      registry.handleEvent(makeSessionEvent('agent_settled', 's2'));
       expect(registry.sessions['s2'].needsAttention).toBe(true);
     });
 
@@ -692,11 +704,12 @@ describe('SessionRegistry', () => {
       expect(registry.sessions['s2'].needsAttention).toBe(false);
     });
 
-    it('agent_end does NOT set needsAttention when session IS the viewed session', () => {
+    it('agent_settled does NOT set needsAttention when session IS the viewed session', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.switchTo('s1');
       registry.handleEvent(makeSessionEvent('agent_start', 's1'));
       registry.handleEvent(makeSessionEvent('agent_end', 's1'));
+      registry.handleEvent(makeSessionEvent('agent_settled', 's1'));
       expect(registry.sessions['s1'].needsAttention).toBe(false);
     });
 
@@ -706,6 +719,7 @@ describe('SessionRegistry', () => {
       registry.switchTo('s1');
       registry.handleEvent(makeSessionEvent('agent_start', 's2'));
       registry.handleEvent(makeSessionEvent('agent_end', 's2'));
+      registry.handleEvent(makeSessionEvent('agent_settled', 's2'));
       expect(registry.sessions['s2'].needsAttention).toBe(true);
       registry.switchTo('s2');
       expect(registry.sessions['s2'].needsAttention).toBe(false);

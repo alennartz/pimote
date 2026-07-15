@@ -268,11 +268,22 @@ export class EventBuffer {
       case 'tree_navigation_end':
         return { ...base, type: 'tree_navigation_end' };
 
+      // `agent_settled` is the authoritative idle boundary (fired after the
+      // terminal `agent_end` and after awaited `agent_end` listeners settle,
+      // and only when no retry/compaction/queued-continuation is pending). It
+      // drives the idle UI transition + completion notification.
+      case 'agent_settled':
+        return { ...base, type: 'agent_settled' };
+
       // Real SDK events with no pimote wire representation. Dropped rather than
       // mis-emitted; wire them up here if the client grows a use for them.
+      // `entry_appended` is the authoritative persisted-entry stream; adopting
+      // it is deferred design work (see docs/brainstorms/entry-appended-refactor.md)
+      // — dropped at the wire for now.
       case 'queue_update':
       case 'session_info_changed':
       case 'thinking_level_changed':
+      case 'entry_appended':
         return null;
 
       default: {

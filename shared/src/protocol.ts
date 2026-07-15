@@ -631,6 +631,16 @@ export interface AgentEndEvent extends SessionEventBase {
   messageEntryIds?: string[];
 }
 
+/** The session has fully settled — no active agent run, retry, auto-compaction,
+ *  or queued continuation. This is the authoritative idle boundary, raised after
+ *  the terminal `agent_end` and after any awaited `agent_end` listeners settle.
+ *  Unlike `agent_end` (a per-attempt content boundary that can be followed by a
+ *  queued continuation or compaction), this fires only when the session is
+ *  genuinely quiescent. Drives the idle UI transition + completion notification. */
+export interface AgentSettledEvent extends SessionEventBase {
+  type: 'agent_settled';
+}
+
 export interface TurnStartEvent extends SessionEventBase {
   type: 'turn_start';
 }
@@ -749,6 +759,7 @@ export interface TreeNavigationEndEvent extends SessionEventBase {
 export type PimoteSessionEvent =
   | AgentStartEvent
   | AgentEndEvent
+  | AgentSettledEvent
   | TurnStartEvent
   | TurnEndEvent
   | MessageStartEvent

@@ -208,7 +208,8 @@ export function replaySlotPendingUiRequests(slot: ManagedSlot): void {
 
 /** Construct a SessionState from an AgentSession and EventBus.
  *  Subscribes to session events and sets up panel listeners. */
-function createSessionState(
+/** @internal Exported for lifecycle contract tests. */
+export function createSessionState(
   session: AgentSession,
   eventBus: EventBusController,
   config: PimoteConfig,

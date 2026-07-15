@@ -1,10 +1,37 @@
 import { describe, it, expect, vi } from 'vitest';
-import { WsHandler, type ClientRegistry } from './ws-handler.js';
+import { createCommandContextActions, WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { PimoteSessionManager, ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
 import type { FolderIndex } from './folder-index.js';
 import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer } from './event-buffer.js';
 import type { DownloadItem, PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
+
+describe('extension command context actions', () => {
+  it('delegates waitForIdle to the SDK settle-aware primitive', async () => {
+    let resolveIdle: (() => void) | undefined;
+    const waitForIdle = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveIdle = resolve;
+        }),
+    );
+    const slot = createMockSlot();
+    (slot.session as any).waitForIdle = waitForIdle;
+    const actions = createCommandContextActions(slot, {} as PimoteSessionManager);
+
+    let resolved = false;
+    const waiting = actions.waitForIdle().then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+    expect(waitForIdle).toHaveBeenCalledOnce();
+    expect(resolved).toBe(false);
+
+    resolveIdle!();
+    await waiting;
+    expect(resolved).toBe(true);
+  });
+});
 
 // --- Mock factories ---
 
@@ -1868,6 +1895,39 @@ describe('WsHandler', () => {
       const resync = findEvents(sent, 'full_resync');
       expect(resync).toHaveLength(1);
       expect((resync[0] as any).sessionId).toBe('same-session');
+    });
+  });
+
+  describe('reload prompt', () => {
+    it('waits for reload and sends a full resync with refreshed thinking levels', async () => {
+      let finishReload: (() => void) | undefined;
+      const reload = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishReload = resolve;
+          }),
+      );
+      const slot = createMockSlot({ id: 'session-reload', connectedClientId: 'client-1' });
+      (slot.session as any).reload = reload;
+      (slot.session as any).model = { provider: 'genetec-openai-responses', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' };
+      (slot.session as any).thinkingLevel = 'high';
+      (slot.session as any).getAvailableThinkingLevels = () => ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+      const sessions = new Map([['session-reload', slot]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+      const handling = handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-reload', message: '/reload', id: 'req-reload' }));
+
+      await Promise.resolve();
+      expect(reload).toHaveBeenCalledOnce();
+      expect(findResponse(sent, 'req-reload')).toBeUndefined();
+
+      finishReload!();
+      await handling;
+
+      const resync = findEvents(sent, 'full_resync');
+      expect(resync).toHaveLength(1);
+      expect((resync[0] as any).state.availableThinkingLevels).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+      expect(findResponse(sent, 'req-reload')!.success).toBe(true);
     });
   });
 

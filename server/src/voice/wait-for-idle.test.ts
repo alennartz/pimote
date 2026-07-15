@@ -16,16 +16,28 @@ function makeProbe(initiallyIdle: boolean, becomeIdleAfterCalls?: number): IdleP
   };
 }
 
-function makeAbortableProbe(initiallyIdle: boolean, becomeIdleAfterAbortCalls?: number): AbortableIdleProbe & { isIdleCalls: number; abortCalls: number } {
+function makeAbortableProbe(
+  initiallyIdle: boolean,
+  becomeIdleAfterAbortCalls?: number,
+): AbortableIdleProbe & { isIdleCalls: number; abortCalls: number; settleListeners: number; fireSettled: () => void } {
   let isIdleCalls = 0;
   let abortCalls = 0;
   let aborted = false;
+  const listeners = new Set<() => void>();
   return {
     get isIdleCalls() {
       return isIdleCalls;
     },
     get abortCalls() {
       return abortCalls;
+    },
+    get settleListeners() {
+      return listeners.size;
+    },
+    fireSettled() {
+      const current = [...listeners];
+      listeners.clear();
+      for (const l of current) l();
     },
     isIdle() {
       isIdleCalls += 1;
@@ -38,6 +50,10 @@ function makeAbortableProbe(initiallyIdle: boolean, becomeIdleAfterAbortCalls?: 
     abort() {
       abortCalls += 1;
       aborted = true;
+    },
+    onSettled(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
   };
 }
@@ -94,5 +110,22 @@ describe('ensureIdleWithImplicitAbort', () => {
     const result = await ensureIdleWithImplicitAbort(probe, 60);
     expect(result).toBe(false);
     expect(probe.abortCalls).toBe(1);
+  });
+
+  it('resolves true promptly when agent_settled fires (event path, no poll wait)', async () => {
+    // Agent stays busy on isIdle() forever; only the settle event can resolve it.
+    const probe = makeAbortableProbe(false);
+    const pending = ensureIdleWithImplicitAbort(probe, 5000);
+    // A real barge-in / abort teardown completes and the SDK emits agent_settled.
+    probe.fireSettled();
+    const result = await pending;
+    expect(result).toBe(true);
+    expect(probe.abortCalls).toBe(1);
+  });
+
+  it('unsubscribes the settle listener once resolved', async () => {
+    const probe = makeAbortableProbe(false, 1);
+    await ensureIdleWithImplicitAbort(probe, 2000);
+    expect(probe.settleListeners).toBe(0);
   });
 });

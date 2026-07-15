@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { makeDownloadSnapshot, PimoteSessionManager, routeSlotDownloadUpdate, setupSlotDownloadListener, singleFlight } from './session-manager.js';
+import { createSessionState, makeDownloadSnapshot, PimoteSessionManager, routeSlotDownloadUpdate, setupSlotDownloadListener, singleFlight } from './session-manager.js';
 import type { ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
 import type { PimoteConfig } from './config.js';
 import type { PushNotificationService } from './push-notification.js';
@@ -85,6 +85,99 @@ function createFakeSlot(
 }
 
 // --- Tests ---
+
+describe('session lifecycle idle boundary', () => {
+  it('keeps the session working at agent_end and enters idle only at agent_settled', () => {
+    let listener: ((event: any) => void) | undefined;
+    const session = {
+      sessionId: 'settle-test',
+      sessionName: 'Settle test',
+      isStreaming: false,
+      messages: [],
+      subscribe: vi.fn((fn: (event: any) => void) => {
+        listener = fn;
+        return vi.fn();
+      }),
+    } as any;
+    const eventBus = { on: vi.fn(() => vi.fn()) } as any;
+    const onStatusChange = vi.fn();
+    const onSessionIdle = vi.fn();
+    const sendEvent = vi.fn();
+    const slotRef = { slot: null as ManagedSlot | null };
+
+    const state = createSessionState(
+      session,
+      eventBus,
+      createTestConfig(),
+      {
+        onStatusChange,
+        onSessionIdle,
+        sendEvent,
+        notify: vi.fn(async () => {}),
+      },
+      slotRef,
+      '/home/user/project',
+    );
+    slotRef.slot = createFakeSlot({ id: 'settle-test' });
+
+    listener!({ type: 'agent_start' });
+    expect(state.status).toBe('working');
+    expect(state.idleSince).toBeNull();
+
+    listener!({
+      type: 'agent_end',
+      willRetry: false,
+      messages: [{ role: 'assistant', content: [], stopReason: 'stop' }],
+    });
+    expect(state.status).toBe('working');
+    expect(state.idleSince).toBeNull();
+    expect(state.needsAttention).toBe(false);
+    expect(onSessionIdle).not.toHaveBeenCalled();
+
+    listener!({ type: 'agent_settled' });
+    expect(state.status).toBe('idle');
+    expect(state.idleSince).toEqual(expect.any(Number));
+    expect(state.needsAttention).toBe(true);
+    expect(onSessionIdle).toHaveBeenCalledOnce();
+    expect(onSessionIdle).toHaveBeenCalledWith('settle-test', slotRef.slot);
+    expect(onStatusChange).toHaveBeenCalledTimes(2);
+    expect(sendEvent.mock.calls.map(([event]) => event.type)).toEqual(['agent_start', 'agent_end', 'agent_settled']);
+  });
+
+  it('does not emit a second idle transition for duplicate settle events', () => {
+    let listener: ((event: any) => void) | undefined;
+    const session = {
+      sessionId: 'settle-test',
+      sessionName: 'Settle test',
+      isStreaming: true,
+      messages: [],
+      subscribe: vi.fn((fn: (event: any) => void) => {
+        listener = fn;
+        return vi.fn();
+      }),
+    } as any;
+    const onSessionIdle = vi.fn();
+    const state = createSessionState(
+      session,
+      { on: vi.fn(() => vi.fn()) } as any,
+      createTestConfig(),
+      {
+        onSessionIdle,
+        sendEvent: vi.fn(),
+        notify: vi.fn(async () => {}),
+      },
+      { slot: createFakeSlot({ id: 'settle-test' }) },
+      '/home/user/project',
+    );
+
+    listener!({ type: 'agent_settled' });
+    const firstIdleSince = state.idleSince;
+    listener!({ type: 'agent_settled' });
+
+    expect(onSessionIdle).toHaveBeenCalledOnce();
+    expect(state.idleSince).toBe(firstIdleSince);
+  });
+});
 
 describe('PimoteSessionManager — idle reaper', () => {
   beforeEach(() => {

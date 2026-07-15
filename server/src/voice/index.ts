@@ -114,6 +114,15 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     // ---- Per-extension-instance state (per pimote session) ---------------
     let state: RuntimeState = initialState();
     let lastCtx: ExtensionContext | null = null;
+    // Settle-signal fan-out. `pi.on` has no unsubscribe, so a single persistent
+    // `agent_settled` listener (registered below) multiplexes to transient
+    // one-shot waiters. Consumed by `ensureIdleWithImplicitAbort` via the probe's
+    // `onSettled` seam to replace busy-polling with the SDK's idle boundary.
+    const settleWaiters = new Set<() => void>();
+    const onSettled = (listener: () => void): (() => void) => {
+      settleWaiters.add(listener);
+      return () => settleWaiters.delete(listener);
+    };
     let speechmuxClient: SpeechmuxClient | null = null;
     // Monotonic generation tag for the speechmux client. Bumped on every
     // open_ws and close_ws so a discarded client's late callbacks (frame /
@@ -196,7 +205,12 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
           // was silently reasoning, so speechmux didn't issue an abort
           // (no TTS in flight to abort). See wait-for-idle.ts.
           if (lastCtx) {
-            const ready = await ensureIdleWithImplicitAbort(lastCtx);
+            const ctx = lastCtx;
+            const ready = await ensureIdleWithImplicitAbort({
+              isIdle: () => ctx.isIdle(),
+              abort: () => ctx.abort(),
+              onSettled,
+            });
             if (!ready) {
               console.warn(`[voice] send_user_message: agent did not become idle within 2000ms after implicit abort, dropping: ${action.text.slice(0, 60)}`);
               return;
@@ -418,6 +432,14 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         type: 'sdk:turn_end',
         lastSpeakToolCallId: typeof lastSpeakResult.toolCallId === 'string' ? lastSpeakResult.toolCallId : null,
       });
+    });
+
+    pi.on('agent_settled', () => {
+      // Authoritative "run fully settled / idle" boundary. Drain the one-shot
+      // settle waiters (see `onSettled` / `ensureIdleWithImplicitAbort`).
+      const waiters = [...settleWaiters];
+      settleWaiters.clear();
+      for (const w of waiters) w();
     });
 
     pi.on('agent_end', () => {

@@ -27,6 +27,12 @@ export interface IdleProbe {
 /** Idle probe that can also abort an in-flight turn. */
 export interface AbortableIdleProbe extends IdleProbe {
   abort(): void;
+  /**
+   * Subscribe to the next `agent_settled` signal (the SDK's authoritative
+   * "run fully settled / idle" boundary). Returns an unsubscribe function.
+   * The voice extension wires this to `pi.on('agent_settled', …)`.
+   */
+  onSettled(listener: () => void): () => void;
 }
 
 /**
@@ -66,11 +72,30 @@ export async function waitForAgentIdle(ctx: IdleProbe, timeoutMs = 2000): Promis
  *
  * This helper closes that gap: when the agent isn't idle on entry, we
  * fire `ctx.abort()` ourselves (idempotent if a real barge-in already
- * issued one) and then poll for idle the same way the abort/user pair
- * already does. Returns true once idle, false on timeout.
+ * issued one) and then wait for the agent to settle. Returns true once
+ * idle, false on timeout.
+ *
+ * Settling is driven primarily by the SDK's `agent_settled` event
+ * (subscribed BEFORE the abort so the signal the abort triggers can't
+ * slip through the gap). A bounded `isIdle()` poll runs alongside it as a
+ * fallback: it covers the rare race where the agent settled between the
+ * entry `isIdle()` check and the abort (abort on an already-idle agent
+ * emits no settle event) and any missed-signal edge. Whichever resolves
+ * first wins; timeout yields false.
  */
 export async function ensureIdleWithImplicitAbort(ctx: AbortableIdleProbe, timeoutMs = 2000): Promise<boolean> {
   if (ctx.isIdle()) return true;
+
+  let unsubscribe = (): void => {};
+  const settledByEvent = new Promise<boolean>((resolve) => {
+    unsubscribe = ctx.onSettled(() => resolve(true));
+  });
+
   ctx.abort();
-  return waitForAgentIdle(ctx, timeoutMs);
+
+  try {
+    return await Promise.race([settledByEvent, waitForAgentIdle(ctx, timeoutMs)]);
+  } finally {
+    unsubscribe();
+  }
 }

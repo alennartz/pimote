@@ -26,7 +26,7 @@ import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
-import { mapAgentMessages, extractMessageEntryIds, applyEntryIds } from './message-mapper.js';
+import { mapContextEntries, extractMessageEntryIds } from './message-mapper.js';
 import type { TreeNavigationStartEvent, TreeNavigationEndEvent } from './event-buffer.js';
 import { sumAssistantCostUsd } from './session-cost.js';
 import { completeFileRefs } from './file-references.js';
@@ -118,7 +118,8 @@ export function mapTreeNodes(nodes: SessionTreeNode[]): PimoteTreeNode[] {
  * reconciles the session map and then notifies the slot's current owner (if any)
  * via slot.connection.onSessionReset — so a reset with no live owner still re-keys.
  */
-function createCommandContextActions(slot: ManagedSlot, sessionManager: PimoteSessionManager): ExtensionCommandContextActions {
+/** @internal Exported for the SDK delegation contract test. */
+export function createCommandContextActions(slot: ManagedSlot, sessionManager: PimoteSessionManager): ExtensionCommandContextActions {
   return {
     // Delegate to the SDK's native settle-aware primitive (0.80.7+): it resolves
     // only when the session is genuinely idle (no active run, retry,
@@ -989,9 +990,7 @@ export class WsHandler {
       }
 
       case 'get_messages': {
-        const messages = mapAgentMessages(session.messages);
-        const entryIds = extractMessageEntryIds(session.sessionManager.getBranch());
-        applyEntryIds(messages, entryIds);
+        const messages = mapContextEntries(session.sessionManager.buildContextEntries());
         this.sendResponse(id, true, { messages });
         break;
       }
@@ -1548,9 +1547,7 @@ export class WsHandler {
       autoCompactionEnabled: session.autoCompactionEnabled,
       messageCount: session.messages.length,
     };
-    const messages = mapAgentMessages(session.messages);
-    const entryIds = extractMessageEntryIds(session.sessionManager.getBranch());
-    applyEntryIds(messages, entryIds);
+    const messages = mapContextEntries(session.sessionManager.buildContextEntries());
     const fullResyncEvent: FullResyncEvent = {
       type: 'full_resync',
       sessionId: pimoteSessionId,
