@@ -222,6 +222,16 @@ describe('LoginStore.handleStep routing', () => {
     expect(store.state.infoSteps).toEqual([info]);
     expect(store.state.currentStep).toEqual(prompt);
   });
+
+  it('clears provider information notices before a new login begins', async () => {
+    const { store } = setupStore();
+    await store.open();
+    store.state.infoSteps = [{ kind: 'info', message: 'First flow notice' }];
+
+    await store.begin('openai');
+
+    expect(store.state.infoSteps).toEqual([]);
+  });
 });
 
 // =============================================================================
@@ -330,5 +340,15 @@ describe('LoginStore.close', () => {
     expect(store.state.flow).toBe('idle');
     expect(store.state.providers).toEqual([]);
     expect(store.state.currentStep).toBeNull();
+  });
+
+  it('clears provider information notices', async () => {
+    const { store } = setupStore();
+    await store.open();
+    store.state.infoSteps = [{ kind: 'info', message: 'Flow notice' }];
+
+    store.close();
+
+    expect(store.state.infoSteps).toEqual([]);
   });
 });

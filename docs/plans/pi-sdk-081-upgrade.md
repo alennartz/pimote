@@ -113,13 +113,17 @@ All other entry kinds and missing, non-finite, or negative values contribute zer
 #### LoginStore provider notices
 
 - An `info` step remains available after a later prompt becomes the active interactive step, including its external link metadata.
+- Starting a new login flow or closing the dialog clears all notices retained from the prior flow.
 
 #### Lifetime cost
 
 - A complete session-history fold includes assistant-message, compaction, and branch-summary `usage.cost.total` values exactly once.
+- Missing, non-finite, negative, and non-cost-bearing values leave valid accumulated spend unchanged.
 
 #### Red Gate
 
 - `server/src/session-cost.test.ts` runs with the new lifetime-cost test red through the explicit `not implemented` stub.
 - `client/src/lib/stores/login.svelte.test.ts` runs with the new notice-retention test red because no accumulation behavior exists yet.
 - Shared/server compilation and client checking remain green.
+
+**Review status:** approved

@@ -20,6 +20,18 @@ describe('sumLifetimeCostUsd', () => {
 
     expect(sumLifetimeCostUsd(entries)).toBeCloseTo(0.6, 10);
   });
+
+  it('skips missing or invalid persisted values without changing valid spend', () => {
+    const entries = [
+      assistant(0.1),
+      { type: 'compaction' },
+      { type: 'branch_summary', usage: { cost: { total: Number.NaN } } },
+      { type: 'branch_summary', usage: { cost: { total: -0.2 } } },
+      { type: 'message', message: { role: 'user', usage: { cost: { total: 99 } } } },
+    ] as unknown as CostBranchEntry[];
+
+    expect(sumLifetimeCostUsd(entries)).toBeCloseTo(0.1, 10);
+  });
 });
 
 describe('sumAssistantCostUsd', () => {
