@@ -17,6 +17,8 @@
   import { untrack } from 'svelte';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
+  import { fuzzyFilter } from '$lib/fuzzy.js';
+  import { Input } from '$lib/components/ui/input/index.js';
   import type { SessionMeta } from '@pimote/shared';
 
   interface AvailableModel {
@@ -28,11 +30,16 @@
   let models: AvailableModel[] = $state([]);
   let loading = $state(false);
   let open = $state(false);
+  let filterQuery = $state('');
+  let searchInput: HTMLInputElement | null = $state(null);
+  let contentElement: HTMLDivElement | null = $state(null);
 
-  // Group models by provider
+  let filteredModels = $derived(fuzzyFilter(models, filterQuery, (model) => `${model.provider}/${model.name} ${model.id}`));
+
+  // Group filtered models by provider.
   let grouped = $derived.by(() => {
     const map = new SvelteMap<string, AvailableModel[]>();
-    for (const m of models) {
+    for (const m of filteredModels) {
       const list = map.get(m.provider) ?? [];
       list.push(m);
       map.set(m.provider, list);
@@ -43,9 +50,28 @@
   // Fetch models when dropdown opens
   $effect(() => {
     if (open) {
+      filterQuery = '';
       untrack(() => fetchModels());
     }
   });
+
+  function handleOpenAutoFocus(event: Event) {
+    event.preventDefault();
+    requestAnimationFrame(() => {
+      if (typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches) {
+        searchInput?.focus();
+      } else {
+        contentElement?.focus();
+      }
+    });
+  }
+
+  function handleSearchKeydown(event: KeyboardEvent) {
+    // Keep editing keys in the search field. Navigation/selection keys bubble
+    // to the dropdown menu so its built-in roving focus and Enter selection work.
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End', 'Tab', 'Escape', 'Enter'].includes(event.key)) return;
+    event.stopPropagation();
+  }
 
   async function fetchModels() {
     if (loading) return;
@@ -114,8 +140,16 @@
       <ChevronDown class="size-3 shrink-0" />
     </Button>
   </DropdownMenuTrigger>
-  <DropdownMenuContent align="start" class="max-h-72 w-max max-w-[min(28rem,calc(100vw-1rem))] min-w-52 overflow-y-auto">
+  <DropdownMenuContent
+    bind:ref={contentElement}
+    align="start"
+    onOpenAutoFocus={handleOpenAutoFocus}
+    class="max-h-72 w-max max-w-[min(28rem,calc(100vw-1rem))] min-w-52 overflow-y-auto"
+  >
     <DropdownMenuLabel>Models</DropdownMenuLabel>
+    <div class="px-1 pb-1">
+      <Input bind:ref={searchInput} bind:value={filterQuery} aria-label="Filter models" placeholder="Filter models…" class="h-8 text-sm" onkeydown={handleSearchKeydown} />
+    </div>
     <DropdownMenuSeparator />
     {#if loading && models.length === 0}
       <div class="flex items-center justify-center py-4">
@@ -123,6 +157,8 @@
       </div>
     {:else if models.length === 0}
       <div class="text-muted-foreground px-2 py-4 text-center text-xs">No models available</div>
+    {:else if filteredModels.length === 0}
+      <div class="text-muted-foreground px-2 py-4 text-center text-xs">No matching models</div>
     {:else}
       {#each [...grouped.entries()] as [provider, providerModels], i (provider)}
         {#if i > 0}
