@@ -40,6 +40,16 @@ import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 export type CostBranchEntry = SessionEntry;
 
 /**
+ * Sum persisted cost-bearing usage across a session's complete entry history.
+ *
+ * This interface stub deliberately remains unimplemented until the Pi 0.81
+ * migration materializes the new compaction and branch-summary usage fields.
+ */
+export function sumLifetimeCostUsd(_entries: SessionEntry[]): number {
+  throw new Error('not implemented');
+}
+
+/**
  * Sum usage.cost.total over assistant message entries in the branch.
  * - Skips non-'message' entries (compaction, model-change, labels, etc.).
  * - Skips non-assistant messages (user, toolResult).

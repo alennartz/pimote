@@ -32,6 +32,8 @@ export interface LoginStoreState {
    * begin()/close().
    */
   authInfo: { url: string; instructions?: string } | null;
+  /** Informational provider-auth notices accumulated for the current flow. */
+  infoSteps: Extract<LoginStep, { kind: 'info' }>[];
   /** Set when the flow ended; mirrors the terminal `done` step's success flag. */
   succeeded: boolean | null;
   /** Error string from a failed terminal step, if any. */
@@ -51,6 +53,7 @@ export class LoginStore {
     providers: [],
     currentStep: null,
     authInfo: null,
+    infoSteps: [],
     succeeded: null,
     error: null,
   });

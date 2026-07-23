@@ -204,6 +204,24 @@ describe('LoginStore.handleStep routing', () => {
     store.handleStep({ kind: 'progress', message: 'Exchanging tokens…' });
     expect(store.state.currentStep).toMatchObject({ kind: 'progress', message: 'Exchanging tokens…' });
   });
+
+  it('retains provider information notices while a later prompt remains active', async () => {
+    const { store } = setupStore();
+    await store.open();
+    await store.begin('anthropic');
+    const info: LoginStep = {
+      kind: 'info',
+      message: 'Configure your provider before continuing.',
+      links: [{ url: 'https://provider.example/docs', label: 'Provider docs' }],
+    };
+    const prompt: LoginStep = { kind: 'prompt', requestId: 'req-1', message: 'Paste the code' };
+
+    store.handleStep(info);
+    store.handleStep(prompt);
+
+    expect(store.state.infoSteps).toEqual([info]);
+    expect(store.state.currentStep).toEqual(prompt);
+  });
 });
 
 // =============================================================================

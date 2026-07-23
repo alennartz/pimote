@@ -92,3 +92,34 @@ All other entry kinds and missing, non-finite, or negative values contribute zer
 ### DR Supersessions
 
 - **DR-028** (Server-side idempotent cost recompute over the session branch) — superseded because Pi 0.81 persists usage for compaction and branch-summary work that the former assistant-message-only fold could not observe. `lifetimeCostUsd` now means every persisted billed operation across the complete session history, still computed server-side as a pure idempotent fold.
+
+## Tests
+
+**Pre-test-write commit:** `0634ecbb7a7a4e8787f348936541b7aedde3899a`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — materializes the global `LoginStep` information-notice variant and its optional labeled links.
+- `client/src/lib/stores/login.svelte.ts` — materializes the flow-scoped `infoSteps` state interface; accumulation behavior is intentionally unimplemented.
+- `server/src/session-cost.ts` — materializes the `sumLifetimeCostUsd(entries)` pure-function interface as an explicit unimplemented stub.
+
+### Test Files
+
+- `client/src/lib/stores/login.svelte.test.ts` — extends the LoginStore behavioral contract for retaining a provider-information notice while a later interactive step is active.
+- `server/src/session-cost.test.ts` — extends the cost-fold behavioral contract for persisted compaction and branch-summary usage.
+
+### Behaviors Covered
+
+#### LoginStore provider notices
+
+- An `info` step remains available after a later prompt becomes the active interactive step, including its external link metadata.
+
+#### Lifetime cost
+
+- A complete session-history fold includes assistant-message, compaction, and branch-summary `usage.cost.total` values exactly once.
+
+#### Red Gate
+
+- `server/src/session-cost.test.ts` runs with the new lifetime-cost test red through the explicit `not implemented` stub.
+- `client/src/lib/stores/login.svelte.test.ts` runs with the new notice-retention test red because no accumulation behavior exists yet.
+- Shared/server compilation and client checking remain green.

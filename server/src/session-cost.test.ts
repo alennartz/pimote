@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sumAssistantCostUsd, type CostBranchEntry } from './session-cost.js';
+import { sumAssistantCostUsd, sumLifetimeCostUsd, type CostBranchEntry } from './session-cost.js';
 
 // Helpers to build branch entries without repeating the nested shape.
 function assistant(total: number | undefined): CostBranchEntry {
@@ -9,6 +9,18 @@ function assistant(total: number | undefined): CostBranchEntry {
 function user(total: number): CostBranchEntry {
   return { type: 'message', message: { role: 'user', usage: { cost: { total } } } };
 }
+
+describe('sumLifetimeCostUsd', () => {
+  it('includes persisted compaction and branch-summary usage with assistant-turn cost', () => {
+    const entries = [
+      assistant(0.1),
+      { type: 'compaction', usage: { cost: { total: 0.2 } } },
+      { type: 'branch_summary', usage: { cost: { total: 0.3 } } },
+    ] as unknown as CostBranchEntry[];
+
+    expect(sumLifetimeCostUsd(entries)).toBeCloseTo(0.6, 10);
+  });
+});
 
 describe('sumAssistantCostUsd', () => {
   describe('empty / trivial inputs', () => {

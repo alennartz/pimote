@@ -1017,6 +1017,7 @@ export type LoginStep =
   | { kind: 'prompt'; requestId: string; message: string; placeholder?: string; allowEmpty?: boolean }
   | { kind: 'select'; requestId: string; message: string; options: { id: string; label: string }[] }
   | { kind: 'progress'; message: string }
+  | { kind: 'info'; message: string; links?: { url: string; label?: string }[] }
   | { kind: 'done'; success: boolean; providerName: string; error?: string };
 
 export interface LoginStepEvent {
