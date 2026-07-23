@@ -28,7 +28,7 @@ import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
 import { mapContextEntries, extractMessageEntryIds } from './message-mapper.js';
 import type { TreeNavigationStartEvent, TreeNavigationEndEvent } from './event-buffer.js';
-import { sumAssistantCostUsd } from './session-cost.js';
+import { sumLifetimeCostUsd } from './session-cost.js';
 import { completeFileRefs } from './file-references.js';
 import type { AgentSession, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
@@ -755,7 +755,7 @@ export class WsHandler {
 
         // -- Global login commands (NOT session-scoped) --
         case 'login_list': {
-          const providers = this.sessionManager.getLoginOrchestrator().listProviders();
+          const providers = await this.sessionManager.getLoginOrchestrator().listProviders();
           this.sendResponse(id, true, { providers });
           break;
         }
@@ -808,7 +808,7 @@ export class WsHandler {
         }
 
         case 'logout': {
-          this.sessionManager.getLoginOrchestrator().logout(command.providerId);
+          await this.sessionManager.getLoginOrchestrator().logout(command.providerId);
           this.sendResponse(id, true, { ok: true });
           break;
         }
@@ -911,7 +911,7 @@ export class WsHandler {
       }
 
       case 'set_model': {
-        const models = slot.session.modelRegistry.getAvailable();
+        const models = await session.modelRuntime.getAvailable();
         const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
         if (!model) {
           this.sendResponse(id, false, undefined, `Model not found: ${command.provider}/${command.modelId}`);
@@ -937,7 +937,7 @@ export class WsHandler {
       }
 
       case 'get_available_models': {
-        const models = slot.session.modelRegistry.getAvailable();
+        const models = await session.modelRuntime.getAvailable();
         const mapped = models.map((m) => ({
           provider: m.provider,
           id: m.id,
@@ -1021,12 +1021,11 @@ export class WsHandler {
         const meta: SessionMeta = {
           gitBranch: this.sessionManager.getLastKnownGitBranch(sessionId),
           contextUsage: contextUsage ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow } : null,
-          // getEntries() (not getBranch()) so cost spans ALL branches in the
-          // session file, not just the current leaf's branch. Survives live
-          // switches and reload-from-disk because it is recomputed from the
-          // session manager's rehydrated entries every call. See session-cost.ts
-          // for what this figure excludes.
-          lifetimeCostUsd: sumAssistantCostUsd(session.sessionManager.getEntries()),
+          // getEntries() (not getBranch()) keeps this complete-history fold
+          // across every branch, not just the current leaf. It recomputes from
+          // persisted assistant, compaction, and branch-summary usage after
+          // live switches and reloads; see session-cost.ts for the policy.
+          lifetimeCostUsd: sumLifetimeCostUsd(session.sessionManager.getEntries()),
           nextRoundtripCostUsd,
         };
         this.sendResponse(id, true, { meta });

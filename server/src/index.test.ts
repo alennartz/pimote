@@ -47,9 +47,9 @@ vi.mock('./folder-index.js', () => ({
   }),
 }));
 vi.mock('./session-manager.js', () => ({
-  PimoteSessionManager: vi.fn(function () {
-    return mocks.sessionManager;
-  }),
+  PimoteSessionManager: {
+    create: vi.fn(async () => mocks.sessionManager),
+  },
 }));
 vi.mock('./push-notification.js', () => ({
   PushNotificationService: vi.fn(function () {
@@ -119,7 +119,7 @@ describe('main — file download bootstrap wiring', () => {
     await main({ portOverride: 4321 });
 
     expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: new Set(['session-1']) }));
-    expect(PimoteSessionManager).toHaveBeenCalledWith(mocks.config, expect.anything(), expect.objectContaining({ fileDownloadFactory: mocks.downloadFactory }));
+    expect(PimoteSessionManager.create).toHaveBeenCalledWith(mocks.config, expect.anything(), expect.objectContaining({ fileDownloadFactory: mocks.downloadFactory }));
     expect(mocks.createServer).toHaveBeenCalledWith(
       mocks.config,
       mocks.sessionManager,

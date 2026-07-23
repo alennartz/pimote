@@ -65,7 +65,7 @@ export async function main(options: StartOptions = {}) {
   const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore });
   const fileDownloads = await bootstrapFileDownloads({ storeDir: PIMOTE_FILE_DOWNLOAD_DIR, validSessionIds });
 
-  const sessionManager = new PimoteSessionManager(config, pushNotificationService, { staticHostFactory, fileDownloadFactory: fileDownloads.extensionFactory });
+  const sessionManager = await PimoteSessionManager.create(config, pushNotificationService, { staticHostFactory, fileDownloadFactory: fileDownloads.extensionFactory });
 
   // Build the voice orchestrator before createServer so each WsHandler can be
   // handed a reference. The orchestrator needs a client-registry lookup, but

@@ -3,8 +3,7 @@ import {
   createAgentSessionServices,
   createAgentSessionFromServices,
   createEventBus,
-  AuthStorage,
-  ModelRegistry,
+  ModelRuntime,
   getAgentDir,
   SessionManager as PiSessionManager,
 } from '@earendil-works/pi-coding-agent';
@@ -26,6 +25,11 @@ import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 export interface EventSocket {
   send(data: string, cb?: (err?: Error) => void): void;
   readonly readyState: number;
+}
+
+export interface SessionManagerOptions {
+  staticHostFactory?: ExtensionFactory;
+  fileDownloadFactory?: ExtensionFactory;
 }
 
 export interface PendingUiEntry {
@@ -361,8 +365,6 @@ export async function singleFlight<V>(map: Map<string, Promise<V>>, key: string,
 }
 
 export class PimoteSessionManager {
-  private readonly authStorage: AuthStorage;
-  private readonly modelRegistry: ModelRegistry;
   private readonly loginOrchestrator: LoginOrchestrator;
   private readonly sessions = new Map<string, ManagedSlot>();
   /** In-flight `openSession` promises keyed by session file path, so two
@@ -389,16 +391,22 @@ export class PimoteSessionManager {
   private readonly staticHostFactory?: ExtensionFactory;
   private readonly fileDownloadFactory?: ExtensionFactory;
 
-  constructor(
+  private constructor(
     private readonly config: PimoteConfig,
     private readonly pushNotificationService: PushNotificationService,
-    options: { staticHostFactory?: ExtensionFactory; fileDownloadFactory?: ExtensionFactory } = {},
+    private readonly modelRuntime: ModelRuntime,
+    options: SessionManagerOptions = {},
   ) {
-    this.authStorage = AuthStorage.create();
-    this.modelRegistry = ModelRegistry.create(this.authStorage);
-    this.loginOrchestrator = new LoginOrchestrator(this.authStorage, this.modelRegistry);
+    // Login stays server-global and shares the exact runtime every session uses.
+    this.loginOrchestrator = new LoginOrchestrator(this.modelRuntime);
     this.staticHostFactory = options.staticHostFactory;
     this.fileDownloadFactory = options.fileDownloadFactory;
+  }
+
+  /** Initialize the one process-lifetime Pi model/auth runtime before serving sessions. */
+  static async create(config: PimoteConfig, pushNotificationService: PushNotificationService, options: SessionManagerOptions = {}): Promise<PimoteSessionManager> {
+    const modelRuntime = await ModelRuntime.create();
+    return new PimoteSessionManager(config, pushNotificationService, modelRuntime, options);
   }
 
   /**
@@ -460,8 +468,7 @@ export class PimoteSessionManager {
 
   private async doOpenSession(folderPath: string, sessionFilePath?: string): Promise<string> {
     const eventBusRef: { current: EventBusController | null } = { current: null };
-    const sharedAuthStorage = this.authStorage;
-    const sharedModelRegistry = this.modelRegistry;
+    const sharedModelRuntime = this.modelRuntime;
     const sessionManager = sessionFilePath ? PiSessionManager.open(sessionFilePath) : PiSessionManager.create(folderPath);
     const effectiveFolderPath = sessionFilePath ? sessionManager.getCwd() : folderPath;
 
@@ -481,8 +488,7 @@ export class PimoteSessionManager {
       const services = await createAgentSessionServices({
         cwd,
         agentDir,
-        authStorage: sharedAuthStorage,
-        modelRegistry: sharedModelRegistry,
+        modelRuntime: sharedModelRuntime,
         resourceLoaderOptions: {
           eventBus,
           ...(extensionFactories.length ? { extensionFactories } : {}),
@@ -505,13 +511,13 @@ export class PimoteSessionManager {
     const session = runtime.session;
     const sessionId = session.sessionId;
 
-    // Diagnostics: log model registry state after factory has loaded extensions
-    const availableModels = this.modelRegistry.getAvailable();
+    // Diagnostics: log model runtime state after factory has loaded extensions
+    const availableModels = await this.modelRuntime.getAvailable();
     console.log(`[pimote] openSession: ${availableModels.length} models available, session model: ${session.model ? `${session.model.provider}/${session.model.id}` : 'none'}`);
 
     // Apply default model from config (only for new sessions without an existing model preference)
     if (!sessionFilePath && this.config.defaultProvider && this.config.defaultModel) {
-      const models = this.modelRegistry.getAvailable();
+      const models = await this.modelRuntime.getAvailable();
       const defaultModel = models.find((m) => m.provider === this.config.defaultProvider && m.id === this.config.defaultModel);
       if (defaultModel) {
         await session.setModel(defaultModel);

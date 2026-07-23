@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const modelRuntimeCreate = vi.hoisted(() => vi.fn(async () => ({ getAvailable: vi.fn(async () => []) })));
+
+vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => ({
+  ...(await importOriginal()),
+  ModelRuntime: { create: modelRuntimeCreate },
+}));
+
 import { createSessionState, makeDownloadSnapshot, PimoteSessionManager, routeSlotDownloadUpdate, setupSlotDownloadListener, singleFlight } from './session-manager.js';
 import type { ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
 import type { PimoteConfig } from './config.js';
@@ -190,7 +198,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
   it('reaps sessions with no connected client past idle timeout', async () => {
     const config = createTestConfig();
-    const manager = new PimoteSessionManager(config, createMockPushService());
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     const now = Date.now();
@@ -214,7 +222,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
   it('does NOT reap a working (streaming) session, no matter how stale', async () => {
     const config = createTestConfig();
-    const manager = new PimoteSessionManager(config, createMockPushService());
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     // A streaming session has idleSince === null. Even with no client and an arbitrarily
@@ -240,7 +248,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
   it('does NOT reap sessions within idle timeout', async () => {
     const config = createTestConfig();
-    const manager = new PimoteSessionManager(config, createMockPushService());
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     const now = Date.now();
@@ -263,7 +271,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
   it('does NOT reap sessions with a connected client (isClientConnected returns true)', async () => {
     const config = createTestConfig();
-    const manager = new PimoteSessionManager(config, createMockPushService());
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     const now = Date.now();
@@ -287,7 +295,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
   it('reaps sessions whose connectedClientId is set but isClientConnected returns false', async () => {
     const config = createTestConfig();
-    const manager = new PimoteSessionManager(config, createMockPushService());
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     const now = Date.now();
@@ -312,7 +320,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
   it('uses isClientConnected callback only when connectedClientId is not null', async () => {
     const config = createTestConfig();
-    const manager = new PimoteSessionManager(config, createMockPushService());
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     const now = Date.now();
@@ -340,7 +348,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
   it('does NOT reap stale sessions while tree navigation is in progress', async () => {
     const config = createTestConfig();
-    const manager = new PimoteSessionManager(config, createMockPushService());
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     const now = Date.now();
@@ -363,7 +371,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
   it('reaps stale sessions after tree navigation completes', async () => {
     const config = createTestConfig();
-    const manager = new PimoteSessionManager(config, createMockPushService());
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     const now = Date.now();
@@ -390,7 +398,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
   it('reaps multiple stale sessions in one check', async () => {
     const config = createTestConfig();
-    const manager = new PimoteSessionManager(config, createMockPushService());
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     const now = Date.now();
@@ -428,7 +436,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
   it('falls back to reaping when no isClientConnected callback is provided', async () => {
     const config = createTestConfig();
-    const manager = new PimoteSessionManager(config, createMockPushService());
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     const now = Date.now();
@@ -455,7 +463,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
   it('stopIdleCheck prevents further reaping', async () => {
     const config = createTestConfig();
-    const manager = new PimoteSessionManager(config, createMockPushService());
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     const now = Date.now();
@@ -477,7 +485,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
   it('restarts idle check cleanly when called multiple times', async () => {
     const config = createTestConfig();
-    const manager = new PimoteSessionManager(config, createMockPushService());
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     const now = Date.now();
@@ -653,8 +661,8 @@ describe('PimoteSessionManager — download delivery seam', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  it('starts rebuilt session state without registrations from the prior session identity', () => {
-    const manager = new PimoteSessionManager(createTestConfig(), createMockPushService());
+  it('starts rebuilt session state without registrations from the prior session identity', async () => {
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
     const slot = createFakeSlot({ id: 'old-session' });
     slot.sessionState.downloads = [offered];
     slot.eventBusRef.current = { on: vi.fn(() => () => {}), emit: vi.fn() } as any;
@@ -669,7 +677,7 @@ describe('PimoteSessionManager — download delivery seam', () => {
 
 describe('PimoteSessionManager — openSession reuse (#5)', () => {
   it('returns the already-open session id without building a second runtime', async () => {
-    const manager = new PimoteSessionManager(createTestConfig(), createMockPushService());
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
     const slot = createFakeSlot({ id: 'sess-x' });
     (slot.runtime.session as any).sessionFile = '/sessions/x.json';
     injectSession(manager, slot);

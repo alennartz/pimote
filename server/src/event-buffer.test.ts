@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { EventBuffer } from './event-buffer.js';
+import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
 import type { PimoteSessionEvent } from '../../shared/dist/index.js';
 
 describe('EventBuffer', () => {
@@ -112,6 +112,23 @@ describe('EventBuffer', () => {
       const live: PimoteSessionEvent[] = [];
       buffer.onEvent(makeSdkEvent('entry_appended', { entry: { id: 'e1', type: 'message' } }), SESSION_ID, (e) => live.push(e));
       expect(live).toHaveLength(0);
+    });
+
+    it('drops every Pi 0.81 summarization retry variant', () => {
+      const buffer = new EventBuffer(10);
+      const live: PimoteSessionEvent[] = [];
+      const retryEvents: IncomingSdkEvent[] = [
+        { type: 'summarization_retry_scheduled', attempt: 1, maxAttempts: 3, delayMs: 1_000, errorMessage: 'temporary failure' },
+        { type: 'summarization_retry_attempt_start', source: 'branchSummary' },
+        { type: 'summarization_retry_attempt_start', source: 'compaction', reason: 'threshold' },
+        { type: 'summarization_retry_finished' },
+      ];
+
+      for (const event of retryEvents) {
+        buffer.onEvent(event, SESSION_ID, (mapped) => live.push(mapped));
+      }
+
+      expect(live).toEqual([]);
     });
   });
 

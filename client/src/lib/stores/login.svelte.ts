@@ -86,6 +86,7 @@ export class LoginStore {
     // on a blank "Working…" screen.
     this.state.currentStep = null;
     this.state.authInfo = null;
+    this.state.infoSteps = [];
     this.state.succeeded = null;
     this.state.error = null;
     const resp = await this.seams.sendCommand<LoginBeginResponseData>({
@@ -176,6 +177,12 @@ export class LoginStore {
       }
       return;
     }
+    // Notices are flow-scoped: retain them while later interactive steps replace
+    // the active control.
+    if (step.kind === 'info') {
+      this.state.infoSteps.push(step);
+      return;
+    }
     // Latch the auth URL so it survives the manual-code `prompt` step that pi
     // emits immediately after `auth` (which would otherwise overwrite it).
     if (step.kind === 'auth') {
@@ -190,6 +197,7 @@ export class LoginStore {
     this.state.providers = [];
     this.state.currentStep = null;
     this.state.authInfo = null;
+    this.state.infoSteps = [];
     this.state.succeeded = null;
     this.state.error = null;
   }

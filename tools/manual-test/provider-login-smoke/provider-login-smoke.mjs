@@ -8,7 +8,7 @@
 //   1. Typing `/login` opens the LoginDialog and posts NO user message
 //      (the client-side interception, plan step 9).
 //   2. The provider picker lists the OAuth providers (Anthropic, GitHub
-//      Copilot, ChatGPT) with no logged-in badge, with no auth.json on disk.
+//      Copilot, OpenAI Codex) with no logged-in badge, with no auth.json on disk.
 //   3. HEADLINE: picking Anthropic (a usesCallbackServer / paste-back provider)
 //      drives pi's real onAuth -> onManualCodeInput double-emit; the dialog
 //      shows the "Open auth page" link (href = the real claude.ai authorize
@@ -164,8 +164,10 @@ async function waitFor(expr, { timeoutMs = 8000, intervalMs = 400, label = '' } 
   return false;
 }
 
-const DIALOG_OPEN = `!!Array.from(document.querySelectorAll('h2')).find(h => h.textContent.trim() === 'Provider Login')`;
-const PICKER_SHOWN = `(() => { const open = Array.from(document.querySelectorAll('h2')).some(h => h.textContent.trim() === 'Provider Login'); const hasProvider = Array.from(document.querySelectorAll('button')).some(b => /Anthropic|GitHub Copilot|ChatGPT/.test(b.textContent)); return open && hasProvider; })()`;
+const DIALOG_TITLE = 'Providers';
+const OAUTH_PROVIDER_NAMES = ['Anthropic', 'GitHub Copilot', 'OpenAI Codex'];
+const DIALOG_OPEN = `!!Array.from(document.querySelectorAll('h2')).find(h => h.textContent.trim() === ${JSON.stringify(DIALOG_TITLE)})`;
+const PICKER_SHOWN = `(() => { const open = ${DIALOG_OPEN}; const providerNames = ${JSON.stringify(OAUTH_PROVIDER_NAMES)}; const buttons = Array.from(document.querySelectorAll('button')); return open && providerNames.every(name => buttons.some(button => button.textContent.trim() === name)); })()`;
 
 // Click a provider button by an accessible-name substring, from within the open
 // picker. Returns true if the click landed.
@@ -367,7 +369,7 @@ async function main() {
     const beforeText = await evalJs(`document.body.innerText`);
     await typeLoginAndSubmit();
     const dialogOpen = await waitFor(DIALOG_OPEN, { label: 'LoginDialog open after /login' });
-    assert(dialogOpen, 'LoginDialog ("Provider Login") opens on /login');
+    assert(dialogOpen, 'LoginDialog ("Providers") opens on /login');
 
     // No new user bubble: the literal "/login" text must not appear in a posted
     // message. The dialog itself doesn't contain "/login", so a body scan works.
@@ -385,7 +387,7 @@ async function main() {
     const pickerText = await evalJs(`document.body.innerText`);
     assert(/Anthropic/.test(pickerText), 'picker lists Anthropic');
     assert(/GitHub Copilot/.test(pickerText), 'picker lists GitHub Copilot');
-    assert(/ChatGPT/.test(pickerText), 'picker lists ChatGPT (OpenAI Codex)');
+    assert(/OpenAI Codex/.test(pickerText), 'picker lists OpenAI Codex');
     const badgeCount = Number(await evalJs(`document.querySelectorAll('.bg-primary\\\\/15').length || 0`)) || 0;
     assert(badgeCount === 0, `no "logged in" badge shown for any provider (got ${badgeCount})`);
 

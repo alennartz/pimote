@@ -83,7 +83,7 @@ function createMockSlot(
     sessionName: undefined,
     autoCompactionEnabled: false,
     bindExtensions: async () => {},
-    modelRegistry: { getAvailable: () => [] },
+    modelRuntime: { getAvailable: async () => [] },
     clearQueue: () => ({ steering: [], followUp: [] }),
     sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
   };
@@ -266,6 +266,81 @@ describe('WsHandler', () => {
     it('exposes the clientId passed to constructor', () => {
       const { handler } = createTestHandler('client-abc');
       expect(handler.clientId).toBe('client-abc');
+    });
+  });
+
+  describe('server-global login commands', () => {
+    it('waits for asynchronous OAuth provider listing before responding', async () => {
+      let release!: () => void;
+      const providersGate = new Promise<Array<{ id: string; name: string; loggedIn: boolean }>>(
+        (resolve) => (release = () => resolve([{ id: 'anthropic', name: 'Claude', loggedIn: true }])),
+      );
+      const { handler, sent, sessionManager } = createTestHandler('client-1');
+      (sessionManager as any).getLoginOrchestrator = () => ({ listProviders: () => providersGate });
+
+      const handling = handler.handleMessage(JSON.stringify({ type: 'login_list', id: 'req-login-list' }));
+      await Promise.resolve();
+      expect(findResponse(sent, 'req-login-list')).toBeUndefined();
+
+      release();
+      await handling;
+      expect(findResponse(sent, 'req-login-list')).toMatchObject({ success: true, data: { providers: [{ id: 'anthropic', name: 'Claude', loggedIn: true }] } });
+    });
+
+    it('waits for logout and its model refresh before confirming success', async () => {
+      let release!: () => void;
+      const logoutGate = new Promise<void>((resolve) => (release = resolve));
+      const logout = vi.fn(() => logoutGate);
+      const { handler, sent, sessionManager } = createTestHandler('client-1');
+      (sessionManager as any).getLoginOrchestrator = () => ({ logout });
+
+      const handling = handler.handleMessage(JSON.stringify({ type: 'logout', providerId: 'anthropic', id: 'req-logout' }));
+      await Promise.resolve();
+      expect(logout).toHaveBeenCalledWith('anthropic');
+      expect(findResponse(sent, 'req-logout')).toBeUndefined();
+
+      release();
+      await handling;
+      expect(findResponse(sent, 'req-logout')).toMatchObject({ success: true, data: { ok: true } });
+    });
+  });
+
+  describe('session model runtime controls', () => {
+    it('waits for session.modelRuntime before listing available models', async () => {
+      let release!: () => void;
+      const modelsGate = new Promise<Array<{ provider: string; id: string; name: string }>>(
+        (resolve) => (release = () => resolve([{ provider: 'anthropic', id: 'claude', name: 'Claude' }])),
+      );
+      const slot = createMockSlot();
+      const getAvailable = vi.fn(() => modelsGate);
+      (slot.session as any).modelRuntime = { getAvailable };
+      const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+
+      const handling = handler.handleMessage(JSON.stringify({ type: 'get_available_models', sessionId: slot.sessionState.id, id: 'req-model-list' }));
+      await Promise.resolve();
+      expect(getAvailable).toHaveBeenCalledOnce();
+      expect(findResponse(sent, 'req-model-list')).toBeUndefined();
+
+      release();
+      await handling;
+      expect(findResponse(sent, 'req-model-list')).toMatchObject({
+        success: true,
+        data: { models: [{ provider: 'anthropic', id: 'claude', name: 'Claude' }] },
+      });
+    });
+
+    it('selects a matching model from session.modelRuntime', async () => {
+      const model = { provider: 'anthropic', id: 'claude', name: 'Claude' };
+      const slot = createMockSlot();
+      const setModel = vi.fn(async () => undefined);
+      (slot.session as any).modelRuntime = { getAvailable: vi.fn(async () => [model]) };
+      (slot.session as any).setModel = setModel;
+      const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+
+      await handler.handleMessage(JSON.stringify({ type: 'set_model', sessionId: slot.sessionState.id, provider: 'anthropic', modelId: 'claude', id: 'req-set-model' }));
+
+      expect(setModel).toHaveBeenCalledWith(model);
+      expect(findResponse(sent, 'req-set-model')).toMatchObject({ success: true });
     });
   });
 
@@ -663,7 +738,7 @@ describe('WsHandler', () => {
             sessionName: undefined,
             autoCompactionEnabled: false,
             bindExtensions: async () => {},
-            modelRegistry: { getAvailable: () => [] },
+            modelRuntime: { getAvailable: async () => [] },
             clearQueue: () => ({ steering: [], followUp: [] }),
             sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
           } as any,
@@ -1263,7 +1338,7 @@ describe('WsHandler', () => {
             sessionName: undefined,
             autoCompactionEnabled: false,
             bindExtensions: async () => {},
-            modelRegistry: { getAvailable: () => [] },
+            modelRuntime: { getAvailable: async () => [] },
             clearQueue: () => ({ steering: [], followUp: [] }),
             sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
           } as any,
@@ -1603,7 +1678,7 @@ describe('WsHandler', () => {
             };
           }
         },
-        modelRegistry: { getAvailable: () => [] },
+        modelRuntime: { getAvailable: async () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         navigateTree: async () => ({ cancelled: false }),
         sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
@@ -1710,7 +1785,7 @@ describe('WsHandler', () => {
         sessionName: undefined,
         autoCompactionEnabled: false,
         bindExtensions: async () => {},
-        modelRegistry: { getAvailable: () => [] },
+        modelRuntime: { getAvailable: async () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         navigateTree: async () => ({ cancelled: false }),
         sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
@@ -1763,7 +1838,7 @@ describe('WsHandler', () => {
             };
           }
         },
-        modelRegistry: { getAvailable: () => [] },
+        modelRuntime: { getAvailable: async () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         navigateTree: async () => ({ cancelled: false }),
         sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
@@ -1853,7 +1928,7 @@ describe('WsHandler', () => {
         bindExtensions: async (bindings: any) => {
           capturedBindings = bindings;
         },
-        modelRegistry: { getAvailable: () => [] },
+        modelRuntime: { getAvailable: async () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         navigateTree: async () => ({ cancelled: false }),
         sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
@@ -2095,7 +2170,7 @@ describe('WsHandler', () => {
           sessionName: undefined,
           autoCompactionEnabled: false,
           bindExtensions: async () => {},
-          modelRegistry: { getAvailable: () => [] },
+          modelRuntime: { getAvailable: async () => [] },
           clearQueue: () => ({ steering: [], followUp: [] }),
           navigateTree,
           sessionManager: {
@@ -2193,7 +2268,7 @@ describe('WsHandler', () => {
           sessionName: undefined,
           autoCompactionEnabled: false,
           bindExtensions: async () => {},
-          modelRegistry: { getAvailable: () => [] },
+          modelRuntime: { getAvailable: async () => [] },
           clearQueue: () => ({ steering: [], followUp: [] }),
           navigateTree,
           sessionManager: {
@@ -2279,7 +2354,7 @@ describe('WsHandler', () => {
           sessionName: undefined,
           autoCompactionEnabled: false,
           bindExtensions: async () => {},
-          modelRegistry: { getAvailable: () => [] },
+          modelRuntime: { getAvailable: async () => [] },
           clearQueue: () => ({ steering: [], followUp: [] }),
           navigateTree,
           sessionManager: {
@@ -2591,7 +2666,7 @@ describe('WsHandler', () => {
         sessionName: undefined,
         autoCompactionEnabled: false,
         bindExtensions: async () => {},
-        modelRegistry: { getAvailable: () => [] },
+        modelRuntime: { getAvailable: async () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
@@ -2664,7 +2739,7 @@ describe('WsHandler', () => {
         sessionName: undefined,
         autoCompactionEnabled: false,
         bindExtensions: async () => {},
-        modelRegistry: { getAvailable: () => [] },
+        modelRuntime: { getAvailable: async () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
@@ -2738,7 +2813,7 @@ describe('WsHandler', () => {
         sessionName: undefined,
         autoCompactionEnabled: false,
         bindExtensions: async () => {},
-        modelRegistry: { getAvailable: () => [] },
+        modelRuntime: { getAvailable: async () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
@@ -2813,7 +2888,7 @@ describe('WsHandler', () => {
         sessionName: undefined,
         autoCompactionEnabled: false,
         bindExtensions: async () => {},
-        modelRegistry: { getAvailable: () => [] },
+        modelRuntime: { getAvailable: async () => [] },
         clearQueue: () => ({ steering: [], followUp: [] }),
         sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
       } as any;
@@ -2886,7 +2961,7 @@ describe('WsHandler', () => {
           sessionName: undefined,
           autoCompactionEnabled: false,
           bindExtensions: async () => {},
-          modelRegistry: { getAvailable: () => [] },
+          modelRuntime: { getAvailable: async () => [] },
           clearQueue: () => ({ steering: [], followUp: [] }),
         },
       });

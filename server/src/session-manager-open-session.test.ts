@@ -2,12 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PushNotificationService } from './push-notification.js';
 import type { PimoteConfig } from './config.js';
 
-const { runtimeArgs, serviceArgs, openedSessionManagers, gitBranchSpy } = vi.hoisted(() => ({
-  runtimeArgs: [] as Array<{ cwd: string; agentDir: string; sessionManager: { getCwd(): string } }>,
-  serviceArgs: [] as Array<{ resourceLoaderOptions?: { extensionFactories?: unknown[] } }>,
-  openedSessionManagers: [] as Array<{ getCwd(): string }>,
-  gitBranchSpy: vi.fn(() => 'main'),
-}));
+const { modelRuntime, modelRuntimeCreate, runtimeArgs, serviceArgs, openedSessionManagers, gitBranchSpy } = vi.hoisted(() => {
+  const modelRuntime = { getAvailable: vi.fn(async () => []) };
+  return {
+    modelRuntime,
+    modelRuntimeCreate: vi.fn(async () => modelRuntime),
+    runtimeArgs: [] as Array<{ cwd: string; agentDir: string; sessionManager: { getCwd(): string } }>,
+    serviceArgs: [] as Array<{ modelRuntime?: unknown; resourceLoaderOptions?: { extensionFactories?: unknown[] } }>,
+    openedSessionManagers: [] as Array<{ getCwd(): string }>,
+    gitBranchSpy: vi.fn(() => 'main'),
+  };
+});
 
 vi.mock('./git-branch.js', () => ({
   getGitBranch: gitBranchSpy,
@@ -27,25 +32,19 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
   };
 
   return {
-    AuthStorage: { create: vi.fn(() => ({})) },
-    ModelRegistry: {
-      create: vi.fn(() => ({
-        getAvailable: vi.fn(() => []),
-      })),
-    },
+    ModelRuntime: { create: modelRuntimeCreate },
     getAgentDir: vi.fn(() => '/agent-dir'),
     createEventBus: vi.fn(() => ({
       on: vi.fn(() => () => {}),
       emit: vi.fn(() => undefined),
     })),
-    createAgentSessionServices: vi.fn(async (args: { cwd: string; agentDir: string; resourceLoaderOptions?: { extensionFactories?: unknown[] } }) => {
+    createAgentSessionServices: vi.fn(async (args: { cwd: string; agentDir: string; modelRuntime?: unknown; resourceLoaderOptions?: { extensionFactories?: unknown[] } }) => {
       serviceArgs.push(args);
       return {
         cwd: args.cwd,
         agentDir: args.agentDir,
-        authStorage: {},
+        modelRuntime: args.modelRuntime,
         settingsManager: {},
-        modelRegistry: {},
         resourceLoader: {},
         diagnostics: [],
       };
@@ -111,16 +110,18 @@ describe('PimoteSessionManager.openSession', () => {
     openedSessionManagers.length = 0;
     gitBranchSpy.mockClear();
 
-    const manager = new PimoteSessionManager(createTestConfig(), createMockPushService());
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
     const sessionId = await manager.openSession('/home/user/project', '/tmp/session.jsonl');
     const slot = manager.getSession(sessionId);
 
+    expect(modelRuntimeCreate).toHaveBeenCalledOnce();
     expect(openedSessionManagers).toHaveLength(1);
     expect(runtimeArgs).toHaveLength(1);
     expect(runtimeArgs[0]?.cwd).toBe('/tmp/pi-repro-resume-cwd/demo');
     expect(slot?.folderPath).toBe('/tmp/pi-repro-resume-cwd/demo');
     expect(gitBranchSpy).toHaveBeenCalledWith('/tmp/pi-repro-resume-cwd/demo');
     expect(slot?.sessionState.downloads).toEqual([]);
+    expect(serviceArgs[0]?.modelRuntime).toBe(modelRuntime);
   });
 
   it('threads the dedicated download extension factory alongside static hosting into every runtime', async () => {
@@ -128,11 +129,14 @@ describe('PimoteSessionManager.openSession', () => {
     serviceArgs.length = 0;
     const staticHostFactory = (() => undefined) as any;
     const fileDownloadFactory = (() => undefined) as any;
-    const manager = new PimoteSessionManager(createTestConfig(), createMockPushService(), { staticHostFactory, fileDownloadFactory });
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService(), { staticHostFactory, fileDownloadFactory });
 
     await manager.openSession('/home/user/project');
+    await manager.openSession('/home/user/second-project');
 
-    expect(serviceArgs).toHaveLength(1);
+    expect(serviceArgs).toHaveLength(2);
+    expect(serviceArgs.map((args) => args.modelRuntime)).toEqual([modelRuntime, modelRuntime]);
     expect(serviceArgs[0]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory]);
+    expect(serviceArgs[1]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory]);
   });
 });

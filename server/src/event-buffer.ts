@@ -61,9 +61,8 @@ export class EventBuffer {
     const cursor = this._cursor;
 
     const pimoteEvent = this.mapEvent(sdkEvent, sessionId, cursor, getLastMessage);
-    // Some SDK events (queue_update, session_info_changed, thinking_level_changed)
-    // have no pimote wire representation — mapEvent returns null and we drop them
-    // rather than mis-emitting a bogus agent_start.
+    // Some SDK events have no Pimote wire representation. mapEvent returns null
+    // for them, so we drop them rather than emitting a bogus client event.
     if (!pimoteEvent) return;
     sendLive(pimoteEvent);
     this.coalesceAndBuffer(pimoteEvent);
@@ -275,15 +274,19 @@ export class EventBuffer {
       case 'agent_settled':
         return { ...base, type: 'agent_settled' };
 
-      // Real SDK events with no pimote wire representation. Dropped rather than
+      // Real SDK events with no Pimote wire representation. Dropped rather than
       // mis-emitted; wire them up here if the client grows a use for them.
       // `entry_appended` is the authoritative persisted-entry stream; adopting
       // it is deferred design work (see docs/brainstorms/entry-appended-refactor.md)
-      // — dropped at the wire for now.
+      // — dropped at the wire for now. Pi 0.81's summarization retry lifecycle
+      // remains server-local until the client protocol gains retry variants.
       case 'queue_update':
       case 'session_info_changed':
       case 'thinking_level_changed':
       case 'entry_appended':
+      case 'summarization_retry_scheduled':
+      case 'summarization_retry_attempt_start':
+      case 'summarization_retry_finished':
         return null;
 
       default: {

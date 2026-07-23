@@ -1,52 +1,68 @@
-import { describe, it, expect, vi } from 'vitest';
-import { LoginOrchestrator, LoginBusyError, type LoginAuthStorage, type LoginModelRegistry, type LoginOAuthCallbacks, type LoginTransport } from './login-orchestrator.js';
+import { describe, expect, it, vi } from 'vitest';
+import { LoginBusyError, LoginOrchestrator, type LoginInteraction, type LoginModelRuntime, type LoginTransport } from './login-orchestrator.js';
 import type { LoginStep } from '../../shared/dist/index.js';
 
 // --- Fakes -------------------------------------------------------------------
 
-interface FakeAuthOptions {
-  providers?: Array<{ id: string; name: string }>;
-  /** Provider ids that report configured: true. */
-  loggedIn?: string[];
-  /** Custom login behaviour; defaults to immediate success. */
-  login?: (providerId: string, callbacks: LoginOAuthCallbacks) => Promise<void>;
+interface FakeRuntimeOptions {
+  providers?: Array<{ id: string; name: string; oauth?: boolean }>;
+  auth?: Record<string, 'api_key' | 'oauth' | undefined>;
+  login?: (providerId: string, authType: 'oauth', interaction: LoginInteraction) => Promise<void>;
+  logout?: (providerId: string) => Promise<void>;
+  refresh?: () => Promise<void>;
 }
 
-function fakeAuthStorage(opts: FakeAuthOptions = {}): LoginAuthStorage & {
-  loginCalls: Array<{ providerId: string; callbacks: LoginOAuthCallbacks }>;
+type FakeModelRuntime = LoginModelRuntime & {
+  loginCalls: Array<{ providerId: string; authType: 'oauth'; interaction: LoginInteraction }>;
   logoutCalls: string[];
-} {
-  const providers = opts.providers ?? [
-    { id: 'anthropic', name: 'Claude' },
-    { id: 'openai', name: 'ChatGPT' },
+  checkAuthCalls: string[];
+  refreshCount: number;
+};
+
+function fakeModelRuntime(options: FakeRuntimeOptions = {}): FakeModelRuntime {
+  const providers = options.providers ?? [
+    { id: 'anthropic', name: 'Claude', oauth: true },
+    { id: 'openai', name: 'ChatGPT', oauth: true },
   ];
-  const loggedIn = new Set(opts.loggedIn ?? []);
-  const loginCalls: Array<{ providerId: string; callbacks: LoginOAuthCallbacks }> = [];
+  const auth = { ...(options.auth ?? {}) };
+  const loginCalls: Array<{ providerId: string; authType: 'oauth'; interaction: LoginInteraction }> = [];
   const logoutCalls: string[] = [];
-  return {
+  const checkAuthCalls: string[] = [];
+
+  const runtime = {
     loginCalls,
     logoutCalls,
-    getOAuthProviders: () => providers,
-    getAuthStatus: (provider: string) => ({ configured: loggedIn.has(provider) }),
-    login: async (providerId: string, callbacks: LoginOAuthCallbacks) => {
-      loginCalls.push({ providerId, callbacks });
-      if (opts.login) return opts.login(providerId, callbacks);
-    },
-    logout: (provider: string) => {
-      logoutCalls.push(provider);
-      loggedIn.delete(provider);
-    },
-  };
-}
-
-function fakeModelRegistry(): LoginModelRegistry & { refreshCount: number } {
-  const reg = {
+    checkAuthCalls,
     refreshCount: 0,
-    refresh() {
-      reg.refreshCount++;
+    getProviders: () =>
+      providers.map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        auth: provider.oauth === false ? { apiKey: {} } : { oauth: {} },
+      })),
+    checkAuth: async (providerId: string) => {
+      checkAuthCalls.push(providerId);
+      const type = auth[providerId];
+      return type ? { type } : undefined;
+    },
+    login: async (providerId: string, authType: 'oauth', interaction: LoginInteraction) => {
+      loginCalls.push({ providerId, authType, interaction });
+      await options.login?.(providerId, authType, interaction);
+      return {};
+    },
+    logout: async (providerId: string) => {
+      logoutCalls.push(providerId);
+      delete auth[providerId];
+      await options.logout?.(providerId);
+    },
+    refresh: async () => {
+      runtime.refreshCount++;
+      await options.refresh?.();
+      return {};
     },
   };
-  return reg;
+
+  return runtime as unknown as FakeModelRuntime;
 }
 
 function fakeTransport(): LoginTransport & { emitted: LoginStep[]; abort: () => void } {
@@ -56,14 +72,14 @@ function fakeTransport(): LoginTransport & { emitted: LoginStep[]; abort: () => 
     emitted,
     abort: () => controller.abort(),
     signal: controller.signal,
-    emit: (step: LoginStep) => emitted.push(step),
-    requestInput: async () => '',
+    emit: (step) => emitted.push(step),
+    requestInput: async () => undefined,
     requestSelect: async () => undefined,
   };
 }
 
-function lastStep(t: { emitted: LoginStep[] }): LoginStep | undefined {
-  return t.emitted[t.emitted.length - 1];
+function lastStep(transport: { emitted: LoginStep[] }): LoginStep | undefined {
+  return transport.emitted.at(-1);
 }
 
 // =============================================================================
@@ -71,36 +87,37 @@ function lastStep(t: { emitted: LoginStep[] }): LoginStep | undefined {
 // =============================================================================
 
 describe('LoginOrchestrator.listProviders', () => {
-  it('returns one entry per OAuth provider with id and name', () => {
-    const auth = fakeAuthStorage({
+  it('returns only OAuth-capable providers with their id and name', async () => {
+    const runtime = fakeModelRuntime({
       providers: [
         { id: 'anthropic', name: 'Claude' },
-        { id: 'openai', name: 'ChatGPT' },
+        { id: 'local', name: 'Local server', oauth: false },
         { id: 'github-copilot', name: 'GitHub Copilot' },
       ],
     });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const list = orch.listProviders();
-    expect(list.map((p) => p.id)).toEqual(['anthropic', 'openai', 'github-copilot']);
-    expect(list.map((p) => p.name)).toEqual(['Claude', 'ChatGPT', 'GitHub Copilot']);
+    const list = await new LoginOrchestrator(runtime).listProviders();
+
+    expect(list).toEqual([
+      { id: 'anthropic', name: 'Claude', loggedIn: false },
+      { id: 'github-copilot', name: 'GitHub Copilot', loggedIn: false },
+    ]);
+    expect(runtime.checkAuthCalls).toEqual(['anthropic', 'github-copilot']);
   });
 
-  it('marks loggedIn true for providers whose auth status is configured', () => {
-    const auth = fakeAuthStorage({
-      providers: [
-        { id: 'anthropic', name: 'Claude' },
-        { id: 'openai', name: 'ChatGPT' },
-      ],
-      loggedIn: ['anthropic'],
+  it('reports loggedIn only for an asynchronous OAuth auth check, not an API key', async () => {
+    const runtime = fakeModelRuntime({
+      auth: { anthropic: 'oauth', openai: 'api_key' },
     });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const byId = Object.fromEntries(orch.listProviders().map((p) => [p.id, p.loggedIn]));
-    expect(byId).toEqual({ anthropic: true, openai: false });
+
+    await expect(new LoginOrchestrator(runtime).listProviders()).resolves.toEqual([
+      { id: 'anthropic', name: 'Claude', loggedIn: true },
+      { id: 'openai', name: 'ChatGPT', loggedIn: false },
+    ]);
   });
 
-  it('returns an empty list when there are no OAuth providers', () => {
-    const orch = new LoginOrchestrator(fakeAuthStorage({ providers: [] }), fakeModelRegistry());
-    expect(orch.listProviders()).toEqual([]);
+  it('returns no entries when no provider supports OAuth', async () => {
+    const runtime = fakeModelRuntime({ providers: [{ id: 'local', name: 'Local server', oauth: false }] });
+    await expect(new LoginOrchestrator(runtime).listProviders()).resolves.toEqual([]);
   });
 });
 
@@ -109,41 +126,41 @@ describe('LoginOrchestrator.listProviders', () => {
 // =============================================================================
 
 describe('LoginOrchestrator in-flight guard', () => {
-  it('is not busy before any login starts', () => {
-    const orch = new LoginOrchestrator(fakeAuthStorage(), fakeModelRegistry());
-    expect(orch.isBusy()).toBe(false);
+  it('is not busy before a login starts', () => {
+    expect(new LoginOrchestrator(fakeModelRuntime()).isBusy()).toBe(false);
   });
 
   it('reports busy while a login flow is running', async () => {
     let release!: () => void;
-    const gate = new Promise<void>((r) => (release = r));
-    const auth = fakeAuthStorage({ login: async () => gate });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const t = fakeTransport();
-    const running = orch.runLogin('anthropic', t);
-    expect(orch.isBusy()).toBe(true);
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const orchestrator = new LoginOrchestrator(fakeModelRuntime({ login: async () => gate }));
+
+    const running = orchestrator.runLogin('anthropic', fakeTransport());
+    expect(orchestrator.isBusy()).toBe(true);
     release();
     await running;
-    expect(orch.isBusy()).toBe(false);
+    expect(orchestrator.isBusy()).toBe(false);
   });
 
-  it('rejects a concurrent runLogin with LoginBusyError while one is in flight', async () => {
+  it('rejects a concurrent runLogin while the global flow is in flight', async () => {
     let release!: () => void;
-    const gate = new Promise<void>((r) => (release = r));
-    const auth = fakeAuthStorage({ login: async () => gate });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const first = orch.runLogin('anthropic', fakeTransport());
-    await expect(orch.runLogin('openai', fakeTransport())).rejects.toBeInstanceOf(LoginBusyError);
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const orchestrator = new LoginOrchestrator(fakeModelRuntime({ login: async () => gate }));
+
+    const first = orchestrator.runLogin('anthropic', fakeTransport());
+    await expect(orchestrator.runLogin('openai', fakeTransport())).rejects.toBeInstanceOf(LoginBusyError);
     release();
     await first;
   });
 
-  it('allows a second login after the first one completes', async () => {
-    const auth = fakeAuthStorage();
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    await orch.runLogin('anthropic', fakeTransport());
-    await orch.runLogin('openai', fakeTransport());
-    expect(auth.loginCalls.map((c) => c.providerId)).toEqual(['anthropic', 'openai']);
+  it('allows another login after the first flow ends', async () => {
+    const runtime = fakeModelRuntime();
+    const orchestrator = new LoginOrchestrator(runtime);
+
+    await orchestrator.runLogin('anthropic', fakeTransport());
+    await orchestrator.runLogin('openai', fakeTransport());
+
+    expect(runtime.loginCalls.map((call) => call.providerId)).toEqual(['anthropic', 'openai']);
   });
 });
 
@@ -152,230 +169,191 @@ describe('LoginOrchestrator in-flight guard', () => {
 // =============================================================================
 
 describe('LoginOrchestrator.logout', () => {
-  it('clears the credential for the requested provider', () => {
-    const auth = fakeAuthStorage({ loggedIn: ['anthropic'] });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    orch.logout('anthropic');
-    expect(auth.logoutCalls).toEqual(['anthropic']);
-    expect(orch.listProviders().find((p) => p.id === 'anthropic')?.loggedIn).toBe(false);
+  it('removes the requested credential and refreshes the shared runtime', async () => {
+    const runtime = fakeModelRuntime({ auth: { anthropic: 'oauth' } });
+    const orchestrator = new LoginOrchestrator(runtime);
+
+    await orchestrator.logout('anthropic');
+
+    expect(runtime.logoutCalls).toEqual(['anthropic']);
+    expect(runtime.refreshCount).toBe(1);
+    await expect(orchestrator.listProviders()).resolves.toContainEqual({ id: 'anthropic', name: 'Claude', loggedIn: false });
   });
 
-  it('refreshes the model registry after logout', () => {
-    const registry = fakeModelRegistry();
-    const orch = new LoginOrchestrator(fakeAuthStorage({ loggedIn: ['anthropic'] }), registry);
-    orch.logout('anthropic');
-    expect(registry.refreshCount).toBe(1);
+  it('does not refresh until asynchronous credential removal finishes', async () => {
+    let releaseLogout!: () => void;
+    const logoutGate = new Promise<void>((resolve) => (releaseLogout = resolve));
+    const runtime = fakeModelRuntime({ logout: async () => logoutGate });
+    const loggedOut = new LoginOrchestrator(runtime).logout('anthropic');
+
+    expect(runtime.logoutCalls).toEqual(['anthropic']);
+    expect(runtime.refreshCount).toBe(0);
+    releaseLogout();
+    await loggedOut;
+    expect(runtime.refreshCount).toBe(1);
   });
 
-  it('is independent of the login single-flight guard', async () => {
+  it('remains independent of the login single-flight guard', async () => {
     let release!: () => void;
-    const gate = new Promise<void>((r) => (release = r));
-    const auth = fakeAuthStorage({ login: async () => gate, loggedIn: ['openai'] });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const running = orch.runLogin('anthropic', fakeTransport());
-    expect(orch.isBusy()).toBe(true);
-    orch.logout('openai');
-    expect(auth.logoutCalls).toEqual(['openai']);
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const runtime = fakeModelRuntime({ login: async () => gate, auth: { openai: 'oauth' } });
+    const orchestrator = new LoginOrchestrator(runtime);
+
+    const running = orchestrator.runLogin('anthropic', fakeTransport());
+    await orchestrator.logout('openai');
+
+    expect(runtime.logoutCalls).toEqual(['openai']);
     release();
     await running;
   });
 });
 
 // =============================================================================
-// runLogin — happy path
+// runLogin — success and interaction mapping
 // =============================================================================
 
 describe('LoginOrchestrator.runLogin success', () => {
-  it('calls authStorage.login with the requested provider id', async () => {
-    const auth = fakeAuthStorage();
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    await orch.runLogin('anthropic', fakeTransport());
-    expect(auth.loginCalls[0]?.providerId).toBe('anthropic');
+  it('starts the provider-owned OAuth flow for the requested provider', async () => {
+    const runtime = fakeModelRuntime();
+    await new LoginOrchestrator(runtime).runLogin('anthropic', fakeTransport());
+
+    expect(runtime.loginCalls).toHaveLength(1);
+    expect(runtime.loginCalls[0]).toMatchObject({ providerId: 'anthropic', authType: 'oauth' });
   });
 
-  it('refreshes the model registry after a successful login', async () => {
-    const registry = fakeModelRegistry();
-    const orch = new LoginOrchestrator(fakeAuthStorage(), registry);
-    await orch.runLogin('anthropic', fakeTransport());
-    expect(registry.refreshCount).toBe(1);
+  it('waits for refresh before reporting successful completion', async () => {
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolve) => (releaseRefresh = resolve));
+    const runtime = fakeModelRuntime({ refresh: async () => refreshGate });
+    const transport = fakeTransport();
+    const running = new LoginOrchestrator(runtime).runLogin('anthropic', transport);
+
+    await vi.waitFor(() => expect(runtime.refreshCount).toBe(1));
+    expect(transport.emitted).toEqual([]);
+
+    releaseRefresh();
+    await running;
+    expect(lastStep(transport)).toMatchObject({ kind: 'done', success: true });
   });
 
-  it('emits a terminal done step with success true on completion', async () => {
-    const orch = new LoginOrchestrator(fakeAuthStorage(), fakeModelRegistry());
-    const t = fakeTransport();
-    await orch.runLogin('anthropic', t);
-    const step = lastStep(t);
-    expect(step?.kind).toBe('done');
-    expect(step).toMatchObject({ kind: 'done', success: true });
-  });
-
-  it('emits an auth step when the provider invokes onAuth', async () => {
-    const auth = fakeAuthStorage({
-      login: async (_id, cb) => {
-        cb.onAuth({ url: 'https://auth.example/login' });
+  it('maps auth URLs, device codes, progress, and information notices', async () => {
+    const runtime = fakeModelRuntime({
+      login: async (_providerId, _authType, interaction) => {
+        interaction.notify({ type: 'auth_url', url: 'https://auth.example/login', instructions: 'Sign in' });
+        interaction.notify({ type: 'device_code', userCode: 'WXYZ-1234', verificationUri: 'https://device.example', expiresInSeconds: 120 });
+        interaction.notify({ type: 'progress', message: 'Exchanging tokens…' });
+        interaction.notify({
+          type: 'info',
+          message: 'Choose a subscription tier',
+          links: [{ url: 'https://example.test/plans', label: 'View plans' }],
+        });
       },
     });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const t = fakeTransport();
-    await orch.runLogin('anthropic', t);
-    expect(t.emitted).toContainEqual(expect.objectContaining({ kind: 'auth', url: 'https://auth.example/login' }));
+    const transport = fakeTransport();
+
+    await new LoginOrchestrator(runtime).runLogin('anthropic', transport);
+
+    expect(transport.emitted).toEqual(
+      expect.arrayContaining([
+        { kind: 'auth', url: 'https://auth.example/login', instructions: 'Sign in' },
+        { kind: 'device_code', userCode: 'WXYZ-1234', verificationUri: 'https://device.example', expiresInSeconds: 120 },
+        { kind: 'progress', message: 'Exchanging tokens…' },
+        { kind: 'info', message: 'Choose a subscription tier', links: [{ url: 'https://example.test/plans', label: 'View plans' }] },
+      ]),
+    );
   });
 
-  it('emits a device_code step when the provider invokes onDeviceCode', async () => {
-    const auth = fakeAuthStorage({
-      login: async (_id, cb) => {
-        cb.onDeviceCode({ userCode: 'WXYZ-1234', verificationUri: 'https://device.example' });
+  it('maps text, manual-code, and select prompts through the bound transport', async () => {
+    const runtime = fakeModelRuntime({
+      login: async (_providerId, _authType, interaction) => {
+        await expect(interaction.prompt({ type: 'text', message: 'Paste the code', placeholder: 'code' })).resolves.toBe('pasted-code');
+        await expect(interaction.prompt({ type: 'manual_code', message: 'Manual code' })).resolves.toBe('manual-code');
+        await expect(interaction.prompt({ type: 'select', message: 'Choose', options: [{ id: 'pro', label: 'Pro', description: 'Subscription' }] })).resolves.toBe('pro');
       },
     });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const t = fakeTransport();
-    await orch.runLogin('github-copilot', t);
-    expect(t.emitted).toContainEqual(expect.objectContaining({ kind: 'device_code', userCode: 'WXYZ-1234', verificationUri: 'https://device.example' }));
+    const transport = fakeTransport();
+    transport.requestInput = vi.fn().mockResolvedValueOnce('pasted-code').mockResolvedValueOnce('manual-code');
+    transport.requestSelect = vi.fn().mockResolvedValue('pro');
+
+    await new LoginOrchestrator(runtime).runLogin('anthropic', transport);
+
+    expect(transport.requestInput).toHaveBeenCalledWith(expect.objectContaining({ message: 'Paste the code', placeholder: 'code' }));
+    expect(transport.requestInput).toHaveBeenCalledWith(expect.objectContaining({ message: 'Manual code' }));
+    expect(transport.requestSelect).toHaveBeenCalledWith({ requestId: 'login-3', message: 'Choose', options: [{ id: 'pro', label: 'Pro' }] });
   });
 
-  it('routes onPrompt through the transport requestInput and returns its value', async () => {
-    const auth = fakeAuthStorage({
-      login: async (_id, cb) => {
-        const code = await cb.onPrompt({ message: 'Paste the code' });
-        if (code !== 'pasted-code') throw new Error('unexpected prompt value');
+  it('passes the connection abort signal into the Pi interaction', async () => {
+    let signal: AbortSignal | undefined;
+    const runtime = fakeModelRuntime({
+      login: async (_providerId, _authType, interaction) => {
+        signal = interaction.signal;
       },
     });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const t = fakeTransport();
-    t.requestInput = vi.fn(async () => 'pasted-code');
-    await orch.runLogin('anthropic', t);
-    expect(t.requestInput).toHaveBeenCalledOnce();
-    expect(lastStep(t)).toMatchObject({ kind: 'done', success: true });
-  });
+    const transport = fakeTransport();
 
-  it('routes onManualCodeInput through the transport requestInput and returns its value', async () => {
-    const auth = fakeAuthStorage({
-      login: async (_id, cb) => {
-        const code = await cb.onManualCodeInput!();
-        if (code !== 'manual-pasted-code') throw new Error('unexpected manual code value');
-      },
-    });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const t = fakeTransport();
-    t.requestInput = vi.fn(async () => 'manual-pasted-code');
-    await orch.runLogin('anthropic', t);
-    expect(t.requestInput).toHaveBeenCalledOnce();
-    expect(lastStep(t)).toMatchObject({ kind: 'done', success: true });
-  });
-
-  it('routes onSelect through the transport requestSelect and returns its value', async () => {
-    const auth = fakeAuthStorage({
-      login: async (_id, cb) => {
-        const choice = await cb.onSelect({ message: 'Pick one', options: [{ id: 'a', label: 'A' }] });
-        if (choice !== 'a') throw new Error('unexpected select value');
-      },
-    });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const t = fakeTransport();
-    t.requestSelect = vi.fn(async () => 'a');
-    await orch.runLogin('anthropic', t);
-    expect(t.requestSelect).toHaveBeenCalledOnce();
-    expect(lastStep(t)).toMatchObject({ kind: 'done', success: true });
-  });
-
-  it('emits a progress step when the provider invokes onProgress', async () => {
-    const auth = fakeAuthStorage({
-      login: async (_id, cb) => {
-        cb.onProgress?.('Exchanging tokens…');
-      },
-    });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const t = fakeTransport();
-    await orch.runLogin('anthropic', t);
-    expect(t.emitted).toContainEqual(expect.objectContaining({ kind: 'progress', message: 'Exchanging tokens…' }));
-  });
-
-  it('passes the transport abort signal through to the login callbacks', async () => {
-    let seenSignal: AbortSignal | undefined;
-    const auth = fakeAuthStorage({
-      login: async (_id, cb) => {
-        seenSignal = cb.signal;
-      },
-    });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const t = fakeTransport();
-    await orch.runLogin('anthropic', t);
-    expect(seenSignal).toBe(t.signal);
+    await new LoginOrchestrator(runtime).runLogin('anthropic', transport);
+    expect(signal).toBe(transport.signal);
   });
 });
 
 // =============================================================================
-// runLogin — failure / abort
+// runLogin — failure and cancellation
 // =============================================================================
 
 describe('LoginOrchestrator.runLogin failure', () => {
-  it('emits a terminal done step with success false and the error when login throws', async () => {
-    const auth = fakeAuthStorage({
+  it('rejects a cancelled select prompt instead of passing an empty value to Pi', async () => {
+    const runtime = fakeModelRuntime({
+      login: async (_providerId, _authType, interaction) => {
+        await interaction.prompt({ type: 'select', message: 'Choose', options: [{ id: 'pro', label: 'Pro' }] });
+      },
+    });
+    const transport = fakeTransport();
+    transport.requestSelect = vi.fn().mockResolvedValue(undefined);
+
+    await new LoginOrchestrator(runtime).runLogin('anthropic', transport);
+
+    expect(lastStep(transport)).toMatchObject({ kind: 'done', success: false, error: 'Login prompt cancelled' });
+  });
+
+  it('rejects a prompt when Pi aborts its prompt-specific signal', async () => {
+    const runtime = fakeModelRuntime({
+      login: async (_providerId, _authType, interaction) => {
+        const controller = new AbortController();
+        controller.abort();
+        await interaction.prompt({ type: 'manual_code', message: 'Manual code', signal: controller.signal });
+      },
+    });
+    const transport = fakeTransport();
+    transport.requestInput = vi.fn(() => new Promise<string>(() => {}));
+
+    await new LoginOrchestrator(runtime).runLogin('anthropic', transport);
+
+    expect(lastStep(transport)).toMatchObject({ kind: 'done', success: false, error: 'Login prompt cancelled' });
+  });
+
+  it('emits failure and skips the explicit refresh when login throws', async () => {
+    const runtime = fakeModelRuntime({
       login: async () => {
         throw new Error('oauth denied');
       },
     });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const t = fakeTransport();
-    await orch.runLogin('anthropic', t);
-    const step = lastStep(t);
-    expect(step?.kind).toBe('done');
-    expect(step).toMatchObject({ kind: 'done', success: false });
-    expect((step as { error?: string }).error).toContain('oauth denied');
+    const transport = fakeTransport();
+
+    await new LoginOrchestrator(runtime).runLogin('anthropic', transport);
+
+    expect(lastStep(transport)).toMatchObject({ kind: 'done', success: false, error: 'oauth denied' });
+    expect(runtime.refreshCount).toBe(0);
   });
 
-  it('does not refresh the model registry when login fails', async () => {
-    const registry = fakeModelRegistry();
-    const auth = fakeAuthStorage({
+  it('clears busy state after a failed flow so a retry can start', async () => {
+    const runtime = fakeModelRuntime({
       login: async () => {
         throw new Error('boom');
       },
     });
-    const orch = new LoginOrchestrator(auth, registry);
-    await orch.runLogin('anthropic', fakeTransport());
-    expect(registry.refreshCount).toBe(0);
-  });
+    const orchestrator = new LoginOrchestrator(runtime);
 
-  it('emits a terminal done step with success false when the flow is aborted mid-login', async () => {
-    const auth = fakeAuthStorage({
-      login: async (_id, cb) => {
-        await new Promise<void>((_resolve, reject) => {
-          cb.signal?.addEventListener('abort', () => reject(new Error('aborted')));
-        });
-      },
-    });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const t = fakeTransport();
-    const running = orch.runLogin('anthropic', t);
-    t.abort();
-    await running;
-    expect(lastStep(t)).toMatchObject({ kind: 'done', success: false });
-  });
-
-  it('clears busy state after an aborted login so a retry can start', async () => {
-    const auth = fakeAuthStorage({
-      login: async (_id, cb) => {
-        await new Promise<void>((_resolve, reject) => {
-          cb.signal?.addEventListener('abort', () => reject(new Error('aborted')));
-        });
-      },
-    });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    const t = fakeTransport();
-    const running = orch.runLogin('anthropic', t);
-    t.abort();
-    await running;
-    expect(orch.isBusy()).toBe(false);
-  });
-
-  it('clears busy state after a failed login so a retry can start', async () => {
-    const auth = fakeAuthStorage({
-      login: async () => {
-        throw new Error('boom');
-      },
-    });
-    const orch = new LoginOrchestrator(auth, fakeModelRegistry());
-    await orch.runLogin('anthropic', fakeTransport());
-    expect(orch.isBusy()).toBe(false);
+    await orchestrator.runLogin('anthropic', fakeTransport());
+    expect(orchestrator.isBusy()).toBe(false);
   });
 });

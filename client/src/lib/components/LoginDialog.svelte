@@ -93,6 +93,24 @@
           </div>
         {/if}
       {:else if view.flow === 'running'}
+        {#if view.infoSteps.length > 0}
+          <div class="flex flex-col gap-3 text-sm">
+            {#each view.infoSteps as infoStep (infoStep)}
+              <div class="border-border flex flex-col gap-2 rounded-md border p-3">
+                <p class="text-muted-foreground">{infoStep.message}</p>
+                {#if infoStep.links?.length}
+                  <div class="flex flex-col items-start gap-1">
+                    {#each infoStep.links as link (link)}
+                      <!-- link.url is a provider-supplied external URL, not a SPA route, so resolve() does not apply. -->
+                      <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+                      <a class="text-primary hover:text-primary/85 underline" href={link.url} target="_blank" rel="noopener noreferrer">{link.label ?? link.url}</a>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
         {#if view.authInfo}
           <!-- Authorization-code (Claude/ChatGPT) flow: the auth link is latched in
                view.authInfo so it stays reachable even after the manual-code `prompt`
