@@ -127,3 +127,47 @@ All other entry kinds and missing, non-finite, or negative values contribute zer
 - Shared/server compilation and client checking remain green.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Resolve the 0.81.1 package line and initialize one shared runtime
+
+Use npm workspace dependency commands to move the root and server runtime dependencies, plus the panels peer and development dependency, to the `0.81.1` line and regenerate `package-lock.json`. Do not add `@earendil-works/pi-ai` as a direct dependency. Replace synchronous `AuthStorage`/`ModelRegistry` construction in `server/src/session-manager.ts` with asynchronous `ModelRuntime.create()` ownership behind `PimoteSessionManager.create(...)`; pass the one resulting runtime to every `createAgentSessionServices({ modelRuntime })` call. Update `server/src/index.ts` and all `PimoteSessionManager` construction tests to await the factory, and migrate `server/src/session-manager-open-session.test.ts` mocks to assert that exact runtime is threaded into services.
+
+**Verify:** `npm ls @earendil-works/pi-coding-agent @earendil-works/pi-agent-core` resolves only 0.81.1 for the live workspace path; session-manager lifecycle/open-session tests pass with the shared target runtime.
+**Status:** not started
+
+### Step 2: Adapt session model controls and global provider login to ModelRuntime
+
+In `server/src/login-orchestrator.ts`, replace the old auth-storage/model-registry seams with a narrow injected seam derived from `ModelRuntime`’s public methods. Make listing and logout asynchronous; list only OAuth-capable providers, identify an active OAuth credential through `checkAuth`, drive `login(providerId, 'oauth', interaction)`, map all provider interaction events including `info`, reject cancelled input, and await refresh before successful completion or logout return. Preserve the current global single-flight and connection-bound transport behavior. Update `server/src/ws-handler.ts` to await provider listing/logout and to await `session.modelRuntime.getAvailable()` for model selection/listing. Update default-model selection and diagnostics in `server/src/session-manager.ts` to await its shared runtime. Rewrite the existing login and WebSocket/session test fakes to the target seam while retaining their behavioral assertions and add coverage for information-event mapping and refresh ordering.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/login-orchestrator.test.ts src/session-manager-open-session.test.ts src/ws-handler.test.ts` and `tsc --noEmit -p server/tsconfig.json` pass.
+**Status:** not started
+
+### Step 3: Complete provider-information handling in the PWA
+
+Implement the `LoginStore` flow-scoped notice collection: append `info` steps without replacing the active interactive step, and clear notices in both `begin()` and `close()`. Extend `client/src/lib/components/LoginDialog.svelte` to render notices above the active login control, including all optional external links with the established safe new-tab attributes. Leave the authorization-code URL latch separate. Keep the existing shared protocol commands and client-side post-login model re-pull behavior unchanged.
+
+**Verify:** `npm run test --workspace=client -- --run src/lib/stores/login.svelte.test.ts` and `npm run check --workspace=client` pass.
+**Status:** not started
+
+### Step 4: Preserve exhaustive event mapping while dropping summary retries
+
+Update `server/src/event-buffer.ts` to explicitly return `null` for Pi 0.81’s `summarization_retry_scheduled`, `summarization_retry_attempt_start`, and `summarization_retry_finished` events. Add focused `EventBuffer` assertions that all three events produce no client event, preserving the existing protocol decision without weakening the `never` exhaustiveness guard.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/event-buffer.test.ts` and the server type check pass.
+**Status:** not started
+
+### Step 5: Replace assistant-only cost accounting with the lifetime fold
+
+Replace the `sumLifetimeCostUsd` stub in `server/src/session-cost.ts` with the pure complete-history fold, remove the superseded assistant-only export and tests, and update `server/src/ws-handler.ts` to use the new function for `SessionMeta.lifetimeCostUsd`. The implementation must count exactly one finite, non-negative `usage.cost.total` for assistant message, compaction, and branch-summary entries, and ignore every other entry. Update comments to describe the complete persisted-cost policy and retain all-branch recomputation.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/session-cost.test.ts src/ws-handler.test.ts` passes, including the red lifetime-cost tests from the plan.
+**Status:** not started
+
+### Step 6: Run the complete upgrade verification suite
+
+Run formatting checks, full workspace type checks, server/client/panels tests, and the provider-login smoke driver. Exercise an existing session containing compaction and a branch summary to confirm session reopening, tree navigation, full resync, and lifetime-cost hydration remain valid. Confirm no configured default model refers to a removed upstream model before release.
+
+**Verify:** `npm run format:check`, `npm run check`, `npm run test --workspace=@pimote/server -- --run`, `npm run test --workspace=client -- --run`, `npm run test --workspace=@pimote/panels -- --run`, and `node tools/manual-test/provider-login-smoke/provider-login-smoke.mjs` all pass.
+**Status:** not started
