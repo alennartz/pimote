@@ -172,4 +172,4 @@ Replace the `sumLifetimeCostUsd` stub in `server/src/session-cost.ts` with the p
 Run formatting checks, full workspace type checks, server/client/panels tests, and the provider-login smoke driver. Exercise an existing session containing compaction and a branch summary to confirm session reopening, tree navigation, full resync, and lifetime-cost hydration remain valid. Confirm no configured default model refers to a removed upstream model before release.
 
 **Verify:** `npm run format:check`, `npm run check`, `npm run test --workspace=@pimote/server -- --run`, `npm run test --workspace=client -- --run`, `npm run test --workspace=@pimote/panels -- --run`, and `node tools/manual-test/provider-login-smoke/provider-login-smoke.mjs` all pass.
-**Status:** blocked — `npm run format:check` remains red on unrelated pre-existing files outside this upgrade; all upgrade-specific checks, full type checks, workspace tests, production build, and the provider-login smoke pass.
+**Status:** done — repository formatting, full type checks, workspace tests, production build, and the provider-login smoke all pass.
