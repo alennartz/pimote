@@ -334,8 +334,14 @@ async function main() {
     };
 
     const pricedMeta = await metaFor(priced.sessionId, pricedProject);
-    assert(pricedMeta && typeof pricedMeta.lifetimeCostUsd === 'number', `priced get_session_meta returns numeric lifetimeCostUsd (got ${JSON.stringify(pricedMeta?.lifetimeCostUsd)})`);
-    assert(Math.abs((pricedMeta?.lifetimeCostUsd ?? 0) - expectedSum) < 1e-9, `priced lifetimeCostUsd === Σ assistant costs (${expectedSum}); user/toolResult/model_change excluded (got ${pricedMeta?.lifetimeCostUsd})`);
+    assert(
+      pricedMeta && typeof pricedMeta.lifetimeCostUsd === 'number',
+      `priced get_session_meta returns numeric lifetimeCostUsd (got ${JSON.stringify(pricedMeta?.lifetimeCostUsd)})`,
+    );
+    assert(
+      Math.abs((pricedMeta?.lifetimeCostUsd ?? 0) - expectedSum) < 1e-9,
+      `priced lifetimeCostUsd === Σ assistant costs (${expectedSum}); user/toolResult/model_change excluded (got ${pricedMeta?.lifetimeCostUsd})`,
+    );
 
     const zeroMeta = await metaFor(zero.sessionId, freshProject);
     assert(zeroMeta && typeof zeroMeta.lifetimeCostUsd === 'number', `zero get_session_meta returns numeric lifetimeCostUsd (got ${JSON.stringify(zeroMeta?.lifetimeCostUsd)})`);
@@ -363,7 +369,9 @@ async function main() {
     // read it from the DOM rather than the interactive accessibility snapshot.
     const pricedCostText = (
       await abCmd(['eval', `Array.from(document.querySelectorAll('[title="Session cost"]')).map(e => e.textContent.trim()).join('|')`], { allowFailure: true })
-    ).stdout.trim().replace(/^"|"$/g, '');
+    ).stdout
+      .trim()
+      .replace(/^"|"$/g, '');
     const showsPricedFigure = pricedCostText.split('|').includes(expectedDisplay);
     assert(showsPricedFigure, `StatusBar [title="Session cost"] shows ${expectedDisplay} for the priced session (got ${JSON.stringify(pricedCostText)})`);
     if (!showsPricedFigure) {
@@ -383,9 +391,7 @@ async function main() {
     await abCmd(['wait', '3000']);
     // Assert on the title="Session cost" span: it must be absent for the zero
     // session (formatSessionCost(0) === null hides the indicator).
-    const costSpanCount = Number(
-      (await abCmd(['eval', `document.querySelectorAll('[title="Session cost"]').length`], { allowFailure: true })).stdout.trim() || 'NaN',
-    );
+    const costSpanCount = Number((await abCmd(['eval', `document.querySelectorAll('[title="Session cost"]').length`], { allowFailure: true })).stdout.trim() || 'NaN');
     assert(costSpanCount === 0, `zero-spend session renders no [title="Session cost"] span (got ${costSpanCount})`);
     await abCmd(['screenshot', join(sandboxHome, 'zero-statusbar.png')], { allowFailure: true });
 
@@ -395,7 +401,9 @@ async function main() {
     failures++;
     try {
       await abCmd(['close'], { allowFailure: true });
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   } finally {
     await stopPimote(child).catch(() => {});
     log('pimote log path:', logPath);

@@ -249,10 +249,7 @@ const SHORT_TS = `export function greet(name: string): string {
 `;
 
 // >20 lines to trip the collapse threshold.
-const LONG_TS =
-  `import { readFile } from 'node:fs/promises';\n\n` +
-  Array.from({ length: 30 }, (_, i) => `export const value${i} = ${i}; // line ${i}`).join('\n') +
-  `\n`;
+const LONG_TS = `import { readFile } from 'node:fs/promises';\n\n` + Array.from({ length: 30 }, (_, i) => `export const value${i} = ${i}; // line ${i}`).join('\n') + `\n`;
 
 // Markdown with a heading, list, and an inner fenced code block.
 const SHORT_MD = `# Streaming highlight demo
@@ -269,10 +266,7 @@ console.log(answer);
 `;
 
 // >20 lines of markdown to trip collapse in markdown mode.
-const LONG_MD =
-  `# Long markdown document\n\n` +
-  Array.from({ length: 30 }, (_, i) => `- bullet point number ${i} with some text`).join('\n') +
-  `\n`;
+const LONG_MD = `# Long markdown document\n\n` + Array.from({ length: 30 }, (_, i) => `- bullet point number ${i} with some text`).join('\n') + `\n`;
 
 const WRITES = [
   { path: 'src/example.ts', content: SHORT_TS },
@@ -400,7 +394,10 @@ async function main() {
     await abCmd(['wait', '300']);
     const copiedMd = await abEval(`window.__copied`);
     assert(copiedMd === SHORT_MD, 'markdown-mode copy yields the raw .md source verbatim (NOT rendered text)');
-    assert(typeof copiedMd === 'string' && copiedMd.includes('# Streaming highlight demo') && copiedMd.includes('```ts'), 'markdown-mode copied text retains literal markdown bytes (#, ``` fences)');
+    assert(
+      typeof copiedMd === 'string' && copiedMd.includes('# Streaming highlight demo') && copiedMd.includes('```ts'),
+      'markdown-mode copied text retains literal markdown bytes (#, ``` fences)',
+    );
 
     // -----------------------------------------------------------------
     section('Test 3 (precondition b): collapse wrapper bounds long files in BOTH modes');
@@ -409,7 +406,10 @@ async function main() {
       `(() => { const w = window.__wfbFor('long.ts'); if(!w) return null; const toggle = w.querySelector('.wfb-toggle'); return { mode: w.getAttribute('data-mode'), hasToggle: !!toggle, toggleText: toggle && toggle.textContent.trim() }; })()`,
     );
     assert(longCode && longCode.mode === 'code', 'long .ts write is in code mode');
-    assert(longCode && longCode.hasToggle && /Show more/.test(longCode.toggleText), `long code write shows a "Show more…" collapse toggle (got ${JSON.stringify(longCode?.toggleText)})`);
+    assert(
+      longCode && longCode.hasToggle && /Show more/.test(longCode.toggleText),
+      `long code write shows a "Show more…" collapse toggle (got ${JSON.stringify(longCode?.toggleText)})`,
+    );
 
     // After expanding-all earlier, the long block may already be expanded.
     // Collapse it, then assert the body clamps.
@@ -422,7 +422,10 @@ async function main() {
       `(() => { const w = window.__wfbFor('notes.md'); if(!w) return null; const toggle = w.querySelector('.wfb-toggle'); return { mode: w.getAttribute('data-mode'), hasToggle: !!toggle, toggleText: toggle && toggle.textContent.trim() }; })()`,
     );
     assert(longMd && longMd.mode === 'markdown', 'long .md write is in markdown mode');
-    assert(longMd && longMd.hasToggle && /Show more/.test(longMd.toggleText), `long markdown write shows a "Show more…" collapse toggle (got ${JSON.stringify(longMd?.toggleText)})`);
+    assert(
+      longMd && longMd.hasToggle && /Show more/.test(longMd.toggleText),
+      `long markdown write shows a "Show more…" collapse toggle (got ${JSON.stringify(longMd?.toggleText)})`,
+    );
 
     const clampMd = await abEval(
       `(() => { const w = window.__wfbFor('notes.md'); const t = w.querySelector('.wfb-toggle'); if (w.querySelector('.wfb-body').classList.contains('scrollable')) { t.click(); } const body = w.querySelector('.wfb-body'); return { clamped: body.classList.contains('clamped') }; })()`,
@@ -430,7 +433,9 @@ async function main() {
     assert(clampMd && clampMd.clamped === true, 'long markdown write body is height-clamped when collapsed (collapse applies in markdown mode too)');
 
     // Coherence screenshot: expand all again and capture the rendered view.
-    await abEval(`(() => { document.querySelectorAll('.wfb-toggle').forEach(t => { const b = t.closest('.write-file-block').querySelector('.wfb-body'); if (b.classList.contains('clamped')) t.click(); }); return 'ok'; })()`);
+    await abEval(
+      `(() => { document.querySelectorAll('.wfb-toggle').forEach(t => { const b = t.closest('.write-file-block').querySelector('.wfb-body'); if (b.classList.contains('clamped')) t.click(); }); return 'ok'; })()`,
+    );
     await abCmd(['wait', '500']);
     const shotPath = process.env.SCH_SHOT || join(sandboxHome, 'write-blocks.png');
     await abCmd(['screenshot', shotPath], { allowFailure: true });
@@ -443,10 +448,14 @@ async function main() {
     try {
       const tail = await readFile(logPath, 'utf-8').catch(() => '');
       if (tail) console.error('[sch-smoke] pimote.log tail:\n' + tail.slice(-2000));
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     try {
       await abCmd(['close'], { allowFailure: true });
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   } finally {
     await stopPimote(child).catch(() => {});
     log('pimote log path:', logPath);

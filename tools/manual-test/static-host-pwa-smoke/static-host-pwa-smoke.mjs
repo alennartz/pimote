@@ -105,10 +105,7 @@ function startPimote({ port, sandboxHome, logPath }) {
 async function stopPimote(child) {
   if (!child || child.exitCode !== null) return;
   child.kill('SIGTERM');
-  await Promise.race([
-    once(child, 'exit'),
-    new Promise((r) => setTimeout(r, 5_000)),
-  ]);
+  await Promise.race([once(child, 'exit'), new Promise((r) => setTimeout(r, 5_000))]);
   if (child.exitCode === null) child.kill('SIGKILL');
 }
 
@@ -207,8 +204,7 @@ async function main() {
   await mkdir(bundleDir, { recursive: true });
   await writeFile(
     join(bundleDir, 'index.html'),
-    '<!doctype html><html><head><meta charset="utf-8"><title>Smoke Bundle</title></head>' +
-      '<body><h1 id="bundle-marker">STATIC-HOST-SMOKE-OK</h1></body></html>\n',
+    '<!doctype html><html><head><meta charset="utf-8"><title>Smoke Bundle</title></head>' + '<body><h1 id="bundle-marker">STATIC-HOST-SMOKE-OK</h1></body></html>\n',
   );
 
   const port = await new Promise((resolve, reject) => {
@@ -223,10 +219,7 @@ async function main() {
   });
 
   const configPath = join(xdgConfig, 'pimote', 'config.json');
-  await writeFile(
-    configPath,
-    JSON.stringify({ roots: [projectsRoot], port, bufferSize: 100 }, null, 2),
-  );
+  await writeFile(configPath, JSON.stringify({ roots: [projectsRoot], port, bufferSize: 100 }, null, 2));
 
   const storeDir = join(xdgState, 'pimote', 'static-host');
   const logPath = join(sandboxHome, 'pimote.log');
@@ -324,9 +317,7 @@ async function main() {
     // accessible name includes the card title + tag).
     const sessionSnap = (await abCmd(['snapshot', '-i'])).stdout;
     const hasLinkInSnapshot = /link "Smoke Bundle Card/.test(sessionSnap);
-    const linkHref = hasLinkInSnapshot
-      ? (await abCmd(['get', 'attr', 'a[href^="/s/"]', 'href'], { allowFailure: true })).stdout.trim()
-      : '';
+    const linkHref = hasLinkInSnapshot ? (await abCmd(['get', 'attr', 'a[href^="/s/"]', 'href'], { allowFailure: true })).stdout.trim() : '';
     const hasAnchor = hasLinkInSnapshot && linkHref.includes(expectedHref);
     assert(hasLinkInSnapshot, 'panel renders a link element for the card');
     assert(hasAnchor, `link href is ${expectedHref} (got ${JSON.stringify(linkHref)})`);
@@ -365,10 +356,7 @@ async function main() {
         parsedHeaders = null;
       }
       assert(parsedHeaders && parsedHeaders.status === 200, `fetch /s/<slug>/ from page context -> 200 (got ${JSON.stringify(parsedHeaders)})`);
-      assert(
-        parsedHeaders && /no-cache/i.test(parsedHeaders.cc || ''),
-        'response cache-control from server (no-cache) — proves SW did not synthesize an SPA-shell response',
-      );
+      assert(parsedHeaders && /no-cache/i.test(parsedHeaders.cc || ''), 'response cache-control from server (no-cache) — proves SW did not synthesize an SPA-shell response');
 
       // ========================================================
       section('Browser-back returns to the session view');
@@ -378,10 +366,7 @@ async function main() {
       const backUrl = (await abCmd(['get', 'url'])).stdout.trim();
       assert(!backUrl.endsWith(expectedHref), `back navigation left the bundle (now ${backUrl})`);
       const backSnap = (await abCmd(['snapshot', '-i'])).stdout;
-      assert(
-        /Send a message|Smoke Bundle Card|test-project/.test(backSnap),
-        'session view restored after back (input bar / panel card / folder visible)',
-      );
+      assert(/Send a message|Smoke Bundle Card|test-project/.test(backSnap), 'session view restored after back (input bar / panel card / folder visible)');
     } else {
       log('skipping click/back/SW checks because anchor was not found');
     }
@@ -392,7 +377,9 @@ async function main() {
     failures++;
     try {
       await abCmd(['close'], { allowFailure: true });
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   } finally {
     await stopPimote(child).catch(() => {});
     log('pimote log path:', logPath);

@@ -463,10 +463,7 @@ async function main() {
       assert(first.items.length === 0, `fd missing → complete_file_refs returns no items (got ${first.items.length})`);
       const notifyEvents = first.events.filter((e) => e.type === 'extension_ui_request' && e.method === 'notify');
       assert(notifyEvents.length === 1, `fd missing → exactly one notify warning emitted (got ${notifyEvents.length})`);
-      assert(
-        notifyEvents[0]?.notifyType === 'warning' && /fd not found/i.test(notifyEvents[0]?.message ?? ''),
-        'fd missing → warning message names fd and is typed "warning"',
-      );
+      assert(notifyEvents[0]?.notifyType === 'warning' && /fd not found/i.test(notifyEvents[0]?.message ?? ''), 'fd missing → warning message names fd and is typed "warning"');
       // Second request must NOT re-emit the warning (per-connection one-shot).
       const second = await completeFileRefs(ws2, sid2, '@docs', { collectEvents: true });
       const secondNotify = second.events.filter((e) => e.type === 'extension_ui_request' && e.method === 'notify');
@@ -577,20 +574,21 @@ async function main() {
     await abCmd(['wait', '300']);
     // Send via the visible Send button.
     const sent = await abCmd(
-      ['eval', `(() => {
+      [
+        'eval',
+        `(() => {
         const btns = Array.from(document.querySelectorAll('button'));
         const send = btns.find(b => /send/i.test(b.getAttribute('title')||'') || /send/i.test(b.textContent||''));
         if (!send) return 'NO_SEND';
         send.click();
         return 'SENT';
-      })()`],
+      })()`,
+      ],
       { allowFailure: true },
     );
     await abCmd(['wait', '1500']);
     if (sent.stdout.includes('SENT')) {
-      const echoed = (
-        await abCmd(['eval', `(() => document.body.innerText.includes('check @top.txt now') ? 'YES' : 'NO')()`], { allowFailure: true })
-      ).stdout;
+      const echoed = (await abCmd(['eval', `(() => document.body.innerText.includes('check @top.txt now') ? 'YES' : 'NO')()`], { allowFailure: true })).stdout;
       assert(echoed.includes('YES'), 'optimistic user message shows the literal "@top.txt" token unchanged (no expansion)');
     } else {
       assert(false, 'could not locate the Send button to dispatch the prompt');
@@ -604,7 +602,9 @@ async function main() {
     failures++;
     try {
       await abCmd(['close'], { allowFailure: true });
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   } finally {
     await stopPimote(fdMissingChild).catch(() => {});
     await stopPimote(child).catch(() => {});

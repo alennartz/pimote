@@ -20,12 +20,7 @@ import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import {
-  FileStaticHostStore,
-  InMemoryStaticHostRegistry,
-  gcStaticHostStore,
-  serveStaticHostRoute,
-} from '../../../server/dist/static-host/index.js';
+import { FileStaticHostStore, InMemoryStaticHostRegistry, gcStaticHostStore, serveStaticHostRoute } from '../../../server/dist/static-host/index.js';
 import { executeRegisterTool, executeRemoveTool } from '../../../server/dist/static-host/tools.js';
 
 let failures = 0;
@@ -95,10 +90,7 @@ async function main() {
       emitPanelCards: () => emitted.push({ sessionId: sessionA, cards: registry.listForSession(sessionA) }),
       emitNavigate: () => {},
     };
-    const reg = await executeRegisterTool(
-      { slug: 'demo', folder: bundleDir, title: 'Demo bundle', tag: 'preview', color: 'accent' },
-      depsA,
-    );
+    const reg = await executeRegisterTool({ slug: 'demo', folder: bundleDir, title: 'Demo bundle', tag: 'preview', color: 'accent' }, depsA);
     assert(reg.slug === 'demo', 'register returns the input slug when free');
     assert(reg.url === '/s/demo/', 'register returns /s/<slug>/ URL');
     assert(emitted.length === 1, 'emitPanelCards called once on register');
@@ -108,7 +100,10 @@ async function main() {
     const fileA = await store.read(sessionA);
     assert(fileA && fileA.version === 1 && fileA.entries.length === 1, 'persistence file written with version=1');
     assert(fileA.entries[0].slug === 'demo' && fileA.entries[0].folderPath === bundleDir, 'persisted entry shape ok');
-    assert(fileA.entries[0].cardMetadata.title === 'Demo bundle' && fileA.entries[0].cardMetadata.tag === 'preview' && fileA.entries[0].cardMetadata.color === 'accent', 'persisted cardMetadata shape ok');
+    assert(
+      fileA.entries[0].cardMetadata.title === 'Demo bundle' && fileA.entries[0].cardMetadata.tag === 'preview' && fileA.entries[0].cardMetadata.color === 'accent',
+      'persisted cardMetadata shape ok',
+    );
 
     // ============================================================
     section('HTTP route — happy paths');
@@ -196,7 +191,13 @@ async function main() {
         threw = true;
       }
       assert(threw, 'invalid slug throws');
-      assert(registry.listForSession(sessionA).map((r) => r.slug).join(',') === before.join(','), 'invalid slug does not register');
+      assert(
+        registry
+          .listForSession(sessionA)
+          .map((r) => r.slug)
+          .join(',') === before.join(','),
+        'invalid slug does not register',
+      );
       assert(emitted.length === emitsBefore, 'invalid slug does not emit panel snapshot');
     }
     {

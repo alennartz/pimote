@@ -203,10 +203,14 @@ async function typeLoginAndSubmit() {
   await evalJs(setVal);
   await abCmd(['wait', '500']);
   // Dismiss the autocomplete dropdown.
-  await evalJs(`(() => { const t = document.querySelector('textarea'); if (!t) return 'no-textarea'; t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return 'ok'; })()`);
+  await evalJs(
+    `(() => { const t = document.querySelector('textarea'); if (!t) return 'no-textarea'; t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return 'ok'; })()`,
+  );
   await abCmd(['wait', '400']);
   // Now Enter drives sendMessage() -> /login interception.
-  await evalJs(`(() => { const t = document.querySelector('textarea'); if (!t) return 'no-textarea'; t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); return 'ok'; })()`);
+  await evalJs(
+    `(() => { const t = document.querySelector('textarea'); if (!t) return 'no-textarea'; t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); return 'ok'; })()`,
+  );
   await abCmd(['wait', '1000']);
 }
 
@@ -351,7 +355,10 @@ async function main() {
     const ids = providers.map((p) => p.id);
     assert(providers.length >= 3, `login_list returns >=3 providers (got ${providers.length}: ${ids.join(', ')})`);
     assert(ids.includes('anthropic') && ids.includes('github-copilot') && ids.includes('openai-codex'), `providers include anthropic + github-copilot + openai-codex`);
-    assert(providers.every((p) => p.loggedIn === false), `no provider is logged in (fresh sandbox, no auth.json)`);
+    assert(
+      providers.every((p) => p.loggedIn === false),
+      `no provider is logged in (fresh sandbox, no auth.json)`,
+    );
 
     // -----------------------------------------------------------------
     section('Drive the PWA: open a session so the InputBar mounts');
@@ -373,7 +380,8 @@ async function main() {
 
     // No new user bubble: the literal "/login" text must not appear in a posted
     // message. The dialog itself doesn't contain "/login", so a body scan works.
-    const loginPosted = (await evalJs(`Array.from(document.querySelectorAll('[data-message-role="user"], .message, article')).some(e => e.textContent.includes('/login'))`)) === 'true';
+    const loginPosted =
+      (await evalJs(`Array.from(document.querySelectorAll('[data-message-role="user"], .message, article')).some(e => e.textContent.includes('/login'))`)) === 'true';
     // Conservative cross-check: the seed user count should be unchanged. We
     // assert the literal command did not get rendered as a chat message.
     assert(!loginPosted, 'no user message containing "/login" was posted (prompt suppressed)');
@@ -466,7 +474,9 @@ async function main() {
       await abCmd(['screenshot', join(shotsDir, '03-copilot-device.png')], { allowFailure: true });
     } else {
       const errShown = /Login failed|error/i.test(bodyAfter);
-      envBound(`Copilot device code not reachable in this environment (network to github.com); body had code=${hasUserCode}, verifyHref=${verifyHref || 'none'}${errShown ? ', failure step shown' : ''}`);
+      envBound(
+        `Copilot device code not reachable in this environment (network to github.com); body had code=${hasUserCode}, verifyHref=${verifyHref || 'none'}${errShown ? ', failure step shown' : ''}`,
+      );
       await abCmd(['screenshot', join(shotsDir, '03-copilot-device.png')], { allowFailure: true });
     }
     // Cancel/close back to idle.
@@ -482,7 +492,9 @@ async function main() {
     await clickProvider('Anthropic');
     // Confirm the in-flight flow actually started (auth link present) before
     // probing — otherwise the server wouldn't be busy and the probe is moot.
-    const inflight = await waitFor(`Array.from(document.querySelectorAll('a')).some(x => x.textContent.trim() === 'Open auth page')`, { label: 'Anthropic flow in-flight before busy probe' });
+    const inflight = await waitFor(`Array.from(document.querySelectorAll('a')).some(x => x.textContent.trim() === 'Open auth page')`, {
+      label: 'Anthropic flow in-flight before busy probe',
+    });
     assert(inflight, 'busy precondition: an Anthropic flow is in-flight in the browser');
     const busyData = await wsLoginBegin({ port, version, providerId: 'openai-codex' });
     assert(busyData && busyData.ok === false && busyData.reason === 'busy', `concurrent login_begin rejected { ok:false, reason:'busy' } (got ${JSON.stringify(busyData)})`);
@@ -495,7 +507,9 @@ async function main() {
     failures++;
     try {
       await abCmd(['close'], { allowFailure: true });
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   } finally {
     await stopPimote(child).catch(() => {});
     log('pimote log path:', logPath);

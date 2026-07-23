@@ -15,13 +15,7 @@
 // runnable mock slice. See docs/manual-tests/voice-mode.md.
 
 import { VoiceOrchestrator, CallBindError } from '../server/dist/voice-orchestrator.js';
-import {
-  initialRuntimeState,
-  reduceActivate,
-  reduceDeactivate,
-  reduceSpeechmuxFrame,
-  reduceSpeechmuxOpened,
-} from '../server/dist/voice/extension-runtime.js';
+import { initialRuntimeState, reduceActivate, reduceDeactivate, reduceSpeechmuxFrame, reduceSpeechmuxOpened } from '../server/dist/voice/extension-runtime.js';
 import { VOICE_INTERRUPT_CUSTOM_TYPE } from '../shared/dist/index.js';
 
 let failures = 0;
@@ -121,12 +115,18 @@ async function main() {
   const act = reduceActivate(state, bus.emitted[0].payload, runtimeConfig);
   state = act.next;
   assert(state.state === 'activating', 'state is activating after reduceActivate');
-  assert(act.actions.some((a) => a.kind === 'open_speechmux'), 'open_speechmux action emitted');
+  assert(
+    act.actions.some((a) => a.kind === 'open_speechmux'),
+    'open_speechmux action emitted',
+  );
 
   const opened = reduceSpeechmuxOpened(state, runtimeConfig);
   state = opened.next;
   assert(state.state === 'active', 'state is active after speechmux opened');
-  assert(opened.actions.some((a) => a.kind === 'set_model'), 'set_model emitted on first activation');
+  assert(
+    opened.actions.some((a) => a.kind === 'set_model'),
+    'set_model emitted on first activation',
+  );
   assert(
     opened.actions.some((a) => a.kind === 'send_user_message' && a.text === '<voice_call_started/>'),
     '<voice_call_started/> sentinel emitted',
@@ -141,7 +141,10 @@ async function main() {
   console.log('  [mock] speechmux user frame -> session.sendUserMessage');
 
   const rollbackFrame = reduceSpeechmuxFrame(state, { type: 'rollback', heard_text: 'hi th' });
-  assert(rollbackFrame.actions.some((a) => a.kind === 'abort'), 'rollback emits abort');
+  assert(
+    rollbackFrame.actions.some((a) => a.kind === 'abort'),
+    'rollback emits abort',
+  );
   assert(
     rollbackFrame.actions.some((a) => a.kind === 'set_walkback_watermark' && a.heardText === 'hi th'),
     'rollback sets walkback watermark',
@@ -175,10 +178,7 @@ async function main() {
 
   // Idempotency: repeated endCall is a no-op.
   await orchestrator.endCall({ sessionId: 's-1', reason: 'user_hangup' });
-  assert(
-    bus.emitted.filter((e) => e.type === 'pimote:voice:deactivate').length === 1,
-    'repeated endCall is idempotent (no extra deactivate)',
-  );
+  assert(bus.emitted.filter((e) => e.type === 'pimote:voice:deactivate').length === 1, 'repeated endCall is idempotent (no extra deactivate)');
   // endCall on unbound session is a no-op and does not throw.
   await orchestrator.endCall({ sessionId: 's-none', reason: 'user_hangup' });
 
@@ -250,7 +250,10 @@ async function main() {
   const deact = reduceDeactivate(state, { type: 'pimote:voice:deactivate', sessionId: 's-1' });
   state = deact.next;
   assert(state.state === 'dormant', 'state is dormant after reduceDeactivate');
-  assert(deact.actions.some((a) => a.kind === 'close_speechmux'), 'close_speechmux emitted on deactivate');
+  assert(
+    deact.actions.some((a) => a.kind === 'close_speechmux'),
+    'close_speechmux emitted on deactivate',
+  );
   console.log('  [mock] endCall emitted pimote:voice:deactivate');
 
   await orchestrator.stop();

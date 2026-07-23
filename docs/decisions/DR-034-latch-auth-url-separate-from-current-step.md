@@ -7,9 +7,9 @@ Accepted
 ## Context
 
 The login modal renders a single "current step" emitted by the server
-orchestrator (auth / device_code / prompt / select / progress / done). The
+orchestrator (auth / device*code / prompt / select / progress / done). The
 plan's clean model was one auth screen carrying both the "Open auth page" link
-and the paste field. Implementation against pi's _actual_ OAuth callback
+and the paste field. Implementation against pi's \_actual* OAuth callback
 sequencing exposed three ordering hazards that a single `currentStep` field
 mishandles — all rooted in _when_ pi fires its callbacks, not in the protocol
 shape:

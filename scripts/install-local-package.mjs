@@ -15,7 +15,10 @@ const currentLink = join(deployRoot, 'current');
 const keepReleases = Number.parseInt(process.env.PIMOTE_KEEP_RELEASES || '3', 10);
 
 function timestamp() {
-  return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  return new Date()
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}Z$/, 'Z');
 }
 
 async function pathExists(path) {
