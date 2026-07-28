@@ -18,13 +18,25 @@ export interface TreeNavigationEndEvent {
 }
 
 /**
- * Everything EventBuffer.onEvent accepts: the real SDK session-event union plus
- * the two synthetic tree-navigation events pimote injects. Typing against the
- * real union means the mapper's per-event field access is compiler-checked, so
- * any upstream event rename/field change surfaces here instead of silently
- * falling through to a mismapped event.
+ * Pi 0.82 adds this event for direct session.executeBash() calls. Pimote does
+ * not expose direct bash execution, so it is intentionally dropped at the
+ * server/UI boundary for now. Keep the local shape so the server compiles
+ * against both the pre-0.82 and post-0.82 SDK types.
  */
-export type IncomingSdkEvent = AgentSessionEvent | TreeNavigationStartEvent | TreeNavigationEndEvent;
+export interface BashExecutionUpdateEvent {
+  type: 'bash_execution_update';
+  id?: string;
+  delta: string;
+}
+
+/**
+ * Everything EventBuffer.onEvent accepts: the real SDK session-event union plus
+ * synthetic events Pimote injects or deliberately recognizes at the boundary.
+ * Typing against the real union means the mapper's per-event field access is
+ * compiler-checked, so any upstream event rename/field change surfaces here
+ * instead of silently falling through to a mismapped event.
+ */
+export type IncomingSdkEvent = AgentSessionEvent | TreeNavigationStartEvent | TreeNavigationEndEvent | BashExecutionUpdateEvent;
 
 interface BufferEntry {
   cursor: number;
@@ -287,6 +299,7 @@ export class EventBuffer {
       case 'summarization_retry_scheduled':
       case 'summarization_retry_attempt_start':
       case 'summarization_retry_finished':
+      case 'bash_execution_update':
         return null;
 
       default: {

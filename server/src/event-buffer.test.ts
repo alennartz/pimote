@@ -114,6 +114,14 @@ describe('EventBuffer', () => {
       expect(live).toHaveLength(0);
     });
 
+    it('drops direct bash execution updates until Pimote exposes that capability', () => {
+      const buffer = new EventBuffer(10);
+      const live: PimoteSessionEvent[] = [];
+      buffer.onEvent({ type: 'bash_execution_update', id: 'bash-1', delta: 'output\n' }, SESSION_ID, (e) => live.push(e));
+      expect(live).toEqual([]);
+      expect(buffer.currentCursor).toBe(1);
+    });
+
     it('drops every Pi 0.81 summarization retry variant', () => {
       const buffer = new EventBuffer(10);
       const live: PimoteSessionEvent[] = [];
