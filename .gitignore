@@ -17,5 +17,5 @@ Thumbs.db
 # Client build output handled by client/.gitignore
 
 # Local deployment/hosting details
-.pi/agent/Deployment.md
+Deployment.md
 Makefile.local
