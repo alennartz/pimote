@@ -1071,6 +1071,7 @@ export class WsHandler {
           { name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false },
           { name: 'login', description: 'Log in to a model provider', hasArgCompletions: false },
           { name: 'logout', description: 'Log out from a model provider', hasArgCompletions: false },
+          { name: 'compact', description: 'Manually compact the session context', hasArgCompletions: false },
         );
 
         this.sendResponse(id, true, { commands });

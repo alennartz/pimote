@@ -244,6 +244,31 @@
       return;
     }
 
+    // Intercept `/compact` — triggers manual context compaction with optional
+    // custom instructions (e.g. `/compact focus on file diffs and decisions`).
+    if (/^\/compact(?:\s|$)/.test(text)) {
+      const customInstructions = text.slice('/compact'.length).trim() || undefined;
+      try {
+        await connection.send({
+          type: 'compact',
+          sessionId: sessionRegistry.viewed!.sessionId,
+          customInstructions,
+        });
+      } catch (e) {
+        console.error('Failed to compact:', e);
+      }
+      inputText = '';
+      autocompleteVisible = false;
+      selectedCommand = null;
+      if (sessionRegistry.viewed) {
+        sessionRegistry.viewed.draftText = '';
+      }
+      if (textareaEl) {
+        textareaEl.style.height = 'auto';
+      }
+      return;
+    }
+
     let sent = false;
 
     if (sessionRegistry.viewed?.isStreaming) {
