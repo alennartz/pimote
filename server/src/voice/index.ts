@@ -91,22 +91,16 @@ export { createDefaultSpeechmuxClientFactory } from './speechmux-client.js';
 
 // ---- Public factory -------------------------------------------------------
 
-export interface ModelRef {
-  provider: string;
-  modelId: string;
-}
-
 export interface CreateVoiceExtensionOptions {
-  defaultInterpreterModel: ModelRef;
-  defaultWorkerModel: ModelRef;
+  defaultInterpreterModel: string;
+  defaultWorkerModel: string;
   /** Optional client factory override — tests inject a fake. */
   speechmuxClientFactory?: SpeechmuxClientFactory;
 }
 
 export function createVoiceExtension(opts: CreateVoiceExtensionOptions): ExtensionFactory {
   const interpreterPrompt = renderInterpreterPrompt({
-    workerProvider: opts.defaultWorkerModel.provider,
-    workerModel: opts.defaultWorkerModel.modelId,
+    workerModel: opts.defaultWorkerModel,
   });
   const clientFactory = opts.speechmuxClientFactory ?? createDefaultSpeechmuxClientFactory();
 
@@ -177,9 +171,10 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
             console.warn('[voice] set_interpreter_model: no ExtensionContext yet');
             return;
           }
-          const model = lastCtx.modelRegistry.find(action.provider, action.modelId);
+          const [provider, modelId] = action.modelSlug.split('/');
+          const model = lastCtx.modelRegistry.find(provider, modelId);
           if (!model) {
-            console.warn(`[voice] set_interpreter_model: no model ${action.provider}/${action.modelId}`);
+            console.warn(`[voice] set_interpreter_model: no model ${action.modelSlug}`);
             return;
           }
           await pi.setModel(model);

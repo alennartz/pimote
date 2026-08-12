@@ -421,11 +421,9 @@ export class PimoteSessionManager {
       return undefined;
     }
     const interpreter =
-      this.config.defaultInterpreterModel ??
-      (this.config.defaultProvider && this.config.defaultModel ? { provider: this.config.defaultProvider, modelId: this.config.defaultModel } : undefined);
+      this.config.defaultInterpreterModel ?? (this.config.defaultProvider && this.config.defaultModel ? `${this.config.defaultProvider}/${this.config.defaultModel}` : undefined);
     const worker =
-      this.config.defaultWorkerModel ??
-      (this.config.defaultProvider && this.config.defaultModel ? { provider: this.config.defaultProvider, modelId: this.config.defaultModel } : undefined);
+      this.config.defaultWorkerModel ?? (this.config.defaultProvider && this.config.defaultModel ? `${this.config.defaultProvider}/${this.config.defaultModel}` : undefined);
     if (!interpreter || !worker) {
       console.warn('[pimote] voice extension disabled: no defaultInterpreterModel/defaultWorkerModel or fallback defaultProvider/defaultModel in config');
       return undefined;

@@ -23,9 +23,9 @@ export interface PimoteConfig {
   defaultModel?: string;
   defaultThinkingLevel?: string;
   /** Voice interpreter model. Falls back to defaultProvider/defaultModel if absent. */
-  defaultInterpreterModel?: ModelRef;
+  defaultInterpreterModel?: string;
   /** Voice worker model for `my-pi` subagent spawns. */
-  defaultWorkerModel?: ModelRef;
+  defaultWorkerModel?: string;
   /** Voice subsystem config. */
   voice?: VoiceConfig;
   vapidPublicKey?: string;
@@ -88,20 +88,13 @@ export async function loadConfig(): Promise<PimoteConfig> {
     defaultProvider: typeof obj.defaultProvider === 'string' ? obj.defaultProvider : undefined,
     defaultModel: typeof obj.defaultModel === 'string' ? obj.defaultModel : undefined,
     defaultThinkingLevel: typeof obj.defaultThinkingLevel === 'string' ? obj.defaultThinkingLevel : undefined,
-    defaultInterpreterModel: parseModelRef(obj.defaultInterpreterModel),
-    defaultWorkerModel: parseModelRef(obj.defaultWorkerModel),
+    defaultInterpreterModel: typeof obj.defaultInterpreterModel === 'string' ? obj.defaultInterpreterModel : undefined,
+    defaultWorkerModel: typeof obj.defaultWorkerModel === 'string' ? obj.defaultWorkerModel : undefined,
     voice: parseVoiceConfig(obj.voice),
     vapidPublicKey: typeof obj.vapidPublicKey === 'string' ? obj.vapidPublicKey : undefined,
     vapidPrivateKey: typeof obj.vapidPrivateKey === 'string' ? obj.vapidPrivateKey : undefined,
     vapidEmail: typeof obj.vapidEmail === 'string' ? obj.vapidEmail : undefined,
   };
-}
-
-function parseModelRef(v: unknown): ModelRef | undefined {
-  if (!v || typeof v !== 'object') return undefined;
-  const o = v as Record<string, unknown>;
-  if (typeof o.provider !== 'string' || typeof o.modelId !== 'string') return undefined;
-  return { provider: o.provider, modelId: o.modelId };
 }
 
 function parseVoiceConfig(v: unknown): VoiceConfig | undefined {

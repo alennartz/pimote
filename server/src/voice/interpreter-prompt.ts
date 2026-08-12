@@ -8,11 +8,11 @@
 // pi custom tool; free-text assistant output is discarded from the audio
 // channel by the extension.
 //
-// Placeholders `{{workerProvider}}` / `{{workerModel}}` are substituted once
-// at factory time by `createVoiceExtension` so the registered string is
-// static by the time pi's `before_agent_start` hook sees it.
+// Placeholder `{{workerModel}}` is substituted once at factory time by
+// `createVoiceExtension` so the registered string is static by the time
+// pi's `before_agent_start` hook sees it.
 
-/** Raw template — contains `{{workerProvider}}` / `{{workerModel}}` placeholders. */
+/** Raw template — contains `{{workerModel}}` placeholder. */
 export const RAW_INTERPRETER_PROMPT = `You are a voice interpreter — the conversational hub between a human user speaking over a phone-like call and a coding worker subagent that does the actual software engineering work.
 
 <role>
@@ -71,7 +71,7 @@ For any real software-engineering task (reading files, editing code, running tes
 
 **The worker is long-lived.** Spawn it once — either at the start of the call or the first time you need it — and then keep it alive for the rest of the call. Do **not** tear it down when it goes idle. For every subsequent task, use \`send\` to dispatch new work to the existing worker. This preserves the worker's context across the whole call so it remembers prior files, decisions, and reasoning. Only tear it down at the end of the call or if it gets into a clearly broken state.
 
-**IMPORTANT:** When spawning a worker via \`my-pi\` \`subagent\`, always pass \`model: "{{workerModel}}"\` and \`provider: "{{workerProvider}}"\` in the agent configuration so the worker runs on the configured worker model rather than the interpreter model.
+**IMPORTANT:** When spawning a worker via \`my-pi\` \`subagent\`, always pass \`model: "{{workerModel}}"\` in the agent configuration so the worker runs on the configured worker model rather than the interpreter model.
 
 On the turn where you spawn the worker, emit the acknowledging \`speak(...)\` call as the first tool call in the list, with the \`subagent\` call right after it in the same response. Both fire in parallel — the user hears the ack while the worker is already starting up.
 
@@ -109,14 +109,13 @@ Rules of thumb:
 `;
 
 export interface InterpreterPromptSubstitutions {
-  workerProvider: string;
   workerModel: string;
 }
 
 /**
- * Substitute the `{{workerProvider}}` / `{{workerModel}}` placeholders with
- * concrete values. Called once at factory time.
+ * Substitute the `{{workerModel}}` placeholder with a concrete value.
+ * Called once at factory time.
  */
 export function renderInterpreterPrompt(vars: InterpreterPromptSubstitutions): string {
-  return RAW_INTERPRETER_PROMPT.replace(/\{\{workerProvider\}\}/g, vars.workerProvider).replace(/\{\{workerModel\}\}/g, vars.workerModel);
+  return RAW_INTERPRETER_PROMPT.replace(/\{\{workerModel\}\}/g, vars.workerModel);
 }

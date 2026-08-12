@@ -15,7 +15,7 @@ import type { Event } from '../events.js';
 import type { LifecycleState, RuntimeState } from '../state.js';
 
 export interface LifecycleConfig {
-  defaultInterpreterModel: { provider: string; modelId: string };
+  defaultInterpreterModel: string;
 }
 
 export interface LifecycleResult {
@@ -50,8 +50,7 @@ export function reduceLifecycle(prev: LifecycleState, event: Event, ctx: { inter
       if (!ctx.interpreterApplied) {
         actions.push({
           kind: 'set_interpreter_model',
-          provider: ctx.config.defaultInterpreterModel.provider,
-          modelId: ctx.config.defaultInterpreterModel.modelId,
+          modelSlug: ctx.config.defaultInterpreterModel,
         });
       }
       // Steer the start sentinel rather than aborting: if the agent is mid-task

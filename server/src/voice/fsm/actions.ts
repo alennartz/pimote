@@ -10,7 +10,7 @@ import type { VoiceInterruptEntryData } from '../../../../shared/dist/index.js';
 
 export type Action =
   // ---- Lifecycle side effects ----
-  | { kind: 'set_interpreter_model'; provider: string; modelId: string }
+  | { kind: 'set_interpreter_model'; modelSlug: string }
   | { kind: 'send_user_message'; text: string; deliverAs?: 'steer' | 'followUp' }
   /**
    * Inject a user-visible message into the conversation history without

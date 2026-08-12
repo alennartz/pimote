@@ -3,7 +3,7 @@ import { reduce } from './reducer.js';
 import { initialState, type RuntimeState } from './state.js';
 import type { Action } from './actions.js';
 
-const config = { defaultInterpreterModel: { provider: 'p', modelId: 'm' } };
+const config = { defaultInterpreterModel: 'p/m' };
 
 function step(state: RuntimeState, event: Parameters<typeof reduce>[1]): { next: RuntimeState; actions: Action[] } {
   return reduce(state, event, { config });
