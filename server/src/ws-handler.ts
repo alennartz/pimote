@@ -918,7 +918,12 @@ export class WsHandler {
           break;
         }
         await session.setModel(model);
-        this.sendResponse(id, true);
+        const currentModel = session.model;
+        this.sendResponse(id, true, {
+          model: currentModel ? { provider: currentModel.provider, id: currentModel.id, name: currentModel.name } : null,
+          thinkingLevel: session.thinkingLevel,
+          availableThinkingLevels: session.getAvailableThinkingLevels(),
+        });
         break;
       }
 

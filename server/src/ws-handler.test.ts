@@ -332,7 +332,11 @@ describe('WsHandler', () => {
     it('selects a matching model from session.modelRuntime', async () => {
       const model = { provider: 'anthropic', id: 'claude', name: 'Claude' };
       const slot = createMockSlot();
-      const setModel = vi.fn(async () => undefined);
+      const setModel = vi.fn(async () => {
+        slot.session.model = model;
+        slot.session.thinkingLevel = 'off';
+        slot.session.getAvailableThinkingLevels = () => ['off', 'minimal', 'low'];
+      });
       (slot.session as any).modelRuntime = { getAvailable: vi.fn(async () => [model]) };
       (slot.session as any).setModel = setModel;
       const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
@@ -340,7 +344,14 @@ describe('WsHandler', () => {
       await handler.handleMessage(JSON.stringify({ type: 'set_model', sessionId: slot.sessionState.id, provider: 'anthropic', modelId: 'claude', id: 'req-set-model' }));
 
       expect(setModel).toHaveBeenCalledWith(model);
-      expect(findResponse(sent, 'req-set-model')).toMatchObject({ success: true });
+      expect(findResponse(sent, 'req-set-model')).toMatchObject({
+        success: true,
+        data: {
+          model,
+          thinkingLevel: 'off',
+          availableThinkingLevels: ['off', 'minimal', 'low'],
+        },
+      });
     });
   });
 

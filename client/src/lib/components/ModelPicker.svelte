@@ -108,7 +108,21 @@
     if (res.success) {
       const session = sessionRegistry.sessions[sessionId];
       if (session) {
-        session.model = { provider: model.provider, id: model.id, name: model.name };
+        const state = res.data as
+          | {
+              model?: { provider: string; id: string; name: string } | null;
+              thinkingLevel?: string;
+              availableThinkingLevels?: string[];
+            }
+          | undefined;
+        session.model = state?.model ?? { provider: model.provider, id: model.id, name: model.name };
+        // Changing models can clamp the current thinking level and changes the
+        // capabilities exposed by the thinking-level picker. Apply the
+        // server-authoritative values from the set_model response together.
+        if (state?.thinkingLevel !== undefined) session.thinkingLevel = state.thinkingLevel;
+        if (Array.isArray(state?.availableThinkingLevels)) {
+          session.availableThinkingLevels = state.availableThinkingLevels;
+        }
       }
       // Context window / token capacity is model-specific, so refresh meta now.
       // Otherwise the displayed capacity stays stale until the next agent turn
