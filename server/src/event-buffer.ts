@@ -177,12 +177,20 @@ export class EventBuffer {
           },
         };
 
-        // Extract tool call metadata on toolcall_start from the partial message
+        // Extract tool call metadata on toolcall_start from the partial message.
+        // Include initial arguments as the text value so the client can render
+        // the path / language / body incrementally instead of waiting for the
+        // first delta (which may arrive much later).
         if (contentType === 'tool_call' && subtype === 'start' && 'partial' in ame) {
           const block = ame.partial.content[contentIndex];
           if (block && block.type === 'toolCall') {
             result.toolCallId = block.id;
             result.toolName = block.name;
+            // Serialize initial arguments so the client's streaming parser
+            // and path-extraction regex have something to work with immediately.
+            if (typeof block.arguments === 'object' && block.arguments !== null) {
+              result.content.text = JSON.stringify(block.arguments);
+            }
           }
         }
 

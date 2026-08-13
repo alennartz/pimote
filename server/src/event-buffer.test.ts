@@ -501,6 +501,35 @@ describe('EventBuffer', () => {
       expect(update.toolName).toBe('bash');
     });
 
+    it('maps toolcall_start with initial arguments as text for incremental rendering', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(
+        makeSdkEvent('message_update', {
+          assistantMessageEvent: {
+            type: 'toolcall_start',
+            contentIndex: 0,
+            partial: {
+              content: [{ type: 'toolCall', id: 'tc-1', name: 'write', arguments: { path: '/tmp/test.js', content: '' } }],
+            },
+          },
+        }),
+        SESSION_ID,
+        sendLive,
+      );
+
+      const update = liveEvents[0] as any;
+      expect(update.subtype).toBe('start');
+      expect(update.contentIndex).toBe(0);
+      expect(update.toolCallId).toBe('tc-1');
+      expect(update.toolName).toBe('write');
+      // Initial arguments should be serialized as text so the client can
+      // extract the path / language / body incrementally.
+      expect(update.content).toEqual({ type: 'tool_call', text: '{"path":"/tmp/test.js","content":""}' });
+    });
+
     it('maps toolcall_delta with tool_call content type', () => {
       const buffer = new EventBuffer(10);
       const liveEvents: PimoteSessionEvent[] = [];
