@@ -270,6 +270,8 @@ registry request per TTL), but it is demand-triggered rather than timer-driven.
 
 ## Steps
 
+**Pre-implementation commit:** `edc71288cf0220d7725aa772ab45d1206e88e95c`
+
 ### Step 1: Implement the cached update checker and npm adapter
 
 Use npm workspace commands—not hand edits—to add the latest stable `semver` runtime dependency to both `package.json` (the published package manifest) and `server/package.json` (the source workspace), add its current type package to the server workspace if the resolved `semver` package does not provide declarations, and update `package-lock.json`.
@@ -285,7 +287,7 @@ export function fetchLatestVersionFromNpm(): Promise<string>;
 It must GET `https://registry.npmjs.org/@pimote/pimote/latest`, validate the response and its string `version`, and reject malformed or unsuccessful responses for the checker to suppress. Keep `fetchLatestVersion` required in `UpdateCheckerOptions`: an explicit exported adapter keeps registry URL/response knowledge in this module, while avoiding both a hidden live-network default in tests and an inline fetch in `index.ts`.
 
 **Verify:** `npm run build:shared`, `npm run test --workspace=@pimote/server -- --run src/update-check.test.ts`, `npx tsc --noEmit -p server/tsconfig.json`, and `npm ls semver --depth=0 --all` pass/show the intended direct runtime dependencies.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Wire configuration and startup composition
 
