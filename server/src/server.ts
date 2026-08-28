@@ -13,7 +13,7 @@ import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { serveStaticHostRoute, type StaticHostRegistry } from './static-host/index.js';
 import { serveFileDownloadRoute, type DownloadManager } from './file-download/index.js';
 import crypto from 'node:crypto';
-import type { VersionMismatchEvent } from '../../shared/dist/index.js';
+import type { UpdateAvailableEvent, VersionMismatchEvent } from '../../shared/dist/index.js';
 import type { UpdateChecker } from './update-check.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -112,7 +112,7 @@ export async function createServer(
   voiceOrchestrator: VoiceOrchestrator | undefined,
   staticHostRegistry: StaticHostRegistry,
   fileDownloads: DownloadManager,
-  _updateChecker?: UpdateChecker,
+  updateChecker?: UpdateChecker,
 ): Promise<PimoteServer> {
   const clientVersion = await loadClientVersion();
   if (clientVersion) {
@@ -255,6 +255,14 @@ export async function createServer(
         handler.cleanup();
       }
     });
+
+    if (updateChecker) {
+      void updateChecker.getStatus().then((status) => {
+        if (!status) return;
+        const event: UpdateAvailableEvent = { type: 'update_available', ...status };
+        handler.sendToClient(event);
+      });
+    }
   });
 
   return {

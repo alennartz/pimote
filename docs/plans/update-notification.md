@@ -305,7 +305,7 @@ Mechanically adapt the pre-existing exact-argument fixture in `server/src/index.
 In `server/src/server.ts`, rename the injected `_updateChecker` parameter to `updateChecker`. After the client-version mismatch early return and after the new `WsHandler` is registered with its socket listeners, fire-and-forget `updateChecker?.getStatus()`. For a non-null result, construct the typed `UpdateAvailableEvent` (`{ type: 'update_available', ...status }`) and send it through `handler.sendToClient()` so serialization and send-error handling stay behind the existing WebSocket interface. Do nothing for `null` or an absent checker; never await this work in the connection callback or add broadcast/timer lifecycle.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/server-update-check.test.ts src/server.test.ts` and `npx tsc --noEmit -p server/tsconfig.json` pass; the wiring test observes one checker call and the exact event after an accepted connection.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Implement client persistence, reactive state, and event ingestion
 
