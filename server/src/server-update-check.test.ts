@@ -60,4 +60,34 @@ describe('createServer — update notification wiring', () => {
     const sentEvents = ws.send.mock.calls.map(([payload]) => JSON.parse(payload as string));
     expect(sentEvents).toContainEqual({ type: 'update_available', ...status });
   });
+
+  it('does not emit an update event when no checker is configured', async () => {
+    const wsHandlers = new Map<string, (...args: any[]) => void>();
+    const ws = {
+      readyState: 1,
+      send: vi.fn(),
+      on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+        wsHandlers.set(event, handler);
+      }),
+    };
+
+    server = await createServer(
+      { roots: [], idleTimeout: 60_000, bufferSize: 10, port: 0 },
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      undefined,
+      new InMemoryStaticHostRegistry(),
+      makeDownloads(),
+    );
+    await server.start(0);
+
+    server.wss.emit('connection', ws as any, { url: '/ws?clientId=client-without-checker' } as any);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(server.clientRegistry.has('client-without-checker')).toBe(true);
+    expect(ws.send).not.toHaveBeenCalled();
+  });
 });

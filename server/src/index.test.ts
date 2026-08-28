@@ -87,7 +87,7 @@ vi.mock('./static-host/index.js', () => ({
   createStaticHostExtension: mocks.createStaticHostExtension,
 }));
 vi.mock('./file-download/bootstrap.js', () => ({ bootstrapFileDownloads: mocks.bootstrapFileDownloads }));
-vi.mock('./cli.js', () => ({ getVersion: mocks.getVersion }));
+vi.mock('./version.js', () => ({ getVersion: mocks.getVersion }));
 vi.mock('./update-check.js', () => ({
   createUpdateChecker: mocks.createUpdateChecker,
   fetchLatestVersionFromNpm: mocks.fetchLatestVersionFromNpm,
@@ -97,6 +97,7 @@ import { main } from './index.js';
 import { PimoteSessionManager } from './session-manager.js';
 
 function resetMocks(): void {
+  mocks.config.updateCheck = undefined;
   mocks.folderIndex.scan.mockReset().mockResolvedValue([{ path: '/workspace/project' }]);
   mocks.folderIndex.listSessionRecords.mockReset().mockResolvedValue([{ id: 'session-1' }]);
   mocks.sessionManager.startIdleCheck.mockReset();
@@ -144,6 +145,28 @@ describe('main — file download bootstrap wiring', () => {
       mocks.staticHostRegistry,
       mocks.downloadManager,
       mocks.updateChecker,
+    );
+  });
+
+  it('does not construct or warm the update checker when update checks are disabled', async () => {
+    mocks.config.updateCheck = false;
+
+    await main();
+
+    expect(mocks.getVersion).not.toHaveBeenCalled();
+    expect(mocks.createUpdateChecker).not.toHaveBeenCalled();
+    expect(mocks.fetchLatestVersionFromNpm).not.toHaveBeenCalled();
+    expect(mocks.updateChecker.getStatus).not.toHaveBeenCalled();
+    expect(mocks.createServer).toHaveBeenCalledWith(
+      mocks.config,
+      mocks.sessionManager,
+      mocks.folderIndex,
+      expect.anything(),
+      expect.anything(),
+      undefined,
+      mocks.staticHostRegistry,
+      mocks.downloadManager,
+      undefined,
     );
   });
 

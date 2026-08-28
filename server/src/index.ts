@@ -11,7 +11,7 @@ import { FileSessionMetadataStore } from './session-metadata.js';
 import { buildVoiceOrchestrator } from './voice-orchestrator-boot.js';
 import { InMemoryStaticHostRegistry, FileStaticHostStore, gcStaticHostStore, createStaticHostExtension } from './static-host/index.js';
 import { bootstrapFileDownloads } from './file-download/bootstrap.js';
-import { getVersion } from './cli.js';
+import { getVersion } from './version.js';
 import { createUpdateChecker, fetchLatestVersionFromNpm, type UpdateChecker } from './update-check.js';
 
 export interface StartOptions {

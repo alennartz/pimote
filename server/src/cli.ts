@@ -3,12 +3,12 @@ import { createInterface } from 'node:readline/promises';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { stdin as input, stdout as output } from 'node:process';
-import { fileURLToPath } from 'node:url';
 import { CONFIG_PATH } from './config.js';
 import { PIMOTE_STATE_DIR } from './paths.js';
 import { main as startPimote } from './index.js';
+import { getVersion } from './version.js';
 
-const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+export { getVersion } from './version.js';
 
 export interface ParsedArgs {
   command: 'start' | 'init' | 'help' | 'version';
@@ -21,12 +21,6 @@ interface ExistingConfigResult {
   exists: boolean;
   data: Record<string, unknown>;
   warning?: string;
-}
-
-export async function getVersion(): Promise<string> {
-  const raw = await readFile(join(ROOT_DIR, 'package.json'), 'utf-8');
-  const pkg = JSON.parse(raw);
-  return typeof pkg.version === 'string' ? pkg.version : '0.0.0';
 }
 
 export function printHelp(): void {

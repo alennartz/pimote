@@ -39,6 +39,22 @@ describe('createUpdateChecker', () => {
     await expect(checker.getStatus()).resolves.toBeNull();
   });
 
+  it('allows a later refresh after a rejected request', async () => {
+    let now = 0;
+    let calls = 0;
+    const fetchLatestVersion = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('request aborted');
+      return '1.2.0';
+    });
+    const checker = createUpdateChecker({ currentVersion: '1.0.0', fetchLatestVersion, now: () => now, ttlMs: 100 });
+
+    await expect(checker.getStatus()).resolves.toBeNull();
+    now = 100;
+    await expect(checker.getStatus()).resolves.toEqual(newerStatus);
+    expect(fetchLatestVersion).toHaveBeenCalledTimes(2);
+  });
+
   it('returns the cached status when a refresh fails after the TTL', async () => {
     let now = 0;
     let calls = 0;

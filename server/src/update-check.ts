@@ -70,7 +70,7 @@ export function createUpdateChecker(opts: UpdateCheckerOptions): UpdateChecker {
 
 /** Fetch the latest published pimote version from npm's registry endpoint. */
 export async function fetchLatestVersionFromNpm(): Promise<string> {
-  const response = await fetch(NPM_LATEST_URL);
+  const response = await fetch(NPM_LATEST_URL, { signal: AbortSignal.timeout(10_000) });
   if (!response.ok) {
     throw new Error(`npm registry returned HTTP ${response.status}`);
   }
