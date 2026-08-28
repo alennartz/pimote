@@ -215,3 +215,53 @@ is explicit: a long-lived client that never reconnects — realistically only a 
 for days — will not see a new release until it reconnects or reloads. Mobile reconnects constantly,
 so it is unaffected. The check still happens on a cadence in the sense that matters (bounded to one
 registry request per TTL), but it is demand-triggered rather than timer-driven.
+
+## Tests
+
+**Pre-test-write commit:** `64acee2e261ccc555fc6bfb1d0c93d44765856c2`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — shared `UpdateStatus` payload and `UpdateAvailableEvent` wire event added to the event union. `UpdateStatus` lives in the shared protocol so the checker, server, and client consume one definition.
+- `server/src/update-check.ts` — `UpdateChecker` contract, options shape, and status type export.
+- `server/src/server.ts` — optional `UpdateChecker` dependency added to `createServer`.
+- `server/src/config.ts` — optional `updateCheck` deployment preference added to `PimoteConfig`.
+- `client/src/lib/stores/persistence.ts` — dismissed-update-version persistence accessors declared.
+- `client/src/lib/stores/update.svelte.ts` — `UpdateStore` public status, visibility, event-ingest, and dismissal surface declared.
+
+### Test Files
+
+- `server/src/update-check.test.ts` — checker comparison, release URL, failure suppression, TTL cache, and single-flight behaviors.
+- `server/src/config-update-check.test.ts` — explicit true/false config preference parsing.
+- `server/src/server-update-check.test.ts` — accepted WebSocket update-status check and event delivery wiring.
+- `client/src/lib/stores/update-persistence.test.ts` — version-keyed localStorage round-trip and best-effort error behavior.
+- `client/src/lib/stores/update.svelte.test.ts` — status ingestion, banner/marker visibility, version-keyed dismissal, newer-release reappearance, and reload persistence.
+
+### Behaviors Covered
+
+#### Update Check
+
+- A published version strictly newer than the running version yields the current/latest versions and the canonical GitHub release URL.
+- Equal and registry-ahead versions yield no update status.
+- Registry failures never reject a status request; a cold failure yields no status and a refresh failure preserves the cached status.
+- Calls within the TTL reuse the cached result, while expiry permits one refresh.
+- Concurrent cold-cache callers share one registry request and receive the same status.
+
+#### Server Wiring
+
+- An accepted WebSocket connection invokes the optional checker after the version gate and sends a non-null result as an `update_available` event.
+
+#### Config
+
+- Explicit `updateCheck: true` and `updateCheck: false` values survive config loading.
+
+#### Client Persistence
+
+- The dismissed latest-version string round-trips under `pimote:dismissedUpdateVersion`, overwrites older values, and gracefully handles storage failures.
+
+#### Client Update Store
+
+- An incoming update event becomes the observable status and enables both banner and ambient marker.
+- Dismissing the current version hides only the banner; the marker remains visible.
+- A newer latest version raises the banner again after an older version was dismissed.
+- Dismissal is read from persistence when a fresh store is constructed after reload.

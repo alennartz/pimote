@@ -1027,6 +1027,16 @@ export interface LoginStepEvent {
 
 // -- Version mismatch --
 
+export interface UpdateStatus {
+  currentVersion: string;
+  latestVersion: string;
+  releaseUrl: string;
+}
+
+export interface UpdateAvailableEvent extends UpdateStatus {
+  type: 'update_available';
+}
+
 export interface VersionMismatchEvent {
   type: 'version_mismatch';
   serverVersion: string;
@@ -1067,7 +1077,8 @@ export type PimoteEvent =
   // Provider login
   | LoginStepEvent
   // Version
-  | VersionMismatchEvent;
+  | VersionMismatchEvent
+  | UpdateAvailableEvent;
 
 // ----------------------------------------------------------------------------
 // Server → Client Responses (request/response pattern)

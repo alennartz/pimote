@@ -31,6 +31,8 @@ export interface PimoteConfig {
   vapidPublicKey?: string;
   vapidPrivateKey?: string;
   vapidEmail?: string;
+  /** Check npm for newer pimote releases. Default true. */
+  updateCheck?: boolean;
 }
 
 export const CONFIG_PATH = PIMOTE_CONFIG_PATH;
