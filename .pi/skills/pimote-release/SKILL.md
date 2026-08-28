@@ -135,6 +135,24 @@ This triggers:
 
 - `.github/workflows/publish-pimote.yml`
 
+#### The app tag suffix is user-visible
+
+The running server shows an update banner whose **View release** button links to
+`https://github.com/alennartz/pimote/releases/tag/pimote-v<published-version>` (template in
+`server/src/update-check.ts`). So the tag suffix must be **exactly** the published version — no
+`-retry`, `-hotfix`, or other decoration.
+
+The workflow trigger is `pimote-v*`, which enforces the prefix but **not** the suffix: a tag like
+`pimote-v0.12.0-retry` on a `0.12.0` tree publishes normally and leaves every user's banner pointing
+at a page that does not exist. Nothing in CI catches this.
+
+To retry a failed publish, move the existing tag (see _Retagging after a failed run_) rather than
+creating a decorated variant.
+
+If the tag convention ever changes, update the URL template in `server/src/update-check.ts` in the
+same change. A GitHub Release object is not required — GitHub renders the tag page with its commit
+list for any pushed tag, which is the intended fallback when release notes are absent.
+
 ### Panels tags
 
 ```bash
@@ -205,7 +223,13 @@ git push origin panels-v0.1.0
 - The app package published from the repo root is `@pimote/pimote`.
 - The installed binary name remains `pimote`.
 - The app publish workflow performs a packed-install smoke test before publish.
-- Local deployment uses installed package releases under `~/.local/share/pimote/` and is intentionally separate from publish tagging.
+- Local deployment uses installed package releases under `~/.local/share/pimote/`. It has its own
+  install path (`make deploy`), but it is **not** isolated from publishing: a local deployment reads
+  its version from the packed `package.json` and compares it against the npm registry, so a
+  locally-deployed build older than the latest published version will show the update banner. That
+  is correct behaviour — the remedy is `make deploy` from an updated tree rather than an npm
+  install, and the banner copy is deliberately install-method-agnostic. Keep it that way: do not add
+  an `npm i -g` hint to `UpdateBanner.svelte`, since it would be wrong for source-based deployments.
 
 ## Response pattern
 
