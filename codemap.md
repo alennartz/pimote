@@ -36,7 +36,7 @@ sequenceDiagram
 
 Defines the TypeScript WebSocket contract shared by server and web client.
 
-**Responsibilities:** commands, events, request/response envelopes, session and message data, extension UI, panels, downloads, voice, provider login, tree navigation
+**Responsibilities:** commands, events, request/response envelopes, session and message data, extension UI, panels, downloads, voice, provider login, tree navigation, update-availability status/events
 
 **Dependencies:** none; Android maintains a hand-written mirror of the subset it consumes
 
@@ -48,7 +48,7 @@ Defines the TypeScript WebSocket contract shared by server and web client.
 
 Hosts pi `AgentSession` instances and exposes the HTTP and WebSocket API.
 
-**Responsibilities:** CLI and configuration, static/PWA and WebSocket serving, session slots and replay buffers, command routing, project discovery, ownership/conflict handling, extension UI bridge, auth, push notifications, persistent session metadata
+**Responsibilities:** CLI and configuration, static/PWA and WebSocket serving, session slots and replay buffers, command routing, project discovery, ownership/conflict handling, extension UI bridge, auth, push notifications, persistent session metadata, version lookup and TTL-cached npm update checks with per-connection update events
 
 **Dependencies:** Protocol for wire types; Agent Extensions for session tools and resources
 
@@ -74,7 +74,7 @@ In-process pi extensions for optional voice calls, static bundles, and one-shot 
 
 Installable SvelteKit PWA for browsing, controlling, and rendering remote pi sessions.
 
-**Responsibilities:** WebSocket reconnect and session state, streamed conversation/tool rendering, composer and autocomplete, extension dialogs/panels, session navigation, downloads and push, browser voice calls
+**Responsibilities:** WebSocket reconnect and session state, streamed conversation/tool rendering, composer and autocomplete, extension dialogs/panels, session navigation, downloads and push, browser voice calls, version-keyed update persistence and banner/ambient update surfaces
 
 **Dependencies:** Protocol for wire types; Server's HTTP/WebSocket API
 
@@ -110,7 +110,7 @@ Native Kotlin voice-first peer that connects to Pimote through Android's calling
 
 Packages, boots, tests, and manually exercises the product surfaces.
 
-**Responsibilities:** npm executable and install helpers, patching and service setup, diagnostic scripts, end-to-end smoke suites, extension UI test fixture
+**Responsibilities:** npm executable and install helpers, patching and service setup, diagnostic scripts, end-to-end smoke suites, deterministic update-notification server/PWA smoke harness, extension UI test fixture
 
 **Dependencies:** Server, Web Client, Agent Extensions, and Android Client as applicable
 
@@ -119,4 +119,5 @@ Packages, boots, tests, and manually exercises the product surfaces.
 - `bin/**`
 - `scripts/**`
 - `tools/**`
+- `tools/manual-test/update-notification-smoke/**`
 - `.pi/extensions/**`

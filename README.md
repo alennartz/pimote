@@ -220,6 +220,7 @@ With this config, if `/home/you/projects/` contains `my-app/` and `another-repo/
 | `defaultInterpreterModel` | `{provider, modelId}` | —              | Voice interpreter model (falls back to `defaultProvider`/`defaultModel`) |
 | `defaultWorkerModel`      | `{provider, modelId}` | —              | Voice worker model passed to `my-pi` subagent spawns                     |
 | `voice`                   | `object`              | —              | Voice subsystem config (see below)                                       |
+| `updateCheck`             | `boolean`             | `true`         | Check npm for newer Pimote releases and notify connected clients         |
 
 #### Voice mode
 
@@ -246,6 +247,8 @@ To enable it, point pimote at an externally managed speechmux instance
 Both `voice.speechmuxSignalUrl` and `voice.speechmuxLlmWsUrl` are required to
 enable voice. `defaultInterpreterModel` and `defaultWorkerModel` fall back to
 `defaultProvider` + `defaultModel` if unset.
+
+When `updateCheck` is enabled (the default), the server checks npm for a newer `@pimote/pimote` release using a six-hour cache. Connected clients receive an update notification with the release link; dismissing it leaves a persistent ambient marker so the notice can be revisited. Set `"updateCheck": false` to disable registry checks and update indicators.
 
 VAPID keys for push notifications are auto-generated on first run and written back to the config file. Session metadata and push subscription state live under `~/.local/state/pimote` (or `$XDG_STATE_HOME/pimote`).
 
