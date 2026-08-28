@@ -355,7 +355,7 @@ Run the repository-wide formatting, lint, type-check, build, server-test, and cl
 Because `semver` is needed by packed server output, run the package dry-run and confirm the root manifest declares it as a runtime dependency.
 
 **Verify:** `npm run format:check`, `npm run lint`, `npm run check`, `npm run build`, `npm run test --workspace=@pimote/server -- --run`, `npm run test --workspace=client -- --run`, and `npm run pack:dry-run` all pass, followed by the enabled/disabled manual checks above.
-**Status:** not started
+**Status:** done
 
 ### Known test gap
 
