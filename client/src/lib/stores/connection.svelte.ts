@@ -3,6 +3,7 @@ import type { OpenSessionResponseData, PimoteCommand, PimoteResponse, PimoteEven
 import { SvelteMap } from 'svelte/reactivity';
 import { version } from '$app/environment';
 import { getClientId, setClientId } from './persistence.js';
+import { updateStore } from './update.svelte.js';
 
 type EventListener = (event: PimoteEvent) => void;
 
@@ -190,6 +191,11 @@ export class ConnectionStore {
       if ('type' in msg && msg.type === 'version_mismatch') {
         console.log(`[ConnectionStore] Version mismatch — reloading (server=${(msg as { serverVersion: string }).serverVersion}, client=${version})`);
         location.reload();
+        return;
+      }
+
+      if ('type' in msg && msg.type === 'update_available') {
+        updateStore.handleEvent(msg);
         return;
       }
 

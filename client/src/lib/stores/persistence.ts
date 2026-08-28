@@ -7,7 +7,7 @@ const KEY_ACTIVE_SESSIONS = 'pimote:activeSessions';
 const KEY_VIEWED_SESSION_ID = 'pimote:viewedSessionId';
 const KEY_SHOW_ARCHIVED = 'pimote:showArchived';
 const KEY_SESSION_PILL_SWIPE_HINT_SHOWN = 'pimote:sessionPillSwipeHintShown';
-const _KEY_DISMISSED_UPDATE_VERSION = 'pimote:dismissedUpdateVersion';
+const KEY_DISMISSED_UPDATE_VERSION = 'pimote:dismissedUpdateVersion';
 
 /** Minimal data needed to rehydrate a session tab. */
 export interface PersistedSession {
@@ -131,9 +131,17 @@ export function setSessionPillSwipeHintShown(shown: boolean): void {
 // ---------------------------------------------------------------------------
 
 export function getDismissedUpdateVersion(): string | null {
-  throw new Error('not implemented');
+  try {
+    return localStorage.getItem(KEY_DISMISSED_UPDATE_VERSION);
+  } catch {
+    return null;
+  }
 }
 
-export function setDismissedUpdateVersion(_version: string): void {
-  throw new Error('not implemented');
+export function setDismissedUpdateVersion(version: string): void {
+  try {
+    localStorage.setItem(KEY_DISMISSED_UPDATE_VERSION, version);
+  } catch {
+    // best-effort
+  }
 }

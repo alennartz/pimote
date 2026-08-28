@@ -324,7 +324,7 @@ get showMarker(): boolean;
 In `client/src/lib/stores/connection.svelte.ts`, import the singleton `updateStore` and add a server-level `update_available` branch adjacent to `version_mismatch`: pass the narrowed event to `updateStore.handleEvent()` and return before response/session-event routing.
 
 **Verify:** `npm run build:shared`, `npm run test --workspace=client -- --run src/lib/stores/update-persistence.test.ts src/lib/stores/update.svelte.test.ts src/lib/stores/connection.svelte.test.ts`, and `npm run check --workspace=client` pass.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Add the dismissible update banner
 
