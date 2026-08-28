@@ -6,6 +6,7 @@
   import { Separator } from '$lib/components/ui/separator/index.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
+  import { updateStore } from '$lib/stores/update.svelte.js';
   import { getContextDisplay, getContextTone, getSessionDisplayName, formatCombinedCost } from '$lib/session-summary.js';
   import { getRestoreModeLabel } from '$lib/restore-status.js';
   import { GitBranch } from '@lucide/svelte';
@@ -126,6 +127,20 @@
         </span>
         Compacting…
       </Badge>
+    {/if}
+
+    {#if updateStore.showMarker}
+      {@const updateStatus = updateStore.status}
+      {#if updateStatus}
+        <Separator orientation="vertical" class="mx-0.5 h-4" />
+        <div class="flex items-center gap-1.5" title={`Pimote update: running ${updateStatus.currentVersion}, available ${updateStatus.latestVersion}`}>
+          <span>Running {updateStatus.currentVersion} → {updateStatus.latestVersion}</span>
+          <!-- updateStatus.releaseUrl is a server-supplied external release URL, not a SPA route, so resolve() does not apply. -->
+          <!-- eslint-disable svelte/no-navigation-without-resolve -->
+          <a class="text-primary hover:text-primary/85 underline" href={updateStatus.releaseUrl} target="_blank" rel="noopener noreferrer">View release</a>
+          <!-- eslint-enable svelte/no-navigation-without-resolve -->
+        </div>
+      {/if}
     {/if}
 
     <!-- Connection status -->

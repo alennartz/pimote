@@ -346,7 +346,7 @@ Update the three architecture-selected client surfaces, all driven directly by `
 Do not add update content to `MobileRuntimeStatus` or any Android source.
 
 **Verify:** `npm run check --workspace=client` and `npm run build --workspace=client` pass; manually dismissing a visible banner leaves the settings dot and both detail surfaces present, while a later event for a new version raises the banner again.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Run full feature verification
 

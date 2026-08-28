@@ -24,6 +24,7 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import { routeNotificationIntent, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
+  import { updateStore } from '$lib/stores/update.svelte.js';
   import { pushSharedImages } from '$lib/stores/input-bar.svelte.js';
   import { resolveAppViewportHeight } from '$lib/app-viewport.js';
   import { onMount } from 'svelte';
@@ -294,7 +295,12 @@
       {/if}
 
       {#if sessionRegistry.viewedSessionId}
-        <SessionSettingsDialog />
+        <div class="relative">
+          <SessionSettingsDialog />
+          {#if updateStore.showMarker}
+            <span class="bg-primary pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full" aria-hidden="true"></span>
+          {/if}
+        </div>
       {/if}
     </header>
 

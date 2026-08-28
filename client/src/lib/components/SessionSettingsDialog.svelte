@@ -7,6 +7,7 @@
   import CallButton from './CallButton.svelte';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { updateStore } from '$lib/stores/update.svelte.js';
   import { getContextDisplay, getContextTone, formatCombinedCost } from '$lib/session-summary.js';
   import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import X from '@lucide/svelte/icons/x';
@@ -132,6 +133,23 @@
             <span>{connectionLabel}</span>
           </div>
         </div>
+
+        {#if updateStore.showMarker}
+          {@const updateStatus = updateStore.status}
+          {#if updateStatus}
+            <div class="border-border/60 flex items-start justify-between gap-3 border-t px-3 py-3">
+              <span class="text-muted-foreground">Pimote update</span>
+              <div class="flex flex-col items-end gap-1 text-right text-xs">
+                <span>Running {updateStatus.currentVersion}</span>
+                <span>Available {updateStatus.latestVersion}</span>
+                <!-- updateStatus.releaseUrl is a server-supplied external release URL, not a SPA route, so resolve() does not apply. -->
+                <!-- eslint-disable svelte/no-navigation-without-resolve -->
+                <a class="text-primary hover:text-primary/85 underline" href={updateStatus.releaseUrl} target="_blank" rel="noopener noreferrer">View release</a>
+                <!-- eslint-enable svelte/no-navigation-without-resolve -->
+              </div>
+            </div>
+          {/if}
+        {/if}
       </div>
     </div>
   </Dialog.Content>
