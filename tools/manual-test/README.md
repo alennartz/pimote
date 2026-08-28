@@ -314,6 +314,25 @@ are printed. The source fixture is never deleted by the route.
 required; focused/background push planning and notification-intent contracts
 are covered by the client unit tests.
 
+### update-notification-smoke
+
+**Purpose:** Exercise the update-availability notification end-to-end with a deterministic npm-registry fixture. Boots the real server in an isolated HOME, injects controlled equal/older/newer registry responses, probes the `update_available` WebSocket event, and drives the real PWA via `agent-browser` to verify the banner, dismissal-to-ambient markers, persistence across reload/reconnect, newer-release reappearance, banner-slot coexistence, and the `updateCheck: false` no-network path.
+
+**Location:** `tools/manual-test/update-notification-smoke/update-notification-smoke.mjs`
+
+**Invocation:**
+
+```bash
+npm run build
+UN_SHOTS=/tmp/update-notification-shots node tools/manual-test/update-notification-smoke/update-notification-smoke.mjs
+```
+
+**Inputs:** none by default. `UN_SHOTS` optionally keeps coherence screenshots outside the disposable sandbox; `UN_KEEP=1` preserves the sandbox on a passing run.
+
+**Outputs:** per-check `✓/✗` lines, mobile/desktop screenshots, and a non-zero exit on hard failure. On failure the sandbox and server log are preserved for inspection.
+
+**Prerequisites:** workspaces built (`npm run build`), `agent-browser` on `PATH`, writable `os.tmpdir()`. No real npm registry, LLM, or push subscription is required; `fake-registry.mjs` intercepts only the npm latest-version URL in the child server process.
+
 ### agent-browser (cross-repo skill)
 
 **Purpose:** Drive PWA user journeys end-to-end via a headless-Chromium
