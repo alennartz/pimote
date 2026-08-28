@@ -333,7 +333,7 @@ Create `client/src/lib/components/UpdateBanner.svelte` using the existing `Notif
 Import and render the component next to `NotificationBanner` at the top of `client/src/routes/+page.svelte`, outside the viewed-session branch so it also appears on the landing/folder screen.
 
 **Verify:** `npm run check --workspace=client` and `npm run build --workspace=client` pass; with an ingested status the banner displays both versions and the supplied link, and its dismiss control removes only the banner.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Add the persistent ambient markers
 

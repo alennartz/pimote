@@ -8,6 +8,7 @@
   import MobileRuntimeStatus from '$lib/components/MobileRuntimeStatus.svelte';
   import ActiveSessionBar from '$lib/components/ActiveSessionBar.svelte';
   import NotificationBanner from '$lib/components/NotificationBanner.svelte';
+  import UpdateBanner from '$lib/components/UpdateBanner.svelte';
   import CallingMode from '$lib/components/CallingMode.svelte';
   import { sessionRegistry, confirmTakeover, dismissTakeover } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
@@ -37,6 +38,7 @@
 </script>
 
 <NotificationBanner />
+<UpdateBanner />
 
 {#if sessionRegistry.viewedSessionId}
   {#if inCall}
