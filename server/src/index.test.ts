@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
   const staticHostFactory = (() => undefined) as any;
   const downloadManager = {};
   const downloadFactory = (() => undefined) as any;
+  const updateChecker = { getStatus: vi.fn(async () => null) };
   return {
     config,
     folderIndex,
@@ -29,6 +30,10 @@ const mocks = vi.hoisted(() => {
     staticHostFactory,
     downloadManager,
     downloadFactory,
+    updateChecker,
+    getVersion: vi.fn(async () => '0.11.0'),
+    createUpdateChecker: vi.fn(() => updateChecker),
+    fetchLatestVersionFromNpm: vi.fn(async () => '0.11.0'),
     loadConfig: vi.fn(async () => config),
     ensureVapidKeys: vi.fn(async (nextConfig) => nextConfig),
     migratePushSubscriptionStore: vi.fn(async () => undefined),
@@ -82,6 +87,11 @@ vi.mock('./static-host/index.js', () => ({
   createStaticHostExtension: mocks.createStaticHostExtension,
 }));
 vi.mock('./file-download/bootstrap.js', () => ({ bootstrapFileDownloads: mocks.bootstrapFileDownloads }));
+vi.mock('./cli.js', () => ({ getVersion: mocks.getVersion }));
+vi.mock('./update-check.js', () => ({
+  createUpdateChecker: mocks.createUpdateChecker,
+  fetchLatestVersionFromNpm: mocks.fetchLatestVersionFromNpm,
+}));
 
 import { main } from './index.js';
 import { PimoteSessionManager } from './session-manager.js';
@@ -95,6 +105,10 @@ function resetMocks(): void {
   mocks.createServer.mockReset().mockResolvedValue(mocks.server);
   mocks.gcStaticHostStore.mockReset().mockResolvedValue(undefined);
   mocks.createStaticHostExtension.mockReset().mockReturnValue(mocks.staticHostFactory);
+  mocks.getVersion.mockReset().mockResolvedValue('0.11.0');
+  mocks.createUpdateChecker.mockReset().mockReturnValue(mocks.updateChecker);
+  mocks.fetchLatestVersionFromNpm.mockReset().mockResolvedValue('0.11.0');
+  mocks.updateChecker.getStatus.mockReset().mockResolvedValue(null);
 }
 
 describe('main — file download bootstrap wiring', () => {
@@ -129,6 +143,7 @@ describe('main — file download bootstrap wiring', () => {
       undefined,
       mocks.staticHostRegistry,
       mocks.downloadManager,
+      mocks.updateChecker,
     );
   });
 

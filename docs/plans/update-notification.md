@@ -298,7 +298,7 @@ In `server/src/index.ts`, import `getVersion()` from `server/src/cli.ts` plus `c
 Mechanically adapt the pre-existing exact-argument fixture in `server/src/index.test.ts`: mock `getVersion` and the update-check module's adapter/factory with a fake checker whose `getStatus()` resolves `null`, reset those mocks with the existing collaborators, and add that fake checker as the ninth expected `createServer` argument. Do not add or alter behavioral assertions in this fixture.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/config-update-check.test.ts src/index.test.ts` passes, startup remains non-blocking, and inspection confirms the false branch has no call path to `fetchLatestVersionFromNpm()`.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Deliver update status on accepted connections
 

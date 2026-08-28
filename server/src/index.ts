@@ -11,6 +11,8 @@ import { FileSessionMetadataStore } from './session-metadata.js';
 import { buildVoiceOrchestrator } from './voice-orchestrator-boot.js';
 import { InMemoryStaticHostRegistry, FileStaticHostStore, gcStaticHostStore, createStaticHostExtension } from './static-host/index.js';
 import { bootstrapFileDownloads } from './file-download/bootstrap.js';
+import { getVersion } from './cli.js';
+import { createUpdateChecker, fetchLatestVersionFromNpm, type UpdateChecker } from './update-check.js';
 
 export interface StartOptions {
   portOverride?: number;
@@ -85,6 +87,19 @@ export async function main(options: StartOptions = {}) {
     console.log('[voice] dormant: voice config absent (set voice.speechmuxSignalUrl and voice.speechmuxLlmWsUrl to enable)');
   }
 
+  let updateChecker: UpdateChecker | undefined;
+  if (config.updateCheck !== false) {
+    const currentVersion = await getVersion();
+    updateChecker = createUpdateChecker({ currentVersion, fetchLatestVersion: fetchLatestVersionFromNpm });
+    void updateChecker.getStatus().then((status) => {
+      if (status) {
+        console.log(`[pimote] Update available: ${status.currentVersion} → ${status.latestVersion}`);
+      } else {
+        console.log('[pimote] Update check: no newer release found');
+      }
+    });
+  }
+
   const server = await createServer(
     config,
     sessionManager,
@@ -94,6 +109,7 @@ export async function main(options: StartOptions = {}) {
     voiceBoot?.orchestrator,
     staticHostRegistry,
     fileDownloads.manager,
+    updateChecker,
   );
   clientRegistryRef.current = server.clientRegistry;
 

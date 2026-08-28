@@ -96,6 +96,7 @@ export async function loadConfig(): Promise<PimoteConfig> {
     vapidPublicKey: typeof obj.vapidPublicKey === 'string' ? obj.vapidPublicKey : undefined,
     vapidPrivateKey: typeof obj.vapidPrivateKey === 'string' ? obj.vapidPrivateKey : undefined,
     vapidEmail: typeof obj.vapidEmail === 'string' ? obj.vapidEmail : undefined,
+    updateCheck: typeof obj.updateCheck === 'boolean' ? obj.updateCheck : undefined,
   };
 }
 
