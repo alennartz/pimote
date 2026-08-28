@@ -267,3 +267,94 @@ registry request per TTL), but it is demand-triggered rather than timer-driven.
 - Dismissal is read from persistence when a fresh store is constructed after reload.
 
 **Review status:** skipped — test-review bypassed by skip decision
+
+## Steps
+
+### Step 1: Implement the cached update checker and npm adapter
+
+Use npm workspace commands—not hand edits—to add the latest stable `semver` runtime dependency to both `package.json` (the published package manifest) and `server/package.json` (the source workspace), add its current type package to the server workspace if the resolved `semver` package does not provide declarations, and update `package-lock.json`.
+
+Complete `server/src/update-check.ts` behind the existing `UpdateChecker#getStatus()` interface. Add a private pure `computeUpdateStatus(currentVersion, latestVersion)` helper that returns a status only when `semver.gt(latestVersion, currentVersion)` and builds the canonical `pimote-v<latestVersion>` GitHub tag URL. Keep cache timestamp, cached nullable status, and the optional in-flight promise inside each checker instance; use the injected clock and TTL (default six hours), cache both update and no-update results, advance the check timestamp after failed refreshes so failures are also rate-limited, preserve the prior cached value on failure, and clear the single-flight slot when the attempt settles. Every `getStatus()` path must resolve rather than reject, and simultaneous cold or expired calls must receive the same in-flight result.
+
+Export the production adapter at the declared fetch seam:
+
+```ts
+export function fetchLatestVersionFromNpm(): Promise<string>;
+```
+
+It must GET `https://registry.npmjs.org/@pimote/pimote/latest`, validate the response and its string `version`, and reject malformed or unsuccessful responses for the checker to suppress. Keep `fetchLatestVersion` required in `UpdateCheckerOptions`: an explicit exported adapter keeps registry URL/response knowledge in this module, while avoiding both a hidden live-network default in tests and an inline fetch in `index.ts`.
+
+**Verify:** `npm run build:shared`, `npm run test --workspace=@pimote/server -- --run src/update-check.test.ts`, `npx tsc --noEmit -p server/tsconfig.json`, and `npm ls semver --depth=0 --all` pass/show the intended direct runtime dependencies.
+**Status:** not started
+
+### Step 2: Wire configuration and startup composition
+
+In `server/src/config.ts`, include `updateCheck` in `loadConfig()` only when the JSON value is boolean, preserving explicit `true` and `false` while leaving an absent/invalid value undefined so the default remains enabled.
+
+In `server/src/index.ts`, import `getVersion()` from `server/src/cli.ts` plus `createUpdateChecker()` and `fetchLatestVersionFromNpm()` from the update-check module. At the one enablement branch (`config.updateCheck !== false`), read the installed version, construct one process-lifetime checker with the real adapter, start a non-awaited `getStatus()` to warm that same checker's cache, and log the resolved nullable outcome without turning `null` into an error. Pass that checker as the final optional argument to `createServer`; when disabled, pass `undefined` and do not construct, warm, or invoke the registry adapter. Starting the warm-up before server construction lets an immediate connection share the same in-flight request.
+
+Mechanically adapt the pre-existing exact-argument fixture in `server/src/index.test.ts`: mock `getVersion` and the update-check module's adapter/factory with a fake checker whose `getStatus()` resolves `null`, reset those mocks with the existing collaborators, and add that fake checker as the ninth expected `createServer` argument. Do not add or alter behavioral assertions in this fixture.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/config-update-check.test.ts src/index.test.ts` passes, startup remains non-blocking, and inspection confirms the false branch has no call path to `fetchLatestVersionFromNpm()`.
+**Status:** not started
+
+### Step 3: Deliver update status on accepted connections
+
+In `server/src/server.ts`, rename the injected `_updateChecker` parameter to `updateChecker`. After the client-version mismatch early return and after the new `WsHandler` is registered with its socket listeners, fire-and-forget `updateChecker?.getStatus()`. For a non-null result, construct the typed `UpdateAvailableEvent` (`{ type: 'update_available', ...status }`) and send it through `handler.sendToClient()` so serialization and send-error handling stay behind the existing WebSocket interface. Do nothing for `null` or an absent checker; never await this work in the connection callback or add broadcast/timer lifecycle.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/server-update-check.test.ts src/server.test.ts` and `npx tsc --noEmit -p server/tsconfig.json` pass; the wiring test observes one checker call and the exact event after an accepted connection.
+**Status:** not started
+
+### Step 4: Implement client persistence, reactive state, and event ingestion
+
+In `client/src/lib/stores/persistence.ts`, promote `_KEY_DISMISSED_UPDATE_VERSION` to the used `pimote:dismissedUpdateVersion` constant and implement the two declared accessors with the file's established best-effort `localStorage` pattern: reads return the stored string or `null`, and reads/writes swallow storage exceptions.
+
+In `client/src/lib/stores/update.svelte.ts`, replace the declarations with private rune-backed status and dismissed-version state initialized from persistence, plus readonly getters for the public contract:
+
+```ts
+get status(): UpdateStatus | null;
+get showBanner(): boolean;
+get showMarker(): boolean;
+```
+
+`handleEvent()` must copy the three server-provided status fields without retaining the event discriminator. `showBanner` compares the current latest version with the persisted dismissal; `showMarker` depends only on a status being present. `dismiss()` is a no-op without status and otherwise updates both reactive dismissal state and persistence for that latest version.
+
+In `client/src/lib/stores/connection.svelte.ts`, import the singleton `updateStore` and add a server-level `update_available` branch adjacent to `version_mismatch`: pass the narrowed event to `updateStore.handleEvent()` and return before response/session-event routing.
+
+**Verify:** `npm run build:shared`, `npm run test --workspace=client -- --run src/lib/stores/update-persistence.test.ts src/lib/stores/update.svelte.test.ts src/lib/stores/connection.svelte.test.ts`, and `npm run check --workspace=client` pass.
+**Status:** not started
+
+### Step 5: Add the dismissible update banner
+
+Create `client/src/lib/components/UpdateBanner.svelte` using the existing `NotificationBanner.svelte` border, spacing, typography, action, and dismiss-control conventions. Render only while `updateStore.showBanner` is true. Show both `status.currentVersion` and `status.latestVersion`, render the server-supplied `status.releaseUrl` as a safe external link (`target="_blank"` with `rel="noopener noreferrer"`), and call `updateStore.dismiss()` from an accessible dismiss button. Do not reconstruct the release URL in the client.
+
+Import and render the component next to `NotificationBanner` at the top of `client/src/routes/+page.svelte`, outside the viewed-session branch so it also appears on the landing/folder screen.
+
+**Verify:** `npm run check --workspace=client` and `npm run build --workspace=client` pass; with an ingested status the banner displays both versions and the supplied link, and its dismiss control removes only the banner.
+**Status:** not started
+
+### Step 6: Add the persistent ambient markers
+
+Update the three architecture-selected client surfaces, all driven directly by `updateStore.showMarker`/`status` so dismissal cannot hide them:
+
+- In `client/src/routes/+layout.svelte`, import `updateStore`, place the existing session-settings trigger in a relative wrapper, and overlay a small non-interactive dot when an update exists, following the adjacent panel-button badge positioning. Keep the existing rule that this control—and therefore the dot—appears only while a session is open.
+- In `client/src/lib/components/SessionSettingsDialog.svelte`, add a conditional server-global row showing the running version, available version, and safe external link to the supplied release URL.
+- In `client/src/lib/components/StatusBar.svelte`, add the desktop twin of that version information as a compact conditional item, separated consistently from neighboring status items and linked to the supplied release URL.
+
+Do not add update content to `MobileRuntimeStatus` or any Android source.
+
+**Verify:** `npm run check --workspace=client` and `npm run build --workspace=client` pass; manually dismissing a visible banner leaves the settings dot and both detail surfaces present, while a later event for a new version raises the banner again.
+**Status:** not started
+
+### Step 7: Run full feature verification
+
+Run the repository-wide formatting, lint, type-check, build, server-test, and client-test commands after all slices are integrated. Exercise an enabled server against a controlled newer-version response to confirm startup warming and an early connection share one registry request, the WebSocket handshake is not delayed, and the banner-to-ambient flow survives reload. Exercise `updateCheck: false` and confirm there is no npm request and no `update_available` event. Also confirm equal and registry-older versions produce no client status.
+
+Because `semver` is needed by packed server output, run the package dry-run and confirm the root manifest declares it as a runtime dependency.
+
+**Verify:** `npm run format:check`, `npm run lint`, `npm run check`, `npm run build`, `npm run test --workspace=@pimote/server -- --run`, `npm run test --workspace=client -- --run`, and `npm run pack:dry-run` all pass, followed by the enabled/disabled manual checks above.
+**Status:** not started
+
+### Known test gap
+
+The immutable feature tests preserve `updateCheck: false` through config loading, but none drives that value through `main()` to prove the checker is not constructed or warmed, and none asserts the absent-checker connection path emits no event. Step 2 must still enforce the disabled path structurally; the review phase should decide whether to add explicit regression coverage rather than weakening any existing behavioral test.
