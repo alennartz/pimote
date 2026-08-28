@@ -265,3 +265,5 @@ registry request per TTL), but it is demand-triggered rather than timer-driven.
 - Dismissing the current version hides only the banner; the marker remains visible.
 - A newer latest version raises the banner again after an older version was dismissed.
 - Dismissal is read from persistence when a fresh store is constructed after reload.
+
+**Review status:** skipped — test-review bypassed by skip decision
