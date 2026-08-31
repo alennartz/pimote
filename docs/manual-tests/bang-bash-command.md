@@ -2,39 +2,50 @@
 
 ## Smoke Suite
 
-- **Connect and open a session (journey 1):** verify the real server/PWA can boot, connect, list/open a session, and reach the composer used by bang commands.
-- **Prompt → streamed assistant response (journey 2, scoped):** verify the session surface and composer remain usable while the model stream path is active; the focused run emphasizes bash submitted during streaming rather than unrelated prompt features.
+- **Connect and open a session (journey 1):** booted an isolated Pimote server, listed the configured root over WebSocket, opened a seeded pi session, and opened the same session in the PWA.
+- **Prompt → streamed assistant response (journey 2, scoped):** used a local OpenAI-compatible SSE fixture to make a real pi model stream, then submitted a bang command while `agent_start` was active. The focused run covered the shared composer/session surface rather than unrelated prompt features.
 
-The remaining persistent journeys are out of scope for this topic and are not exercised here, per the focus hints.
+The remaining persistent journeys are out of scope for this topic and were not exercised, per the focus hints.
 
 ## Topic-Specific Tests
 
 1. Leading `!` parses and dispatches a context-visible native bash command.
-2. Leading `!!` parses and dispatches a context-excluded native bash command, with distinct presentation and resync semantics.
+2. Leading `!!` parses and dispatches a context-excluded native bash command, with distinct presentation and reconnect-compatible metadata.
 3. Native bash output streams live, renders bounded output/status, and final results preserve exit/cancel/truncation metadata.
-4. Bash can execute during model streaming without becoming a steer or blocking the model stream.
+4. Bash executes during model streaming without becoming a steer or blocking the model stream.
 5. Bash cancellation is independent from model abort and leaves a cancelled result.
-6. A second bash is rejected while one is running; extension user-bash interception is honored when available.
-7. Reconnect/disconnect recovery preserves an accepted running command, avoids duplicate dispatch, and reconciles via full resync.
+6. A second bash is rejected while one is running; an installed pi extension can intercept user-bash and return a complete result.
+7. Disconnect/reconnect recovery preserves an accepted running command, avoids duplicate dispatch, and reconciles through full resync.
 
 ## Tools
 
-- Reused: `npm run build`; direct WebSocket probes via `node`/`bash`; `agent-browser` where available.
-- New: none.
-- Improved: none.
+- **Reused:** `agent-browser` skill for the PWA (open → snapshot → click/fill/evaluate/screenshot); direct WebSocket probes through `bash`/Node's native `WebSocket`; `npm run build` and focused Vitest suites.
+- **New:** none committed. The direct probes were temporary isolated `/tmp` harnesses because the repository has no bang-specific reusable driver yet.
+- **Improved:** none.
 
 ## Harness Limitations
 
-The repository has no existing bang-specific manual-test driver. The focused run uses a real built server and PWA plus direct WebSocket protocol probes, but no live LLM credentials/model stream or extension fixture is guaranteed in this environment. Therefore model-stream concurrency and extension interception are checked at the protocol/handler boundary where possible, while a true provider-generated stream and extension-owned result remain environment-bounded. Browser checks require an installed `agent-browser` binary and a sandboxed pi session; synthetic session fixtures cannot prove provider latency or multi-client races.
+The PWA and server were real built artifacts in isolated sandboxes. A real pi extension fixture was loaded for interception, and native shell execution used the installed SDK. The model-stream check used a local OpenAI-compatible SSE fixture rather than an external LLM/provider, so provider-specific latency, auth, and model quality are not covered; it still exercises pi's actual streaming/session event path. The browser run used one Chromium client; multi-client ownership races beyond the explicit socket-drop probe and real-world network failure modes remain outside this harness. No harness gap blocked the topic's primary behavior because the leading-bang path, SDK execution, UI, and recovery boundaries were all exercised directly.
 
 ## Results
 
-_To be filled after execution._
+| #   | Journey / test                                       | What was run and observed                                                                                                                                                                                                                                                                                                                 | Verdict                                                                                                                                                                                                               | Coherence                                                                                                  |
+| --- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 1   | Connect/open smoke                                   | `npm run build`; isolated server + seeded JSONL; direct `list_folders` and `open_session` succeeded. `agent-browser open http://127.0.0.1:<port>/` → `snapshot -i` showed the project/session card; clicking the session rendered the composer textbox.                                                                                   | **pass**                                                                                                                                                                                                              | **looks coherent** — project/session navigation reaches the same composer used by bang commands.           |
+| 2   | `!` visible command                                  | PWA `fill` + `click` submitted `!printf 'hello from !'`; the UI rendered `$ printf 'hello from !'`, output, and `complete`. Direct WS `printf 'visible-one\\nvisible-two\\n'` returned exit code 0 and a live `bash_execution_update`; `get_messages` retained command/output/native metadata.                                            | **pass**                                                                                                                                                                                                              | **looks coherent** — shell prompt, output, and completion status are visually separate from chat.          |
+| 3   | `!!` excluded command                                | PWA submitted `!!printf 'excluded output'`; DOM reported `bash-execution-excluded` while normal `!` entries reported `bash-execution-normal`. Direct WS result preserved `excludeFromContext: true` and the persisted mapping recorded it once.                                                                                           | **pass**                                                                                                                                                                                                              | **looks coherent** — excluded output is visibly dimmed without hiding the command or status.               |
+| 4   | Streaming output, nonzero status, and bounded output | Direct WS observed live deltas before final responses. `printf bad >&2; exit 7` returned a completed result with exit code 7. `yes 1234567890                                                                                                                                                                                             | head -n 6000`returned`truncated: true`with a bounded 21,999-character result. In the PWA, 15 output lines collapsed to a ten-line preview with`Show more`; clicking it revealed all lines and changed to `Show less`. | **pass**                                                                                                   | **looks coherent** — long output stays readable and bounded while status remains visible. |
+| 5   | Bash during model streaming                          | Local fake provider served delayed OpenAI SSE. After `set_model` selected `fake/fake-model`, `prompt` produced `agent_start`; a concurrent `!printf 'bash-during-stream'` completed with a bash update at cursor 8 before `agent_end` at cursor 13. The assistant stream then settled and the bash result persisted. No `steer` was sent. | **pass**                                                                                                                                                                                                              | **looks coherent** — bash occupies its own pending/result surface while the assistant stream continues.    |
+| 6   | Independent cancellation                             | Direct WS started `sleep 10; printf late`, issued `abort_bash`, and received `{ cancelled: true }`; `get_state` remained `isStreaming: false`. In the PWA, a running `!sleep 10` entry exposed an item-level `Cancel`; clicking it removed the button and rendered `cancelled`.                                                           | **pass**                                                                                                                                                                                                              | **looks coherent** — cancellation is local to the bash item and does not present as a model abort.         |
+| 7   | Concurrent-command guard and extension interception  | Direct WS started `sleep 3`; a second bash received stable `bash_already_running` and did not execute. A real sandbox `.pi/agent/extensions/manual-bash-interceptor.js` handled `manual-intercept`, returned `extension-intercepted\\n`, and the `!!` result was recorded exactly once with exclusion metadata.                           | **pass**                                                                                                                                                                                                              | **looks coherent** — conflict is explicit and extension-owned output uses the same native result contract. |
+| 8   | Disconnect/reconnect recovery                        | Direct WS accepted `sleep 2; printf reconnect-live`, closed the owner socket while it ran, reopened the session from a replacement socket, and found exactly one durable result after completion. A subsequent full `get_messages` resync retained visible `printf durable` once and the session remained claimable.                      | **pass**                                                                                                                                                                                                              | **looks coherent** — reconnect reconciles durable output instead of duplicating or re-dispatching it.      |
+
+The focused automated contracts were also green: server `event-buffer.test.ts`, `message-mapper.test.ts`, and `ws-handler.test.ts` passed **153/153**; client bang/reducer/presentation suites passed **105/105**. These support the manual observations but are not substitutes for the live checks above.
 
 ## Plan Updates
 
-Empty — no new primary journey or persistent tool is introduced by this run.
+Empty — no new primary journey or persistent tool was introduced by this run.
 
 ## Open Issues
 
-_To be filled after execution._
+Empty — all scoped manual checks passed. The model-stream check is intentionally provider-synthetic as documented under Harness Limitations, not a product failure.
