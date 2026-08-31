@@ -729,6 +729,8 @@ export class WsHandler {
         case 'steer':
         case 'follow_up':
         case 'abort':
+        case 'bash':
+        case 'abort_bash':
         case 'set_model':
         case 'cycle_model':
         case 'get_available_models':
@@ -906,6 +908,51 @@ export class WsHandler {
         if (abortResult === 'timeout') {
           console.error(`[WsHandler] session.abort() did not resolve within 30s (sessionId=${sessionId})`);
         }
+        this.sendResponse(id, true);
+        break;
+      }
+
+      case 'bash': {
+        // Pi's native bash executor permits only one concurrent execution. Do
+        // this guard before extension interception so a rejected second
+        // command cannot trigger side effects in an extension.
+        if (session.isBashRunning) {
+          this.sendResponse(id, false, undefined, 'bash_already_running');
+          break;
+        }
+
+        const excludeFromContext = command.excludeFromContext === true;
+        const extensionResult = await session.extensionRunner.emitUserBash({
+          type: 'user_bash',
+          command: command.command,
+          excludeFromContext,
+          cwd: session.sessionManager.getCwd(),
+        });
+
+        if (extensionResult?.result) {
+          // Extensions that fully handle the command bypass executeBash, so
+          // they must explicitly record exactly one native result.
+          session.recordBashResult(command.command, extensionResult.result, { excludeFromContext });
+          this.sendResponse(id, true, { result: extensionResult.result });
+          break;
+        }
+
+        // executeBash emits live SDK chunks and records its own result. Pass
+        // through the caller ID, exclusion flag, and any custom operations
+        // supplied by an extension without duplicating the history entry.
+        const result = await session.executeBash(command.command, undefined, {
+          id,
+          excludeFromContext,
+          operations: extensionResult?.operations,
+        });
+        this.sendResponse(id, true, { result });
+        break;
+      }
+
+      case 'abort_bash': {
+        // Bash cancellation is independent from the model abort path: the
+        // session may continue streaming while this request is issued.
+        session.abortBash();
         this.sendResponse(id, true);
         break;
       }

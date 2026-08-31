@@ -159,7 +159,7 @@ Update the `bashExecution` branch in `server/src/message-mapper.ts` to preserve 
 In `server/src/ws-handler.ts`, add `bash` and `abort_bash` to the existing session-command dispatch list and implement both cases in `handleSessionCommand()`. For `bash`, reject before extension interception when `session.isBashRunning` is true with the exact `bash_already_running` error. Otherwise, normalize `excludeFromContext` to a boolean and call `session.extensionRunner.emitUserBash({ type: 'user_bash', command, excludeFromContext, cwd: session.sessionManager.getCwd() })`. If the extension returns a complete result, record it exactly once with `session.recordBashResult()`; otherwise await `session.executeBash(command, undefined, { id, excludeFromContext, operations })`, relying on that native method to record its own result. Return both paths as `{ result }` in the successful response. For `abort_bash`, call `session.abortBash()` and respond successfully without touching `session.abort()` or model-stream state. Do not gate either path on `session.isStreaming`.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/ws-handler.test.ts` passes the native bash command group, including required session scope, streaming concurrency, extension results/operations, conflict rejection, and bash-only abort.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Implement parsing and per-session bash reduction
 
