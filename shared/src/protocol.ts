@@ -102,6 +102,20 @@ export interface PimoteAgentMessage {
   aborted?: boolean;
   /** Present on assistant messages whose turn failed before producing content. */
   errorMessage?: string;
+  /** Native bash metadata when role === 'bashExecution'. */
+  command?: string;
+  /** Native bash combined output when role === 'bashExecution'. */
+  output?: string;
+  /** Native bash exit status; omitted when the process was cancelled. */
+  exitCode?: number;
+  /** Native bash cancellation marker. */
+  cancelled?: boolean;
+  /** Native bash output truncation marker. */
+  truncated?: boolean;
+  /** Path to the complete output when Pi truncated the visible result. */
+  fullOutputPath?: string;
+  /** Whether this bash result is excluded from LLM context (`!!`). */
+  excludeFromContext?: boolean;
   [key: string]: unknown;
 }
 
@@ -185,6 +199,34 @@ export interface FollowUpCommand extends CommandBase {
 
 export interface AbortCommand extends CommandBase {
   type: 'abort';
+}
+
+/** Execute shell text through the live Pi session. A leading `!!` sets
+ * `excludeFromContext` so Pi records the visible result without adding it to
+ * the next model context. */
+export interface BashCommand extends CommandBase {
+  type: 'bash';
+  command: string;
+  excludeFromContext?: boolean;
+}
+
+/** Cancel the currently running native bash execution for a session. */
+export interface AbortBashCommand extends CommandBase {
+  type: 'abort_bash';
+}
+
+/** Final result returned by a native bash execution. */
+export interface BashResult {
+  output: string;
+  exitCode?: number;
+  cancelled: boolean;
+  truncated: boolean;
+  fullOutputPath?: string;
+}
+
+/** Data carried by a successful `bash` command response. */
+export interface BashResponseData {
+  result: BashResult;
 }
 
 /**
@@ -546,6 +588,8 @@ export type PimoteCommand =
   | SteerCommand
   | FollowUpCommand
   | AbortCommand
+  | BashCommand
+  | AbortBashCommand
   | ClientLogCommand
   | SetModelCommand
   | CycleModelCommand
@@ -705,6 +749,14 @@ export interface ToolExecutionEndEvent extends SessionEventBase {
   isError?: boolean;
 }
 
+/** Live output chunk emitted while a native user bash command is running. */
+export interface BashExecutionUpdateEvent extends SessionEventBase {
+  type: 'bash_execution_update';
+  /** The originating bash command ID when the SDK supplied one. */
+  id?: string;
+  delta: string;
+}
+
 // -- Auto-compaction events --
 
 export interface AutoCompactionStartEvent extends SessionEventBase {
@@ -768,6 +820,7 @@ export type PimoteSessionEvent =
   | ToolExecutionStartEvent
   | ToolExecutionUpdateEvent
   | ToolExecutionEndEvent
+  | BashExecutionUpdateEvent
   | AutoCompactionStartEvent
   | AutoCompactionEndEvent
   | AutoRetryStartEvent

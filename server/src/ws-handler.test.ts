@@ -3487,4 +3487,86 @@ describe('WsHandler', () => {
       expect(resp!.error).toBe('Root is not a configured project root');
     });
   });
+
+  describe('native bash commands', () => {
+    it('executes a visible bash command through the session and returns its native result', async () => {
+      const slot = createMockSlot({ id: 'session-bash', connectedClientId: 'client-1' });
+      const executeBash = vi.fn(async () => ({ output: 'hello\\n', exitCode: 0, cancelled: false, truncated: false }));
+      (slot.session as any).executeBash = executeBash;
+      (slot.session as any).isBashRunning = false;
+      const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'bash',
+          id: 'bash-request-1',
+          sessionId: slot.sessionState.id,
+          command: "printf 'hello\\n'",
+          excludeFromContext: false,
+        }),
+      );
+
+      expect(executeBash).toHaveBeenCalledWith("printf 'hello\\n'", expect.any(Function), {
+        id: 'bash-request-1',
+        excludeFromContext: false,
+        operations: expect.anything(),
+      });
+      expect(findResponse(sent, 'bash-request-1')).toMatchObject({
+        success: true,
+        data: { result: { output: 'hello\\n', exitCode: 0, cancelled: false, truncated: false } },
+      });
+    });
+
+    it('passes !! context exclusion through to native execution and records the result', async () => {
+      const slot = createMockSlot({ id: 'session-bash-excluded', connectedClientId: 'client-1' });
+      const executeBash = vi.fn(async () => ({ output: 'secret\\n', exitCode: 0, cancelled: false, truncated: false }));
+      const recordBashResult = vi.fn();
+      (slot.session as any).executeBash = executeBash;
+      (slot.session as any).recordBashResult = recordBashResult;
+      (slot.session as any).isBashRunning = false;
+      const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'bash',
+          id: 'bash-request-2',
+          sessionId: slot.sessionState.id,
+          command: 'printf secret',
+          excludeFromContext: true,
+        }),
+      );
+
+      expect(executeBash).toHaveBeenCalledWith('printf secret', expect.any(Function), expect.objectContaining({ excludeFromContext: true }));
+      expect(recordBashResult).toHaveBeenCalledWith('printf secret', expect.objectContaining({ output: 'secret\\n' }), { excludeFromContext: true });
+      expect(findResponse(sent, 'bash-request-2')?.success).toBe(true);
+    });
+
+    it('rejects a second bash while native execution is running without invoking it', async () => {
+      const slot = createMockSlot({ id: 'session-bash-conflict', connectedClientId: 'client-1' });
+      const executeBash = vi.fn(async () => ({ output: '', exitCode: 0, cancelled: false, truncated: false }));
+      (slot.session as any).executeBash = executeBash;
+      (slot.session as any).isBashRunning = true;
+      const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+
+      await handler.handleMessage(JSON.stringify({ type: 'bash', id: 'bash-request-3', sessionId: slot.sessionState.id, command: 'echo second' }));
+
+      expect(executeBash).not.toHaveBeenCalled();
+      expect(findResponse(sent, 'bash-request-3')).toMatchObject({ success: false, error: 'bash_already_running' });
+    });
+
+    it('issues native abortBash for abort_bash without aborting the model stream', async () => {
+      const slot = createMockSlot({ id: 'session-bash-abort', connectedClientId: 'client-1' });
+      const abortBash = vi.fn();
+      const abort = vi.fn(async () => {});
+      (slot.session as any).abortBash = abortBash;
+      (slot.session as any).abort = abort;
+      const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+
+      await handler.handleMessage(JSON.stringify({ type: 'abort_bash', id: 'bash-abort-1', sessionId: slot.sessionState.id }));
+
+      expect(abortBash).toHaveBeenCalledOnce();
+      expect(abort).not.toHaveBeenCalled();
+      expect(findResponse(sent, 'bash-abort-1')).toMatchObject({ success: true });
+    });
+  });
 });

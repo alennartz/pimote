@@ -44,6 +44,7 @@ describe('SessionRegistry', () => {
       expect(session!.streamingKey).toBeNull();
       expect(session!.messageKeys).toEqual([]);
       expect(Object.keys(session!.toolExecutions).length).toBe(0);
+      expect(session!.bashExecutions).toEqual({});
       expect(session!.autoCompactionEnabled).toBe(false);
       expect(session!.messageCount).toBe(0);
       expect(session!.conflictingProcesses).toEqual([]);
@@ -1201,6 +1202,112 @@ describe('SessionRegistry', () => {
 
       expect(onDownloadUpdate).toHaveBeenCalledTimes(1);
       expect(onDownloadUpdate).toHaveBeenCalledWith(update);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Native bash executions
+  // --------------------------------------------------------------------------
+  describe('Native bash executions', () => {
+    it('starts a transient execution with running state and caller correlation ID', () => {
+      registry.addSession('s1', '/path', 'proj');
+
+      registry.startBash('s1', {
+        id: 'bash-1',
+        command: 'printf hello',
+        excludeFromContext: false,
+      });
+
+      expect(registry.sessions['s1'].bashExecutions).toEqual({
+        'bash-1': {
+          id: 'bash-1',
+          command: 'printf hello',
+          excludeFromContext: false,
+          output: '',
+          status: 'running',
+        },
+      });
+    });
+
+    it('appends identified output deltas to the matching execution', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.startBash('s1', { id: 'bash-1', command: 'printf hello', excludeFromContext: false });
+      registry.updateBash('s1', { id: 'bash-1', delta: 'hello' });
+      registry.updateBash('s1', { id: 'bash-1', delta: '\\n' });
+
+      expect(registry.sessions['s1'].bashExecutions['bash-1'].output).toBe('hello\\n');
+    });
+
+    it('applies an id-less update to the sole running bash and drops ambiguous updates', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.startBash('s1', { id: 'bash-1', command: 'one', excludeFromContext: false });
+      registry.updateBash('s1', { delta: 'one output' });
+      expect(registry.sessions['s1'].bashExecutions['bash-1'].output).toBe('one output');
+
+      registry.startBash('s1', { id: 'bash-2', command: 'two', excludeFromContext: true });
+      expect(() => registry.updateBash('s1', { delta: 'ambiguous' })).not.toThrow();
+      expect(registry.sessions['s1'].bashExecutions['bash-1'].output).toBe('one output');
+      expect(registry.sessions['s1'].bashExecutions['bash-2'].output).toBe('');
+    });
+
+    it('finalizes an execution with the native result and moves it to a bashExecution message', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.startBash('s1', { id: 'bash-1', command: 'false', excludeFromContext: false });
+      registry.updateBash('s1', { id: 'bash-1', delta: 'failed\\n' });
+      registry.completeBash('s1', 'bash-1', {
+        output: 'failed\\n',
+        exitCode: 1,
+        cancelled: false,
+        truncated: false,
+      });
+
+      expect(registry.sessions['s1'].bashExecutions['bash-1'].status).toBe('complete');
+      expect(registry.sessions['s1'].messages).toContainEqual(
+        expect.objectContaining({
+          role: 'bashExecution',
+          command: 'false',
+          output: 'failed\\n',
+          exitCode: 1,
+          cancelled: false,
+          truncated: false,
+        }),
+      );
+    });
+
+    it('clears all transient executions without changing persisted messages', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.sessions['s1'].messages = [{ role: 'user', content: [{ type: 'text', text: 'keep' }] }];
+      registry.sessions['s1'].bashExecutions = {
+        'bash-1': {
+          id: 'bash-1',
+          command: 'sleep 1',
+          excludeFromContext: false,
+          output: '',
+          status: 'running',
+        },
+      };
+
+      registry.clearBash('s1');
+
+      expect(registry.sessions['s1'].bashExecutions).toEqual({});
+      expect(registry.sessions['s1'].messages).toHaveLength(1);
+    });
+
+    it('reduces a live bash update event through the public event boundary', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.sessions['s1'].bashExecutions = {
+        'bash-1': {
+          id: 'bash-1',
+          command: 'printf hello',
+          excludeFromContext: false,
+          output: '',
+          status: 'running',
+        },
+      };
+
+      registry.handleEvent({ type: 'bash_execution_update', sessionId: 's1', cursor: 1, id: 'bash-1', delta: 'hello' });
+
+      expect(registry.sessions['s1'].bashExecutions['bash-1'].output).toBe('hello');
     });
   });
 });

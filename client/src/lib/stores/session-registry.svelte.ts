@@ -35,6 +35,8 @@ import type {
   SessionRestoreEvent,
   Card,
   RestoreMode,
+  BashResult,
+  BashExecutionUpdateEvent,
 } from '@pimote/shared';
 import { connection } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
@@ -43,6 +45,15 @@ import { downloadUi } from './download-ui.svelte.js';
 import { coordinateDownloadUpdate } from '../download-coordinator.js';
 import { handleDownloadNotificationIntent, type DownloadNotificationIntent } from '../download-notification-intent.js';
 import { getActiveSessions, setActiveSessions, getViewedSessionId, setViewedSessionId } from './persistence.js';
+
+export interface BashExecutionState {
+  id: string;
+  command: string;
+  excludeFromContext: boolean;
+  output: string;
+  status: 'running' | 'complete' | 'cancelled' | 'error';
+  result?: BashResult;
+}
 
 export interface PerSessionState {
   sessionId: string;
@@ -60,6 +71,8 @@ export interface PerSessionState {
   streamingKey: string | null;
   messageKeys: string[];
   toolExecutions: Record<string, { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown; isError?: boolean }>;
+  /** Transient native bash executions keyed by caller-owned command ID. */
+  bashExecutions: Record<string, BashExecutionState>;
   autoCompactionEnabled: boolean;
   messageCount: number;
   status: 'idle' | 'working';
@@ -128,6 +141,7 @@ export class SessionRegistry {
       streamingKey: null,
       messageKeys: [],
       toolExecutions: {},
+      bashExecutions: {},
       autoCompactionEnabled: false,
       messageCount: 0,
       status: 'idle',
@@ -399,6 +413,11 @@ export class SessionRegistry {
         if (message.role === 'toolResult') {
           this.applyToolResults(session, message);
         }
+        break;
+      }
+
+      case 'bash_execution_update': {
+        this.updateBash(sessionId, event as BashExecutionUpdateEvent);
         break;
       }
 
@@ -679,6 +698,26 @@ export class SessionRegistry {
         this.applyToolResults(session, message);
       }
     }
+  }
+
+  /** Begin tracking a caller-owned native bash execution. */
+  startBash(_sessionId: string, _execution: Pick<BashExecutionState, 'id' | 'command' | 'excludeFromContext'>): void {
+    throw new Error('not implemented');
+  }
+
+  /** Apply one live SDK bash output update to its transient execution. */
+  updateBash(_sessionId: string, _update: Pick<BashExecutionUpdateEvent, 'id' | 'delta'>): void {
+    throw new Error('not implemented');
+  }
+
+  /** Finalize one transient execution with Pi's native result metadata. */
+  completeBash(_sessionId: string, _id: string, _result: BashResult): void {
+    throw new Error('not implemented');
+  }
+
+  /** Drop transient bash state, e.g. after a full resync or session close. */
+  clearBash(_sessionId: string): void {
+    throw new Error('not implemented');
   }
 
   /** Clear conflicting processes for a session (after user dismisses or kills them) */

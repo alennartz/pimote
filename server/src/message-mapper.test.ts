@@ -32,6 +32,48 @@ describe('mapAgentMessage', () => {
       expect(result.content).toEqual([{ type: 'tool_result', toolCallId: 'tc-1', toolName: 'read', result: 'file contents', isError: undefined }]);
     });
 
+    it('preserves native bash result metadata for a context-visible execution', () => {
+      const result = m({
+        role: 'bashExecution',
+        command: 'git status --short',
+        output: ' M src/index.ts\\n',
+        exitCode: 0,
+        cancelled: false,
+        truncated: false,
+      });
+
+      expect(result).toMatchObject({
+        role: 'bashExecution',
+        command: 'git status --short',
+        output: ' M src/index.ts\\n',
+        exitCode: 0,
+        cancelled: false,
+        truncated: false,
+      });
+    });
+
+    it('preserves cancellation, truncation, full-output path, and !! exclusion metadata', () => {
+      const result = m({
+        role: 'bashExecution',
+        command: 'cat huge.log',
+        output: 'partial',
+        cancelled: true,
+        truncated: true,
+        fullOutputPath: '/tmp/pimote-bash-output.log',
+        excludeFromContext: true,
+      });
+
+      expect(result).toMatchObject({
+        role: 'bashExecution',
+        command: 'cat huge.log',
+        output: 'partial',
+        cancelled: true,
+        truncated: true,
+        fullOutputPath: '/tmp/pimote-bash-output.log',
+        excludeFromContext: true,
+      });
+    });
+
     it('preserves provider error text for failed assistant messages', () => {
       const result = m({
         role: 'assistant',

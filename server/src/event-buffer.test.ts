@@ -114,12 +114,37 @@ describe('EventBuffer', () => {
       expect(live).toHaveLength(0);
     });
 
-    it('drops direct bash execution updates until Pimote exposes that capability', () => {
+    it('maps native bash execution updates to a live wire event without buffering the delta', () => {
       const buffer = new EventBuffer(10);
       const live: PimoteSessionEvent[] = [];
       buffer.onEvent({ type: 'bash_execution_update', id: 'bash-1', delta: 'output\n' }, SESSION_ID, (e) => live.push(e));
-      expect(live).toEqual([]);
-      expect(buffer.currentCursor).toBe(1);
+
+      expect(live).toEqual([
+        expect.objectContaining({
+          type: 'bash_execution_update',
+          sessionId: SESSION_ID,
+          cursor: 1,
+          id: 'bash-1',
+          delta: 'output\n',
+        }),
+      ]);
+      expect(buffer.replay(0)).toEqual([]);
+    });
+
+    it('forwards an SDK bash update without an id for the client fallback', () => {
+      const buffer = new EventBuffer(10);
+      const live: PimoteSessionEvent[] = [];
+      buffer.onEvent({ type: 'bash_execution_update', delta: 'unidentified\n' }, SESSION_ID, (e) => live.push(e));
+
+      expect(live[0]).toEqual(
+        expect.objectContaining({
+          type: 'bash_execution_update',
+          sessionId: SESSION_ID,
+          delta: 'unidentified\n',
+        }),
+      );
+      expect((live[0] as any).id).toBeUndefined();
+      expect(buffer.replay(0)).toEqual([]);
     });
 
     it('drops every Pi 0.81 summarization retry variant', () => {

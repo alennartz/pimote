@@ -88,3 +88,50 @@ The composer recognizes a trimmed leading `!!` before `!`, strips the prefix, tr
 ### Technology Choices
 
 No new dependency or runtime technology is introduced. The design uses the already embedded Pi SDK (`AgentSession.executeBash`, `recordBashResult`, `abortBash`, and typed `bash_execution_update` events), the existing WebSocket protocol, Svelte session reduction, and the existing client styling system. A separate server `child_process` implementation and Pi RPC subprocess were rejected because they would bypass the accepted SDK-embedding boundary, extension interception, native history/context semantics, and cancellation.
+
+## Tests
+
+**Pre-test-write commit:** `683ec2607d742b3781b228157778f2d16859c066`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — bash/abort command DTOs, `BashResult` response data, bash update event, and native bash message metadata.
+- `server/src/event-buffer.ts` — accepts the SDK-owned `bash_execution_update` event without a Pimote shadow type.
+- `client/src/lib/bash-command.ts` — composer parsing seam for leading `!` and `!!` commands.
+- `client/src/lib/stores/session-registry.svelte.ts` — `BashExecutionState`, transient state field, event boundary, and reducer operation contracts.
+- `client/src/lib/components/BashExecution.svelte` — dedicated bash presentation component props contract.
+
+### Test Files
+
+- `server/src/event-buffer.test.ts` — live mapping and non-replay behavior for identified and unidentified SDK bash output updates.
+- `server/src/message-mapper.test.ts` — preservation of native bash command/result status metadata, including cancellation, truncation, full-output paths, and context exclusion.
+- `server/src/ws-handler.test.ts` — bash execution, `!!` recording, concurrent-command conflict, and bash-specific cancellation command contracts.
+- `client/src/lib/bash-command.test.ts` — leading bang parsing, whitespace boundaries, ordinary prompt pass-through, and empty-command behavior.
+- `client/src/lib/stores/session-registry.test.ts` — transient execution lifecycle, output correlation fallback, finalization, clearing, and live event reduction.
+- `client/src/lib/components/InputBar.bash.test.ts` — composer wiring and ordering before streaming steer handling.
+- `client/src/lib/components/MessageList.bash.test.ts` — transient bash display and independent cancellation wiring.
+- `client/src/lib/components/BashExecution.test.ts` — dedicated renderer command/status/preview/cancel/exclusion presentation contract.
+
+### Behaviors Covered
+
+#### Protocol and server event boundary
+
+- A native `bash_execution_update` is mapped to a session-scoped wire event with cursor, optional command ID, and output delta.
+- Bash output deltas are forwarded live but omitted from the replay ring; missing SDK IDs remain representable for the sole-running-command fallback.
+- Native bash result metadata survives message mapping, including nonzero exit status, cancellation, truncation, full-output path, and `!!` context exclusion.
+- A `bash` command returns the native `BashResult`, passes the caller correlation ID and exclusion flag through the SDK path, and records extension-handled results.
+- A second `bash` while `isBashRunning` is rejected with a stable conflict error and does not start another process.
+- `abort_bash` invokes `abortBash` without invoking the model `abort` path.
+
+#### Composer parsing and session reduction
+
+- Leading `!` starts a context-visible command; leading `!!` starts a context-excluded command.
+- Parser trimming removes only the bang and command boundary; ordinary prompts and bare bang prefixes stay on the normal path.
+- A session can track a caller-owned bash execution as running, append identified deltas, and apply an unidentified delta only when one running candidate exists.
+- Completion carries native status metadata and promotes the live execution to a `bashExecution` message; transient state can be cleared independently.
+- The composer checks bang commands before streaming steer logic and supplies request IDs; message display owns independent bash cancellation.
+
+#### Bash presentation
+
+- Bash entries render with a distinct shell prompt/mode, running/completed/cancelled/nonzero/truncated status, bounded collapsed output, and an item-level Cancel action.
+- Context-excluded `!!` entries receive a dimmed presentation while normal commands retain bash-mode emphasis.
