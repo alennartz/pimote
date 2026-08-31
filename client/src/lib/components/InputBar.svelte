@@ -8,7 +8,8 @@
   import { loginStore } from '$lib/stores/login-store.js';
   import CommandAutocomplete from './CommandAutocomplete.svelte';
   import { extractFileRefPrefix, resolveFileRefSelection } from '$lib/file-ref-prefix.js';
-  import type { CommandInfo } from '@pimote/shared';
+  import { parseBangBashCommand } from '$lib/bash-command.js';
+  import type { BashResponseData, CommandInfo } from '@pimote/shared';
   import Send from '@lucide/svelte/icons/send';
   import MessageSquare from '@lucide/svelte/icons/message-square';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
@@ -226,6 +227,56 @@
   async function sendMessage() {
     const text = inputText.trim();
     if (!canSend) return;
+
+    // Native bang commands are dispatched before slash commands, steering, or
+    // ordinary prompts. They are independent of model streaming and own their
+    // caller-generated correlation ID so live output can be reduced correctly.
+    const parsedBash = parseBangBashCommand(text);
+    if (parsedBash) {
+      const session = sessionRegistry.viewed;
+      if (!session) return;
+      const sessionId = session.sessionId;
+      const id = crypto.randomUUID();
+      sessionRegistry.startBash(sessionId, {
+        id,
+        command: parsedBash.command,
+        excludeFromContext: parsedBash.excludeFromContext,
+      });
+
+      // Clear the submitted draft immediately. Staged images intentionally stay
+      // attached to the next prompt; bang commands never consume prompt images.
+      inputText = '';
+      autocompleteVisible = false;
+      selectedCommand = null;
+      fileRefPrefix = null;
+      if (sessionRegistry.viewed?.sessionId === sessionId) {
+        sessionRegistry.viewed.draftText = '';
+      }
+      if (textareaEl) {
+        textareaEl.style.height = 'auto';
+      }
+
+      try {
+        const response = await connection.send({
+          type: 'bash',
+          id,
+          sessionId,
+          command: parsedBash.command,
+          excludeFromContext: parsedBash.excludeFromContext,
+        });
+        const data = response.data as BashResponseData | undefined;
+        if (response.success && data?.result) {
+          sessionRegistry.completeBash(sessionId, id, data.result);
+        } else {
+          sessionRegistry.failBash(sessionId, id, response.error ?? 'Bash command failed');
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        sessionRegistry.failBash(sessionId, id, message);
+        console.error('Failed to send bash command:', error);
+      }
+      return;
+    }
 
     // Intercept the bare `/login` and `/logout` commands client-side: open the
     // providers dialog instead of sending a prompt to the agent. Both open the

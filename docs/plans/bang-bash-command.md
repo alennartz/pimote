@@ -175,7 +175,7 @@ Implement the `startBash`, `updateBash`, `completeBash`, `failBash`, and `clearB
 Update `client/src/lib/components/InputBar.svelte` to import the parser and `BashResponseData`, then branch on a parsed bang command immediately after the send guard and before `/login`, `/compact`, streaming steer, or ordinary prompt handling. Capture the current session ID, create a caller-owned `crypto.randomUUID()` request ID, call `sessionRegistry.startBash()` before sending, and send `{ type: 'bash', id, sessionId, command, excludeFromContext }`. Clear the submitted text/draft/autocomplete state when dispatch begins so a long-running command does not pin the composer; do not attach or discard staged prompt images. Resolve a successful `{ result }` response through `completeBash()` using the captured session/ID, and route an unsuccessful response or rejected promise through `failBash()` with the server error or thrown `Error.message`. Leave bare bangs and every existing non-bash branch unchanged.
 
 **Verify:** `npm run test --workspace=client -- --run src/lib/components/InputBar.bash.test.ts src/lib/bash-command.test.ts` passes; in particular, a bang submitted during model streaming sends `bash`, never `steer`, and both server failures and transport rejection remain visible in session state.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Build the dedicated bash presentation module
 
