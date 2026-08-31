@@ -73,6 +73,10 @@ export interface SessionState {
   panelThrottleTimer: ReturnType<typeof setTimeout> | null;
   /** True while a tree navigation + optional summarization is in progress. */
   treeNavigationInProgress: boolean;
+  /** True from bash admission through extension interception/native execution. */
+  bashDispatchInProgress?: boolean;
+  /** Set when abort_bash arrives before native execution has been admitted. */
+  bashAbortRequested?: boolean;
 }
 
 export interface ManagedSlot {
@@ -244,6 +248,8 @@ export function createSessionState(
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
     treeNavigationInProgress: false,
+    bashDispatchInProgress: false,
+    bashAbortRequested: false,
   };
 
   // Subscribe to session events
@@ -759,9 +765,12 @@ export class PimoteSessionManager {
         const hasConnectedClient = clientId !== null && (isClientConnected?.(clientId) ?? false);
         // Only idle (non-streaming) sessions are eligible for reaping. `idleSince` is set on
         // `agent_end` and cleared on `agent_start`, so a working session can never be reaped
-        // here, regardless of how long it's been since a client was connected.
+        // here, regardless of how long it's been since a client was connected. A standalone
+        // bash command does not change the agent-level status, so guard both native execution
+        // and the short extension-admission window explicitly as well.
         const idleSince = slot.sessionState.idleSince;
-        if (!hasConnectedClient && idleSince !== null && Date.now() - idleSince > idleTimeout) {
+        const bashInProgress = slot.session.isBashRunning || slot.sessionState.bashDispatchInProgress === true;
+        if (!hasConnectedClient && !bashInProgress && idleSince !== null && Date.now() - idleSince > idleTimeout) {
           this.closeSession(sessionId).catch(() => {
             // Best-effort cleanup — swallow errors during idle reaping
           });

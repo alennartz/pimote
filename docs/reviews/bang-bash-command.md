@@ -15,7 +15,7 @@ The implementation follows the plan across the protocol, native SDK routing, cli
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `server/src/ws-handler.ts:915-947`
-- **Status:** open
+- **Status:** resolved
 
 Each WebSocket message is handled independently, but this branch checks `session.isBashRunning` only before awaiting the asynchronous `emitUserBash()` hook. Two requests can therefore pass the check while the first hook is pending (and extension-handled paths never set the native running flag), then both execute or record a command. An `abort_bash` received during that interception window can also return successfully before a process exists, leaving the later command uncancelled.
 
@@ -33,7 +33,7 @@ Each WebSocket message is handled independently, but this branch checks `session
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/stores/session-registry.svelte.ts:748-772`; `client/src/lib/components/MessageList.svelte:145-165`
-- **Status:** open
+- **Status:** resolved
 
 Pi's native `recordBashResult()` defers persistence while the agent is streaming, but `completeBash()` immediately appends a finalized bash message to the client list. `MessageList` renders finalized messages before the active streaming message, so a command submitted during a model turn jumps ahead of the assistant output. The extra local message also participates in the later positional `messageEntryIds` assignment, shifting fork targets until a full resync replaces the list.
 
@@ -42,7 +42,7 @@ Pi's native `recordBashResult()` defers persistence while the agent is streaming
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/ws-handler.ts:915-948`; `server/src/session-manager.ts:760-765`
-- **Status:** open
+- **Status:** resolved
 
 A standalone bash execution does not emit `agent_start` or otherwise clear the slot's `idleSince`. If an idle session loses its owner while a long command is running, the idle checker still sees the old idle timestamp and no connected client, and can close the session after the timeout, aborting the command and losing its live result.
 
@@ -51,7 +51,7 @@ A standalone bash execution does not emit `agent_start` or otherwise clear the s
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/stores/session-registry.svelte.ts:727-744`; `client/src/lib/components/BashExecution.svelte:93-95`
-- **Status:** open
+- **Status:** resolved
 
 The reducer concatenates every streamed delta into one string, and the renderer repeatedly splits that complete string on every update. The ten-line preview does not cap bytes, so high-volume output or one very long line can consume unbounded browser memory/CPU and bypass the collapsed preview. Native truncation only arrives in the final result, after the transient client state has already accumulated the full stream.
 

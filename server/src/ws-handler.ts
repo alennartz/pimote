@@ -913,45 +913,66 @@ export class WsHandler {
       }
 
       case 'bash': {
-        // Pi's native bash executor permits only one concurrent execution. Do
-        // this guard before extension interception so a rejected second
-        // command cannot trigger side effects in an extension.
-        if (session.isBashRunning) {
+        // Pi's native bash executor permits only one concurrent execution. The
+        // admission marker is set synchronously before the extension hook is
+        // awaited, so a second request cannot slip through while an extension
+        // is deciding whether to handle the command.
+        if (session.isBashRunning || slot.sessionState.bashDispatchInProgress === true) {
           this.sendResponse(id, false, undefined, 'bash_already_running');
           break;
         }
 
-        const excludeFromContext = command.excludeFromContext === true;
-        const extensionResult = await session.extensionRunner.emitUserBash({
-          type: 'user_bash',
-          command: command.command,
-          excludeFromContext,
-          cwd: session.sessionManager.getCwd(),
-        });
+        slot.sessionState.bashDispatchInProgress = true;
+        slot.sessionState.bashAbortRequested = false;
+        try {
+          const excludeFromContext = command.excludeFromContext === true;
+          const extensionResult = await session.extensionRunner.emitUserBash({
+            type: 'user_bash',
+            command: command.command,
+            excludeFromContext,
+            cwd: session.sessionManager.getCwd(),
+          });
 
-        if (extensionResult?.result) {
-          // Extensions that fully handle the command bypass executeBash, so
-          // they must explicitly record exactly one native result.
-          session.recordBashResult(command.command, extensionResult.result, { excludeFromContext });
-          this.sendResponse(id, true, { result: extensionResult.result });
-          break;
+          if (extensionResult?.result) {
+            // Extensions that fully handle the command bypass executeBash, so
+            // they must explicitly record exactly one native result.
+            session.recordBashResult(command.command, extensionResult.result, { excludeFromContext });
+            this.sendResponse(id, true, { result: extensionResult.result });
+            break;
+          }
+
+          // executeBash emits live SDK chunks and records its own result. Pass
+          // through the caller ID, exclusion flag, and any custom operations
+          // supplied by an extension without duplicating the history entry.
+          const execution = session.executeBash(command.command, undefined, {
+            id,
+            excludeFromContext,
+            operations: extensionResult?.operations,
+          });
+          // abort_bash can arrive during extension interception, before the
+          // native executor has installed its AbortController. Re-issue the
+          // cancellation immediately after admission so that request is not
+          // lost in that window.
+          if ((slot.sessionState.bashAbortRequested as boolean | undefined) === true) {
+            session.abortBash();
+          }
+          const result = await execution;
+          this.sendResponse(id, true, { result });
+        } finally {
+          slot.sessionState.bashDispatchInProgress = false;
+          slot.sessionState.bashAbortRequested = false;
         }
-
-        // executeBash emits live SDK chunks and records its own result. Pass
-        // through the caller ID, exclusion flag, and any custom operations
-        // supplied by an extension without duplicating the history entry.
-        const result = await session.executeBash(command.command, undefined, {
-          id,
-          excludeFromContext,
-          operations: extensionResult?.operations,
-        });
-        this.sendResponse(id, true, { result });
         break;
       }
 
       case 'abort_bash': {
         // Bash cancellation is independent from the model abort path: the
-        // session may continue streaming while this request is issued.
+        // session may continue streaming while this request is issued. Keep a
+        // marker for the admission window so the bash branch can cancel again
+        // once native execution has installed its AbortController.
+        if (slot.sessionState.bashDispatchInProgress === true) {
+          slot.sessionState.bashAbortRequested = true;
+        }
         session.abortBash();
         this.sendResponse(id, true);
         break;

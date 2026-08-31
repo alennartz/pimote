@@ -46,6 +46,64 @@ import { coordinateDownloadUpdate } from '../download-coordinator.js';
 import { handleDownloadNotificationIntent, type DownloadNotificationIntent } from '../download-notification-intent.js';
 import { getActiveSessions, setActiveSessions, getViewedSessionId, setViewedSessionId } from './persistence.js';
 
+/** Maximum UTF-8 bytes retained from live bash deltas per execution. */
+export const MAX_BASH_LIVE_OUTPUT_BYTES = 256 * 1024;
+
+const bashTextEncoder = new TextEncoder();
+
+function utf8ByteLength(value: string): number {
+  return bashTextEncoder.encode(value).byteLength;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (maxBytes <= 0 || value.length === 0) return '';
+  // Every UTF-16 code unit consumes at least one UTF-8 byte. Avoid encoding a
+  // potentially enormous delta just to discover that it exceeds the budget.
+  if (value.length <= maxBytes && utf8ByteLength(value) <= maxBytes) return value;
+
+  let low = 0;
+  let high = Math.min(value.length, maxBytes);
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (utf8ByteLength(value.slice(0, middle)) <= maxBytes) low = middle;
+    else high = middle - 1;
+  }
+  return value.slice(0, low);
+}
+
+/** Append a live delta without allowing the transient browser buffer to grow unbounded. */
+function appendBoundedBashOutput(current: string, delta: string, maxBytes: number): { output: string; bytes: number; truncated: boolean } {
+  const currentBytes = utf8ByteLength(current);
+  if (currentBytes >= maxBytes) {
+    const boundedCurrent = currentBytes > maxBytes ? truncateUtf8(current, maxBytes) : current;
+    return { output: boundedCurrent, bytes: utf8ByteLength(boundedCurrent), truncated: delta.length > 0 || boundedCurrent !== current };
+  }
+
+  const available = maxBytes - currentBytes;
+  // A delta with more code units than the remaining byte budget cannot fit;
+  // avoid allocating a full encoded copy for that common high-volume case.
+  const deltaBytes = delta.length <= available ? utf8ByteLength(delta) : available + 1;
+  if (deltaBytes <= available) {
+    return { output: current + delta, bytes: currentBytes + deltaBytes, truncated: false };
+  }
+
+  // Find the largest UTF-8-safe prefix of this delta that fits the remaining
+  // budget. Binary search avoids repeatedly copying the entire output string.
+  let low = 0;
+  let high = Math.min(delta.length, available);
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (utf8ByteLength(delta.slice(0, middle)) <= available) low = middle;
+    else high = middle - 1;
+  }
+  const prefix = delta.slice(0, low);
+  return {
+    output: current + prefix,
+    bytes: currentBytes + utf8ByteLength(prefix),
+    truncated: true,
+  };
+}
+
 export interface BashExecutionState {
   id: string;
   command: string;
@@ -53,6 +111,8 @@ export interface BashExecutionState {
   output: string;
   status: 'running' | 'complete' | 'cancelled' | 'error';
   result?: BashResult;
+  /** True when live output was capped before the native result arrived. */
+  outputTruncated?: boolean;
   /** Dispatch failure distinct from a native nonzero exit or cancellation. */
   error?: string;
 }
@@ -111,6 +171,21 @@ export class SessionRegistry {
   /** Temporary ID of an optimistic "new session" placeholder awaiting server confirmation. */
   pendingNewSession: string | null = $state(null);
   private _nextMessageKey: number = 0;
+  // Byte accounting lives outside the reactive execution object so the public
+  // state shape stays focused on rendering and existing callers remain stable.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- internal accounting, not UI state
+  private bashOutputBytes = new Map<string, number>();
+
+  private bashOutputKey(sessionId: string, executionId: string): string {
+    return `${sessionId}\u0000${executionId}`;
+  }
+
+  private clearBashOutputBytes(sessionId: string): void {
+    const prefix = `${sessionId}\u0000`;
+    for (const key of this.bashOutputBytes.keys()) {
+      if (key.startsWith(prefix)) this.bashOutputBytes.delete(key);
+    }
+  }
 
   /** Generate stable keys for a batch of messages (used on initial load and resync) */
   generateMessageKeys(count: number): string[] {
@@ -263,6 +338,10 @@ export class SessionRegistry {
         // placeholder, entry IDs, meta) happens on `agent_end` below.
         session.status = 'idle';
         session.isStreaming = false;
+        // Native recordBashResult() defers persistence while the model is
+        // streaming. Promote those completed transient entries only after the
+        // SDK's settled boundary, preserving assistant/message ordering.
+        this.flushCompletedBash(sessionId);
         if (sessionId !== this.viewedSessionId) {
           session.needsAttention = true;
         }
@@ -473,6 +552,7 @@ export class SessionRegistry {
 
       case 'full_resync': {
         const resync = event as FullResyncEvent;
+        this.clearBashOutputBytes(sessionId);
         const state: SessionState = resync.state;
         const messages: PimoteAgentMessage[] = resync.messages;
         const rebuilt = this.createSessionState(session.sessionId, session.folderPath, session.projectName);
@@ -580,12 +660,14 @@ export class SessionRegistry {
 
   /** Add a session to the registry. If it already exists (e.g. takeover placeholder), resets it. */
   addSession(sessionId: string, folderPath: string, projectName: string): void {
+    this.clearBashOutputBytes(sessionId);
     this.sessions[sessionId] = this.createSessionState(sessionId, folderPath, projectName);
     this.persistSessions();
   }
 
   /** Remove a session from the registry */
   removeSession(sessionId: string): void {
+    this.clearBashOutputBytes(sessionId);
     // A session removal has no download_update event to reconcile against;
     // explicitly drop any queued one-shot actions owned by that session.
     downloadUi.clearSession(sessionId);
@@ -611,6 +693,8 @@ export class SessionRegistry {
 
     // A reset/replacement creates a new session identity and does not migrate
     // one-shot registrations or their actionable toasts.
+    this.clearBashOutputBytes(oldSessionId);
+    this.clearBashOutputBytes(newSessionId);
     downloadUi.clearSession(oldSessionId);
 
     // Remove old entry, add new entry with clean state but same slot identity
@@ -707,6 +791,7 @@ export class SessionRegistry {
     const session = this.sessions[sessionId];
     if (!session) return;
 
+    this.bashOutputBytes.set(this.bashOutputKey(sessionId, execution.id), 0);
     session.bashExecutions = {
       ...session.bashExecutions,
       [execution.id]: {
@@ -736,21 +821,20 @@ export class SessionRegistry {
     const execution = session.bashExecutions[targetId];
     if (!execution || execution.status !== 'running') return;
 
+    const outputKey = this.bashOutputKey(sessionId, targetId);
+    const bounded = appendBoundedBashOutput(execution.output, update.delta, MAX_BASH_LIVE_OUTPUT_BYTES);
+    this.bashOutputBytes.set(outputKey, bounded.bytes);
     session.bashExecutions = {
       ...session.bashExecutions,
       [targetId]: {
         ...execution,
-        output: execution.output + update.delta,
+        output: bounded.output,
+        ...(execution.outputTruncated || bounded.truncated ? { outputTruncated: true } : {}),
       },
     };
   }
 
-  /** Promote a successful native result to the message list and remove its transient state. */
-  completeBash(sessionId: string, id: string, result: BashResult): void {
-    const session = this.sessions[sessionId];
-    const execution = session?.bashExecutions[id];
-    if (!session || !execution) return;
-
+  private appendBashMessage(session: PerSessionState, execution: BashExecutionState, result: BashResult): void {
     const message: PimoteAgentMessage = {
       role: 'bashExecution',
       content: [{ type: 'text', text: `$ ${execution.command}\n${result.output}` }],
@@ -767,9 +851,52 @@ export class SessionRegistry {
     session.messages = [...session.messages, message];
     session.messageKeys = [...session.messageKeys, key];
     session.messageCount++;
+  }
 
+  /** Promote completed entries once the SDK's model turn has settled. */
+  private flushCompletedBash(sessionId: string): void {
+    const session = this.sessions[sessionId];
+    if (!session || session.isStreaming) return;
+
+    const completed = Object.values(session.bashExecutions).filter((execution) => execution.status === 'complete' || execution.status === 'cancelled');
+    if (completed.length === 0) return;
+
+    const remaining = { ...session.bashExecutions };
+    for (const execution of completed) {
+      if (!execution.result) continue;
+      this.appendBashMessage(session, execution, execution.result);
+      delete remaining[execution.id];
+      this.bashOutputBytes.delete(this.bashOutputKey(sessionId, execution.id));
+    }
+    session.bashExecutions = remaining;
+  }
+
+  /** Promote a successful native result to the message list and remove its transient state. */
+  completeBash(sessionId: string, id: string, result: BashResult): void {
+    const session = this.sessions[sessionId];
+    const execution = session?.bashExecutions[id];
+    if (!session || !execution) return;
+
+    // If the model is still streaming, retain a completed transient entry until
+    // agent_settled. Pi queues the native history entry until that same boundary;
+    // appending it now would place it before the active assistant message and
+    // shift positional fork targets.
+    const completed: BashExecutionState = {
+      ...execution,
+      output: result.output,
+      status: result.cancelled ? 'cancelled' : 'complete',
+      result,
+      ...(execution.outputTruncated ? { outputTruncated: false } : {}),
+    };
+    if (session.isStreaming) {
+      session.bashExecutions = { ...session.bashExecutions, [id]: completed };
+      return;
+    }
+
+    this.appendBashMessage(session, completed, result);
     const { [id]: _removed, ...remaining } = session.bashExecutions;
     session.bashExecutions = remaining;
+    this.bashOutputBytes.delete(this.bashOutputKey(sessionId, id));
   }
 
   /** Retain a failed dispatch as a visible, non-context transient entry. */
@@ -792,6 +919,7 @@ export class SessionRegistry {
   clearBash(sessionId: string): void {
     const session = this.sessions[sessionId];
     if (!session) return;
+    this.clearBashOutputBytes(sessionId);
     session.bashExecutions = {};
   }
 

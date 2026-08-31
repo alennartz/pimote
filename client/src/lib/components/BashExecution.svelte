@@ -3,6 +3,53 @@
   import type { BashExecutionState } from '$lib/stores/session-registry.svelte.js';
 
   const MAX_PREVIEW_LINES = 10;
+  const MAX_PREVIEW_BYTES = 16 * 1024;
+  const previewTextEncoder = new TextEncoder();
+
+  function utf8ByteLength(value: string): number {
+    return previewTextEncoder.encode(value).byteLength;
+  }
+
+  function truncateUtf8(value: string, maxBytes: number): string {
+    if (maxBytes <= 0 || value.length === 0) return '';
+    // Every UTF-16 code unit consumes at least one UTF-8 byte. Avoid encoding a
+    // potentially enormous line just to discover that it exceeds the budget.
+    if (value.length <= maxBytes && utf8ByteLength(value) <= maxBytes) return value;
+
+    let low = 0;
+    let high = Math.min(value.length, maxBytes);
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (utf8ByteLength(value.slice(0, middle)) <= maxBytes) low = middle;
+      else high = middle - 1;
+    }
+    return value.slice(0, low);
+  }
+
+  /** Build a collapsed preview without splitting or rendering the whole output. */
+  function buildPreview(value: string): { text: string; truncated: boolean } {
+    if (!value) return { text: '', truncated: false };
+
+    let cursor = 0;
+    let lines = 0;
+    let bytes = 0;
+    while (cursor < value.length && lines < MAX_PREVIEW_LINES) {
+      const newline = value.indexOf('\n', cursor);
+      const lineEnd = newline === -1 ? value.length : newline + 1;
+      const line = value.slice(cursor, lineEnd);
+      const available = MAX_PREVIEW_BYTES - bytes;
+      const lineBytes = line.length <= available ? utf8ByteLength(line) : available + 1;
+      if (bytes + lineBytes > MAX_PREVIEW_BYTES) {
+        const prefix = truncateUtf8(line, MAX_PREVIEW_BYTES - bytes);
+        return { text: value.slice(0, cursor) + prefix, truncated: true };
+      }
+      bytes += lineBytes;
+      cursor = lineEnd;
+      lines++;
+    }
+
+    return { text: value.slice(0, cursor), truncated: cursor < value.length };
+  }
 
   /** Persisted native bash result accepted by the shared presentation boundary. */
   export type FinalBashExecutionMessage = PimoteAgentMessage & {
@@ -50,6 +97,7 @@
     transient: boolean;
     command: string;
     output: string;
+    outputTruncated?: boolean;
     excludeFromContext: boolean;
     status: BashExecutionState['status'] | 'persisted';
     result?: BashResult;
@@ -62,6 +110,7 @@
         transient: true,
         command: value.command,
         output: value.output,
+        outputTruncated: value.outputTruncated,
         excludeFromContext: value.excludeFromContext,
         status: value.status,
         result: value.result,
@@ -90,9 +139,9 @@
   let output = $derived(view.output);
   let excludeFromContext = $derived(view.excludeFromContext);
   let result = $derived(view.result);
-  let outputLines = $derived(output ? output.split('\n') : []);
-  let needsExpansion = $derived(outputLines.length > MAX_PREVIEW_LINES);
-  let visibleOutput = $derived(expanded || !needsExpansion ? output : outputLines.slice(0, MAX_PREVIEW_LINES).join('\n'));
+  let preview = $derived(buildPreview(output));
+  let needsExpansion = $derived(preview.truncated);
+  let visibleOutput = $derived(expanded || !needsExpansion ? output : preview.text);
   let canCancel = $derived(view.transient && view.status === 'running' && onCancel !== undefined);
   let statusText = $derived.by(() => {
     if (view.status === 'error') return `error: ${view.error ?? 'dispatch failed'}`;
@@ -102,7 +151,7 @@
     return 'complete';
   });
   let fullOutputPath = $derived(result?.fullOutputPath);
-  let isTruncated = $derived(result?.truncated === true);
+  let isTruncated = $derived(result?.truncated === true || view.outputTruncated === true);
 </script>
 
 <div data-testid="bash-execution" class="bash-execution {excludeFromContext ? 'bash-execution-excluded' : 'bash-execution-normal'}">
