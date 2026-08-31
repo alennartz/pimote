@@ -186,8 +186,22 @@ export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
     case 'user':
       return { role: 'user', content: mapContentBlocks(msg.content) };
 
-    case 'bashExecution':
-      return { role: 'bashExecution', content: [{ type: 'text', text: `$ ${msg.command}\n${msg.output}` }] };
+    case 'bashExecution': {
+      // Keep the display text for clients that only know the generic message
+      // shape, while carrying Pi's native result metadata for status-aware
+      // rendering after a context resync.
+      return {
+        role: 'bashExecution',
+        content: [{ type: 'text', text: `$ ${msg.command}\n${msg.output}` }],
+        command: msg.command,
+        output: msg.output,
+        cancelled: msg.cancelled,
+        truncated: msg.truncated,
+        ...(msg.exitCode !== undefined ? { exitCode: msg.exitCode } : {}),
+        ...(msg.fullOutputPath !== undefined ? { fullOutputPath: msg.fullOutputPath } : {}),
+        ...(msg.excludeFromContext !== undefined ? { excludeFromContext: msg.excludeFromContext } : {}),
+      };
+    }
 
     case 'branchSummary':
     case 'compactionSummary':

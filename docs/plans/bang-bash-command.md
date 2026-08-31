@@ -152,7 +152,7 @@ Update `server/src/event-buffer.ts` to map the SDK-owned `bash_execution_update`
 Update the `bashExecution` branch in `server/src/message-mapper.ts` to preserve `command`, `output`, `exitCode`, `cancelled`, `truncated`, optional `fullOutputPath`, and optional `excludeFromContext` on the `PimoteAgentMessage` while retaining the `$ <command>\n<output>` text block. This one mapping must serve both direct messages and `mapContextEntries()` resync output.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/event-buffer.test.ts src/message-mapper.test.ts` passes, including identified/id-less live updates, non-replay, and context-entry metadata preservation.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Route bash execution and cancellation through the live session
 

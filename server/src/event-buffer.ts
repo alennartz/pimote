@@ -44,6 +44,10 @@ export class EventBuffer {
   private head = 0; // index of oldest entry
   private tail = 0; // index of next write position
   private count = 0;
+  /** Whether any replayable event has ever been inserted. A cursor can advance
+   * solely through live-only deltas; that history is caught up rather than
+   * considered stale. */
+  private hasBufferedEvent = false;
   private _cursor = 0;
 
   constructor(private readonly capacity: number) {
@@ -80,8 +84,11 @@ export class EventBuffer {
     }
 
     if (this.count === 0) {
-      // Buffer is empty but cursor has advanced — can't replay
-      return fromCursor < this._cursor ? null : [];
+      // A history made solely of live-only events is still caught up: there is
+      // no replayable boundary the client could have missed. Once a replayable
+      // event has been inserted, count cannot return to zero, so an empty
+      // buffer here remains a genuine stale-cursor condition.
+      return this.hasBufferedEvent ? null : [];
     }
 
     const oldestEntry = this.buffer[this.head];
@@ -296,8 +303,15 @@ export class EventBuffer {
       case 'summarization_retry_scheduled':
       case 'summarization_retry_attempt_start':
       case 'summarization_retry_finished':
-      case 'bash_execution_update':
         return null;
+
+      case 'bash_execution_update':
+        return {
+          ...base,
+          type: 'bash_execution_update',
+          ...(sdkEvent.id !== undefined ? { id: sdkEvent.id } : {}),
+          delta: sdkEvent.delta,
+        };
 
       default: {
         // Exhaustiveness guard: if the SDK adds a new AgentSessionEvent member,
@@ -313,6 +327,7 @@ export class EventBuffer {
     switch (event.type) {
       case 'message_update':
       case 'tool_execution_update':
+      case 'bash_execution_update':
         // Streaming deltas are forwarded live but not stored in the replay buffer.
         // Only start/end bookends are buffered — reconnect replays the finalized state.
         break;
@@ -324,6 +339,7 @@ export class EventBuffer {
   }
 
   private pushToBuffer(event: PimoteSessionEvent): void {
+    this.hasBufferedEvent = true;
     this.buffer[this.tail] = { cursor: event.cursor, event };
     this.tail = (this.tail + 1) % this.capacity;
 
