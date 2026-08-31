@@ -196,4 +196,4 @@ In `client/src/lib/components/Message.svelte`, add a `bashExecution` role branch
 Rebuild the shared protocol output, then run formatting, linting, type checks, the complete server/client suites, and the production build. In a live browser session, start a slow `!` command while the model is streaming, confirm output arrives incrementally and item-level Cancel stops only bash, then run a nonzero command and a `!!` command and confirm their final statuses and exclusion styling. Reconnect/full-resync and confirm no transient duplicate remains; context-visible results rehydrate with their metadata, while an excluded result may disappear under the existing context-only resync policy.
 
 **Verify:** `npm run build:shared`, `npm run format:check`, `npm run lint`, `npm run check`, `npm run test --workspace=@pimote/server -- --run`, `npm run test --workspace=client -- --run`, and `npm run build` all pass, followed by the live checks above.
-**Status:** not started
+**Status:** done
