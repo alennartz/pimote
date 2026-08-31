@@ -139,7 +139,17 @@ describe('mapContextEntries', () => {
         parentId: 'compact-1',
         timestamp: '2026-01-01T00:00:03.000Z',
         type: 'message',
-        message: { role: 'bashExecution', command: 'pwd', output: '/tmp', timestamp: 0 },
+        message: {
+          role: 'bashExecution',
+          command: 'pwd',
+          output: '/tmp',
+          exitCode: 1,
+          cancelled: false,
+          truncated: true,
+          fullOutputPath: '/tmp/pimote-bash-output.log',
+          excludeFromContext: true,
+          timestamp: 0,
+        },
       },
       { id: 'model-1', parentId: 'bash-1', timestamp: '2026-01-01T00:00:04.000Z', type: 'model_change', provider: 'test', modelId: 'test-model' },
     ] as never);
@@ -148,7 +158,18 @@ describe('mapContextEntries', () => {
       { role: 'user', content: [{ type: 'text', text: 'hello' }], entryId: 'user-1' },
       { role: 'custom', customType: 'agent-complete', display: true, content: [{ type: 'text', text: 'done' }], entryId: 'custom-1' },
       { role: 'compactionSummary', content: [{ type: 'text', text: 'Earlier context' }], entryId: 'compact-1' },
-      { role: 'bashExecution', content: [{ type: 'text', text: '$ pwd\n/tmp' }], entryId: 'bash-1' },
+      {
+        role: 'bashExecution',
+        content: [{ type: 'text', text: '$ pwd\n/tmp' }],
+        command: 'pwd',
+        output: '/tmp',
+        exitCode: 1,
+        cancelled: false,
+        truncated: true,
+        fullOutputPath: '/tmp/pimote-bash-output.log',
+        excludeFromContext: true,
+        entryId: 'bash-1',
+      },
     ]);
   });
 });

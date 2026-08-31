@@ -12,13 +12,13 @@ Pimote should mirror Pi TUI’s leading `!` command: execute shell text directly
 - **Server / command routing (`server/src/ws-handler.ts`)** — route `bash` and `abort_bash` through the existing session command handler. Invoke Pi’s native user-bash interception and `AgentSession.executeBash()`/`recordBashResult()` APIs, passing the WebSocket request ID into Pi’s bash event ID. Return the final result to the initiating owner connection and reject a second command while `session.isBashRunning`.
 - **Server / SDK event boundary (`server/src/event-buffer.ts`)** — map the real SDK `bash_execution_update` event into the new wire event. Forward chunks live to the existing owning connection and keep them out of replay, matching the current treatment of streaming deltas. Do not invent an SDK shadow type.
 - **Server / message mapping (`server/src/message-mapper.ts`)** — retain the existing `bashExecution` role mapping and include native result metadata (`command`, `exitCode`, `cancelled`, `truncated`, optional `fullOutputPath`, and context-exclusion state where available) so normal `!` results rendered after context resync retain their status. Context-only resync remains unchanged for `!!`: excluded entries may be absent after reconnect.
-- **Web Client / connection and session reduction (`client/src/lib/stores/connection.svelte.ts`, `client/src/lib/stores/session-registry.svelte.ts`)** — correlate command IDs, hold transient per-session bash executions, append output deltas, finalize them from the command response, and clear/reconcile transient state during resync. Finalized live executions become ordinary `bashExecution` messages; `!!` can subsequently disappear when the server sends the existing context view.
+- **Web Client / connection and session reduction (`client/src/lib/stores/connection.svelte.ts`, `client/src/lib/stores/session-registry.svelte.ts`)** — correlate command IDs, hold transient per-session bash executions, append output deltas, promote successful responses into ordinary `bashExecution` messages, retain dispatch failures as visible non-context errors, and clear transient state during resync. Finalized live executions become ordinary messages; `!!` can subsequently disappear when the server sends the existing context view.
 - **Web Client / composer (`client/src/lib/components/InputBar.svelte`)** — parse leading `!`/`!!` before slash-command, streaming-steer, and normal-prompt handling. Start bash even while the model streams; do not send it as a steer. Supply a caller-owned request ID so update events can be correlated.
 - **Web Client / conversation rendering (`client/src/lib/components/MessageList.svelte`, new `BashExecution.svelte`, and `Message.svelte`)** — render pending and finalized bash entries with Pi-like `$ command`/output/status treatment, a distinct bash-mode color, dim styling for excluded commands, collapsed long-output preview, and an item-level Cancel action. Keep bash visually separate from assistant/tool messages.
 
 ### New Modules
 
-- **`client/src/lib/components/BashExecution.svelte`** — deep presentation component for one bash execution. It owns output preview/truncation display, running/completed/cancelled/nonzero status, normal-vs-excluded color treatment, and the cancel callback; callers provide state and do not reproduce bash rendering rules.
+- **`client/src/lib/components/BashExecution.svelte`** — deep presentation component for one bash execution. It owns output preview/truncation display, running/completed/cancelled/nonzero/dispatch-error status, normal-vs-excluded color treatment, and the cancel callback; callers provide state and do not reproduce bash rendering rules.
 
 ### Interfaces
 
@@ -46,7 +46,7 @@ interface BashResult {
 
 `bash` is session-scoped and uses its command `id` as the correlation ID. The server calls extension `emitUserBash` first, honoring an extension-provided complete result or custom operations; otherwise it calls `session.executeBash(command, undefined, { id, excludeFromContext, operations })`. The execution path must record the result in Pi session history. `abort_bash` calls `session.abortBash()` and responds after issuing the cancellation request.
 
-A second `bash` received while `session.isBashRunning` fails with a stable conflict error and does not start another process. An empty command is not a bash command; the client leaves it on the normal text path, matching Pi’s submit behavior.
+A second `bash` received while `session.isBashRunning` fails with the stable `bash_already_running` error and does not start another process. An empty command is not a bash command; the client leaves it on the normal text path, matching Pi’s submit behavior.
 
 #### SDK event boundary → Protocol
 
@@ -62,7 +62,7 @@ The event mapper consumes the real SDK event and forwards its output delta live 
 
 #### Server response → Client reducer
 
-The successful `bash` response carries `{ result: BashResult }`. The client associates it with the caller-owned command ID, stops the transient execution, and appends a `PimoteAgentMessage` with `role: 'bashExecution'` plus the command/result metadata. Output deltas may arrive before or after the response and are keyed by the same ID; a response with no prior delta still renders correctly from `result.output`. A later full resync replaces the entire message list and clears transient executions rather than appending, so live completion cannot duplicate a persisted result; context-only resync may omit `!!` by design.
+The successful `bash` response carries `{ result: BashResult }`. The client associates it with the caller-owned command ID, appends a `PimoteAgentMessage` with `role: 'bashExecution'` plus the command/result metadata, and removes the transient execution. The final response is canonical: the server emits SDK output updates before its awaited response on the same WebSocket, so a later update for that completed ID is dropped rather than resurrecting transient state or duplicating output. A response with no prior delta still renders correctly from `result.output`. An unsuccessful response or rejected dispatch retains the transient item in `error` state with its error text; it is visible but never becomes context. A later full resync replaces the entire message list and clears transient executions rather than appending, so live completion cannot duplicate a persisted result; context-only resync may omit `!!` by design.
 
 #### Client session state → renderer
 
@@ -74,12 +74,13 @@ interface BashExecutionState {
   output: string;
   status: 'running' | 'complete' | 'cancelled' | 'error';
   result?: BashResult;
+  error?: string; // present only for a failed dispatch
 }
 ```
 
-`SessionRegistry` owns `bashExecutions: Record<string, BashExecutionState>` per session and exposes reducer operations for start, update, complete, and clear. `MessageList` includes running entries in display order alongside persisted messages; completed entries are moved into the normal message list. If an update has no ID, the reducer applies it to the sole running bash; if there is no unique candidate, it drops the update. A full resync replaces the message list and clears transient executions, so an excluded `!!` result may disappear by design.
+`SessionRegistry` owns `bashExecutions: Record<string, BashExecutionState>` per session and exposes reducer operations for start, update, complete, fail, and clear. `MessageList` includes running and error entries in display order alongside persisted messages; completion promotes an entry then removes its transient record. If an update has no ID, the reducer applies it to the sole running bash; if there is no unique candidate, or its ID is already complete, it drops the update. A full resync replaces the message list and clears transient executions, so an excluded `!!` result may disappear by design.
 
-`BashExecution.svelte` accepts a `BashExecutionState`/final message, renders `$ <command>`, sanitized output, a bounded collapsed preview, exit/cancel/truncation status, and `onCancel`. Normal commands use the bash-mode color; excluded commands use a dim variant. `onCancel` sends `abort_bash` for the relevant session; it is independent of the model Abort/Escape control.
+`BashExecution.svelte` accepts a `BashExecutionState`/final message, renders `$ <command>`, sanitized output, a bounded collapsed preview, exit/cancel/truncation/dispatch-error status, and `onCancel`. Normal commands use the bash-mode color; excluded commands use a dim variant. `onCancel` sends `abort_bash` for the relevant session; it is independent of the model Abort/Escape control.
 
 #### Input parsing
 
@@ -105,12 +106,12 @@ No new dependency or runtime technology is introduced. The design uses the alrea
 
 - `server/src/event-buffer.test.ts` — live mapping and non-replay behavior for identified and unidentified SDK bash output updates.
 - `server/src/message-mapper.test.ts` — preservation of native bash command/result status metadata, including cancellation, truncation, full-output paths, and context exclusion.
-- `server/src/ws-handler.test.ts` — bash execution, `!!` recording, concurrent-command conflict, and bash-specific cancellation command contracts.
+- `server/src/ws-handler.test.ts` — native execution while model streaming, extension interception/result/operations handling, `!!` recording, concurrent-command conflict, and bash-specific cancellation contracts.
 - `client/src/lib/bash-command.test.ts` — leading bang parsing, whitespace boundaries, ordinary prompt pass-through, and empty-command behavior.
-- `client/src/lib/stores/session-registry.test.ts` — transient execution lifecycle, output correlation fallback, finalization, clearing, and live event reduction.
-- `client/src/lib/components/InputBar.bash.test.ts` — composer wiring and ordering before streaming steer handling.
-- `client/src/lib/components/MessageList.bash.test.ts` — transient bash display and independent cancellation wiring.
-- `client/src/lib/components/BashExecution.test.ts` — dedicated renderer command/status/preview/cancel/exclusion presentation contract.
+- `client/src/lib/stores/session-registry.test.ts` — transient lifecycle, output-correlation fallback, canonical completion/removal, dispatch errors, resync clearing, and live event reduction.
+- `client/src/lib/components/InputBar.bash.test.ts` — mounted composer behavior before streaming steer handling, caller-owned IDs, and unsuccessful/rejected dispatch handling.
+- `client/src/lib/components/MessageList.bash.test.ts` — mounted transient/error/final bash display and independent cancellation wiring.
+- `client/src/lib/components/BashExecution.test.ts` — mounted renderer command/status/preview/cancel/exclusion/sanitization presentation contract.
 
 ### Behaviors Covered
 
@@ -119,8 +120,8 @@ No new dependency or runtime technology is introduced. The design uses the alrea
 - A native `bash_execution_update` is mapped to a session-scoped wire event with cursor, optional command ID, and output delta.
 - Bash output deltas are forwarded live but omitted from the replay ring; missing SDK IDs remain representable for the sole-running-command fallback.
 - Native bash result metadata survives message mapping, including nonzero exit status, cancellation, truncation, full-output path, and `!!` context exclusion.
-- A `bash` command returns the native `BashResult`, passes the caller correlation ID and exclusion flag through the SDK path, and records extension-handled results.
-- A second `bash` while `isBashRunning` is rejected with a stable conflict error and does not start another process.
+- A `bash` command requires a session scope, runs while a model stream is active, invokes extension user-bash interception, passes caller correlation/exclusion/custom operations through the SDK path, returns the native `BashResult`, and records only extension-handled results.
+- A second `bash` while `isBashRunning` is rejected with `bash_already_running` and does not start another process or extension handler.
 - `abort_bash` invokes `abortBash` without invoking the model `abort` path.
 
 #### Composer parsing and session reduction
@@ -128,10 +129,14 @@ No new dependency or runtime technology is introduced. The design uses the alrea
 - Leading `!` starts a context-visible command; leading `!!` starts a context-excluded command.
 - Parser trimming removes only the bang and command boundary; ordinary prompts and bare bang prefixes stay on the normal path.
 - A session can track a caller-owned bash execution as running, append identified deltas, and apply an unidentified delta only when one running candidate exists.
-- Completion carries native status metadata and promotes the live execution to a `bashExecution` message; transient state can be cleared independently.
-- The composer checks bang commands before streaming steer logic and supplies request IDs; message display owns independent bash cancellation.
+- Completion carries native status metadata, promotes the live execution to a `bashExecution` message, removes its transient state, and drops any later duplicate update for that ID.
+- An unsuccessful response or rejected dispatch retains a visible `error`-state transient without adding context.
+- Full resync clears all transient executions while preserving only server-supplied messages.
+- The mounted composer checks bang commands before streaming steer logic, supplies request IDs, preserves `!!` exclusion, and leaves bare bangs on the ordinary prompt path; message display owns independent bash cancellation.
 
 #### Bash presentation
 
-- Bash entries render with a distinct shell prompt/mode, running/completed/cancelled/nonzero/truncated status, bounded collapsed output, and an item-level Cancel action.
-- Context-excluded `!!` entries receive a dimmed presentation while normal commands retain bash-mode emphasis.
+- Bash entries render with a distinct shell prompt/mode, running/completed/cancelled/nonzero/truncated/dispatch-error status, bounded collapsed output, sanitized text output, and an item-level Cancel action.
+- Context-excluded `!!` entries receive a visibly distinct dimmed presentation while normal commands retain bash-mode emphasis.
+
+**Review status:** approved

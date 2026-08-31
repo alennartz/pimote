@@ -53,6 +53,8 @@ export interface BashExecutionState {
   output: string;
   status: 'running' | 'complete' | 'cancelled' | 'error';
   result?: BashResult;
+  /** Dispatch failure distinct from a native nonzero exit or cancellation. */
+  error?: string;
 }
 
 export interface PerSessionState {
@@ -710,8 +712,13 @@ export class SessionRegistry {
     throw new Error('not implemented');
   }
 
-  /** Finalize one transient execution with Pi's native result metadata. */
+  /** Promote a successful native result to the message list and remove its transient state. */
   completeBash(_sessionId: string, _id: string, _result: BashResult): void {
+    throw new Error('not implemented');
+  }
+
+  /** Retain a failed dispatch as a visible, non-context transient entry. */
+  failBash(_sessionId: string, _id: string, _error: string): void {
     throw new Error('not implemented');
   }
 

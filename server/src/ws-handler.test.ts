@@ -85,7 +85,7 @@ function createMockSlot(
     bindExtensions: async () => {},
     modelRuntime: { getAvailable: async () => [] },
     clearQueue: () => ({ steering: [], followUp: [] }),
-    sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
+    sessionManager: { buildContextEntries: () => [], getBranch: () => [], getCwd: () => overrides.folderPath ?? '/home/user/project' },
   };
 
   const sessionState: SessionState = {
@@ -3489,11 +3489,24 @@ describe('WsHandler', () => {
   });
 
   describe('native bash commands', () => {
-    it('executes a visible bash command through the session and returns its native result', async () => {
+    it('rejects a bash command without its required session scope', async () => {
+      const { handler, sent } = createTestHandler('client-1');
+
+      await handler.handleMessage(JSON.stringify({ type: 'bash', id: 'bash-no-session', command: 'pwd' }));
+
+      expect(findResponse(sent, 'bash-no-session')).toMatchObject({ success: false, error: 'sessionId is required' });
+    });
+
+    it('executes a visible bash command while the model streams and returns its native result', async () => {
       const slot = createMockSlot({ id: 'session-bash', connectedClientId: 'client-1' });
       const executeBash = vi.fn(async () => ({ output: 'hello\\n', exitCode: 0, cancelled: false, truncated: false }));
+      const recordBashResult = vi.fn();
+      const emitUserBash = vi.fn(async () => undefined);
       (slot.session as any).executeBash = executeBash;
+      (slot.session as any).recordBashResult = recordBashResult;
+      (slot.session as any).extensionRunner = { emitUserBash };
       (slot.session as any).isBashRunning = false;
+      (slot.session as any).isStreaming = true;
       const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
 
       await handler.handleMessage(
@@ -3506,23 +3519,56 @@ describe('WsHandler', () => {
         }),
       );
 
-      expect(executeBash).toHaveBeenCalledWith("printf 'hello\\n'", expect.any(Function), {
+      expect(emitUserBash).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'user_bash',
+          command: "printf 'hello\\n'",
+          excludeFromContext: false,
+          cwd: slot.folderPath,
+        }),
+      );
+      expect(executeBash).toHaveBeenCalledWith("printf 'hello\\n'", undefined, {
         id: 'bash-request-1',
         excludeFromContext: false,
-        operations: expect.anything(),
+        operations: undefined,
       });
+      // executeBash records its own native result. Recording it again would
+      // duplicate the entry in Pi history.
+      expect(recordBashResult).not.toHaveBeenCalled();
       expect(findResponse(sent, 'bash-request-1')).toMatchObject({
         success: true,
         data: { result: { output: 'hello\\n', exitCode: 0, cancelled: false, truncated: false } },
       });
     });
 
-    it('passes !! context exclusion through to native execution and records the result', async () => {
+    it('passes extension-provided operations into native execution', async () => {
+      const slot = createMockSlot({ id: 'session-bash-operations', connectedClientId: 'client-1' });
+      const executeBash = vi.fn(async () => ({ output: 'remote\\n', exitCode: 0, cancelled: false, truncated: false }));
+      const operations = {};
+      (slot.session as any).executeBash = executeBash;
+      (slot.session as any).extensionRunner = { emitUserBash: vi.fn(async () => ({ operations })) };
+      (slot.session as any).isBashRunning = false;
+      const { handler } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+
+      await handler.handleMessage(JSON.stringify({ type: 'bash', id: 'bash-request-operations', sessionId: slot.sessionState.id, command: 'pwd' }));
+
+      expect(executeBash).toHaveBeenCalledWith('pwd', undefined, expect.objectContaining({ operations }));
+    });
+
+    it('records an extension-handled !! result without executing or duplicating native bash', async () => {
       const slot = createMockSlot({ id: 'session-bash-excluded', connectedClientId: 'client-1' });
-      const executeBash = vi.fn(async () => ({ output: 'secret\\n', exitCode: 0, cancelled: false, truncated: false }));
+      const executeBash = vi.fn();
       const recordBashResult = vi.fn();
+      const result = {
+        output: 'secret\\n',
+        exitCode: 17,
+        cancelled: false,
+        truncated: true,
+        fullOutputPath: '/tmp/pimote-bash-output.log',
+      };
       (slot.session as any).executeBash = executeBash;
       (slot.session as any).recordBashResult = recordBashResult;
+      (slot.session as any).extensionRunner = { emitUserBash: vi.fn(async () => ({ result })) };
       (slot.session as any).isBashRunning = false;
       const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
 
@@ -3536,20 +3582,23 @@ describe('WsHandler', () => {
         }),
       );
 
-      expect(executeBash).toHaveBeenCalledWith('printf secret', expect.any(Function), expect.objectContaining({ excludeFromContext: true }));
-      expect(recordBashResult).toHaveBeenCalledWith('printf secret', expect.objectContaining({ output: 'secret\\n' }), { excludeFromContext: true });
-      expect(findResponse(sent, 'bash-request-2')?.success).toBe(true);
+      expect(executeBash).not.toHaveBeenCalled();
+      expect(recordBashResult).toHaveBeenCalledWith('printf secret', result, { excludeFromContext: true });
+      expect(findResponse(sent, 'bash-request-2')).toMatchObject({ success: true, data: { result } });
     });
 
-    it('rejects a second bash while native execution is running without invoking it', async () => {
+    it('rejects a second bash while native execution is running without invoking an extension or process', async () => {
       const slot = createMockSlot({ id: 'session-bash-conflict', connectedClientId: 'client-1' });
       const executeBash = vi.fn(async () => ({ output: '', exitCode: 0, cancelled: false, truncated: false }));
+      const emitUserBash = vi.fn();
       (slot.session as any).executeBash = executeBash;
+      (slot.session as any).extensionRunner = { emitUserBash };
       (slot.session as any).isBashRunning = true;
       const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
 
       await handler.handleMessage(JSON.stringify({ type: 'bash', id: 'bash-request-3', sessionId: slot.sessionState.id, command: 'echo second' }));
 
+      expect(emitUserBash).not.toHaveBeenCalled();
       expect(executeBash).not.toHaveBeenCalled();
       expect(findResponse(sent, 'bash-request-3')).toMatchObject({ success: false, error: 'bash_already_running' });
     });

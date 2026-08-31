@@ -8,6 +8,8 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
   },
   resolve: {
+    // Svelte's client runtime is required for mounted component-boundary tests.
+    conditions: ['browser'],
     alias: {
       $lib: path.resolve(__dirname, 'src/lib'),
       '@pimote/shared': path.resolve(__dirname, '../shared/dist/index.js'),

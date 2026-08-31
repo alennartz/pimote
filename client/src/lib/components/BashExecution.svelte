@@ -1,8 +1,18 @@
 <script lang="ts">
+  import type { PimoteAgentMessage } from '@pimote/shared';
   import type { BashExecutionState } from '$lib/stores/session-registry.svelte.js';
 
+  /** Persisted native bash result accepted by the shared presentation boundary. */
+  export type FinalBashExecutionMessage = PimoteAgentMessage & {
+    role: 'bashExecution';
+    command: string;
+    output: string;
+    cancelled: boolean;
+    truncated: boolean;
+  };
+
   export interface BashExecutionProps {
-    execution: BashExecutionState;
+    execution: BashExecutionState | FinalBashExecutionMessage;
     onCancel?: () => void;
   }
 

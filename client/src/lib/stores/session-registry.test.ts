@@ -638,6 +638,15 @@ describe('SessionRegistry', () => {
       before.pendingSteeringMessages.push('pending');
       before.conflictingProcesses = [{ pid: 1234, command: 'pi' }];
       before.conflictingRemoteSessions = [{ sessionId: 'remote', status: 'working' }];
+      before.bashExecutions = {
+        'bash-in-flight': {
+          id: 'bash-in-flight',
+          command: 'sleep 30',
+          excludeFromContext: true,
+          output: 'starting…',
+          status: 'running',
+        },
+      };
       before.lastBotActivityTimestamp = '2026-04-04T12:00:00.000Z';
       registry.handleEvent(makeSessionEvent('agent_start', 's1'));
       expect(registry.sessions['s1'].isStreaming).toBe(true);
@@ -673,6 +682,7 @@ describe('SessionRegistry', () => {
       expect(session.pendingSteeringMessages).toEqual([]);
       expect(session.conflictingProcesses).toEqual([]);
       expect(session.conflictingRemoteSessions).toEqual([]);
+      expect(session.bashExecutions).toEqual({});
       expect(session.lastBotActivityTimestamp).toBeNull();
     });
   });
@@ -1246,22 +1256,24 @@ describe('SessionRegistry', () => {
 
       registry.startBash('s1', { id: 'bash-2', command: 'two', excludeFromContext: true });
       expect(() => registry.updateBash('s1', { delta: 'ambiguous' })).not.toThrow();
+      expect(() => registry.updateBash('s1', { id: 'unknown', delta: 'unmatched' })).not.toThrow();
       expect(registry.sessions['s1'].bashExecutions['bash-1'].output).toBe('one output');
       expect(registry.sessions['s1'].bashExecutions['bash-2'].output).toBe('');
     });
 
     it('finalizes an execution with the native result and moves it to a bashExecution message', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.startBash('s1', { id: 'bash-1', command: 'false', excludeFromContext: false });
+      registry.startBash('s1', { id: 'bash-1', command: 'false', excludeFromContext: true });
       registry.updateBash('s1', { id: 'bash-1', delta: 'failed\\n' });
       registry.completeBash('s1', 'bash-1', {
         output: 'failed\\n',
         exitCode: 1,
         cancelled: false,
-        truncated: false,
+        truncated: true,
+        fullOutputPath: '/tmp/bash-output.log',
       });
 
-      expect(registry.sessions['s1'].bashExecutions['bash-1'].status).toBe('complete');
+      expect(registry.sessions['s1'].bashExecutions['bash-1']).toBeUndefined();
       expect(registry.sessions['s1'].messages).toContainEqual(
         expect.objectContaining({
           role: 'bashExecution',
@@ -1269,9 +1281,57 @@ describe('SessionRegistry', () => {
           output: 'failed\\n',
           exitCode: 1,
           cancelled: false,
+          truncated: true,
+          fullOutputPath: '/tmp/bash-output.log',
+          excludeFromContext: true,
+        }),
+      );
+      expect(registry.sessions['s1'].messageKeys).toHaveLength(registry.sessions['s1'].messages.length);
+
+      // The response is canonical; a duplicated update that arrives afterward
+      // must not resurrect transient state or append output twice.
+      registry.updateBash('s1', { id: 'bash-1', delta: 'late duplicate' });
+      expect(registry.sessions['s1'].bashExecutions['bash-1']).toBeUndefined();
+      expect(registry.sessions['s1'].messages[0]).toMatchObject({ output: 'failed\\n' });
+    });
+
+    it('promotes a cancelled native result without converting it into a generic error', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.startBash('s1', { id: 'bash-1', command: 'sleep 30', excludeFromContext: false });
+
+      registry.completeBash('s1', 'bash-1', {
+        output: 'stopped',
+        cancelled: true,
+        truncated: false,
+      });
+
+      expect(registry.sessions['s1'].messages).toContainEqual(
+        expect.objectContaining({
+          role: 'bashExecution',
+          command: 'sleep 30',
+          output: 'stopped',
+          cancelled: true,
           truncated: false,
         }),
       );
+      expect(registry.sessions['s1'].bashExecutions['bash-1']).toBeUndefined();
+    });
+
+    it('retains a dispatch failure as an error-state transient without adding context', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.startBash('s1', { id: 'bash-1', command: 'pwd', excludeFromContext: false });
+
+      registry.failBash('s1', 'bash-1', 'WebSocket closed');
+      registry.updateBash('s1', { id: 'bash-1', delta: 'late output' });
+
+      expect(registry.sessions['s1'].bashExecutions['bash-1']).toMatchObject({
+        id: 'bash-1',
+        command: 'pwd',
+        status: 'error',
+        error: 'WebSocket closed',
+        output: '',
+      });
+      expect(registry.sessions['s1'].messages).toEqual([]);
     });
 
     it('clears all transient executions without changing persisted messages', () => {
