@@ -923,6 +923,12 @@ export class SessionRegistry {
     session.bashExecutions = {};
   }
 
+  /** Whether a session has a bash outcome that still needs reconciliation. */
+  hasPendingBash(sessionId: string): boolean {
+    const session = this.sessions[sessionId];
+    return session ? Object.values(session.bashExecutions).some((execution) => execution.status !== 'error') : false;
+  }
+
   /** Clear conflicting processes for a session (after user dismisses or kills them) */
   clearConflict(sessionId: string): void {
     const session = this.sessions[sessionId];
@@ -964,6 +970,11 @@ async function fetchFullSessionData(sessionId: string): Promise<void> {
     }
 
     if (msgRes.success && msgRes.data) {
+      // A successful message snapshot is the durable boundary for a command
+      // whose response was lost. Replace the pending transient before applying
+      // the canonical list; context-excluded `!!` results may be absent by
+      // design.
+      sessionRegistry.clearBash(sessionId);
       const messages = (msgRes.data as { messages: PimoteAgentMessage[] }).messages;
       session.messages = messages;
       session.messageKeys = sessionRegistry.generateMessageKeys(messages.length);
@@ -1194,7 +1205,15 @@ connection.onPendingAdopt = (sessionId, folderPath, { openDownloads }) => {
 connection.onReconnected = () => {
   for (const session of sessionRegistry.activeSessions) {
     if (session.sessionId.startsWith('pending-')) continue;
-    void refreshSessionMetaAndCommands(session.sessionId);
+    // A bash response can be accepted by the server just before the socket
+    // drops. Incremental replay intentionally excludes the live delta stream,
+    // so reconcile pending executions from the durable session snapshot before
+    // allowing the user to submit another command. Never re-dispatch the text.
+    if (sessionRegistry.hasPendingBash(session.sessionId)) {
+      void fetchFullSessionData(session.sessionId);
+    } else {
+      void refreshSessionMetaAndCommands(session.sessionId);
+    }
   }
   const viewedId = sessionRegistry.viewedSessionId;
   if (viewedId && !viewedId.startsWith('pending-')) {

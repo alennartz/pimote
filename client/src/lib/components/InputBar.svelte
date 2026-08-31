@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack, tick } from 'svelte';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
-  import { connection } from '$lib/stores/connection.svelte.js';
+  import { connection, isConnectionLossError } from '$lib/stores/connection.svelte.js';
   import { commandStore } from '$lib/stores/command-store.svelte.js';
   import { editorTextRequest, setEditorText, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
   import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
@@ -271,9 +271,17 @@
           sessionRegistry.failBash(sessionId, id, response.error ?? 'Bash command failed');
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        sessionRegistry.failBash(sessionId, id, message);
-        console.error('Failed to send bash command:', error);
+        if (isConnectionLossError(error)) {
+          // The server may have accepted and started the command before the
+          // socket dropped. Keep the transient execution running and
+          // cancellable; reconnect recovery will replace it from session data
+          // rather than dispatching the command again.
+          console.warn('Bash command outcome unknown after connection loss; awaiting reconnect:', error);
+        } else {
+          const message = error instanceof Error ? error.message : String(error);
+          sessionRegistry.failBash(sessionId, id, message);
+          console.error('Failed to send bash command:', error);
+        }
       }
       return;
     }

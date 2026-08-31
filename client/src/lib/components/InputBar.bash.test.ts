@@ -110,17 +110,68 @@ describe('InputBar native bang command boundary', () => {
     view.destroy();
   });
 
-  it('keeps a rejected bash dispatch visible as an error', async () => {
+  it('keeps a socket-drop outcome pending instead of converting it into a dispatch error', async () => {
     const session = setupSession();
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(connection, 'send').mockRejectedValue(new Error('WebSocket closed'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const send = vi.spyOn(connection, 'send').mockRejectedValue(new Error('WebSocket closed'));
     const view = render();
 
     await enterAndSubmit(view.target, '!pwd');
     await Promise.resolve();
     await tick();
 
-    expect(Object.values(session.bashExecutions)).toContainEqual(expect.objectContaining({ command: 'pwd', status: 'error', error: 'WebSocket closed' }));
+    const command = send.mock.calls.find(([request]) => request.type === 'bash')?.[0] as Extract<Parameters<typeof connection.send>[0], { type: 'bash' }>;
+    expect(command).toBeDefined();
+    expect(session.bashExecutions[command.id!]).toMatchObject({ command: 'pwd', status: 'running' });
+    expect(session.bashExecutions[command.id!].error).toBeUndefined();
+
+    view.destroy();
+  });
+
+  it('recovers an accepted command from a reconnect snapshot without re-dispatching it', async () => {
+    const session = setupSession();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const send = vi
+      .spyOn(connection, 'send')
+      .mockRejectedValueOnce(new Error('WebSocket closed'))
+      .mockImplementation(async (request) => {
+        if (request.type === 'get_messages') {
+          return {
+            id: request.id ?? 'messages',
+            success: true,
+            data: {
+              messages: [
+                {
+                  role: 'bashExecution',
+                  content: [{ type: 'text', text: '$ pwd\n/workspace/project' }],
+                  command: 'pwd',
+                  output: '/workspace/project',
+                  cancelled: false,
+                  truncated: false,
+                  excludeFromContext: false,
+                },
+              ],
+            },
+          } as never;
+        }
+        return { id: request.id ?? 'request', success: true } as never;
+      });
+    const view = render();
+
+    await enterAndSubmit(view.target, '!pwd');
+    await Promise.resolve();
+    await tick();
+    const bashRequestCount = () => send.mock.calls.filter(([request]) => request.type === 'bash').length;
+    expect(bashRequestCount()).toBe(1);
+
+    connection.onReconnected?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await tick();
+
+    expect(bashRequestCount()).toBe(1);
+    expect(session.bashExecutions).toEqual({});
+    expect(session.messages).toContainEqual(expect.objectContaining({ role: 'bashExecution', command: 'pwd', output: '/workspace/project' }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'get_messages', sessionId: 's1' }));
 
     view.destroy();
   });

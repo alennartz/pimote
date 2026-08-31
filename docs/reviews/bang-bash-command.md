@@ -24,9 +24,11 @@ Each WebSocket message is handled independently, but this branch checks `session
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/components/InputBar.svelte:259-276`; `client/src/lib/stores/session-registry.svelte.ts:736-787`; `server/src/event-buffer.ts:326-333`
-- **Status:** open
+- **Status:** resolved
 
 `connection.send()` rejects all pending requests when the socket closes, even if the server has already accepted and started the bash command. The catch path marks the transient entry as a terminal error, which removes its Cancel action and causes subsequent live deltas to be ignored. The server leaves the command running after owner disconnect, while bash deltas are not replayed; an incremental reconnect can therefore show a failed or missing command and invite duplicate execution before a durable result is observed.
+
+**Resolution:** Connection-loss transport errors now leave the transient execution in its running/pending state, preserving item-level cancellation and never re-dispatching the command. After reconnect, sessions with pending bash state request a full session snapshot; a durable context-visible result replaces the transient entry, while an excluded `!!` result may disappear under the existing context-only policy. Focused composer coverage verifies socket-drop recovery and exactly one `bash` dispatch.
 
 ### 3. Completion during model streaming is inserted in the wrong order
 

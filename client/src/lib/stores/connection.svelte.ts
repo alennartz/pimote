@@ -7,6 +7,16 @@ import { updateStore } from './update.svelte.js';
 
 type EventListener = (event: PimoteEvent) => void;
 
+/** Errors that mean a request may have reached the server before the socket dropped. */
+export function isConnectionLossError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  if (message === 'websocket closed' || message === 'websocket replaced' || message === 'websocket not connected') return true;
+  // Browsers can throw their own wording when the socket closes between the
+  // readyState check and ws.send(). Treat those as the same unknown outcome.
+  return message.includes('websocket') && /closed|closing|not connected|not open|connecting|replaced/.test(message);
+}
+
 /** Notification-driven session adoption may also request its local download inbox. */
 export interface PendingSessionAdopt {
   sessionId: string;
