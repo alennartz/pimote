@@ -140,3 +140,60 @@ No new dependency or runtime technology is introduced. The design uses the alrea
 - Context-excluded `!!` entries receive a visibly distinct dimmed presentation while normal commands retain bash-mode emphasis.
 
 **Review status:** approved
+
+## Steps
+
+**Pre-implementation commit:** `55ca43f02b805e960e6ec4135e2eb6243ad1753e`
+
+### Step 1: Map native bash events and persisted results
+
+Update `server/src/event-buffer.ts` to map the SDK-owned `bash_execution_update` variant directly to the wire event, preserving its optional `id` and `delta`, and classify it with the existing live-only streaming updates so it is sent to the slot owner but never inserted into the replay ring. Keep the `AgentSessionEvent`-derived input union and exhaustive switch intact; do not add a local SDK shadow type or synthesize agent/message lifecycle events. Make an event history containing only deliberately non-replayable updates yield an empty replay rather than a stale-cursor result, without changing the existing overflow behavior for evicted buffered events.
+
+Update the `bashExecution` branch in `server/src/message-mapper.ts` to preserve `command`, `output`, `exitCode`, `cancelled`, `truncated`, optional `fullOutputPath`, and optional `excludeFromContext` on the `PimoteAgentMessage` while retaining the `$ <command>\n<output>` text block. This one mapping must serve both direct messages and `mapContextEntries()` resync output.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/event-buffer.test.ts src/message-mapper.test.ts` passes, including identified/id-less live updates, non-replay, and context-entry metadata preservation.
+**Status:** not started
+
+### Step 2: Route bash execution and cancellation through the live session
+
+In `server/src/ws-handler.ts`, add `bash` and `abort_bash` to the existing session-command dispatch list and implement both cases in `handleSessionCommand()`. For `bash`, reject before extension interception when `session.isBashRunning` is true with the exact `bash_already_running` error. Otherwise, normalize `excludeFromContext` to a boolean and call `session.extensionRunner.emitUserBash({ type: 'user_bash', command, excludeFromContext, cwd: session.sessionManager.getCwd() })`. If the extension returns a complete result, record it exactly once with `session.recordBashResult()`; otherwise await `session.executeBash(command, undefined, { id, excludeFromContext, operations })`, relying on that native method to record its own result. Return both paths as `{ result }` in the successful response. For `abort_bash`, call `session.abortBash()` and respond successfully without touching `session.abort()` or model-stream state. Do not gate either path on `session.isStreaming`.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/ws-handler.test.ts` passes the native bash command group, including required session scope, streaming concurrency, extension results/operations, conflict rejection, and bash-only abort.
+**Status:** not started
+
+### Step 3: Implement parsing and per-session bash reduction
+
+Implement `parseBangBashCommand()` in `client/src/lib/bash-command.ts` as a pure parser: trim outer whitespace, recognize `!!` before `!`, trim only the command boundary, preserve the command's internal shell text, and return `null` for ordinary text or an empty/bare prefix.
+
+Implement the `startBash`, `updateBash`, `completeBash`, `failBash`, and `clearBash` operations in `client/src/lib/stores/session-registry.svelte.ts` against the existing per-session `bashExecutions` record. Start creates a running entry with empty output. Updates append only to a matching running entry; an id-less update may target only the sole running entry, and unknown, ambiguous, completed, or errored targets are ignored. Completion treats `BashResult.output` as canonical, appends one ordinary `bashExecution` message containing the command/result/exclusion metadata and `$ <command>\n<output>` text, advances `messageKeys` and `messageCount` in lockstep, then removes the transient entry so later updates cannot resurrect it. Failure retains the existing transient entry with `status: 'error'` and its transport/server error without adding a message. Clearing replaces only the transient record; retain the current full-resync rebuild, which already starts from an empty record.
+
+**Verify:** `npm run test --workspace=client -- --run src/lib/bash-command.test.ts src/lib/stores/session-registry.test.ts` passes the parser, correlation fallback, canonical completion, cancellation-result promotion, dispatch-error, late-update, and resync cases.
+**Status:** not started
+
+### Step 4: Dispatch bang commands before every prompt path
+
+Update `client/src/lib/components/InputBar.svelte` to import the parser and `BashResponseData`, then branch on a parsed bang command immediately after the send guard and before `/login`, `/compact`, streaming steer, or ordinary prompt handling. Capture the current session ID, create a caller-owned `crypto.randomUUID()` request ID, call `sessionRegistry.startBash()` before sending, and send `{ type: 'bash', id, sessionId, command, excludeFromContext }`. Clear the submitted text/draft/autocomplete state when dispatch begins so a long-running command does not pin the composer; do not attach or discard staged prompt images. Resolve a successful `{ result }` response through `completeBash()` using the captured session/ID, and route an unsuccessful response or rejected promise through `failBash()` with the server error or thrown `Error.message`. Leave bare bangs and every existing non-bash branch unchanged.
+
+**Verify:** `npm run test --workspace=client -- --run src/lib/components/InputBar.bash.test.ts src/lib/bash-command.test.ts` passes; in particular, a bang submitted during model streaming sends `bash`, never `steer`, and both server failures and transport rejection remain visible in session state.
+**Status:** not started
+
+### Step 5: Build the dedicated bash presentation module
+
+Replace the stub in `client/src/lib/components/BashExecution.svelte` with the complete presentation behind its existing `BashExecutionProps` interface. Normalize transient and finalized inputs into derived command, output, exclusion, and result/status values; render the literal `$ command`, output in an escaped text/preformatted node (never `{@html}`), and status text for running, successful completion, nonzero exit, cancellation, truncation/full-output path, and dispatch errors. Bound long output to a ten-line preview with local `Show more`/`Show less` expansion. Expose `Cancel` only for a running transient with an `onCancel` callback. Give the root one distinct bash accent treatment and a separate dimmed class for `excludeFromContext` so callers do not duplicate these rules.
+
+**Verify:** `npm run test --workspace=client -- --run src/lib/components/BashExecution.test.ts` passes all status, expansion, cancellation, exclusion-style, and markup-escaping assertions.
+**Status:** not started
+
+### Step 6: Integrate transient and persisted bash entries into the conversation
+
+In `client/src/lib/components/Message.svelte`, add a `bashExecution` role branch that delegates finalized messages to `BashExecution.svelte` instead of falling through to generic system-message rendering. In `client/src/lib/components/MessageList.svelte`, render the viewed session's transient executions after its ordinary conversation entries in record insertion order, pass a bash-specific cancel callback that sends `{ type: 'abort_bash', sessionId }`, and never reuse the model `handleAbort()` path. Account for transient entries in the empty-state and auto-scroll dependencies so running output and retained dispatch errors remain visible and follow live output. Let `completeBash()`'s promotion/removal make the dedicated finalized branch replace the transient without duplication.
+
+**Verify:** `npm run test --workspace=client -- --run src/lib/components/MessageList.bash.test.ts src/lib/components/BashExecution.test.ts` passes for transient ordering, dispatch errors, persisted rendering, and independent cancellation.
+**Status:** not started
+
+### Step 7: Run full automated and live-path validation
+
+Rebuild the shared protocol output, then run formatting, linting, type checks, the complete server/client suites, and the production build. In a live browser session, start a slow `!` command while the model is streaming, confirm output arrives incrementally and item-level Cancel stops only bash, then run a nonzero command and a `!!` command and confirm their final statuses and exclusion styling. Reconnect/full-resync and confirm no transient duplicate remains; context-visible results rehydrate with their metadata, while an excluded result may disappear under the existing context-only resync policy.
+
+**Verify:** `npm run build:shared`, `npm run format:check`, `npm run lint`, `npm run check`, `npm run test --workspace=@pimote/server -- --run`, `npm run test --workspace=client -- --run`, and `npm run build` all pass, followed by the live checks above.
+**Status:** not started
