@@ -182,7 +182,7 @@ Update `client/src/lib/components/InputBar.svelte` to import the parser and `Bas
 Replace the stub in `client/src/lib/components/BashExecution.svelte` with the complete presentation behind its existing `BashExecutionProps` interface. Normalize transient and finalized inputs into derived command, output, exclusion, and result/status values; render the literal `$ command`, output in an escaped text/preformatted node (never `{@html}`), and status text for running, successful completion, nonzero exit, cancellation, truncation/full-output path, and dispatch errors. Bound long output to a ten-line preview with local `Show more`/`Show less` expansion. Expose `Cancel` only for a running transient with an `onCancel` callback. Give the root one distinct bash accent treatment and a separate dimmed class for `excludeFromContext` so callers do not duplicate these rules.
 
 **Verify:** `npm run test --workspace=client -- --run src/lib/components/BashExecution.test.ts` passes all status, expansion, cancellation, exclusion-style, and markup-escaping assertions.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Integrate transient and persisted bash entries into the conversation
 
