@@ -13,19 +13,20 @@ Mirror Pi TUI’s leading-exclamation command in Pimote: typing `!cmd` executes 
 - **Provide cancellation.** The client needs a bash-specific abort path backed by Pi’s `abortBash`, so an active command can be stopped without aborting the model run.
 - **Keep shell parsing server-side.** After removing the leading `!` or `!!` and trimming the command boundary as Pi does, the client sends the command text without attempting shell parsing or escaping.
 - **Use the existing session trust boundary.** Any client already authorized to control a session can execute arbitrary commands in that session’s workspace; the feature does not introduce a second permission model.
+- **Keep current context-based resync semantics.** `!!` output is visible during the live execution and recorded by Pi with `excludeFromContext`, but it does not need to survive Pimote’s existing context-only reconnect/full-resync path. Broadening scrollback persistence is out of scope.
 
 ## Direction
 
 Add a session-scoped `bash` WebSocket command carrying the command and `excludeFromContext` flag. The server invokes Pi’s native user-bash/`executeBash` flow, forwards correlated live output updates, returns the final bash result, and lets Pi persist the `bashExecution` message. Extend the client input bar to recognize leading `!`/`!!`, render a pending/finalized bash item alongside chat, and route cancellation to `abortBash`. Extend event mapping and replay handling so finalized messages survive reconnects while in-flight output remains correlated and best-effort.
 
-The feature is a direct transport of Pi’s existing interactive behavior, not a new shell abstraction.
+The feature is a direct transport of Pi’s existing interactive behavior, not a new shell abstraction. Live parity is the goal; Pimote’s existing context-only resync may omit `!!` entries after reconnect by explicit choice.
 
 ## Open questions
 
 ### Sharp questions
 
 - Which shared wire shape should represent a live bash output update and final result while remaining compatible with the installed Pi SDK’s `bash_execution_update` event?
-- Should replay include a completed bash result as a dedicated event, or rely solely on the persisted message fetched during session synchronization?
+- Should replay include a completed bash result as a dedicated event, or rely solely on the persisted message fetched during session synchronization? For `!!`, the existing context-only synchronization is allowed to omit the entry.
 - How should multiple connected clients render and correlate simultaneous bash commands, especially when one client starts or cancels a command?
 - What exact client control should invoke `abortBash` when a command is active (keyboard escape, stop button, or both) without interrupting a concurrent model stream?
 
