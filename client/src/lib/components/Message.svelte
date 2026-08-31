@@ -5,6 +5,7 @@
   import ThinkingBlock from './ThinkingBlock.svelte';
   import ToolCall from './ToolCall.svelte';
   import StreamingCollapsible from './StreamingCollapsible.svelte';
+  import BashExecution, { type FinalBashExecutionMessage } from './BashExecution.svelte';
   import TtsButton from './TtsButton.svelte';
   import CopyButton from './CopyButton.svelte';
   import User from '@lucide/svelte/icons/user';
@@ -225,6 +226,8 @@
       </div>
     </div>
   {/if}
+{:else if message.role === 'bashExecution'}
+  <BashExecution execution={message as FinalBashExecutionMessage} />
 {:else if message.role === 'custom'}
   <!-- Custom message (extension-injected, e.g. subagent results) -->
   <div class="message custom-message">

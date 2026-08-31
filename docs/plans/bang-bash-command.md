@@ -189,7 +189,7 @@ Replace the stub in `client/src/lib/components/BashExecution.svelte` with the co
 In `client/src/lib/components/Message.svelte`, add a `bashExecution` role branch that delegates finalized messages to `BashExecution.svelte` instead of falling through to generic system-message rendering. In `client/src/lib/components/MessageList.svelte`, render the viewed session's transient executions after its ordinary conversation entries in record insertion order, pass a bash-specific cancel callback that sends `{ type: 'abort_bash', sessionId }`, and never reuse the model `handleAbort()` path. Account for transient entries in the empty-state and auto-scroll dependencies so running output and retained dispatch errors remain visible and follow live output. Let `completeBash()`'s promotion/removal make the dedicated finalized branch replace the transient without duplication.
 
 **Verify:** `npm run test --workspace=client -- --run src/lib/components/MessageList.bash.test.ts src/lib/components/BashExecution.test.ts` passes for transient ordering, dispatch errors, persisted rendering, and independent cancellation.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Run full automated and live-path validation
 

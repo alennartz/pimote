@@ -2,6 +2,7 @@
   import { tick, onDestroy } from 'svelte';
   import { formatRelativeTime } from '$lib/format-relative-time.js';
   import type { PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
+  import type { BashExecutionState } from '$lib/stores/session-registry.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { setEditorText } from '$lib/stores/input-bar.svelte.js';
@@ -9,6 +10,7 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import Message from './Message.svelte';
+  import BashExecution from './BashExecution.svelte';
   import StreamingIndicator from './StreamingIndicator.svelte';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
@@ -130,16 +132,22 @@
     autoScrollEnabled = atBottom;
   }
 
-  // Unified display entries: finalized messages + streaming message
+  type DisplayEntry =
+    | { kind: 'message'; key: string; message: PimoteAgentMessage | StreamingMessage; streaming: boolean }
+    | { kind: 'bash'; key: string; execution: BashExecutionState };
+
+  // Unified display entries: finalized messages, streaming message, and the
+  // viewed session's transient native bash executions.
   let displayEntries = $derived.by(() => {
     const session = sessionRegistry.viewed;
-    if (!session) return [];
-    const entries: { key: string; message: PimoteAgentMessage | StreamingMessage; streaming: boolean }[] = [];
+    if (!session) return [] as DisplayEntry[];
+    const entries: DisplayEntry[] = [];
     for (let i = 0; i < session.messages.length; i++) {
       const msg = session.messages[i];
       // Hide custom messages with display: false
       if (msg.display === false) continue;
       entries.push({
+        kind: 'message',
         key: session.messageKeys[i] ?? `fallback-${i}`,
         message: msg as PimoteAgentMessage | StreamingMessage,
         streaming: false,
@@ -147,10 +155,14 @@
     }
     if (session.streamingMessage && session.streamingKey) {
       entries.push({
+        kind: 'message',
         key: session.streamingKey,
         message: session.streamingMessage,
         streaming: true,
       });
+    }
+    for (const execution of Object.values(session.bashExecutions)) {
+      entries.push({ kind: 'bash', key: `bash-${execution.id}`, execution });
     }
     return entries;
   });
@@ -173,6 +185,15 @@
       sm.content.length;
       sm.content[sm.content.length - 1].text;
     }
+    // Live bash output is transient state, so touch its fields explicitly to
+    // keep the scroll effect following deltas and dispatch-status changes.
+    if (session) {
+      for (const execution of Object.values(session.bashExecutions)) {
+        execution.output;
+        execution.status;
+        execution.error;
+      }
+    }
 
     if (autoScrollEnabled && scrollContainer) {
       tick().then(() => {
@@ -187,6 +208,19 @@
     if (scrollContainer) {
       autoScrollEnabled = true;
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    }
+  }
+
+  async function handleBashCancel(_executionId: string): Promise<void> {
+    const session = sessionRegistry.viewed;
+    if (!session?.sessionId) return;
+    try {
+      await connection.send({
+        type: 'abort_bash',
+        sessionId: session.sessionId,
+      });
+    } catch (error) {
+      console.error('Failed to send bash abort:', error);
     }
   }
 
@@ -218,7 +252,11 @@
       {/if}
 
       {#each displayEntries as entry (entry.key)}
-        <Message message={entry.message} streaming={entry.streaming} messageKey={entry.key} onfork={handleFork} />
+        {#if entry.kind === 'bash'}
+          <BashExecution execution={entry.execution} onCancel={readOnly ? undefined : () => handleBashCancel(entry.execution.id)} />
+        {:else}
+          <Message message={entry.message} streaming={entry.streaming} messageKey={entry.key} onfork={handleFork} />
+        {/if}
       {/each}
 
       <!-- Streaming indicator (agent is working but no content yet) -->
