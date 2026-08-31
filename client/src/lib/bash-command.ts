@@ -5,11 +5,23 @@ export interface ParsedBashCommand {
 }
 
 /**
- * Parse the composer's trimmed leading `!` / `!!` syntax.
+ * Parse the composer's leading `!` / `!!` syntax.
  *
- * The implementation is intentionally deferred to the implementation phase;
- * this module is the stable seam used by the composer and its behavioral tests.
+ * Only the outer input and the boundary between the prefix and command are
+ * trimmed. Once that boundary is removed, the shell text is returned as-is so
+ * quoting and internal whitespace retain their meaning.
  */
-export function parseBangBashCommand(_input: string): ParsedBashCommand | null {
-  throw new Error('not implemented');
+export function parseBangBashCommand(input: string): ParsedBashCommand | null {
+  const trimmed = input.trim();
+  if (trimmed.startsWith('!!')) {
+    const command = trimmed.slice(2).trim();
+    return command ? { command, excludeFromContext: true } : null;
+  }
+
+  if (trimmed.startsWith('!')) {
+    const command = trimmed.slice(1).trim();
+    return command ? { command, excludeFromContext: false } : null;
+  }
+
+  return null;
 }

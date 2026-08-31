@@ -703,28 +703,96 @@ export class SessionRegistry {
   }
 
   /** Begin tracking a caller-owned native bash execution. */
-  startBash(_sessionId: string, _execution: Pick<BashExecutionState, 'id' | 'command' | 'excludeFromContext'>): void {
-    throw new Error('not implemented');
+  startBash(sessionId: string, execution: Pick<BashExecutionState, 'id' | 'command' | 'excludeFromContext'>): void {
+    const session = this.sessions[sessionId];
+    if (!session) return;
+
+    session.bashExecutions = {
+      ...session.bashExecutions,
+      [execution.id]: {
+        id: execution.id,
+        command: execution.command,
+        excludeFromContext: execution.excludeFromContext,
+        output: '',
+        status: 'running',
+      },
+    };
   }
 
   /** Apply one live SDK bash output update to its transient execution. */
-  updateBash(_sessionId: string, _update: Pick<BashExecutionUpdateEvent, 'id' | 'delta'>): void {
-    throw new Error('not implemented');
+  updateBash(sessionId: string, update: Pick<BashExecutionUpdateEvent, 'id' | 'delta'>): void {
+    const session = this.sessions[sessionId];
+    if (!session) return;
+
+    let targetId = update.id;
+    if (!targetId) {
+      const runningIds = Object.values(session.bashExecutions)
+        .filter((execution) => execution.status === 'running')
+        .map((execution) => execution.id);
+      if (runningIds.length !== 1) return;
+      targetId = runningIds[0];
+    }
+
+    const execution = session.bashExecutions[targetId];
+    if (!execution || execution.status !== 'running') return;
+
+    session.bashExecutions = {
+      ...session.bashExecutions,
+      [targetId]: {
+        ...execution,
+        output: execution.output + update.delta,
+      },
+    };
   }
 
   /** Promote a successful native result to the message list and remove its transient state. */
-  completeBash(_sessionId: string, _id: string, _result: BashResult): void {
-    throw new Error('not implemented');
+  completeBash(sessionId: string, id: string, result: BashResult): void {
+    const session = this.sessions[sessionId];
+    const execution = session?.bashExecutions[id];
+    if (!session || !execution) return;
+
+    const message: PimoteAgentMessage = {
+      role: 'bashExecution',
+      content: [{ type: 'text', text: `$ ${execution.command}\n${result.output}` }],
+      command: execution.command,
+      output: result.output,
+      cancelled: result.cancelled,
+      truncated: result.truncated,
+      excludeFromContext: execution.excludeFromContext,
+      ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+      ...(result.fullOutputPath !== undefined ? { fullOutputPath: result.fullOutputPath } : {}),
+    };
+
+    const key = 'msg-' + this._nextMessageKey++;
+    session.messages = [...session.messages, message];
+    session.messageKeys = [...session.messageKeys, key];
+    session.messageCount++;
+
+    const { [id]: _removed, ...remaining } = session.bashExecutions;
+    session.bashExecutions = remaining;
   }
 
   /** Retain a failed dispatch as a visible, non-context transient entry. */
-  failBash(_sessionId: string, _id: string, _error: string): void {
-    throw new Error('not implemented');
+  failBash(sessionId: string, id: string, error: string): void {
+    const session = this.sessions[sessionId];
+    const execution = session?.bashExecutions[id];
+    if (!session || !execution) return;
+
+    session.bashExecutions = {
+      ...session.bashExecutions,
+      [id]: {
+        ...execution,
+        status: 'error',
+        error,
+      },
+    };
   }
 
   /** Drop transient bash state, e.g. after a full resync or session close. */
-  clearBash(_sessionId: string): void {
-    throw new Error('not implemented');
+  clearBash(sessionId: string): void {
+    const session = this.sessions[sessionId];
+    if (!session) return;
+    session.bashExecutions = {};
   }
 
   /** Clear conflicting processes for a session (after user dismisses or kills them) */

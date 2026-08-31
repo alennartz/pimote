@@ -168,7 +168,7 @@ Implement `parseBangBashCommand()` in `client/src/lib/bash-command.ts` as a pure
 Implement the `startBash`, `updateBash`, `completeBash`, `failBash`, and `clearBash` operations in `client/src/lib/stores/session-registry.svelte.ts` against the existing per-session `bashExecutions` record. Start creates a running entry with empty output. Updates append only to a matching running entry; an id-less update may target only the sole running entry, and unknown, ambiguous, completed, or errored targets are ignored. Completion treats `BashResult.output` as canonical, appends one ordinary `bashExecution` message containing the command/result/exclusion metadata and `$ <command>\n<output>` text, advances `messageKeys` and `messageCount` in lockstep, then removes the transient entry so later updates cannot resurrect it. Failure retains the existing transient entry with `status: 'error'` and its transport/server error without adding a message. Clearing replaces only the transient record; retain the current full-resync rebuild, which already starts from an empty record.
 
 **Verify:** `npm run test --workspace=client -- --run src/lib/bash-command.test.ts src/lib/stores/session-registry.test.ts` passes the parser, correlation fallback, canonical completion, cancellation-result promotion, dispatch-error, late-update, and resync cases.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Dispatch bang commands before every prompt path
 
