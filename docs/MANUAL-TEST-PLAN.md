@@ -15,7 +15,7 @@
 4. [TP-03: WebSocket Connection Lifecycle](#tp-03-websocket-connection-lifecycle)
 5. [TP-04: Folder & Session Index Browsing](#tp-04-folder--session-index-browsing)
 6. [TP-05: Session Lifecycle (Open / Close / Reap)](#tp-05-session-lifecycle-open--close--reap)
-7. [TP-06: Conversation — Prompt, Steer, Follow-Up, Abort](#tp-06-conversation--prompt-steer-follow-up-abort)
+7. [TP-06: Conversation — Prompt, Bang Bash, Steer, Follow-Up, Abort](#tp-06-conversation--prompt-bang-bash-steer-follow-up-abort)
 8. [TP-07: Real-Time Streaming & Message Rendering](#tp-07-real-time-streaming--message-rendering)
 9. [TP-08: Tool Call Visualization](#tp-08-tool-call-visualization)
 10. [TP-09: Model & Thinking Level Controls](#tp-09-model--thinking-level-controls)
@@ -468,7 +468,7 @@
 
 ---
 
-## TP-06: Conversation — Prompt, Steer, Follow-Up, Abort
+## TP-06: Conversation — Prompt, Bang Bash, Steer, Follow-Up, Abort
 
 ### TC-06.01 — Send a prompt 🔴
 
@@ -483,6 +483,16 @@
 
 - **[S]** Type text, press Shift+Enter, type more text, press Enter
 - **[E]** Shift+Enter inserts newline; Enter sends the multi-line message
+
+### TC-06.02a — Run a native bang bash command 🟠
+
+- **[P]** A session is open; the agent may be idle or streaming
+- **[S]** Type `!printf 'hello'` in the InputBar and send
+- **[E]** A dedicated bash item shows `$ printf 'hello'`, streamed output, and completion status; no `prompt` or `steer` command is sent
+- **[S]** Run `!!printf 'private'`
+- **[E]** The result is visibly marked as excluded from context while remaining in the conversation
+- **[S]** Start a long-running `!` command and click its item-level Cancel control
+- **[E]** The command ends as cancelled; the model's streaming/abort state is unaffected
 
 ### TC-06.03 — Steer while agent is working 🟠
 
@@ -528,10 +538,10 @@
 
 - **[P]** Agent has finished (status: idle), conversation has messages
 - **[S]** Type a follow-up message in InputBar and send
-- **[E]** `prompt` command sent (InputBar uses `prompt` for all non-streaming sends)
+- **[E]** `prompt` command sent for ordinary follow-up text (a leading `!`/`!!` is handled as a native bash command instead)
 - **[E]** Agent resumes working on the follow-up
 
-> **Note:** The `follow_up` command exists in the protocol but is not used by the current InputBar UI. The UI always sends `prompt` when not streaming and `steer` when streaming.
+> **Note:** The `follow_up` command exists in the protocol but is not used by the current InputBar UI. Ordinary text sends `prompt` when idle and `steer` when streaming; leading `!`/`!!` always sends the separate `bash` command, including while the agent is streaming.
 
 ### TC-06.05 — Abort while streaming 🔴
 
@@ -550,7 +560,7 @@ Verify InputBar shows the correct mode:
 | Idle (not streaming) | "Send a message…" | Send icon (primary color) | Hidden |
 | Working (streaming) | "Steer the conversation…" | Steer icon (streaming color) | Visible (red) |
 
-The InputBar sends `prompt` when idle and `steer` when streaming. There is no separate `follow_up` mode in the UI.
+The InputBar sends `prompt` for ordinary text when idle and `steer` for ordinary text while streaming. A leading `!` or `!!` sends `bash` in either state, and its item-level Cancel sends `abort_bash`; there is no separate `follow_up` mode in the UI.
 
 Additionally, typing `/` as the first character triggers slash command autocomplete — see [TP-09a](#tp-09a-slash-command-autocomplete) for full coverage.
 
@@ -1585,7 +1595,7 @@ The panel system allows pi extensions to push structured card data into the pimo
 
 6. **Select dialog options format mismatch**: The extension bridge sends the `options` parameter from `ui.select()` as a raw string array, but `ExtensionDialog.svelte` renders `option.label` and sends `option.value`. If the options arrive as plain strings rather than `{label, value}` objects, the dialog may render blank labels. This should be tested carefully.
 
-7. **InputBar doesn't use `follow_up` command**: The protocol defines `follow_up` as a separate command, but the InputBar UI always sends `prompt` when not streaming. The `follow_up` semantic pathway exists on the server but is unreachable from the current UI. If `follow_up` has different behavior than `prompt` in the pi SDK, that difference is not being utilized.
+7. **InputBar doesn't use `follow_up` command**: The protocol defines `follow_up` as a separate command, but the InputBar UI sends `prompt` for ordinary text when idle and `steer` when streaming. Leading `!`/`!!` text uses the separate native `bash` command in either state. The `follow_up` semantic pathway exists on the server but is unreachable from the current UI. If `follow_up` has different behavior than `prompt` in the pi SDK, that difference is not being utilized.
 
 8. **Textarea auto-resize cap**: The InputBar textarea caps at 200px height (~8 lines). Very long pasted content will require scrolling within the textarea. This is intentional but should be verified on mobile where screen real estate is limited.
 

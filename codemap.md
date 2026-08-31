@@ -2,7 +2,7 @@
 
 ## Overview
 
-Pimote is a Node.js server and SvelteKit PWA for using pi coding-agent sessions remotely. It shares a TypeScript WebSocket protocol with the PWA and an independent Kotlin Android voice client; pi extensions provide voice, static hosting, file downloads, and panel cards.
+Pimote is a Node.js server and SvelteKit PWA for using pi coding-agent sessions remotely. It shares a TypeScript WebSocket protocol with the PWA and an independent Kotlin Android voice client; pi extensions provide voice, static hosting, file downloads, panel cards, and interception for native `!` bash commands.
 
 ```mermaid
 graph LR
@@ -36,7 +36,7 @@ sequenceDiagram
 
 Defines the TypeScript WebSocket contract shared by server and web client.
 
-**Responsibilities:** commands, events, request/response envelopes, session and message data, extension UI, panels, downloads, voice, provider login, tree navigation, update-availability status/events
+**Responsibilities:** commands (including session-scoped native bash and abort), events (including live bash output), request/response envelopes, session and message data, native bash result metadata, extension UI, panels, downloads, voice, provider login, tree navigation, update-availability status/events
 
 **Dependencies:** none; Android maintains a hand-written mirror of the subset it consumes
 
@@ -48,7 +48,7 @@ Defines the TypeScript WebSocket contract shared by server and web client.
 
 Hosts pi `AgentSession` instances and exposes the HTTP and WebSocket API.
 
-**Responsibilities:** CLI and configuration, static/PWA and WebSocket serving, session slots and replay buffers, command routing, project discovery, ownership/conflict handling, extension UI bridge, auth, push notifications, persistent session metadata, version lookup and TTL-cached npm update checks with per-connection update events
+**Responsibilities:** CLI and configuration, static/PWA and WebSocket serving, session slots and replay buffers, command routing (including native bash execution, extension interception, and cancellation), SDK event boundary for live bash output, project discovery, ownership/conflict handling, extension UI bridge, auth, push notifications, persistent session metadata, version lookup and TTL-cached npm update checks with per-connection update events
 
 **Dependencies:** Protocol for wire types; Agent Extensions for session tools and resources
 
@@ -74,13 +74,13 @@ In-process pi extensions for optional voice calls, static bundles, and one-shot 
 
 Installable SvelteKit PWA for browsing, controlling, and rendering remote pi sessions.
 
-**Responsibilities:** WebSocket reconnect and session state, streamed conversation/tool rendering, composer and autocomplete, extension dialogs/panels, session navigation, downloads and push, browser voice calls, version-keyed update persistence and banner/ambient update surfaces
+**Responsibilities:** WebSocket reconnect and session state, streamed conversation/tool rendering, transient bash execution reduction and correlation, composer bang-command parsing/dispatch, dedicated bash output/status/cancellation rendering, extension dialogs/panels, session navigation, downloads and push, browser voice calls, version-keyed update persistence and banner/ambient update surfaces
 
 **Dependencies:** Protocol for wire types; Server's HTTP/WebSocket API
 
 **Files:**
 
-- `client/src/**`
+- `client/src/**` (including `client/src/lib/bash-command.ts`, `client/src/lib/stores/connection.svelte.ts`, `client/src/lib/stores/session-registry.svelte.ts`, and `client/src/lib/components/BashExecution.svelte`)
 
 ### Panels
 

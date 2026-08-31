@@ -29,7 +29,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Streams conversations in real time with independent scrolling
 - Browses folders and sessions across projects
 - Creates new project folders from the session picker dialog (choose root, name, `mkdir` + `git init`)
-- Sends prompts, steers, aborts, switches models
+- Sends prompts, runs native shell commands with `!`/`!!`, steers, aborts, and switches models
 - Slash command autocomplete — typing `/` shows a fuzzy-filtered dropdown of available commands (skills, extension commands, prompt templates) with argument completion for extension commands
 - Handles extension UI dialogs (select, confirm, input)
 - Displays live panel cards pushed by extensions (subagent progress, custom dashboards) in a responsive side panel (desktop) or overlay (mobile)

@@ -99,6 +99,7 @@ Session state persists across browser restarts — reopening Pimote restores you
 Once in a session, you can:
 
 - **Send prompts** with text and pasted/attached images
+- **Run shell commands directly** with a leading `!` (for example, `!git status`); use `!!` to show the result without adding it to the agent's context. Commands stream output in their own conversation item and can be cancelled independently of an agent turn.
 - **Steer** the agent while it's working — messages queue and deliver when the agent is ready
 - **Abort** a running agent turn
 - **Switch models** and **thinking levels** on the fly
@@ -134,7 +135,7 @@ The file-download extension gives the agent `pimote_send_file({ path })` and `pi
 
 ### Reconnect
 
-Network drops are handled transparently. The server buffers recent events per session, so when you reconnect, any missed events are replayed automatically — no lost output.
+Network drops are handled transparently. The server buffers recent events per session, so when you reconnect, any missed events are replayed automatically. Accepted shell commands continue on the server and are reconciled on reconnect; a context-excluded `!!` result may be omitted by the existing context-only resync.
 
 ## Prerequisites
 
