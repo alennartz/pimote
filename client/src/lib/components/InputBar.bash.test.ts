@@ -53,7 +53,7 @@ describe('InputBar native bang command boundary', () => {
     await tick();
 
     const bangTextarea = view.target.querySelector('textarea')!;
-    expect(bangTextarea).toBe(textarea);
+    expect(bangTextarea).not.toBe(textarea);
 
     bangTextarea.value = '! ';
     bangTextarea.dispatchEvent(new Event('input', { bubbles: true }));
@@ -75,9 +75,11 @@ describe('InputBar native bang command boundary', () => {
       data: 'E',
       inputType: 'insertText',
     });
-    expect(bashTextarea.dispatchEvent(autoCapInput)).toBe(false);
+    expect(bashTextarea.dispatchEvent(autoCapInput)).toBe(true);
+    bashTextarea.value = '! E';
+    bashTextarea.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
-    expect(bashTextarea.value).toBe('! e');
+    expect(bashTextarea.value).toBe('! E');
 
     bashTextarea.value = '! echo first. ';
     bashTextarea.dispatchEvent(new Event('input', { bubbles: true }));
@@ -89,9 +91,11 @@ describe('InputBar native bang command boundary', () => {
       data: 'E',
       inputType: 'insertText',
     });
-    expect(bashTextarea.dispatchEvent(punctuationAutoCap)).toBe(false);
+    expect(bashTextarea.dispatchEvent(punctuationAutoCap)).toBe(true);
+    bashTextarea.value = '! echo first. E';
+    bashTextarea.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
-    expect(bashTextarea.value).toBe('! echo first. e');
+    expect(bashTextarea.value).toBe('! echo first. E');
 
     bashTextarea.value = '! git status';
     bashTextarea.dispatchEvent(new Event('input', { bubbles: true }));
@@ -105,7 +109,7 @@ describe('InputBar native bang command boundary', () => {
     await tick();
 
     const ordinaryTextarea = view.target.querySelector('textarea')!;
-    expect(ordinaryTextarea).toBe(bashTextarea);
+    expect(ordinaryTextarea).not.toBe(bashTextarea);
     expect(ordinaryTextarea.getAttribute('autocapitalize')).toBeNull();
     expect(ordinaryTextarea.getAttribute('autocorrect')).toBeNull();
     expect(ordinaryTextarea.getAttribute('spellcheck')).toBeNull();
