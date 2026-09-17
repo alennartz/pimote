@@ -41,29 +41,53 @@ describe('InputBar native bang command boundary', () => {
   it('shows bash mode and disables mobile autocapitalization as soon as ! is typed', async () => {
     setupSession();
     const view = render();
+    document.body.appendChild(view.target);
+    await tick();
     const textarea = view.target.querySelector('textarea')!;
+    textarea.focus();
+    expect(document.activeElement).toBe(textarea);
+    textarea.selectionStart = textarea.selectionEnd = 0;
 
-    textarea.value = '!git status';
+    textarea.value = '!';
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
 
-    expect(textarea.className).toContain('border-warning');
-    expect(textarea.className).toContain('font-mono');
-    expect(textarea.getAttribute('autocapitalize')).toBe('none');
-    expect(textarea.getAttribute('autocorrect')).toBe('off');
-    expect(textarea.getAttribute('spellcheck')).toBe('false');
-    expect(textarea.getAttribute('aria-label')).toBe('Bash command');
+    const bangTextarea = view.target.querySelector('textarea')!;
+    expect(bangTextarea).not.toBe(textarea);
 
-    textarea.value = 'ordinary prompt';
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    bangTextarea.value = '! ';
+    bangTextarea.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
 
-    expect(textarea.getAttribute('autocapitalize')).toBeNull();
-    expect(textarea.getAttribute('autocorrect')).toBeNull();
-    expect(textarea.getAttribute('spellcheck')).toBeNull();
-    expect(textarea.getAttribute('aria-label')).toBe('Message');
+    const bashTextarea = view.target.querySelector('textarea')!;
+    expect(bashTextarea).toBe(bangTextarea);
+    expect(bashTextarea.className).toContain('border-warning');
+    expect(bashTextarea.className).toContain('font-mono');
+    expect(bashTextarea.getAttribute('autocapitalize')).toBe('none');
+    expect(bashTextarea.getAttribute('autocorrect')).toBe('off');
+    expect(bashTextarea.getAttribute('spellcheck')).toBe('false');
+    expect(bashTextarea.getAttribute('aria-label')).toBe('Bash command');
+
+    bashTextarea.value = '! git status';
+    bashTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+
+    expect(document.activeElement).toBe(bashTextarea);
+    expect(bashTextarea.selectionStart).toBe('! git status'.length);
+
+    bashTextarea.value = 'ordinary prompt';
+    bashTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+
+    const ordinaryTextarea = view.target.querySelector('textarea')!;
+    expect(ordinaryTextarea).not.toBe(bashTextarea);
+    expect(ordinaryTextarea.getAttribute('autocapitalize')).toBeNull();
+    expect(ordinaryTextarea.getAttribute('autocorrect')).toBeNull();
+    expect(ordinaryTextarea.getAttribute('spellcheck')).toBeNull();
+    expect(ordinaryTextarea.getAttribute('aria-label')).toBe('Message');
 
     view.destroy();
+    view.target.remove();
   });
 
   it('starts a caller-correlated bash command while the model streams instead of steering it', async () => {

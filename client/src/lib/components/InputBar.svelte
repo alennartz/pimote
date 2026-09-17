@@ -244,7 +244,28 @@
     }
   }
 
+  function captureTextareaFocus() {
+    if (!textareaEl || document.activeElement !== textareaEl) return null;
+    return {
+      element: textareaEl,
+      cursorPosition: textareaEl.selectionStart,
+    };
+  }
+
+  function restoreTextareaFocus(snapshot: ReturnType<typeof captureTextareaFocus>) {
+    if (!snapshot) return;
+    void tick().then(() => {
+      if (!textareaEl || textareaEl === snapshot.element) return;
+      textareaEl.focus();
+      const position = Math.min(snapshot.cursorPosition, textareaEl.value.length);
+      textareaEl.selectionStart = textareaEl.selectionEnd = position;
+      autoResize();
+    });
+  }
+
   function handleInput(e?: Event) {
+    const focusSnapshot = captureTextareaFocus();
+
     // When / is typed as the first char with existing text after it, insert a space separator
     if (e && textareaEl) {
       const ie = e as InputEvent;
@@ -263,11 +284,16 @@
     syncKeyboardHints();
     updateAutocomplete();
     autoResize();
+
+    // Replacing the textarea gives the mobile keyboard a fresh element whose
+    // autocapitalize setting is present before the next key is entered.
+    restoreTextareaFocus(focusSnapshot);
   }
 
   async function sendMessage() {
     const text = inputText.trim();
     if (!canSend) return;
+    const focusSnapshot = captureTextareaFocus();
 
     // Native bang commands are dispatched before slash commands, steering, or
     // ordinary prompts. They are independent of model streaming and own their
@@ -296,6 +322,7 @@
       if (textareaEl) {
         textareaEl.style.height = 'auto';
       }
+      restoreTextareaFocus(focusSnapshot);
 
       try {
         const response = await connection.send({
@@ -341,6 +368,7 @@
       if (textareaEl) {
         textareaEl.style.height = 'auto';
       }
+      restoreTextareaFocus(focusSnapshot);
       return;
     }
 
@@ -366,6 +394,7 @@
       if (textareaEl) {
         textareaEl.style.height = 'auto';
       }
+      restoreTextareaFocus(focusSnapshot);
       return;
     }
 
@@ -422,6 +451,7 @@
     if (textareaEl) {
       textareaEl.style.height = 'auto';
     }
+    restoreTextareaFocus(focusSnapshot);
   }
 
   async function handleAbort() {
@@ -652,24 +682,32 @@
         </div>
       {/if}
 
-      <textarea
-        bind:this={textareaEl}
-        bind:value={inputText}
-        onbeforeinput={handleBeforeInput}
-        oninput={handleInput}
-        onkeydown={handleKeydown}
-        onclick={updateAutocomplete}
-        onpaste={handlePaste}
-        disabled={noSession || isPending}
-        rows={1}
-        placeholder={noSession ? 'Open a session to start…' : isPending ? 'Starting session…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
-        autocapitalize={isBangCommand ? 'none' : undefined}
-        spellcheck={isBangCommand ? false : undefined}
-        aria-label={isBangCommand ? 'Bash command' : 'Message'}
-        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm transition-colors focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
-          {isBangCommand ? 'border-warning bg-warning/10 focus:border-warning focus:ring-warning font-mono' : ''}
-          {dragOver ? 'ring-ring ring-2' : ''}"
-      ></textarea>
+      {#key isBangCommand}
+        <textarea
+          bind:this={textareaEl}
+          bind:value={inputText}
+          onbeforeinput={handleBeforeInput}
+          oninput={handleInput}
+          onkeydown={handleKeydown}
+          onclick={updateAutocomplete}
+          onpaste={handlePaste}
+          disabled={noSession || isPending}
+          rows={1}
+          placeholder={noSession
+            ? 'Open a session to start…'
+            : isPending
+              ? 'Starting session…'
+              : sessionRegistry.viewed?.isStreaming
+                ? 'Steer the conversation…'
+                : 'Send a message…'}
+          autocapitalize={isBangCommand ? 'none' : undefined}
+          spellcheck={isBangCommand ? false : undefined}
+          aria-label={isBangCommand ? 'Bash command' : 'Message'}
+          class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm transition-colors focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
+            {isBangCommand ? 'border-warning bg-warning/10 focus:border-warning focus:ring-warning font-mono' : ''}
+            {dragOver ? 'ring-ring ring-2' : ''}"
+        ></textarea>
+      {/key}
 
       <!-- Send / Steer button (inset in textarea) -->
       <button
