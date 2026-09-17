@@ -38,6 +38,34 @@ afterEach(() => {
 });
 
 describe('InputBar native bang command boundary', () => {
+  it('shows bash mode and disables mobile autocapitalization as soon as ! is typed', async () => {
+    setupSession();
+    const view = render();
+    const textarea = view.target.querySelector('textarea')!;
+
+    textarea.value = '!git status';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+
+    expect(textarea.className).toContain('border-warning');
+    expect(textarea.className).toContain('font-mono');
+    expect(textarea.getAttribute('autocapitalize')).toBe('none');
+    expect(textarea.getAttribute('autocorrect')).toBe('off');
+    expect(textarea.getAttribute('spellcheck')).toBe('false');
+    expect(textarea.getAttribute('aria-label')).toBe('Bash command');
+
+    textarea.value = 'ordinary prompt';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+
+    expect(textarea.getAttribute('autocapitalize')).toBeNull();
+    expect(textarea.getAttribute('autocorrect')).toBeNull();
+    expect(textarea.getAttribute('spellcheck')).toBeNull();
+    expect(textarea.getAttribute('aria-label')).toBe('Message');
+
+    view.destroy();
+  });
+
   it('starts a caller-correlated bash command while the model streams instead of steering it', async () => {
     const session = setupSession(true);
     const send = vi.spyOn(connection, 'send').mockImplementation(() => new Promise(() => {}));

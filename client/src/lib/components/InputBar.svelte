@@ -27,6 +27,10 @@
   const isPending = $derived(sessionRegistry.viewedSessionId?.startsWith('pending-') ?? false);
   const canSend = $derived(!noSession && !isPending && connection.ready);
   const hasContent = $derived(inputText.trim().length > 0 || stagedImages.length > 0);
+  // A leading bang switches the composer into shell-command mode. Keep this
+  // separate from parsing so the feedback appears as soon as the prefix is
+  // typed, including while the command is still incomplete.
+  const isBangCommand = $derived(inputText.trimStart().startsWith('!'));
 
   // Autocomplete state
   let autocompleteVisible = $state(false);
@@ -204,6 +208,42 @@
     }
   }
 
+  function setKeyboardHints(bangMode: boolean) {
+    if (!textareaEl) return;
+
+    if (bangMode) {
+      textareaEl.setAttribute('autocapitalize', 'none');
+      textareaEl.setAttribute('autocorrect', 'off');
+      textareaEl.spellcheck = false;
+    } else {
+      textareaEl.removeAttribute('autocapitalize');
+      textareaEl.removeAttribute('autocorrect');
+      textareaEl.spellcheck = true;
+    }
+  }
+
+  function syncKeyboardHints() {
+    // Update these synchronously from the input event. Mobile keyboards can
+    // decide how to capitalize the *next* character before Svelte's next DOM
+    // update has run.
+    setKeyboardHints(inputText.trimStart().startsWith('!'));
+  }
+
+  // Keep the non-standard autocorrect hint in sync for restored drafts too;
+  // Svelte's template type definitions intentionally don't expose that attr.
+  $effect(() => {
+    setKeyboardHints(isBangCommand);
+  });
+
+  function handleBeforeInput(e: InputEvent) {
+    // Virtual keyboards may skip keydown for punctuation. beforeinput still
+    // runs before the bang is inserted, so the next character gets the right
+    // capitalization mode.
+    if (e.inputType === 'insertText' && e.data?.startsWith('!') && textareaEl?.selectionStart === 0) {
+      setKeyboardHints(true);
+    }
+  }
+
   function handleInput(e?: Event) {
     // When / is typed as the first char with existing text after it, insert a space separator
     if (e && textareaEl) {
@@ -220,6 +260,7 @@
     if (sessionRegistry.viewed) {
       sessionRegistry.viewed.draftText = inputText;
     }
+    syncKeyboardHints();
     updateAutocomplete();
     autoResize();
   }
@@ -507,6 +548,13 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    // Set the keyboard hint before the bang is inserted. This gives mobile
+    // keyboards a chance to apply the mode to the very next character rather
+    // than treating `!` as sentence-ending punctuation first.
+    if (e.key === '!' && textareaEl?.selectionStart === 0) {
+      setKeyboardHints(true);
+    }
+
     // Intercept keys when autocomplete is visible
     if (autocompleteVisible && autocompleteRef) {
       if (e.key === 'ArrowUp') {
@@ -607,6 +655,7 @@
       <textarea
         bind:this={textareaEl}
         bind:value={inputText}
+        onbeforeinput={handleBeforeInput}
         oninput={handleInput}
         onkeydown={handleKeydown}
         onclick={updateAutocomplete}
@@ -614,7 +663,11 @@
         disabled={noSession || isPending}
         rows={1}
         placeholder={noSession ? 'Open a session to start…' : isPending ? 'Starting session…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
-        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
+        autocapitalize={isBangCommand ? 'none' : undefined}
+        spellcheck={isBangCommand ? false : undefined}
+        aria-label={isBangCommand ? 'Bash command' : 'Message'}
+        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm transition-colors focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
+          {isBangCommand ? 'border-warning bg-warning/10 focus:border-warning focus:ring-warning font-mono' : ''}
           {dragOver ? 'ring-ring ring-2' : ''}"
       ></textarea>
 
