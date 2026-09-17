@@ -235,37 +235,59 @@
     setKeyboardHints(isBangCommand);
   });
 
-  function handleBeforeInput(e: InputEvent) {
-    // Virtual keyboards may skip keydown for punctuation. beforeinput still
-    // runs before the bang is inserted, so the next character gets the right
-    // capitalization mode.
-    if (e.inputType === 'insertText' && e.data?.startsWith('!') && textareaEl?.selectionStart === 0) {
-      setKeyboardHints(true);
-    }
+  function isBangCommandPrefix(text: string) {
+    return /^\s*!!?\s*$/.test(text);
   }
 
-  function captureTextareaFocus() {
-    if (!textareaEl || document.activeElement !== textareaEl) return null;
-    return {
-      element: textareaEl,
-      cursorPosition: textareaEl.selectionStart,
-    };
+  function isUppercaseLetter(text: string | null) {
+    return text !== null && /^[A-Z]$/.test(text);
   }
 
-  function restoreTextareaFocus(snapshot: ReturnType<typeof captureTextareaFocus>) {
-    if (!snapshot) return;
-    void tick().then(() => {
-      if (!textareaEl || textareaEl === snapshot.element) return;
-      textareaEl.focus();
-      const position = Math.min(snapshot.cursorPosition, textareaEl.value.length);
-      textareaEl.selectionStart = textareaEl.selectionEnd = position;
-      autoResize();
+  function replaceInputSelection(start: number, end: number, replacement: string) {
+    if (!textareaEl) return;
+    inputText = inputText.slice(0, start) + replacement + inputText.slice(end);
+    if (sessionRegistry.viewed) sessionRegistry.viewed.draftText = inputText;
+    syncKeyboardHints();
+    updateAutocomplete();
+    autoResize();
+    const cursorPosition = start + replacement.length;
+    tick().then(() => {
+      if (textareaEl) textareaEl.selectionStart = textareaEl.selectionEnd = cursorPosition;
     });
   }
 
-  function handleInput(e?: Event) {
-    const focusSnapshot = captureTextareaFocus();
+  function handleBeforeInput(e: InputEvent) {
+    if (e.inputType !== 'insertText' || !textareaEl) return;
+    const start = textareaEl.selectionStart;
+    const end = textareaEl.selectionEnd;
+    const beforeSelection = inputText.slice(0, start);
 
+    // Some mobile keyboards ignore a dynamically changed autocapitalize attr.
+    // Keep the focused textarea (and keyboard) in place, but replace only the
+    // auto-capitalized first command character with its lowercase equivalent.
+    if (e.data && e.data.length === 1 && isUppercaseLetter(e.data) && isBangCommandPrefix(beforeSelection)) {
+      e.preventDefault();
+      replaceInputSelection(start, end, e.data.toLowerCase());
+      return;
+    }
+
+    // Virtual keyboards may skip keydown for punctuation. beforeinput still
+    // runs before the bang is inserted, so the next character gets the right
+    // capitalization mode.
+    if (e.data?.startsWith('!') && start === 0) setKeyboardHints(true);
+  }
+
+  function normalizeAutoCapitalizedInput(e: InputEvent) {
+    const data = e.data;
+    if (e.inputType !== 'insertText' || !textareaEl || typeof data !== 'string' || !isUppercaseLetter(data)) return;
+    const end = textareaEl.selectionStart;
+    const start = end - data.length;
+    if (start < 0 || inputText.slice(start, end) !== data || !isBangCommandPrefix(inputText.slice(0, start))) return;
+    replaceInputSelection(start, end, data.toLowerCase());
+  }
+
+  function handleInput(e?: Event) {
+    if (e) normalizeAutoCapitalizedInput(e as InputEvent);
     // When / is typed as the first char with existing text after it, insert a space separator
     if (e && textareaEl) {
       const ie = e as InputEvent;
@@ -284,16 +306,11 @@
     syncKeyboardHints();
     updateAutocomplete();
     autoResize();
-
-    // Replacing the textarea gives the mobile keyboard a fresh element whose
-    // autocapitalize setting is present before the next key is entered.
-    restoreTextareaFocus(focusSnapshot);
   }
 
   async function sendMessage() {
     const text = inputText.trim();
     if (!canSend) return;
-    const focusSnapshot = captureTextareaFocus();
 
     // Native bang commands are dispatched before slash commands, steering, or
     // ordinary prompts. They are independent of model streaming and own their
@@ -322,7 +339,6 @@
       if (textareaEl) {
         textareaEl.style.height = 'auto';
       }
-      restoreTextareaFocus(focusSnapshot);
 
       try {
         const response = await connection.send({
@@ -368,7 +384,6 @@
       if (textareaEl) {
         textareaEl.style.height = 'auto';
       }
-      restoreTextareaFocus(focusSnapshot);
       return;
     }
 
@@ -394,7 +409,6 @@
       if (textareaEl) {
         textareaEl.style.height = 'auto';
       }
-      restoreTextareaFocus(focusSnapshot);
       return;
     }
 
@@ -451,7 +465,6 @@
     if (textareaEl) {
       textareaEl.style.height = 'auto';
     }
-    restoreTextareaFocus(focusSnapshot);
   }
 
   async function handleAbort() {
@@ -682,32 +695,24 @@
         </div>
       {/if}
 
-      {#key isBangCommand}
-        <textarea
-          bind:this={textareaEl}
-          bind:value={inputText}
-          onbeforeinput={handleBeforeInput}
-          oninput={handleInput}
-          onkeydown={handleKeydown}
-          onclick={updateAutocomplete}
-          onpaste={handlePaste}
-          disabled={noSession || isPending}
-          rows={1}
-          placeholder={noSession
-            ? 'Open a session to start…'
-            : isPending
-              ? 'Starting session…'
-              : sessionRegistry.viewed?.isStreaming
-                ? 'Steer the conversation…'
-                : 'Send a message…'}
-          autocapitalize={isBangCommand ? 'none' : undefined}
-          spellcheck={isBangCommand ? false : undefined}
-          aria-label={isBangCommand ? 'Bash command' : 'Message'}
-          class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm transition-colors focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
-            {isBangCommand ? 'border-warning bg-warning/10 focus:border-warning focus:ring-warning font-mono' : ''}
-            {dragOver ? 'ring-ring ring-2' : ''}"
-        ></textarea>
-      {/key}
+      <textarea
+        bind:this={textareaEl}
+        bind:value={inputText}
+        onbeforeinput={handleBeforeInput}
+        oninput={handleInput}
+        onkeydown={handleKeydown}
+        onclick={updateAutocomplete}
+        onpaste={handlePaste}
+        disabled={noSession || isPending}
+        rows={1}
+        placeholder={noSession ? 'Open a session to start…' : isPending ? 'Starting session…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
+        autocapitalize={isBangCommand ? 'none' : undefined}
+        spellcheck={isBangCommand ? false : undefined}
+        aria-label={isBangCommand ? 'Bash command' : 'Message'}
+        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm transition-colors focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
+          {isBangCommand ? 'border-warning bg-warning/10 focus:border-warning focus:ring-warning font-mono' : ''}
+          {dragOver ? 'ring-ring ring-2' : ''}"
+      ></textarea>
 
       <!-- Send / Steer button (inset in textarea) -->
       <button

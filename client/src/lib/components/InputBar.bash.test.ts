@@ -53,7 +53,7 @@ describe('InputBar native bang command boundary', () => {
     await tick();
 
     const bangTextarea = view.target.querySelector('textarea')!;
-    expect(bangTextarea).not.toBe(textarea);
+    expect(bangTextarea).toBe(textarea);
 
     bangTextarea.value = '! ';
     bangTextarea.dispatchEvent(new Event('input', { bubbles: true }));
@@ -68,6 +68,17 @@ describe('InputBar native bang command boundary', () => {
     expect(bashTextarea.getAttribute('spellcheck')).toBe('false');
     expect(bashTextarea.getAttribute('aria-label')).toBe('Bash command');
 
+    bashTextarea.selectionStart = bashTextarea.selectionEnd = 2;
+    const autoCapInput = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: 'E',
+      inputType: 'insertText',
+    });
+    expect(bashTextarea.dispatchEvent(autoCapInput)).toBe(false);
+    await tick();
+    expect(bashTextarea.value).toBe('! e');
+
     bashTextarea.value = '! git status';
     bashTextarea.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
@@ -80,7 +91,7 @@ describe('InputBar native bang command boundary', () => {
     await tick();
 
     const ordinaryTextarea = view.target.querySelector('textarea')!;
-    expect(ordinaryTextarea).not.toBe(bashTextarea);
+    expect(ordinaryTextarea).toBe(bashTextarea);
     expect(ordinaryTextarea.getAttribute('autocapitalize')).toBeNull();
     expect(ordinaryTextarea.getAttribute('autocorrect')).toBeNull();
     expect(ordinaryTextarea.getAttribute('spellcheck')).toBeNull();
