@@ -16,7 +16,8 @@
   import X from '@lucide/svelte/icons/x';
 
   let inputText = $state('');
-  let textareaEl: HTMLTextAreaElement | undefined = $state();
+  let messageTextareaEl: HTMLTextAreaElement | undefined = $state();
+  let bashTextareaEl: HTMLTextAreaElement | undefined = $state();
   let autocompleteRef: CommandAutocomplete | undefined = $state();
 
   // Image attachment state
@@ -31,6 +32,7 @@
   // separate from parsing so the feedback appears as soon as the prefix is
   // typed, including while the command is still incomplete.
   const isBangCommand = $derived(inputText.trimStart().startsWith('!'));
+  const textareaEl = $derived(isBangCommand ? bashTextareaEl : messageTextareaEl);
 
   // Autocomplete state
   let autocompleteVisible = $state(false);
@@ -208,41 +210,12 @@
     }
   }
 
-  function setKeyboardHints(bangMode: boolean) {
-    if (!textareaEl) return;
-
-    if (bangMode) {
-      textareaEl.setAttribute('autocapitalize', 'none');
-      textareaEl.setAttribute('autocorrect', 'off');
-      textareaEl.spellcheck = false;
-    } else {
-      textareaEl.removeAttribute('autocapitalize');
-      textareaEl.removeAttribute('autocorrect');
-      textareaEl.spellcheck = true;
-    }
-  }
-
-  function syncKeyboardHints() {
-    // Update these synchronously from the input event. Mobile keyboards can
-    // decide how to capitalize the *next* character before Svelte's next DOM
-    // update has run.
-    setKeyboardHints(inputText.trimStart().startsWith('!'));
-  }
-
-  // Keep the non-standard autocorrect hint in sync for restored drafts too;
-  // Svelte's template type definitions intentionally don't expose that attr.
+  // Svelte's textarea typings omit Safari's non-standard autocorrect attr.
+  // Both editing hosts are initialized before either can receive focus.
   $effect(() => {
-    setKeyboardHints(isBangCommand);
+    bashTextareaEl?.setAttribute('autocorrect', 'off');
+    messageTextareaEl?.removeAttribute('autocorrect');
   });
-
-  function handleBeforeInput(e: InputEvent) {
-    // Virtual keyboards may skip keydown for punctuation. beforeinput still
-    // runs before the bang is inserted, so the next character gets the right
-    // capitalization mode.
-    if (e.inputType === 'insertText' && e.data?.startsWith('!') && textareaEl?.selectionStart === 0) {
-      setKeyboardHints(true);
-    }
-  }
 
   function focusTextareaAndKeyboard() {
     if (!textareaEl) return;
@@ -256,10 +229,12 @@
   }
 
   function captureTextareaFocus() {
-    if (!textareaEl || document.activeElement !== textareaEl) return null;
+    const focused = document.activeElement;
+    if (focused !== messageTextareaEl && focused !== bashTextareaEl) return null;
+    const element = focused as HTMLTextAreaElement;
     return {
-      element: textareaEl,
-      cursorPosition: textareaEl.selectionStart,
+      element,
+      cursorPosition: element.selectionStart,
     };
   }
 
@@ -293,7 +268,6 @@
     if (sessionRegistry.viewed) {
       sessionRegistry.viewed.draftText = inputText;
     }
-    syncKeyboardHints();
     updateAutocomplete();
     autoResize();
     restoreTextareaFocus(captureTextareaFocus());
@@ -587,13 +561,6 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    // Set the keyboard hint before the bang is inserted. This gives mobile
-    // keyboards a chance to apply the mode to the very next character rather
-    // than treating `!` as sentence-ending punctuation first.
-    if (e.key === '!' && textareaEl?.selectionStart === 0) {
-      setKeyboardHints(true);
-    }
-
     // Intercept keys when autocomplete is visible
     if (autocompleteVisible && autocompleteRef) {
       if (e.key === 'ArrowUp') {
@@ -691,32 +658,45 @@
         </div>
       {/if}
 
-      {#key isBangCommand}
-        <textarea
-          bind:this={textareaEl}
-          bind:value={inputText}
-          onbeforeinput={handleBeforeInput}
-          oninput={handleInput}
-          onkeydown={handleKeydown}
-          onclick={updateAutocomplete}
-          onpaste={handlePaste}
-          disabled={noSession || isPending}
-          rows={1}
-          placeholder={noSession
-            ? 'Open a session to start…'
-            : isPending
-              ? 'Starting session…'
-              : sessionRegistry.viewed?.isStreaming
-                ? 'Steer the conversation…'
-                : 'Send a message…'}
-          autocapitalize={isBangCommand ? 'none' : undefined}
-          spellcheck={isBangCommand ? false : undefined}
-          aria-label={isBangCommand ? 'Bash command' : 'Message'}
-          class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm transition-colors focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
-            {isBangCommand ? 'border-warning bg-warning/10 focus:border-warning focus:ring-warning font-mono' : ''}
-            {dragOver ? 'ring-ring ring-2' : ''}"
-        ></textarea>
-      {/key}
+      <textarea
+        bind:this={messageTextareaEl}
+        bind:value={inputText}
+        oninput={handleInput}
+        onkeydown={handleKeydown}
+        onclick={updateAutocomplete}
+        onpaste={handlePaste}
+        disabled={noSession || isPending}
+        tabindex={isBangCommand ? -1 : 0}
+        aria-hidden={isBangCommand}
+        rows={1}
+        placeholder={noSession ? 'Open a session to start…' : isPending ? 'Starting session…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
+        autocapitalize="sentences"
+        spellcheck={true}
+        aria-label="Message"
+        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm transition-colors focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
+          {isBangCommand ? 'pointer-events-none absolute inset-0 opacity-0' : ''}
+          {dragOver ? 'ring-ring ring-2' : ''}"
+      ></textarea>
+
+      <textarea
+        bind:this={bashTextareaEl}
+        bind:value={inputText}
+        oninput={handleInput}
+        onkeydown={handleKeydown}
+        onclick={updateAutocomplete}
+        onpaste={handlePaste}
+        disabled={noSession || isPending}
+        tabindex={isBangCommand ? 0 : -1}
+        aria-hidden={!isBangCommand}
+        rows={1}
+        placeholder={noSession ? 'Open a session to start…' : isPending ? 'Starting session…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
+        autocapitalize="none"
+        spellcheck={false}
+        aria-label="Bash command"
+        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm transition-colors focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
+          {isBangCommand ? 'border-warning bg-warning/10 focus:border-warning focus:ring-warning font-mono' : 'pointer-events-none absolute inset-0 opacity-0'}
+          {dragOver ? 'ring-ring ring-2' : ''}"
+      ></textarea>
 
       <!-- Send / Steer button (inset in textarea) -->
       <button

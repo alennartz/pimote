@@ -43,7 +43,7 @@ describe('InputBar native bang command boundary', () => {
     const view = render();
     document.body.appendChild(view.target);
     await tick();
-    const textarea = view.target.querySelector('textarea')!;
+    const textarea = view.target.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')!;
     textarea.focus();
     expect(document.activeElement).toBe(textarea);
     textarea.selectionStart = textarea.selectionEnd = 0;
@@ -52,14 +52,14 @@ describe('InputBar native bang command boundary', () => {
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
 
-    const bangTextarea = view.target.querySelector('textarea')!;
+    const bangTextarea = view.target.querySelector<HTMLTextAreaElement>('textarea[aria-label="Bash command"]')!;
     expect(bangTextarea).not.toBe(textarea);
 
     bangTextarea.value = '! ';
     bangTextarea.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
 
-    const bashTextarea = view.target.querySelector('textarea')!;
+    const bashTextarea = view.target.querySelector<HTMLTextAreaElement>('textarea[aria-label="Bash command"]')!;
     expect(bashTextarea).toBe(bangTextarea);
     expect(bashTextarea.className).toContain('border-warning');
     expect(bashTextarea.className).toContain('font-mono');
@@ -108,11 +108,11 @@ describe('InputBar native bang command boundary', () => {
     bashTextarea.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
 
-    const ordinaryTextarea = view.target.querySelector('textarea')!;
+    const ordinaryTextarea = view.target.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')!;
     expect(ordinaryTextarea).not.toBe(bashTextarea);
-    expect(ordinaryTextarea.getAttribute('autocapitalize')).toBeNull();
+    expect(ordinaryTextarea.getAttribute('autocapitalize')).toBe('sentences');
     expect(ordinaryTextarea.getAttribute('autocorrect')).toBeNull();
-    expect(ordinaryTextarea.getAttribute('spellcheck')).toBeNull();
+    expect(ordinaryTextarea.getAttribute('spellcheck')).toBe('true');
     expect(ordinaryTextarea.getAttribute('aria-label')).toBe('Message');
 
     view.destroy();
