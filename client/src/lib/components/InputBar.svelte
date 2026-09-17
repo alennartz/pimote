@@ -235,8 +235,8 @@
     setKeyboardHints(isBangCommand);
   });
 
-  function isBangCommandPrefix(text: string) {
-    return /^\s*!!?\s*$/.test(text);
+  function isBangCommandCapitalizationBoundary(text: string) {
+    return /^\s*!!?\s*$/.test(text) || /(?:[\p{P}\p{S}]|\n)\s*$/u.test(text);
   }
 
   function isUppercaseLetter(text: string | null) {
@@ -263,9 +263,10 @@
     const beforeSelection = inputText.slice(0, start);
 
     // Some mobile keyboards ignore a dynamically changed autocapitalize attr.
-    // Keep the focused textarea (and keyboard) in place, but replace only the
-    // auto-capitalized first command character with its lowercase equivalent.
-    if (e.data && e.data.length === 1 && isUppercaseLetter(e.data) && isBangCommandPrefix(beforeSelection)) {
+    // Keep the focused textarea (and keyboard) in place, but replace an
+    // auto-capitalized command character at any sentence boundary with its
+    // lowercase equivalent.
+    if (e.data && e.data.length === 1 && isUppercaseLetter(e.data) && isBangCommandCapitalizationBoundary(beforeSelection)) {
       e.preventDefault();
       replaceInputSelection(start, end, e.data.toLowerCase());
       return;
@@ -282,7 +283,7 @@
     if (e.inputType !== 'insertText' || !textareaEl || typeof data !== 'string' || !isUppercaseLetter(data)) return;
     const end = textareaEl.selectionStart;
     const start = end - data.length;
-    if (start < 0 || inputText.slice(start, end) !== data || !isBangCommandPrefix(inputText.slice(0, start))) return;
+    if (start < 0 || inputText.slice(start, end) !== data || !isBangCommandCapitalizationBoundary(inputText.slice(0, start))) return;
     replaceInputSelection(start, end, data.toLowerCase());
   }
 

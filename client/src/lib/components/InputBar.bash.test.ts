@@ -79,6 +79,20 @@ describe('InputBar native bang command boundary', () => {
     await tick();
     expect(bashTextarea.value).toBe('! e');
 
+    bashTextarea.value = '! echo first. ';
+    bashTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+    bashTextarea.selectionStart = bashTextarea.selectionEnd = bashTextarea.value.length;
+    const punctuationAutoCap = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: 'E',
+      inputType: 'insertText',
+    });
+    expect(bashTextarea.dispatchEvent(punctuationAutoCap)).toBe(false);
+    await tick();
+    expect(bashTextarea.value).toBe('! echo first. e');
+
     bashTextarea.value = '! git status';
     bashTextarea.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
