@@ -217,15 +217,8 @@
     messageTextareaEl?.removeAttribute('autocorrect');
   });
 
-  function focusTextareaAndKeyboard() {
-    if (!textareaEl) return;
-    textareaEl.focus({ preventScroll: true });
-    const virtualKeyboard = (navigator as Navigator & { virtualKeyboard?: { show?: () => void } }).virtualKeyboard;
-    try {
-      virtualKeyboard?.show?.();
-    } catch {
-      // The VirtualKeyboard API may reject calls without a user activation.
-    }
+  function focusTextarea() {
+    textareaEl?.focus({ preventScroll: true });
   }
 
   function captureTextareaFocus() {
@@ -242,13 +235,10 @@
     if (!snapshot) return;
     void tick().then(() => {
       if (!textareaEl || textareaEl === snapshot.element) return;
-      focusTextareaAndKeyboard();
+      focusTextarea();
       const position = Math.min(snapshot.cursorPosition, textareaEl.value.length);
       textareaEl.selectionStart = textareaEl.selectionEnd = position;
       autoResize();
-      // Give mobile browsers a chance to finish closing the old editing host,
-      // then explicitly reopen the keyboard on the replacement textarea.
-      setTimeout(() => focusTextareaAndKeyboard(), 50);
     });
   }
 
