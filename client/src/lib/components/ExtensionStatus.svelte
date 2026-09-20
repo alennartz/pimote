@@ -10,8 +10,11 @@
   import Info from '@lucide/svelte/icons/info';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 
-  // Status entries: key → text
-  let statuses = new SvelteMap<string, string>();
+  // Status entries, scoped per session: sessionId → (key → text).
+  // setStatus events carry the owning session's id; without this scoping a
+  // status from a background session (e.g. its quota banner) would render on
+  // whichever session is currently viewed.
+  let statuses = new SvelteMap<string, SvelteMap<string, string>>();
 
   // Notifications with auto-dismiss
   interface Notification {
@@ -36,16 +39,26 @@
 
   onMount(() => {
     const unsubscribe = connection.onEvent((event) => {
+      if (event.type === 'session_closed') {
+        statuses.delete(event.sessionId);
+        return;
+      }
       if (event.type !== 'extension_ui_request') return;
       const req = event as ExtensionUiRequestEvent;
 
       if (req.method === 'setStatus') {
         const key = req.key as string;
         const text = req.text as string | undefined;
+        let sessionStatuses = statuses.get(req.sessionId);
+        if (!sessionStatuses) {
+          sessionStatuses = new SvelteMap<string, string>();
+          statuses.set(req.sessionId, sessionStatuses);
+        }
         if (text) {
-          statuses.set(key, text);
+          sessionStatuses.set(key, text);
         } else {
-          statuses.delete(key);
+          sessionStatuses.delete(key);
+          if (sessionStatuses.size === 0) statuses.delete(req.sessionId);
         }
       } else if (req.method === 'setWidget') {
         const key = req.key as string;
@@ -93,7 +106,11 @@
     return unsubscribe;
   });
 
-  const statusEntries = $derived([...statuses.entries()]);
+  const statusEntries = $derived.by(() => {
+    const viewedId = sessionRegistry.viewedSessionId;
+    if (!viewedId) return [];
+    return [...(statuses.get(viewedId)?.entries() ?? [])];
+  });
 </script>
 
 <!-- Status bar -->
