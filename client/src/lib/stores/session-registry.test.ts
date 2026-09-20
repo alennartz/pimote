@@ -335,6 +335,26 @@ describe('SessionRegistry', () => {
   // Event Routing — Messages
   // --------------------------------------------------------------------------
   describe('Event Routing — Messages', () => {
+    it('custom_entry appends a display-only custom message with a matching key', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const message = {
+        role: 'custom',
+        content: [{ type: 'text', text: 'the prompt' }],
+        customType: 'print-prompt',
+        display: true,
+        fromEntry: true,
+        entryId: 'ce-1',
+      };
+      registry.handleEvent(makeSessionEvent('custom_entry', 's1', { message }));
+      const session = registry.sessions['s1'];
+      expect(session.messages).toEqual([message]);
+      expect(session.messageKeys).toHaveLength(1);
+      expect(session.messageKeys[0]).toMatch(/^msg-\d+$/);
+      expect(session.messageCount).toBe(1);
+      // Display-only: never touches streaming state
+      expect(session.streamingMessage).toBeNull();
+    });
+
     it('message_start creates streamingMessage with role and empty content', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));

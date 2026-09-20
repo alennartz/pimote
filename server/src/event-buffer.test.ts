@@ -107,11 +107,47 @@ describe('EventBuffer', () => {
       expect(live[0]).toMatchObject({ type: 'agent_settled', sessionId: SESSION_ID });
     });
 
-    it('drops entry_appended (deferred refactor — no wire representation yet)', () => {
-      const buffer = new EventBuffer(10);
+    it('maps entry_appended for visible custom entries to a custom_entry wire event', () => {
+      const buffer = new EventBuffer(10, (ct) => ct === 'print-prompt');
       const live: PimoteSessionEvent[] = [];
-      buffer.onEvent(makeSdkEvent('entry_appended', { entry: { id: 'e1', type: 'message' } }), SESSION_ID, (e) => live.push(e));
+      buffer.onEvent(makeSdkEvent('entry_appended', { entry: { id: 'ce-1', type: 'custom', customType: 'print-prompt', data: { text: 'the prompt' } } }), SESSION_ID, (e) =>
+        live.push(e),
+      );
+      expect(live).toHaveLength(1);
+      expect(live[0]).toMatchObject({
+        type: 'custom_entry',
+        sessionId: SESSION_ID,
+        message: {
+          role: 'custom',
+          customType: 'print-prompt',
+          fromEntry: true,
+          entryId: 'ce-1',
+          content: [{ type: 'text', text: 'the prompt' }],
+        },
+      });
+    });
+
+    it('drops entry_appended for custom entries failing the visibility predicate (TUI parity)', () => {
+      const buffer = new EventBuffer(10, () => false);
+      const live: PimoteSessionEvent[] = [];
+      buffer.onEvent(makeSdkEvent('entry_appended', { entry: { id: 'ce-1', type: 'custom', customType: 'idle-marker', data: {} } }), SESSION_ID, (e) => live.push(e));
       expect(live).toHaveLength(0);
+    });
+
+    it('drops entry_appended for non-custom entries and when no predicate is configured', () => {
+      const noPredicate = new EventBuffer(10);
+      const live: PimoteSessionEvent[] = [];
+      noPredicate.onEvent(makeSdkEvent('entry_appended', { entry: { id: 'ce-1', type: 'custom', customType: 'print-prompt', data: {} } }), SESSION_ID, (e) => live.push(e));
+      noPredicate.onEvent(makeSdkEvent('entry_appended', { entry: { id: 'e1', type: 'message' } }), SESSION_ID, (e) => live.push(e));
+      expect(live).toHaveLength(0);
+    });
+
+    it('replays buffered custom_entry events on reconnect', () => {
+      const buffer = new EventBuffer(10, () => true);
+      buffer.onEvent(makeSdkEvent('entry_appended', { entry: { id: 'ce-1', type: 'custom', customType: 'print-prompt', data: 'body' } }), SESSION_ID, () => {});
+      const replayed = buffer.replay(0);
+      expect(replayed).not.toBeNull();
+      expect(replayed!.map((e) => e.type)).toEqual(['custom_entry']);
     });
 
     it('maps native bash execution updates to a live wire event without buffering the delta', () => {

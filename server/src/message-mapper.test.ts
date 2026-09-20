@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { mapAgentMessage, mapAgentMessages, mapContextEntries, extractMessageEntryIds, applyEntryIds, type SdkSessionEntry } from './message-mapper.js';
+import {
+  mapAgentMessage,
+  mapAgentMessages,
+  mapContextEntries,
+  extractMessageEntryIds,
+  mapCustomEntry,
+  customEntryDisplayText,
+  rendererRegisteredVisibility,
+  type SdkSessionEntry,
+} from './message-mapper.js';
 
 describe('mapAgentMessage', () => {
   // AgentMessage is a discriminated union with many required fields per role;
@@ -92,7 +101,7 @@ describe('mapAgentMessage', () => {
       expect(result.aborted).toBe(true);
     });
 
-    it('does not assign entryId (entry IDs are applied separately via applyEntryIds)', () => {
+    it('does not assign entryId (the client assigns entry IDs from agent_end messageEntryIds)', () => {
       const result = m({ role: 'user', content: [{ type: 'text', text: 'x' }] });
       expect(result.entryId).toBeUndefined();
     });
@@ -232,30 +241,107 @@ describe('extractMessageEntryIds', () => {
   });
 });
 
-describe('applyEntryIds', () => {
-  it('sets entryId on mapped messages by index', () => {
-    const messages = [
-      { role: 'user', content: [] },
-      { role: 'assistant', content: [] },
-    ];
-    applyEntryIds(messages, ['id-1', 'id-2']);
-    expect(messages[0].entryId).toBe('id-1');
-    expect(messages[1].entryId).toBe('id-2');
+describe('custom entries (pi.appendEntry)', () => {
+  const customEntry = (overrides: Partial<Record<string, unknown>> & { id: string }): SdkSessionEntry =>
+    ({ parentId: null, timestamp: '2026-01-01T00:00:00.000Z', type: 'custom', customType: 'print-prompt', data: { text: 'the prompt' }, ...overrides }) as never;
+  const visible = (customType: string) => customType === 'print-prompt';
+
+  describe('customEntryDisplayText', () => {
+    it('uses a string payload directly', () => {
+      expect(customEntryDisplayText('raw body')).toBe('raw body');
+    });
+
+    it('prefers string text/markdown/content fields', () => {
+      expect(customEntryDisplayText({ text: 'a' })).toBe('a');
+      expect(customEntryDisplayText({ markdown: 'b' })).toBe('b');
+      expect(customEntryDisplayText({ content: 'c' })).toBe('c');
+      expect(customEntryDisplayText({ text: 'a', markdown: 'b' })).toBe('a');
+    });
+
+    it('falls back to pretty JSON for other shapes', () => {
+      expect(customEntryDisplayText({ count: 42 })).toBe('{\n  "count": 42\n}');
+    });
+
+    it('returns undefined for empty payloads, JSON fallback for empty string fields', () => {
+      expect(customEntryDisplayText(undefined)).toBeUndefined();
+      expect(customEntryDisplayText('')).toBeUndefined();
+      expect(customEntryDisplayText({})).toBeUndefined();
+      expect(customEntryDisplayText({ text: '' })).toBe('{\n  "text": ""\n}');
+    });
   });
 
-  it('handles more IDs than messages (extra IDs ignored)', () => {
-    const messages = [{ role: 'user', content: [] }];
-    applyEntryIds(messages, ['id-1', 'id-2']);
-    expect(messages[0].entryId).toBe('id-1');
+  describe('mapCustomEntry', () => {
+    it('maps to a display-only custom message with entry id', () => {
+      expect(mapCustomEntry(customEntry({ id: 'ce-1' }) as never)).toEqual({
+        role: 'custom',
+        content: [{ type: 'text', text: 'the prompt' }],
+        customType: 'print-prompt',
+        display: true,
+        fromEntry: true,
+        entryId: 'ce-1',
+      });
+    });
   });
 
-  it('handles fewer IDs than messages (extra messages untouched)', () => {
-    const messages = [
-      { role: 'user', content: [] },
-      { role: 'assistant', content: [] },
-    ];
-    applyEntryIds(messages, ['id-1']);
-    expect(messages[0].entryId).toBe('id-1');
-    expect(messages[1].entryId).toBeUndefined();
+  describe('rendererRegisteredVisibility', () => {
+    it('is true only for customTypes with a registered entry renderer', () => {
+      const session = { extensionRunner: { getEntryRenderer: (ct: string) => (ct === 'print-prompt' ? {} : undefined) } };
+      const isVisible = rendererRegisteredVisibility(session);
+      expect(isVisible('print-prompt')).toBe(true);
+      expect(isVisible('idle-marker')).toBe(false);
+    });
+
+    it('reads the runner at call time so extension reloads are picked up', () => {
+      const session: { extensionRunner?: { getEntryRenderer?: (ct: string) => unknown } } = {};
+      const isVisible = rendererRegisteredVisibility(session);
+      expect(isVisible('print-prompt')).toBe(false);
+      session.extensionRunner = { getEntryRenderer: () => ({}) };
+      expect(isVisible('print-prompt')).toBe(true);
+    });
+  });
+
+  describe('mapContextEntries + extractMessageEntryIds alignment', () => {
+    it('surfaces visible custom entries in order, in both messages and ids', () => {
+      const branch: SdkSessionEntry[] = [
+        { id: 'e1', parentId: null, timestamp: 't', type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } } as never,
+        customEntry({ id: 'ce-1', parentId: 'e1' }),
+        customEntry({ id: 'ce-2', parentId: 'ce-1', customType: 'idle-marker', data: { at: 'now' } }),
+        { id: 'e2', parentId: 'ce-2', timestamp: 't', type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'yo' }] } } as never,
+      ];
+
+      const messages = mapContextEntries(branch, visible);
+      expect(messages.map((m) => [m.role, m.entryId])).toEqual([
+        ['user', 'e1'],
+        ['custom', 'ce-1'],
+        ['assistant', 'e2'],
+      ]);
+      expect(messages[1]).toMatchObject({ customType: 'print-prompt', fromEntry: true, display: true });
+
+      expect(extractMessageEntryIds(branch, visible)).toEqual(['e1', 'ce-1', 'e2']);
+    });
+
+    it('keeps the compaction walk aligned too', () => {
+      const branch: SdkSessionEntry[] = [
+        { id: 'e1', parentId: null, timestamp: 't', type: 'message', message: { role: 'user', content: [] } } as never,
+        { id: 'e2', parentId: 'e1', timestamp: 't', type: 'message', message: { role: 'assistant', content: [] } } as never,
+        customEntry({ id: 'ce-1', parentId: 'e2' }),
+        { id: 'c1', parentId: 'ce-1', timestamp: 't', type: 'compaction', summary: 's', firstKeptEntryId: 'e2' } as never,
+        { id: 'e3', parentId: 'c1', timestamp: 't', type: 'message', message: { role: 'user', content: [] } } as never,
+      ];
+      // What ws-handler feeds each side: buildContextEntries() output to the
+      // mapper (compaction-aware), the raw branch to the id extractor (which
+      // performs its own compaction walk).
+      const contextEntries: SdkSessionEntry[] = [branch[3], branch[1], branch[2], branch[4]];
+
+      const messages = mapContextEntries(contextEntries, visible);
+      expect(messages.map((m) => m.entryId)).toEqual(['c1', 'e2', 'ce-1', 'e3']);
+      expect(extractMessageEntryIds(branch, visible)).toEqual(['c1', 'e2', 'ce-1', 'e3']);
+    });
+
+    it('excludes custom entries entirely without a predicate', () => {
+      const branch: SdkSessionEntry[] = [customEntry({ id: 'ce-1' })];
+      expect(mapContextEntries(branch)).toEqual([]);
+      expect(extractMessageEntryIds(branch)).toEqual([]);
+    });
   });
 });

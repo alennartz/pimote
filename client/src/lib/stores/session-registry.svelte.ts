@@ -17,6 +17,7 @@ import type {
   MessageStartEvent,
   MessageUpdateEvent,
   MessageEndEvent,
+  CustomEntryEvent,
   ToolExecutionStartEvent,
   ToolExecutionUpdateEvent,
   ToolExecutionEndEvent,
@@ -365,12 +366,13 @@ export class SessionRegistry {
         session.streamingKey = null;
         // Apply entry IDs so fork targets work on messages received via streaming.
         //
-        // Same alignment subtlety as server/src/message-mapper.ts::applyEntryIds:
-        // agent.state.messages on the server side includes pi-agent-core's
-        // synthetic aborted-assistant placeholders (abort pushes an empty
-        // assistant into state but never persists an entry). messageEntryIds
-        // comes from persisted entries and therefore doesn't include those
-        // placeholders. Skip aborted-empty messages so IDs land on the right
+        // Alignment: messageEntryIds comes from the persisted branch
+        // (extractMessageEntryIds on the server) and includes custom-entry
+        // ids whenever the client also shows them (same visibility
+        // predicate on both sides). The client list can also hold
+        // pi-agent-core's synthetic aborted-assistant placeholders (abort
+        // pushes an empty assistant into state but never persists an entry).
+        // Skip aborted-empty messages so IDs land on the right
         // real messages. Without this, every barge-in shifts subsequent
         // entryIds one slot earlier, breaking fork / tree navigation targeting.
         if (endEvent.messageEntryIds) {
@@ -430,6 +432,16 @@ export class SessionRegistry {
             block.streaming = false;
           }
         }
+        break;
+      }
+
+      case 'custom_entry': {
+        // Display-only custom entry (pi.appendEntry) with a registered
+        // renderer — appended in arrival order; no streaming state involved.
+        const entryEvent = event as CustomEntryEvent;
+        session.messages = [...session.messages, entryEvent.message];
+        session.messageKeys = [...session.messageKeys, 'msg-' + this._nextMessageKey++];
+        session.messageCount++;
         break;
       }
 

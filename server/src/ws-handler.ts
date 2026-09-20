@@ -26,7 +26,7 @@ import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
-import { mapContextEntries, extractMessageEntryIds } from './message-mapper.js';
+import { mapContextEntries, extractMessageEntryIds, rendererRegisteredVisibility } from './message-mapper.js';
 import type { TreeNavigationStartEvent, TreeNavigationEndEvent } from './event-buffer.js';
 import { sumLifetimeCostUsd } from './session-cost.js';
 import { completeFileRefs } from './file-references.js';
@@ -1063,7 +1063,7 @@ export class WsHandler {
       }
 
       case 'get_messages': {
-        const messages = mapContextEntries(session.sessionManager.buildContextEntries());
+        const messages = mapContextEntries(session.sessionManager.buildContextEntries(), rendererRegisteredVisibility(session));
         this.sendResponse(id, true, { messages });
         break;
       }
@@ -1590,7 +1590,7 @@ export class WsHandler {
         // Augment agent_end with message entry IDs so the client can enable
         // fork targets on messages that arrived via streaming (without IDs).
         if (event.type === 'agent_end') {
-          event.messageEntryIds = extractMessageEntryIds(slot.session.sessionManager.getBranch());
+          event.messageEntryIds = extractMessageEntryIds(slot.session.sessionManager.getBranch(), rendererRegisteredVisibility(slot.session));
         }
         this.sendEvent(event);
       },
@@ -1620,7 +1620,7 @@ export class WsHandler {
       autoCompactionEnabled: session.autoCompactionEnabled,
       messageCount: session.messages.length,
     };
-    const messages = mapContextEntries(session.sessionManager.buildContextEntries());
+    const messages = mapContextEntries(session.sessionManager.buildContextEntries(), rendererRegisteredVisibility(session));
     const fullResyncEvent: FullResyncEvent = {
       type: 'full_resync',
       sessionId: pimoteSessionId,

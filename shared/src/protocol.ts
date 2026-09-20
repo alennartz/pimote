@@ -95,6 +95,13 @@ export interface PimoteAgentMessage {
   /** For custom messages: if false, the message should be hidden from the UI */
   display?: boolean;
   /**
+   * True for role === 'custom' messages synthesized from persisted custom
+   * entries (pi.appendEntry). Display-only: unlike extension custom messages,
+   * these never participate in LLM context. Rendered with the same generic
+   * custom-message card (label + collapsible body).
+   */
+  fromEntry?: boolean;
+  /**
    * True for assistant messages whose turn ended with `stopReason: 'aborted'`.
    * Common in voice sessions (every barge-in produces one) — the UI renders
    * these with an "interrupted" indicator rather than as empty bubbles.
@@ -727,6 +734,17 @@ export interface MessageEndEvent extends SessionEventBase {
   message: PimoteAgentMessage;
 }
 
+/**
+ * A persisted custom entry (pi.appendEntry) whose customType has a registered
+ * entry renderer, surfaced as a display-only custom message. Mirrors the TUI's
+ * visibility rule: entries without a renderer are state markers and stay
+ * invisible. The message carries fromEntry: true and never re-enters LLM context.
+ */
+export interface CustomEntryEvent extends SessionEventBase {
+  type: 'custom_entry';
+  message: PimoteAgentMessage;
+}
+
 // -- Tool execution events --
 
 export interface ToolExecutionStartEvent extends SessionEventBase {
@@ -817,6 +835,7 @@ export type PimoteSessionEvent =
   | MessageStartEvent
   | MessageUpdateEvent
   | MessageEndEvent
+  | CustomEntryEvent
   | ToolExecutionStartEvent
   | ToolExecutionUpdateEvent
   | ToolExecutionEndEvent

@@ -10,6 +10,7 @@ import {
 import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory } from '@earendil-works/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
+import { rendererRegisteredVisibility } from './message-mapper.js';
 import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, DownloadUpdateEvent } from '../../shared/dist/index.js';
 import type { PushNotificationPayload, PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
@@ -231,7 +232,7 @@ export function createSessionState(
   folderPath: string,
 ): SessionState {
   const sessionId = session.sessionId;
-  const eventBuffer = new EventBuffer(config.bufferSize);
+  const eventBuffer = new EventBuffer(config.bufferSize, rendererRegisteredVisibility(session));
 
   const state: SessionState = {
     id: sessionId,

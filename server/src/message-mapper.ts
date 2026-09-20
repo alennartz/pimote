@@ -12,6 +12,57 @@ type AgentContentItem = Extract<Extract<AgentMessage, { role: 'assistant' | 'use
 /** Session entries whose relative order must match buildSessionContext's message list. */
 export type SdkSessionEntry = SessionEntry;
 
+/**
+ * Decides whether a persisted custom entry (pi.appendEntry) is surfaced to
+ * clients. Pimote mirrors the TUI's visibility rule: an entry renders only
+ * when its extension registered an entry renderer for its customType —
+ * entries without one (e.g. session-resume's idle markers) are state, not
+ * transcript content, and stay invisible in both UIs.
+ */
+export type CustomEntryVisibility = (customType: string) => boolean;
+
+/**
+ * Build the TUI-parity visibility predicate for a session. Reads
+ * `session.extensionRunner` at call time so extension reloads (which swap the
+ * runner) are picked up without rebuilding the predicate.
+ */
+export function rendererRegisteredVisibility(session: { extensionRunner?: { getEntryRenderer?: (customType: string) => unknown } }): CustomEntryVisibility {
+  return (customType) => !!session.extensionRunner?.getEntryRenderer?.(customType);
+}
+
+/**
+ * Derive display text for a custom entry's data payload. Extensions appendEntry()
+ * arbitrary JSON; pimote has no web renderer for it, so render generically:
+ * a string payload or a string text/markdown/content field becomes the body,
+ * anything else falls back to pretty-printed JSON.
+ */
+export function customEntryDisplayText(data: unknown): string | undefined {
+  if (typeof data === 'string') return data || undefined;
+  if (data && typeof data === 'object') {
+    for (const key of ['text', 'markdown', 'content'] as const) {
+      const value = (data as Record<string, unknown>)[key];
+      if (typeof value === 'string' && value) return value;
+    }
+    const json = JSON.stringify(data, null, 2);
+    // An empty object has nothing to show — render a label-only card.
+    return json === '{}' ? undefined : json;
+  }
+  return undefined;
+}
+
+/** Map a persisted custom entry to a display-only wire message. */
+export function mapCustomEntry(entry: Extract<SessionEntry, { type: 'custom' }>): PimoteAgentMessage {
+  const text = customEntryDisplayText(entry.data);
+  return {
+    role: 'custom',
+    content: text ? [{ type: 'text', text }] : [],
+    customType: entry.customType,
+    display: true,
+    fromEntry: true,
+    entryId: entry.id,
+  };
+}
+
 /** Convert raw pi SDK AgentMessage objects to PimoteAgentMessage format. */
 export function mapAgentMessages(messages: AgentMessage[]): PimoteAgentMessage[] {
   return messages.map(mapAgentMessage);
@@ -22,10 +73,16 @@ export function mapAgentMessages(messages: AgentMessage[]): PimoteAgentMessage[]
  *
  * `sessionEntryToContextMessages` owns entry-to-message semantics; this
  * mapper only adapts its output and keeps each message paired with its source
- * entry ID. Entries that produce no context message are omitted.
+ * entry ID. Entries that produce no context message are omitted — except
+ * custom entries passing `customEntryVisible`, which are surfaced as
+ * display-only messages (never sent to the LLM; see mapCustomEntry).
  */
-export function mapContextEntries(entries: readonly SessionEntry[]): PimoteAgentMessage[] {
-  return entries.flatMap((entry) => sessionEntryToContextMessages(entry).map((message) => ({ ...mapAgentMessage(message), entryId: entry.id })));
+export function mapContextEntries(entries: readonly SessionEntry[], customEntryVisible?: CustomEntryVisibility): PimoteAgentMessage[] {
+  return entries.flatMap((entry) =>
+    entry.type === 'custom' && customEntryVisible?.(entry.customType)
+      ? [mapCustomEntry(entry)]
+      : sessionEntryToContextMessages(entry).map((message) => ({ ...mapAgentMessage(message), entryId: entry.id })),
+  );
 }
 
 /**
@@ -37,7 +94,7 @@ export function mapContextEntries(entries: readonly SessionEntry[]): PimoteAgent
  * (buildSessionContext() itself returns only messages, not their entry IDs,
  * so this ordering must be reproduced here — see the SDK's session-manager.)
  */
-export function extractMessageEntryIds(branch: SessionEntry[]): string[] {
+export function extractMessageEntryIds(branch: SessionEntry[], customEntryVisible?: CustomEntryVisibility): string[] {
   // Find the last compaction entry on the path
   let compaction: Extract<SessionEntry, { type: 'compaction' }> | null = null;
   for (const entry of branch) {
@@ -52,6 +109,11 @@ export function extractMessageEntryIds(branch: SessionEntry[]): string[] {
     } else if (entry.type === 'custom_message') {
       ids.push(entry.id);
     } else if (entry.type === 'branch_summary' && entry.summary) {
+      ids.push(entry.id);
+    }
+    // Custom entries contribute an id ONLY when mapContextEntries surfaces
+    // them — pass the same predicate to both or the id/message zip desyncs.
+    else if (entry.type === 'custom' && customEntryVisible?.(entry.customType)) {
       ids.push(entry.id);
     }
   };
@@ -80,36 +142,6 @@ export function extractMessageEntryIds(branch: SessionEntry[]): string[] {
   }
 
   return ids;
-}
-
-/**
- * True when the message is pi-agent-core's synthetic aborted placeholder
- * (pushed into agent.state.messages on session.abort() but never persisted
- * via message_end). Identifying these lets entryId alignment skip over them.
- */
-export function isAbortedPlaceholderMessage(msg: PimoteAgentMessage): boolean {
-  if (msg.role !== 'assistant') return false;
-  if (msg.aborted !== true) return false;
-  return msg.content.every((c) => c.type === 'text' && !c.text);
-}
-
-/**
- * Apply entry IDs from the session manager onto mapped messages.
- *
- * Subtle alignment: `messages` comes from `agent.state.messages`, which
- * includes pi-agent-core's synthetic aborted placeholders (abort pushes an
- * empty assistant into state but never persists an entry for it).
- * `entryIds` comes from persisted session entries, which do NOT include
- * those placeholders. We walk the messages and skip aborted placeholders
- * so the persisted IDs land on the correct real messages.
- */
-export function applyEntryIds(messages: PimoteAgentMessage[], entryIds: string[]): void {
-  let idIdx = 0;
-  for (let i = 0; i < messages.length; i++) {
-    if (isAbortedPlaceholderMessage(messages[i])) continue;
-    if (idIdx >= entryIds.length) break;
-    messages[i].entryId = entryIds[idIdx++];
-  }
 }
 
 /** Map an AgentMessage content array (or bare string) to wire content blocks. */

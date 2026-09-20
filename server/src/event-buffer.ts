@@ -1,7 +1,7 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { PimoteSessionEvent } from '../../shared/dist/index.js';
-import { mapAgentMessage } from './message-mapper.js';
+import { mapAgentMessage, mapCustomEntry, type CustomEntryVisibility } from './message-mapper.js';
 
 /**
  * Tree-navigation lifecycle events are synthesized by the ws-handler (they are
@@ -50,7 +50,11 @@ export class EventBuffer {
   private hasBufferedEvent = false;
   private _cursor = 0;
 
-  constructor(private readonly capacity: number) {
+  constructor(
+    private readonly capacity: number,
+    /** TUI-parity filter for persisted custom entries; omit to keep them invisible. */
+    private readonly isCustomEntryVisible?: CustomEntryVisibility,
+  ) {
     this.buffer = new Array(capacity);
   }
 
@@ -290,16 +294,21 @@ export class EventBuffer {
       case 'agent_settled':
         return { ...base, type: 'agent_settled' };
 
-      // Real SDK events with no Pimote wire representation. Dropped rather than
-      // mis-emitted; wire them up here if the client grows a use for them.
-      // `entry_appended` is the authoritative persisted-entry stream; adopting
-      // it is deferred design work (see docs/brainstorms/entry-appended-refactor.md)
-      // — dropped at the wire for now. Pi 0.81's summarization retry lifecycle
-      // remains server-local until the client protocol gains retry variants.
+      // Custom entries with a registered renderer become display-only
+      // custom messages (same visibility rule as mapContextEntries, so live
+      // events and resyncs agree). Everything else on this list is a real SDK
+      // event with no Pimote wire representation — dropped rather than
+      // mis-emitted. Pi 0.81's summarization retry lifecycle remains
+      // server-local until the client protocol gains retry variants.
+      case 'entry_appended':
+        if (sdkEvent.entry.type !== 'custom' || !this.isCustomEntryVisible?.(sdkEvent.entry.customType)) {
+          return null;
+        }
+        return { ...base, type: 'custom_entry', message: mapCustomEntry(sdkEvent.entry) };
+
       case 'queue_update':
       case 'session_info_changed':
       case 'thinking_level_changed':
-      case 'entry_appended':
       case 'summarization_retry_scheduled':
       case 'summarization_retry_attempt_start':
       case 'summarization_retry_finished':
