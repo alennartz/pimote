@@ -83,6 +83,12 @@ function previewForEntry(entry: SessionTreeNode['entry']): string {
     return truncatePreview(summary || entry.type);
   }
 
+  if (entry.type === 'context_edit') {
+    // Sessions edited in pi's TUI carry context_edit entries; pimote's mapper
+    // omits them from the transcript, but the tree still shows a preview.
+    return entry.replacement === null ? 'prompt message omitted' : 'prompt message edited';
+  }
+
   return entry.type;
 }
 
