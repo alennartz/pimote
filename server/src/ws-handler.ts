@@ -926,12 +926,23 @@ export class WsHandler {
         slot.sessionState.bashAbortRequested = false;
         try {
           const excludeFromContext = command.excludeFromContext === true;
-          const extensionResult = await session.extensionRunner.emitUserBash({
-            type: 'user_bash',
-            command: command.command,
-            excludeFromContext,
-            cwd: session.sessionManager.getCwd(),
-          });
+          let extensionResult: Awaited<ReturnType<typeof session.extensionRunner.emitUserBash>>;
+          try {
+            extensionResult = await session.extensionRunner.emitUserBash({
+              type: 'user_bash',
+              command: command.command,
+              excludeFromContext,
+              cwd: session.sessionManager.getCwd(),
+            });
+          } catch (err) {
+            // pi 0.87 user_bash fails closed: a throwing extension handler or an
+            // invalid defined result aborts the command instead of falling through
+            // to local execution. Surface a distinct code rather than leaking the
+            // raw extension error through the generic command-error path.
+            console.error('[WsHandler] user_bash extension handler failed:', err);
+            this.sendResponse(id, false, undefined, 'bash_extension_error');
+            break;
+          }
 
           if (extensionResult?.result) {
             // Extensions that fully handle the command bypass executeBash, so

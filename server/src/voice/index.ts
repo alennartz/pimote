@@ -109,15 +109,14 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     // ---- Per-extension-instance state (per pimote session) ---------------
     let state: RuntimeState = initialState();
     let lastCtx: ExtensionContext | null = null;
-    // Settle-signal fan-out. `pi.on` has no unsubscribe, so a single persistent
-    // `agent_settled` listener (registered below) multiplexes to transient
-    // one-shot waiters. Consumed by `ensureIdleWithImplicitAbort` via the probe's
-    // `onSettled` seam to replace busy-polling with the SDK's idle boundary.
-    const settleWaiters = new Set<() => void>();
-    const onSettled = (listener: () => void): (() => void) => {
-      settleWaiters.add(listener);
-      return () => settleWaiters.delete(listener);
-    };
+    // Settle-signal seam. Consumed by `ensureIdleWithImplicitAbort` via the
+    // probe's `onSettled` to replace busy-polling with the SDK's idle boundary.
+    // pi 0.87+ `pi.on` returns an unsubscribe, so each waiter registers its own
+    // transient `agent_settled` listener and removes it when done (the waiter's
+    // resolve is idempotent, so a late extra settle between resolve and
+    // unsubscribe is harmless). Previously this needed a persistent multiplexer
+    // listener plus a waiter set because `pi.on` could not be unsubscribed.
+    const onSettled = (listener: () => void): (() => void) => pi.on('agent_settled', listener);
     let speechmuxClient: SpeechmuxClient | null = null;
     // Monotonic generation tag for the speechmux client. Bumped on every
     // open_ws and close_ws so a discarded client's late callbacks (frame /
@@ -432,14 +431,6 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         type: 'sdk:turn_end',
         lastSpeakToolCallId: typeof lastSpeakResult.toolCallId === 'string' ? lastSpeakResult.toolCallId : null,
       });
-    });
-
-    pi.on('agent_settled', () => {
-      // Authoritative "run fully settled / idle" boundary. Drain the one-shot
-      // settle waiters (see `onSettled` / `ensureIdleWithImplicitAbort`).
-      const waiters = [...settleWaiters];
-      settleWaiters.clear();
-      for (const w of waiters) w();
     });
 
     pi.on('agent_end', () => {

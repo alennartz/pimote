@@ -3541,6 +3541,30 @@ describe('WsHandler', () => {
       });
     });
 
+    it('fails closed with a distinct error when the user_bash extension handler throws', async () => {
+      const slot = createMockSlot({ id: 'session-bash-throws', connectedClientId: 'client-1' });
+      const executeBash = vi.fn();
+      const recordBashResult = vi.fn();
+      (slot.session as any).executeBash = executeBash;
+      (slot.session as any).recordBashResult = recordBashResult;
+      (slot.session as any).extensionRunner = {
+        emitUserBash: vi.fn(async () => {
+          throw new Error('handler boom');
+        }),
+      };
+      (slot.session as any).isBashRunning = false;
+      const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+
+      await handler.handleMessage(JSON.stringify({ type: 'bash', id: 'bash-request-throws', sessionId: slot.sessionState.id, command: 'pwd' }));
+
+      // Fail-closed: neither local execution nor extension result recording runs.
+      expect(executeBash).not.toHaveBeenCalled();
+      expect(recordBashResult).not.toHaveBeenCalled();
+      // Dispatch flags are reset by the case's finally, so the next command is admissible.
+      expect(slot.sessionState.bashDispatchInProgress).toBe(false);
+      expect(findResponse(sent, 'bash-request-throws')).toMatchObject({ success: false, error: 'bash_extension_error' });
+    });
+
     it('passes extension-provided operations into native execution', async () => {
       const slot = createMockSlot({ id: 'session-bash-operations', connectedClientId: 'client-1' });
       const executeBash = vi.fn(async () => ({ output: 'remote\\n', exitCode: 0, cancelled: false, truncated: false }));
