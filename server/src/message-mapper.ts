@@ -64,8 +64,20 @@ export function mapCustomEntry(entry: Extract<SessionEntry, { type: 'custom' }>)
 }
 
 /** Convert raw pi SDK AgentMessage objects to PimoteAgentMessage format. */
+/**
+ * Map a message array, omitting the session's leading system message (the full
+ * base prompt — pure noise in a chat UI). Later system messages are pi 0.87+
+ * prompt-section deltas and map to compact wire entries.
+ */
 export function mapAgentMessages(messages: AgentMessage[]): PimoteAgentMessage[] {
-  return messages.map(mapAgentMessage);
+  let seenSystem = false;
+  return messages.flatMap((message) => {
+    if (message.role === 'system' && !seenSystem) {
+      seenSystem = true;
+      return [];
+    }
+    return [mapAgentMessage(message)];
+  });
 }
 
 /**
@@ -78,11 +90,18 @@ export function mapAgentMessages(messages: AgentMessage[]): PimoteAgentMessage[]
  * display-only messages (never sent to the LLM; see mapCustomEntry).
  */
 export function mapContextEntries(entries: readonly SessionEntry[], customEntryVisible?: CustomEntryVisibility): PimoteAgentMessage[] {
-  return entries.flatMap((entry) =>
-    entry.type === 'custom' && customEntryVisible?.(entry.customType)
-      ? [mapCustomEntry(entry)]
-      : sessionEntryToContextMessages(entry).map((message) => ({ ...mapAgentMessage(message), entryId: entry.id })),
-  );
+  let seenSystem = false;
+  return entries.flatMap((entry) => {
+    if (entry.type === 'custom' && customEntryVisible?.(entry.customType)) return [mapCustomEntry(entry)];
+    // Skip the leading system message (the base prompt) — same rule as
+    // mapAgentMessages; extractMessageEntryIds mirrors it to keep the ID zip aligned.
+    const messages = sessionEntryToContextMessages(entry).filter((message) => {
+      if (message.role !== 'system' || seenSystem) return true;
+      seenSystem = true;
+      return false;
+    });
+    return messages.map((message) => ({ ...mapAgentMessage(message), entryId: entry.id }));
+  });
 }
 
 /**
@@ -102,9 +121,15 @@ export function extractMessageEntryIds(branch: SessionEntry[], customEntryVisibl
   }
 
   const ids: string[] = [];
+  // Mirrors mapContextEntries: the leading system message entry contributes no message.
+  let seenSystemEntry = false;
 
   const appendId = (entry: SessionEntry) => {
     if (entry.type === 'message') {
+      if (entry.message?.role === 'system' && !seenSystemEntry) {
+        seenSystemEntry = true;
+        return;
+      }
       ids.push(entry.id);
     } else if (entry.type === 'custom_message') {
       ids.push(entry.id);
@@ -238,6 +263,16 @@ export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
     case 'branchSummary':
     case 'compactionSummary':
       return { role: msg.role, content: msg.summary ? [{ type: 'text', text: msg.summary }] : [] };
+
+    case 'system':
+      // Harness→model prompt bookkeeping (pi 0.87+): named prompt-section deltas.
+      // The leading base-prompt message is omitted by the list mappers above; live
+      // single-message paths (event buffer) surface later deltas as compact entries.
+      return {
+        role: 'system',
+        content: mapContentBlocks(msg.content),
+        ...(msg.sections && Object.keys(msg.sections).length > 0 ? { sections: msg.sections } : {}),
+      };
 
     default: {
       // Exhaustiveness guard: a new AgentMessage role fails to compile here.

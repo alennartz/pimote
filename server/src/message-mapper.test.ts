@@ -101,6 +101,13 @@ describe('mapAgentMessage', () => {
       expect(result.aborted).toBe(true);
     });
 
+    it('maps system prompt-section delta messages (pi 0.87+)', () => {
+      const result = m({ role: 'system', content: '', sections: { voice: 'You are a voice interpreter…', legacy: null } });
+      expect(result.role).toBe('system');
+      expect(result.content).toEqual([]);
+      expect(result.sections).toEqual({ voice: 'You are a voice interpreter…', legacy: null });
+    });
+
     it('does not assign entryId (the client assigns entry IDs from agent_end messageEntryIds)', () => {
       const result = m({ role: 'user', content: [{ type: 'text', text: 'x' }] });
       expect(result.entryId).toBeUndefined();
@@ -118,6 +125,18 @@ describe('mapAgentMessages', () => {
     expect(results).toHaveLength(2);
     expect(results[0].role).toBe('user');
     expect(results[1].role).toBe('assistant');
+  });
+
+  it('omits the leading system message and keeps later section deltas', () => {
+    const results = mapAgentMessages([
+      { role: 'system', content: '', sections: { preamble: 'base prompt' } },
+      { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+      { role: 'system', content: '', sections: { voice: 'interpreter prompt' } },
+    ] as never);
+
+    expect(results).toHaveLength(2);
+    expect(results[0].role).toBe('user');
+    expect(results[1]).toMatchObject({ role: 'system', sections: { voice: 'interpreter prompt' } });
   });
 });
 
@@ -181,6 +200,34 @@ describe('mapContextEntries', () => {
       },
     ]);
   });
+
+  it('omits the leading system entry but maps later system deltas, keeping IDs aligned', () => {
+    const systemEntry = (id: string, sections: Record<string, string | null>) => ({
+      id,
+      parentId: null,
+      timestamp: '2026-01-01T00:00:00.000Z',
+      type: 'message' as const,
+      message: { role: 'system' as const, content: '', sections },
+    });
+    const entries = [
+      systemEntry('sys-1', { preamble: 'base prompt' }),
+      {
+        id: 'user-1',
+        parentId: 'sys-1',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        type: 'message' as const,
+        message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'hello' }] },
+      },
+      systemEntry('sys-2', { voice: 'interpreter prompt' }),
+    ];
+
+    const messages = mapContextEntries(entries as never);
+    const ids = extractMessageEntryIds(entries as never);
+
+    expect(messages.map((msg) => msg.role)).toEqual(['user', 'system']);
+    expect(messages[1]).toMatchObject({ entryId: 'sys-2', sections: { voice: 'interpreter prompt' } });
+    expect(ids).toEqual(['user-1', 'sys-2']);
+  });
 });
 
 describe('extractMessageEntryIds', () => {
@@ -234,6 +281,15 @@ describe('extractMessageEntryIds', () => {
     ];
     // compaction summary → kept (e2, e3) → post-compaction (e4, e5)
     expect(extractMessageEntryIds(branch)).toEqual(['c1', 'e2', 'e3', 'e4', 'e5']);
+  });
+
+  it('skips the leading system message entry but keeps later ones (mirrors mapContextEntries)', () => {
+    const branch: SdkSessionEntry[] = [
+      entry({ id: 'sys1', type: 'message', message: { role: 'system', content: '' } }),
+      entry({ id: 'u1', type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } }),
+      entry({ id: 'sys2', type: 'message', message: { role: 'system', content: '' } }),
+    ];
+    expect(extractMessageEntryIds(branch)).toEqual(['u1', 'sys2']);
   });
 
   it('returns empty array for empty branch', () => {

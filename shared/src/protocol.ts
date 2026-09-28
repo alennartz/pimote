@@ -109,6 +109,13 @@ export interface PimoteAgentMessage {
   aborted?: boolean;
   /** Present on assistant messages whose turn failed before producing content. */
   errorMessage?: string;
+  /**
+   * Present when role === 'system' — pi 0.87+ transcript system-prompt bookkeeping.
+   * Named prompt-section updates keyed by section name; `null` marks a removed section.
+   * The session's leading system message (the full base prompt) is omitted by the
+   * server mapper; later section deltas surface as collapsed chips in the client.
+   */
+  sections?: Record<string, string | null>;
   /** Native bash metadata when role === 'bashExecution'. */
   command?: string;
   /** Native bash combined output when role === 'bashExecution'. */

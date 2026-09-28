@@ -28,6 +28,7 @@
   }: { message: PimoteAgentMessage | StreamingMessage; streaming?: boolean; messageKey?: string; onfork?: (entryId: string) => void } = $props();
   let userMenuOpen = $state(false);
   let customExpanded = $state(false);
+  let systemExpanded = $state(false);
   let skillExpanded = $state(false);
   let toolMenuOpen = $state(false);
 
@@ -84,6 +85,8 @@
   let customText = $derived(getUserText(message));
   let customLines = $derived(customText.split('\n'));
   let customNeedsCollapse = $derived(customLines.length > MAX_COLLAPSED_LINES);
+  let systemSections = $derived(message.role === 'system' ? ((message as PimoteAgentMessage).sections ?? {}) : {});
+  let systemSectionNames = $derived(Object.keys(systemSections));
 </script>
 
 {#if message.role === 'toolResult'}
@@ -270,8 +273,37 @@
       {/if}
     </div>
   </div>
+{:else if message.role === 'system'}
+  <!-- System prompt bookkeeping (pi 0.87+): collapsed chip over named prompt-section deltas. -->
+  <div class="message system-chip">
+    <button class="system-chip-header" onclick={() => (systemExpanded = !systemExpanded)}>
+      {#if systemExpanded}
+        <ChevronDown size={12} />
+      {:else}
+        <ChevronRight size={12} />
+      {/if}
+      <span>system prompt{systemSectionNames.length > 0 ? `: ${systemSectionNames.join(', ')}` : ' updated'}</span>
+    </button>
+    {#if systemExpanded}
+      <div class="system-chip-body">
+        {#each systemSectionNames as name (name)}
+          {#if systemSections[name] === null}
+            <div class="system-section"><span class="system-section-name">{name}</span> <span class="text-muted-foreground">removed</span></div>
+          {:else}
+            <div class="system-section">
+              <div class="system-section-name">{name}</div>
+              <TextBlock text={systemSections[name] ?? ''} />
+            </div>
+          {/if}
+        {/each}
+        {#if systemSectionNames.length === 0}
+          <TextBlock text={getUserText(message)} />
+        {/if}
+      </div>
+    {/if}
+  </div>
 {:else}
-  <!-- System or other role messages -->
+  <!-- Other roles (fallback) -->
   <div class="message system-message">
     <div class="message-body">
       <div class="system-text">{getUserText(message)}</div>
@@ -284,6 +316,44 @@
     display: flex;
     gap: 10px;
     padding: 12px 0;
+  }
+
+  .system-chip {
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 0;
+  }
+
+  .system-chip-header {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    color: var(--muted-foreground, var(--foreground));
+    font-size: 12px;
+    cursor: pointer;
+    padding: 2px 0;
+    text-align: left;
+  }
+
+  .system-chip-body {
+    margin-left: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 12px;
+    max-width: 100%;
+  }
+
+  .system-section {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .system-section-name {
+    font-weight: 600;
   }
 
   .message-icon {
