@@ -22,6 +22,7 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 
 import { renderInterpreterPrompt } from './interpreter-prompt.js';
+import { applyVoicePromptSection } from './prompt-section.js';
 import { createDefaultSpeechmuxClientFactory, type SpeechmuxClient, type SpeechmuxClientFactory } from './speechmux-client.js';
 import { ensureIdleWithImplicitAbort } from './wait-for-idle.js';
 import type { VoiceActivateMessage, VoiceDeactivateMessage } from './state-machine.js';
@@ -377,8 +378,12 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
 
     pi.on('before_agent_start', (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
       lastCtx = ctx;
-      if (state.lifecycle.kind === 'dormant') return;
-      return { systemPrompt: `${interpreterPrompt}\n\n${event.systemPrompt ?? ''}`.trim() };
+      // Carry the interpreter prompt as a named prompt section (pi 0.87+).
+      // pi diffs the desired sections against the transcript-replayed ones and
+      // persists a SystemMessage delta, so voice-mode prompt state survives
+      // resume and branch navigation. Dormant removes the section so the
+      // base prompt returns unchanged after a call ends.
+      applyVoicePromptSection(event.systemPromptOptions.sections, state.lifecycle.kind, interpreterPrompt);
     });
 
     // The `tool_call` hook is intentionally NOT registered. The streaming
