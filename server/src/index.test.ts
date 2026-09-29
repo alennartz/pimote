@@ -6,17 +6,31 @@ const mocks = vi.hoisted(() => {
     roots: ['/workspace'],
     scan: vi.fn(async () => [{ path: '/workspace/project' }]),
     listSessionRecords: vi.fn(async () => [{ id: 'session-1' }]),
+    resolveSessionPath: vi.fn(async () => undefined),
   };
   const sessionManager = {
     startIdleCheck: vi.fn(),
     dispose: vi.fn(async () => undefined),
     getModelRuntime: vi.fn(() => ({})),
+    getAllSessions: vi.fn(() => []),
+    getSession: vi.fn(() => undefined),
+    closeSession: vi.fn(async () => undefined),
+    openSession: vi.fn(async () => 'session-new'),
+  };
+  const sessionMetadataStore = {
+    initialize: vi.fn(async () => undefined),
+    getArchivedLookup: vi.fn(() => new Map<string, boolean>()),
+    setArchived: vi.fn(async () => undefined),
+  };
+  const projectRegistry = {
+    list: vi.fn(async () => []),
   };
   const server = {
     clientRegistry: new Map(),
     start: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
   };
+  const createManagerSessionFactory = vi.fn((_deps: { config: unknown; modelRuntime: unknown; managerExtensionFactory: (pi: unknown) => unknown }) => vi.fn());
   const staticHostRegistry = {};
   const staticHostFactory = (() => undefined) as any;
   const downloadManager = {};
@@ -26,7 +40,10 @@ const mocks = vi.hoisted(() => {
     config,
     folderIndex,
     sessionManager,
+    sessionMetadataStore,
+    projectRegistry,
     server,
+    createManagerSessionFactory,
     staticHostRegistry,
     staticHostFactory,
     downloadManager,
@@ -56,8 +73,17 @@ vi.mock('./session-manager.js', () => ({
   PimoteSessionManager: {
     create: vi.fn(async () => mocks.sessionManager),
   },
-  createManagerSessionFactory: vi.fn(() => vi.fn()),
+  createManagerSessionFactory: mocks.createManagerSessionFactory,
 }));
+vi.mock('./project-registry.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./project-registry.js')>();
+  return {
+    ...actual,
+    ProjectRegistry: vi.fn(function () {
+      return mocks.projectRegistry;
+    }),
+  };
+});
 vi.mock('./push-notification.js', () => ({
   PushNotificationService: vi.fn(function () {
     return { initialize: vi.fn(async () => undefined) };
@@ -74,7 +100,7 @@ vi.mock('./push-infrastructure.js', () => ({
 }));
 vi.mock('./session-metadata.js', () => ({
   FileSessionMetadataStore: vi.fn(function () {
-    return { initialize: vi.fn(async () => undefined) };
+    return mocks.sessionMetadataStore;
   }),
 }));
 vi.mock('./voice-orchestrator-boot.js', () => ({ buildVoiceOrchestrator: vi.fn(() => null) }));
@@ -102,7 +128,17 @@ function resetMocks(): void {
   mocks.config.updateCheck = undefined;
   mocks.folderIndex.scan.mockReset().mockResolvedValue([{ path: '/workspace/project' }]);
   mocks.folderIndex.listSessionRecords.mockReset().mockResolvedValue([{ id: 'session-1' }]);
+  mocks.folderIndex.resolveSessionPath.mockReset().mockResolvedValue(undefined);
   mocks.sessionManager.startIdleCheck.mockReset();
+  mocks.sessionManager.getAllSessions.mockReset().mockReturnValue([]);
+  mocks.sessionManager.getSession.mockReset().mockReturnValue(undefined);
+  mocks.sessionManager.closeSession.mockReset().mockResolvedValue(undefined);
+  mocks.sessionManager.openSession.mockReset().mockResolvedValue('session-new');
+  mocks.sessionMetadataStore.getArchivedLookup.mockReset().mockReturnValue(new Map<string, boolean>());
+  mocks.sessionMetadataStore.setArchived.mockReset().mockResolvedValue(undefined);
+  mocks.projectRegistry.list.mockReset().mockResolvedValue([]);
+  mocks.createManagerSessionFactory.mockClear();
+  mocks.server.clientRegistry.clear();
   mocks.server.start.mockReset().mockResolvedValue(undefined);
   mocks.bootstrapFileDownloads.mockReset().mockResolvedValue({ manager: mocks.downloadManager, extensionFactory: mocks.downloadFactory });
   mocks.createServer.mockReset().mockResolvedValue(mocks.server);
@@ -186,5 +222,159 @@ describe('main — file download bootstrap wiring', () => {
     await main();
 
     expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: null }));
+  });
+});
+
+// The manager toolset's port wiring: drive the tools registered at the
+// single ManagerToolContext construction site through the real extension
+// factory main() hands to the manager session factory, against the mocked
+// server internals the construction site composes over.
+describe('main — manager toolset port wiring', () => {
+  let processOn: ReturnType<typeof vi.spyOn>;
+  let log: ReturnType<typeof vi.spyOn>;
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  interface FakeToolDef {
+    name: string;
+    execute: (...args: unknown[]) => Promise<{ details: any }>;
+  }
+
+  /** Run main(), then register the manager extension's tools against a fake
+   *  ExtensionAPI and return them for direct execution. */
+  async function registeredManagerTools(): Promise<FakeToolDef[]> {
+    await main({ portOverride: 4321 });
+    expect(mocks.createManagerSessionFactory).toHaveBeenCalledTimes(1);
+    const { managerExtensionFactory } = mocks.createManagerSessionFactory.mock.calls[0][0];
+    const toolDefs: FakeToolDef[] = [];
+    (managerExtensionFactory as (pi: unknown) => void)({
+      registerTool(def: FakeToolDef) {
+        toolDefs.push(def);
+      },
+      on() {},
+      events: { emit() {}, on: () => () => {} },
+    });
+    return toolDefs;
+  }
+
+  function toolNamed(tools: FakeToolDef[], name: string): FakeToolDef {
+    const def = tools.find((tool) => tool.name === name);
+    if (!def) throw new Error(`${name} not registered`);
+    return def;
+  }
+
+  const alphaProject = { path: '/workspace/alpha', name: 'alpha', kind: 'single' as const, activeSessionCount: 0, externalProcessCount: 0 };
+  const betaProject = { path: '/workspace/beta', name: 'beta', kind: 'single' as const, activeSessionCount: 0, externalProcessCount: 0 };
+
+  beforeEach(() => {
+    resetMocks();
+    processOn = vi.spyOn(process, 'on').mockImplementation(() => process);
+    log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    processOn.mockRestore();
+    log.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('wires listDiskSessions: search lists every project through FolderIndex and enriches with the archived lookup', async () => {
+    mocks.projectRegistry.list.mockResolvedValue([alphaProject, betaProject]);
+    mocks.folderIndex.listSessionRecords.mockImplementation(async (folderPath: string) =>
+      folderPath === '/workspace/alpha'
+        ? [
+            {
+              id: 's1',
+              path: '/sessions/s1.jsonl',
+              name: 'Fix login',
+              created: new Date('2025-06-01T00:00:00Z'),
+              modified: new Date('2025-06-02T00:00:00Z'),
+              messageCount: 3,
+              firstMessage: 'login broken',
+            },
+          ]
+        : [],
+    );
+    mocks.sessionMetadataStore.getArchivedLookup.mockReturnValue(new Map([['/sessions/s1.jsonl', true]]));
+
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_search_sessions').execute('call-1', { query: 'login' }, undefined, undefined, {});
+
+    expect(mocks.folderIndex.listSessionRecords).toHaveBeenCalledWith('/workspace/alpha');
+    expect(mocks.folderIndex.listSessionRecords).toHaveBeenCalledWith('/workspace/beta');
+    expect(mocks.sessionMetadataStore.getArchivedLookup).toHaveBeenCalledWith(['/sessions/s1.jsonl']);
+    expect(result.details.results).toEqual([
+      {
+        id: 's1',
+        name: 'Fix login',
+        firstMessage: 'login broken',
+        modified: '2025-06-02T00:00:00.000Z',
+        folderPath: '/workspace/alpha',
+        open: false,
+        archived: true,
+        messageCount: 3,
+      },
+    ]);
+  });
+
+  it('wires openSession: start_session opens through the session manager and prompts the firstMessage', async () => {
+    mocks.projectRegistry.list.mockResolvedValue([alphaProject]);
+    mocks.sessionManager.openSession.mockResolvedValue('sess-9');
+    const prompt = vi.fn(async () => undefined);
+    mocks.sessionManager.getSession.mockReturnValue({ session: { sessionFile: '/sessions/sess-9.jsonl', prompt }, folderPath: '/workspace/alpha' });
+
+    const tools = await registeredManagerTools();
+    const withMessage = await toolNamed(tools, 'pimote_start_session').execute(
+      'call-1',
+      { projectPath: '/workspace/alpha', firstMessage: 'do the thing' },
+      undefined,
+      undefined,
+      {},
+    );
+    const withoutMessage = await toolNamed(tools, 'pimote_start_session').execute('call-2', { projectPath: '/workspace/alpha' }, undefined, undefined, {});
+
+    expect(mocks.sessionManager.openSession).toHaveBeenNthCalledWith(1, '/workspace/alpha');
+    expect(mocks.sessionManager.openSession).toHaveBeenNthCalledWith(2, '/workspace/alpha');
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledWith('do the thing');
+    expect(withMessage.details).toEqual({ sessionId: 'sess-9', projectPath: '/workspace/alpha', firstMessageSent: true });
+    expect(withoutMessage.details).toEqual({ sessionId: 'sess-9', projectPath: '/workspace/alpha', firstMessageSent: false });
+  });
+
+  it('wires archiveSessions for an open session: canonical archive on the slot file, slot evicted, clients notified', async () => {
+    mocks.projectRegistry.list.mockResolvedValue([alphaProject]);
+    mocks.sessionManager.getSession.mockReturnValue({ session: { sessionFile: '/sessions/s1.jsonl' }, folderPath: '/workspace/alpha' });
+    const broadcast = vi.fn();
+    mocks.server.clientRegistry.set('client-1', { sendToClient: broadcast });
+
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_archive_sessions').execute('call-1', { sessionIds: ['s1'] }, undefined, undefined, {});
+
+    expect(mocks.sessionMetadataStore.setArchived).toHaveBeenCalledWith('/sessions/s1.jsonl', true);
+    expect(mocks.sessionManager.closeSession).toHaveBeenCalledWith('s1');
+    // The live slot's session file wins; no disk scan is needed.
+    expect(mocks.folderIndex.resolveSessionPath).not.toHaveBeenCalled();
+    expect(broadcast).toHaveBeenCalledWith({ type: 'session_archived', sessionId: 's1', folderPath: '/workspace/alpha', archived: true });
+    expect(result.details.results).toEqual([{ sessionId: 's1', outcome: 'open_slot_evicted' }]);
+  });
+
+  it('wires archiveSessions for a closed session: resolves the record across project folders, archives on disk, leaves no slot to evict', async () => {
+    mocks.projectRegistry.list.mockResolvedValue([alphaProject, betaProject]);
+    mocks.folderIndex.resolveSessionPath.mockImplementation(async (_folderPath: string, sessionId: string) => (sessionId === 's2' ? '/sessions/s2.jsonl' : undefined));
+
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_archive_sessions').execute('call-1', { sessionIds: ['s2'] }, undefined, undefined, {});
+
+    expect(mocks.folderIndex.resolveSessionPath).toHaveBeenCalledWith('/workspace/alpha', 's2');
+    expect(mocks.sessionMetadataStore.setArchived).toHaveBeenCalledWith('/sessions/s2.jsonl', true);
+    expect(mocks.sessionManager.closeSession).not.toHaveBeenCalled();
+    expect(result.details.results).toEqual([{ sessionId: 's2', outcome: 'archived' }]);
+  });
+
+  it('wires archiveSessions for an unknown session id: reports not_found without touching the metadata store', async () => {
+    mocks.projectRegistry.list.mockResolvedValue([alphaProject]);
+
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_archive_sessions').execute('call-1', { sessionIds: ['ghost'] }, undefined, undefined, {});
+
+    expect(mocks.sessionMetadataStore.setArchived).not.toHaveBeenCalled();
+    expect(mocks.sessionManager.closeSession).not.toHaveBeenCalled();
+    expect(result.details.results).toEqual([{ sessionId: 'ghost', outcome: 'not_found' }]);
   });
 });

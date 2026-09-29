@@ -10,7 +10,7 @@ import { loadProjectSources } from './project-sources/index.js';
 import { createBuiltinCreator } from './project-sources/builtin.js';
 import type { ProjectCreator } from './project-sources/index.js';
 import { ManagerService } from './manager/index.js';
-import type { ManagerToolContext } from './manager/index.js';
+import type { ManagerToolContext, SessionArchiveOutcome } from './manager/index.js';
 import { createManagerExtension } from './manager/index.js';
 import { PushNotificationService } from './push-notification.js';
 import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore } from './push-infrastructure.js';
@@ -99,6 +99,12 @@ export async function main(options: StartOptions = {}) {
   // Global ephemeral manager: one session per client connection, built on the
   // shared model runtime with the manager extension as its only toolset. Tools
   // act only through the narrow ports of the ManagerToolContext.
+  //
+  // Manager-initiated session_archived events fan out to every connected
+  // client exactly like the ws-handler archive_session flow; the client
+  // registry is created inside createServer, so the archive port closes over
+  // this ref, swapped in right after createServer returns.
+  const managerClientRegistryRef: { current: Map<string, import('./ws-handler.js').WsHandler> } = { current: new Map() };
   const managerContext: ManagerToolContext = {
     sessions: {
       getAllSessions: () =>
@@ -108,6 +114,59 @@ export async function main(options: StartOptions = {}) {
           status: slot.sessionState.status,
           needsAttention: slot.sessionState.needsAttention,
         })),
+      // On-disk records for one project folder: FolderIndex listing enriched
+      // with the archived flag from the session metadata store, so search
+      // results carry the same archived state the WS list_sessions path serves.
+      listDiskSessions: async (folderPath) => {
+        const records = await folderIndex.listSessionRecords(folderPath);
+        const archivedLookup = sessionMetadataStore.getArchivedLookup(records.map((record) => record.path));
+        return records.map((record) => ({
+          id: record.id,
+          name: record.name,
+          firstMessage: record.firstMessage,
+          created: record.created.toISOString(),
+          modified: record.modified.toISOString(),
+          messageCount: record.messageCount,
+          archived: archivedLookup.get(record.path) === true,
+        }));
+      },
+      // The same open path the open_session WS command uses; a firstMessage is
+      // prompted immediately and its agent run continues in the background.
+      openSession: async (folderPath, firstMessage) => {
+        const sessionId = await sessionManager.openSession(folderPath);
+        const message = firstMessage?.trim();
+        if (message) {
+          sessionManager
+            .getSession(sessionId)
+            ?.session.prompt(message)
+            .catch((err) => console.error('[pimote] manager firstMessage prompt failed:', err));
+        }
+        return sessionId;
+      },
+      // Canonical archive flow (ws-handler archive_session): resolve the live
+      // slot's session file or the on-disk record, mark it archived, then —
+      // manager-specific — evict the live slot so an archived session never
+      // lingers as an open one. Broadcast mirrors the WS flow so connected
+      // dashboards update immediately.
+      archiveSessions: async (sessionIds: string[]): Promise<SessionArchiveOutcome[]> => {
+        const folderPaths = [...new Set((await projectRegistry.list()).map((project) => project.path))];
+        return Promise.all(
+          sessionIds.map(async (sessionId): Promise<SessionArchiveOutcome> => {
+            const slot = sessionManager.getSession(sessionId);
+            const resolved = slot?.session.sessionFile
+              ? { folderPath: slot.folderPath, sessionPath: slot.session.sessionFile }
+              : await resolveSessionAcrossFolders(folderIndex, folderPaths, sessionId);
+            if (!resolved) return { sessionId, outcome: 'not_found' };
+
+            await sessionMetadataStore.setArchived(resolved.sessionPath, true);
+            if (slot) await sessionManager.closeSession(sessionId);
+            for (const [, handler] of managerClientRegistryRef.current) {
+              handler.sendToClient({ type: 'session_archived', sessionId, folderPath: resolved.folderPath, archived: true });
+            }
+            return { sessionId, outcome: slot ? 'open_slot_evicted' : 'archived' };
+          }),
+        );
+      },
     },
     projects: projectRegistry,
     repos: repoIndex,
@@ -168,6 +227,7 @@ export async function main(options: StartOptions = {}) {
     creators,
   );
   clientRegistryRef.current = server.clientRegistry;
+  managerClientRegistryRef.current = server.clientRegistry;
 
   if (voiceBoot) {
     const orchestrator = voiceBoot.orchestrator;
@@ -223,6 +283,17 @@ export async function main(options: StartOptions = {}) {
 
 function isDirectRun(): boolean {
   return process.argv[1] != null && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+}
+
+/** Resolve a session id to its on-disk file path and owning project folder,
+ *  scanning the given folders — the manager's archive path when no live slot
+ *  holds the id. */
+async function resolveSessionAcrossFolders(folderIndex: FolderIndex, folderPaths: string[], sessionId: string): Promise<{ folderPath: string; sessionPath: string } | undefined> {
+  for (const folderPath of folderPaths) {
+    const sessionPath = await folderIndex.resolveSessionPath(folderPath, sessionId);
+    if (sessionPath) return { folderPath, sessionPath };
+  }
+  return undefined;
 }
 
 if (isDirectRun()) {
