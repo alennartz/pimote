@@ -109,6 +109,16 @@ describe('RepoIndex.list() — recursive discovery', () => {
     expect(paths).toContain(repoA);
     expect(paths).toContain(repoB);
   });
+
+  it('tolerates a configured root that does not exist', async () => {
+    const repo = join(tempDir, 'repo');
+    await initRepo(repo);
+
+    const index = makeIndex([tempDir, join(tempDir, 'gone')]);
+    const paths = (await index.list()).map((r) => r.path);
+
+    expect(paths).toContain(repo);
+  });
 });
 
 describe('RepoIndex.list() — registered sources', () => {

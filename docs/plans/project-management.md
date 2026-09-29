@@ -102,18 +102,21 @@ None. DR-001 (SDK embedding), DR-026 (extension-owns-tools pattern), and DR-039 
 - `server/src/repo-index.ts` — `RepoIndex` class stub: `list()` (TTL-cached discovery + git-status enrichment), `invalidate()`, `registerSource()`, `RepoIndexOptions` (ttlMs, statusTtlMs, injectable clock).
 - `server/src/project-registry.ts` — `ProjectRegistry` class stub: `list()` (index + overrides merge), `update(patch)`, `createHub(name, root, repoPaths)`, `disband(path)`, `onChange(cb)`; `ProjectUpdatePatch`.
 - `server/src/project-sources/types.ts` — `ProjectSource` and `ProjectCreator` interfaces, `ProjectCreatorDescriptor` / `ProjectCreatorParamType`.
+- `server/src/project-sources/builtin.ts` — `createBuiltinCreator(): ProjectCreator` stub: the built-in mkdir + git-init creator backing the dashboard's create-project flow (`{ root, name }` params; rejects when the target folder already exists).
 - `server/src/project-sources/loader.ts` — `loadProjectSources(dir)` stub returning `LoadedProjectSources` (`{ sources, creators }`); user-module contract: modules export `sources` / `creators` arrays; per-module failure isolation; missing dir → empty.
 - `server/src/manager/types.ts` — `ManagerToolContext` with narrow DI ports per DR-039: `SessionManagerPort` (`getAllSessions(): ManagedSessionSummary[]`), `ProjectRegistryPort`, `RepoIndexPort`.
 - `server/src/manager/service.ts` — `ManagerService` stub (`getOrCreate(clientId)`, `disposeClient(clientId)`, `sweepIdle()`), `ManagerSession` handle (`session`, `onEvent(cb)`, `dispose()`), `ManagerSessionFactory` seam over session-manager's runtime factory, `ManagerServiceOptions` (idleTimeoutMs, injectable clock).
-- `server/src/manager/extension.ts` — `createManagerExtension(context): ExtensionFactory` stub (registers the pimote toolset acting only through the context).
+- `server/src/manager/extension.ts` — `createManagerExtension(context): ExtensionFactory` stub (registers the pinned listing toolset — `pimote_list_projects`, `pimote_list_repos`, `pimote_list_sessions`, each with empty parameters — acting only through the context).
 - `server/src/config.ts` — `projectSourcesDir?: string` setting (default resolved in `paths.ts` as `PIMOTE_PROJECT_SOURCES_DIR`).
 
 ### Test Files
 
 - `server/src/repo-index.test.ts` — recursive discovery bounds, excluded dirs, symlink non-following, multi-root, registered sources incl. `missing` marking, listing TTL + invalidate, git status enrichment (branch/dirty/ahead-behind) and its separate TTL.
-- `server/src/project-registry.test.ts` — single/multi project listing and merge, curation overrides, hub creation (symlinks + AGENTS.md) and validation, disband (incl. single-repo safety refusal), persistence across instances, change notifications + unsubscribe.
+- `server/src/project-registry.test.ts` — single/multi project listing and merge, curation overrides (single-repo and hub projects), manual-order/name sort listing, hub creation (symlinks + AGENTS.md) and validation (unknown member, existing target folder), disband (incl. single-repo safety refusal), persistence across instances, change notifications + unsubscribe.
 - `server/src/project-sources/loader.test.ts` — module collection, per-module failure isolation, non-module files ignored, missing directory → empty.
+- `server/src/project-sources/builtin.test.ts` — creator descriptor (`root` + `name` form), mkdir + git init, target-exists rejection touching nothing.
 - `server/src/manager/service.test.ts` — create-on-first-use, per-connection isolation, dispose-on-disconnect + recreate, idle reaper (reaps beyond timeout, spares recent use, tolerance of unknown clients).
+- `server/src/manager/extension.test.ts` — registers exactly the pinned listing toolset; each tool routes through the injected `ManagerToolContext` ports.
 
 ### Behaviors Covered
 
@@ -124,7 +127,7 @@ All new tests are red at this phase (stubs throw `not implemented`); the full pr
 - Discovers git repos up to three directory levels below each configured root; deeper repos are not listed.
 - Does not descend into `node_modules`, `.git`, `dist`, `build`, `target`, `.venv`.
 - Does not follow symlinks pointing outside the scanned tree.
-- Discovers across all configured roots.
+- Discovers across all configured roots; a configured root that does not exist is tolerated.
 - Merges repos contributed by registered `ProjectSource`s into listings.
 - Lists paths that vanished from disk with `missing: true` instead of dropping them.
 - Serves a cached listing until the listing TTL expires; `invalidate()` forces an immediate re-walk.
@@ -134,10 +137,12 @@ All new tests are red at this phase (stubs throw `not implemented`); the full pr
 #### ProjectRegistry
 
 - Lists every discovered repo as a `single` project with no curation flags applied.
-- Applies `favorite` / `order` / `archived` overrides to single-repo projects.
+- Applies `favorite` / `order` / `archived` overrides to single-repo projects and to hub projects.
+- Sorts the merged list by manual `order` where set and by name otherwise.
 - Rejects updates for unknown project paths.
-- Creates a hub project: directory under the chosen root, symlink per member repo, non-empty generated `AGENTS.md`; listed as `multi` with member `RepoInfo`s.
+- Creates a hub project: directory under the chosen root, symlink per member repo, generated `AGENTS.md` naming each member repo and the sub-project convention; listed as `multi` with member `RepoInfo`s.
 - Rejects hub creation when any member is missing from the repo index and creates nothing.
+- Rejects hub creation when the target folder already exists and leaves it untouched.
 - Disbands a hub: registry entry removed, hub folder deleted, member repos untouched.
 - Refuses to disband a single-repo project or an unknown path.
 - Persists hubs and overrides across registry instances (session-json-store pattern).
@@ -149,15 +154,26 @@ All new tests are red at this phase (stubs throw `not implemented`); the full pr
 - Isolates failures per module: a module that throws or fails to parse is skipped; the rest load.
 - Ignores non-module files; a missing directory yields empty results.
 
+#### Built-in creator
+
+- Describes a creation form asking for `root` and `name`.
+- Creates the project folder under the chosen root and git-inits it.
+- Rejects creation when the target folder already exists, touching nothing.
+
 #### ManagerService
 
 - Creates the connection's manager session on first use and reuses it for that connection.
 - Keeps separate manager sessions per connection.
 - Disposes a connection's session on disconnect and recreates it on next use; disposing an unknown client is a no-op.
 - Reaps sessions idle beyond the timeout as a safety net; spares sessions used recently; a reaped session is recreated on next use.
+- The manager extension registers exactly the pinned listing toolset (`pimote_list_projects`, `pimote_list_repos`, `pimote_list_sessions`); each tool routes through the injected `ManagerToolContext` ports.
 
 #### Deferred to implementation (noted for review)
 
 - The physical `FolderInfo`→`ProjectInfo` / `list_folders`→`list_projects` rename: the new surface is materialized additively here; swapping the old surface ripples through ws-handler routing, client stores, and the Android mirror and belongs with implementation wiring. Wire field names in session-scoped events are untouched, per the plan.
 - Client interfaces (`project-store`, `manager-store`, Dashboard/ProjectList/ManagerChat): the plan's Interfaces subsection defines no client contracts beyond the wire protocol materialized above; the stores evolve existing index-store machinery and get their behavioral tests with their implementation.
 - Hub-folder symlink-following exception in the walker (depends on the generated-AGENTS.md marker convention that hub creation itself defines); the general no-symlink-following rule is covered.
+- Manager toolset semantics beyond the pinned listing tools (session create/manage tools, search parameters, output shaping): the ports they need don't exist yet; they are settled with implementation planning, alongside their tests.
+- Ephemeral runtime properties of the real manager session factory (`SessionManager.inMemory`, temp cwd, event-mapping reuse): live behind the `ManagerSessionFactory` seam and get exercised when the factory itself is implemented.
+
+**Review status:** approved

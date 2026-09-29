@@ -81,6 +81,29 @@ describe('ProjectRegistry.list()', () => {
 
     await expect(registry.update({ projectPath: join(tempDir, 'ghost'), favorite: true })).rejects.toThrow();
   });
+
+  it('applies curation overrides to hub projects', async () => {
+    const registry = makeRegistry();
+    const { path: hubPath } = await registry.createHub('hub', rootDir, [repoA]);
+    await registry.update({ projectPath: hubPath, favorite: true, archived: true });
+
+    const project = (await registry.list()).find((p) => p.path === hubPath);
+    expect(project?.favorite).toBe(true);
+    expect(project?.archived).toBe(true);
+  });
+
+  it('sorts by manual order where set and by name otherwise', async () => {
+    const repoB = join(rootDir, 'repo-b');
+    await initRepo(repoB);
+
+    const registry = makeRegistry();
+    expect((await registry.list()).map((p) => p.path)).toEqual([repoA, repoB]);
+
+    await registry.update({ projectPath: repoB, order: 1 });
+    await registry.update({ projectPath: repoA, order: 2 });
+
+    expect((await registry.list()).map((p) => p.path)).toEqual([repoB, repoA]);
+  });
 });
 
 describe('ProjectRegistry.createHub()', () => {
@@ -106,6 +129,16 @@ describe('ProjectRegistry.createHub()', () => {
     const ghost = join(rootDir, 'ghost');
     await expect(registry.createHub('hub', rootDir, [repoA, ghost])).rejects.toThrow();
     expect(existsSync(join(rootDir, 'hub'))).toBe(false);
+  });
+
+  it('rejects hub creation when the target folder already exists and leaves it untouched', async () => {
+    const registry = makeRegistry();
+    await registry.createHub('hub', rootDir, [repoA]);
+
+    await expect(registry.createHub('hub', rootDir, [repoA])).rejects.toThrow();
+
+    const hubs = (await registry.list()).filter((p) => p.path === join(rootDir, 'hub'));
+    expect(hubs).toHaveLength(1);
   });
 });
 
@@ -183,11 +216,13 @@ describe('ProjectRegistry.onChange()', () => {
 });
 
 describe('ProjectRegistry hub AGENTS.md', () => {
-  it('generates a non-empty AGENTS.md in the hub folder', async () => {
+  it('generates an AGENTS.md naming each member repo and the sub-project convention', async () => {
     const registry = makeRegistry();
     const { path: hubPath } = await registry.createHub('hub', rootDir, [repoA]);
 
     const content = await readFile(join(hubPath, 'AGENTS.md'), 'utf8');
     expect(content.length).toBeGreaterThan(0);
+    expect(content).toContain('repo-a');
+    expect(content.toLowerCase()).toContain('agents.md');
   });
 });
