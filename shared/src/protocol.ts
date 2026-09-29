@@ -32,6 +32,38 @@ export interface FolderInfo {
   activeStatus?: 'working' | 'idle' | 'attention' | null;
 }
 
+/** A git repository as discovered by the server's repo index. */
+export interface RepoInfo {
+  path: string;
+  name: string;
+  branch: string | null;
+  dirty: boolean;
+  /** Commits ahead of upstream; 0 when unknown. */
+  ahead: number;
+  behind: number;
+  /** Epoch ms of last session activity in this repo, when known. */
+  lastActivity?: number;
+  /** True when the repo path no longer exists on disk (deleted member, broken symlink).
+   *  Projects always remain editable: members can be removed regardless of state. */
+  missing?: boolean;
+}
+
+/** A user-curated project: a single repo, or a multi-repo hub folder. */
+export interface ProjectInfo {
+  /** Repo dir (single) or hub dir (multi). */
+  path: string;
+  name: string;
+  kind: 'single' | 'multi';
+  /** Member repos; present when kind === 'multi' (hub children). */
+  repos?: RepoInfo[];
+  favorite?: boolean;
+  /** Manual ordering; absent = name sort. */
+  order?: number;
+  archived?: boolean;
+  activeSessionCount: number;
+  externalProcessCount: number;
+}
+
 export interface SessionInfo {
   id: string;
   name?: string;
@@ -421,6 +453,65 @@ export interface CreateProjectCommand extends CommandBase {
   name: string;
 }
 
+/** List curated projects (merged repo index + registry overrides). resp: ListProjectsResponseData */
+export interface ListProjectsCommand extends CommandBase {
+  type: 'list_projects';
+}
+
+/** List the discovery index (repos), used by multi-repo configuration and creation flows. resp: ListReposResponseData */
+export interface ListReposCommand extends CommandBase {
+  type: 'list_repos';
+}
+
+/** Apply curation flags to a project. Single-repo curation writes registry overrides. */
+export interface UpdateProjectCommand extends CommandBase {
+  type: 'update_project';
+  projectPath: string;
+  favorite?: boolean;
+  order?: number;
+  archived?: boolean;
+}
+
+/** Create a multi-repo hub project: mkdir + symlinks to member repos + generated AGENTS.md. resp: CreateHubProjectResponseData */
+export interface CreateHubProjectCommand extends CommandBase {
+  type: 'create_hub_project';
+  name: string;
+  /** Must be one of the configured roots */
+  root: string;
+  /** Every repoPath must exist in the repo index. */
+  repoPaths: string[];
+}
+
+/** Remove a hub project: registry entry deleted, hub folder deleted. */
+export interface DisbandProjectCommand extends CommandBase {
+  type: 'disband_project';
+  projectPath: string;
+}
+
+/** Prompt the connection's ephemeral manager agent. */
+export interface ManagerPromptCommand extends CommandBase {
+  type: 'manager_prompt';
+  text: string;
+}
+
+/** Abort the running manager prompt, if any. */
+export interface ManagerAbortCommand extends CommandBase {
+  type: 'manager_abort';
+}
+
+export interface ListProjectsResponseData {
+  projects: ProjectInfo[];
+  roots: string[];
+}
+
+export interface ListReposResponseData {
+  repos: RepoInfo[];
+}
+
+export interface CreateHubProjectResponseData {
+  projectPath: string;
+}
+
 // -- Server-level commands --
 
 export interface ListFoldersCommand extends CommandBase {
@@ -627,6 +718,13 @@ export type PimoteCommand =
   | SetTreeLabelCommand
   // Project management
   | CreateProjectCommand
+  | ListProjectsCommand
+  | ListReposCommand
+  | UpdateProjectCommand
+  | CreateHubProjectCommand
+  | DisbandProjectCommand
+  | ManagerPromptCommand
+  | ManagerAbortCommand
   // Server-level
   | RenameSessionCommand
   | ListFoldersCommand
@@ -942,6 +1040,23 @@ export interface ConnectionRestoredEvent {
   sessionId: string;
 }
 
+// -- Project management events --
+
+/** Broadcast after a project registry mutation; carries the full merged project list. */
+export interface ProjectsChangedEvent {
+  type: 'projects_changed';
+  projects: ProjectInfo[];
+}
+
+/** Streams the connection's ephemeral manager session: the same session event
+ *  mapping used for regular sessions, wrapped so the client can render manager
+ *  output with the same machinery. Manager sessions are per-connection and
+ *  ephemeral (in-memory), so there is no replay cursor. */
+export interface ManagerStreamEvent {
+  type: 'manager_event';
+  event: PimoteEvent;
+}
+
 export interface SessionRestoreEvent {
   type: 'session_restore';
   sessionId: string;
@@ -1139,6 +1254,8 @@ export type PimoteEvent =
   | SessionReplacedEvent
   | SessionStateChangedEvent
   | ConnectionRestoredEvent
+  | ProjectsChangedEvent
+  | ManagerStreamEvent
   | SessionRestoreEvent
   | BufferedEventsEvent
   | FullResyncEvent

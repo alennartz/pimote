@@ -16,6 +16,8 @@ export interface VoiceConfig {
 
 export interface PimoteConfig {
   roots: string[];
+  /** Directory scanned for user project-source modules. Default: PIMOTE_PROJECT_SOURCES_DIR. */
+  projectSourcesDir?: string;
   idleTimeout: number;
   bufferSize: number;
   port: number;
@@ -84,6 +86,7 @@ export async function loadConfig(): Promise<PimoteConfig> {
 
   return {
     roots: obj.roots,
+    projectSourcesDir: typeof obj.projectSourcesDir === 'string' ? obj.projectSourcesDir : undefined,
     idleTimeout: typeof obj.idleTimeout === 'number' ? obj.idleTimeout : DEFAULTS.idleTimeout,
     bufferSize: typeof obj.bufferSize === 'number' ? obj.bufferSize : DEFAULTS.bufferSize,
     port: typeof obj.port === 'number' ? obj.port : DEFAULTS.port,
