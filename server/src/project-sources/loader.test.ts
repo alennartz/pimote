@@ -46,6 +46,15 @@ describe('loadProjectSources()', () => {
     expect(sources.map((s) => s.id)).toEqual(['good']);
   });
 
+  it('loads a TypeScript module exporting sources alongside the .mjs modules', async () => {
+    await writeModule('a.mjs', `export const sources = [{ id: 'source-a', list: async () => [] }];`);
+    await writeModule('ts-source.ts', `export const sources = [{ id: 'source-ts', list: async () => [] }];`);
+
+    const { sources } = await loadProjectSources(sourcesDir);
+
+    expect(sources.map((s) => s.id).sort()).toEqual(['source-a', 'source-ts']);
+  });
+
   it('ignores non-module files', async () => {
     await writeModule('README.txt', 'not a module');
     await writeModule('notes.json', '{ "not": "a module" }');

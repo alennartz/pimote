@@ -180,6 +180,8 @@ All new tests are red at this phase (stubs throw `not implemented`); the full pr
 
 ## Steps
 
+**Pre-implementation commit:** `f84bc3a3734a80598d9ea0ec99b36f60b74dc59b`
+
 Grounded in the code as of `13bb344` (test-review). The six new test files hold 42 red tests; steps 1–6 make them pass. Server modules first (they have no upstream dependencies), then wiring, then the physical protocol rename, then the client.
 
 ### Step 1: Implement RepoIndex
@@ -194,7 +196,7 @@ Fill in `server/src/repo-index.ts` (stub + `RepoIndexOptions` already exist; `Pr
 - `invalidate()`: clear both caches.
 
 **Verify:** `cd server && npx vitest run src/repo-index.test.ts` — 11 tests green.
-**Status:** not started
+**Status:** done (13 tests green — plan count was stale; test file untouched)
 
 ### Step 2: Add jiti and extend the loader test contract
 
@@ -202,7 +204,7 @@ Fill in `server/src/repo-index.ts` (stub + `RepoIndexOptions` already exist; `Pr
 - Extend `server/src/project-sources/loader.test.ts` with one case: a `.ts` module exporting `sources` loads alongside the `.mjs` modules. This pins the TS contract that motivates the dependency.
 
 **Verify:** jiti appears in `server/package.json` dependencies; the new loader test case is red.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Implement project sources (builtin creator + loader)
 
@@ -217,7 +219,7 @@ Fill in `server/src/repo-index.ts` (stub + `RepoIndexOptions` already exist; `Pr
   - Collect `mod.sources` and `mod.creators` when they are arrays; return `{ sources, creators }`.
 
 **Verify:** `cd server && npx vitest run src/project-sources/` — loader (5, incl. the new `.ts` case) + builtin (3) green.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Implement ProjectRegistry
 
@@ -232,7 +234,7 @@ Fill in `server/src/project-registry.ts` (stub and `ProjectUpdatePatch` already 
 - `onChange(cb)`: subscriber set; fire after each successful `update`/`createHub`/`disband`; return an unsubscribe function.
 
 **Verify:** `cd server && npx vitest run src/project-registry.test.ts` — 12 tests green.
-**Status:** not started
+**Status:** done (14 tests green — plan count was stale; test file untouched)
 
 ### Step 5: Implement the manager extension
 
@@ -242,7 +244,7 @@ Fill in `server/src/manager/extension.ts`.
 - Each tool: `parameters: Type.Object({})` (`Type` from `'typebox'`, same import as `static-host/index.ts`), a label, and an LLM-facing description; `execute` awaits the port call and returns the JSON-serialized result as text content per pi's `AgentToolResult` shape. Tools act only through the injected ports — no fs, no server internals.
 
 **Verify:** `cd server && npx vitest run src/manager/extension.test.ts` — 2 tests green.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Implement ManagerService
 
@@ -254,7 +256,7 @@ Fill in `server/src/manager/service.ts` (types already exist).
 - `sweepIdle()`: entries with `now() - lastUsedMs > idleTimeoutMs` → dispose + delete.
 
 **Verify:** `cd server && npx vitest run src/manager/service.test.ts` — 6 tests green.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Real manager session factory
 
