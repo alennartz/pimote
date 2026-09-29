@@ -9,7 +9,7 @@
   import { updateStore } from '$lib/stores/update.svelte.js';
   import { getContextDisplay, getContextTone, getSessionDisplayName, formatCombinedCost } from '$lib/session-summary.js';
   import { getRestoreModeLabel } from '$lib/restore-status.js';
-  import { GitBranch } from '@lucide/svelte';
+  import { GitBranch, House } from '@lucide/svelte';
   import SessionRenameDialog from './SessionRenameDialog.svelte';
   import CallButton from './CallButton.svelte';
   import DownloadInbox from './DownloadInbox.svelte';
@@ -42,6 +42,18 @@
 
 <div class="border-border bg-muted/30 text-muted-foreground shrink-0 border-b text-xs">
   <div class="flex h-9 items-center gap-1 px-2">
+    <!-- Back to dashboard -->
+    <button
+      class="text-muted-foreground hover:text-foreground hover:bg-accent flex size-7 shrink-0 items-center justify-center rounded-md transition-colors"
+      title="Back to dashboard"
+      aria-label="Back to dashboard"
+      onclick={() => sessionRegistry.goHome()}
+    >
+      <House class="size-4" />
+    </button>
+
+    <Separator orientation="vertical" class="mx-0.5 h-4" />
+
     <!-- Model picker -->
     <ModelPicker />
 

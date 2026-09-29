@@ -112,6 +112,17 @@ describe('SessionRegistry', () => {
       expect(() => registry.switchTo('unknown')).not.toThrow();
       expect(registry.viewedSessionId).toBe('unknown');
     });
+
+    it('goHome() clears viewedSessionId so the dashboard renders', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.switchTo('s1');
+      expect(registry.viewedSessionId).toBe('s1');
+
+      registry.goHome();
+      expect(registry.viewedSessionId).toBeNull();
+      // The session itself stays open in the tray
+      expect(registry.sessions['s1']).toBeDefined();
+    });
   });
 
   // --------------------------------------------------------------------------

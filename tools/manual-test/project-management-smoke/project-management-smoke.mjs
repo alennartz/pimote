@@ -11,7 +11,7 @@
 //   PM_SHOTS=/tmp/dir  keep coherence screenshots outside the disposable sandbox
 //   PM_KEEP=1          keep the sandbox even on a passing run
 
-import { copyFile, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, writeFile, appendFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readlink, rm, stat, writeFile, appendFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -314,7 +314,7 @@ async function main() {
   const agentDir = join(sandboxHome, 'agent');
   await mkdir(agentDir, { recursive: true });
   const modelsSrc = join(REAL_AGENT_DIR, 'models.json');
-  let jetsonUsable = false;
+  let jetsonUsable;
   try {
     const models = JSON.parse(await readFile(modelsSrc, 'utf8'));
     jetsonUsable = Boolean(models.providers?.jetson);
@@ -332,7 +332,7 @@ async function main() {
   await gitInit(join(rootA, 'gamma', 'sub', 'deep-repo'), 'main');
   await gitInit(join(rootA, 'gamma', 'sub', 'deeper', 'deepest'), 'main'); // depth 4 — must NOT be discovered
   await gitInit(join(rootB, 'delta'), 'feature/zebra');
-  const sessionId = await seedSession(join(agentDir, 'sessions'), join(rootA, 'alpha'), 'What is the launch checklist?', '1. Fuel the rocket. 2. Wake the manager.');
+  await seedSession(join(agentDir, 'sessions'), join(rootA, 'alpha'), 'What is the launch checklist?', '1. Fuel the rocket. 2. Wake the manager.');
 
   const configPath = join(configDir, 'config.json');
   const config = {
@@ -394,7 +394,10 @@ async function main() {
     assert(repoByPath.get(join(rootA, 'beta'))?.dirty === true, 'beta reports dirty=true (list_repos)');
     assert(repoByPath.get(join(rootA, 'alpha'))?.dirty === false, 'alpha reports dirty=false (list_repos)');
     assert(repoByPath.get(join(rootA, 'alpha'))?.branch === 'main', 'alpha reports branch main (list_repos)');
-    assert(projects1.every((p) => typeof p.activeSessionCount === 'number'), 'every project carries activeSessionCount');
+    assert(
+      projects1.every((p) => typeof p.activeSessionCount === 'number'),
+      'every project carries activeSessionCount',
+    );
     const sortedNames = projects1.map((p) => p.name);
     const nameSorted = [...sortedNames].sort((a, b) => a.localeCompare(b));
     assert(JSON.stringify(sortedNames) === JSON.stringify(nameSorted), 'default listing is name-sorted');
@@ -448,7 +451,6 @@ async function main() {
 
     // Re-create hub-west over WS so the browser phase can observe it appearing
     // live via projects_changed (two-client sync in the browser direction).
-    const hubAt = Date.now();
     await probeB.send({ type: 'create_hub_project', name: 'hub-west', root: rootA, repoPaths: [join(rootA, 'alpha'), join(rootA, 'beta')] });
 
     // ============================================================
@@ -465,7 +467,13 @@ async function main() {
       assert(pageText.includes(name), `dashboard lists project ${name}`);
     }
     assert(!pageText.includes('deepest'), 'depth-4 repo absent from the dashboard');
-    assert(snap.includes('Create multi-repo hub'), 'toolbar exposes the hub creation control');
+    // Hub creation lives in the toolbar overflow menu (redesign: compact projects toolbar).
+    await browser(['click', 'button[title="More project actions"]']);
+    await browser(['wait', 400]);
+    const hubMenuSnap = (await browser(['snapshot', '-i'])).stdout;
+    assert(hubMenuSnap.includes('Create multi-repo hub'), 'toolbar exposes the hub creation control');
+    await browser(['press', 'Escape']);
+    await browser(['wait', 300]);
     const managerVisible = await evalBrowser(
       `(() => { const ta = document.querySelector('textarea[aria-label="Message the manager"]'); return Boolean(ta && ta.offsetParent !== null); })()`,
     );
@@ -482,7 +490,7 @@ async function main() {
     for (let i = 0; i < 20; i++) {
       await wait(300);
       libStar = await evalBrowser(
-        `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('lib')); return Boolean(row?.querySelector('button[title="Unfavorite"]')); })()`,
+        `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('lib')); return Boolean(row?.querySelector('svg.fill-yellow-500')); })()`,
       );
       if (libStar === true) break;
     }
@@ -513,9 +521,7 @@ async function main() {
     // ============================================================
     section('B — new session from a project (journey 1)');
     // ============================================================
-    const newSessionOk = await evalBrowser(
-      `(() => { const b = document.querySelector('button[title="New session in alpha"]'); if (!b) return false; b.click(); return true; })()`,
-    );
+    const newSessionOk = await evalBrowser(`(() => { const b = document.querySelector('button[title="New session in alpha"]'); if (!b) return false; b.click(); return true; })()`);
     assert(newSessionOk === true, 'per-project new-session button clickable');
     // The session composer replaces the manager pane; placeholders are not in
     // innerText, so assert on elements: a non-manager textarea + StatusBar gear.
@@ -571,18 +577,20 @@ async function main() {
     // ============================================================
     section('B — favorite + reload persistence');
     // ============================================================
-    const favBefore = Number(await evalBrowser(`document.querySelectorAll('button[title="Unfavorite"]').length`));
+    const favBefore = Number(await evalBrowser(`document.querySelectorAll('main .rounded-lg svg.fill-yellow-500').length`));
     const favClick = await evalBrowser(
-      `(() => { const row = Array.from(document.querySelectorAll('button[title="Favorite"]')).find(b => (b.closest('.rounded-lg')?.textContent ?? '').trim().startsWith('alpha')); if (!row) return 'none-free'; row.click(); return 'clicked'; })()`,
+      `(() => { const rows = Array.from(document.querySelectorAll('button[title^="Manage project"]')); for (const manage of rows) { if ((manage.closest('.rounded-lg')?.textContent ?? '').trim().startsWith('alpha')) { manage.click(); return true; } } return false; })()`,
     );
-    log('favorite click:', favClick);
+    log('favorite menu open:', favClick);
+    await browser(['wait', 400]);
+    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Favorite']);
     await browser(['wait', 800]);
-    const favAfter = Number(await evalBrowser(`document.querySelectorAll('button[title="Unfavorite"]').length`));
+    const favAfter = Number(await evalBrowser(`document.querySelectorAll('main .rounded-lg svg.fill-yellow-500').length`));
     assert(favAfter === favBefore + 1, `alpha star toggled to favorite (${favBefore} → ${favAfter})`);
     await browser(['reload']);
     await browser(['wait', 2500]);
     const alphaStarAfterReload = await evalBrowser(
-      `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('alpha')); return Boolean(row?.querySelector('button[title="Unfavorite"]')); })()`,
+      `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('alpha')); return Boolean(row?.querySelector('svg.fill-yellow-500')); })()`,
     );
     assert(alphaStarAfterReload === true, 'favorite survives reload');
 
@@ -590,7 +598,7 @@ async function main() {
     section('B — manual order (move up)');
     // ============================================================
     // Move delta up until it reaches the top (name-sorted start position may vary).
-    const firstNameEval = `(() => { const s = document.querySelector('main .rounded-lg .text-sm.font-medium span'); return s?.textContent?.trim() ?? ''; })()`;
+    const firstNameEval = `(() => { const s = document.querySelector('main .rounded-lg [data-project-name]'); return s?.textContent?.trim() ?? ''; })()`;
     let first = String(await evalBrowser(firstNameEval));
     log('list order before move, first row:', first);
     let moves = 0;
@@ -613,7 +621,7 @@ async function main() {
     await browser(['reload']);
     await browser(['wait', 2500]);
     const deltaFirstAfterReload = await evalBrowser(
-      `(() => { const first = document.querySelector('main .rounded-lg .text-sm.font-medium span'); return first?.textContent?.trim() ?? ''; })()`,
+      `(() => { const first = document.querySelector('main .rounded-lg [data-project-name]'); return first?.textContent?.trim() ?? ''; })()`,
     );
     assert(deltaFirstAfterReload === 'delta', 'manual order survives reload');
 
@@ -629,11 +637,13 @@ async function main() {
     const deepRowExpr = `Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('deep-repo'))`;
     const deepHidden = await evalBrowser(`Boolean((${deepRowExpr})?.textContent?.includes('deep-repo'))`);
     assert(deepHidden === false, 'archived project hidden by default');
-    const checkbox = await evalBrowser(
-      `(() => { const c = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(c => c.closest('label')?.textContent?.includes('Show archived')); if (!c) return false; c.click(); return true; })()`,
-    );
+    await browser(['click', 'button[title="More project actions"]']);
+    await browser(['wait', 400]);
+    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Show archived']);
     await browser(['wait', 1200]);
-    const deepRowShown = await evalBrowser(`(() => { const row = (${deepRowExpr}); return row ? (row.textContent?.includes('Archived') ? 'badge' : 'visible-no-badge') : 'hidden'; })()`);
+    const deepRowShown = await evalBrowser(
+      `(() => { const row = (${deepRowExpr}); return row ? (row.textContent?.includes('Archived') ? 'badge' : 'visible-no-badge') : 'hidden'; })()`,
+    );
     assert(deepRowShown === 'badge', 'show-archived reveals project with Archived badge');
     await browser(['screenshot', join(shotsDir, '04-archived.png')], { allowFailure: true });
     await evalBrowser(
@@ -687,7 +697,9 @@ async function main() {
     // ============================================================
     section('B — hub creation via UI dialog + repo chips');
     // ============================================================
-    await evalBrowser(`document.querySelector('button[title="Create multi-repo hub"]')?.click()`);
+    await browser(['click', 'button[title="More project actions"]']);
+    await browser(['wait', 400]);
+    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Create multi-repo hub']);
     await browser(['wait', 600]);
     await fillSelector('[role="dialog"] input[placeholder="Hub name"]', 'hub-lima');
     await browser(['wait', 200]);
@@ -715,10 +727,6 @@ async function main() {
     );
     assert(limaChips.includes('alpha') && /main/.test(limaChips), 'hub-lima chip: alpha with branch main');
     assert(limaChips.includes('delta') && /feature\/zebra/.test(limaChips), 'hub-lima chip: delta with branch feature/zebra');
-    const hubIconOk = await evalBrowser(
-      `(() => { const hubRow = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.includes('hub-lima')); return Boolean(hubRow?.querySelector('svg.lucide-folder-git-2, svg[class*="folder-git"]')); })()`,
-    );
-    assert(hubIconOk === true, 'multi project renders the hub (folder-git) icon');
     await browser(['screenshot', join(shotsDir, '06-hub-chips.png')], { allowFailure: true });
 
     // Dirty chip visual: hub-west contains beta (dirty).
@@ -828,10 +836,7 @@ async function main() {
     section('B — manager abort');
     // ============================================================
     if (jetsonUsable) {
-      await fillSelector(
-        'textarea[aria-label="Message the manager"]',
-        'Count from 1 to 300 slowly, writing every number on its own line. Do not stop early.',
-      );
+      await fillSelector('textarea[aria-label="Message the manager"]', 'Count from 1 to 300 slowly, writing every number on its own line. Do not stop early.');
       await browser(['find', 'role', 'button', 'click', '--name', 'Send']);
       let abortClicked = false;
       for (let i = 0; i < 40; i++) {
@@ -855,9 +860,10 @@ async function main() {
       }
       assert(backToSend, 'abort returns the manager to idle (Send visible again)');
       if (abortClicked && backToSend) {
-        const countNumbers = () => evalBrowser(
-          `(() => { const area = Array.from(document.querySelectorAll('div')).filter(d => d.querySelector?.('textarea[aria-label="Message the manager"]')).at(-1); return ((area ?? document.body).innerText.match(/\b\d+\b/g) ?? []).length; })()`,
-        );
+        const countNumbers = () =>
+          evalBrowser(
+            `(() => { const area = Array.from(document.querySelectorAll('div')).filter(d => d.querySelector?.('textarea[aria-label="Message the manager"]')).at(-1); return ((area ?? document.body).innerText.match(/\\b\\d+\\b/g) ?? []).length; })()`,
+          );
         await wait(1500);
         const n1 = Number(await countNumbers());
         await wait(3000);
@@ -913,16 +919,20 @@ async function main() {
     await browser(['wait', 2500]);
     const mobileText = String(await evalBrowser('document.body.innerText'));
     assert(mobileText.includes('alpha'), 'mobile dashboard shows the projects list fullscreen');
-    const managerFab = await evalBrowser(
-      `(() => { const b = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.trim() === 'Manager' && getComputedStyle(b).position === 'fixed'); return b ? 'fab' : 'none'; })()`,
+    // Redesign: the FAB became the spotlight affordance — an md:hidden button on
+    // the home column that opens the fullscreen manager sheet.
+    const managerSpotlight = await evalBrowser(
+      `(() => { const b = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Ask the manager') && getComputedStyle(b).display !== 'none'); return b ? 'spotlight' : 'none'; })()`,
     );
-    assert(managerFab === 'fab', 'mobile shows the fixed Manager affordance');
-    await evalBrowser(`(() => { const b = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.trim() === 'Manager' && getComputedStyle(b).position === 'fixed'); b?.click(); return Boolean(b); })()`);
+    assert(managerSpotlight === 'spotlight', 'mobile shows the Manager spotlight affordance');
+    await evalBrowser(
+      `(() => { const b = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Ask the manager') && getComputedStyle(b).display !== 'none'); b?.click(); return Boolean(b); })()`,
+    );
     await browser(['wait', 600]);
     const sheetComposer = await evalBrowser(
       `(() => ({ count: document.querySelectorAll('textarea[aria-label="Message the manager"]').length, visible: Array.from(document.querySelectorAll('textarea[aria-label="Message the manager"]')).some(t => t.offsetParent !== null) }))()`,
     );
-    assert(sheetComposer?.count >= 2 && sheetComposer?.visible === true, 'manager sheet opens fullscreen on mobile');
+    assert(sheetComposer?.count >= 1 && sheetComposer?.visible === true, 'manager sheet opens fullscreen on mobile');
     await browser(['screenshot', join(shotsDir, '10-mobile-manager.png')], { allowFailure: true });
 
     await browser(['close'], { allowFailure: true });

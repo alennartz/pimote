@@ -17,6 +17,7 @@
   import SessionRenameDialog from '$lib/components/SessionRenameDialog.svelte';
   import { getContextDisplay, getContextTone, getSessionDisplayName } from '$lib/session-summary.js';
   import PanelRight from '@lucide/svelte/icons/panel-right';
+  import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { routeNotificationIntent, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
@@ -197,6 +198,16 @@
   <div class="flex flex-1 flex-col overflow-hidden">
     <!-- Mobile header -->
     <header class="border-border flex h-12 shrink-0 items-center gap-2 border-b px-3 md:hidden">
+      {#if sessionRegistry.viewedSessionId}
+        <button
+          class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors"
+          title="Back to dashboard"
+          aria-label="Back to dashboard"
+          onclick={() => sessionRegistry.goHome()}
+        >
+          <ArrowLeft class="size-5" />
+        </button>
+      {/if}
       <div class="min-w-0 flex-1">
         {#if sessionRegistry.viewedSessionId && sessionRegistry.viewed}
           <SessionRenameDialog

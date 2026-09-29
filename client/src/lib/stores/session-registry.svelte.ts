@@ -45,7 +45,7 @@ import { panelStore } from './panel-store.svelte.js';
 import { downloadUi } from './download-ui.svelte.js';
 import { coordinateDownloadUpdate } from '../download-coordinator.js';
 import { handleDownloadNotificationIntent, type DownloadNotificationIntent } from '../download-notification-intent.js';
-import { getActiveSessions, setActiveSessions, getViewedSessionId, setViewedSessionId } from './persistence.js';
+import { getActiveSessions, setActiveSessions } from './persistence.js';
 
 /** Maximum UTF-8 bytes retained from live bash deltas per execution. */
 export const MAX_BASH_LIVE_OUTPUT_BYTES = 256 * 1024;
@@ -167,6 +167,18 @@ export class SessionRegistry {
   /** Receives typed updates after their owning session snapshot has been reduced. */
   constructor(private readonly onDownloadUpdate?: (event: DownloadUpdateEvent) => void) {}
 
+  /** Client-only URL sync target (see lib/nav.ts). Null in tests/SSR — state changes stay local. */
+  private viewNavigator: { toViewed(sessionId: string | null, opts: { replace: boolean }): void } | null = null;
+
+  /** Called once from lib/nav.ts at app boot to mirror viewed-session changes into the URL. */
+  setViewNavigator(nav: { toViewed(sessionId: string | null, opts: { replace: boolean }): void }): void {
+    this.viewNavigator = nav;
+  }
+
+  private navigateToViewed(replace: boolean): void {
+    this.viewNavigator?.toViewed(this.viewedSessionId, { replace });
+  }
+
   sessions: Record<string, PerSessionState> = $state({});
   viewedSessionId: string | null = $state(null);
   /** Temporary ID of an optimistic "new session" placeholder awaiting server confirmation. */
@@ -267,12 +279,6 @@ export class SessionRegistry {
         .filter((s) => !s.sessionId.startsWith('pending-'))
         .map((s) => ({ sessionId: s.sessionId, folderPath: s.folderPath })),
     );
-  }
-
-  private persistViewedSession(): void {
-    // Don't persist a pending optimistic session as the viewed session
-    if (this.viewedSessionId?.startsWith('pending-')) return;
-    setViewedSessionId(this.viewedSessionId);
   }
 
   /** Add an optimistic user message so it renders immediately before the server round-trip */
@@ -699,9 +705,9 @@ export class SessionRegistry {
       const remaining = Object.keys(this.sessions);
       this.viewedSessionId = remaining.length > 0 ? remaining[0] : null;
       this.syncViewedPanelStore();
+      this.navigateToViewed(true);
     }
     this.persistSessions();
-    this.persistViewedSession();
   }
 
   /** Replace a session in-place — same slot in the registry, new session ID.
@@ -731,9 +737,9 @@ export class SessionRegistry {
     if (this.viewedSessionId === oldSessionId) {
       this.viewedSessionId = newSessionId;
       this.syncViewedPanelStore();
+      this.navigateToViewed(true);
     }
     this.persistSessions();
-    this.persistViewedSession();
   }
 
   /** Switch viewed session, clears needsAttention for target */
@@ -744,7 +750,27 @@ export class SessionRegistry {
       session.needsAttention = false;
     }
     this.syncViewedPanelStore();
-    this.persistViewedSession();
+    this.navigateToViewed(false);
+  }
+
+  /** Leave the conversation view and return to the dashboard (viewedSessionId = null). */
+  goHome(): void {
+    this.viewedSessionId = null;
+    this.syncViewedPanelStore();
+    this.navigateToViewed(false);
+  }
+
+  /**
+   * Adopt a session id arriving from the URL (route param) without re-navigating —
+   * the browser is already at /sessions/<id>. Returns false for unknown ids so the
+   * route page can redirect home (stale deep links).
+   */
+  adoptRouteView(sessionId: string): boolean {
+    if (!this.sessions[sessionId]) return false;
+    if (this.viewedSessionId === sessionId) return true;
+    this.viewedSessionId = sessionId;
+    this.syncViewedPanelStore();
+    return true;
   }
 
   /** Check if a session ID is currently active */
@@ -1242,16 +1268,10 @@ connection.onReconnected = () => {
 
 // Hydrate persisted sessions before first connection
 const persistedSessions = getActiveSessions();
-const persistedViewedId = getViewedSessionId();
-
 for (const { sessionId, folderPath } of persistedSessions) {
   const projectName = folderPath.split('/').pop() || 'Unknown';
   sessionRegistry.addSession(sessionId, folderPath, projectName);
   connection.addSubscribedSession(sessionId, folderPath);
-}
-
-if (persistedViewedId && sessionRegistry.sessions[persistedViewedId]) {
-  sessionRegistry.viewedSessionId = persistedViewedId;
 }
 
 /** Confirm takeover — resend open_session with force:true */

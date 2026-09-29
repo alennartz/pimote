@@ -4,7 +4,6 @@
   import type { ProjectInfo } from '@pimote/shared';
   import { projectStore } from '$lib/stores/project-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { formatRelativeTime } from '$lib/format-relative-time.js';
   import SessionItem from './SessionItem.svelte';
   import Archive from '@lucide/svelte/icons/archive';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
@@ -12,7 +11,6 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import EllipsisVertical from '@lucide/svelte/icons/ellipsis-vertical';
   import FolderIcon from '@lucide/svelte/icons/folder';
-  import FolderGit2 from '@lucide/svelte/icons/folder-git-2';
   import Loader2 from '@lucide/svelte/icons/loader-2';
   import Network from '@lucide/svelte/icons/network';
   import Plus from '@lucide/svelte/icons/plus';
@@ -58,7 +56,13 @@
   // Disband confirmation state
   let disbandTarget = $state<ProjectInfo | null>(null);
 
-  const displayProjects = $derived(projectStore.visibleProjects);
+  const displayProjects = $derived(
+    projectStore.visibleProjects.filter((project) => {
+      const query = projectSearch.trim().toLowerCase();
+      if (!query) return true;
+      return project.name.toLowerCase().includes(query) || project.path.toLowerCase().includes(query);
+    }),
+  );
   const archivableCount = $derived(
     projectStore.projects.reduce((total, project) => {
       const sessions = projectStore.sessions.get(project.path) ?? [];
@@ -357,38 +361,52 @@
       {/if}
     </div>
   {:else}
-    <div class="flex flex-col gap-1 px-1">
-      <Button class="w-full justify-center" onclick={openNewSessionDialog} disabled={connection.status !== 'connected'}>
-        <Plus class="size-4" />
-        New session
-      </Button>
-      <div class="flex items-center justify-between">
-        <label class="text-muted-foreground hover:text-sidebar-foreground flex items-center gap-1.5 py-1 text-xs">
-          <input type="checkbox" checked={projectStore.showArchived} onchange={(e) => projectStore.setShowArchived((e.currentTarget as HTMLInputElement).checked)} />
-          <span>Show archived</span>
-        </label>
-        <div class="flex items-center">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            class="text-muted-foreground hover:text-sidebar-foreground"
-            title="Create multi-repo hub"
-            disabled={connection.status !== 'connected' || projectStore.roots.length === 0}
-            onclick={openHubDialog}
-          >
-            <Network class="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            class="text-muted-foreground hover:text-sidebar-foreground"
-            title="Archive all inactive sessions"
-            disabled={connection.status !== 'connected' || archivableCount === 0}
-            onclick={() => (showArchiveAllDialog = true)}
-          >
-            <Archive class="size-4" />
-          </Button>
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center gap-1.5">
+        <div
+          class="border-border bg-secondary/50 focus-within:ring-ring flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors focus-within:ring-1 focus-within:outline-none"
+        >
+          <span class="text-muted-foreground text-xs">🔎</span>
+          <input
+            bind:value={projectSearch}
+            placeholder="Search projects"
+            aria-label="Search projects"
+            class="text-foreground placeholder:text-muted-foreground w-full min-w-0 bg-transparent text-xs outline-none"
+          />
         </div>
+        <Button size="sm" class="shrink-0" onclick={openNewSessionDialog} disabled={connection.status !== 'connected'}>
+          <Plus class="size-3.5" />
+          New session
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger>
+            <Button variant="outline" size="icon-sm" class="text-muted-foreground shrink-0" title="More project actions">
+              <EllipsisVertical class="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuPortal>
+            <DropdownMenuContent class="w-52" align="end">
+              <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || projectStore.roots.length === 0} onSelect={() => openHubDialog()}>
+                <Network class="size-4" />
+                Create multi-repo hub…
+              </DropdownMenuItem>
+              <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || archivableCount === 0} onSelect={() => (showArchiveAllDialog = true)}>
+                <Archive class="size-4" />
+                Archive all inactive…
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem class="gap-2" onSelect={() => projectStore.setShowArchived(!projectStore.showArchived)}>
+                {#if projectStore.showArchived}
+                  <Undo2 class="size-4" />
+                  Hide archived
+                {:else}
+                  <Archive class="size-4" />
+                  Show archived
+                {/if}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenuPortal>
+        </DropdownMenu>
       </div>
     </div>
 
@@ -410,48 +428,61 @@
           {@const hiddenCount = Math.max(0, projectSessions.length - MAX_SESSIONS_SHOWN)}
           {@const idx = projectIndex(project.path)}
 
-          <div class="rounded-lg">
-            <div class="flex items-center gap-1">
+          <div class="border-border/60 rounded-lg">
+            <div class="flex items-center gap-0.5">
               <button
-                class="hover:bg-sidebar-accent active:bg-sidebar-accent/80 flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors active:scale-[0.97]"
+                class="hover:bg-accent active:bg-accent/80 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors"
                 onclick={() => toggleProject(project.path)}
               >
-                <ChevronRight class="text-muted-foreground size-4 shrink-0 transition-transform {expanded ? 'rotate-90' : ''}" />
-                {#if project.kind === 'multi'}
-                  <FolderGit2 class="text-muted-foreground size-4 shrink-0" />
-                {:else}
-                  <FolderIcon class="text-muted-foreground size-4 shrink-0" />
+                <ChevronRight class="text-muted-foreground size-3.5 shrink-0 transition-transform {expanded ? 'rotate-90' : ''}" />
+                <Star class="size-3 shrink-0 {project.favorite ? 'fill-yellow-500 text-yellow-500' : 'text-muted-foreground/40'}" />
+                <span class="text-foreground truncate text-[13px] font-medium {project.archived ? 'opacity-70' : ''}" data-project-name={project.path}>{project.name}</span>
+                {#if project.archived}
+                  <span class="bg-muted text-muted-foreground shrink-0 rounded px-1 py-0.5 text-[10px] font-medium tracking-wide uppercase">Archived</span>
                 {/if}
-                <div class="min-w-0 flex-1">
-                  <div class="text-sidebar-foreground flex items-center gap-2 truncate text-sm font-medium">
-                    <span class="truncate {project.archived ? 'opacity-70' : ''}">{project.name}</span>
-                    {#if project.archived}
-                      <span class="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase">Archived</span>
+                <div class="chips ml-auto flex shrink-0 items-center gap-1">
+                  {#if project.activeSessionCount > 0}
+                    <span
+                      class="flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-px text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400"
+                      title={`${project.activeSessionCount} open session${project.activeSessionCount !== 1 ? 's' : ''}`}
+                    >
+                      <span class="bg-status-connected size-1.5 rounded-full"></span>
+                      {project.activeSessionCount}
+                    </span>
+                  {/if}
+                  {#if project.kind === 'multi' && project.repos?.length}
+                    {#each project.repos as repo (repo.path)}
+                      <span
+                        class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px] {repo.missing
+                          ? 'border border-yellow-500/20 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
+                          : ''}"
+                        title={repo.missing ? `${repo.name} is missing on disk` : repo.path}
+                      >
+                        {#if !repo.missing}
+                          <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
+                        {/if}
+                        <span class="max-w-28 truncate">{repo.name}</span>
+                        {#if repo.missing}
+                          <span class="font-medium">missing</span>
+                        {:else if repo.branch}
+                          <span class="max-w-20 truncate opacity-70">{repo.branch}</span>
+                        {/if}
+                      </span>
+                    {/each}
+                  {:else}
+                    {@const repo = projectStore.repos.find((r) => r.path === project.path)}
+                    {#if repo && !repo.missing && repo.branch}
+                      <span class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px]" title={repo.path}>
+                        <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
+                        <span class="max-w-24 truncate">{repo.branch}</span>
+                        {#if repo.ahead || repo.behind}
+                          <span class="opacity-70">↑{repo.ahead}↓{repo.behind}</span>
+                        {/if}
+                      </span>
                     {/if}
-                    {#if project.activeSessionCount > 0}
-                      <span class="bg-status-connected size-2 shrink-0 rounded-full"></span>
-                    {/if}
-                  </div>
-                  <div class="text-muted-foreground mt-0.5 truncate text-xs">
-                    {#if projectSessions.length === 0}
-                      No sessions
-                    {:else}
-                      {projectSessions.length} session{projectSessions.length !== 1 ? 's' : ''} · updated {formatRelativeTime(projectSessions[0].modified)}
-                    {/if}
-                  </div>
+                  {/if}
                 </div>
               </button>
-
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                class="shrink-0 {project.favorite ? 'text-yellow-500' : 'text-muted-foreground hover:text-sidebar-foreground'}"
-                title={project.favorite ? 'Unfavorite' : 'Favorite'}
-                disabled={connection.status !== 'connected'}
-                onclick={() => void updateProject(project, { favorite: !project.favorite })}
-              >
-                <Star class="size-4 {project.favorite ? 'fill-yellow-500' : ''}" />
-              </Button>
 
               <DropdownMenu>
                 <DropdownMenuTrigger>
@@ -513,29 +544,6 @@
                 <Plus class="size-4" />
               </Button>
             </div>
-
-            {#if project.kind === 'multi' && project.repos?.length}
-              <div class="mt-0.5 flex flex-wrap gap-1 pr-2 pl-8">
-                {#each project.repos as repo (repo.path)}
-                  <span
-                    class="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] {repo.missing
-                      ? 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
-                      : 'bg-muted text-muted-foreground'}"
-                    title={repo.missing ? `${repo.name} is missing on disk` : repo.path}
-                  >
-                    {#if !repo.missing}
-                      <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
-                    {/if}
-                    <span class="max-w-32 truncate">{repo.name}</span>
-                    {#if repo.missing}
-                      <span class="font-medium">missing</span>
-                    {:else if repo.branch}
-                      <span class="max-w-24 truncate">{repo.branch}</span>
-                    {/if}
-                  </span>
-                {/each}
-              </div>
-            {/if}
 
             {#if expanded}
               <div class="border-sidebar-border ml-4 flex flex-col gap-0.5 border-l pt-1 pl-2">
