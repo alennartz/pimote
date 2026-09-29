@@ -2,11 +2,27 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, ensureVapidKeys } from './config.js';
 import { createServer } from './server.js';
-import { PimoteSessionManager } from './session-manager.js';
+import { PimoteSessionManager, createManagerSessionFactory } from './session-manager.js';
 import { FolderIndex } from './folder-index.js';
+import { RepoIndex } from './repo-index.js';
+import { ProjectRegistry } from './project-registry.js';
+import { loadProjectSources } from './project-sources/index.js';
+import { createBuiltinCreator } from './project-sources/builtin.js';
+import type { ProjectCreator } from './project-sources/index.js';
+import { ManagerService } from './manager/index.js';
+import type { ManagerToolContext } from './manager/index.js';
+import { createManagerExtension } from './manager/index.js';
 import { PushNotificationService } from './push-notification.js';
 import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore } from './push-infrastructure.js';
-import { LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_FILE_DOWNLOAD_DIR, PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_SESSION_METADATA_PATH, PIMOTE_STATIC_HOST_DIR } from './paths.js';
+import {
+  LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
+  PIMOTE_FILE_DOWNLOAD_DIR,
+  PIMOTE_PROJECTS_DIR,
+  PIMOTE_PROJECT_SOURCES_DIR,
+  PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
+  PIMOTE_SESSION_METADATA_PATH,
+  PIMOTE_STATIC_HOST_DIR,
+} from './paths.js';
 import { FileSessionMetadataStore } from './session-metadata.js';
 import { buildVoiceOrchestrator } from './voice-orchestrator-boot.js';
 import { InMemoryStaticHostRegistry, FileStaticHostStore, gcStaticHostStore, createStaticHostExtension } from './static-host/index.js';
@@ -26,6 +42,17 @@ export async function main(options: StartOptions = {}) {
   const port = options.portOverride ?? (process.env.PORT ? parseInt(process.env.PORT, 10) : config.port);
 
   const folderIndex = new FolderIndex(config.roots);
+
+  // Project management: discovery index over the configured roots plus any
+  // user-registered sources, the persistent curation/hub layer above it, and
+  // the built-in creator backing the dashboard's create-project flow.
+  const repoIndex = new RepoIndex(config.roots);
+  const loadedSources = await loadProjectSources(config.projectSourcesDir ?? PIMOTE_PROJECT_SOURCES_DIR);
+  for (const source of loadedSources.sources) {
+    repoIndex.registerSource(source);
+  }
+  const creators: ProjectCreator[] = [createBuiltinCreator(), ...loadedSources.creators];
+  const projectRegistry = new ProjectRegistry(repoIndex, PIMOTE_PROJECTS_DIR);
 
   // Initialize push notification service
   await migratePushSubscriptionStore(LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_PUSH_SUBSCRIPTIONS_PATH);
@@ -69,6 +96,32 @@ export async function main(options: StartOptions = {}) {
 
   const sessionManager = await PimoteSessionManager.create(config, pushNotificationService, { staticHostFactory, fileDownloadFactory: fileDownloads.extensionFactory });
 
+  // Global ephemeral manager: one session per client connection, built on the
+  // shared model runtime with the manager extension as its only toolset. Tools
+  // act only through the narrow ports of the ManagerToolContext.
+  const managerContext: ManagerToolContext = {
+    sessions: {
+      getAllSessions: () =>
+        sessionManager.getAllSessions().map((slot) => ({
+          sessionId: slot.sessionState.id,
+          folderPath: slot.folderPath,
+          status: slot.sessionState.status,
+          needsAttention: slot.sessionState.needsAttention,
+        })),
+    },
+    projects: projectRegistry,
+    repos: repoIndex,
+    config,
+  };
+  const managerService = new ManagerService({
+    context: managerContext,
+    factory: createManagerSessionFactory({
+      config,
+      modelRuntime: sessionManager.getModelRuntime(),
+      managerExtensionFactory: createManagerExtension(managerContext),
+    }),
+  });
+
   // Build the voice orchestrator before createServer so each WsHandler can be
   // handed a reference. The orchestrator needs a client-registry lookup, but
   // the real registry is created inside createServer below — so we hand it a
@@ -110,6 +163,10 @@ export async function main(options: StartOptions = {}) {
     staticHostRegistry,
     fileDownloads.manager,
     updateChecker,
+    repoIndex,
+    projectRegistry,
+    managerService,
+    creators,
   );
   clientRegistryRef.current = server.clientRegistry;
 
@@ -139,6 +196,9 @@ export async function main(options: StartOptions = {}) {
   // Start idle session reaping with client connectivity check
   sessionManager.startIdleCheck(config.idleTimeout, (clientId) => server.clientRegistry.has(clientId));
 
+  // Safety net for manager sessions whose disconnect event was missed.
+  const managerReaperHandle = setInterval(() => managerService.sweepIdle(), 60_000);
+
   await server.start(port);
 
   console.log(`[pimote] Server listening on http://localhost:${port}`);
@@ -151,6 +211,7 @@ export async function main(options: StartOptions = {}) {
   // Graceful shutdown
   const shutdown = async () => {
     console.log('\n[pimote] Shutting down...');
+    clearInterval(managerReaperHandle);
     await voiceBoot?.shutdown();
     await sessionManager.dispose();
     await server.close();

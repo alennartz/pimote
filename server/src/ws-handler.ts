@@ -1,7 +1,4 @@
-import { mkdir, stat } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import { join, sep } from 'node:path';
-import { promisify } from 'node:util';
+import { sep } from 'node:path';
 import type { WebSocket } from 'ws';
 import type {
   PimoteCommand,
@@ -15,6 +12,7 @@ import type {
   RestoreMode,
   SessionRestoreEvent,
   SessionStateChangedEvent,
+  ProjectsChangedEvent,
   PimoteTreeNode,
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome } from './session-manager.js';
@@ -22,6 +20,11 @@ import { makeDownloadSnapshot, resolveAllSlotPendingUi, resolveSlotPendingUi, re
 import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
 import type { FolderIndex } from './folder-index.js';
+import type { RepoIndex } from './repo-index.js';
+import type { ProjectRegistry } from './project-registry.js';
+import type { ManagerService } from './manager/index.js';
+import type { ProjectCreator } from './project-sources/index.js';
+import type { ManagerSession } from './manager/index.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
@@ -169,6 +172,8 @@ export class WsHandler {
   private pendingLoginInputs = new Map<string, { resolve: (v: string) => void; reject: (e: unknown) => void }>();
   /** AbortController for the in-flight login flow this connection initiated, if any. */
   private loginAbort: AbortController | null = null;
+  /** This connection's manager stream subscription (one per live manager session). */
+  private managerListener: { session: ManagerSession; unsubscribe: () => void } | null = null;
   readonly clientId: string;
 
   constructor(
@@ -180,6 +185,10 @@ export class WsHandler {
     clientId: string,
     private readonly clientRegistry: ClientRegistry,
     private readonly voiceOrchestrator?: VoiceOrchestrator,
+    private readonly repoIndex?: RepoIndex,
+    private readonly projectRegistry?: ProjectRegistry,
+    private readonly managerService?: ManagerService,
+    private readonly creators?: ProjectCreator[],
   ) {
     this.clientId = clientId;
   }
@@ -230,6 +239,77 @@ export class WsHandler {
           break;
         }
 
+        case 'list_projects': {
+          const { repoIndex, projectRegistry } = this.requireProjectDeps();
+          const projects = await projectRegistry.list();
+          // Exact path match, same rule as the list_folders enrichment: member
+          // sessions count toward their own single-repo projects.
+          const activeSessions = this.sessionManager.getAllSessions();
+          for (const project of projects) {
+            project.activeSessionCount = activeSessions.filter((s) => s.folderPath === project.path).length;
+          }
+          this.sendResponse(id, true, { projects, roots: repoIndex.roots });
+          break;
+        }
+
+        case 'list_repos': {
+          const { repoIndex } = this.requireProjectDeps();
+          this.sendResponse(id, true, { repos: await repoIndex.list() });
+          break;
+        }
+
+        case 'update_project': {
+          const { projectRegistry } = this.requireProjectDeps();
+          await projectRegistry.update({ projectPath: command.projectPath, favorite: command.favorite, order: command.order, archived: command.archived });
+          this.sendResponse(id, true);
+          break;
+        }
+
+        case 'create_hub_project': {
+          const { repoIndex, projectRegistry } = this.requireProjectDeps();
+          if (!repoIndex.roots.includes(command.root)) {
+            this.sendResponse(id, false, undefined, 'Root is not a configured project root');
+            break;
+          }
+          const created = await projectRegistry.createHub(command.name, command.root, command.repoPaths);
+          this.sendResponse(id, true, { projectPath: created.path });
+          break;
+        }
+
+        case 'disband_project': {
+          const { projectRegistry } = this.requireProjectDeps();
+          await projectRegistry.disband(command.projectPath);
+          this.sendResponse(id, true);
+          break;
+        }
+
+        case 'manager_prompt': {
+          const { managerService } = this.requireProjectDeps();
+          const manager = await managerService.getOrCreate(this.clientId);
+          // One subscription per connection, bound to the live manager session
+          // (a reaped-and-recreated session needs a fresh listener).
+          if (this.managerListener?.session !== manager) {
+            this.managerListener?.unsubscribe();
+            const unsubscribe = manager.onEvent((event) => this.sendToClient({ type: 'manager_event', event }));
+            this.managerListener = { session: manager, unsubscribe };
+          }
+          // Fire-and-forget like `prompt`: output reaches the client as the
+          // manager_event stream; this response confirms admission only.
+          manager.session.prompt(command.text).catch((err) => {
+            console.error('[WsHandler] manager_prompt error:', err);
+          });
+          this.sendResponse(id, true);
+          break;
+        }
+
+        case 'manager_abort': {
+          const { managerService } = this.requireProjectDeps();
+          const manager = await managerService.getOrCreate(this.clientId);
+          await manager.session.abort();
+          this.sendResponse(id, true);
+          break;
+        }
+
         case 'create_project': {
           const name = command.name;
           const root = command.root;
@@ -246,34 +326,29 @@ export class WsHandler {
             break;
           }
 
-          const folderPath = join(root, name);
+          const deps = this.requireProjectDeps();
 
-          // Check if directory already exists
-          try {
-            await stat(folderPath);
-            this.sendResponse(id, false, undefined, 'Directory already exists');
+          // Route through the creator whose form matches { root, name } — the
+          // built-in folder creator, or a user-authored one taking its slot.
+          const creator = deps.creators.find((c) => {
+            const schema = c.describe().paramSchema;
+            return 'root' in schema && 'name' in schema;
+          });
+          if (!creator) {
+            this.sendResponse(id, false, undefined, 'No project creator available');
             break;
-          } catch (err) {
-            const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
-            if (code !== 'ENOENT') {
-              const message = err instanceof Error ? err.message : String(err);
-              this.sendResponse(id, false, undefined, `Cannot access directory: ${message}`);
-              break;
-            }
-            // ENOENT — directory doesn't exist yet, proceed with creation
           }
 
-          // Create directory and git init
           try {
-            await mkdir(folderPath, { recursive: true });
-            await promisify(execFile)('git', ['init'], { cwd: folderPath });
+            const created = await creator.create({ root, name });
+            // Otherwise the 30s listing TTL hides the new repo from the index.
+            deps.repoIndex.invalidate();
+            WsHandler.broadcastProjectsChanged(deps.projectRegistry, this.clientRegistry);
+            this.sendResponse(id, true, { folderPath: created.path });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             this.sendResponse(id, false, undefined, `Failed to create project: ${message}`);
-            break;
           }
-
-          this.sendResponse(id, true, { folderPath });
           break;
         }
 
@@ -1655,6 +1730,31 @@ export class WsHandler {
     this.sendEvent(event);
   }
 
+  /** Broadcast the merged project list to ALL connected clients. Used after
+   *  registry mutations (via the registry's onChange in server.ts) and after
+   *  create_project (folder creation isn't a registry mutation). */
+  static broadcastProjectsChanged(projectRegistry: ProjectRegistry, clientRegistry: ClientRegistry): void {
+    void projectRegistry
+      .list()
+      .then((projects) => {
+        const event: ProjectsChangedEvent = { type: 'projects_changed', projects };
+        for (const [, handler] of clientRegistry) {
+          handler.sendToClient(event);
+        }
+      })
+      .catch((err) => {
+        console.error('[WsHandler] Failed to broadcast projects_changed:', err);
+      });
+  }
+
+  /** The project-management wiring; every project/manager command requires it. */
+  private requireProjectDeps(): { repoIndex: RepoIndex; projectRegistry: ProjectRegistry; managerService: ManagerService; creators: ProjectCreator[] } {
+    if (!this.repoIndex || !this.projectRegistry || !this.managerService || !this.creators) {
+      throw new Error('Project management is not available on this connection');
+    }
+    return { repoIndex: this.repoIndex, projectRegistry: this.projectRegistry, managerService: this.managerService, creators: this.creators };
+  }
+
   /** Broadcast a session_state_changed event to ALL connected clients. */
   static broadcastSidebarUpdate(sessionId: string, folderPath: string, sessionManager: PimoteSessionManager, clientRegistry: ClientRegistry): void {
     const slot = sessionManager.getSession(sessionId);
@@ -1724,5 +1824,9 @@ export class WsHandler {
     }
     this.subscribedSessions.clear();
     this.viewedSessionId = null;
+    // Tear down this connection's manager session (and its stream subscription).
+    this.managerListener?.unsubscribe();
+    this.managerListener = null;
+    this.managerService?.disposeClient(this.clientId);
   }
 }

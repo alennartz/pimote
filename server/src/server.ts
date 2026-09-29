@@ -9,6 +9,10 @@ import type { FolderIndex } from './folder-index.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
+import type { RepoIndex } from './repo-index.js';
+import type { ProjectRegistry } from './project-registry.js';
+import type { ManagerService } from './manager/index.js';
+import type { ProjectCreator } from './project-sources/index.js';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { serveStaticHostRoute, type StaticHostRegistry } from './static-host/index.js';
 import { serveFileDownloadRoute, type DownloadManager } from './file-download/index.js';
@@ -113,6 +117,10 @@ export async function createServer(
   staticHostRegistry: StaticHostRegistry,
   fileDownloads: DownloadManager,
   updateChecker?: UpdateChecker,
+  repoIndex?: RepoIndex,
+  projectRegistry?: ProjectRegistry,
+  managerService?: ManagerService,
+  creators?: ProjectCreator[],
 ): Promise<PimoteServer> {
   const clientVersion = await loadClientVersion();
   if (clientVersion) {
@@ -182,6 +190,12 @@ export async function createServer(
     if (ownerClientId) clientRegistry.get(ownerClientId)?.sendDisplacedEvent(sessionId);
   };
 
+  // Project registry mutations (update / createHub / disband) broadcast the
+  // merged list to every connected client.
+  projectRegistry?.onChange(() => {
+    WsHandler.broadcastProjectsChanged(projectRegistry, clientRegistry);
+  });
+
   const wss = new WebSocketServer({ noServer: true });
   const clientRegistry: ClientRegistry = new Map();
 
@@ -232,7 +246,20 @@ export async function createServer(
     // The close handler skips cleanup when the registry already points to a
     // different handler, so this is the only place it runs.
     const existing = clientRegistry.get(clientId);
-    const handler = new WsHandler(sessionManager, folderIndex, ws, pushNotificationService, sessionMetadataStore, clientId, clientRegistry, voiceOrchestrator);
+    const handler = new WsHandler(
+      sessionManager,
+      folderIndex,
+      ws,
+      pushNotificationService,
+      sessionMetadataStore,
+      clientId,
+      clientRegistry,
+      voiceOrchestrator,
+      repoIndex,
+      projectRegistry,
+      managerService,
+      creators,
+    );
     clientRegistry.set(clientId, handler);
     if (existing) {
       existing.cleanup();

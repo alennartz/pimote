@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   createAgentSessionRuntime,
   createAgentSessionServices,
@@ -20,6 +23,7 @@ import { LoginOrchestrator } from './login-orchestrator.js';
 import { createVoiceExtension } from './voice/index.js';
 import { autoDrainOnAbort } from './auto-drain-on-abort.js';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
+import type { ManagerSession, ManagerSessionFactory } from './manager/service.js';
 
 /** Narrow interface for the WebSocket used for event routing.
  *  Avoids importing the `ws` package type in session-manager. */
@@ -749,6 +753,11 @@ export class PimoteSessionManager {
     return this.loginOrchestrator;
   }
 
+  /** The process-lifetime model/auth runtime every session shares (manager sessions included). */
+  getModelRuntime(): ModelRuntime {
+    return this.modelRuntime;
+  }
+
   getAllSessions(): ManagedSlot[] {
     return Array.from(this.sessions.values());
   }
@@ -813,4 +822,115 @@ export class PimoteSessionManager {
     const sessionIds = Array.from(this.sessions.keys());
     await Promise.all(sessionIds.map((id) => this.closeSession(id)));
   }
+}
+
+/** Dependencies for building ephemeral manager sessions. */
+export interface ManagerSessionFactoryDeps {
+  config: PimoteConfig;
+  modelRuntime: ModelRuntime;
+  managerExtensionFactory: ExtensionFactory;
+}
+
+/**
+ * Build the `ManagerSessionFactory` behind ManagerService: each call creates
+ * one ephemeral pi session — an mkdtemp cwd (DR-006's chdir patch makes this
+ * safe), `SessionManager.inMemory` (no persistence), and the manager extension
+ * as the only extension. Streaming reuses the existing EventBuffer SDK→wire
+ * mapping, so manager output is byte-identical with regular sessions; mapped
+ * events fan out to `onEvent` subscribers (manager sessions have no replay
+ * cursor, so the buffer exists only to run the shared mapping).
+ */
+export function createManagerSessionFactory(deps: ManagerSessionFactoryDeps): ManagerSessionFactory {
+  return async (_args: { clientId: string }): Promise<ManagerSession> => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'pimote-manager-'));
+    const eventBus = createEventBus();
+
+    const factory: CreateAgentSessionRuntimeFactory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
+      const services = await createAgentSessionServices({
+        cwd,
+        agentDir,
+        modelRuntime: deps.modelRuntime,
+        resourceLoaderOptions: {
+          eventBus,
+          extensionFactories: [deps.managerExtensionFactory],
+        },
+      });
+
+      return {
+        ...(await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent })),
+        services,
+        diagnostics: services.diagnostics,
+      };
+    };
+
+    const runtime = await createAgentSessionRuntime(factory, {
+      cwd: tempDir,
+      agentDir: getAgentDir(),
+      sessionManager: PiSessionManager.inMemory(tempDir),
+    });
+
+    const session = runtime.session;
+
+    // Same pimote-wide conventions as doOpenSession (minus persistence and the
+    // voice/static-host/file-download extensions): drain queued messages in one
+    // consolidated run, and apply the configured default model/thinking level
+    // for fresh sessions.
+    session.setSteeringMode('all');
+    session.setFollowUpMode('all');
+    if (deps.config.defaultProvider && deps.config.defaultModel) {
+      const models = await deps.modelRuntime.getAvailable();
+      const defaultModel = models.find((m) => m.provider === deps.config.defaultProvider && m.id === deps.config.defaultModel);
+      if (defaultModel) {
+        await session.setModel(defaultModel);
+      } else {
+        console.warn(`[pimote] manager session: default model not found: ${deps.config.defaultProvider}/${deps.config.defaultModel}`);
+      }
+    }
+    if (deps.config.defaultThinkingLevel) {
+      session.setThinkingLevel(deps.config.defaultThinkingLevel as AgentSession['thinkingLevel']);
+    }
+
+    const eventBuffer = new EventBuffer(deps.config.bufferSize, rendererRegisteredVisibility(session));
+    const subscribers = new Set<(event: PimoteEvent) => void>();
+    const unsubscribe = session.subscribe((sdkEvent) => {
+      eventBuffer.onEvent(
+        sdkEvent,
+        session.sessionId,
+        (event) => {
+          for (const subscriber of [...subscribers]) {
+            try {
+              subscriber(event);
+            } catch (error) {
+              console.error('[pimote] manager onEvent subscriber threw:', error);
+            }
+          }
+        },
+        () => session.messages[session.messages.length - 1],
+      );
+    });
+
+    let disposed = false;
+    return {
+      session,
+      onEvent(cb) {
+        subscribers.add(cb);
+        return () => {
+          subscribers.delete(cb);
+        };
+      },
+      async dispose() {
+        if (disposed) return;
+        disposed = true;
+        unsubscribe();
+        subscribers.clear();
+        try {
+          await runtime.dispose();
+        } finally {
+          await rm(tempDir, { recursive: true, force: true }).catch(() => {
+            // Best-effort temp cleanup
+          });
+        }
+      },
+    };
+  };
 }

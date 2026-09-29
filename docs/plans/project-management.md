@@ -271,7 +271,7 @@ Fill in `server/src/manager/service.ts` (types already exist).
   - Return the `ManagerSession` handle.
 
 **Verify:** `npm run check` still green (tsc server); type-level only.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Server wiring — construction + DI
 
@@ -286,7 +286,7 @@ Fill in `server/src/manager/service.ts` (types already exist).
 - `server/src/server.ts`: `createServer` gains `repoIndex`, `projectRegistry`, `managerService`, `creators` params; constructs each `WsHandler` with them; index.ts passes them through.
 
 **Verify:** `npm run check` green; server boots against a temp config (`npx tsx server/src/index.ts` with `PIMOTE_CONFIG_PATH` pointed at a scratch config).
-**Status:** not started
+**Status:** done
 
 ### Step 9: WS command routing, broadcast, manager streaming
 
@@ -304,7 +304,7 @@ Fill in `server/src/manager/service.ts` (types already exist).
 - Disconnect: `cleanup()` also unsubscribes the manager listener and calls `managerService.disposeClient(this.clientId)`.
 
 **Verify:** `npm run check` green; server suite green; manual WS smoke (temp config + `wscat`): `list_projects`, `list_repos`, `update_project`, `create_hub_project`, `disband_project`, `manager_prompt` (streams `manager_event`), `manager_abort`; `projects_changed` arrives after a mutation.
-**Status:** not started
+**Status:** done
 
 ### Step 10: Physical protocol rename
 

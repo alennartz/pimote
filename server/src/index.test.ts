@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
   const sessionManager = {
     startIdleCheck: vi.fn(),
     dispose: vi.fn(async () => undefined),
+    getModelRuntime: vi.fn(() => ({})),
   };
   const server = {
     clientRegistry: new Map(),
@@ -55,6 +56,7 @@ vi.mock('./session-manager.js', () => ({
   PimoteSessionManager: {
     create: vi.fn(async () => mocks.sessionManager),
   },
+  createManagerSessionFactory: vi.fn(() => vi.fn()),
 }));
 vi.mock('./push-notification.js', () => ({
   PushNotificationService: vi.fn(function () {
@@ -145,6 +147,10 @@ describe('main — file download bootstrap wiring', () => {
       mocks.staticHostRegistry,
       mocks.downloadManager,
       mocks.updateChecker,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -167,6 +173,10 @@ describe('main — file download bootstrap wiring', () => {
       mocks.staticHostRegistry,
       mocks.downloadManager,
       undefined,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
     );
   });
 
