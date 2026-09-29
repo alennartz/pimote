@@ -88,6 +88,31 @@ describe('ProjectStore', () => {
       store.showArchived = true;
       expect(store.visibleProjects).toEqual([plain, archived]);
     });
+
+    it('sorts by most recent session activity, name as tiebreak (old-sidebar order)', () => {
+      const store = new ProjectStore();
+      const stale = makeProject({ path: '/r/stale', name: 'stale' });
+      const fresh = makeProject({ path: '/r/fresh', name: 'zeta' });
+      const mid = makeProject({ path: '/r/mid', name: 'mid' });
+      const untouched = makeProject({ path: '/r/none', name: 'alpha' });
+      store.projects = [stale, fresh, mid, untouched];
+      store.sessions.set('/r/stale', [makeSession('s1', '2026-01-01T00:00:00Z')]);
+      store.sessions.set('/r/fresh', [makeSession('s2', '2026-03-01T00:00:00Z')]);
+      store.sessions.set('/r/mid', [makeSession('s3', '2026-02-01T00:00:00Z')]);
+
+      expect(store.visibleProjects).toEqual([fresh, mid, stale, untouched]);
+    });
+
+    it('manually ordered projects keep their curated position ahead of recency', () => {
+      const store = new ProjectStore();
+      const pinned = makeProject({ path: '/r/pin', name: 'pin', order: 0 });
+      const active = makeProject({ path: '/r/active', name: 'active' });
+      store.projects = [active, pinned];
+      store.sessions.set('/r/active', [makeSession('s1', '2026-03-01T00:00:00Z')]);
+      store.sessions.set('/r/pin', [makeSession('s2', '2026-01-01T00:00:00Z')]);
+
+      expect(store.visibleProjects).toEqual([pinned, active]);
+    });
   });
 
   describe('loadProjects', () => {
