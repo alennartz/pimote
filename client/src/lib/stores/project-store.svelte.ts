@@ -1,5 +1,17 @@
-// IndexStore — manages folder and session listing
-import type { ProjectInfo, SessionInfo, SessionStateChangedEvent, SessionDeletedEvent, SessionRenamedEvent, SessionArchivedEvent } from '@pimote/shared';
+// ProjectStore — manages project, repo, and session listing
+import type {
+  ListProjectsResponseData,
+  ListReposResponseData,
+  ProjectInfo,
+  ProjectsChangedEvent,
+  PimoteEvent,
+  RepoInfo,
+  SessionInfo,
+  SessionStateChangedEvent,
+  SessionDeletedEvent,
+  SessionRenamedEvent,
+  SessionArchivedEvent,
+} from '@pimote/shared';
 import { connection } from './connection.svelte.js';
 import { SvelteMap } from 'svelte/reactivity';
 import { getShowArchived, setShowArchived } from './persistence.js';
@@ -15,61 +27,87 @@ function toTimestamp(value: string): number {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
 function sortSessionsByRecency(sessions: SessionInfo[]): SessionInfo[] {
   return [...sessions].sort((a, b) => toTimestamp(b.modified) - toTimestamp(a.modified) || toTimestamp(b.created) - toTimestamp(a.created) || a.id.localeCompare(b.id));
 }
 
-class IndexStore {
-  folders: ProjectInfo[] = $state([]);
+export class ProjectStore {
+  projects: ProjectInfo[] = $state([]);
+  repos: RepoInfo[] = $state([]);
   roots: string[] = $state([]);
   sessions = $state(new SvelteMap<string, SessionInfo[]>());
   loading: boolean = $state(false);
   showArchived: boolean = $state(getShowArchived());
-  private foldersLoadInFlight: Promise<void> | null = null;
-  private sessionLoadsInFlight = new Map<string, InFlightSessionLoad>();
+  private projectsLoadInFlight: Promise<void> | null = null;
+  private sessionLoadsInFlight: Map<string, InFlightSessionLoad> = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
   private nextSessionRequestId = 0;
 
-  async loadFolders(): Promise<void> {
-    if (this.foldersLoadInFlight) return this.foldersLoadInFlight;
+  /** Projects with the archived filter applied; order is the server's (manual order, then name). */
+  get visibleProjects(): ProjectInfo[] {
+    return this.showArchived ? this.projects : this.projects.filter((p) => !p.archived);
+  }
 
-    this.foldersLoadInFlight = (async () => {
-      const isInitialLoad = this.folders.length === 0;
+  async loadProjects(): Promise<void> {
+    if (this.projectsLoadInFlight) return this.projectsLoadInFlight;
+
+    this.projectsLoadInFlight = (async () => {
+      const isInitialLoad = this.projects.length === 0;
       if (isInitialLoad) this.loading = true;
       try {
         const response = await connection.send({ type: 'list_projects' });
         if (response.success && response.data) {
-          const data = response.data as { projects: ProjectInfo[]; roots: string[] };
-          this.folders = data.projects;
+          const data = response.data as ListProjectsResponseData;
+          this.projects = data.projects;
           this.roots = data.roots ?? [];
-          await Promise.all(data.projects.map((folder) => this.loadSessions(folder.path)));
+          await Promise.all(data.projects.map((project) => this.loadSessions(project.path)));
         }
       } catch (e) {
-        console.error('[IndexStore] Failed to load folders:', e);
+        console.error('[ProjectStore] Failed to load projects:', e);
       } finally {
         if (isInitialLoad) this.loading = false;
       }
     })().finally(() => {
-      this.foldersLoadInFlight = null;
+      this.projectsLoadInFlight = null;
     });
 
-    return this.foldersLoadInFlight;
+    return this.projectsLoadInFlight;
+  }
+
+  async loadRepos(): Promise<void> {
+    try {
+      const response = await connection.send({ type: 'list_repos' });
+      if (response.success && response.data) {
+        this.repos = (response.data as ListReposResponseData).repos;
+      }
+    } catch (e) {
+      console.error('[ProjectStore] Failed to load repos:', e);
+    }
+  }
+
+  /** Whole-list replacement driven by the server's projects_changed broadcast. */
+  applyProjectsChanged(event: ProjectsChangedEvent): void {
+    this.projects = event.projects;
   }
 
   applySessionStateChange(event: SessionStateChangedEvent, myClientId: string): void {
-    const folder = this.folders.find((f) => f.path === event.folderPath);
-    if (folder) {
-      folder.activeSessionCount = event.folderActiveSessionCount;
+    const project = this.projects.find((p) => p.path === event.folderPath);
+    if (project) {
+      project.activeSessionCount = event.folderActiveSessionCount;
     }
 
     const isOwnedByMe = event.connectedClientId === myClientId;
-    const folderSessions = this.sessions.get(event.folderPath);
-    if (folderSessions) {
-      const idx = folderSessions.findIndex((s) => s.id === event.sessionId);
+    const projectSessions = this.sessions.get(event.folderPath);
+    if (projectSessions) {
+      const idx = projectSessions.findIndex((s) => s.id === event.sessionId);
       if (idx >= 0) {
         // Update in place — merge event metadata with existing entry
         this.sessions.set(
           event.folderPath,
-          folderSessions.map((s, i) =>
+          projectSessions.map((s, i) =>
             i === idx
               ? {
                   ...s,
@@ -84,9 +122,9 @@ class IndexStore {
         );
       } else if (event.liveStatus !== null) {
         // New active session — add directly from event data
-        const now = new Date().toISOString();
+        const now = nowIso();
         const updated = [
-          ...folderSessions,
+          ...projectSessions,
           {
             id: event.sessionId,
             name: event.sessionName ?? '',
@@ -102,8 +140,8 @@ class IndexStore {
         this.sessions.set(event.folderPath, sortSessionsByRecency(updated));
       }
     } else if (event.liveStatus !== null) {
-      // Sessions for this folder not loaded yet — seed with this entry
-      const now = new Date().toISOString();
+      // Sessions for this project not loaded yet — seed with this entry
+      const now = nowIso();
       this.sessions.set(event.folderPath, [
         {
           id: event.sessionId,
@@ -121,19 +159,19 @@ class IndexStore {
   }
 
   applySessionDeleted(event: SessionDeletedEvent): void {
-    const folderSessions = this.sessions.get(event.folderPath);
-    if (folderSessions) {
-      const filtered = folderSessions.filter((s) => s.id !== event.sessionId);
+    const projectSessions = this.sessions.get(event.folderPath);
+    if (projectSessions) {
+      const filtered = projectSessions.filter((s) => s.id !== event.sessionId);
       this.sessions.set(event.folderPath, filtered);
     }
   }
 
   applySessionRenamed(event: SessionRenamedEvent): void {
-    const folderSessions = this.sessions.get(event.folderPath);
-    if (!folderSessions) return;
+    const projectSessions = this.sessions.get(event.folderPath);
+    if (!projectSessions) return;
     this.sessions.set(
       event.folderPath,
-      folderSessions.map((s) => (s.id === event.sessionId ? { ...s, name: event.name } : s)),
+      projectSessions.map((s) => (s.id === event.sessionId ? { ...s, name: event.name } : s)),
     );
   }
 
@@ -146,7 +184,7 @@ class IndexStore {
   setShowArchived(show: boolean): void {
     this.showArchived = show;
     setShowArchived(show);
-    void Promise.all(this.folders.map((folder) => this.loadSessions(folder.path)));
+    void Promise.all(this.projects.map((project) => this.loadSessions(project.path)));
   }
 
   async loadSessions(folderPath: string): Promise<void> {
@@ -168,7 +206,7 @@ class IndexStore {
           this.sessions.set(folderPath, sortSessionsByRecency(data.sessions));
         }
       } catch (e) {
-        console.error('[IndexStore] Failed to load sessions:', e);
+        console.error('[ProjectStore] Failed to load sessions:', e);
       } finally {
         if (this.sessionLoadsInFlight.get(folderPath)?.requestId === requestId) {
           this.sessionLoadsInFlight.delete(folderPath);
@@ -181,4 +219,11 @@ class IndexStore {
   }
 }
 
-export const indexStore = new IndexStore();
+export const projectStore = new ProjectStore();
+
+// Route server-side project mutations into the store for the lifetime of the app.
+connection.onEvent((event: PimoteEvent) => {
+  if (event.type === 'projects_changed') {
+    projectStore.applyProjectsChanged(event);
+  }
+});

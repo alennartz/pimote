@@ -69,6 +69,11 @@ export class ConnectionStore {
   /** Called after connection restore when a notification-driven adopt should begin. */
   onPendingAdopt: ((sessionId: string, folderPath: string, options: { openDownloads?: boolean }) => void) | null = null;
 
+  /** Called when the WebSocket closes — after a drop or an intentional
+   *  disconnect. Set by manager-store to reset the ephemeral manager
+   *  transcript (the server disposes the connection's manager on socket close). */
+  onDisconnected: (() => void) | null = null;
+
   /** Session to adopt after next successful connection (set from notification URL param or click). */
   pendingAdopt: PendingSessionAdopt | null = null;
 
@@ -94,6 +99,9 @@ export class ConnectionStore {
       this.ws.onerror = null;
     }
     this.rejectAllPending('WebSocket replaced');
+    // The replaced socket is closing or already closed; its connection-scoped
+    // state (the manager) is gone server-side.
+    this.onDisconnected?.();
     this.intentionalClose = false;
 
     this.installLifecycleListeners();
@@ -255,6 +263,9 @@ export class ConnectionStore {
       this.ws = null;
       this.ready = false;
       this.rejectAllPending('WebSocket closed');
+      // The server disposes this connection's manager with the socket;
+      // dependent stores reset before any reconnect bookkeeping runs.
+      this.onDisconnected?.();
 
       if (!this.intentionalClose) {
         this.status = 'reconnecting';

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import FolderList from '$lib/components/FolderList.svelte';
+  import Dashboard from '$lib/components/Dashboard.svelte';
   import MessageList from '$lib/components/MessageList.svelte';
   import InlineSelect from '$lib/components/InlineSelect.svelte';
   import PendingSteeringMessages from '$lib/components/PendingSteeringMessages.svelte';
@@ -81,19 +81,6 @@
     </div>
   {/if}
 {:else}
-  <!-- Landing / folder browser -->
-  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
-    <div class="my-auto flex flex-col items-center p-8">
-      <img src="/pwa/icon-512.png" alt="Pimote" class="mb-6 size-32" />
-      <h1 class="text-foreground mb-2 text-2xl font-bold">Pimote</h1>
-      <p class="text-muted-foreground mb-8 text-sm">Resume a session from the sidebar, or start a new one.</p>
-
-      <!-- Show folder browser inline on mobile as well -->
-      <div class="w-full max-w-md md:hidden">
-        <FolderList />
-      </div>
-
-      <ActiveSessionBar />
-    </div>
-  </div>
+  <!-- Dashboard: projects column + manager chat -->
+  <Dashboard />
 {/if}

@@ -2,7 +2,7 @@
   import { tick, onDestroy } from 'svelte';
   import { formatRelativeTime } from '$lib/format-relative-time.js';
   import type { PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
-  import type { BashExecutionState } from '$lib/stores/session-registry.svelte.js';
+  import type { BashExecutionState, PerSessionState } from '$lib/stores/session-registry.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { setEditorText } from '$lib/stores/input-bar.svelte.js';
@@ -20,8 +20,16 @@
      *  suppresses the draft-conflict dialog. Visual rendering and
      *  auto-scroll are unchanged. Default: false. */
     readOnly?: boolean;
+    /** Message source to render. Defaults to the viewed regular session;
+     *  the manager chat passes its own transcript instead. Fork and the
+     *  floating abort are session-only affordances and are disabled for an
+     *  explicit source. */
+    source?: PerSessionState | null;
   }
-  let { readOnly = false }: Props = $props();
+  let { readOnly = false, source = null }: Props = $props();
+
+  // The rendered transcript: an explicit source (manager) or the viewed session.
+  let session = $derived(source ?? sessionRegistry.viewed);
 
   // ---- Fork flow ----
 
@@ -42,14 +50,16 @@
   }
 
   async function handleFork(entryId: string) {
-    const session = sessionRegistry.viewed;
-    if (!session?.sessionId) return;
+    // Session-only affordance: forks act on the viewed regular session and
+    // no-op for an explicit source (the manager has no forkable branch tree).
+    const viewed = sessionRegistry.viewed;
+    if (!viewed?.sessionId) return;
 
     let res;
     try {
       res = await connection.send({
         type: 'fork',
-        sessionId: session.sessionId,
+        sessionId: viewed.sessionId,
         entryId,
       });
     } catch (e) {
@@ -86,34 +96,36 @@
   }
 
   async function handleAbort() {
-    const session = sessionRegistry.viewed;
-    if (!session?.sessionId) return;
+    // Session-only affordance: the manager composer owns abort for an explicit
+    // source. No-op unless a regular session is viewed.
+    const viewed = sessionRegistry.viewed;
+    if (!viewed?.sessionId) return;
     try {
       await connection.send({
         type: 'abort',
-        sessionId: session.sessionId,
+        sessionId: viewed.sessionId,
       });
     } catch (e) {
       console.error('Failed to send abort:', e);
     }
 
-    if (session.pendingSteeringMessages.length > 0) {
+    if (viewed.pendingSteeringMessages.length > 0) {
       try {
         const res = await connection.send({
           type: 'dequeue_steering',
-          sessionId: session.sessionId,
+          sessionId: viewed.sessionId,
         });
         if (res.success && res.data) {
           const { steering, followUp } = res.data as { steering: string[]; followUp: string[] };
           const allQueued = [...steering, ...followUp];
           if (allQueued.length > 0) {
-            setEditorText(session.sessionId, allQueued.join('\n'));
+            setEditorText(viewed.sessionId, allQueued.join('\n'));
           }
         }
       } catch (e) {
         console.error('Failed to dequeue steering messages after abort:', e);
       }
-      session.pendingSteeringMessages = [];
+      viewed.pendingSteeringMessages = [];
     }
   }
 
@@ -139,7 +151,6 @@
   // Unified display entries: finalized messages, streaming message, and the
   // viewed session's transient native bash executions.
   let displayEntries = $derived.by(() => {
-    const session = sessionRegistry.viewed;
     if (!session) return [] as DisplayEntry[];
     const entries: DisplayEntry[] = [];
     for (let i = 0; i < session.messages.length; i++) {
@@ -169,7 +180,6 @@
 
   // Show streaming indicator when streaming but no content yet
   let showStreamingIndicator = $derived.by(() => {
-    const session = sessionRegistry.viewed;
     if (!session?.isStreaming) return false;
     return !session.streamingMessage || session.streamingMessage.content.length === 0;
   });
@@ -179,7 +189,6 @@
     // Track display entries changes
     displayEntries.length;
     // Track streaming content changes for auto-scroll
-    const session = sessionRegistry.viewed;
     const sm = session?.streamingMessage;
     if (sm && sm.content.length > 0) {
       sm.content.length;
@@ -212,12 +221,12 @@
   }
 
   async function handleBashCancel(_executionId: string): Promise<void> {
-    const session = sessionRegistry.viewed;
-    if (!session?.sessionId) return;
+    const viewed = sessionRegistry.viewed;
+    if (!viewed?.sessionId) return;
     try {
       await connection.send({
         type: 'abort_bash',
-        sessionId: session.sessionId,
+        sessionId: viewed.sessionId,
       });
     } catch (error) {
       console.error('Failed to send bash abort:', error);
@@ -234,7 +243,6 @@
   let lastActivityText = $derived.by(() => {
     // Touch `now` to re-evaluate on timer ticks
     void now;
-    const session = sessionRegistry.viewed;
     if (!session?.lastBotActivityTimestamp) return null;
     // Don't show during active streaming — the streaming indicator is enough
     if (session.isStreaming) return null;
@@ -245,7 +253,7 @@
 <div class="message-list-wrapper">
   <div class="message-list" bind:this={scrollContainer} onscroll={onScroll}>
     <div class="message-list-inner" class:pointer-events-none={readOnly}>
-      {#if displayEntries.length === 0 && !sessionRegistry.viewed?.isStreaming}
+      {#if displayEntries.length === 0 && !session?.isStreaming}
         <div class="empty-state">
           <p>No messages yet</p>
         </div>
@@ -255,7 +263,7 @@
         {#if entry.kind === 'bash'}
           <BashExecution execution={entry.execution} onCancel={readOnly ? undefined : () => handleBashCancel(entry.execution.id)} />
         {:else}
-          <Message message={entry.message} streaming={entry.streaming} messageKey={entry.key} onfork={handleFork} />
+          <Message message={entry.message} streaming={entry.streaming} messageKey={entry.key} onfork={source ? undefined : handleFork} />
         {/if}
       {/each}
 
@@ -275,7 +283,7 @@
   </div>
 
   <!-- Floating abort button (mobile only) -->
-  {#if sessionRegistry.viewed?.isStreaming && !readOnly}
+  {#if !source && session?.isStreaming && !readOnly}
     <button
       class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 absolute right-3 bottom-3 z-10 flex items-center justify-center rounded-full p-3 shadow-lg transition-colors md:hidden"
       onpointerdown={(e) => e.preventDefault()}
