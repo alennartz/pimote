@@ -69,10 +69,29 @@ export class ConnectionStore {
   /** Called after connection restore when a notification-driven adopt should begin. */
   onPendingAdopt: ((sessionId: string, folderPath: string, options: { openDownloads?: boolean }) => void) | null = null;
 
-  /** Called when the WebSocket closes — after a drop or an intentional
-   *  disconnect. Set by manager-store to reset the ephemeral manager
-   *  transcript (the server disposes the connection's manager on socket close). */
-  onDisconnected: (() => void) | null = null;
+  /** Disconnect listeners — a set, not a slot, so the next consumer can't
+   *  silently assign over an existing reset (the manager transcript reset
+   *  depends on this firing). Fires on close and on socket replacement. */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- listener set, not reactive UI state
+  private disconnectListeners = new Set<() => void>();
+
+  /** Subscribe to WebSocket close/replacement; returns unsubscribe. */
+  onDisconnect(cb: () => void): () => void {
+    this.disconnectListeners.add(cb);
+    return () => {
+      this.disconnectListeners.delete(cb);
+    };
+  }
+
+  private notifyDisconnected(): void {
+    for (const cb of [...this.disconnectListeners]) {
+      try {
+        cb();
+      } catch (e) {
+        console.error('[ConnectionStore] Disconnect listener error:', e);
+      }
+    }
+  }
 
   /** Session to adopt after next successful connection (set from notification URL param or click). */
   pendingAdopt: PendingSessionAdopt | null = null;
@@ -101,7 +120,7 @@ export class ConnectionStore {
     this.rejectAllPending('WebSocket replaced');
     // The replaced socket is closing or already closed; its connection-scoped
     // state (the manager) is gone server-side.
-    this.onDisconnected?.();
+    this.notifyDisconnected();
     this.intentionalClose = false;
 
     this.installLifecycleListeners();
@@ -265,7 +284,7 @@ export class ConnectionStore {
       this.rejectAllPending('WebSocket closed');
       // The server disposes this connection's manager with the socket;
       // dependent stores reset before any reconnect bookkeeping runs.
-      this.onDisconnected?.();
+      this.notifyDisconnected();
 
       if (!this.intentionalClose) {
         this.status = 'reconnecting';

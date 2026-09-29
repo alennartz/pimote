@@ -15,7 +15,7 @@ The plan was implemented faithfully: all 15 steps are reflected in the diff, the
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `client/src/lib/session-list-groups.ts:18`, `client/src/lib/components/ProjectList.svelte:300-360`
-- **Status:** open
+- **Status:** resolved
 
 Step 12 says to preserve "per-project session grouping/expansion (`session-list-groups.ts` machinery)". The behavior is preserved (per-project collapse/expand, `MAX_SESSIONS_SHOWN`, per-path session map), but `ProjectList` never imports `buildSessionProjectGroups` — it iterates `projectStore.visibleProjects` and looks up sessions directly. The module is now imported by nothing except its own test, yet step 10 renamed that test's types, cementing a maintained test for dead code into the suite. Either the module should have been deleted or the plan's named machinery kept in use.
 
@@ -33,7 +33,7 @@ Session-count enrichment lives only in the `list_projects` command case; `broadc
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/project-registry.ts:159-176` (update mutates the shared doc before persist), `server/src/project-registry.ts:245-253` (persist uses a fixed `registry.json.tmp`)
-- **Status:** open
+- **Status:** resolved
 
 WS messages are handled fire-and-forget (`server/src/server.ts:269-272`), so two `update_project`/`createHub`/`disband` commands interleave. Both mutate the same cached document object, and both write the same `.tmp` path before renaming: the second `rename` can fail with ENOENT (the first already moved it), making a mutation that actually persisted report failure; interleaved tmp writes are also possible. Additionally, if `persist` throws (disk full), in-memory state keeps the mutation while disk doesn't — divergence until restart. Reachable from a single client action: `moveProject` (`client/src/lib/components/ProjectList.svelte:257-268`) fires one `update_project` per reordered row in parallel.
 
@@ -87,7 +87,7 @@ The constructor signature `{ context, factory, options }` matches step 8's wirin
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `docs/plans/project-management.md` (Tests section, "42 red tests")
-- **Status:** open
+- **Status:** dismissed
 
 Actual new server tests: 43 (597 − 554); the original per-step verify counts summed to 39. The in-plan HTML comments acknowledge the step-1 (13) and step-4 (14) drift, but the header's "42" matches neither. Cosmetic — behavior coverage itself is complete.
 
@@ -96,7 +96,7 @@ Actual new server tests: 43 (597 − 554); the original per-step verify counts s
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `client/src/lib/components/InlineSelect.svelte:1-10`, `client/src/lib/components/InlineSelect.test.ts` (new)
-- **Status:** open
+- **Status:** dismissed
 
 This is a mobile-keyboard focus fix for `ask_user` inline questions plus its own new test — it does not belong to this plan and is unrelated client work riding in the range. Not wrong (concurrent changes are treated as intentional); noted so it isn't attributed to the project-management redesign. It touches no plan-protected test file.
 
@@ -132,7 +132,7 @@ On TTL expiry, every concurrent caller runs its own full recursive walk plus a b
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/stores/connection.svelte.ts:75,104,268`; sole consumer `client/src/lib/stores/manager-store.svelte.ts:95`
-- **Status:** open
+- **Status:** resolved
 
 The next store that needs disconnect notification will assign over manager-store's reset, silently reintroducing the stale-manager-transcript bug. A listener set (like `onEvent`) removes the trap.
 

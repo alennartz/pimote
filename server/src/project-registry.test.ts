@@ -140,6 +140,25 @@ describe('ProjectRegistry.createHub()', () => {
     const hubs = (await registry.list()).filter((p) => p.path === join(rootDir, 'hub'));
     expect(hubs).toHaveLength(1);
   });
+
+  it('rejects duplicate member basenames up front and cleans up so a retry can succeed', async () => {
+    const repoB = join(rootDir, 'nested', 'repo-a');
+    await initRepo(repoB);
+    const registry = makeRegistry();
+
+    // Two members sharing a basename collide on one symlink target; a
+    // duplicated path fails the same way. Either used to fail partway,
+    // leaving an un-disbandable half-built hub folder.
+    await expect(registry.createHub('hub', rootDir, [repoA, repoB])).rejects.toThrow(/Duplicate member name/);
+    await expect(registry.createHub('hub', rootDir, [repoA, repoA])).rejects.toThrow(/Duplicate member name/);
+    expect(existsSync(join(rootDir, 'hub'))).toBe(false);
+    expect((await registry.list()).filter((p) => p.name === 'hub')).toHaveLength(0);
+
+    // The failed attempts left nothing behind — the same call now succeeds.
+    const second = makeRegistry();
+    const { path: hubPath } = await second.createHub('hub', rootDir, [repoA]);
+    expect(existsSync(hubPath)).toBe(true);
+  });
 });
 
 describe('ProjectRegistry.disband()', () => {

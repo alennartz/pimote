@@ -92,4 +92,4 @@ connection.onEvent((event) => {
     managerStore.handleManagerEvent(event as ManagerStreamEvent);
   }
 });
-connection.onDisconnected = () => managerStore.reset();
+connection.onDisconnect(() => managerStore.reset());

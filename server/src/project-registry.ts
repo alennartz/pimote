@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { basename, join, sep } from 'node:path';
 import type { ProjectInfo, RepoInfo } from '../../shared/dist/index.js';
@@ -161,6 +162,7 @@ function agentsMarkdown(hubName: string, memberPaths: string[]): string {
 export class ProjectRegistry {
   private documentPromise: Promise<RegistryDocument> | null = null;
   private readonly subscribers = new Set<() => void>();
+  private mutations: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly repos: RepoIndex,
@@ -177,19 +179,21 @@ export class ProjectRegistry {
   }
 
   /** Apply a curation patch. Unknown project paths reject. */
-  async update(patch: ProjectUpdatePatch): Promise<void> {
-    const doc = await this.document();
-    const known = await this.knownProjectPaths(doc);
-    if (!known.has(patch.projectPath)) throw new Error(`Unknown project: ${patch.projectPath}`);
+  update(patch: ProjectUpdatePatch): Promise<void> {
+    return this.serialized(async () => {
+      const doc = await this.document();
+      const known = await this.knownProjectPaths(doc);
+      if (!known.has(patch.projectPath)) throw new Error(`Unknown project: ${patch.projectPath}`);
 
-    const override = doc.overrides[patch.projectPath] ?? {};
-    if (patch.favorite !== undefined) override.favorite = patch.favorite;
-    if (patch.order !== undefined) override.order = patch.order;
-    if (patch.archived !== undefined) override.archived = patch.archived;
-    doc.overrides[patch.projectPath] = override;
+      const override = doc.overrides[patch.projectPath] ?? {};
+      if (patch.favorite !== undefined) override.favorite = patch.favorite;
+      if (patch.order !== undefined) override.order = patch.order;
+      if (patch.archived !== undefined) override.archived = patch.archived;
+      doc.overrides[patch.projectPath] = override;
 
-    await this.persist(doc);
-    this.fireChange();
+      await this.persist(doc);
+      this.fireChange();
+    });
   }
 
   /**
@@ -198,55 +202,59 @@ export class ProjectRegistry {
    * Every repoPath must exist in the repo index; unknown members reject.
    */
   async createHub(name: string, root: string, repoPaths: string[]): Promise<{ path: string }> {
-    const doc = await this.document();
-    const repos = await this.repos.list();
-    const byPath = new Map(repos.map((repo) => [repo.path, repo]));
+    return this.serialized(async () => {
+      const doc = await this.document();
+      const repos = await this.repos.list();
+      const byPath = new Map(repos.map((repo) => [repo.path, repo]));
 
-    if (!isValidProjectName(name)) throw new Error(`Invalid project name: ${name}`);
-    const unknown = repoPaths.find((repoPath) => !byPath.has(repoPath));
-    if (unknown !== undefined) throw new Error(`Unknown repo: ${unknown}`);
-    const memberPaths = repoPaths.map((repoPath) => byPath.get(repoPath)!.path);
-    // Two members with the same basename collide on one symlink target inside
-    // the hub dir — reject up front so no partial hub is ever built.
-    const seen = new Set<string>();
-    for (const memberPath of memberPaths) {
-      const base = basename(memberPath);
-      if (seen.has(base)) throw new Error(`Duplicate member name: ${base}`);
-      seen.add(base);
-    }
-    const target = join(root, name);
-    if (await pathExists(target)) throw new Error(`Directory already exists: ${target}`);
-
-    await mkdir(target, { recursive: true });
-    try {
+      if (!isValidProjectName(name)) throw new Error(`Invalid project name: ${name}`);
+      const unknown = repoPaths.find((repoPath) => !byPath.has(repoPath));
+      if (unknown !== undefined) throw new Error(`Unknown repo: ${unknown}`);
+      const memberPaths = repoPaths.map((repoPath) => byPath.get(repoPath)!.path);
+      // Two members with the same basename collide on one symlink target inside
+      // the hub dir — reject up front so no partial hub is ever built.
+      const seen = new Set<string>();
       for (const memberPath of memberPaths) {
-        await symlink(memberPath, join(target, basename(memberPath)));
+        const base = basename(memberPath);
+        if (seen.has(base)) throw new Error(`Duplicate member name: ${base}`);
+        seen.add(base);
       }
-      await writeFile(join(target, 'AGENTS.md'), agentsMarkdown(name, memberPaths), 'utf8');
-      doc.hubs.push({ path: target, name, memberPaths });
-      await this.persist(doc);
-    } catch (error) {
-      // Never leave a half-built hub folder behind: it would block retry
-      // (Directory already exists) and couldn't be disbanded (no registry
-      // entry) — all-or-nothing.
-      await rm(target, { recursive: true, force: true }).catch(() => {});
-      throw error;
-    }
-    this.fireChange();
-    return { path: target };
+      const target = join(root, name);
+      if (await pathExists(target)) throw new Error(`Directory already exists: ${target}`);
+
+      await mkdir(target, { recursive: true });
+      try {
+        for (const memberPath of memberPaths) {
+          await symlink(memberPath, join(target, basename(memberPath)));
+        }
+        await writeFile(join(target, 'AGENTS.md'), agentsMarkdown(name, memberPaths), 'utf8');
+        doc.hubs.push({ path: target, name, memberPaths });
+        await this.persist(doc);
+      } catch (error) {
+        // Never leave a half-built hub folder behind: it would block retry
+        // (Directory already exists) and couldn't be disbanded (no registry
+        // entry) — all-or-nothing.
+        await rm(target, { recursive: true, force: true }).catch(() => {});
+        throw error;
+      }
+      this.fireChange();
+      return { path: target };
+    });
   }
 
   /** Remove a hub project: registry entry removed and the hub folder deleted. */
-  async disband(projectPath: string): Promise<void> {
-    const doc = await this.document();
-    const index = doc.hubs.findIndex((hub) => hub.path === projectPath);
-    if (index === -1) throw new Error(`Not a hub project: ${projectPath}`);
+  disband(projectPath: string): Promise<void> {
+    return this.serialized(async () => {
+      const doc = await this.document();
+      const index = doc.hubs.findIndex((hub) => hub.path === projectPath);
+      if (index === -1) throw new Error(`Not a hub project: ${projectPath}`);
 
-    // rm on a directory unlinks symlinks inside it; the member repos survive.
-    await rm(doc.hubs[index].path, { recursive: true, force: true });
-    doc.hubs.splice(index, 1);
-    await this.persist(doc);
-    this.fireChange();
+      // rm on a directory unlinks symlinks inside it; the member repos survive.
+      await rm(doc.hubs[index].path, { recursive: true, force: true });
+      doc.hubs.splice(index, 1);
+      await this.persist(doc);
+      this.fireChange();
+    });
   }
 
   /** Subscribe to registry mutations; returns an unsubscribe function. */
@@ -286,13 +294,32 @@ export class ProjectRegistry {
     }
   }
 
-  /** Atomic replace: write to `.tmp`, then rename over the final path. */
+  /** Serialize mutating operations: WS commands are handled fire-and-forget,
+   *  so interleaved mutations would race on the shared cached document and
+   *  the tmp file (e.g. two renames, the second hitting a moved tmp path).
+   *  Each mutation runs only after the previous one settles. */
+  private serialized<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutations.then(operation);
+    this.mutations = result.catch(() => {});
+    return result;
+  }
+
+  /** Atomic replace: write to a unique `.tmp`, then rename over the final
+   *  path. On failure the cached document is dropped so the next read
+   *  reloads from disk — the mutation may already sit in the shared cached
+   *  object, and memory must not diverge from what's persisted. */
   private async persist(doc: RegistryDocument): Promise<void> {
     await mkdir(this.storeDir, { recursive: true });
     const finalPath = join(this.storeDir, REGISTRY_FILE);
-    const temporaryPath = `${finalPath}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(doc, null, 2)}\n`, 'utf8');
-    await rename(temporaryPath, finalPath);
+    const temporaryPath = `${finalPath}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporaryPath, `${JSON.stringify(doc, null, 2)}\n`, 'utf8');
+      await rename(temporaryPath, finalPath);
+    } catch (error) {
+      this.documentPromise = null;
+      await rm(temporaryPath, { force: true }).catch(() => {});
+      throw error;
+    }
   }
 
   private fireChange(): void {

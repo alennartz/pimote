@@ -167,16 +167,46 @@ describe('ManagerStore', () => {
       expect(store.messages).toHaveLength(1);
     });
 
-    it('the store resets when the connection drops (connection.onDisconnected wiring)', () => {
+    it('the store resets when the connection drops (onDisconnect wiring)', async () => {
       reduce(managerStore, { type: 'agent_start' });
       reduce(managerStore, { type: 'message_end', message: assistantMessage('stale transcript') });
       expect(managerStore.messages).toHaveLength(1);
 
-      expect(typeof connection.onDisconnected).toBe('function');
-      connection.onDisconnected?.();
+      // Drive the production path: open the singleton's socket, then close it.
+      // notifyDisconnected() runs the module-level onDisconnect wiring → reset.
+      const sockets: FakeWebSocket[] = [];
+      class FakeWebSocket {
+        static readonly CONNECTING = 0;
+        static readonly OPEN = 1;
+        static readonly CLOSING = 2;
+        static readonly CLOSED = 3;
+        readyState = FakeWebSocket.CONNECTING;
+        onopen: (() => void) | null = null;
+        onmessage: ((ev: { data: string }) => void) | null = null;
+        onclose: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        constructor() {
+          sockets.push(this as FakeWebSocket);
+        }
+        send(): void {}
+        close(): void {}
+      }
+      vi.stubGlobal('WebSocket', FakeWebSocket);
+      // Node test environment: connect() only reads these two fields.
+      vi.stubGlobal('location', { protocol: 'https:', host: 'test-host' });
+      vi.useFakeTimers();
+      try {
+        connection.connect();
+        sockets[0].onclose!();
+        await vi.advanceTimersByTimeAsync(0);
 
-      expect(managerStore.messages).toEqual([]);
-      expect(managerStore.status).toBe('idle');
+        expect(managerStore.messages).toEqual([]);
+        expect(managerStore.status).toBe('idle');
+      } finally {
+        connection.disconnect();
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+      }
     });
   });
 });
