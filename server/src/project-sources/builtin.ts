@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, stat } from 'node:fs/promises';
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
+import { isValidProjectName } from '../project-registry.js';
 import type { ProjectCreator } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -37,8 +38,9 @@ export function createBuiltinCreator(): ProjectCreator {
       const root = params.root;
       const name = params.name;
 
-      // Validate everything before any filesystem mutation.
-      if (typeof name !== 'string' || !name || name.includes('/') || name.includes(sep) || name === '.' || name === '..') {
+      // Validate everything before any filesystem mutation. Shared rule with
+      // the registry and the WS create_project path.
+      if (typeof name !== 'string' || !isValidProjectName(name)) {
         throw new Error('Invalid project name');
       }
       if (typeof root !== 'string' || !root) {

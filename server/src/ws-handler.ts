@@ -1,4 +1,3 @@
-import { sep } from 'node:path';
 import type { WebSocket } from 'ws';
 import type {
   PimoteCommand,
@@ -21,7 +20,7 @@ import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
 import type { FolderIndex } from './folder-index.js';
 import type { RepoIndex } from './repo-index.js';
-import type { ProjectRegistry } from './project-registry.js';
+import { enrichActiveSessionCounts, isValidProjectName, type ProjectRegistry } from './project-registry.js';
 import type { ManagerService } from './manager/index.js';
 import type { ProjectCreator } from './project-sources/index.js';
 import type { ManagerSession } from './manager/index.js';
@@ -221,12 +220,7 @@ export class WsHandler {
         case 'list_projects': {
           const { repoIndex, projectRegistry } = this.requireProjectDeps();
           const projects = await projectRegistry.list();
-          // Exact path match: member sessions count toward their own
-          // single-repo projects.
-          const activeSessions = this.sessionManager.getAllSessions();
-          for (const project of projects) {
-            project.activeSessionCount = activeSessions.filter((s) => s.folderPath === project.path).length;
-          }
+          enrichActiveSessionCounts(projects, this.sessionManager.getAllSessions());
           this.sendResponse(id, true, { projects, roots: repoIndex.roots });
           break;
         }
@@ -283,7 +277,13 @@ export class WsHandler {
 
         case 'manager_abort': {
           const { managerService } = this.requireProjectDeps();
-          const manager = await managerService.getOrCreate(this.clientId);
+          const manager = managerService.get(this.clientId);
+          if (!manager) {
+            // Nothing running — no manager session to abort, and none should
+            // be created just to abort it.
+            this.sendResponse(id, true);
+            break;
+          }
           await manager.session.abort();
           this.sendResponse(id, true);
           break;
@@ -294,13 +294,13 @@ export class WsHandler {
           const root = command.root;
 
           // Validate name: non-empty, no path separators, not . or ..
-          if (!name || name.includes('/') || name.includes(sep) || name === '.' || name === '..') {
+          if (!isValidProjectName(name)) {
             this.sendResponse(id, false, undefined, 'Invalid project name');
             break;
           }
 
           // Validate root is one of the configured roots
-          if (!this.folderIndex.roots.includes(root)) {
+          if (!this.repoIndex?.roots.includes(root)) {
             this.sendResponse(id, false, undefined, 'Root is not a configured project root');
             break;
           }
@@ -322,7 +322,7 @@ export class WsHandler {
             const created = await creator.create({ root, name });
             // Otherwise the 30s listing TTL hides the new repo from the index.
             deps.repoIndex.invalidate();
-            WsHandler.broadcastProjectsChanged(deps.projectRegistry, this.clientRegistry);
+            WsHandler.broadcastProjectsChanged(deps.projectRegistry, this.sessionManager, this.clientRegistry);
             this.sendResponse(id, true, { folderPath: created.path });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -1703,10 +1703,13 @@ export class WsHandler {
   /** Broadcast the merged project list to ALL connected clients. Used after
    *  registry mutations (via the registry's onChange in server.ts) and after
    *  create_project (folder creation isn't a registry mutation). */
-  static broadcastProjectsChanged(projectRegistry: ProjectRegistry, clientRegistry: ClientRegistry): void {
+  static broadcastProjectsChanged(projectRegistry: ProjectRegistry, sessionManager: PimoteSessionManager, clientRegistry: ClientRegistry): void {
     void projectRegistry
       .list()
       .then((projects) => {
+        // Serve the same enriched view as list_projects — a broadcast with
+        // zeroed counts would wipe every live indicator client-side.
+        enrichActiveSessionCounts(projects, sessionManager.getAllSessions());
         const event: ProjectsChangedEvent = { type: 'projects_changed', projects };
         for (const [, handler] of clientRegistry) {
           handler.sendToClient(event);

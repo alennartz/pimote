@@ -1,6 +1,5 @@
 import type { AgentSession } from '@earendil-works/pi-coding-agent';
 import type { PimoteEvent } from '../../../shared/dist/index.js';
-import type { ManagerToolContext } from './types.js';
 
 /** One connection's live manager session. */
 export interface ManagerSession {
@@ -39,23 +38,42 @@ export class ManagerService {
   private readonly idleTimeoutMs: number;
   private readonly now: () => number;
   private readonly clients = new Map<string, ClientEntry>();
+  private readonly creating = new Map<string, Promise<ManagerSession>>();
 
-  constructor(deps: { context: ManagerToolContext; factory: ManagerSessionFactory; options?: ManagerServiceOptions }) {
+  constructor(deps: { factory: ManagerSessionFactory; options?: ManagerServiceOptions }) {
     this.idleTimeoutMs = deps.options?.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.now = deps.options?.now ?? Date.now;
     this.factory = deps.factory;
   }
 
-  /** The connection's manager session, created on first use. */
+  /** The connection's manager session, created on first use. Single-flight:
+   *  concurrent first uses share one factory call, so the second completion
+   *  can't overwrite (and orphan) the first session. */
   async getOrCreate(clientId: string): Promise<ManagerSession> {
     const existing = this.clients.get(clientId);
     if (existing) {
       existing.lastUsedMs = this.now();
       return existing.session;
     }
-    const session = await this.factory({ clientId });
-    this.clients.set(clientId, { session, lastUsedMs: this.now() });
-    return session;
+    let pending = this.creating.get(clientId);
+    if (!pending) {
+      pending = this.factory({ clientId })
+        .then((session) => {
+          this.clients.set(clientId, { session, lastUsedMs: this.now() });
+          return session;
+        })
+        .finally(() => {
+          this.creating.delete(clientId);
+        });
+      this.creating.set(clientId, pending);
+    }
+    return pending;
+  }
+
+  /** The connection's manager session without creating one — for operations
+   *  like abort that must not spin up a session just to do nothing. */
+  get(clientId: string): ManagerSession | undefined {
+    return this.clients.get(clientId)?.session;
   }
 
   /** Tear down the connection's manager session (disconnect path). */

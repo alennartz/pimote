@@ -1,22 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AgentSession } from '@earendil-works/pi-coding-agent';
 import { ManagerService, type ManagerSession, type ManagerSessionFactory } from './service.js';
-import type { ManagerToolContext } from './types.js';
 
 let clock: number;
 
 beforeEach(() => {
   clock = 1_000;
 });
-
-function fakeContext(): ManagerToolContext {
-  return {
-    sessions: { getAllSessions: () => [] },
-    projects: { list: async () => [] },
-    repos: { list: async () => [] },
-    config: { roots: ['/tmp'], idleTimeout: 1_000, bufferSize: 10, port: 3000 },
-  };
-}
 
 function makeFakeSession(): ManagerSession {
   return {
@@ -28,7 +18,6 @@ function makeFakeSession(): ManagerSession {
 
 function makeService(factory: ManagerSessionFactory, options: { idleTimeoutMs?: number } = {}): ManagerService {
   return new ManagerService({
-    context: fakeContext(),
     factory,
     options: { now: () => clock, idleTimeoutMs: 5_000, ...options },
   });
@@ -56,6 +45,43 @@ describe('ManagerService.getOrCreate()', () => {
 
     expect(forClient2).not.toBe(forClient1);
     expect(factory).toHaveBeenCalledTimes(2);
+  });
+
+  it('single-flights concurrent first uses — one factory call, one live session', async () => {
+    let resolveFactory: (session: ManagerSession) => void = () => {};
+    const factory = vi.fn<ManagerSessionFactory>(
+      () =>
+        new Promise<ManagerSession>((resolve) => {
+          resolveFactory = resolve;
+        }),
+    );
+    const service = makeService(factory);
+
+    const first = service.getOrCreate('client-1');
+    const second = service.getOrCreate('client-1');
+    expect(factory).toHaveBeenCalledTimes(1);
+
+    const session = makeFakeSession();
+    resolveFactory(session);
+
+    expect(await first).toBe(session);
+    expect(await second).toBe(session);
+    expect(factory).toHaveBeenCalledTimes(1);
+
+    // And the map holds exactly one entry — the second completion must not
+    // have overwritten (and orphaned) the first session.
+    expect(service.get('client-1')).toBe(session);
+  });
+
+  it('get() returns the live session without creating one', async () => {
+    const factory = vi.fn<ManagerSessionFactory>(async () => makeFakeSession());
+    const service = makeService(factory);
+
+    expect(service.get('client-1')).toBeUndefined();
+    expect(factory).not.toHaveBeenCalled();
+
+    const created = await service.getOrCreate('client-1');
+    expect(service.get('client-1')).toBe(created);
   });
 });
 

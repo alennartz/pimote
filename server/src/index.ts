@@ -114,7 +114,6 @@ export async function main(options: StartOptions = {}) {
     config,
   };
   const managerService = new ManagerService({
-    context: managerContext,
     factory: createManagerSessionFactory({
       config,
       modelRuntime: sessionManager.getModelRuntime(),

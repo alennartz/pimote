@@ -86,6 +86,8 @@ export class RepoIndex {
   private readonly sources: ProjectSource[] = [];
   private listing: { entries: RepoInfo[]; at: number } | null = null;
   private readonly statusCache = new Map<string, RepoStatus>();
+  private listingPromise: Promise<RepoInfo[]> | null = null;
+  private walkGeneration = 0;
 
   constructor(
     private readonly _roots: string[],
@@ -108,13 +110,34 @@ export class RepoIndex {
    */
   async list(): Promise<RepoInfo[]> {
     const cached = this.listing;
-    const base = cached && this.now() - cached.at < this.ttlMs ? cached.entries : await this.discoverAndStamp();
+    if (cached && this.now() - cached.at < this.ttlMs) {
+      return await Promise.all(cached.entries.map((entry) => this.resolveServed(entry)));
+    }
+    // Single-flight: on a TTL miss, concurrent callers share one walk instead
+    // of each running a full recursive scan plus a burst of git subprocesses.
+    if (!this.listingPromise) {
+      const generation = this.walkGeneration;
+      this.listingPromise = this.discoverAndStamp()
+        .then((entries) => {
+          if (generation !== this.walkGeneration) {
+            // invalidate() ran while this walk was in flight — its stamp is
+            // stale, so the next list() must re-walk.
+            this.listing = null;
+          }
+          return entries;
+        })
+        .finally(() => {
+          this.listingPromise = null;
+        });
+    }
+    const base = await this.listingPromise;
     return await Promise.all(base.map((entry) => this.resolveServed(entry)));
   }
 
   /** Drop cached listings so the next list() re-walks. */
   invalidate(): void {
     this.listing = null;
+    this.walkGeneration++;
     this.statusCache.clear();
   }
 

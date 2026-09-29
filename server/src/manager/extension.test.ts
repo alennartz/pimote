@@ -53,6 +53,8 @@ describe('createManagerExtension()', () => {
 
     expect(ports.projects.list).toHaveBeenCalledTimes(1);
     expect(ports.repos.list).toHaveBeenCalledTimes(1);
-    expect(ports.sessions.getAllSessions).toHaveBeenCalledTimes(1);
+    // Called by pimote_list_sessions and by the projects tool's live-count
+    // enrichment.
+    expect(ports.sessions.getAllSessions).toHaveBeenCalledTimes(2);
   });
 });

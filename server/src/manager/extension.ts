@@ -1,5 +1,6 @@
 import type { ExtensionFactory, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
+import { enrichActiveSessionCounts } from '../project-registry.js';
 import type { ManagerToolContext } from './types.js';
 
 /**
@@ -29,7 +30,13 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         'List every pimote project: curated single-repo projects and multi-repo hub projects, ' +
         'with path, kind, member repos, and favorite/order/archived flags. Takes no arguments.',
       parameters: Type.Object({}),
-      execute: async () => jsonToolResult(await context.projects.list()),
+      execute: async () => {
+        const projects = await context.projects.list();
+        // Live counts, same rule the WS serve-paths use — the agent should
+        // never see permanently-zeroed indicators.
+        enrichActiveSessionCounts(projects, context.sessions.getAllSessions());
+        return jsonToolResult(projects);
+      },
     });
 
     pi.registerTool({

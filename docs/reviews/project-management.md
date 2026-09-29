@@ -24,7 +24,7 @@ Step 12 says to preserve "per-project session grouping/expansion (`session-list-
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/ws-handler.ts:221-231` vs `server/src/ws-handler.ts:1706-1715`; also `server/src/manager/extension.ts:28-33`, `server/src/project-registry.ts:78-99`, `client/src/lib/stores/project-store.svelte.ts:92-94`
-- **Status:** open
+- **Status:** resolved
 
 Session-count enrichment lives only in the `list_projects` command case; `broadcastProjectsChanged` and the manager's `pimote_list_projects` tool call `projectRegistry.list()` directly, which always emits `activeSessionCount: 0`. The client's `applyProjectsChanged` replaces the whole projects array, so after any favorite/archive/order/hub mutation (the documented update path — ProjectList comments say "the store updates via the projects_changed broadcast") every green "active" dot in the dashboard disappears until the next full `list_projects`. The manager agent also permanently sees zero counts. This is the doctrine failure of a business operation (count enrichment) living in one caller instead of the module that owns the data — two of three paths already miss it.
 
@@ -42,7 +42,7 @@ WS messages are handled fire-and-forget (`server/src/server.ts:269-272`), so two
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/manager/service.ts:50-59`; related: `server/src/ws-handler.ts:284-289`
-- **Status:** open
+- **Status:** resolved
 
 Two concurrent `manager_prompt` commands for the same clientId both see no existing entry and both await the factory; the second `clients.set` overwrites the first, leaving session A running with no map entry — never disposed (temp dir + runtime leak), its prompt output unbound (the handler's listener re-keys to B). The window is narrow (client clears the draft synchronously) but the server shouldn't depend on that. Related wart: `manager_abort` calls `getOrCreate`, so aborting with no manager creates a full agent session (temp dir, runtime, 30-min idle lifetime) just to abort nothing.
 
@@ -51,7 +51,7 @@ Two concurrent `manager_prompt` commands for the same clientId both see no exist
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/project-registry.ts:179-202`
-- **Status:** open
+- **Status:** resolved
 
 After `mkdir`, each `symlink` and the `writeFile` are unguarded. Two member repos with the same basename (e.g. `/a/app` and `/b/app`), or a duplicated `repoPaths` entry, throw EEXIST partway — leaving a half-built hub folder with no registry entry. The leftover folder can't be disbanded (`disband` only accepts registered hub paths) and blocks retry (`Directory already exists`), requiring manual filesystem cleanup. Same partial-state shape if `writeFile` or `persist` fails. Validating basename uniqueness up front and cleaning up on failure would close this cheaply.
 
@@ -60,7 +60,7 @@ After `mkdir`, each `symlink` and the `writeFile` are unguarded. Two member repo
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/session-manager.ts:845-933`
-- **Status:** open
+- **Status:** resolved
 
 `mkdtemp` runs first; `rm(tempDir)` only runs inside `dispose()`. If anything between throws — `createAgentSessionServices` (extension/resource init), `createAgentSessionRuntime`, `setModel` — the temp dir is orphaned and the error propagates to the client as a failed `manager_prompt`. A persistent failure (bad extension, model runtime error) leaks one `/tmp/pimote-manager-*` dir per attempt with no cap. Wrap creation in try/catch that cleans up before rethrowing.
 
@@ -69,7 +69,7 @@ After `mkdir`, each `symlink` and the `writeFile` are unguarded. Two member repo
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `server/src/ws-handler.ts:303` (vs. `server/src/ws-handler.ts:228` for `list_projects`)
-- **Status:** open
+- **Status:** resolved
 
 Step 9 routed `create_project` through the creator but left the pre-existing root check on `FolderIndex`. Both arrays are constructed from `config.roots` (`server/src/index.ts:46-48`), so there is no behavioral drift today, but the codebase now has two parallel "configured roots" sources for the same concept that step 9 otherwise unified.
 
@@ -78,7 +78,7 @@ Step 9 routed `create_project` through the creator but left the pre-existing roo
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `server/src/manager/service.ts:38-47`
-- **Status:** open
+- **Status:** resolved
 
 The constructor signature `{ context, factory, options }` matches step 8's wiring call, but `deps.context` is destructured into nothing — the context is only consumed by `createManagerExtension` at the construction site. A required-but-unused parameter; the interface lies about what the service needs, and a reader assumes the service exercises the ports.
 
@@ -105,7 +105,7 @@ This is a mobile-keyboard focus fix for `ask_user` inline questions plus its own
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/ws-handler.ts:297`, `server/src/project-registry.ts:58-62`, `server/src/project-sources/builtin.ts:39-41`, `client/src/lib/components/ProjectList.svelte:169-175`
-- **Status:** open
+- **Status:** resolved
 
 One business rule ("valid project name") is implemented four times, and it has already drifted: the client rejects `\`, the server-side POSIX checks don't. When the rule changes (e.g. allow spaces, reject control chars), paths will disagree about what the server accepts. One shared validator on the server (client keeps its UX copy) would localize it.
 
@@ -114,7 +114,7 @@ One business rule ("valid project name") is implemented four times, and it has a
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/project-registry.ts:43-55` (parseDocument), `server/src/project-registry.ts:231-243` (documentPromise)
-- **Status:** open
+- **Status:** resolved
 
 `documentPromise` caches rejection forever, so one transient non-ENOENT read failure (EACCES, EISDIR) fails every project command permanently, even after the file is fixed. And `parseDocument` validates only container shapes: a hub entry without `memberPaths` (hand-edited/corrupt file) makes `hub.memberPaths.map` throw inside `mergedProjects`, failing every `list_projects` until the file is manually repaired. Reset the promise on load failure and validate per-entry shape.
 
@@ -123,7 +123,7 @@ One business rule ("valid project name") is implemented four times, and it has a
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/repo-index.ts:88-92` with `108-137`
-- **Status:** open
+- **Status:** resolved
 
 On TTL expiry, every concurrent caller runs its own full recursive walk plus a burst of git subprocesses (3 per repo). Multiple clients connecting at once (or `list_projects` racing `broadcastProjectsChanged`) duplicate the whole scan. Harmless but wasteful; a shared in-flight promise is the standard fix.
 

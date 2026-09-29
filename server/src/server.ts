@@ -193,7 +193,7 @@ export async function createServer(
   // Project registry mutations (update / createHub / disband) broadcast the
   // merged list to every connected client.
   projectRegistry?.onChange(() => {
-    WsHandler.broadcastProjectsChanged(projectRegistry, clientRegistry);
+    WsHandler.broadcastProjectsChanged(projectRegistry, sessionManager, clientRegistry);
   });
 
   const wss = new WebSocketServer({ noServer: true });

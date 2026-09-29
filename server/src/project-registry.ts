@@ -45,16 +45,37 @@ function parseDocument(raw: string): RegistryDocument {
     const parsed = JSON.parse(raw) as Partial<RegistryDocument>;
     if (!Array.isArray(parsed.hubs)) return emptyDocument();
     if (typeof parsed.overrides !== 'object' || parsed.overrides === null) return emptyDocument();
-    return { version: DOCUMENT_VERSION, hubs: parsed.hubs, overrides: parsed.overrides };
+    // Per-entry shape: one malformed hub (e.g. no memberPaths in a hand-edited
+    // file) must not poison every listing — skip the entry, keep the rest.
+    const hubs = parsed.hubs.filter((hub): hub is HubEntry => {
+      if (typeof hub?.path !== 'string' || typeof hub?.name !== 'string') return false;
+      return Array.isArray(hub.memberPaths) && hub.memberPaths.every((p) => typeof p === 'string');
+    });
+    return { version: DOCUMENT_VERSION, hubs, overrides: parsed.overrides };
   } catch {
     return emptyDocument();
   }
 }
 
-/** Same rules as the create-project flow: non-empty, no separators, not . or .. */
-function validateHubName(name: string): void {
-  if (!name || name.includes('/') || name.includes(sep) || name === '.' || name === '..') {
-    throw new Error(`Invalid project name: ${name}`);
+/**
+ * The project-name rule shared by every server-side creation path
+ * (create_project, hub creation, the built-in creator): non-empty, no path
+ * separators, not . or ..
+ */
+export function isValidProjectName(name: string): boolean {
+  return !!name && !name.includes('/') && !name.includes(sep) && name !== '.' && name !== '..';
+}
+
+/**
+ * Enrich projects in place with live session counts: a session counts toward
+ * the project whose path it runs in (exact match). Derived state the registry
+ * itself cannot know — every path that serves `ProjectInfo`s (list_projects,
+ * the projects_changed broadcast, the manager tool) runs its list through
+ * this so no consumer ever sees zeroed counts.
+ */
+export function enrichActiveSessionCounts(projects: ProjectInfo[], activeSessions: ReadonlyArray<{ folderPath: string | null }>): void {
+  for (const project of projects) {
+    project.activeSessionCount = activeSessions.filter((session) => session.folderPath === project.path).length;
   }
 }
 
@@ -181,21 +202,36 @@ export class ProjectRegistry {
     const repos = await this.repos.list();
     const byPath = new Map(repos.map((repo) => [repo.path, repo]));
 
-    validateHubName(name);
+    if (!isValidProjectName(name)) throw new Error(`Invalid project name: ${name}`);
     const unknown = repoPaths.find((repoPath) => !byPath.has(repoPath));
     if (unknown !== undefined) throw new Error(`Unknown repo: ${unknown}`);
+    const memberPaths = repoPaths.map((repoPath) => byPath.get(repoPath)!.path);
+    // Two members with the same basename collide on one symlink target inside
+    // the hub dir — reject up front so no partial hub is ever built.
+    const seen = new Set<string>();
+    for (const memberPath of memberPaths) {
+      const base = basename(memberPath);
+      if (seen.has(base)) throw new Error(`Duplicate member name: ${base}`);
+      seen.add(base);
+    }
     const target = join(root, name);
     if (await pathExists(target)) throw new Error(`Directory already exists: ${target}`);
 
     await mkdir(target, { recursive: true });
-    const memberPaths = repoPaths.map((repoPath) => byPath.get(repoPath)!.path);
-    for (const memberPath of memberPaths) {
-      await symlink(memberPath, join(target, basename(memberPath)));
+    try {
+      for (const memberPath of memberPaths) {
+        await symlink(memberPath, join(target, basename(memberPath)));
+      }
+      await writeFile(join(target, 'AGENTS.md'), agentsMarkdown(name, memberPaths), 'utf8');
+      doc.hubs.push({ path: target, name, memberPaths });
+      await this.persist(doc);
+    } catch (error) {
+      // Never leave a half-built hub folder behind: it would block retry
+      // (Directory already exists) and couldn't be disbanded (no registry
+      // entry) — all-or-nothing.
+      await rm(target, { recursive: true, force: true }).catch(() => {});
+      throw error;
     }
-    await writeFile(join(target, 'AGENTS.md'), agentsMarkdown(name, memberPaths), 'utf8');
-
-    doc.hubs.push({ path: target, name, memberPaths });
-    await this.persist(doc);
     this.fireChange();
     return { path: target };
   }
@@ -227,9 +263,16 @@ export class ProjectRegistry {
     return new Set([...repos.map((repo) => repo.path), ...doc.hubs.map((hub) => hub.path)]);
   }
 
-  /** Lazy-loaded document; the promise is cached so the file is read once. */
+  /** Lazy-loaded document; the promise is cached so the file is read once.
+   *  A load failure clears the cache — one transient read error (EACCES,
+   *  EISDIR) must not brick every project command until restart. */
   private document(): Promise<RegistryDocument> {
-    if (!this.documentPromise) this.documentPromise = this.loadDocument();
+    if (!this.documentPromise) {
+      this.documentPromise = this.loadDocument().catch((error) => {
+        this.documentPromise = null;
+        throw error;
+      });
+    }
     return this.documentPromise;
   }
 
