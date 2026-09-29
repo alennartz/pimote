@@ -78,7 +78,7 @@ Installable PWA (Svelte 5, Tailwind CSS, shadcn-svelte) with real-time streaming
 
 ### Dashboard, Projects, and the Manager
 
-The landing page is the Dashboard: a projects column (every discovered project, expandable to its sessions) beside a **manager chat** on desktop; on mobile the projects list is fullscreen and the manager opens as a sheet. Projects come from a bounded-depth repo scan of your configured roots plus any custom project sources. You can favorite, reorder, and archive projects, and combine existing repos into a multi-repo **hub project** — a folder with symlinks to each member and a generated `AGENTS.md` — which can be disbanded again later. Use the **New session** action to pick any discovered project and start fresh, or **create a new project** folder directly from the dialog — choose a root, name the project, and Pimote creates the directory, runs `git init`, and opens a session in it. The manager is a per-connection pi session with a pinned pimote toolset (list projects, repos, and open sessions), so you can ask things like "which of my repos are dirty?"
+The landing page is the Dashboard: a projects column (every discovered project, expandable to its sessions) beside a **manager chat** on desktop; on mobile the projects list is fullscreen and the manager opens as a sheet. Projects come from a bounded-depth repo scan of your configured roots plus any custom project sources. You can favorite, reorder, and archive projects, and combine existing repos into a multi-repo **multi-repo project** — a folder with symlinks to each member and a generated `AGENTS.md` — which can be disbanded again later. Use the **New session** action to pick any discovered project and start fresh, or **create a new project** folder directly from the dialog — choose a root, name the project, and Pimote creates the directory, runs `git init`, and opens a session in it. The manager is a per-connection pi session with a pinned pimote toolset (list projects, repos, and open sessions), so you can ask things like "which of my repos are dirty?"
 
 ### Sessions
 
@@ -252,7 +252,7 @@ enable voice. `defaultInterpreterModel` and `defaultWorkerModel` fall back to
 
 When `updateCheck` is enabled (the default), the server checks npm for a newer `@pimote/pimote` release using a six-hour cache. Connected clients receive an update notification with the release link; dismissing it leaves a persistent ambient marker so the notice can be revisited. Set `"updateCheck": false` to disable registry checks and update indicators.
 
-VAPID keys for push notifications are auto-generated on first run and written back to the config file. Session metadata, push subscriptions, and the project registry (favorites, ordering, archive, hub projects) live under `~/.local/state/pimote` (or `$XDG_STATE_HOME/pimote`).
+VAPID keys for push notifications are auto-generated on first run and written back to the config file. Session metadata, push subscriptions, and the project registry (favorites, ordering, archive, multi-repo projects) live under `~/.local/state/pimote` (or `$XDG_STATE_HOME/pimote`).
 
 ## Running
 

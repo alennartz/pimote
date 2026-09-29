@@ -45,13 +45,13 @@
   let createError: string = $state('');
   let creating: boolean = $state(false);
 
-  // Create hub project flow state
-  let showHubDialog = $state(false);
-  let hubName = $state('');
-  let hubRoot = $state('');
-  let hubMembers = new SvelteSet<string>();
-  let hubError = $state('');
-  let hubCreating = $state(false);
+  // Create project project flow state
+  let showMultiRepoDialog = $state(false);
+  let multiRepoName = $state('');
+  let multiRepoRoot = $state('');
+  let multiRepoMembers = new SvelteSet<string>();
+  let multiRepoError = $state('');
+  let multiRepoCreating = $state(false);
 
   // Disband confirmation state
   let disbandTarget = $state<ProjectInfo | null>(null);
@@ -78,7 +78,7 @@
       })
       .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path)),
   );
-  const hubCandidateRepos = $derived(projectStore.repos.filter((repo) => !repo.missing));
+  const multiRepoCandidateRepos = $derived(projectStore.repos.filter((repo) => !repo.missing));
 
   function projectIndex(path: string): number {
     return projectStore.projects.findIndex((p) => p.path === path);
@@ -284,64 +284,65 @@
     }
   }
 
-  function openHubDialog() {
-    hubName = '';
-    hubRoot = '';
-    hubError = '';
-    hubCreating = false;
-    hubMembers.clear();
-    showHubDialog = true;
+  function openMultiRepoDialog() {
+    multiRepoName = '';
+    multiRepoRoot = '';
+    multiRepoError = '';
+    multiRepoCreating = false;
+    multiRepoMembers.clear();
+    showMultiRepoDialog = true;
     void projectStore.loadRepos();
   }
 
-  function handleHubDialogOpenChange(open: boolean) {
-    showHubDialog = open;
+  function handleMultiRepoDialogOpenChange(open: boolean) {
+    showMultiRepoDialog = open;
     if (!open) {
-      hubName = '';
-      hubRoot = '';
-      hubError = '';
-      hubCreating = false;
-      hubMembers.clear();
+      multiRepoName = '';
+      multiRepoRoot = '';
+      multiRepoError = '';
+      multiRepoCreating = false;
+      multiRepoMembers.clear();
     }
   }
 
-  function toggleHubMember(path: string) {
-    if (hubMembers.has(path)) {
-      hubMembers.delete(path);
+  function toggleMultiRepoMember(path: string) {
+    if (multiRepoMembers.has(path)) {
+      multiRepoMembers.delete(path);
     } else {
-      hubMembers.add(path);
+      multiRepoMembers.add(path);
     }
   }
 
-  async function createHub() {
-    const name = hubName.trim();
-    const validationError = validateProjectName(name) ?? (!hubRoot ? 'Choose a root folder' : null) ?? (hubMembers.size === 0 ? 'Select at least one member repository' : null);
+  async function createMultiRepoProject() {
+    const name = multiRepoName.trim();
+    const validationError =
+      validateProjectName(name) ?? (!multiRepoRoot ? 'Choose a root folder' : null) ?? (multiRepoMembers.size === 0 ? 'Select at least one member repository' : null);
     if (validationError) {
-      hubError = validationError;
+      multiRepoError = validationError;
       return;
     }
 
-    hubCreating = true;
-    hubError = '';
+    multiRepoCreating = true;
+    multiRepoError = '';
 
     try {
       const response = await connection.send({
-        type: 'create_hub_project',
+        type: 'create_multi_repo_project',
         name,
-        root: hubRoot,
-        repoPaths: [...hubMembers],
+        root: multiRepoRoot,
+        repoPaths: [...multiRepoMembers],
       });
 
       if (!response.success) {
-        hubError = response.error ?? 'Failed to create hub project';
-        hubCreating = false;
+        multiRepoError = response.error ?? 'Failed to create multi-repo project';
+        multiRepoCreating = false;
         return;
       }
 
-      handleHubDialogOpenChange(false);
+      handleMultiRepoDialogOpenChange(false);
     } catch (e) {
-      hubError = e instanceof Error ? e.message : 'Failed to create hub project';
-      hubCreating = false;
+      multiRepoError = e instanceof Error ? e.message : 'Failed to create multi-repo project';
+      multiRepoCreating = false;
     }
   }
 </script>
@@ -386,9 +387,9 @@
           </DropdownMenuTrigger>
           <DropdownMenuPortal>
             <DropdownMenuContent class="w-52" align="end">
-              <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || projectStore.roots.length === 0} onSelect={() => openHubDialog()}>
+              <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || projectStore.roots.length === 0} onSelect={() => openMultiRepoDialog()}>
                 <Network class="size-4" />
-                Create multi-repo hub…
+                Create multi-repo project…
               </DropdownMenuItem>
               <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || archivableCount === 0} onSelect={() => (showArchiveAllDialog = true)}>
                 <Archive class="size-4" />
@@ -700,20 +701,20 @@
   </Dialog.Content>
 </Dialog.Root>
 
-<Dialog.Root open={showHubDialog} onOpenChange={handleHubDialogOpenChange}>
+<Dialog.Root open={showMultiRepoDialog} onOpenChange={handleMultiRepoDialogOpenChange}>
   <Dialog.Content class="sm:max-w-lg">
     <Dialog.Header>
-      <Dialog.Title>Create multi-repo hub</Dialog.Title>
-      <Dialog.Description>Creates a hub folder with symlinks to each member repository and an AGENTS.md naming the members.</Dialog.Description>
+      <Dialog.Title>Create multi-repo project</Dialog.Title>
+      <Dialog.Description>Creates a multi-repo project folder with symlinks to each member repository and an AGENTS.md naming the members.</Dialog.Description>
     </Dialog.Header>
 
     <div class="flex flex-col gap-4">
       <Input
-        bind:value={hubName}
-        placeholder="Hub name"
-        disabled={hubCreating}
+        bind:value={multiRepoName}
+        placeholder="Project name"
+        disabled={multiRepoCreating}
         onkeydown={(e) => {
-          if (e.key === 'Enter') void createHub();
+          if (e.key === 'Enter') void createMultiRepoProject();
         }}
       />
 
@@ -726,15 +727,15 @@
             <div class="flex flex-col p-1">
               {#each projectStore.roots as root (root)}
                 <button
-                  class="hover:bg-accent hover:text-accent-foreground flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors {hubRoot === root
+                  class="hover:bg-accent hover:text-accent-foreground flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors {multiRepoRoot === root
                     ? 'bg-accent text-accent-foreground'
                     : ''}"
-                  disabled={hubCreating}
-                  onclick={() => (hubRoot = root)}
+                  disabled={multiRepoCreating}
+                  onclick={() => (multiRepoRoot = root)}
                 >
                   <FolderIcon class="text-muted-foreground size-4 shrink-0" />
                   <span class="min-w-0 flex-1 truncate">{root}</span>
-                  {#if hubRoot === root}
+                  {#if multiRepoRoot === root}
                     <span class="text-primary size-2 shrink-0 rounded-full"></span>
                   {/if}
                 </button>
@@ -746,7 +747,7 @@
 
       <div class="flex flex-col gap-1.5">
         <div class="text-muted-foreground text-xs font-medium">Member repositories</div>
-        {#if hubCandidateRepos.length === 0}
+        {#if multiRepoCandidateRepos.length === 0}
           <div class="text-muted-foreground px-3 py-2 text-sm">
             {#if projectStore.repos.length === 0}
               No repositories discovered yet.
@@ -757,14 +758,14 @@
         {:else}
           <div class="border-border max-h-60 overflow-y-auto rounded-md border">
             <div class="flex flex-col p-1">
-              {#each hubCandidateRepos as repo (repo.path)}
-                {@const selected = hubMembers.has(repo.path)}
+              {#each multiRepoCandidateRepos as repo (repo.path)}
+                {@const selected = multiRepoMembers.has(repo.path)}
                 <button
                   class="hover:bg-accent hover:text-accent-foreground flex items-center gap-2 rounded-md px-3 py-2 text-left transition-colors {selected
                     ? 'bg-accent text-accent-foreground'
                     : ''}"
-                  disabled={hubCreating}
-                  onclick={() => toggleHubMember(repo.path)}
+                  disabled={multiRepoCreating}
+                  onclick={() => toggleMultiRepoMember(repo.path)}
                 >
                   <input type="checkbox" checked={selected} class="pointer-events-none" tabindex={-1} />
                   <div class="min-w-0 flex-1">
@@ -783,18 +784,18 @@
         {/if}
       </div>
 
-      {#if hubError}
-        <p class="text-destructive text-sm">{hubError}</p>
+      {#if multiRepoError}
+        <p class="text-destructive text-sm">{multiRepoError}</p>
       {/if}
 
       <Dialog.Footer>
-        <Button variant="outline" onclick={() => handleHubDialogOpenChange(false)} disabled={hubCreating}>Cancel</Button>
-        <Button onclick={() => void createHub()} disabled={hubCreating || !hubName.trim() || !hubRoot || hubMembers.size === 0}>
-          {#if hubCreating}
+        <Button variant="outline" onclick={() => handleMultiRepoDialogOpenChange(false)} disabled={multiRepoCreating}>Cancel</Button>
+        <Button onclick={() => void createMultiRepoProject()} disabled={multiRepoCreating || !multiRepoName.trim() || !multiRepoRoot || multiRepoMembers.size === 0}>
+          {#if multiRepoCreating}
             <Loader2 class="size-4 animate-spin" />
             Creating…
           {:else}
-            Create hub
+            Create project
           {/if}
         </Button>
       </Dialog.Footer>
@@ -811,7 +812,7 @@
   <Dialog.Content showCloseButton={false}>
     <Dialog.Header>
       <Dialog.Title>Disband {disbandTarget?.name}</Dialog.Title>
-      <Dialog.Description>This deletes the hub folder and removes the project from the list. Member repositories are not touched.</Dialog.Description>
+      <Dialog.Description>This deletes the multi-repo project folder and removes the project from the list. Member repositories are not touched.</Dialog.Description>
     </Dialog.Header>
     <Dialog.Footer>
       <Button variant="outline" onclick={() => (disbandTarget = null)}>Cancel</Button>

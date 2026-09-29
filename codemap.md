@@ -36,7 +36,7 @@ sequenceDiagram
 
 Defines the TypeScript WebSocket contract shared by server and web client.
 
-**Responsibilities:** commands (including session-scoped native bash and abort), events (including live bash output), request/response envelopes, session and message data, native bash result metadata, extension UI, panels, downloads, voice, provider login, tree navigation, update-availability status/events, project/repo discovery and curation (list_projects, list_repos, update_project, create_hub_project, disband_project, projects_changed), ephemeral manager prompt/abort and streamed manager events
+**Responsibilities:** commands (including session-scoped native bash and abort), events (including live bash output), request/response envelopes, session and message data, native bash result metadata, extension UI, panels, downloads, voice, provider login, tree navigation, update-availability status/events, project/repo discovery and curation (list_projects, list_repos, update_project, create_multi_repo_project, disband_project, projects_changed), ephemeral manager prompt/abort and streamed manager events
 
 **Dependencies:** none; Android maintains a hand-written mirror of the subset it consumes
 
@@ -48,7 +48,7 @@ Defines the TypeScript WebSocket contract shared by server and web client.
 
 Hosts pi `AgentSession` instances and exposes the HTTP and WebSocket API.
 
-**Responsibilities:** CLI and configuration, static/PWA and WebSocket serving, session slots and replay buffers, command routing (including native bash execution, extension interception, and cancellation), SDK event boundary for live bash output, project/repo discovery (bounded recursive repo index over roots and registered sources with TTL caches and per-repo git status), curated project registry (favorite/order/archive overrides, multi-repo hub create/disband with symlinked members and generated AGENTS.md, JSON persistence, projects_changed broadcasts), user project sources (jiti-loaded TS modules from a configured dir), ephemeral per-connection manager agent (lifecycle with idle reaper, pimote listing-tool extension, in-memory session factory), ownership/conflict handling, extension UI bridge, auth, push notifications, persistent session metadata, version lookup and TTL-cached npm update checks with per-connection update events
+**Responsibilities:** CLI and configuration, static/PWA and WebSocket serving, session slots and replay buffers, command routing (including native bash execution, extension interception, and cancellation), SDK event boundary for live bash output, project/repo discovery (bounded recursive repo index over roots and registered sources with TTL caches and per-repo git status), curated project registry (favorite/order/archive overrides, multi-repo project create/disband with symlinked members and generated AGENTS.md, JSON persistence, projects_changed broadcasts), user project sources (jiti-loaded TS modules from a configured dir), ephemeral per-connection manager agent (lifecycle with idle reaper, pimote listing-tool extension, in-memory session factory), ownership/conflict handling, extension UI bridge, auth, push notifications, persistent session metadata, version lookup and TTL-cached npm update checks with per-connection update events
 
 **Dependencies:** Protocol for wire types; Agent Extensions for session tools and resources
 

@@ -62,7 +62,7 @@
     <!-- Brand -->
     <div class="flex flex-col items-center gap-1.5">
       <div class="flex items-center gap-2.5">
-        <div class="border-border bg-secondary text-muted-foreground flex size-9 items-center justify-center rounded-xl border text-sm">◆</div>
+        <img src="/pwa/icon-512.png" alt="" class="border-border size-9 rounded-xl border object-cover" />
         <span class="text-foreground text-base font-semibold tracking-tight">Pimote</span>
       </div>
     </div>

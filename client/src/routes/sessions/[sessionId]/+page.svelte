@@ -8,19 +8,21 @@
   import ActiveSessionBar from '$lib/components/ActiveSessionBar.svelte';
   import CallingMode from '$lib/components/CallingMode.svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { sessionRegistry, confirmTakeover, dismissTakeover } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { voiceCallStore } from '$lib/stores/voice-call-store.js';
-
-  let { data }: { data: { sessionId: string } } = $props();
 
   // The URL is the source of truth for which conversation is open (back/forward,
   // deep links, reloads). Adopt the route's session into the registry; stale ids
   // (closed sessions, superseded optimistic pending ids) follow the registry's
   // current view rather than bouncing home — the pending→real rekey can land
   // before this effect runs, leaving the URL one step behind.
+  const routeSessionId = $derived(page.params.sessionId);
+
   $effect(() => {
-    const id = data.sessionId;
+    const id = routeSessionId;
+    if (id === undefined) return; // required param — unreachable, satisfies types
     if (sessionRegistry.viewedSessionId === id) return;
     if (sessionRegistry.adoptRouteView(id)) {
       connection.send({ type: 'view_session', sessionId: id }).catch(() => {});

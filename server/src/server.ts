@@ -190,7 +190,7 @@ export async function createServer(
     if (ownerClientId) clientRegistry.get(ownerClientId)?.sendDisplacedEvent(sessionId);
   };
 
-  // Project registry mutations (update / createHub / disband) broadcast the
+  // Project registry mutations (update / createMultiRepoProject / disband) broadcast the
   // merged list to every connected client.
   projectRegistry?.onChange(() => {
     WsHandler.broadcastProjectsChanged(projectRegistry, sessionManager, clientRegistry);

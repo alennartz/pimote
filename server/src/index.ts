@@ -44,7 +44,7 @@ export async function main(options: StartOptions = {}) {
   const folderIndex = new FolderIndex(config.roots);
 
   // Project management: discovery index over the configured roots plus any
-  // user-registered sources, the persistent curation/hub layer above it, and
+  // user-registered sources, the persistent curation layer above it, and
   // the built-in creator backing the dashboard's create-project flow.
   const repoIndex = new RepoIndex(config.roots);
   const loadedSources = await loadProjectSources(config.projectSourcesDir ?? PIMOTE_PROJECT_SOURCES_DIR);

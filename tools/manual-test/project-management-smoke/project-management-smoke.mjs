@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// End-to-end smoke for the project-management topic (dashboard, hubs, manager).
+// End-to-end smoke for the project-management topic (dashboard, multi-repo projects, manager).
 //
 // Boots the real pimote server in an isolated HOME against a fabricated
 // multi-root project tree (nested repos, a dirty repo, named branches, a
@@ -304,7 +304,7 @@ async function wait(ms) {
 // -------------------------------------------------------------------- main
 
 async function main() {
-  console.log('[pm-smoke] project-management dashboard/hub/manager smoke');
+  console.log('[pm-smoke] project-management dashboard/multi-repo-project/manager smoke');
   const sandboxHome = await mkdtemp(join(tmpdir(), 'project-management-smoke-'));
   const configDir = join(sandboxHome, '.config', 'pimote');
   await mkdir(configDir, { recursive: true });
@@ -356,9 +356,9 @@ async function main() {
   log('jetson model =', jetsonUsable ? 'available (manager LLM live)' : 'UNAVAILABLE — manager LLM tests will be environment-bounded');
 
   let child;
-  const hubWest = join(rootA, 'hub-west');
-  const hubLima = join(rootA, 'hub-lima');
-  const hubZulu = join(rootA, 'hub-zulu');
+  const westDir = join(rootA, 'west');
+  const limaDir = join(rootA, 'lima');
+  const zuluDir = join(rootA, 'zulu');
   const epsilon = join(rootA, 'epsilon');
 
   try {
@@ -387,7 +387,7 @@ async function main() {
     assert(byPath.has(join(rootA, 'gamma', 'sub', 'deep-repo')), 'depth-3 repo discovered (gamma/sub/deep-repo)');
     assert(!byPath.has(join(rootA, 'gamma', 'sub', 'deeper', 'deepest')), 'depth-4 repo NOT discovered (depth bound)');
     assert(byPath.get(join(rootA, 'alpha'))?.kind === 'single', 'alpha is a single project');
-    // branch/dirty live on RepoInfo (list_repos and hub members), not ProjectInfo.
+    // branch/dirty live on RepoInfo (list_repos and member repos), not ProjectInfo.
     const reposList = await probeA.send({ type: 'list_repos' });
     const repoByPath = new Map((reposList.data?.repos ?? []).map((r) => [r.path, r]));
     assert(repoByPath.get(join(rootB, 'delta'))?.branch === 'feature/zebra', 'delta reports branch feature/zebra (list_repos)');
@@ -410,33 +410,33 @@ async function main() {
     const bEvent = await probeB.waitForEvent('projects_changed', (e) => e.projects?.some((p) => p.path === join(rootA, 'beta') && p.favorite === true));
     assert(Boolean(bEvent), 'client B receives projects_changed with the favorite (two-client sync)');
 
-    section('W — create_hub_project + disband_project (server-level, disk effects)');
-    const hubResp = await probeB.send({ type: 'create_hub_project', name: 'hub-west', root: rootA, repoPaths: [join(rootA, 'alpha'), join(rootA, 'beta')] });
-    assert(hubResp.success === true && hubResp.data?.projectPath === hubWest, 'create_hub_project returns the hub path');
-    const westStat = await stat(join(hubWest, 'AGENTS.md')).then(
+    section('W — create_multi_repo_project + disband_project (server-level, disk effects)');
+    const createResp = await probeB.send({ type: 'create_multi_repo_project', name: 'west', root: rootA, repoPaths: [join(rootA, 'alpha'), join(rootA, 'beta')] });
+    assert(createResp.success === true && createResp.data?.projectPath === westDir, 'create_multi_repo_project returns the project path');
+    const westStat = await stat(join(westDir, 'AGENTS.md')).then(
       () => true,
       () => false,
     );
-    assert(westStat, 'hub folder exists on disk with AGENTS.md');
-    const linkAlpha = await readlink(join(hubWest, 'alpha')).catch(() => null);
-    const linkBeta = await readlink(join(hubWest, 'beta')).catch(() => null);
+    assert(westStat, 'multi-repo project folder exists on disk with AGENTS.md');
+    const linkAlpha = await readlink(join(westDir, 'alpha')).catch(() => null);
+    const linkBeta = await readlink(join(westDir, 'beta')).catch(() => null);
     assert(linkAlpha === join(rootA, 'alpha') && linkBeta === join(rootA, 'beta'), 'symlinks point at the absolute member paths');
-    const agentsMd = await readFile(join(hubWest, 'AGENTS.md'), 'utf8');
+    const agentsMd = await readFile(join(westDir, 'AGENTS.md'), 'utf8');
     assert(/alpha/i.test(agentsMd) && /beta/i.test(agentsMd) && /agents\.md/i.test(agentsMd), 'AGENTS.md names both members and the AGENTS convention');
-    const aGotHub = await probeA.waitForEvent('projects_changed', (e) => e.projects?.some((p) => p.path === hubWest && p.kind === 'multi'));
-    assert(Boolean(aGotHub), 'client A receives projects_changed with the new hub');
+    const aGotProject = await probeA.waitForEvent('projects_changed', (e) => e.projects?.some((p) => p.path === westDir && p.kind === 'multi'));
+    assert(Boolean(aGotProject), 'client A receives projects_changed with the new multi-repo project');
     const list3 = await probeA.send({ type: 'list_projects' });
-    const west = list3.data.projects.find((p) => p.path === hubWest);
-    assert(west?.repos?.length === 2 && west.repos.every((r) => r.branch), 'hub lists both members with branch info');
-    assert(west.repos.find((r) => r.path === join(rootA, 'beta'))?.dirty === true, 'hub member chip data carries dirty=true for beta');
+    const west = list3.data.projects.find((p) => p.path === westDir);
+    assert(west?.repos?.length === 2 && west.repos.every((r) => r.branch), 'multi-repo project lists both members with branch info');
+    assert(west.repos.find((r) => r.path === join(rootA, 'beta'))?.dirty === true, 'member repo chip data carries dirty=true for beta');
 
-    const disbandResp = await probeB.send({ type: 'disband_project', projectPath: hubWest });
+    const disbandResp = await probeB.send({ type: 'disband_project', projectPath: westDir });
     assert(disbandResp.success === true, 'disband_project succeeds');
-    const westGone = await stat(hubWest).then(
+    const westGone = await stat(westDir).then(
       () => false,
       () => true,
     );
-    assert(westGone, 'hub folder deleted from disk after disband');
+    assert(westGone, 'multi-repo project folder deleted from disk after disband');
     const alphaAlive = await stat(join(rootA, 'alpha', '.git')).then(
       () => true,
       () => false,
@@ -449,9 +449,9 @@ async function main() {
     const refuse = await probeB.send({ type: 'disband_project', projectPath: join(rootA, 'alpha') });
     assert(refuse.success === false, 'disband refuses a single-repo project');
 
-    // Re-create hub-west over WS so the browser phase can observe it appearing
+    // Re-create west over WS so the browser phase can observe it appearing
     // live via projects_changed (two-client sync in the browser direction).
-    await probeB.send({ type: 'create_hub_project', name: 'hub-west', root: rootA, repoPaths: [join(rootA, 'alpha'), join(rootA, 'beta')] });
+    await probeB.send({ type: 'create_multi_repo_project', name: 'west', root: rootA, repoPaths: [join(rootA, 'alpha'), join(rootA, 'beta')] });
 
     // ============================================================
     section('B — dashboard render (desktop)');
@@ -467,11 +467,11 @@ async function main() {
       assert(pageText.includes(name), `dashboard lists project ${name}`);
     }
     assert(!pageText.includes('deepest'), 'depth-4 repo absent from the dashboard');
-    // Hub creation lives in the toolbar overflow menu (redesign: compact projects toolbar).
+    // Multi-repo project creation lives in the toolbar overflow menu (redesign: compact projects toolbar).
     await browser(['click', 'button[title="More project actions"]']);
     await browser(['wait', 400]);
-    const hubMenuSnap = (await browser(['snapshot', '-i'])).stdout;
-    assert(hubMenuSnap.includes('Create multi-repo hub'), 'toolbar exposes the hub creation control');
+    const multiRepoMenuSnap = (await browser(['snapshot', '-i'])).stdout;
+    assert(multiRepoMenuSnap.includes('Create multi-repo project'), 'toolbar exposes the multi-repo project creation control');
     await browser(['press', 'Escape']);
     await browser(['wait', 300]);
     const managerVisible = await evalBrowser(
@@ -479,9 +479,9 @@ async function main() {
     );
     assert(managerVisible === true, 'manager chat is side-by-side on desktop');
 
-    // hub-west was created by client B before this browser loaded, so it is
+    // west was created by client B before this browser loaded, so it is
     // part of the initial list_projects payload.
-    assert(pageText.includes('hub-west'), 'hub created over WS is in the dashboard listing');
+    assert(pageText.includes('west'), 'multi-repo project created over WS is in the dashboard listing');
 
     // Live broadcast INTO the browser: client A (probe) favorites a project;
     // the dashboard re-renders without a reload.
@@ -498,7 +498,7 @@ async function main() {
     const westChipText = await evalBrowser(
       `Array.from(document.querySelectorAll('span[title]')).filter(s => s.querySelector('span') && /alpha|beta/.test(s.textContent ?? '')).map(s => s.getAttribute('title')).join('|')`,
     );
-    assert(String(westChipText).includes(join(rootA, 'alpha')), 'hub-west member chips render (title carries repo path)');
+    assert(String(westChipText).includes(join(rootA, 'alpha')), 'west member chips render (title carries repo path)');
 
     await browser(['screenshot', join(shotsDir, '01-dashboard.png')], { allowFailure: true });
 
@@ -695,18 +695,18 @@ async function main() {
     assert(epsilonGit, 'epsilon/.git exists on disk (mkdir + git init)');
 
     // ============================================================
-    section('B — hub creation via UI dialog + repo chips');
+    section('B — multi-repo project creation via UI dialog + repo chips');
     // ============================================================
     await browser(['click', 'button[title="More project actions"]']);
     await browser(['wait', 400]);
-    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Create multi-repo hub']);
+    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Create multi-repo project']);
     await browser(['wait', 600]);
-    await fillSelector('[role="dialog"] input[placeholder="Hub name"]', 'hub-lima');
+    await fillSelector('[role="dialog"] input[placeholder="Project name"]', 'lima');
     await browser(['wait', 200]);
     const rootPick = await evalBrowser(
       `(() => { const btns = Array.from(document.querySelectorAll('[role="dialog"] button')).filter(b => b.textContent?.trim() === ${JSON.stringify(rootA)}); if (!btns.length) return 0; btns[0].click(); return btns.length; })()`,
     );
-    assert(Number(rootPick) >= 1, 'hub dialog lists configured roots');
+    assert(Number(rootPick) >= 1, 'multi-repo project dialog lists configured roots');
     const memberClicks = await evalBrowser(
       `(() => {
         const rows = Array.from(document.querySelectorAll('[role="dialog"] button')).filter(b => b.textContent?.includes(${JSON.stringify(join(rootA, 'alpha'))}) || b.textContent?.includes(${JSON.stringify(join(rootB, 'delta'))}));
@@ -715,31 +715,31 @@ async function main() {
       })()`,
     );
     assert(Number(memberClicks) === 2, 'member picker lists alpha and delta; both selected');
-    await browser(['screenshot', join(shotsDir, '05-hub-dialog.png')], { allowFailure: true });
-    await browser(['find', 'role', 'button', 'click', '--name', 'Create hub']);
+    await browser(['screenshot', join(shotsDir, '05-multi-repo-dialog.png')], { allowFailure: true });
+    await browser(['find', 'role', 'button', 'click', '--name', 'Create project']);
     await browser(['wait', 1500]);
-    const afterHub = String(await evalBrowser('document.body.innerText'));
-    assert(afterHub.includes('hub-lima'), 'hub-lima appears in the dashboard after UI creation');
+    const afterCreate = String(await evalBrowser('document.body.innerText'));
+    assert(afterCreate.includes('lima'), 'lima appears in the dashboard after UI creation');
     const limaChips = String(
       await evalBrowser(
-        `(() => { const hubRow = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.includes('hub-lima')); return hubRow?.textContent ?? ''; })()`,
+        `(() => { const projectRow = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.includes('lima')); return projectRow?.textContent ?? ''; })()`,
       ),
     );
-    assert(limaChips.includes('alpha') && /main/.test(limaChips), 'hub-lima chip: alpha with branch main');
-    assert(limaChips.includes('delta') && /feature\/zebra/.test(limaChips), 'hub-lima chip: delta with branch feature/zebra');
-    await browser(['screenshot', join(shotsDir, '06-hub-chips.png')], { allowFailure: true });
+    assert(limaChips.includes('alpha') && /main/.test(limaChips), 'lima chip: alpha with branch main');
+    assert(limaChips.includes('delta') && /feature\/zebra/.test(limaChips), 'lima chip: delta with branch feature/zebra');
+    await browser(['screenshot', join(shotsDir, '06-multi-repo-chips.png')], { allowFailure: true });
 
-    // Dirty chip visual: hub-west contains beta (dirty).
+    // Dirty chip visual: west contains beta (dirty).
     const westDirty = await evalBrowser(
-      `(() => { const hubRow = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.includes('hub-west')); if (!hubRow) return 'no-row'; const chips = Array.from(hubRow.querySelectorAll('span[title]')).find(s => (s.getAttribute('title') ?? '').includes('beta')); return chips?.querySelector('span[title="Uncommitted changes"]') ? 'dirty-dot' : 'no-dirty-dot'; })()`,
+      `(() => { const projectRow = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.includes('west')); if (!projectRow) return 'no-row'; const chips = Array.from(projectRow.querySelectorAll('span[title]')).find(s => (s.getAttribute('title') ?? '').includes('beta')); return chips?.querySelector('span[title="Uncommitted changes"]') ? 'dirty-dot' : 'no-dirty-dot'; })()`,
     );
-    assert(westDirty === 'dirty-dot', 'beta chip in hub-west shows the dirty dot');
+    assert(westDirty === 'dirty-dot', 'beta chip in west shows the dirty dot');
 
     // ============================================================
     section('B — disband via UI confirm');
     // ============================================================
     await evalBrowser(
-      `(() => { const rows = Array.from(document.querySelectorAll('button[title^="Manage project"]')); for (const manage of rows) { if ((manage.closest('.rounded-lg')?.textContent ?? '').includes('hub-lima')) { manage.click(); return true; } } return false; })()`,
+      `(() => { const rows = Array.from(document.querySelectorAll('button[title^="Manage project"]')); for (const manage of rows) { if ((manage.closest('.rounded-lg')?.textContent ?? '').includes('lima')) { manage.click(); return true; } } return false; })()`,
     );
     await browser(['wait', 500]);
     await browser(['find', 'role', 'menuitem', 'click', '--name', 'Disband project']);
@@ -749,12 +749,12 @@ async function main() {
     );
     await browser(['wait', 1500]);
     const afterDisband = String(await evalBrowser('document.body.innerText'));
-    assert(!afterDisband.includes('hub-lima'), 'disbanded hub removed from the dashboard');
-    const limaGone = await stat(hubLima).then(
+    assert(!afterDisband.includes('lima'), 'disbanded multi-repo project removed from the dashboard');
+    const limaGone = await stat(limaDir).then(
       () => false,
       () => true,
     );
-    assert(limaGone, 'hub-lima folder deleted from disk');
+    assert(limaGone, 'lima folder deleted from disk');
     const deltaAlive = await stat(join(rootB, 'delta', '.git')).then(
       () => true,
       () => false,
@@ -887,7 +887,7 @@ async function main() {
     // ============================================================
     section('B — missing member chip after disk deletion + restart');
     // ============================================================
-    await probeA.send({ type: 'create_hub_project', name: 'hub-zulu', root: rootA, repoPaths: [join(rootA, 'beta')] });
+    await probeA.send({ type: 'create_multi_repo_project', name: 'zulu', root: rootA, repoPaths: [join(rootA, 'beta')] });
     await rm(join(rootA, 'beta'), { recursive: true, force: true });
     await stopPimote(child);
     child = startPimote({ port, sandboxHome, agentDir, configPath, logPath });
@@ -901,12 +901,12 @@ async function main() {
     await browser(['reload']);
     await browser(['wait', 3500]);
     const missingChip = await evalBrowser(
-      `(() => { const hubRow = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.includes('hub-zulu')); if (!hubRow) return 'no-row'; const chip = Array.from(hubRow.querySelectorAll('span[title]')).find(s => (s.getAttribute('title') ?? '').includes('missing')); return chip ? chip.textContent?.trim() : 'no-chip'; })()`,
+      `(() => { const projectRow = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.includes('zulu')); if (!projectRow) return 'no-row'; const chip = Array.from(projectRow.querySelectorAll('span[title]')).find(s => (s.getAttribute('title') ?? '').includes('missing')); return chip ? chip.textContent?.trim() : 'no-chip'; })()`,
     );
     assert(String(missingChip).includes('missing'), `missing member renders the warning chip (got "${missingChip}")`);
     await browser(['screenshot', join(shotsDir, '09-missing-chip.png')], { allowFailure: true });
-    // Cleanup: disband hub-zulu so the registry is left tidy.
-    await probeA.send({ type: 'disband_project', projectPath: hubZulu });
+    // Cleanup: disband zulu so the registry is left tidy.
+    await probeA.send({ type: 'disband_project', projectPath: zuluDir });
 
     probeA.close();
     probeB.close();

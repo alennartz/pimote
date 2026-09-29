@@ -238,13 +238,13 @@ export class WsHandler {
           break;
         }
 
-        case 'create_hub_project': {
+        case 'create_multi_repo_project': {
           const { repoIndex, projectRegistry } = this.requireProjectDeps();
           if (!repoIndex.roots.includes(command.root)) {
             this.sendResponse(id, false, undefined, 'Root is not a configured project root');
             break;
           }
-          const created = await projectRegistry.createHub(command.name, command.root, command.repoPaths);
+          const created = await projectRegistry.createMultiRepoProject(command.name, command.root, command.repoPaths);
           this.sendResponse(id, true, { projectPath: created.path });
           break;
         }

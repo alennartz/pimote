@@ -45,13 +45,13 @@ export interface RepoInfo {
   missing?: boolean;
 }
 
-/** A user-curated project: a single repo, or a multi-repo hub folder. */
+/** A user-curated project: a single repo, or a multi-repo project folder. */
 export interface ProjectInfo {
-  /** Repo dir (single) or hub dir (multi). */
+  /** Repo dir (single) or project dir (multi). */
   path: string;
   name: string;
   kind: 'single' | 'multi';
-  /** Member repos; present when kind === 'multi' (hub children). */
+  /** Member repos; present when kind === 'multi' (member repos). */
   repos?: RepoInfo[];
   favorite?: boolean;
   /** Manual ordering; absent = name sort. */
@@ -469,9 +469,9 @@ export interface UpdateProjectCommand extends CommandBase {
   archived?: boolean;
 }
 
-/** Create a multi-repo hub project: mkdir + symlinks to member repos + generated AGENTS.md. resp: CreateHubProjectResponseData */
-export interface CreateHubProjectCommand extends CommandBase {
-  type: 'create_hub_project';
+/** Create a multi-repo project: mkdir + symlinks to member repos + generated AGENTS.md. resp: CreateMultiRepoProjectResponseData */
+export interface CreateMultiRepoProjectCommand extends CommandBase {
+  type: 'create_multi_repo_project';
   name: string;
   /** Must be one of the configured roots */
   root: string;
@@ -479,7 +479,7 @@ export interface CreateHubProjectCommand extends CommandBase {
   repoPaths: string[];
 }
 
-/** Remove a hub project: registry entry deleted, hub folder deleted. */
+/** Remove a multi-repo project: registry entry deleted, multi-repo project folder deleted. */
 export interface DisbandProjectCommand extends CommandBase {
   type: 'disband_project';
   projectPath: string;
@@ -505,7 +505,7 @@ export interface ListReposResponseData {
   repos: RepoInfo[];
 }
 
-export interface CreateHubProjectResponseData {
+export interface CreateMultiRepoProjectResponseData {
   projectPath: string;
 }
 
@@ -714,7 +714,7 @@ export type PimoteCommand =
   | ListProjectsCommand
   | ListReposCommand
   | UpdateProjectCommand
-  | CreateHubProjectCommand
+  | CreateMultiRepoProjectCommand
   | DisbandProjectCommand
   | ManagerPromptCommand
   | ManagerAbortCommand

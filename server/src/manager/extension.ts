@@ -60,7 +60,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       name: 'pimote_list_projects',
       label: 'List projects',
       description:
-        'List every pimote project: curated single-repo projects and multi-repo hub projects, ' +
+        'List every pimote project: curated single-repo projects and multi-repo projects, ' +
         'with path, kind, member repos, and favorite/order/archived flags. Takes no arguments.',
       parameters: Type.Object({}),
       execute: async () => {

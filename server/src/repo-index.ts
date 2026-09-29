@@ -75,7 +75,7 @@ async function readGitStatus(cwd: string): Promise<Omit<RepoStatus, 'at'>> {
  * Discovery over configured roots plus registered sources.
  *
  * Bounded-depth recursive walk (depth 3; skips node_modules, .git, dist,
- * build, target, .venv; does not follow symlinks except inside hub folders),
+ * build, target, .venv; does not follow symlinks except inside multi-repo project folders),
  * TTL-cached repo listing, and per-repo git status enrichment (branch, dirty,
  * ahead/behind) with its own TTL. Derived state only — no persistence.
  */

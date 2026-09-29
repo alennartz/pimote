@@ -46,10 +46,10 @@ function makeRegistry(index: RepoIndex = makeIndex()): ProjectRegistry {
   return new ProjectRegistry(index, storeDir);
 }
 
-/** A symlink inside `hubPath` pointing at `target`, if any. */
-async function findSymlinkTo(hubPath: string, target: string): Promise<string | undefined> {
-  for (const entry of await readdir(hubPath)) {
-    const full = join(hubPath, entry);
+/** A symlink inside `projectDir` pointing at `target`, if any. */
+async function findSymlinkTo(projectDir: string, target: string): Promise<string | undefined> {
+  for (const entry of await readdir(projectDir)) {
+    const full = join(projectDir, entry);
     const info = await lstat(full);
     if (info.isSymbolicLink() && (await readlink(full)) === target) return full;
   }
@@ -82,12 +82,12 @@ describe('ProjectRegistry.list()', () => {
     await expect(registry.update({ projectPath: join(tempDir, 'ghost'), favorite: true })).rejects.toThrow();
   });
 
-  it('applies curation overrides to hub projects', async () => {
+  it('applies curation overrides to multi-repo projects', async () => {
     const registry = makeRegistry();
-    const { path: hubPath } = await registry.createHub('hub', rootDir, [repoA]);
-    await registry.update({ projectPath: hubPath, favorite: true, archived: true });
+    const { path: projectPath } = await registry.createMultiRepoProject('multi', rootDir, [repoA]);
+    await registry.update({ projectPath: projectPath, favorite: true, archived: true });
 
-    const project = (await registry.list()).find((p) => p.path === hubPath);
+    const project = (await registry.list()).find((p) => p.path === projectPath);
     expect(project?.favorite).toBe(true);
     expect(project?.archived).toBe(true);
   });
@@ -106,39 +106,39 @@ describe('ProjectRegistry.list()', () => {
   });
 });
 
-describe('ProjectRegistry.createHub()', () => {
-  it('creates a hub project with symlinked members and a generated AGENTS.md', async () => {
+describe('ProjectRegistry.createMultiRepoProject()', () => {
+  it('creates a multi-repo project with symlinked members and a generated AGENTS.md', async () => {
     const registry = makeRegistry();
-    const { path: hubPath } = await registry.createHub('hub', rootDir, [repoA]);
+    const { path: projectPath } = await registry.createMultiRepoProject('multi', rootDir, [repoA]);
 
-    expect(hubPath).toBe(join(rootDir, 'hub'));
-    expect(existsSync(hubPath)).toBe(true);
-    expect(existsSync(join(hubPath, 'AGENTS.md'))).toBe(true);
-    expect(await findSymlinkTo(hubPath, repoA)).toBeDefined();
+    expect(projectPath).toBe(join(rootDir, 'multi'));
+    expect(existsSync(projectPath)).toBe(true);
+    expect(existsSync(join(projectPath, 'AGENTS.md'))).toBe(true);
+    expect(await findSymlinkTo(projectPath, repoA)).toBeDefined();
 
-    const project = (await registry.list()).find((p) => p.path === hubPath);
+    const project = (await registry.list()).find((p) => p.path === projectPath);
     expect(project?.kind).toBe('multi');
-    expect(project?.name).toBe('hub');
+    expect(project?.name).toBe('multi');
     expect(project?.repos?.map((r) => r.path)).toContain(repoA);
   });
 
-  it('rejects hub creation when a member is missing from the repo index and creates nothing', async () => {
+  it('rejects multi-repo project creation when a member is missing from the repo index and creates nothing', async () => {
     const registry = makeRegistry();
-    await registry.createHub('valid-hub', rootDir, [repoA]);
+    await registry.createMultiRepoProject('valid-multi', rootDir, [repoA]);
 
     const ghost = join(rootDir, 'ghost');
-    await expect(registry.createHub('hub', rootDir, [repoA, ghost])).rejects.toThrow();
-    expect(existsSync(join(rootDir, 'hub'))).toBe(false);
+    await expect(registry.createMultiRepoProject('multi', rootDir, [repoA, ghost])).rejects.toThrow();
+    expect(existsSync(join(rootDir, 'multi'))).toBe(false);
   });
 
-  it('rejects hub creation when the target folder already exists and leaves it untouched', async () => {
+  it('rejects multi-repo project creation when the target folder already exists and leaves it untouched', async () => {
     const registry = makeRegistry();
-    await registry.createHub('hub', rootDir, [repoA]);
+    await registry.createMultiRepoProject('multi', rootDir, [repoA]);
 
-    await expect(registry.createHub('hub', rootDir, [repoA])).rejects.toThrow();
+    await expect(registry.createMultiRepoProject('multi', rootDir, [repoA])).rejects.toThrow();
 
-    const hubs = (await registry.list()).filter((p) => p.path === join(rootDir, 'hub'));
-    expect(hubs).toHaveLength(1);
+    const multi = (await registry.list()).filter((p) => p.path === join(rootDir, 'multi'));
+    expect(multi).toHaveLength(1);
   });
 
   it('rejects duplicate member basenames up front and cleans up so a retry can succeed', async () => {
@@ -148,57 +148,57 @@ describe('ProjectRegistry.createHub()', () => {
 
     // Two members sharing a basename collide on one symlink target; a
     // duplicated path fails the same way. Either used to fail partway,
-    // leaving an un-disbandable half-built hub folder.
-    await expect(registry.createHub('hub', rootDir, [repoA, repoB])).rejects.toThrow(/Duplicate member name/);
-    await expect(registry.createHub('hub', rootDir, [repoA, repoA])).rejects.toThrow(/Duplicate member name/);
-    expect(existsSync(join(rootDir, 'hub'))).toBe(false);
-    expect((await registry.list()).filter((p) => p.name === 'hub')).toHaveLength(0);
+    // leaving an un-disbandable half-built project folder.
+    await expect(registry.createMultiRepoProject('multi', rootDir, [repoA, repoB])).rejects.toThrow(/Duplicate member name/);
+    await expect(registry.createMultiRepoProject('multi', rootDir, [repoA, repoA])).rejects.toThrow(/Duplicate member name/);
+    expect(existsSync(join(rootDir, 'multi'))).toBe(false);
+    expect((await registry.list()).filter((p) => p.name === 'multi')).toHaveLength(0);
 
     // The failed attempts left nothing behind — the same call now succeeds.
     const second = makeRegistry();
-    const { path: hubPath } = await second.createHub('hub', rootDir, [repoA]);
-    expect(existsSync(hubPath)).toBe(true);
+    const { path: projectPath } = await second.createMultiRepoProject('multi', rootDir, [repoA]);
+    expect(existsSync(projectPath)).toBe(true);
   });
 });
 
 describe('ProjectRegistry.disband()', () => {
-  it('removes the hub project and deletes the hub folder', async () => {
+  it('removes the multi-repo project and deletes the project folder', async () => {
     const registry = makeRegistry();
-    const { path: hubPath } = await registry.createHub('hub', rootDir, [repoA]);
+    const { path: projectPath } = await registry.createMultiRepoProject('multi', rootDir, [repoA]);
 
-    await registry.disband(hubPath);
+    await registry.disband(projectPath);
 
-    expect((await registry.list()).find((p) => p.path === hubPath)).toBeUndefined();
-    expect(existsSync(hubPath)).toBe(false);
+    expect((await registry.list()).find((p) => p.path === projectPath)).toBeUndefined();
+    expect(existsSync(projectPath)).toBe(false);
     // The member repo itself must survive.
     expect(existsSync(repoA)).toBe(true);
   });
 
   it('refuses to disband a single-repo project', async () => {
     const registry = makeRegistry();
-    await registry.createHub('hub', rootDir, [repoA]);
+    await registry.createMultiRepoProject('multi', rootDir, [repoA]);
 
     await expect(registry.disband(repoA)).rejects.toThrow();
     expect(existsSync(repoA)).toBe(true);
-    expect(existsSync(join(rootDir, 'hub'))).toBe(true);
+    expect(existsSync(join(rootDir, 'multi'))).toBe(true);
   });
 
   it('rejects disbanding an unknown project path', async () => {
     const registry = makeRegistry();
-    await registry.createHub('hub', rootDir, [repoA]);
+    await registry.createMultiRepoProject('multi', rootDir, [repoA]);
 
     await expect(registry.disband(join(tempDir, 'ghost'))).rejects.toThrow();
-    expect(existsSync(join(rootDir, 'hub'))).toBe(true);
+    expect(existsSync(join(rootDir, 'multi'))).toBe(true);
   });
 });
 
 describe('ProjectRegistry persistence', () => {
-  it('persists hub projects across registry instances', async () => {
+  it('persists multi-repo projects across registry instances', async () => {
     const first = makeRegistry();
-    const { path: hubPath } = await first.createHub('hub', rootDir, [repoA]);
+    const { path: projectPath } = await first.createMultiRepoProject('multi', rootDir, [repoA]);
 
     const second = makeRegistry();
-    const project = (await second.list()).find((p) => p.path === hubPath);
+    const project = (await second.list()).find((p) => p.path === projectPath);
     expect(project?.kind).toBe('multi');
   });
 
@@ -214,7 +214,7 @@ describe('ProjectRegistry persistence', () => {
 });
 
 describe('ProjectRegistry.onChange()', () => {
-  it('notifies subscribers on update, createHub, and disband', async () => {
+  it('notifies subscribers on update, createMultiRepoProject, and disband', async () => {
     const registry = makeRegistry();
     const onChange = vi.fn();
     const unsubscribe = registry.onChange(onChange);
@@ -222,10 +222,10 @@ describe('ProjectRegistry.onChange()', () => {
     await registry.update({ projectPath: repoA, favorite: true });
     expect(onChange).toHaveBeenCalledTimes(1);
 
-    const { path: hubPath } = await registry.createHub('hub', rootDir, [repoA]);
+    const { path: projectPath } = await registry.createMultiRepoProject('multi', rootDir, [repoA]);
     expect(onChange).toHaveBeenCalledTimes(2);
 
-    await registry.disband(hubPath);
+    await registry.disband(projectPath);
     expect(onChange).toHaveBeenCalledTimes(3);
 
     unsubscribe();
@@ -234,12 +234,12 @@ describe('ProjectRegistry.onChange()', () => {
   });
 });
 
-describe('ProjectRegistry hub AGENTS.md', () => {
+describe('ProjectRegistry project AGENTS.md', () => {
   it('generates an AGENTS.md naming each member repo and the sub-project convention', async () => {
     const registry = makeRegistry();
-    const { path: hubPath } = await registry.createHub('hub', rootDir, [repoA]);
+    const { path: projectPath } = await registry.createMultiRepoProject('multi', rootDir, [repoA]);
 
-    const content = await readFile(join(hubPath, 'AGENTS.md'), 'utf8');
+    const content = await readFile(join(projectPath, 'AGENTS.md'), 'utf8');
     expect(content.length).toBeGreaterThan(0);
     expect(content).toContain('repo-a');
     expect(content.toLowerCase()).toContain('agents.md');
