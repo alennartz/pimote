@@ -13,7 +13,7 @@
 2. [TP-01: Server Startup & Configuration](#tp-01-server-startup--configuration)
 3. [TP-02: HTTP Server & Static File Serving](#tp-02-http-server--static-file-serving)
 4. [TP-03: WebSocket Connection Lifecycle](#tp-03-websocket-connection-lifecycle)
-5. [TP-04: Folder & Session Index Browsing](#tp-04-folder--session-index-browsing)
+5. [TP-04: Project & Session Browsing (Dashboard)](#tp-04-project--session-browsing-dashboard)
 6. [TP-05: Session Lifecycle (Open / Close / Reap)](#tp-05-session-lifecycle-open--close--reap)
 7. [TP-06: Conversation — Prompt, Bang Bash, Steer, Follow-Up, Abort](#tp-06-conversation--prompt-bang-bash-steer-follow-up-abort)
 8. [TP-07: Real-Time Streaming & Message Rendering](#tp-07-real-time-streaming--message-rendering)
@@ -39,16 +39,16 @@
 
 ### Required Setup
 
-| Item               | Details                                                                                   |
-| ------------------ | ----------------------------------------------------------------------------------------- |
-| **Server Machine** | Linux with `/proc` filesystem (for process takeover tests)                                |
-| **Node.js**        | v20+                                                                                      |
-| **Config File**    | `~/.config/pimote/config.json` with valid `roots` array                                   |
-| **pi SDK**         | `@earendil-works/pi-coding-agent` installed, API keys configured                          |
-| **Test Projects**  | At least 2 project directories under configured roots, each with `.git` or `package.json` |
-| **Browsers**       | Chrome (latest), Firefox (latest), Safari (latest, for PWA tests)                         |
-| **Mobile Device**  | Android phone with Chrome, or iOS with Safari (for push + PWA tests)                      |
-| **Network Tool**   | Browser DevTools (Network tab), `wscat` or similar for raw WS testing                     |
+| Item               | Details                                                                 |
+| ------------------ | ----------------------------------------------------------------------- |
+| **Server Machine** | Linux with `/proc` filesystem (for process takeover tests)              |
+| **Node.js**        | v20+                                                                    |
+| **Config File**    | `~/.config/pimote/config.json` with valid `roots` array                 |
+| **pi SDK**         | `@earendil-works/pi-coding-agent` installed, API keys configured        |
+| **Test Projects**  | At least 2 project directories under configured roots, each with `.git` |
+| **Browsers**       | Chrome (latest), Firefox (latest), Safari (latest, for PWA tests)       |
+| **Mobile Device**  | Android phone with Chrome, or iOS with Safari (for push + PWA tests)    |
+| **Network Tool**   | Browser DevTools (Network tab), `wscat` or similar for raw WS testing   |
 
 ### Config File Template
 
@@ -201,7 +201,7 @@
 
 - **[P]** Server is running
 - **[S]** Open client in browser
-- **[E]** Sidebar shows green connection status dot
+- **[E]** Dashboard shows the connected state: while disconnected the project list reads "Connecting to server…" with controls disabled; once connected the list loads and the **New session** button enables
 - **[E]** `connection.status` transitions: `disconnected` → `connecting` → `connected`
 - **[E]** WebSocket URL includes `?clientId=<uuid>` query parameter (persisted in localStorage; generated via `crypto.randomUUID()` on first visit, reused on subsequent visits)
 
@@ -296,51 +296,52 @@
 
 ---
 
-## TP-04: Folder & Session Index Browsing
+## TP-04: Project & Session Browsing (Dashboard)
 
-### TC-04.01 — Folder list loads on connection 🔴
+The dashboard's projects column lists every discovered project; expand a row to see its sessions. Curation (favorites, ordering, archive), multi-repo hub projects, and the manager agent have dedicated coverage in journey 12 of the persistent manual-test plan ([tools/manual-test/PLAN.md](../tools/manual-test/PLAN.md)).
 
-- **[P]** Roots contain projects with `.git` or `package.json`
-- **[S]** Open client; observe sidebar / landing page
-- **[E]** Folder list populates with project names from all configured roots
-- **[E]** Each folder shows its `name` (directory basename)
+### TC-04.01 — Project list loads on connection 🔴
+
+- **[P]** Roots contain git repos
+- **[S]** Open client; observe the dashboard
+- **[E]** Project list populates with projects from all configured roots (plus any project sources)
+- **[E]** Each project shows its `name` (directory basename); hub projects also show member repo chips with branch and dirty dot
 
 ### TC-04.02 — Empty root directory 🟡
 
 - **[P]** One root exists but contains no project directories
-- **[S]** Load folder list
-- **[E]** That root contributes no folders; no error
+- **[S]** Load project list
+- **[E]** That root contributes no projects; no error
 
 ### TC-04.03 — Inaccessible root directory 🟡
 
 - **[P]** One root path does not exist or has no read permission
-- **[S]** Load folder list
+- **[S]** Load project list
 - **[E]** Server logs warning; other roots still scanned; no crash
 
-### TC-04.04 — Non-project directories filtered out 🟡
+### TC-04.04 — Non-repo directories filtered out 🟡
 
-- **[P]** Root contains subdirectories without `.git` or `package.json`
-- **[S]** Load folder list
-- **[E]** Those subdirectories do not appear
+- **[P]** A root contains subdirectories without `.git`
+- **[S]** Load project list
+- **[E]** Those directories do not appear; discovery is recursive to three levels below each root (skipping `node_modules`, `dist`, `build`, `target`, `.venv`)
 
-### TC-04.05 — Folder active status enrichment 🟠
+### TC-04.05 — Project active enrichment 🟠
 
 - **[P]** Open a session for project A (currently working), project B (idle), no session for project C
-- **[S]** Reload folder list
-- **[E]** Project A: `activeStatus: 'working'`, `activeSessionCount: 1`
-- **[E]** Project B: `activeStatus: 'idle'`, `activeSessionCount: 1`
-- **[E]** Project C: `activeStatus: null`, `activeSessionCount: 0`
+- **[S]** Reload project list
+- **[E]** Projects A and B: `activeSessionCount: 1` and the active dot renders; project C: `activeSessionCount: 0`, no dot
+- **[E]** Session rows carry `liveStatus` (`working` / `idle`) and `isOwnedByMe` enrichment
 
-### TC-04.06 — Folder attention status 🟠
+### TC-04.06 — Attention status not shown on the project row 🟡
 
 - **[P]** Session B has `needsAttention = true` (agent finished while not viewed)
-- **[S]** Reload folder list
-- **[E]** Project B shows `activeStatus: 'attention'` (unless another session there is `working`, which takes precedence)
+- **[S]** Reload project list
+- **[E]** The project row shows no attention marker — attention surfaces via notifications and the active session bar, not the projects column
 
 ### TC-04.07 — Session list for a folder 🔴
 
-- **[P]** Project folder has 3+ pi sessions
-- **[S]** Click/expand folder in sidebar
+- **[P]** Project has 3+ pi sessions
+- **[S]** Click/expand the project row in the dashboard
 - **[E]** Lists sessions with: id, name (if set), created date, modified date, message count, first message preview
 - **[E]** Sessions sorted by modified date (most recent first, or per SDK ordering)
 - **[E]** Each session enriched with `isOwnedByMe` (true if this client owns the live session) and `liveStatus` (working/idle/null if not managed)
@@ -348,7 +349,7 @@
 ### TC-04.08 — Session list for folder with no sessions 🟡
 
 - **[P]** Project exists but has no pi sessions
-- **[S]** Click/expand folder
+- **[S]** Click/expand the project
 - **[E]** Empty session list; no error
 
 ### TC-04.09 — Click session to open 🔴
@@ -359,19 +360,19 @@
 
 ### TC-04.10 — Open new session (no existing session selected) 🔴
 
-- **[P]** Folder expanded
-- **[S]** Click folder name (or "new session" action)
-- **[E]** New session created for that folder; conversation view shows empty state
+- **[P]** Project row visible
+- **[S]** Click the project's "+" (new session) action
+- **[E]** New session created for that project; conversation view shows empty state
 
 ### TC-04.11 — Create new project from session picker 🟠
 
 - **[P]** At least one root configured; "New session" dialog open
-- **[S]** Click "Create new project" button at the bottom of the folder list
+- **[S]** Click "Create new project" button at the bottom of the project picker dialog
 - **[S]** If multiple roots configured: select a root from the list. If single root: skip to name entry.
 - **[S]** Enter a project name and click "Create"
 - **[E]** `create_project` command sent with `root` and `name`
 - **[E]** Server creates directory at `<root>/<name>` and runs `git init`
-- **[E]** Folder list refreshes to include the new project
+- **[E]** Project list refreshes to include the new project
 - **[E]** A new session opens in the created project
 
 ### TC-04.12 — Create project with invalid name 🟡
@@ -394,7 +395,7 @@
 
 ### TC-04.15 — Create project button hidden when no roots 🟡
 
-- **[P]** `list_folders` returned no roots (edge case)
+- **[P]** `list_projects` returned no roots (edge case)
 - **[S]** Open "New session" dialog
 - **[E]** "Create new project" button is not shown
 
@@ -411,7 +412,7 @@
 - **[S]** Click "Back"
 - **[E]** Returns to root selection step
 - **[S]** Click "Back" again
-- **[E]** Returns to the folder picker list
+- **[E]** Returns to the project picker list
 
 ---
 
@@ -419,7 +420,7 @@
 
 ### TC-05.01 — Open new session 🔴
 
-- **[S]** Click a folder to open a new session
+- **[S]** Click a project's new-session (+) action to open a new session
 - **[E]** Server creates AgentSession via pi SDK
 - **[E]** `session_opened` event received with `sessionId` and `folder` info
 - **[E]** Client adds session to registry, subscribes, switches view
@@ -464,7 +465,7 @@
 
 - **[S]** Open two separate sessions for the same project folder
 - **[E]** Both sessions co-exist independently with separate `sessionId` values
-- **[E]** Folder's `activeSessionCount` reflects both
+- **[E]** Project's `activeSessionCount` reflects both
 
 ---
 
@@ -1273,29 +1274,29 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 ### TC-16.01 — Desktop layout 🟠
 
 - **[S]** Open on desktop browser (>768px width)
-- **[E]** Sidebar permanently visible on left
-- **[E]** No mobile hamburger menu
+- **[E]** Dashboard shows the projects column beside the manager chat, side by side
+- **[E]** No mobile manager button or sheet
 - **[E]** Conversation fills remaining width (unless an extension panel is active — see [TP-16a](#tp-16a-extension-panel-system))
 
 ### TC-16.02 — Mobile layout 🟠
 
 - **[S]** Open on phone or narrow browser (<768px)
-- **[E]** Sidebar hidden by default; hamburger menu (☰) visible in header
-- **[S]** Click hamburger
-- **[E]** Sidebar slides in as overlay with dark backdrop
-- **[S]** Click backdrop or X button
-- **[E]** Sidebar closes
+- **[E]** Projects list is fullscreen; the manager chat is hidden
+- **[S]** Tap the floating Manager button (bottom right)
+- **[E]** Manager chat opens as a fullscreen sheet with a dark backdrop
+- **[S]** Tap the backdrop or the X button
+- **[E]** Sheet closes
 
-### TC-16.03 — Sidebar closes on Escape key 🟡
+### TC-16.03 — Manager sheet closes on Escape key 🟡
 
-- **[P]** Mobile, sidebar open
+- **[P]** Mobile, manager sheet open
 - **[S]** Press Escape
-- **[E]** Sidebar closes
+- **[E]** Sheet closes
 
-### TC-16.04 — FolderList inline on mobile landing 🟡
+### TC-16.04 — Project list fullscreen on mobile landing 🟡
 
 - **[P]** No session selected, mobile viewport
-- **[E]** FolderList shown inline in main content area (not just in sidebar)
+- **[E]** Project list fills the main content area; opening a session replaces it with the conversation view
 
 ### TC-16.05 — ActiveSessionBar on mobile 🟠
 

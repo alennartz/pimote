@@ -83,7 +83,7 @@ dialog type).
 
 **What:** Two clients are open on the same session. The second claims
 with force → the first receives `session_closed { reason: 'displaced' }`
-and its UI returns to the folder list. The second client takes over and
+and its UI returns to the dashboard. The second client takes over and
 can prompt.
 
 **Why:** Single-owner semantics is load-bearing: shared across regular
@@ -257,8 +257,7 @@ over real server APIs, with abort and transcript reset on reconnect.
 are the multi-repo model; the manager is the dashboard's second half.
 
 **Driver:** `tools/manual-test/project-management-smoke/` (real sandboxed
-server + `agent-browser` + a second WebSocket probe client). See
-`docs/manual-tests/project-management.md`.
+server + `agent-browser` + a second WebSocket probe client).
 
 ## Automation gap (recorded, not an action item for this topic)
 

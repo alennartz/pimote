@@ -235,7 +235,7 @@ async function runInteractiveInit(options: ResolveInitConfigOptions): Promise<{ 
 
   printSetupIntro(configPath, stateDir, Object.keys(existingConfig).length > 0);
   console.log('Tip: roots should be parent directories like ~/projects, not individual repos.');
-  console.log('Pimote scans each root one level deep and picks folders containing .git or package.json.');
+  console.log('Pimote scans each root recursively up to three levels deep and discovers repos by looking for .git.');
   console.log('');
 
   const rl = createInterface({ input, output });

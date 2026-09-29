@@ -68,17 +68,17 @@ A separate **native Android client** lives at `mobile/android/` — a voice-firs
 
 ### Server
 
-Node.js process that embeds pi `AgentSession` instances directly via the SDK. Manages session lifecycles, brokers WebSocket connections, buffers events for reconnect replay, bridges extension UI calls, detects conflicting processes, and delivers push notifications.
+Node.js process that embeds pi `AgentSession` instances directly via the SDK. Manages session lifecycles, indexes your repos and curated projects, brokers WebSocket connections, buffers events for reconnect replay, bridges extension UI calls, detects conflicting processes, hosts a per-connection manager agent, and delivers push notifications.
 
 ### Client
 
-Installable PWA (Svelte 5, Tailwind CSS, shadcn-svelte) with real-time streaming, multi-session tabs, folder browsing, extension UI, push notifications, and a session StatusBar that surfaces model/thinking controls plus live context-window and lifetime-cost indicators. Works on phone and desktop.
+Installable PWA (Svelte 5, Tailwind CSS, shadcn-svelte) with real-time streaming, multi-session tabs, a project dashboard with a manager chat, extension UI, push notifications, and a session StatusBar that surfaces model/thinking controls plus live context-window and lifetime-cost indicators. Works on phone and desktop.
 
 ## Usage
 
-### Projects and Folders
+### Dashboard, Projects, and the Manager
 
-The landing page shows a session-first home view. Sessions are grouped by project and ordered by recency so you can quickly resume work. Use the top-level **New session** action to pick any discovered project and start fresh, or **create a new project** folder directly from the dialog — choose a root, name the project, and Pimote creates the directory, runs `git init`, and opens a session in it.
+The landing page is the Dashboard: a projects column (every discovered project, expandable to its sessions) beside a **manager chat** on desktop; on mobile the projects list is fullscreen and the manager opens as a sheet. Projects come from a bounded-depth repo scan of your configured roots plus any custom project sources. You can favorite, reorder, and archive projects, and combine existing repos into a multi-repo **hub project** — a folder with symlinks to each member and a generated `AGENTS.md` — which can be disbanded again later. Use the **New session** action to pick any discovered project and start fresh, or **create a new project** folder directly from the dialog — choose a root, name the project, and Pimote creates the directory, runs `git init`, and opens a session in it. The manager is a per-connection pi session with a pinned pimote toolset (list projects, repos, and open sessions), so you can ask things like "which of my repos are dirty?"
 
 ### Sessions
 
@@ -194,7 +194,7 @@ npm start
 
 Pimote reads its config from `~/.config/pimote/config.json` (respects `$XDG_CONFIG_HOME`).
 
-The first-run wizard creates this file for you, but you can also edit it manually. The most important setting is `roots`: parent directories that contain your projects. Pimote scans each root one level deep and discovers project folders by looking for `.git` or `package.json`.
+The first-run wizard creates this file for you, but you can also edit it manually. The most important setting is `roots`: parent directories that contain your projects. Pimote walks each root recursively up to three levels deep and discovers repos by looking for `.git` (skipping `node_modules`, `dist`, `build`, `target`, `.venv`). Additional repos can be contributed by project sources — TypeScript modules in `projectSourcesDir` (default `~/.config/pimote/project-sources/`) that list or create projects programmatically.
 
 Example:
 
@@ -205,23 +205,24 @@ Example:
 }
 ```
 
-With this config, if `/home/you/projects/` contains `my-app/` and `another-repo/`, both show up in Pimote's folder browser.
+With this config, if `/home/you/projects/` contains `my-app/` and `another-repo/`, both show up in the dashboard's project list.
 
 ### Options
 
-| Field                     | Type                  | Default        | Description                                                              |
-| ------------------------- | --------------------- | -------------- | ------------------------------------------------------------------------ |
-| `roots`                   | `string[]`            | **(required)** | Parent directories to scan for projects                                  |
-| `port`                    | `number`              | `3000`         | Server port                                                              |
-| `idleTimeout`             | `number`              | `1800000`      | Idle session reap timeout (ms, default 30min)                            |
-| `bufferSize`              | `number`              | `1000`         | Event ring buffer size per session                                       |
-| `defaultProvider`         | `string`              | —              | Default LLM provider                                                     |
-| `defaultModel`            | `string`              | —              | Default model                                                            |
-| `defaultThinkingLevel`    | `string`              | —              | Default thinking level                                                   |
-| `defaultInterpreterModel` | `{provider, modelId}` | —              | Voice interpreter model (falls back to `defaultProvider`/`defaultModel`) |
-| `defaultWorkerModel`      | `{provider, modelId}` | —              | Voice worker model passed to `my-pi` subagent spawns                     |
-| `voice`                   | `object`              | —              | Voice subsystem config (see below)                                       |
-| `updateCheck`             | `boolean`             | `true`         | Check npm for newer Pimote releases and notify connected clients         |
+| Field                     | Type                  | Default                            | Description                                                                  |
+| ------------------------- | --------------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
+| `roots`                   | `string[]`            | **(required)**                     | Parent directories to scan for projects                                      |
+| `projectSourcesDir`       | `string`              | `~/.config/pimote/project-sources` | Directory scanned for user project-source modules (pluggable repo discovery) |
+| `port`                    | `number`              | `3000`                             | Server port                                                                  |
+| `idleTimeout`             | `number`              | `1800000`                          | Idle session reap timeout (ms, default 30min)                                |
+| `bufferSize`              | `number`              | `1000`                             | Event ring buffer size per session                                           |
+| `defaultProvider`         | `string`              | —                                  | Default LLM provider                                                         |
+| `defaultModel`            | `string`              | —                                  | Default model                                                                |
+| `defaultThinkingLevel`    | `string`              | —                                  | Default thinking level                                                       |
+| `defaultInterpreterModel` | `{provider, modelId}` | —                                  | Voice interpreter model (falls back to `defaultProvider`/`defaultModel`)     |
+| `defaultWorkerModel`      | `{provider, modelId}` | —                                  | Voice worker model passed to `my-pi` subagent spawns                         |
+| `voice`                   | `object`              | —                                  | Voice subsystem config (see below)                                           |
+| `updateCheck`             | `boolean`             | `true`                             | Check npm for newer Pimote releases and notify connected clients             |
 
 #### Voice mode
 
@@ -251,7 +252,7 @@ enable voice. `defaultInterpreterModel` and `defaultWorkerModel` fall back to
 
 When `updateCheck` is enabled (the default), the server checks npm for a newer `@pimote/pimote` release using a six-hour cache. Connected clients receive an update notification with the release link; dismissing it leaves a persistent ambient marker so the notice can be revisited. Set `"updateCheck": false` to disable registry checks and update indicators.
 
-VAPID keys for push notifications are auto-generated on first run and written back to the config file. Session metadata and push subscription state live under `~/.local/state/pimote` (or `$XDG_STATE_HOME/pimote`).
+VAPID keys for push notifications are auto-generated on first run and written back to the config file. Session metadata, push subscriptions, and the project registry (favorites, ordering, archive, hub projects) live under `~/.local/state/pimote` (or `$XDG_STATE_HOME/pimote`).
 
 ## Running
 

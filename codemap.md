@@ -36,7 +36,7 @@ sequenceDiagram
 
 Defines the TypeScript WebSocket contract shared by server and web client.
 
-**Responsibilities:** commands (including session-scoped native bash and abort), events (including live bash output), request/response envelopes, session and message data, native bash result metadata, extension UI, panels, downloads, voice, provider login, tree navigation, update-availability status/events
+**Responsibilities:** commands (including session-scoped native bash and abort), events (including live bash output), request/response envelopes, session and message data, native bash result metadata, extension UI, panels, downloads, voice, provider login, tree navigation, update-availability status/events, project/repo discovery and curation (list_projects, list_repos, update_project, create_hub_project, disband_project, projects_changed), ephemeral manager prompt/abort and streamed manager events
 
 **Dependencies:** none; Android maintains a hand-written mirror of the subset it consumes
 
@@ -48,13 +48,15 @@ Defines the TypeScript WebSocket contract shared by server and web client.
 
 Hosts pi `AgentSession` instances and exposes the HTTP and WebSocket API.
 
-**Responsibilities:** CLI and configuration, static/PWA and WebSocket serving, session slots and replay buffers, command routing (including native bash execution, extension interception, and cancellation), SDK event boundary for live bash output, project discovery, ownership/conflict handling, extension UI bridge, auth, push notifications, persistent session metadata, version lookup and TTL-cached npm update checks with per-connection update events
+**Responsibilities:** CLI and configuration, static/PWA and WebSocket serving, session slots and replay buffers, command routing (including native bash execution, extension interception, and cancellation), SDK event boundary for live bash output, project/repo discovery (bounded recursive repo index over roots and registered sources with TTL caches and per-repo git status), curated project registry (favorite/order/archive overrides, multi-repo hub create/disband with symlinked members and generated AGENTS.md, JSON persistence, projects_changed broadcasts), user project sources (jiti-loaded TS modules from a configured dir), ephemeral per-connection manager agent (lifecycle with idle reaper, pimote listing-tool extension, in-memory session factory), ownership/conflict handling, extension UI bridge, auth, push notifications, persistent session metadata, version lookup and TTL-cached npm update checks with per-connection update events
 
 **Dependencies:** Protocol for wire types; Agent Extensions for session tools and resources
 
 **Files:**
 
 - `server/src/*.ts`
+- `server/src/manager/**`
+- `server/src/project-sources/**`
 
 ### Agent Extensions
 
@@ -74,13 +76,13 @@ In-process pi extensions for optional voice calls, static bundles, and one-shot 
 
 Installable SvelteKit PWA for browsing, controlling, and rendering remote pi sessions.
 
-**Responsibilities:** WebSocket reconnect and session state, streamed conversation/tool rendering, transient bash execution reduction and correlation, composer bang-command parsing/dispatch, dedicated bash output/status/cancellation rendering, extension dialogs/panels, session navigation, downloads and push, browser voice calls, version-keyed update persistence and banner/ambient update surfaces
+**Responsibilities:** WebSocket reconnect and session state, streamed conversation/tool rendering, transient bash execution reduction and correlation, composer bang-command parsing/dispatch, dedicated bash output/status/cancellation rendering, extension dialogs/panels, session navigation, dashboard landing (projects column + manager chat side-by-side on desktop, fullscreen list + manager sheet on mobile), project list with favorites/manual ordering/archive/repo chips and hub create/disband dialogs, projects_changed sync, manager chat (ephemeral per connection, manager events reduced onto a synthetic session slot), downloads and push, browser voice calls, version-keyed update persistence and banner/ambient update surfaces
 
 **Dependencies:** Protocol for wire types; Server's HTTP/WebSocket API
 
 **Files:**
 
-- `client/src/**` (including `client/src/lib/bash-command.ts`, `client/src/lib/stores/connection.svelte.ts`, `client/src/lib/stores/session-registry.svelte.ts`, and `client/src/lib/components/BashExecution.svelte`)
+- `client/src/**` (including `client/src/lib/components/Dashboard.svelte`, `client/src/lib/components/ProjectList.svelte`, `client/src/lib/components/ManagerChat.svelte`, `client/src/lib/stores/project-store.svelte.ts`, `client/src/lib/stores/manager-store.svelte.ts`, `client/src/lib/stores/connection.svelte.ts`, `client/src/lib/stores/session-registry.svelte.ts`, `client/src/lib/bash-command.ts`, and `client/src/lib/components/BashExecution.svelte`)
 
 ### Panels
 
@@ -100,7 +102,7 @@ Native Kotlin voice-first peer that connects to Pimote through Android's calling
 
 **Responsibilities:** WebSocket/session synchronization, self-managed Telecom calls and WebRTC audio, contacts and Assistant shortcuts, Android Auto, Compose UI, settings and authentication
 
-**Dependencies:** Server's WebSocket API; Protocol mirror; Android Telecom, Contacts, Car App, and WebRTC APIs
+**Dependencies:** Server's WebSocket API; Protocol mirror (currently stale on the project-management renames — FolderInfo→ProjectInfo, list_folders→list_projects — accepted debt); Android Telecom, Contacts, Car App, and WebRTC APIs
 
 **Files:**
 
@@ -110,7 +112,7 @@ Native Kotlin voice-first peer that connects to Pimote through Android's calling
 
 Packages, boots, tests, and manually exercises the product surfaces.
 
-**Responsibilities:** npm executable and install helpers, patching and service setup, diagnostic scripts, end-to-end smoke suites, deterministic update-notification server/PWA smoke harness, extension UI test fixture
+**Responsibilities:** npm executable and install helpers, patching and service setup, diagnostic scripts, end-to-end smoke suites, deterministic update-notification server/PWA smoke harness, dashboard/projects/hubs/manager smoke (real server in an isolated HOME against a fabricated multi-root tree, driven via agent-browser plus a second WebSocket probe client), shared pi session-dir fixture helper, extension UI test fixture
 
 **Dependencies:** Server, Web Client, Agent Extensions, and Android Client as applicable
 
@@ -120,4 +122,6 @@ Packages, boots, tests, and manually exercises the product surfaces.
 - `scripts/**`
 - `tools/**`
 - `tools/manual-test/update-notification-smoke/**`
+- `tools/manual-test/project-management-smoke/**`
+- `tools/manual-test/lib/**`
 - `.pi/extensions/**`
