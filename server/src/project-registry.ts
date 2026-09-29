@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { basename, join, sep } from 'node:path';
 import type { ProjectInfo, RepoInfo } from '../../shared/dist/index.js';
+import type { MultiRepoSourceEntry } from './project-sources/index.js';
 import type { RepoIndex } from './repo-index.js';
 
 const REGISTRY_FILE = 'registry.json';
@@ -97,8 +98,10 @@ function missingRepo(path: string): RepoInfo {
   return { path, name: basename(path), branch: null, dirty: false, ahead: 0, behind: 0, missing: true };
 }
 
-/** The merged view: every index repo as `single`, every multi-repo project as `multi` with resolved members. */
-function mergedProjects(doc: RegistryDocument, repos: RepoInfo[]): ProjectInfo[] {
+/** The merged view: every index repo as `single`, every multi-repo project as `multi` with resolved members.
+ *  Multi-repo entries come from two layers — persisted (user-created) and source-listed (derived,
+ *  gone when the source stops listing). On a path collision the persisted entry wins. */
+function mergedProjects(doc: RegistryDocument, repos: RepoInfo[], sourceProjects: MultiRepoSourceEntry[] = []): ProjectInfo[] {
   const byPath = new Map(repos.map((repo) => [repo.path, repo]));
   const projects: ProjectInfo[] = repos.map((repo) => ({
     path: repo.path,
@@ -108,8 +111,11 @@ function mergedProjects(doc: RegistryDocument, repos: RepoInfo[]): ProjectInfo[]
     externalProcessCount: 0,
     ...doc.overrides[repo.path],
   }));
+  const seen = new Set(projects.map((p) => p.path));
 
-  for (const entry of doc.multiRepo) {
+  for (const entry of [...doc.multiRepo, ...sourceProjects]) {
+    if (seen.has(entry.path)) continue;
+    seen.add(entry.path);
     projects.push({
       path: entry.path,
       name: entry.name,
@@ -175,8 +181,8 @@ export class ProjectRegistry {
    * (with curation overrides applied) plus persisted multi-repo projects as `multi`.
    */
   async list(): Promise<ProjectInfo[]> {
-    const [doc, repos] = await Promise.all([this.document(), this.repos.list()]);
-    return sortProjects(mergedProjects(doc, repos));
+    const [doc, repos, sourceProjects] = await Promise.all([this.document(), this.repos.list(), this.repos.listSourceProjects()]);
+    return sortProjects(mergedProjects(doc, repos, sourceProjects));
   }
 
   /** Apply a curation patch. Unknown project paths reject. */
@@ -268,8 +274,8 @@ export class ProjectRegistry {
 
   /** Index repo paths plus persisted multi-repo project paths — everything update() accepts. */
   private async knownProjectPaths(doc: RegistryDocument): Promise<Set<string>> {
-    const repos = await this.repos.list();
-    return new Set([...repos.map((repo) => repo.path), ...doc.multiRepo.map((entry) => entry.path)]);
+    const [repos, sourceProjects] = await Promise.all([this.repos.list(), this.repos.listSourceProjects()]);
+    return new Set([...repos.map((repo) => repo.path), ...doc.multiRepo.map((entry) => entry.path), ...sourceProjects.map((entry) => entry.path)]);
   }
 
   /** Lazy-loaded document; the promise is cached so the file is read once.

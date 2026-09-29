@@ -133,6 +133,7 @@ export async function main(options: StartOptions = {}) {
       // The same open path the open_session WS command uses; a firstMessage is
       // prompted immediately and its agent run continues in the background.
       openSession: async (folderPath, firstMessage) => {
+        await repoIndex.runOpenHooks(folderPath);
         const sessionId = await sessionManager.openSession(folderPath);
         const message = firstMessage?.trim();
         if (message) {

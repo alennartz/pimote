@@ -392,6 +392,9 @@ export class WsHandler {
         case 'open_session': {
           // New session creation
           if (!command.sessionId) {
+            // Project-source open hooks run before the session does: a source
+            // can materialize a listed-but-missing project folder on first open.
+            await this.repoIndex?.runOpenHooks(command.folderPath);
             const sessionId = await this.sessionManager.openSession(command.folderPath);
             const newSlot = this.sessionManager.getSession(sessionId)!;
             await this.claimSession(sessionId, newSlot);
@@ -445,6 +448,7 @@ export class WsHandler {
             this.broadcastSessionArchived(requestedSessionId, command.folderPath, false);
           }
 
+          await this.repoIndex?.runOpenHooks(command.folderPath);
           const sessionId = await this.sessionManager.openSession(command.folderPath, sessionFilePath);
           const reopenedSlot = this.sessionManager.getSession(sessionId)!;
           await this.syncSessionToClient(sessionId, reopenedSlot, undefined, 'disk_full_resync');

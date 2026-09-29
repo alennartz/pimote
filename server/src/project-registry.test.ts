@@ -106,6 +106,69 @@ describe('ProjectRegistry.list()', () => {
   });
 });
 
+describe('source-listed multi-repo projects', () => {
+  function makeIndexWith(projects: { path: string; name: string; memberPaths: string[] }[]): RepoIndex {
+    const index = makeIndex();
+    index.registerSource({ id: 'test-source', list: async () => projects.map((p) => ({ kind: 'project' as const, ...p })) });
+    return index;
+  }
+
+  it('appear in list() as derived multi projects with resolved (or missing) members', async () => {
+    const memberRepo = join(rootDir, 'member');
+    await initRepo(memberRepo);
+    const virtualMember = join(rootDir, 'not-created-yet');
+    const registry = makeRegistry(makeIndexWith([{ path: join(rootDir, 'group'), name: 'group', memberPaths: [memberRepo, virtualMember] }]));
+
+    const group = (await registry.list()).find((p) => p.name === 'group');
+    expect(group?.kind).toBe('multi');
+    const members = group?.repos ?? [];
+    expect(members.find((m) => m.path === memberRepo)?.branch).toBe('main');
+    expect(members.find((m) => m.path === virtualMember)?.missing).toBe(true);
+  });
+
+  it('are derived: disappearing from the source removes them, persisted entries stay', async () => {
+    let clock = 0;
+    let projects: { path: string; name: string; memberPaths: string[] }[] = [{ path: join(rootDir, 'ghost'), name: 'ghost', memberPaths: [] }];
+    const index = new RepoIndex([rootDir], { now: () => clock, ttlMs: 1_000_000, statusTtlMs: 1_000_000 });
+    index.registerSource({
+      id: 'test-source',
+      list: async () => projects.map((p) => ({ kind: 'project' as const, ...p })),
+    });
+    const registry = makeRegistry(index);
+    await registry.createMultiRepoProject('persisted', rootDir, []);
+
+    expect((await registry.list()).some((p) => p.name === 'ghost')).toBe(true);
+
+    projects = [];
+    clock += 1_000_001; // TTL miss: the next list() re-runs the source and drops 'ghost'
+    const names = (await registry.list()).map((p) => p.name);
+    expect(names).toContain('persisted');
+    expect(names).not.toContain('ghost');
+  });
+
+  it('persisted entries win on a path collision with a source-listed project', async () => {
+    const projects = [{ path: join(rootDir, 'from-user'), name: 'from-source', memberPaths: [] }];
+    const index = makeIndex();
+    index.registerSource({ id: 'test-source', list: async () => projects.map((p) => ({ kind: 'project' as const, ...p })) });
+    const registry = makeRegistry(index);
+
+    // Persist a user-created multi-repo project at the same path the source lists.
+    await registry.createMultiRepoProject('from-user', rootDir, []);
+
+    const shared = (await registry.list()).filter((p) => p.path === join(rootDir, 'from-user'));
+    expect(shared).toHaveLength(1);
+    expect(shared[0].name).toBe('from-user');
+  });
+
+  it('apply curation overrides (favorite) by path', async () => {
+    const target = join(rootDir, 'fav-target');
+    const registry = makeRegistry(makeIndexWith([{ path: target, name: 'fav-target', memberPaths: [] }]));
+    await registry.update({ projectPath: target, favorite: true });
+    const project = (await registry.list()).find((p) => p.path === target);
+    expect(project?.favorite).toBe(true);
+  });
+});
+
 describe('ProjectRegistry.createMultiRepoProject()', () => {
   it('creates a multi-repo project with symlinked members and a generated AGENTS.md', async () => {
     const registry = makeRegistry();

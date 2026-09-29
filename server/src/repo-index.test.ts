@@ -142,6 +142,80 @@ describe('RepoIndex.list() — registered sources', () => {
     expect(listed).toBeDefined();
     expect(listed?.missing).toBe(true);
   });
+
+  it('routes source project entries to listSourceProjects, not the repo listing', async () => {
+    const index = makeIndex();
+    index.registerSource({
+      id: 'test-source',
+      list: async () => [{ kind: 'project', path: join(tempDir, 'virtual-group'), name: 'virtual-group', memberPaths: [join(tempDir, 'alpha')] }],
+    });
+
+    const projects = await index.listSourceProjects();
+    expect(projects).toHaveLength(1);
+    expect(projects[0]).toMatchObject({ name: 'virtual-group', memberPaths: [join(tempDir, 'alpha')] });
+    // The project entry must not leak into the repo index.
+    expect((await index.list()).some((r) => r.path === join(tempDir, 'virtual-group'))).toBe(false);
+  });
+
+  it('normalizes bare repo shapes without a kind as repo entries', async () => {
+    const index = makeIndex();
+    const bare = { path: join(externalDir, 'bare'), name: 'bare', branch: null, dirty: false, ahead: 0, behind: 0 };
+    index.registerSource({ id: 'test-source', list: async () => [bare as never] });
+
+    const paths = (await index.list()).map((r) => r.path);
+    expect(paths).toContain(bare.path);
+  });
+});
+
+describe('RepoIndex.runOpenHooks()', () => {
+  it('awaits every source hook with the opened path, in registration order', async () => {
+    const index = makeIndex();
+    const calls: string[] = [];
+    index.registerSource({
+      id: 'a',
+      list: async () => [],
+      onProjectOpen: async (path) => {
+        await new Promise((r) => setTimeout(r, 5));
+        calls.push(`a:${path}`);
+      },
+    });
+    index.registerSource({
+      id: 'b',
+      list: async () => [],
+      onProjectOpen: async (path) => calls.push(`b:${path}`),
+    });
+
+    await index.runOpenHooks('/r/some-project');
+    expect(calls).toEqual([`a:/r/some-project`, `b:/r/some-project`]);
+  });
+
+  it('aborts on the first hook error and surfaces its message', async () => {
+    const index = makeIndex();
+    let secondCalled = false;
+    index.registerSource({
+      id: 'boom',
+      list: async () => [],
+      onProjectOpen: async () => {
+        throw new Error('scaffold failed: unmounted volume');
+      },
+    });
+    index.registerSource({
+      id: 'never',
+      list: async () => [],
+      onProjectOpen: async () => {
+        secondCalled = true;
+      },
+    });
+
+    await expect(index.runOpenHooks('/r/x')).rejects.toThrow('scaffold failed: unmounted volume');
+    expect(secondCalled).toBe(false);
+  });
+
+  it('is a no-op when no source defines onProjectOpen', async () => {
+    const index = makeIndex();
+    index.registerSource({ id: 'plain', list: async () => [] });
+    await expect(index.runOpenHooks('/r/x')).resolves.toBeUndefined();
+  });
 });
 
 describe('RepoIndex.list() — TTL cache', () => {

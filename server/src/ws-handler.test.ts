@@ -392,6 +392,57 @@ describe('WsHandler', () => {
     });
   });
 
+  describe('open_session — project source open hooks', () => {
+    it('runs runOpenHooks before opening a new session', async () => {
+      const order: string[] = [];
+      const repoIndex = {
+        roots: ['/home/user/projects'],
+        list: async () => [],
+        listSourceProjects: async () => [],
+        runOpenHooks: async (path: string) => {
+          order.push(`hooks:${path}`);
+        },
+      } as unknown as RepoIndex;
+      const { handler, sent, sessionManager } = createTestHandler('client-1', { repoIndex });
+      // Sentinel open: proves hooks ran first without plumbing a full slot.
+      sessionManager.openSession = async () => {
+        order.push('open');
+        throw new Error('halt');
+      };
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/projects/alpha', id: 'req-hooks' }));
+
+      const resp = findResponse(sent, 'req-hooks');
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toBe('halt');
+      expect(order).toEqual(['hooks:/home/user/projects/alpha', 'open']);
+    });
+
+    it('a hook error aborts the open and surfaces the message', async () => {
+      const order: string[] = [];
+      const repoIndex = {
+        roots: ['/home/user/projects'],
+        list: async () => [],
+        listSourceProjects: async () => [],
+        runOpenHooks: async () => {
+          throw new Error('scaffold failed: unmounted volume');
+        },
+      } as unknown as RepoIndex;
+      const { handler, sent, sessionManager } = createTestHandler('client-1', { repoIndex });
+      sessionManager.openSession = async () => {
+        order.push('open');
+        return 'never';
+      };
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/projects/alpha', id: 'req-hook-err' }));
+
+      const resp = findResponse(sent, 'req-hook-err');
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toContain('scaffold failed');
+      expect(order).toEqual([]);
+    });
+  });
+
   describe('open_session — same client ID (live restore)', () => {
     it('replays buffered events for incremental replay when lastCursor is provided', async () => {
       const bufferedEvents: PimoteSessionEvent[] = [

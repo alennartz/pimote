@@ -4,7 +4,7 @@ import type { Dirent } from 'node:fs';
 import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
 import type { RepoInfo } from '../../shared/dist/index.js';
-import type { ProjectSource } from './project-sources/index.js';
+import type { MultiRepoSourceEntry, ProjectSource, RepoSourceEntry, SourceEntry } from './project-sources/index.js';
 import { getGitBranch } from './git-branch.js';
 
 const execFileAsync = promisify(execFile);
@@ -85,6 +85,7 @@ export class RepoIndex {
   private readonly now: () => number;
   private readonly sources: ProjectSource[] = [];
   private listing: { entries: RepoInfo[]; at: number } | null = null;
+  private sourceProjects: { entries: MultiRepoSourceEntry[]; at: number } | null = null;
   private readonly statusCache = new Map<string, RepoStatus>();
   private listingPromise: Promise<RepoInfo[]> | null = null;
   private walkGeneration = 0;
@@ -134,6 +135,29 @@ export class RepoIndex {
     return await Promise.all(base.map((entry) => this.resolveServed(entry)));
   }
 
+  /**
+   * Multi-repo projects contributed by registered sources, cached with the same
+   * TTL as the repo listing. Derived, never persisted — if a source stops
+   * listing an entry, it disappears from the project layer.
+   */
+  async listSourceProjects(): Promise<MultiRepoSourceEntry[]> {
+    if (!this.listing || this.now() - this.listing.at >= this.ttlMs) await this.list();
+    return this.sourceProjects?.entries ?? [];
+  }
+
+  /**
+   * Fan one open attempt out to every source's onProjectOpen hook, awaited in
+   * registration order. Sources self-filter by path (probe the disk, scaffold
+   * if the entry is theirs and missing). The first thrown error aborts the
+   * open and surfaces to the caller.
+   */
+  async runOpenHooks(projectPath: string): Promise<void> {
+    for (const source of this.sources) {
+      if (!source.onProjectOpen) continue;
+      await source.onProjectOpen(projectPath);
+    }
+  }
+
   /** Drop cached listings so the next list() re-walks. */
   invalidate(): void {
     this.listing = null;
@@ -157,18 +181,37 @@ export class RepoIndex {
       }
     }
 
+    const sourceProjects: MultiRepoSourceEntry[] = [];
+    const seenProjectPaths = new Set<string>();
     for (const source of this.sources) {
-      let contributed: RepoInfo[];
+      let contributed: SourceEntry[];
       try {
         contributed = await source.list();
       } catch (error) {
-        console.warn(`[repo-index] source "${source.id}" failed; skipping its repos`, error);
+        console.warn(`[repo-index] source "${source.id}" failed; skipping its entries`, error);
         continue;
       }
-      for (const repo of contributed) {
-        if (!byPath.has(repo.path)) byPath.set(repo.path, repo);
+      for (const raw of contributed) {
+        // Tolerate ergonomic modules that return bare repo shapes without a kind.
+        let entry: SourceEntry;
+        if ('kind' in raw && raw.kind === 'project') {
+          entry = raw;
+        } else {
+          const repo = raw as RepoSourceEntry;
+          const { kind: _kind, ...repoFields } = repo;
+          entry = { kind: 'repo', ...repoFields };
+        }
+        if (entry.kind === 'project') {
+          if (!seenProjectPaths.has(entry.path)) {
+            seenProjectPaths.add(entry.path);
+            sourceProjects.push(entry);
+          }
+          continue;
+        }
+        if (!byPath.has(entry.path)) byPath.set(entry.path, entry);
       }
     }
+    this.sourceProjects = { entries: sourceProjects, at: this.now() };
 
     const entries: RepoInfo[] = [];
     for (const repo of byPath.values()) {

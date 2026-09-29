@@ -194,7 +194,7 @@ npm start
 
 Pimote reads its config from `~/.config/pimote/config.json` (respects `$XDG_CONFIG_HOME`).
 
-The first-run wizard creates this file for you, but you can also edit it manually. The most important setting is `roots`: parent directories that contain your projects. Pimote walks each root recursively up to three levels deep and discovers repos by looking for `.git` (skipping `node_modules`, `dist`, `build`, `target`, `.venv`). Additional repos can be contributed by project sources — TypeScript modules in `projectSourcesDir` (default `~/.config/pimote/project-sources/`) that list or create projects programmatically.
+The first-run wizard creates this file for you, but you can also edit it manually. The most important setting is `roots`: parent directories that contain your projects. Pimote walks each root recursively up to three levels deep and discovers repos by looking for `.git` (skipping `node_modules`, `dist`, `build`, `target`, `.venv`). Additional repos and multi-repo projects can be contributed by project sources — TypeScript modules in `projectSourcesDir` (default `~/.config/pimote/project-sources/`). A source exports a `sources` array; each source `list()`s entries (`{ kind: 'repo', ... }` or `{ kind: 'project', path, name, memberPaths }`) — paths need not exist on disk yet, and missing ones are shown with a warning chip. An optional awaited `onProjectOpen(path)` hook runs before any open of a listed entry (row click, new session, manager tool): probe the disk and scaffold there to make virtual entries materialize on first open; a thrown error aborts the open. A `creators` array provides explicit creation flows (built in: mkdir + git init).
 
 Example:
 

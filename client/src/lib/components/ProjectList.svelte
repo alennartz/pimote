@@ -28,6 +28,7 @@
 
   let { onSessionSelect }: Props = $props();
 
+  let openError = $state('');
   let collapsedProjects = new SvelteSet<string>();
   let expandedSessionLists = new SvelteSet<string>();
 
@@ -210,6 +211,28 @@
     } catch (e) {
       createError = e instanceof Error ? e.message : 'Failed to create project';
       creating = false;
+    }
+  }
+
+  /** True when a project's folder doesn't exist on disk yet — opening it gives
+   *  its source's onProjectOpen hook the chance to materialize it. */
+  function isMissingProject(project: ProjectInfo): boolean {
+    if (project.kind === 'single') {
+      return projectStore.repos.find((r) => r.path === project.path)?.missing === true;
+    }
+    const repos = project.repos ?? [];
+    return repos.length > 0 && repos.every((r) => r.missing);
+  }
+
+  /** Open attempt against a (possibly virtual) project: the server awaits the
+   *  source's onProjectOpen hooks before opening the session. */
+  async function attemptOpen(folderPath: string) {
+    openError = '';
+    try {
+      const response = await connection.send({ type: 'open_session', folderPath });
+      if (!response.success) openError = response.error ?? 'Failed to open project';
+    } catch (e) {
+      openError = e instanceof Error ? e.message : 'Failed to open project';
     }
   }
 
@@ -411,6 +434,10 @@
       </div>
     </div>
 
+    {#if openError}
+      <p class="text-destructive px-1 text-xs">{openError}</p>
+    {/if}
+
     {#if displayProjects.length === 0}
       <div class="text-muted-foreground px-3 py-8 text-center text-sm">
         {#if projectStore.showArchived}
@@ -433,7 +460,14 @@
             <div class="flex items-center gap-0.5">
               <button
                 class="hover:bg-accent active:bg-accent/80 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors"
-                onclick={() => toggleProject(project.path)}
+                title={isMissingProject(project) ? 'Open — its source will create this folder' : undefined}
+                onclick={() => {
+                  if (isMissingProject(project)) {
+                    void attemptOpen(project.path);
+                    return;
+                  }
+                  toggleProject(project.path);
+                }}
               >
                 <ChevronRight class="text-muted-foreground size-3.5 shrink-0 transition-transform {expanded ? 'rotate-90' : ''}" />
                 <Star class="size-3 shrink-0 {project.favorite ? 'fill-yellow-500 text-yellow-500' : 'text-muted-foreground/40'}" />
