@@ -327,7 +327,7 @@ Evolve `client/src/lib/stores/index-store.svelte.ts` → `client/src/lib/stores/
 - Tests alongside implementation (client vitest, mirroring `index-store` test conventions): `projects_changed` replaces the list; concurrent `loadProjects` single-flights; session map keyed by path still correlates loads.
 
 **Verify:** `cd client && npx vitest run` green including the new store tests; `npm run check` green.
-**Status:** not started
+**Status:** done
 
 ### Step 12: `ProjectList.svelte` (client)
 
@@ -342,7 +342,7 @@ Evolve `client/src/lib/components/FolderList.svelte` → `client/src/lib/compone
   - Project manage menu: favorite, order, archive, disband (confirm dialog → `disband_project`), and create multi-repo hub (dialog: name + root + member picker fed by `loadRepos()` → `create_hub_project`).
 
 **Verify:** `npm run check` green; manual smoke — favorite/order/archive persist across reload, hub create/disband round-trips, chips render member state.
-**Status:** not started
+**Status:** done
 
 ### Step 13: `manager-store` + `ManagerChat.svelte` (client)
 
@@ -350,7 +350,7 @@ Evolve `client/src/lib/components/FolderList.svelte` → `client/src/lib/compone
 - `client/src/lib/components/ManagerChat.svelte`: renders the manager transcript through `MessageList` (adapt it minimally to accept a message source — it currently reads `sessionRegistry.viewed` — without changing regular-session rendering) plus a slim composer with send and, while working, abort.
 
 **Verify:** store unit tests (event reduction, send/abort wiring, reset on disconnect) green; `npm run check` green.
-**Status:** not started
+**Status:** done
 
 ### Step 14: Dashboard + layout (client)
 
@@ -360,7 +360,7 @@ Evolve `client/src/lib/components/FolderList.svelte` → `client/src/lib/compone
 - Kick off `projectStore.loadProjects()` when the dashboard mounts and the connection is ready (carry over the "loaded for current connection" guard from `FolderList` so reconnects refresh).
 
 **Verify:** `npm run check` green; full server + client suites green; manual smoke at desktop and mobile widths — projects render, manager chat works, opening a session still swaps to the session view.
-**Status:** not started
+**Status:** done
 
 ### Step 15: Full verification
 
@@ -369,4 +369,4 @@ Evolve `client/src/lib/components/FolderList.svelte` → `client/src/lib/compone
 - Boot smoke against a scratch config: dashboard loads, discovery lists real repos, hub create/disband round-trips, manager prompt streams.
 
 **Verify:** all of the above pass.
-**Status:** not started
+**Status:** done
