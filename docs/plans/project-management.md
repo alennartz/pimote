@@ -196,7 +196,10 @@ Fill in `server/src/repo-index.ts` (stub + `RepoIndexOptions` already exist; `Pr
 - `invalidate()`: clear both caches.
 
 **Verify:** `cd server && npx vitest run src/repo-index.test.ts` — 11 tests green.
-**Status:** done (13 tests green — plan count was stale; test file untouched)
+
+<!-- Note: 13 tests green; the plan's count was stale; test file untouched. -->
+
+**Status:** done
 
 ### Step 2: Add jiti and extend the loader test contract
 
@@ -234,7 +237,10 @@ Fill in `server/src/project-registry.ts` (stub and `ProjectUpdatePatch` already 
 - `onChange(cb)`: subscriber set; fire after each successful `update`/`createHub`/`disband`; return an unsubscribe function.
 
 **Verify:** `cd server && npx vitest run src/project-registry.test.ts` — 12 tests green.
-**Status:** done (14 tests green — plan count was stale; test file untouched)
+
+<!-- Note: 14 tests green; the plan's count was stale; test file untouched. -->
+
+**Status:** done
 
 ### Step 5: Implement the manager extension
 
