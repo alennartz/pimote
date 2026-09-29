@@ -333,6 +333,48 @@ UN_SHOTS=/tmp/update-notification-shots node tools/manual-test/update-notificati
 
 **Prerequisites:** workspaces built (`npm run build`), `agent-browser` on `PATH`, writable `os.tmpdir()`. No real npm registry, LLM, or push subscription is required; `fake-registry.mjs` intercepts only the npm latest-version URL in the child server process.
 
+### project-management-smoke
+
+**Purpose:** Exercise the project-management dashboard end-to-end (the
+`project-management` topic). Boots a real pimote server in an isolated HOME
+against a fabricated two-root project tree (nested repos at depth 2/3, a
+depth-4 negative fixture, a dirty repo, named branches, a fabricated pi
+session), seeds a local model via `PI_CODING_AGENT_DIR` for the manager LLM,
+and drives the real PWA via `agent-browser` plus a second WebSocket probe
+client. Covers: discovery shape and depth bound, `update_project` /
+`projects_changed` two-client sync (both directions), hub create/disband
+round-trips with on-disk symlink + AGENTS.md assertions, favorites, manual
+ordering, archive/show-archived, create-project (mkdir + git init),
+resume of an existing session, the active-session dot, dashboard search, the
+manager chat (streamed reply, `pimote_list_projects` tool use, abort,
+ephemeral reset on reconnect), the missing-member warning chip, and the
+mobile manager affordance.
+
+**Location:** `tools/manual-test/project-management-smoke/project-management-smoke.mjs`
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/project-management-smoke/project-management-smoke.mjs
+# Keep coherence screenshots outside the (auto-removed) sandbox:
+PM_SHOTS=/tmp/pm-shots node tools/manual-test/project-management-smoke/project-management-smoke.mjs
+```
+
+**Inputs:** none (fresh `os.tmpdir()` sandbox; `PM_SHOTS=<dir>` optionally
+redirects screenshots; `PM_KEEP=1` preserves the sandbox on a passing run).
+Expects the host's `~/.pi/agent/models.json` to contain the local `jetson`
+provider for the manager-LLM phase; without it those tests report
+environment-bounded instead of failing.
+
+**Outputs:** per-check ✓/✗/⊝ lines, coherence screenshots, and a non-zero
+exit on hard failure. On failure the sandbox and server log are preserved.
+
+**Prerequisites:** workspaces built (`npm run build`), `agent-browser` on
+`PATH`, `git` on `PATH`, writable `os.tmpdir()`. Tracks and kills only the
+child PID it spawns. Requires network reachability to the model endpoint
+named in `models.json` for the manager phase only.
+
 ### agent-browser (cross-repo skill)
 
 **Purpose:** Drive PWA user journeys end-to-end via a headless-Chromium
