@@ -19,6 +19,7 @@ import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join, resolve as pathResolve } from 'node:path';
 import { createServer as createNetServer } from 'node:net';
+import { seedSessionDir } from '../lib/session-dir.mjs';
 
 const REPO_ROOT = pathResolve(new URL('../../../', import.meta.url).pathname);
 const TOOL_DIR = pathResolve(new URL('.', import.meta.url).pathname);
@@ -199,9 +200,8 @@ async function probeUpdate(port, expectedLatest, { expectEvent = true, timeoutMs
 
 async function seedSession({ sandboxHome, projectDir }) {
   const sessionId = randomUUID();
-  const sessionsDir = join(sandboxHome, '.pi', 'agent', 'sessions');
-  const encodedCwd = `--${projectDir.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
-  const sessionDir = join(sessionsDir, encodedCwd);
+  // SDK-exact encoding (resolve-first); see tools/manual-test/lib/session-dir.mjs.
+  const sessionDir = seedSessionDir(join(sandboxHome, '.pi', 'agent', 'sessions'), projectDir);
   await mkdir(sessionDir, { recursive: true });
   const timestamp = new Date().toISOString();
   const filename = `${timestamp.replace(/:/g, '-')}_${sessionId}.jsonl`;

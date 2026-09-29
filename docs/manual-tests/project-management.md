@@ -157,10 +157,24 @@ target collisions), fixed in the tool inline — none touched product code.
 
 ## Open Issues
 
-- **Pre-existing, other topics' tools: stale pi session-dir encoding.** The
-  pi SDK now encodes per-cwd session dirs with a trailing `--`
-  (`--<encoded-cwd>--`); `update-notification-smoke`, `cost-accumulation-smoke`,
-  and other smokes seed fixtures under the old encoding (no trailing `--`) and
-  target `$HOME/.pi/agent/sessions`, so their fabricated sessions no longer
-  list. Their next runs will fail (or silently test less) until re-pointed.
-  Out of scope for this topic; flagged for the maintainers of those tools.
+- **Resolved 2026-09-29 (verified, not a real break): previously flagged
+  "stale pi session-dir encoding" in other topics' tools.** The earlier
+  claim — that the older smokes seed fixtures "under the old encoding (no
+  trailing `--`)" — was wrong. Verified against the installed SDK
+  (0.87.1) and the published tarball lineage: every smoke
+  (`update-notification-smoke`, `cost-accumulation-smoke`,
+  `streaming-code-highlight-smoke`, `at-file-syntax-smoke`,
+  `static-host-pwa-smoke`, `provider-login-smoke`, `file-downloads-smoke`)
+  already seeded under the current encoding
+  (`--<encoded-resolved-cwd>--`, cf.
+  `dist/core/session-manager.js` ~line 291), always with clean absolute
+  project paths, and `SessionManager.list()` lists every seeded fixture.
+  No SDK version in the `@earendil-works` lineage (0.74.0+) ever encoded
+  without the trailing `--`; the only historical encoding change was
+  resolve-first at 0.76.0, which diverges solely for non-clean cwd strings
+  (relative, trailing slash, `..`) that no tool passes. As follow-up
+  hardening the per-tool inline encoder was centralized in
+  `tools/manual-test/lib/session-dir.mjs` (SDK-exact resolve-first encoder
+  plus a candidates-based finder that tolerates the raw-string encoding
+  for reads/cleanup), so the smokes stay correct even if a future caller
+  passes a non-clean cwd.

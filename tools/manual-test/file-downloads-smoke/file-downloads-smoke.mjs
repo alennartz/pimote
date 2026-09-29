@@ -28,6 +28,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve as pathResolve } from 'node:path';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
+import { seedSessionDir } from '../lib/session-dir.mjs';
 
 const REPO_ROOT = pathResolve(new URL('../../../', import.meta.url).pathname);
 const PIMOTE_BIN = join(REPO_ROOT, 'bin', 'pimote.js');
@@ -132,8 +133,8 @@ async function abCmd(args, { allowFailure = false, retries = 2, timeoutMs = 25_0
 }
 
 function sessionDirectory(projectDir, sandboxHome) {
-  const encoded = `--${projectDir.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
-  return join(sandboxHome, '.pi', 'agent', 'sessions', encoded);
+  // SDK-exact encoding (resolve-first); see tools/manual-test/lib/session-dir.mjs.
+  return seedSessionDir(join(sandboxHome, '.pi', 'agent', 'sessions'), projectDir);
 }
 
 async function seedSession({ sandboxHome, projectDir, sessionId, firstMessage }) {

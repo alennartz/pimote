@@ -7,6 +7,25 @@ registered here.
 See `PLAN.md` in this directory for the list of primary user journeys
 and which tool (if any) drives each.
 
+## Shared helpers
+
+### lib/session-dir.mjs
+
+Single source of truth for the pi session-dir encoding used when smokes
+fabricate session jsonl fixtures. The SDK (verified against 0.87.1,
+`dist/core/session-manager.js` `getDefaultSessionDirPath`) encodes a
+cwd as `--${resolve(cwd)…}--` under `<agentDir>/sessions/` — resolve
+first, then strip the leading slash and replace every `/` `\` `:` with
+`-`. Smokes must seed with that exact encoding or `SessionManager.list()`
+(which reads only the one encoded dir) will not find the fixture.
+
+- `seedSessionDir(sessionsRoot, cwd)` — canonical dir for writing fixtures
+  (always SDK-exact). Use this in every `seedSession`-style helper.
+- `sessionDirCandidates(sessionsRoot, cwd)` / `existingSessionDirs(…)` —
+  both-era-aware lookups (SDK-exact first, then the pre-0.76 raw-string
+  encoding) for reading or cleaning pre-existing fixtures seeded under
+  either encoding.
+
 ## Tools
 
 ### voice-mock-smoke

@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve as pathResolve } from 'node:path';
 import { createConnection } from 'node:net';
 import { once } from 'node:events';
+import { seedSessionDir } from '../lib/session-dir.mjs';
 
 const REPO_ROOT = pathResolve(new URL('../../../', import.meta.url).pathname);
 const PIMOTE_BIN = join(REPO_ROOT, 'bin', 'pimote.js');
@@ -239,9 +240,8 @@ async function main() {
     // enough for pimote to enumerate it and for the static-host
     // extension to fire `session_start` on open.
     const sessionId = randomUUID();
-    const piSessionsDir = join(sandboxHome, '.pi', 'agent', 'sessions');
-    const encodedCwd = `--${projectDir.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
-    const sessionDir = join(piSessionsDir, encodedCwd);
+    // SDK-exact encoding (resolve-first); see tools/manual-test/lib/session-dir.mjs.
+    const sessionDir = seedSessionDir(join(sandboxHome, '.pi', 'agent', 'sessions'), projectDir);
     await mkdir(sessionDir, { recursive: true });
     const isoNow = new Date().toISOString();
     const filenameStamp = isoNow.replace(/:/g, '-');

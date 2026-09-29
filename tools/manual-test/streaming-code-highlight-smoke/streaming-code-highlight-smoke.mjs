@@ -34,6 +34,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve as pathResolve } from 'node:path';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
+import { seedSessionDir } from '../lib/session-dir.mjs';
 
 const REPO_ROOT = pathResolve(new URL('../../../', import.meta.url).pathname);
 const PIMOTE_BIN = join(REPO_ROOT, 'bin', 'pimote.js');
@@ -228,9 +229,8 @@ function fabricateWriteSession({ cwd, firstPrompt, writes }) {
 }
 
 async function seedSession({ sandboxHome, projectDir, lines, sessionId }) {
-  const piSessionsDir = join(sandboxHome, '.pi', 'agent', 'sessions');
-  const encodedCwd = `--${projectDir.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
-  const sessionDir = join(piSessionsDir, encodedCwd);
+  // SDK-exact encoding (resolve-first); see tools/manual-test/lib/session-dir.mjs.
+  const sessionDir = seedSessionDir(join(sandboxHome, '.pi', 'agent', 'sessions'), projectDir);
   await mkdir(sessionDir, { recursive: true });
   const isoNow = new Date().toISOString();
   const filenameStamp = isoNow.replace(/:/g, '-');
