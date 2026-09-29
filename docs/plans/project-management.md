@@ -86,7 +86,7 @@ interface ProjectCreator {
 
 ### Technology Choices
 
-No new dependencies. Recursive walking, symlink handling, and git status use Node fs plus the existing `git` subprocess pattern (`git-branch.ts`). The module loader uses dynamic `import()` of user TS/JS files — same mechanism pi uses for extensions; no sandboxing in v1 (user-authored code is trusted, consistent with pi's extension model). `SessionManager.inMemory` (SDK) covers ephemeral manager sessions; DR-006's chdir patch makes the temp cwd safe.
+One new dependency: `jiti` (direct server dependency), added so user project-source modules can be authored as TypeScript exactly like pi extensions — pi itself loads TS extensions through jiti, and native Node `import()` cannot load `.ts`. Everything else needs nothing new: recursive walking, symlink handling, and git status use Node fs plus the existing `git` subprocess pattern (`git-branch.ts`); the loader dynamic-imports user TS/JS modules through jiti with no sandboxing in v1 (user-authored code is trusted, consistent with pi's extension model). `SessionManager.inMemory` (SDK) covers ephemeral manager sessions; DR-006's chdir patch makes the temp cwd safe.
 
 ### DR Supersessions
 
@@ -177,3 +177,194 @@ All new tests are red at this phase (stubs throw `not implemented`); the full pr
 - Ephemeral runtime properties of the real manager session factory (`SessionManager.inMemory`, temp cwd, event-mapping reuse): live behind the `ManagerSessionFactory` seam and get exercised when the factory itself is implemented.
 
 **Review status:** approved
+
+## Steps
+
+Grounded in the code as of `13bb344` (test-review). The six new test files hold 42 red tests; steps 1–6 make them pass. Server modules first (they have no upstream dependencies), then wiring, then the physical protocol rename, then the client.
+
+### Step 1: Implement RepoIndex
+
+Fill in `server/src/repo-index.ts` (stub + `RepoIndexOptions` already exist; `ProjectSource` import already resolves).
+
+- **Walker** (private): for each configured root, walk directories up to three levels below the root; a directory containing a `.git` entry is a repo. Use `readdir(..., { withFileTypes: true })`; skip entries where `isSymbolicLink()` (never follow symlinks); do not descend into `node_modules`, `.git`, `dist`, `build`, `target`, `.venv`. A root that is missing or unreadable (ENOENT/EACCES) is skipped with a `console.warn`, matching `FolderIndex.scan`'s degrade-gracefully behavior. Keep walking _through_ discovered repos — `repo-index.test.ts` requires finding a repo three levels deep beneath another repo.
+- **Sources**: on each walk, call every registered source's `list()` and merge the results into the listing.
+- **Missing marking**: after merging, `stat` each path; ENOENT → keep the entry with `missing: true` (source-contributed paths can vanish; walker-discovered ones exist by construction, but check uniformly).
+- **Listing TTL**: cache `{ repos, at }`; serve cached while `now() - at < ttlMs` (default 30_000), else re-walk and re-stamp. `now` = `options.now ?? Date.now`.
+- **Status enrichment**: per-path status cache `{ branch, dirty, ahead, behind, at }`, refreshed when `now() - at >= statusTtlMs` (default 30_000). Branch via `getGitBranch` from `git-branch.ts`. Dirty = `git status --porcelain` output non-empty. Ahead/behind: resolve upstream with `git rev-parse --abbrev-ref @{upstream}` (failure → `0`/`0`), then `git rev-list --count <upstream>..HEAD` and `--count HEAD..<upstream>`. All git calls follow the `git-branch.ts` pattern: promisified `execFile`, env guard stripping `GIT_DIR`/`GIT_WORK_TREE`, `timeout: 2000`, catch → neutral value.
+- `invalidate()`: clear both caches.
+
+**Verify:** `cd server && npx vitest run src/repo-index.test.ts` — 11 tests green.
+**Status:** not started
+
+### Step 2: Add jiti and extend the loader test contract
+
+- From the repo root: `npm install jiti -w server` (workspace `@pimote/server`; jiti is currently only a hoisted transitive dep of the pi SDK).
+- Extend `server/src/project-sources/loader.test.ts` with one case: a `.ts` module exporting `sources` loads alongside the `.mjs` modules. This pins the TS contract that motivates the dependency.
+
+**Verify:** jiti appears in `server/package.json` dependencies; the new loader test case is red.
+**Status:** not started
+
+### Step 3: Implement project sources (builtin creator + loader)
+
+- `server/src/project-sources/builtin.ts` — `createBuiltinCreator()` returns a `ProjectCreator`:
+  - `id`: `'builtin-folder'`.
+  - `describe()`: `{ label: 'New project folder', paramSchema: { root: 'string', name: 'string' } }`.
+  - `create({ root, name })`: validate first — name non-empty, no `/` or `path.sep`, not `.`/`..` (same rules as the current `create_project` case in `ws-handler.ts`); `root` must exist; target `join(root, name)` must NOT exist (`stat` success → throw) — all before any filesystem mutation. Then `mkdir(target)` and `git init` in it (env-guarded exec, per `git-branch.ts`). Return `{ path: target }`.
+- `server/src/project-sources/loader.ts` — `loadProjectSources(dir)`:
+  - `readdir(dir, { withFileTypes: true })`; ENOENT → `{ sources: [], creators: [] }`.
+  - Consider only regular files ending `.js`, `.mjs`, `.cjs`, `.ts` — everything else is ignored (covers the `.txt`/`.json` test).
+  - Load each through jiti (`createJiti(import.meta.url)` once, `jiti.import(fileUrl)` per module — mirrors pi's `jiti-loader.ts`). Per-module `try`/`catch`: a load or evaluation failure logs a warning and is skipped; the scan continues.
+  - Collect `mod.sources` and `mod.creators` when they are arrays; return `{ sources, creators }`.
+
+**Verify:** `cd server && npx vitest run src/project-sources/` — loader (5, incl. the new `.ts` case) + builtin (3) green.
+**Status:** not started
+
+### Step 4: Implement ProjectRegistry
+
+Fill in `server/src/project-registry.ts` (stub and `ProjectUpdatePatch` already exist).
+
+- **Persistence document**: `{ version: 1, hubs: Array<{ path: string; name: string; memberPaths: string[] }>, overrides: Record<string, { favorite?: boolean; order?: number; archived?: boolean }> }` at `join(storeDir, 'registry.json')`. Atomic write (`.tmp` + `rename`) mirroring `FileSessionJsonStore` mechanics — this is a single document, not the per-session keyed store, so reuse the pattern, not the class. Lazy-load on first use via a cached load promise (constructor stays synchronous; tests construct then immediately await methods).
+- `list()`: await `repos.list()`. Every repo → a `single` project: `name` = `basename(path)`, override fields spread on when present, `activeSessionCount: 0`, `externalProcessCount: 0` (the WS layer enriches counts; registry tests don't assert them). Every persisted hub → a `multi` project with member `RepoInfo`s resolved against the index; a member path the index doesn't know → `{ path, name: basename, branch: null, dirty: false, ahead: 0, behind: 0, missing: true }`. Sort: entries with `order` ascending first, then the rest by `name` (`localeCompare`) — matches both sort tests.
+- `update(patch)`: resolve the merged view (index paths ∪ hub paths); unknown path → throw. Merge the override, persist, fire `onChange` once.
+- `createHub(name, root, repoPaths)`: validate before any mutation — valid name, every `repoPath` present in the index (else throw, creating nothing), target `join(root, name)` must not exist (else throw, leaving it untouched). Then: `mkdir` target; `symlink(member, join(target, basename(member)))` per member (absolute targets — the test asserts `readlink` equals the member path); write the generated `AGENTS.md`; persist the hub entry; fire `onChange` once; return `{ path: target }`.
+- **AGENTS.md content** (`project-registry.test.ts` asserts it names each member and mentions AGENTS.md case-insensitively): short document titled with the hub name, a bulleted member list (repo name → symlinked directory), and the sub-project convention: each member directory is an independent git repo with its own `AGENTS.md` that takes precedence when working inside it; keep each repo's work inside its own directory.
+- `disband(projectPath)`: known hub → `rm(hubPath, { recursive: true, force: true })` (symlinks are unlinked, never followed — members survive, per test), drop the entry, persist, fire `onChange` once. A single-repo project path or unknown path → throw, touching nothing.
+- `onChange(cb)`: subscriber set; fire after each successful `update`/`createHub`/`disband`; return an unsubscribe function.
+
+**Verify:** `cd server && npx vitest run src/project-registry.test.ts` — 12 tests green.
+**Status:** not started
+
+### Step 5: Implement the manager extension
+
+Fill in `server/src/manager/extension.ts`.
+
+- `createManagerExtension(context)` returns an `ExtensionFactory` that registers exactly three tools, in this order: `pimote_list_projects` → `context.projects.list()`, `pimote_list_repos` → `context.repos.list()`, `pimote_list_sessions` → `context.sessions.getAllSessions()`.
+- Each tool: `parameters: Type.Object({})` (`Type` from `'typebox'`, same import as `static-host/index.ts`), a label, and an LLM-facing description; `execute` awaits the port call and returns the JSON-serialized result as text content per pi's `AgentToolResult` shape. Tools act only through the injected ports — no fs, no server internals.
+
+**Verify:** `cd server && npx vitest run src/manager/extension.test.ts` — 2 tests green.
+**Status:** not started
+
+### Step 6: Implement ManagerService
+
+Fill in `server/src/manager/service.ts` (types already exist).
+
+- Internal map: `clientId → { session: ManagerSession; lastUsedMs: number }`. `now` = `options.now ?? Date.now`; `idleTimeoutMs` default 1_800_000 (30 min, matching the config `idleTimeout` default).
+- `getOrCreate(clientId)`: existing entry → update `lastUsedMs` (every `getOrCreate` is a "use" — the WS prompt path calls it per prompt, which is what makes the reaper's "recently used" semantics work) → return the session. Else `factory({ clientId })`, store with `lastUsedMs = now()`, return.
+- `disposeClient(clientId)`: entry → `session.dispose()` (may return a promise — best-effort, swallow rejections), delete. Unknown client → no-op.
+- `sweepIdle()`: entries with `now() - lastUsedMs > idleTimeoutMs` → dispose + delete.
+
+**Verify:** `cd server && npx vitest run src/manager/service.test.ts` — 6 tests green.
+**Status:** not started
+
+### Step 7: Real manager session factory
+
+`server/src/session-manager.ts` gains the factory path the architecture assigns it (no unit tests — this is the seam the test plan defers; it's exercised by the wiring smoke in step 9).
+
+- Expose the process `ModelRuntime` (built in `PimoteSessionManager.create`) via a getter, e.g. `getModelRuntime(): ModelRuntime`.
+- Export `createManagerSessionFactory(deps: { config: PimoteConfig; modelRuntime: ModelRuntime; managerExtensionFactory: ExtensionFactory }): ManagerSessionFactory` from `session-manager.ts`. Per call:
+  - `mkdtemp(join(tmpdir(), 'pimote-manager-'))` as the session cwd (DR-006's chdir patch makes this safe).
+  - Assemble the runtime exactly like `doOpenSession` minus persistence and the voice/static-host/file-download extensions: fresh `createEventBus()`, `createAgentSessionServices({ cwd, agentDir: getAgentDir(), modelRuntime, resourceLoaderOptions: { eventBus, extensionFactories: [managerExtensionFactory] } })`, `createAgentSessionFromServices`, then `createAgentSessionRuntime(factory, { cwd: tempDir, agentDir: getAgentDir(), sessionManager: PiSessionManager.inMemory(tempDir) })`.
+  - Streaming: subscribe `session.subscribe` and feed an `EventBuffer` (the existing SDK→wire mapping, so manager output is byte-identical with regular sessions); forward each mapped `PimoteEvent` to `onEvent` subscribers. A small buffer is fine — manager sessions have no replay cursor.
+  - `dispose()`: unsubscribe, `runtime.dispose()`, best-effort `rm(tempDir, { recursive: true, force: true })`. Idempotent.
+  - Return the `ManagerSession` handle.
+
+**Verify:** `npm run check` still green (tsc server); type-level only.
+**Status:** not started
+
+### Step 8: Server wiring — construction + DI
+
+- `server/src/paths.ts`: add `PIMOTE_PROJECTS_DIR = join(PIMOTE_STATE_DIR, 'projects')` (registry store dir, alongside the existing static-host/file-download dirs).
+- `server/src/index.ts`:
+  - Construct `RepoIndex(config.roots)`.
+  - `loadProjectSources(config.projectSourcesDir ?? PIMOTE_PROJECT_SOURCES_DIR)`; `registerSource` each loaded source; collect creators as `[createBuiltinCreator(), ...loaded.creators]`.
+  - Construct `ProjectRegistry(repoIndex, PIMOTE_PROJECTS_DIR)`.
+  - Build the `ManagerToolContext`: `sessions` port maps `sessionManager.getAllSessions()` → `ManagedSessionSummary` (`sessionId`, `folderPath`, `status` from `sessionState.status`, `needsAttention`); `projects`/`repos` ports delegate straight to the registry/index; `config` as-is.
+  - `new ManagerService({ context, factory: createManagerSessionFactory({ config, modelRuntime: sessionManager.getModelRuntime(), managerExtensionFactory: createManagerExtension(context) }) })`.
+  - Schedule the reaper: `setInterval(() => managerService.sweepIdle(), 60_000)` next to `startIdleCheck`; clear it in the shutdown handler.
+- `server/src/server.ts`: `createServer` gains `repoIndex`, `projectRegistry`, `managerService`, `creators` params; constructs each `WsHandler` with them; index.ts passes them through.
+
+**Verify:** `npm run check` green; server boots against a temp config (`npx tsx server/src/index.ts` with `PIMOTE_CONFIG_PATH` pointed at a scratch config).
+**Status:** not started
+
+### Step 9: WS command routing, broadcast, manager streaming
+
+`server/src/ws-handler.ts` (cases live in the server-level switch alongside `list_folders`):
+
+- `list_projects`: `projectRegistry.list()`, then enrich each project in place — `activeSessionCount` = managed slots with `folderPath === project.path` (exact match, same rule as the `list_folders` enrichment; member sessions count toward their own single projects), `externalProcessCount: 0` (parity with `list_folders`, which never sets it). Respond `{ projects, roots: repoIndex.roots }`.
+- `list_repos`: `{ repos: await repoIndex.list() }`.
+- `update_project`: `projectRegistry.update({ projectPath, favorite, order, archived })` → success. (The `projects_changed` broadcast in `onChange` covers propagation.)
+- `create_hub_project`: validate `root` ∈ `repoIndex.roots`, then `createHub` → `{ projectPath }`.
+- `disband_project`: `projectRegistry.disband` → success.
+- `manager_prompt`: `const ms = await managerService.getOrCreate(this.clientId)`; install this connection's manager listener on first use (`ms.onEvent(e => this.sendToClient({ type: 'manager_event', event: e }))`, one subscription per connection, stored for cleanup); start `ms.session.prompt(text)` fire-and-forget (same pattern as `prompt`) and respond success immediately — output reaches the client as `manager_event` stream.
+- `manager_abort`: `managerService.getOrCreate(this.clientId)` → `session.abort()` → success.
+- `projects_changed` broadcast: in `server.ts` (has `clientRegistry` + registry), `projectRegistry.onChange(() => { void projectRegistry.list().then(projects => { for (const [, h] of clientRegistry) h.sendToClient({ type: 'projects_changed', projects }); }) })`.
+- `create_project` → route through the builtin creator (find it by `describe().paramSchema` matching `{ root, name }`) instead of the inline mkdir+git-init block; keep the `{ folderPath }` response shape. On success: `repoIndex.invalidate()` then broadcast `projects_changed` — otherwise the 30s listing TTL hides the new repo.
+- Disconnect: `cleanup()` also unsubscribes the manager listener and calls `managerService.disposeClient(this.clientId)`.
+
+**Verify:** `npm run check` green; server suite green; manual WS smoke (temp config + `wscat`): `list_projects`, `list_repos`, `update_project`, `create_hub_project`, `disband_project`, `manager_prompt` (streams `manager_event`), `manager_abort`; `projects_changed` arrives after a mutation.
+**Status:** not started
+
+### Step 10: Physical protocol rename
+
+`shared/src/protocol.ts` + mechanical reference fixes. Android is intentionally untouched — `Protocol.kt` goes stale for renames (accepted debt; its `ignoreUnknownKeys` makes the additions safe but not the renames). Update the header KEEP-IN-SYNC comment to record the pending Kotlin mirror update.
+
+- Delete `FolderInfo` and `ListFoldersCommand`; drop `list_folders` from the `PimoteCommand` union. `SessionOpenedEvent.folder` and `SessionReplacedEvent.folder` become `ProjectInfo` — field names unchanged, per the architecture's wire-compat rule.
+- Server: fix remaining references (`ws-handler.ts` `buildFolderInfo` → builds a `ProjectInfo`; anything else the compiler names).
+- Client mechanical fix (full evolution is steps 11–14): `index-store.svelte.ts` sends `list_projects` and reads `{ projects, roots }`; `FolderInfo` → `ProjectInfo` in `index-store.svelte.ts`, `session-list-groups.ts` (+ its test), `connection.svelte.test.ts`.
+
+**Verify:** `npm run check` green; full server + client suites green.
+**Status:** not started
+
+### Step 11: `project-store` (client)
+
+Evolve `client/src/lib/stores/index-store.svelte.ts` → `client/src/lib/stores/project-store.svelte.ts` (rename file, export `projectStore`, update consumers in the same step so nothing dangles).
+
+- State: `projects: ProjectInfo[]`, `repos: RepoInfo[]`, `roots: string[]`, the per-path sessions `SvelteMap`, `loading`, `showArchived` — the existing single-flight load-correlation machinery for both project and session loads carries over unchanged.
+- Actions: `loadProjects()` (replaces `loadFolders`: `list_projects` → seeds per-project session loads), `loadRepos()` (`list_repos`, for the create/manage flows), `applyProjectsChanged(event)` (whole-list replacement), `setShowArchived` (now also filters `project.archived`).
+- Event routing: module-scope `connection.onEvent` subscription in the store module (the `login-store.ts` pattern) dispatching `projects_changed`; session-scoped events keep flowing through the existing session-registry path untouched.
+- Tests alongside implementation (client vitest, mirroring `index-store` test conventions): `projects_changed` replaces the list; concurrent `loadProjects` single-flights; session map keyed by path still correlates loads.
+
+**Verify:** `cd client && npx vitest run` green including the new store tests; `npm run check` green.
+**Status:** not started
+
+### Step 12: `ProjectList.svelte` (client)
+
+Evolve `client/src/lib/components/FolderList.svelte` → `client/src/lib/components/ProjectList.svelte` (rename, rewire to `projectStore`).
+
+- Preserve: search filter, create-project dialog (root + name → `create_project`), archive-all, show-archived toggle, per-project session grouping/expansion (`session-list-groups.ts` machinery).
+- Add:
+  - Favorite toggle per project → `update_project { favorite }` (star; favorites sort first via `order`-then-name — the favorite flag itself is display state, ordering is manual).
+  - Manual ordering (move up/down in the manage menu) → `update_project { order }`.
+  - Archived flag: show-archived now also reveals `archived` projects; archive/unarchive in the manage menu → `update_project { archived }`.
+  - Inline repo chips on multi projects: member `RepoInfo` name + branch + dirty dot; `missing: true` members render in a warning style.
+  - Project manage menu: favorite, order, archive, disband (confirm dialog → `disband_project`), and create multi-repo hub (dialog: name + root + member picker fed by `loadRepos()` → `create_hub_project`).
+
+**Verify:** `npm run check` green; manual smoke — favorite/order/archive persist across reload, hub create/disband round-trips, chips render member state.
+**Status:** not started
+
+### Step 13: `manager-store` + `ManagerChat.svelte` (client)
+
+- `client/src/lib/stores/manager-store.svelte.ts`: reduces `manager_event` payloads with the same event→message machinery the session registry uses (message_start/update/end, agent_start/end, tool events); exposes `messages`, `status: 'idle' | 'working'`, `send(text)` → `manager_prompt`, `abort()` → `manager_abort`. Manager sessions are ephemeral per connection — reset the store when the WebSocket drops (reconnect gets a fresh manager).
+- `client/src/lib/components/ManagerChat.svelte`: renders the manager transcript through `MessageList` (adapt it minimally to accept a message source — it currently reads `sessionRegistry.viewed` — without changing regular-session rendering) plus a slim composer with send and, while working, abort.
+
+**Verify:** store unit tests (event reduction, send/abort wiring, reset on disconnect) green; `npm run check` green.
+**Status:** not started
+
+### Step 14: Dashboard + layout (client)
+
+- `client/src/routes/+layout.svelte`: remove the sidebar entirely — the `<aside>`, `FolderList` import, `sidebarOpen` state, mobile overlay, and menu button. Everything else (mobile header, panels, dialogs, `ExtensionStatus`) stays.
+- `client/src/lib/components/Dashboard.svelte`: desktop (md+) shows the projects column (`ProjectList`) and the manager chat (`ManagerChat`) side-by-side; mobile shows projects fullscreen with a manager-chat affordance (button/sheet that presents `ManagerChat`).
+- `client/src/routes/+page.svelte`: the landing branch (no viewed session) renders `<Dashboard />`.
+- Kick off `projectStore.loadProjects()` when the dashboard mounts and the connection is ready (carry over the "loaded for current connection" guard from `FolderList` so reconnects refresh).
+
+**Verify:** `npm run check` green; full server + client suites green; manual smoke at desktop and mobile widths — projects render, manager chat works, opening a session still swaps to the session view.
+**Status:** not started
+
+### Step 15: Full verification
+
+- `npm run lint` and `npm run check` clean.
+- Full suites: server (`cd server && npx vitest run`) and client (`cd client && npx vitest run`) — the 42 new tests plus the pre-existing 554 server / 542 client all green.
+- Boot smoke against a scratch config: dashboard loads, discovery lists real repos, hub create/disband round-trips, manager prompt streams.
+
+**Verify:** all of the above pass.
+**Status:** not started
