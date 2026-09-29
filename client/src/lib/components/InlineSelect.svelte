@@ -37,10 +37,16 @@
     }
   });
 
-  // Auto-focus the panel when it appears
+  // Auto-focus the panel when it appears, so keyboard shortcuts work —
+  // unless the user is typing. Blurring an editable element collapses the
+  // mobile virtual keyboard, so the composer keeps focus there.
   $effect(() => {
     if (current && panelEl) {
-      panelEl.focus();
+      const active = document.activeElement;
+      const isEditing = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement || (active instanceof HTMLElement && active.isContentEditable);
+      if (!isEditing) {
+        panelEl.focus();
+      }
     }
   });
 
