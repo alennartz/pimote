@@ -18,14 +18,19 @@ items that must be exercised each run even if only by a human.
 
 ### 1. Connect and open a session
 
-**What:** PWA connects to the pimote server, `list_folders` populates
-the folder picker, user opens an existing session or creates a new one,
-session metadata appears in the active-session bar.
+**What:** PWA connects to the pimote server; the **dashboard** (the landing
+surface since the `project-management` topic removed the sidebar) lists
+discovered projects (`list_projects`), the user starts a new session from a
+project row (or creates/resumes one), session metadata appears in the
+active-session bar, and closing the viewed session returns to the dashboard.
 
 **Why:** Entry point for every other journey. If this breaks, everything
 breaks.
 
-**Driver:** manual-browser (no automation).
+**Driver:** `tools/manual-test/project-management-smoke/` drives the dashboard
+half end-to-end (render, new session, resume of a fabricated session, back
+navigation, active-session dot); the prompt/streaming half remains
+manual-browser plus journey 2's drivers.
 
 ### 2. Prompt → streamed assistant response
 
@@ -236,12 +241,32 @@ LLM/tool turn. Focused/background push planning and inbox-adoption contracts
 are covered by the client unit tests; OS Web Push delivery remains
 environment-bounded in headless Chromium.
 
+## 12. Dashboard: projects, hubs, and manager
+
+**What:** The dashboard is the product home (the `project-management`
+topic): the projects list renders every discovered repo (recursive discovery
+to depth 3) with favorites, manual ordering, archive/show-archived, inline
+expansion of per-project sessions, and repo status chips (branch + dirty dot)
+on multi-repo hub projects; the hub dialog composes a project from indexed
+repos (server creates symlink hub + AGENTS.md) and disband removes it;
+`projects_changed` keeps two clients in sync in both directions; the manager
+chat prompts a per-connection ephemeral agent whose pimote toolset answers
+over real server APIs, with abort and transcript reset on reconnect.
+
+**Why:** This replaced the sidebar as the primary navigation surface; hubs
+are the multi-repo model; the manager is the dashboard's second half.
+
+**Driver:** `tools/manual-test/project-management-smoke/` (real sandboxed
+server + `agent-browser` + a second WebSocket probe client). See
+`docs/manual-tests/project-management.md`.
+
 ## Automation gap (recorded, not an action item for this topic)
 
-Journeys 1–7 currently have no automation driver. This is a deliberate
-pre-existing gap; journey 8 was first to pick one up (`agent-browser`
-skill as of Re-test 2026-04-21). As autoflow topics add user-facing
-features, this plan gets the new primary journey and — when the topic
-brings automation along with it — the driver. Journey 8 is the first
-journey to combine a server-side automated driver with a UI-automation
-driver.
+Journeys 2–7 currently have no automation driver of their own. This is a
+deliberate pre-existing gap; journey 8 was first to pick one up
+(`agent-browser` skill as of Re-test 2026-04-21), and the `project-management`
+topic gave journey 1 (dashboard half) and new journey 12 full drivers. As
+autoflow topics add user-facing features, this plan gets the new primary
+journey and — when the topic brings automation along with it — the driver.
+Journey 8 is the first journey to combine a server-side automated driver with
+a UI-automation driver.
