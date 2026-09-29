@@ -218,32 +218,11 @@ export class WsHandler {
     try {
       switch (command.type) {
         // ---- Server-level commands ----
-        case 'list_folders': {
-          const folders = await this.folderIndex.scan();
-          // Enrich with active session info
-          const activeSessions = this.sessionManager.getAllSessions();
-          for (const folder of folders) {
-            const folderSessions = activeSessions.filter((s) => s.folderPath === folder.path);
-            folder.activeSessionCount = folderSessions.length;
-            if (folderSessions.some((s) => s.sessionState.status === 'working')) {
-              folder.activeStatus = 'working';
-            } else if (folderSessions.some((s) => s.sessionState.needsAttention)) {
-              folder.activeStatus = 'attention';
-            } else if (folderSessions.length > 0) {
-              folder.activeStatus = 'idle';
-            } else {
-              folder.activeStatus = null;
-            }
-          }
-          this.sendResponse(id, true, { folders, roots: this.folderIndex.roots });
-          break;
-        }
-
         case 'list_projects': {
           const { repoIndex, projectRegistry } = this.requireProjectDeps();
           const projects = await projectRegistry.list();
-          // Exact path match, same rule as the list_folders enrichment: member
-          // sessions count toward their own single-repo projects.
+          // Exact path match: member sessions count toward their own
+          // single-repo projects.
           const activeSessions = this.sessionManager.getAllSessions();
           for (const project of projects) {
             project.activeSessionCount = activeSessions.filter((s) => s.folderPath === project.path).length;
@@ -421,7 +400,7 @@ export class WsHandler {
             this.sendEvent({
               type: 'session_opened',
               sessionId,
-              folder: this.buildFolderInfo(newSlot.folderPath),
+              folder: this.buildProjectInfo(newSlot.folderPath),
             });
 
             WsHandler.broadcastSidebarUpdate(sessionId, newSlot.folderPath, this.sessionManager, this.clientRegistry);
@@ -631,13 +610,7 @@ export class WsHandler {
           this.sendEvent({
             type: 'session_opened',
             sessionId: takeoverSessionId,
-            folder: {
-              path: takeoverSlot.folderPath,
-              name: takeoverSlot.folderPath.split('/').pop() ?? takeoverSlot.folderPath,
-              activeSessionCount: 1,
-              externalProcessCount: 0,
-              activeStatus: 'idle',
-            },
+            folder: this.buildProjectInfo(takeoverSlot.folderPath),
           });
 
           WsHandler.broadcastSidebarUpdate(takeoverSessionId, takeoverSlot.folderPath, this.sessionManager, this.clientRegistry);
@@ -1438,11 +1411,8 @@ export class WsHandler {
       oldSessionId: oldId,
       newSessionId: newId,
       folder: {
-        path: folderPath,
-        name: folderPath.split('/').pop() ?? folderPath,
+        ...this.buildProjectInfo(folderPath),
         activeSessionCount: this.sessionManager.getAllSessions().filter((s) => s.folderPath === folderPath).length,
-        externalProcessCount: 0,
-        activeStatus: 'idle',
       },
     });
     this.sendSilentDownloadSnapshot(slot);
@@ -1466,13 +1436,13 @@ export class WsHandler {
     });
   }
 
-  private buildFolderInfo(folderPath: string) {
+  private buildProjectInfo(folderPath: string) {
     return {
       path: folderPath,
       name: folderPath.split('/').pop() ?? folderPath,
+      kind: 'single' as const,
       activeSessionCount: 1,
       externalProcessCount: 0,
-      activeStatus: 'idle' as const,
     };
   }
 
@@ -1759,7 +1729,7 @@ export class WsHandler {
   static broadcastSidebarUpdate(sessionId: string, folderPath: string, sessionManager: PimoteSessionManager, clientRegistry: ClientRegistry): void {
     const slot = sessionManager.getSession(sessionId);
 
-    // Compute folder aggregates (same logic as list_folders handler)
+    // Compute folder aggregates
     const folderSessions = sessionManager.getAllSessions().filter((s) => s.folderPath === folderPath);
     const folderActiveSessionCount = folderSessions.length;
     let folderActiveStatus: 'working' | 'idle' | 'attention' | null = null;

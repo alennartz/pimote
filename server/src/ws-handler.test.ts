@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { createCommandContextActions, WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { PimoteSessionManager, ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
 import type { FolderIndex } from './folder-index.js';
+import type { RepoIndex } from './repo-index.js';
+import type { ProjectRegistry } from './project-registry.js';
 import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer } from './event-buffer.js';
 import type { DownloadItem, PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
@@ -230,6 +232,8 @@ function createTestHandler(
     clientRegistry?: ClientRegistry;
     folderIndex?: FolderIndex;
     sessionMetadataStore?: ReturnType<typeof createMockSessionMetadataStore>;
+    repoIndex?: RepoIndex;
+    projectRegistry?: ProjectRegistry;
   },
 ): TestContext {
   const sessions = opts?.sessions ?? new Map();
@@ -240,7 +244,20 @@ function createTestHandler(
   const pushService = createMockPushService();
   const sessionMetadataStore = opts?.sessionMetadataStore ?? createMockSessionMetadataStore();
 
-  const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, sessionMetadataStore as any, clientId, clientRegistry);
+  const handler = new WsHandler(
+    sessionManager,
+    folderIndex,
+    ws,
+    pushService,
+    sessionMetadataStore as any,
+    clientId,
+    clientRegistry,
+    undefined,
+    opts?.repoIndex,
+    opts?.projectRegistry,
+    { disposeClient: () => {} } as never, // managerService: only truthiness is required by requireProjectDeps; cleanup() no-op
+    [], // creators
+  );
 
   clientRegistry.set(clientId, handler);
 
@@ -3429,12 +3446,13 @@ describe('WsHandler', () => {
     });
   });
 
-  describe('list_folders — roots', () => {
-    it('includes roots in list_folders response', async () => {
-      const folderIndex = createMockFolderIndex(['/home/user/projects', '/opt/repos']);
-      const { handler, sent } = createTestHandler('client-1', { folderIndex });
+  describe('list_projects — roots', () => {
+    it('includes roots in list_projects response', async () => {
+      const repoIndex = { roots: ['/home/user/projects', '/opt/repos'], list: async () => [] } as unknown as RepoIndex;
+      const projectRegistry = { list: async () => [] } as unknown as ProjectRegistry;
+      const { handler, sent } = createTestHandler('client-1', { repoIndex, projectRegistry });
 
-      await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'req-roots' }));
+      await handler.handleMessage(JSON.stringify({ type: 'list_projects', id: 'req-roots' }));
 
       const resp = findResponse(sent, 'req-roots');
       expect(resp!.success).toBe(true);

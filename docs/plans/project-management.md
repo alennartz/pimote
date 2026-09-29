@@ -315,7 +315,7 @@ Fill in `server/src/manager/service.ts` (types already exist).
 - Client mechanical fix (full evolution is steps 11–14): `index-store.svelte.ts` sends `list_projects` and reads `{ projects, roots }`; `FolderInfo` → `ProjectInfo` in `index-store.svelte.ts`, `session-list-groups.ts` (+ its test), `connection.svelte.test.ts`.
 
 **Verify:** `npm run check` green; full server + client suites green.
-**Status:** not started
+**Status:** done
 
 ### Step 11: `project-store` (client)
 

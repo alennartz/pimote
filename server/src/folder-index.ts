@@ -1,7 +1,7 @@
 import { readdir, stat, unlink } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { SessionManager, type SessionInfo as PiSessionInfo } from '@earendil-works/pi-coding-agent';
-import type { FolderInfo, SessionInfo as PimoteSessionInfo } from '../../shared/dist/index.js';
+import type { ProjectInfo, SessionInfo as PimoteSessionInfo } from '../../shared/dist/index.js';
 
 /** Project marker files/directories that identify a folder as a project. */
 const PROJECT_MARKERS = ['.git', 'package.json'] as const;
@@ -30,8 +30,8 @@ export class FolderIndex {
    * Scan all roots one level deep for project directories.
    * A subdirectory is a "project" if it contains .git or package.json.
    */
-  async scan(options: FolderScanOptions = {}): Promise<FolderInfo[]> {
-    const folders: FolderInfo[] = [];
+  async scan(options: FolderScanOptions = {}): Promise<ProjectInfo[]> {
+    const folders: ProjectInfo[] = [];
     const failOnError = options.failOnError === true;
 
     for (const root of this._roots) {
@@ -61,9 +61,9 @@ export class FolderIndex {
         folders.push({
           path: fullPath,
           name: basename(fullPath),
+          kind: 'single',
           activeSessionCount: 0, // Will be enriched by session pool later
           externalProcessCount: 0,
-          activeStatus: null,
         });
       }
     }

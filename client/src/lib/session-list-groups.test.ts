@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { FolderInfo, SessionInfo } from '@pimote/shared';
+import type { ProjectInfo, SessionInfo } from '@pimote/shared';
 import { buildSessionProjectGroups } from './session-list-groups.js';
 
-function folder(path: string, name: string): FolderInfo {
+function folder(path: string, name: string): ProjectInfo {
   return {
     path,
     name,
+    kind: 'single',
     activeSessionCount: 0,
     externalProcessCount: 0,
-    activeStatus: null,
   };
 }
 

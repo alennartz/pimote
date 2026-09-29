@@ -38,9 +38,9 @@ describe('FolderIndex.scan()', () => {
     expect(folders[0]).toEqual({
       path: projectDir,
       name: 'my-project',
+      kind: 'single',
       activeSessionCount: 0,
       externalProcessCount: 0,
-      activeStatus: null,
     });
   });
 

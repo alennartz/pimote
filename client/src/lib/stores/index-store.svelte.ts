@@ -1,5 +1,5 @@
 // IndexStore — manages folder and session listing
-import type { FolderInfo, SessionInfo, SessionStateChangedEvent, SessionDeletedEvent, SessionRenamedEvent, SessionArchivedEvent } from '@pimote/shared';
+import type { ProjectInfo, SessionInfo, SessionStateChangedEvent, SessionDeletedEvent, SessionRenamedEvent, SessionArchivedEvent } from '@pimote/shared';
 import { connection } from './connection.svelte.js';
 import { SvelteMap } from 'svelte/reactivity';
 import { getShowArchived, setShowArchived } from './persistence.js';
@@ -20,7 +20,7 @@ function sortSessionsByRecency(sessions: SessionInfo[]): SessionInfo[] {
 }
 
 class IndexStore {
-  folders: FolderInfo[] = $state([]);
+  folders: ProjectInfo[] = $state([]);
   roots: string[] = $state([]);
   sessions = $state(new SvelteMap<string, SessionInfo[]>());
   loading: boolean = $state(false);
@@ -36,12 +36,12 @@ class IndexStore {
       const isInitialLoad = this.folders.length === 0;
       if (isInitialLoad) this.loading = true;
       try {
-        const response = await connection.send({ type: 'list_folders' });
+        const response = await connection.send({ type: 'list_projects' });
         if (response.success && response.data) {
-          const data = response.data as { folders: FolderInfo[]; roots: string[] };
-          this.folders = data.folders;
+          const data = response.data as { projects: ProjectInfo[]; roots: string[] };
+          this.folders = data.projects;
           this.roots = data.roots ?? [];
-          await Promise.all(data.folders.map((folder) => this.loadSessions(folder.path)));
+          await Promise.all(data.projects.map((folder) => this.loadSessions(folder.path)));
         }
       } catch (e) {
         console.error('[IndexStore] Failed to load folders:', e);
@@ -59,7 +59,6 @@ class IndexStore {
     const folder = this.folders.find((f) => f.path === event.folderPath);
     if (folder) {
       folder.activeSessionCount = event.folderActiveSessionCount;
-      folder.activeStatus = event.folderActiveStatus;
     }
 
     const isOwnedByMe = event.connectedClientId === myClientId;

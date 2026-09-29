@@ -5,6 +5,12 @@
 //
 // KEEP IN SYNC WITH: mobile/android/app/src/main/kotlin/com/pimote/android/protocol/Protocol.kt
 //
+// PENDING MIRROR UPDATE: Protocol.kt still mirrors the pre-rename surface
+// (FolderInfo / list_folders). The project-management rename below is
+// intentionally not yet reflected on the Kotlin side — updating that mirror is
+// accepted debt for a future Android update (field additions are safe via
+// ignoreUnknownKeys; renames are not).
+//
 // The native Android client hand-mirrors a subset of these types as Kotlin
 // data classes. Any change to the following types MUST be reflected on the
 // Kotlin side (no codegen):
@@ -12,8 +18,8 @@
 //   - CallReadyEvent / CallEndedEvent / CallStatusEvent / CallEndReason / CallStatus
 //   - CallBindErrorCode
 //   - OpenSessionCommand / OpenSessionResponseData
-//   - ListFoldersCommand / ListSessionsCommand
-//   - FolderInfo / SessionInfo
+//   - ListSessionsCommand
+//   - ProjectInfo / SessionInfo
 //   - SessionOpenedEvent / SessionRenamedEvent / SessionArchivedEvent /
 //     SessionDeletedEvent / SessionReplacedEvent
 // See docs/plans/native-android-client.md §Protocol DTOs.
@@ -22,15 +28,6 @@
 // ----------------------------------------------------------------------------
 // Shared Data Types
 // ----------------------------------------------------------------------------
-
-export interface FolderInfo {
-  path: string;
-  name: string;
-  activeSessionCount: number;
-  externalProcessCount: number;
-  /** @deprecated Client derives status from per-session data. Will be removed. */
-  activeStatus?: 'working' | 'idle' | 'attention' | null;
-}
 
 /** A git repository as discovered by the server's repo index. */
 export interface RepoInfo {
@@ -514,10 +511,6 @@ export interface CreateHubProjectResponseData {
 
 // -- Server-level commands --
 
-export interface ListFoldersCommand extends CommandBase {
-  type: 'list_folders';
-}
-
 export interface ListSessionsCommand extends CommandBase {
   type: 'list_sessions';
   folderPath: string;
@@ -727,7 +720,6 @@ export type PimoteCommand =
   | ManagerAbortCommand
   // Server-level
   | RenameSessionCommand
-  | ListFoldersCommand
   | ListSessionsCommand
   | OpenSessionCommand
   | CloseSessionCommand
@@ -981,7 +973,7 @@ export interface ExtensionUiRequestEvent {
 export interface SessionOpenedEvent {
   type: 'session_opened';
   sessionId: string;
-  folder: FolderInfo;
+  folder: ProjectInfo;
 }
 
 export interface SessionClosedEvent {
@@ -1014,7 +1006,7 @@ export interface SessionReplacedEvent {
   type: 'session_replaced';
   oldSessionId: string;
   newSessionId: string;
-  folder: FolderInfo;
+  folder: ProjectInfo;
 }
 
 export interface SessionStateChangedEvent {

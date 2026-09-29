@@ -1,7 +1,7 @@
-import type { FolderInfo, SessionInfo } from '@pimote/shared';
+import type { ProjectInfo, SessionInfo } from '@pimote/shared';
 
 export interface SessionProjectGroup {
-  folder: FolderInfo;
+  folder: ProjectInfo;
   sessions: SessionInfo[];
   lastModified: string;
 }
@@ -15,7 +15,7 @@ function compareSessionsByRecency(a: SessionInfo, b: SessionInfo): number {
   return toTimestamp(b.modified) - toTimestamp(a.modified) || toTimestamp(b.created) - toTimestamp(a.created) || a.id.localeCompare(b.id);
 }
 
-export function buildSessionProjectGroups(folders: FolderInfo[], sessionsByFolder: ReadonlyMap<string, SessionInfo[]>): SessionProjectGroup[] {
+export function buildSessionProjectGroups(folders: ProjectInfo[], sessionsByFolder: ReadonlyMap<string, SessionInfo[]>): SessionProjectGroup[] {
   return folders
     .map((folder) => {
       const sessions = [...(sessionsByFolder.get(folder.path) ?? [])].sort(compareSessionsByRecency);
