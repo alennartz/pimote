@@ -15,6 +15,8 @@
   import Network from '@lucide/svelte/icons/network';
   import Plus from '@lucide/svelte/icons/plus';
   import Star from '@lucide/svelte/icons/star';
+  import Tags from '@lucide/svelte/icons/tags';
+  import X from '@lucide/svelte/icons/x';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Undo2 from '@lucide/svelte/icons/undo-2';
   import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuSeparator, DropdownMenuTrigger } from '$lib/components/ui/dropdown-menu/index.js';
@@ -57,6 +59,25 @@
   // Disband confirmation state
   let disbandTarget = $state<ProjectInfo | null>(null);
 
+  // Add-tag dialog state
+  let tagTarget = $state<ProjectInfo | null>(null);
+  let tagName = $state('');
+  let tagError = $state('');
+
+  function openTagDialog(project: ProjectInfo) {
+    tagTarget = project;
+    tagName = '';
+    tagError = '';
+  }
+
+  async function addTag() {
+    const tag = tagName.trim();
+    if (!tag || !tagTarget) return;
+    const project = tagTarget;
+    tagTarget = null;
+    await updateProject(project, { addTags: [tag] });
+  }
+
   // Two-tier search: a project matching by name/path shows all its sessions;
   // one matching only via session data shows just the matching sessions.
   const searchResults = $derived.by(() => {
@@ -68,7 +89,8 @@
     const sessionView = new Map<string, SessionInfo[]>();
     for (const project of projectStore.visibleProjects) {
       const sessions = projectStore.sessions.get(project.path) ?? [];
-      const projectMatch = project.name.toLowerCase().includes(query) || project.path.toLowerCase().includes(query);
+      const tagMatch = (project.tags ?? []).some((t) => t.toLowerCase().includes(query));
+      const projectMatch = tagMatch || project.name.toLowerCase().includes(query) || project.path.toLowerCase().includes(query);
       const sessionMatches = sessions.filter((s) => (s.name ?? '').toLowerCase().includes(query) || (s.firstMessage ?? '').toLowerCase().includes(query));
       if (projectMatch) {
         projects.push(project);
@@ -294,7 +316,7 @@
   }
 
   /** Apply a curation patch; the store updates via the projects_changed broadcast. */
-  async function updateProject(project: ProjectInfo, patch: { favorite?: boolean; order?: number; archived?: boolean }) {
+  async function updateProject(project: ProjectInfo, patch: { favorite?: boolean; order?: number; archived?: boolean; addTags?: string[]; removeTags?: string[] }) {
     try {
       await connection.send({ type: 'update_project', projectPath: project.path, ...patch });
     } catch (e) {
@@ -541,6 +563,34 @@
                 </div>
               </button>
 
+              {#if project.tags?.length}
+                <div class="flex shrink-0 items-center gap-1">
+                  {#each project.tags as tag (tag)}
+                    {@const removable = project.userTags?.includes(tag) === true}
+                    <span
+                      class="flex items-center gap-0.5 rounded-full border px-1.5 py-px text-[10.5px] {removable
+                        ? 'border-border bg-secondary text-secondary-foreground'
+                        : 'border-border/60 bg-muted/60 text-muted-foreground'}"
+                      title={removable ? `Tag: ${tag}` : `Tag from a project source: ${tag}`}
+                    >
+                      {tag}
+                      {#if removable}
+                        <button
+                          class="hover:text-destructive -mr-0.5 rounded-full p-px transition-colors"
+                          aria-label="Remove tag {tag}"
+                          onclick={(e) => {
+                            e.stopPropagation();
+                            void updateProject(project, { removeTags: [tag] });
+                          }}
+                        >
+                          <X class="size-2.5" />
+                        </button>
+                      {/if}
+                    </span>
+                  {/each}
+                </div>
+              {/if}
+
               <DropdownMenu>
                 <DropdownMenuTrigger>
                   <Button
@@ -555,6 +605,10 @@
                 </DropdownMenuTrigger>
                 <DropdownMenuPortal>
                   <DropdownMenuContent class="w-48" align="end">
+                    <DropdownMenuItem class="gap-2" onSelect={() => openTagDialog(project)}>
+                      <Tags class="size-4" />
+                      Add tag…
+                    </DropdownMenuItem>
                     <DropdownMenuItem class="gap-2" onSelect={() => void updateProject(project, { favorite: !project.favorite })}>
                       <Star class="size-4 {project.favorite ? 'fill-yellow-500 text-yellow-500' : ''}" />
                       {project.favorite ? 'Unfavorite' : 'Favorite'}
@@ -635,6 +689,37 @@
     {/if}
   {/if}
 </div>
+
+<Dialog.Root
+  open={tagTarget !== null}
+  onOpenChange={(open) => {
+    if (!open) tagTarget = null;
+  }}
+>
+  <Dialog.Content class="sm:max-w-sm">
+    <Dialog.Header>
+      <Dialog.Title>Add tag</Dialog.Title>
+      <Dialog.Description>Tag the project <code class="bg-muted rounded px-1 py-0.5 text-xs">{tagTarget?.name}</code></Dialog.Description>
+    </Dialog.Header>
+    <div class="flex flex-col gap-1.5">
+      <Input
+        bind:value={tagName}
+        placeholder="Tag name"
+        autofocus
+        onkeydown={(e) => {
+          if (e.key === 'Enter') void addTag();
+        }}
+      />
+      {#if tagError}
+        <p class="text-destructive text-sm">{tagError}</p>
+      {/if}
+    </div>
+    <Dialog.Footer>
+      <Button variant="outline" onclick={() => (tagTarget = null)}>Cancel</Button>
+      <Button onclick={() => void addTag()} disabled={!tagName.trim()}>Add tag</Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root open={showNewSessionDialog} onOpenChange={handleNewSessionDialogOpenChange}>
   <Dialog.Content class="sm:max-w-lg">

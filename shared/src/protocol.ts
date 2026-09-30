@@ -43,6 +43,8 @@ export interface RepoInfo {
   /** True when the repo path no longer exists on disk (deleted member, broken symlink).
    *  Projects always remain editable: members can be removed regardless of state. */
   missing?: boolean;
+  /** Effective tags (user + source-contributed). Absent when untagged. */
+  tags?: string[];
 }
 
 /** A user-curated project: a single repo, or a multi-repo project folder. */
@@ -53,6 +55,10 @@ export interface ProjectInfo {
   kind: 'single' | 'multi';
   /** Member repos; present when kind === 'multi' (member repos). */
   repos?: RepoInfo[];
+  /** Effective tags: own user+source tags, plus inherited member-repo tags for multi projects. */
+  tags?: string[];
+  /** Own-path user tags — the subset of `tags` that is user-removable. */
+  userTags?: string[];
   favorite?: boolean;
   /** Manual ordering; absent = name sort. */
   order?: number;
@@ -467,6 +473,10 @@ export interface UpdateProjectCommand extends CommandBase {
   favorite?: boolean;
   order?: number;
   archived?: boolean;
+  /** Tags to add (stored as user tags at the project path). */
+  addTags?: string[];
+  /** User tags to remove. Source-contributed and inherited tags are not removable. */
+  removeTags?: string[];
 }
 
 /** Create a multi-repo project: mkdir + symlinks to member repos + generated AGENTS.md. resp: CreateMultiRepoProjectResponseData */

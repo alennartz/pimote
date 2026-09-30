@@ -595,6 +595,46 @@ async function main() {
     assert(alphaStarAfterReload === true, 'favorite survives reload');
 
     // ============================================================
+    section('B — tags (add, search, persist, remove)');
+    // ============================================================
+    await evalBrowser(
+      `(() => { const rows = Array.from(document.querySelectorAll('button[title^="Manage project"]')); for (const manage of rows) { if ((manage.closest('.rounded-lg')?.textContent ?? '').trim().startsWith('alpha')) { manage.click(); return true; } } return false; })()`,
+    );
+    await browser(['wait', 400]);
+    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Add tag']);
+    await browser(['wait', 400]);
+    await fillSelector('[role="dialog"] input[placeholder="Tag name"]', 'client-work');
+    await browser(['find', 'role', 'button', 'click', '--name', 'Add tag']);
+    await browser(['wait', 800]);
+    const tagChip = await evalBrowser(
+      `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('alpha')); return row?.textContent?.includes('client-work') ? 'chip' : 'none'; })()`,
+    );
+    assert(tagChip === 'chip', 'tag chip renders on the project row');
+    // Search over tags surfaces the project
+    await fillSelector('input[placeholder="Search projects"]', 'client-work');
+    await browser(['wait', 400]);
+    const tagSearch = String(await evalBrowser('document.body.innerText'));
+    assert(tagSearch.includes('alpha'), 'tag search surfaces the tagged project');
+    await fillSelector('input[placeholder="Search projects"]', '');
+    await browser(['wait', 300]);
+    // Reload persistence
+    await browser(['reload']);
+    await browser(['wait', 2500]);
+    const tagAfterReload = await evalBrowser(
+      `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('alpha')); return row?.textContent?.includes('client-work') ? 'chip' : 'none'; })()`,
+    );
+    assert(tagAfterReload === 'chip', 'tag survives reload');
+    // Remove via chip ×
+    await evalBrowser(
+      `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('alpha')); const x = row?.querySelector('button[aria-label="Remove tag client-work"]'); if (!x) return false; x.click(); return true; })()`,
+    );
+    await browser(['wait', 800]);
+    const tagRemoved = await evalBrowser(
+      `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('alpha')); return row?.textContent?.includes('client-work') ? 'chip' : 'gone'; })()`,
+    );
+    assert(tagRemoved === 'gone', 'tag removal via chip x works');
+
+    // ============================================================
     section('B — manual order (move up)');
     // ============================================================
     // Move delta up until it reaches the top (name-sorted start position may vary).

@@ -18,6 +18,8 @@ export interface MultiRepoSourceEntry {
   path: string;
   name: string;
   memberPaths: string[];
+  /** Source-contributed tags; shown to the user but not user-removable. */
+  tags?: string[];
 }
 
 /** Anything a source lists: a repo, or a multi-repo project over member paths. */

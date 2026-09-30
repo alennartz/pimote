@@ -233,7 +233,14 @@ export class WsHandler {
 
         case 'update_project': {
           const { projectRegistry } = this.requireProjectDeps();
-          await projectRegistry.update({ projectPath: command.projectPath, favorite: command.favorite, order: command.order, archived: command.archived });
+          await projectRegistry.update({
+            projectPath: command.projectPath,
+            favorite: command.favorite,
+            order: command.order,
+            archived: command.archived,
+            addTags: command.addTags,
+            removeTags: command.removeTags,
+          });
           this.sendResponse(id, true);
           break;
         }

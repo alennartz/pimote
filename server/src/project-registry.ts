@@ -21,6 +21,8 @@ interface OverrideEntry {
   favorite?: boolean;
   order?: number;
   archived?: boolean;
+  /** User tags at this path. */
+  tags?: string[];
 }
 
 /** The registry's single JSON document at `<storeDir>/registry.json`. */
@@ -36,6 +38,8 @@ export interface ProjectUpdatePatch {
   favorite?: boolean;
   order?: number;
   archived?: boolean;
+  addTags?: string[];
+  removeTags?: string[];
 }
 
 function emptyDocument(): RegistryDocument {
@@ -99,11 +103,30 @@ function missingRepo(path: string): RepoInfo {
   return { path, name: basename(path), branch: null, dirty: false, ahead: 0, behind: 0, missing: true };
 }
 
+/** Union tag sets; undefined when all inputs are empty (keeps the wire clean). */
+function unionTags(...sets: (string[] | undefined)[]): string[] | undefined {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const set of sets) {
+    for (const tag of set ?? []) {
+      if (!seen.has(tag)) {
+        seen.add(tag);
+        out.push(tag);
+      }
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /** The merged view: every index repo as `single`, every multi-repo project as `multi` with resolved members.
  *  Multi-repo entries come from two layers — persisted (user-created) and source-listed (derived,
  *  gone when the source stops listing). On a path collision the persisted entry wins. */
 function mergedProjects(doc: RegistryDocument, repos: RepoInfo[], sourceProjects: MultiRepoSourceEntry[] = []): ProjectInfo[] {
   const byPath = new Map(repos.map((repo) => [repo.path, repo]));
+
+  /** Effective tags at a repo path: source-contributed ∪ user. */
+  const repoTags = (repoPath: string): string[] | undefined => unionTags(byPath.get(repoPath)?.tags, doc.overrides[repoPath]?.tags);
+
   const projects: ProjectInfo[] = repos.map((repo) => ({
     path: repo.path,
     name: repo.name,
@@ -111,20 +134,33 @@ function mergedProjects(doc: RegistryDocument, repos: RepoInfo[], sourceProjects
     activeSessionCount: 0,
     externalProcessCount: 0,
     ...doc.overrides[repo.path],
+    tags: repoTags(repo.path),
+    userTags: doc.overrides[repo.path]?.tags,
   }));
   const seen = new Set(projects.map((p) => p.path));
 
   for (const entry of [...doc.multiRepo, ...sourceProjects]) {
     if (seen.has(entry.path)) continue;
     seen.add(entry.path);
+    const members: RepoInfo[] = entry.memberPaths.map((memberPath) => {
+      const base = byPath.get(memberPath) ?? missingRepo(memberPath);
+      // Member carries its own effective tags (source ∪ its own user tags).
+      return { ...base, tags: repoTags(memberPath) };
+    });
+    // Multi-repo projects implicitly inherit their members' tags.
+    const memberTagUnion = unionTags(...members.map((m) => m.tags));
+    const sourceTags = sourceProjects.find((sp) => sp.path === entry.path)?.tags;
+    const userTags = doc.overrides[entry.path]?.tags;
     projects.push({
       path: entry.path,
       name: entry.name,
       kind: 'multi' as const,
-      repos: entry.memberPaths.map((memberPath) => byPath.get(memberPath) ?? missingRepo(memberPath)),
+      repos: members,
       activeSessionCount: 0,
       externalProcessCount: 0,
       ...doc.overrides[entry.path],
+      tags: unionTags(userTags, sourceTags, memberTagUnion),
+      userTags,
     });
   }
 
@@ -178,6 +214,15 @@ export class ProjectRegistry {
       if (patch.favorite !== undefined) override.favorite = patch.favorite;
       if (patch.order !== undefined) override.order = patch.order;
       if (patch.archived !== undefined) override.archived = patch.archived;
+      if (patch.addTags?.length || patch.removeTags?.length) {
+        const tags = new Set(override.tags ?? []);
+        for (const tag of patch.addTags ?? []) {
+          const trimmed = tag.trim();
+          if (trimmed) tags.add(trimmed);
+        }
+        for (const tag of patch.removeTags ?? []) tags.delete(tag);
+        override.tags = [...tags];
+      }
       doc.overrides[patch.projectPath] = override;
 
       await this.persist(doc);

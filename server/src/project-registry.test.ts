@@ -106,6 +106,51 @@ describe('ProjectRegistry.list()', () => {
   });
 });
 
+describe('project tags', () => {
+  it('addTags/removeTags round-trip as user tags at the project path', async () => {
+    const registry = makeRegistry();
+    await registry.createMultiRepoProject('tagged', rootDir, []);
+    const path = join(rootDir, 'tagged');
+
+    await registry.update({ projectPath: path, addTags: ['client', '  urgent  ', ''] });
+    let project = (await registry.list()).find((p) => p.path === path);
+    expect(project?.tags).toEqual(['client', 'urgent']);
+    expect(project?.userTags).toEqual(['client', 'urgent']);
+
+    await registry.update({ projectPath: path, removeTags: ['client'] });
+    project = (await registry.list()).find((p) => p.path === path);
+    expect(project?.tags).toEqual(['urgent']);
+  });
+
+  it('multi-repo projects inherit member repo tags', async () => {
+    const member = join(rootDir, 'member');
+    await initRepo(member);
+    const registry = makeRegistry();
+    await registry.update({ projectPath: member, addTags: ['legacy'] });
+
+    await registry.createMultiRepoProject('group', rootDir, [member]);
+    const group = (await registry.list()).find((p) => p.name === 'group');
+    expect(group?.tags).toContain('legacy');
+    // The member itself carries it too; the group's own user tags do not.
+    expect(group?.userTags ?? []).not.toContain('legacy');
+  });
+
+  it('source-contributed tags merge in and are not user-removable', async () => {
+    const index = makeIndex();
+    index.registerSource({
+      id: 'src',
+      list: async () => [{ kind: 'repo', path: join(rootDir, 'src-repo'), name: 'src-repo', branch: 'main', dirty: false, ahead: 0, behind: 0, tags: ['from-source'] }],
+    });
+    const registry = makeRegistry(index);
+    const path = join(rootDir, 'src-repo');
+
+    await registry.update({ projectPath: path, addTags: ['mine'], removeTags: ['from-source'] });
+    const project = (await registry.list()).find((p) => p.path === path);
+    expect(project?.tags).toEqual(['from-source', 'mine']);
+    expect(project?.userTags).toEqual(['mine']);
+  });
+});
+
 describe('source-listed multi-repo projects', () => {
   function makeIndexWith(projects: { path: string; name: string; memberPaths: string[] }[]): RepoIndex {
     const index = makeIndex();
