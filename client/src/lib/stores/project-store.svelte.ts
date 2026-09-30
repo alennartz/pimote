@@ -43,6 +43,7 @@ export class ProjectStore {
   loading: boolean = $state(false);
   showArchived: boolean = $state(getShowArchived());
   private projectsLoadInFlight: Promise<void> | null = null;
+  private reposLoadInFlight: Promise<void> | null = null;
   private sessionLoadsInFlight: Map<string, InFlightSessionLoad> = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
   private nextSessionRequestId = 0;
 
@@ -72,6 +73,9 @@ export class ProjectStore {
           const data = response.data as ListProjectsResponseData;
           this.projects = data.projects;
           this.roots = data.roots ?? [];
+          // Repo listing feeds branch chips and missing-detection; refresh it
+          // with the projects so they never disagree.
+          void this.loadRepos();
           await Promise.all(data.projects.map((project) => this.loadSessions(project.path)));
         }
       } catch (e) {
@@ -86,15 +90,21 @@ export class ProjectStore {
     return this.projectsLoadInFlight;
   }
 
-  async loadRepos(): Promise<void> {
-    try {
-      const response = await connection.send({ type: 'list_repos' });
-      if (response.success && response.data) {
-        this.repos = (response.data as ListReposResponseData).repos;
+  /** Single-flight: branch chips and missing-detection read this listing. */
+  loadRepos(): Promise<void> {
+    this.reposLoadInFlight ??= (async () => {
+      try {
+        const response = await connection.send({ type: 'list_repos' });
+        if (response.success && response.data) {
+          this.repos = (response.data as ListReposResponseData).repos;
+        }
+      } catch (e) {
+        console.error('[ProjectStore] Failed to load repos:', e);
+      } finally {
+        this.reposLoadInFlight = null;
       }
-    } catch (e) {
-      console.error('[ProjectStore] Failed to load repos:', e);
-    }
+    })();
+    return this.reposLoadInFlight;
   }
 
   /** Whole-list replacement driven by the server's projects_changed broadcast. */

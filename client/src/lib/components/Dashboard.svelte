@@ -141,7 +141,7 @@
       </button>
     </div>
     <div class="min-h-0 flex-1">
-      <ManagerChat />
+      <ManagerChat variant="expanded" />
     </div>
   </div>
 {/if}

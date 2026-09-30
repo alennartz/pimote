@@ -501,7 +501,7 @@
           {@const idx = projectIndex(project.path)}
 
           <div class="border-border/60 rounded-lg">
-            <div class="flex items-center gap-0.5">
+            <div class="flex flex-wrap items-center gap-0.5">
               <button
                 class="hover:bg-accent active:bg-accent/80 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors"
                 title={isMissingProject(project) ? 'Open — its source will create this folder' : undefined}
@@ -519,52 +519,52 @@
                 {#if project.archived}
                   <span class="bg-muted text-muted-foreground shrink-0 rounded px-1 py-0.5 text-[10px] font-medium tracking-wide uppercase">Archived</span>
                 {/if}
-                <div class="chips ml-auto flex shrink-0 items-center gap-1">
-                  {#if project.activeSessionCount > 0}
+              </button>
+              <div class="chips ml-auto flex shrink-0 items-center gap-1 max-md:ml-0 max-md:basis-full max-md:overflow-x-auto max-md:py-0.5">
+                {#if project.activeSessionCount > 0}
+                  <span
+                    class="flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-px text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400"
+                    title={`${project.activeSessionCount} open session${project.activeSessionCount !== 1 ? 's' : ''}`}
+                  >
+                    <span class="bg-status-connected size-1.5 rounded-full"></span>
+                    {project.activeSessionCount}
+                  </span>
+                {/if}
+                {#if project.kind === 'multi' && project.repos?.length}
+                  {#each project.repos as repo (repo.path)}
                     <span
-                      class="flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-px text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400"
-                      title={`${project.activeSessionCount} open session${project.activeSessionCount !== 1 ? 's' : ''}`}
+                      class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px] {repo.missing
+                        ? 'border border-yellow-500/20 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
+                        : ''}"
+                      title={repo.missing ? `${repo.name} is missing on disk` : repo.path}
                     >
-                      <span class="bg-status-connected size-1.5 rounded-full"></span>
-                      {project.activeSessionCount}
+                      {#if !repo.missing}
+                        <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
+                      {/if}
+                      <span class="max-w-28 truncate">{repo.name}</span>
+                      {#if repo.missing}
+                        <span class="font-medium">missing</span>
+                      {:else if repo.branch}
+                        <span class="max-w-20 truncate opacity-70">{repo.branch}</span>
+                      {/if}
+                    </span>
+                  {/each}
+                {:else}
+                  {@const repo = projectStore.repos.find((r) => r.path === project.path)}
+                  {#if repo && !repo.missing && repo.branch}
+                    <span class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px]" title={repo.path}>
+                      <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
+                      <span class="max-w-24 truncate">{repo.branch}</span>
+                      {#if repo.ahead || repo.behind}
+                        <span class="opacity-70">↑{repo.ahead}↓{repo.behind}</span>
+                      {/if}
                     </span>
                   {/if}
-                  {#if project.kind === 'multi' && project.repos?.length}
-                    {#each project.repos as repo (repo.path)}
-                      <span
-                        class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px] {repo.missing
-                          ? 'border border-yellow-500/20 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
-                          : ''}"
-                        title={repo.missing ? `${repo.name} is missing on disk` : repo.path}
-                      >
-                        {#if !repo.missing}
-                          <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
-                        {/if}
-                        <span class="max-w-28 truncate">{repo.name}</span>
-                        {#if repo.missing}
-                          <span class="font-medium">missing</span>
-                        {:else if repo.branch}
-                          <span class="max-w-20 truncate opacity-70">{repo.branch}</span>
-                        {/if}
-                      </span>
-                    {/each}
-                  {:else}
-                    {@const repo = projectStore.repos.find((r) => r.path === project.path)}
-                    {#if repo && !repo.missing && repo.branch}
-                      <span class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px]" title={repo.path}>
-                        <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
-                        <span class="max-w-24 truncate">{repo.branch}</span>
-                        {#if repo.ahead || repo.behind}
-                          <span class="opacity-70">↑{repo.ahead}↓{repo.behind}</span>
-                        {/if}
-                      </span>
-                    {/if}
-                  {/if}
-                </div>
-              </button>
+                {/if}
+              </div>
 
               {#if project.tags?.length}
-                <div class="flex shrink-0 items-center gap-1">
+                <div class="flex shrink-0 items-center gap-1 max-md:basis-full max-md:overflow-x-auto max-md:py-0.5">
                   {#each project.tags as tag (tag)}
                     {@const removable = project.userTags?.includes(tag) === true}
                     <span
