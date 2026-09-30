@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { ProjectInfo } from '@pimote/shared';
+  import type { ProjectInfo, SessionInfo } from '@pimote/shared';
   import { projectStore } from '$lib/stores/project-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import SessionItem from './SessionItem.svelte';
@@ -57,15 +57,35 @@
   // Disband confirmation state
   let disbandTarget = $state<ProjectInfo | null>(null);
 
-  const displayProjects = $derived(
-    projectStore.visibleProjects.filter((project) => {
-      const query = projectSearch.trim().toLowerCase();
-      if (!query) return true;
-      if (project.name.toLowerCase().includes(query) || project.path.toLowerCase().includes(query)) return true;
-      // A session match surfaces its project too (name or first message).
-      return (projectStore.sessions.get(project.path) ?? []).some((s) => (s.name ?? '').toLowerCase().includes(query) || (s.firstMessage ?? '').toLowerCase().includes(query));
-    }),
-  );
+  // Two-tier search: a project matching by name/path shows all its sessions;
+  // one matching only via session data shows just the matching sessions.
+  const searchResults = $derived.by(() => {
+    const query = projectSearch.trim().toLowerCase();
+    if (!query) return null;
+    const projects: ProjectInfo[] = [];
+    // Non-reactive derived output — recomputed wholesale on every query change.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const sessionView = new Map<string, SessionInfo[]>();
+    for (const project of projectStore.visibleProjects) {
+      const sessions = projectStore.sessions.get(project.path) ?? [];
+      const projectMatch = project.name.toLowerCase().includes(query) || project.path.toLowerCase().includes(query);
+      const sessionMatches = sessions.filter((s) => (s.name ?? '').toLowerCase().includes(query) || (s.firstMessage ?? '').toLowerCase().includes(query));
+      if (projectMatch) {
+        projects.push(project);
+        sessionView.set(project.path, sessions);
+      } else if (sessionMatches.length > 0) {
+        projects.push(project);
+        sessionView.set(project.path, sessionMatches);
+      }
+    }
+    return { projects, sessionView };
+  });
+
+  const displayProjects = $derived(searchResults ? searchResults.projects : projectStore.visibleProjects);
+
+  function sessionsFor(project: ProjectInfo): SessionInfo[] {
+    return searchResults?.sessionView.get(project.path) ?? projectStore.sessions.get(project.path) ?? [];
+  }
   const archivableCount = $derived(
     projectStore.projects.reduce((total, project) => {
       const sessions = projectStore.sessions.get(project.path) ?? [];
@@ -453,7 +473,7 @@
         {#each displayProjects as project (project.path)}
           {@const expanded = !collapsedProjects.has(project.path)}
           {@const showAll = expandedSessionLists.has(project.path)}
-          {@const projectSessions = projectStore.sessions.get(project.path) ?? []}
+          {@const projectSessions = sessionsFor(project)}
           {@const visibleSessions = showAll ? projectSessions : projectSessions.slice(0, MAX_SESSIONS_SHOWN)}
           {@const hiddenCount = Math.max(0, projectSessions.length - MAX_SESSIONS_SHOWN)}
           {@const idx = projectIndex(project.path)}
