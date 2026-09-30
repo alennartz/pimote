@@ -61,7 +61,9 @@
     projectStore.visibleProjects.filter((project) => {
       const query = projectSearch.trim().toLowerCase();
       if (!query) return true;
-      return project.name.toLowerCase().includes(query) || project.path.toLowerCase().includes(query);
+      if (project.name.toLowerCase().includes(query) || project.path.toLowerCase().includes(query)) return true;
+      // A session match surfaces its project too (name or first message).
+      return (projectStore.sessions.get(project.path) ?? []).some((s) => (s.name ?? '').toLowerCase().includes(query) || (s.firstMessage ?? '').toLowerCase().includes(query));
     }),
   );
   const archivableCount = $derived(
