@@ -31,6 +31,20 @@ materialization: sources may list entries whose folders don't exist on disk yet.
 - **Members may be missing.** `memberPaths` resolve against the index; unknown
   members render with the missing warning chip exactly like disappeared repos.
 
+## Server-owned standard layout
+
+An open of a source-listed multi-repo project whose folder is missing on disk is
+materialized by the **server** before hooks run: mkdir + one absolute symlink per
+`memberPaths` entry + the generated AGENTS.md — the same layout
+`createMultiRepoProject` builds, rendered by the shared
+`materializeMultiRepoFolder` in `server/src/project-sources/materialize.ts`.
+User sources never replicate the convention. Dangling member symlinks are
+allowed and self-heal when a member materializes (links are by path). Hooks run
+after materialization (they see the folder) and may still abort the open; the
+materialized folder remains in that case, and the next open retries the hooks.
+Consequence of the derived lifecycle: a materialized folder whose source stops
+listing the project is not garbage-collected — it stays on disk.
+
 ## Failure model
 
 Hook errors abort the open with the source's message (surface in the projects

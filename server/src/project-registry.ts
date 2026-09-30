@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join, sep } from 'node:path';
 import type { ProjectInfo, RepoInfo } from '../../shared/dist/index.js';
+import { materializeMultiRepoFolder } from './project-sources/materialize.js';
 import type { MultiRepoSourceEntry } from './project-sources/index.js';
 import type { RepoIndex } from './repo-index.js';
 
@@ -140,25 +141,6 @@ function sortProjects(projects: ProjectInfo[]): ProjectInfo[] {
   });
 }
 
-/** The generated multi-repo project AGENTS.md: members plus the sub-project convention. */
-function agentsMarkdown(multiRepoName: string, memberPaths: string[]): string {
-  const members = memberPaths.map((memberPath) => `- ${basename(memberPath)} → ${memberPath}`).join('\n');
-  return [
-    `# ${multiRepoName}`,
-    '',
-    'A multi-repo project. The member repositories below are symlinked into this directory:',
-    '',
-    members,
-    '',
-    '## Convention',
-    '',
-    'Each member directory is an independent git repository with its own AGENTS.md. When working',
-    'inside a member directory, that repository is a sub-project: its AGENTS.md takes precedence',
-    "over this file, and keep each repository's work inside its own directory.",
-    '',
-  ].join('\n');
-}
-
 /**
  * The persistent user-owned layer over the repo index: multi-repo project
  * projects, curation overrides (favorite / manual order / archived) keyed by
@@ -229,12 +211,8 @@ export class ProjectRegistry {
       const target = join(root, name);
       if (await pathExists(target)) throw new Error(`Directory already exists: ${target}`);
 
-      await mkdir(target, { recursive: true });
       try {
-        for (const memberPath of memberPaths) {
-          await symlink(memberPath, join(target, basename(memberPath)));
-        }
-        await writeFile(join(target, 'AGENTS.md'), agentsMarkdown(name, memberPaths), 'utf8');
+        await materializeMultiRepoFolder({ kind: 'project', path: target, name, memberPaths });
         doc.multiRepo.push({ path: target, name, memberPaths });
         await this.persist(doc);
       } catch (error) {

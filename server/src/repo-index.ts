@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import type { RepoInfo } from '../../shared/dist/index.js';
 import type { MultiRepoSourceEntry, ProjectSource, RepoSourceEntry, SourceEntry } from './project-sources/index.js';
 import { getGitBranch } from './git-branch.js';
+import { materializeMultiRepoFolder } from './project-sources/materialize.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -152,6 +153,21 @@ export class RepoIndex {
    * open and surfaces to the caller.
    */
   async runOpenHooks(projectPath: string): Promise<void> {
+    // Standard-layout materialization: an open of a source-listed multi-repo
+    // project whose folder doesn't exist gets the pimote layout (symlinks to
+    // members + AGENTS.md) built from the server's own code — user sources
+    // never replicate the convention. Dangling member symlinks are fine and
+    // self-heal when a member materializes.
+    const projects = await this.listSourceProjects();
+    const entry = projects.find((project) => project.path === projectPath);
+    if (entry) {
+      try {
+        await stat(projectPath);
+      } catch {
+        await materializeMultiRepoFolder(entry);
+      }
+    }
+
     for (const source of this.sources) {
       if (!source.onProjectOpen) continue;
       await source.onProjectOpen(projectPath);

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readlink, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RepoIndex, type RepoIndexOptions } from './repo-index.js';
@@ -164,6 +164,51 @@ describe('RepoIndex.list() — registered sources', () => {
 
     const paths = (await index.list()).map((r) => r.path);
     expect(paths).toContain(bare.path);
+  });
+});
+
+describe('RepoIndex.runOpenHooks() — materialization', () => {
+  it('materializes the standard layout for a missing source-listed project before hooks run', async () => {
+    const groupPath = join(tempDir, 'group');
+    const memberA = join(externalDir, 'member-a');
+    await mkdir(memberA, { recursive: true });
+    const virtualMember = join(tempDir, 'virtual-member'); // never created — dangling link is fine
+    const order: string[] = [];
+    const index = makeIndex();
+    index.registerSource({
+      id: 'src',
+      list: async () => [{ kind: 'project', path: groupPath, name: 'group', memberPaths: [memberA, virtualMember] }],
+      onProjectOpen: async (path) => {
+        // The hook must see the materialized folder already on disk.
+        expect(await readFile(join(groupPath, 'AGENTS.md'), 'utf8')).toContain('member-a');
+        order.push(`hook:${path}`);
+      },
+    });
+
+    await index.runOpenHooks(groupPath);
+
+    expect(await readlink(join(groupPath, 'virtual-member'))).toBe(virtualMember); // dangling is fine
+    const agents = await readFile(join(groupPath, 'AGENTS.md'), 'utf8');
+    expect(agents).toContain('group');
+    expect(agents).toContain('virtual-member');
+    expect(order).toEqual([`hook:${groupPath}`]);
+  });
+
+  it('leaves an existing project folder untouched', async () => {
+    const groupPath = join(tempDir, 'existing-group');
+    await mkdir(groupPath, { recursive: true });
+    await writeFile(join(groupPath, 'sentinel.txt'), 'keep me');
+    const index = makeIndex();
+    index.registerSource({
+      id: 'src',
+      list: async () => [{ kind: 'project', path: groupPath, name: 'existing-group', memberPaths: [] }],
+      onProjectOpen: async () => {},
+    });
+
+    await index.runOpenHooks(groupPath);
+
+    await expect(readFile(join(groupPath, 'sentinel.txt'), 'utf8')).resolves.toBe('keep me');
+    await expect(readFile(join(groupPath, 'AGENTS.md'), 'utf8')).rejects.toThrow();
   });
 });
 
