@@ -1,6 +1,6 @@
 {
   "name": "@pimote/sdk",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Pimote extensibility SDK: panel cards and project discovery/creation seams for pi extensions",
   "type": "module",
   "license": "MIT",
