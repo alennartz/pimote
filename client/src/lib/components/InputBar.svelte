@@ -6,6 +6,7 @@
   import { editorTextRequest, setEditorText, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
   import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
   import { loginStore } from '$lib/stores/login-store.js';
+  import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import CommandAutocomplete from './CommandAutocomplete.svelte';
   import { extractFileRefPrefix, resolveFileRefSelection } from '$lib/file-ref-prefix.js';
   import { parseBangBashCommand } from '$lib/bash-command.js';
@@ -661,7 +662,7 @@
         rows={1}
         placeholder={noSession ? 'Open a session to start…' : isPending ? 'Starting session…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
         autocapitalize="sentences"
-        spellcheck={true}
+        spellcheck={!isMobileViewport()}
         aria-label="Message"
         class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm transition-colors focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
           {isBangCommand ? 'pointer-events-none absolute inset-0 opacity-0' : ''}

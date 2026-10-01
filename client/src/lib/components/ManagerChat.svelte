@@ -1,5 +1,6 @@
 <script lang="ts">
   import { managerStore } from '$lib/stores/manager-store.svelte.js';
+  import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import MessageList from './MessageList.svelte';
   import SendHorizontal from '@lucide/svelte/icons/send-horizontal';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
@@ -49,28 +50,28 @@
         rows={1}
         placeholder="Reply…"
         autocapitalize="sentences"
-        spellcheck={true}
+        spellcheck={!isMobileViewport()}
         aria-label="Message the manager"
-        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none rounded-xl border px-3 py-2 text-sm transition-colors focus:ring-1 focus:outline-none"
+        class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none rounded-xl border px-3 py-2 text-sm transition-colors focus:ring-1 focus:outline-none max-md:text-base"
       ></textarea>
       {#if managerStore.status === 'working'}
         <button
-          class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 mb-0.5 flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors"
+          class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 mb-0.5 flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors max-md:min-h-11 max-md:px-4"
           onpointerdown={(e) => e.preventDefault()}
           onclick={() => void managerStore.abort()}
           title="Abort"
         >
-          <OctagonX class="size-4" />
+          <OctagonX class="size-4 max-md:size-5" />
         </button>
       {:else}
         <button
-          class="bg-primary text-primary-foreground hover:bg-primary/80 active:bg-primary/70 mb-0.5 flex shrink-0 items-center rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          class="bg-primary text-primary-foreground hover:bg-primary/80 active:bg-primary/70 mb-0.5 flex shrink-0 items-center rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11 max-md:px-4"
           disabled={!canSend}
           onpointerdown={(e) => e.preventDefault()}
           onclick={() => void send()}
           title="Send"
         >
-          <SendHorizontal class="size-4" />
+          <SendHorizontal class="size-4 max-md:size-5" />
         </button>
       {/if}
     </div>
@@ -86,7 +87,7 @@
   </div>
 {:else if hasConversation}
   <!-- In use: the conversation grows in place, still centered -->
-  <div class="bg-surface border-border ring-border/50 overflow-hidden rounded-2xl border shadow-sm ring-1">
+  <div class="bg-card border-border ring-border/50 overflow-hidden rounded-2xl border shadow-sm ring-1">
     <div class="flex h-9 items-center gap-2 border-b px-3">
       <Bot class="text-muted-foreground size-3.5" />
       <span class="text-muted-foreground text-xs font-medium">Manager</span>
@@ -119,7 +120,7 @@
       rows={1}
       placeholder="Ask the manager — start sessions, archive old ones, check status…"
       autocapitalize="sentences"
-      spellcheck={true}
+      spellcheck={!isMobileViewport()}
       aria-label="Message the manager"
       class="text-foreground placeholder:text-muted-foreground block w-full resize-none bg-transparent text-sm outline-none"
     ></textarea>

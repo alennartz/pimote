@@ -2,7 +2,11 @@
   import Archive from '@lucide/svelte/icons/archive';
   import Plus from '@lucide/svelte/icons/plus';
   import X from '@lucide/svelte/icons/x';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
+  import { ContextMenu } from 'bits-ui';
   import { onMount } from 'svelte';
+  import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry, switchToSession, closeSession, newSessionInProject } from '$lib/stores/session-registry.svelte.js';
   import { getExtensionUiQueue } from '$lib/stores/extension-ui-queue.svelte.js';
@@ -14,6 +18,7 @@
   let mobileActionsSessionId = $state<string | null>(null);
   let suppressTapSessionId = $state<string | null>(null);
   let hintSessionId = $state<string | null>(null);
+  let deleteSessionId = $state<string | null>(null);
 
   let touchSessionId: string | null = null;
   let touchStartX = 0;
@@ -111,6 +116,23 @@
     closeSession(sessionId);
   }
 
+  async function deleteActiveSession(sessionId: string) {
+    const session = sessionRegistry.sessions[sessionId];
+    deleteSessionId = null;
+    if (!session) return;
+
+    try {
+      closeSession(sessionId);
+      await connection.send({
+        type: 'delete_session',
+        folderPath: session.folderPath,
+        sessionId,
+      });
+    } catch (e) {
+      console.error('Failed to delete session:', e);
+    }
+  }
+
   onMount(() => {
     const handleOutsidePointerDown = (e: PointerEvent) => {
       if (!mobileActionsSessionId) return;
@@ -179,61 +201,90 @@
       {#each sessionRegistry.activeSessions as session (session.sessionId)}
         {@const isViewed = sessionRegistry.viewedSessionId === session.sessionId}
         {@const hasPendingUi = uiQueue.hasRequestForSession(session.sessionId)}
-        <button
-          class="group/chip {isViewed
-            ? 'bg-primary text-primary-foreground'
-            : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'} flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors select-none {hintSessionId ===
-          session.sessionId
-            ? 'session-pill-swipe-hint'
-            : ''}"
-          style="touch-action: pan-x;"
-          onclick={() => handlePillClick(session.sessionId)}
-          onauxclick={(e) => {
-            if (e.button === 1) {
-              e.preventDefault();
-              closeSession(session.sessionId);
-            }
-          }}
-          ontouchstart={(e) => handleTouchStart(session.sessionId, e)}
-          ontouchmove={(e) => handleTouchMove(session.sessionId, e)}
-          ontouchend={() => handleTouchEnd(session.sessionId)}
-          ontouchcancel={resetTouchState}
-          title={session.projectName}
-        >
-          <span class="relative flex size-2">
-            {#if hasPendingUi}
-              <span class="relative inline-flex size-2 rounded-full bg-orange-500"></span>
-            {:else if session.status === 'working'}
-              <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-              <span class="relative inline-flex size-2 rounded-full bg-emerald-500"></span>
-            {:else if session.needsAttention}
-              <span class="relative inline-flex size-2 rounded-full bg-orange-500"></span>
-            {:else}
-              <span class="relative inline-flex size-2 rounded-full bg-gray-400"></span>
-            {/if}
-          </span>
-          <span class="max-w-[80px] truncate">{session.projectName}</span>
-          <span
-            class="{isViewed
-              ? 'text-primary-foreground/50 hover:bg-primary-foreground/20 hover:text-primary-foreground'
-              : 'text-secondary-foreground/50 hover:bg-secondary-foreground/20 hover:text-secondary-foreground'} -mr-1 ml-0.5 hidden items-center justify-center rounded-full p-0.5 transition-colors md:flex md:opacity-0 md:group-hover/chip:opacity-100"
-            role="button"
-            tabindex="-1"
-            title="Close session"
-            onclick={(e) => {
-              e.stopPropagation();
-              closeSession(session.sessionId);
-            }}
-            onkeydown={(e) => {
-              if (e.key === 'Enter') {
-                e.stopPropagation();
-                closeSession(session.sessionId);
-              }
-            }}
-          >
-            <X class="size-3" />
-          </span>
-        </button>
+        <ContextMenu.Root>
+          <ContextMenu.Trigger class="shrink-0">
+            <button
+              class="group/chip {isViewed
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'} flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors select-none {hintSessionId ===
+              session.sessionId
+                ? 'session-pill-swipe-hint'
+                : ''}"
+              style="touch-action: pan-x;"
+              onclick={() => handlePillClick(session.sessionId)}
+              onauxclick={(e) => {
+                if (e.button === 1) {
+                  e.preventDefault();
+                  closeSession(session.sessionId);
+                }
+              }}
+              ontouchstart={(e) => handleTouchStart(session.sessionId, e)}
+              ontouchmove={(e) => handleTouchMove(session.sessionId, e)}
+              ontouchend={() => handleTouchEnd(session.sessionId)}
+              ontouchcancel={resetTouchState}
+              title={session.projectName}
+            >
+              <span class="relative flex size-2">
+                {#if hasPendingUi}
+                  <span class="relative inline-flex size-2 rounded-full bg-orange-500"></span>
+                {:else if session.status === 'working'}
+                  <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                  <span class="relative inline-flex size-2 rounded-full bg-emerald-500"></span>
+                {:else if session.needsAttention}
+                  <span class="relative inline-flex size-2 rounded-full bg-orange-500"></span>
+                {:else}
+                  <span class="relative inline-flex size-2 rounded-full bg-gray-400"></span>
+                {/if}
+              </span>
+              <span class="max-w-[80px] truncate">{session.projectName}</span>
+              <span
+                class="{isViewed
+                  ? 'text-primary-foreground/50 hover:bg-primary-foreground/20 hover:text-primary-foreground'
+                  : 'text-secondary-foreground/50 hover:bg-secondary-foreground/20 hover:text-secondary-foreground'} -mr-1 ml-0.5 hidden items-center justify-center rounded-full p-0.5 transition-colors md:flex md:opacity-0 md:group-hover/chip:opacity-100"
+                role="button"
+                tabindex="-1"
+                title="Close session"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  closeSession(session.sessionId);
+                }}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.stopPropagation();
+                    closeSession(session.sessionId);
+                  }
+                }}
+              >
+                <X class="size-3" />
+              </span>
+            </button>
+          </ContextMenu.Trigger>
+          <ContextMenu.Portal>
+            <ContextMenu.Content class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-36 overflow-hidden rounded-lg p-1 shadow-md ring-1">
+              <ContextMenu.Item
+                class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none max-md:min-h-11 max-md:px-3"
+                onSelect={() => closeSession(session.sessionId)}
+              >
+                <X class="size-4" />
+                Close session
+              </ContextMenu.Item>
+              <ContextMenu.Item
+                class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none max-md:min-h-11 max-md:px-3"
+                onSelect={() => void archiveAndCloseSession(session.sessionId)}
+              >
+                <Archive class="size-4" />
+                Archive session
+              </ContextMenu.Item>
+              <ContextMenu.Item
+                class="focus:bg-destructive/10 dark:focus:bg-destructive/20 text-destructive flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none max-md:min-h-11 max-md:px-3"
+                onSelect={() => (deleteSessionId = session.sessionId)}
+              >
+                <Trash2 class="size-4" />
+                Delete session
+              </ContextMenu.Item>
+            </ContextMenu.Content>
+          </ContextMenu.Portal>
+        </ContextMenu.Root>
       {/each}
 
       {#if sessionRegistry.viewedSessionId}
@@ -250,6 +301,24 @@
     </div>
   </div>
 {/if}
+
+<Dialog.Root
+  open={deleteSessionId !== null}
+  onOpenChange={(open) => {
+    if (!open) deleteSessionId = null;
+  }}
+>
+  <Dialog.Content showCloseButton={false}>
+    <Dialog.Header>
+      <Dialog.Title>Delete session</Dialog.Title>
+      <Dialog.Description>This will permanently delete this session file. This cannot be undone.</Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Button variant="outline" onclick={() => (deleteSessionId = null)}>Cancel</Button>
+      <Button variant="destructive" onclick={() => deleteSessionId !== null && void deleteActiveSession(deleteSessionId)}>Delete</Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
 
 <style>
   @keyframes session-pill-swipe-nudge {

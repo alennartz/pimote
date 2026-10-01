@@ -12,8 +12,8 @@
   import Loader2 from '@lucide/svelte/icons/loader-2';
   import Network from '@lucide/svelte/icons/network';
   import Plus from '@lucide/svelte/icons/plus';
+  import Search from '@lucide/svelte/icons/search';
   import Star from '@lucide/svelte/icons/star';
-  import Tags from '@lucide/svelte/icons/tags';
   import X from '@lucide/svelte/icons/x';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Undo2 from '@lucide/svelte/icons/undo-2';
@@ -392,7 +392,7 @@
   }
 </script>
 
-<div class="flex flex-col gap-2 p-2">
+<div class="flex flex-col gap-2 p-2 max-md:p-0">
   {#if projectStore.loading}
     <div class="text-muted-foreground flex items-center justify-center py-8">
       <Loader2 class="size-5 animate-spin" />
@@ -410,24 +410,24 @@
     <div class="flex flex-col gap-2">
       <div class="flex items-center gap-1.5">
         <div
-          class="border-border bg-secondary/50 focus-within:ring-ring flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors focus-within:ring-1 focus-within:outline-none"
+          class="border-border bg-secondary/50 focus-within:ring-ring flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors focus-within:ring-1 focus-within:outline-none max-md:min-h-11 max-md:rounded-xl max-md:px-3 max-md:py-2"
         >
-          <span class="text-muted-foreground text-xs">🔎</span>
+          <Search class="text-muted-foreground size-4 shrink-0 max-md:size-5" />
           <input
             bind:value={projectSearch}
             placeholder="Search projects"
             aria-label="Search projects"
-            class="text-foreground placeholder:text-muted-foreground w-full min-w-0 bg-transparent text-xs outline-none"
+            class="text-foreground placeholder:text-muted-foreground w-full min-w-0 bg-transparent text-xs outline-none max-md:text-base"
           />
         </div>
-        <Button size="sm" class="shrink-0" onclick={openNewSessionDialog} disabled={connection.status !== 'connected'}>
-          <Plus class="size-3.5" />
+        <Button size="sm" class="shrink-0 max-md:h-11 max-md:rounded-xl max-md:px-4 max-md:text-sm" onclick={openNewSessionDialog} disabled={connection.status !== 'connected'}>
+          <Plus class="size-3.5 max-md:size-4" />
           New session
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger>
-            <Button variant="outline" size="icon-sm" class="text-muted-foreground shrink-0" title="More project actions">
-              <EllipsisVertical class="size-4" />
+            <Button variant="outline" size="icon-sm" class="text-muted-foreground shrink-0 max-md:size-11" title="More project actions">
+              <EllipsisVertical class="size-4 max-md:size-5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuPortal>
@@ -478,9 +478,9 @@
           {@const hiddenCount = Math.max(0, projectSessions.length - MAX_SESSIONS_SHOWN)}
 
           <div class="border-border/60 rounded-lg">
-            <div class="flex flex-wrap items-center gap-0.5">
+            <div class="group flex flex-wrap items-center gap-0.5">
               <button
-                class="hover:bg-accent active:bg-accent/80 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors"
+                class="hover:bg-accent active:bg-accent/80 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors max-md:min-h-11 max-md:gap-2 max-md:rounded-lg max-md:px-2 max-md:py-2"
                 title={isMissingProject(project) ? 'Open — its source will create this folder' : undefined}
                 onclick={() => {
                   if (isMissingProject(project)) {
@@ -490,33 +490,52 @@
                   toggleProject(project.path);
                 }}
               >
-                <ChevronRight class="text-muted-foreground size-3.5 shrink-0 transition-transform {expanded ? 'rotate-90' : ''}" />
-                <Star class="size-3 shrink-0 {project.favorite ? 'fill-yellow-500 text-yellow-500' : 'text-muted-foreground/40'}" />
-                <span class="text-foreground truncate text-[13px] font-medium {project.archived ? 'opacity-70' : ''}" data-project-name={project.path}>{project.name}</span>
+                <ChevronRight class="text-muted-foreground size-3.5 shrink-0 transition-transform max-md:size-4 {expanded ? 'rotate-90' : ''}" />
+                <span class="text-foreground truncate text-[13px] font-medium max-md:text-sm {project.archived ? 'opacity-70' : ''}" data-project-name={project.path}
+                  >{project.name}</span
+                >
                 {#if project.archived}
                   <span class="bg-muted text-muted-foreground shrink-0 rounded px-1 py-0.5 text-[10px] font-medium tracking-wide uppercase">Archived</span>
                 {/if}
               </button>
+              <button
+                class="group/star flex shrink-0 items-center rounded p-1 transition-colors max-md:-m-1 max-md:p-2"
+                title={project.favorite ? 'Unfavorite' : 'Favorite'}
+                aria-label={project.favorite ? `Unfavorite ${project.name}` : `Favorite ${project.name}`}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  void updateProject(project, { favorite: !project.favorite });
+                }}
+              >
+                <Star
+                  class="size-3 transition-colors max-md:size-4 {project.favorite
+                    ? 'fill-yellow-500 text-yellow-500'
+                    : 'text-muted-foreground/40 group-hover/star:text-muted-foreground'}"
+                />
+              </button>
               <div class="chips ml-auto flex shrink-0 items-center gap-1 max-md:ml-0 max-md:basis-full max-md:overflow-x-auto max-md:py-0.5">
                 {#if project.activeSessionCount > 0}
                   <span
-                    class="flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-px text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400"
+                    class="flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-px text-[10.5px] font-medium text-emerald-600 max-md:px-2 max-md:py-0.5 max-md:text-xs dark:text-emerald-400"
                     title={`${project.activeSessionCount} open session${project.activeSessionCount !== 1 ? 's' : ''}`}
                   >
-                    <span class="bg-status-connected size-1.5 rounded-full"></span>
+                    <span class="bg-status-connected size-1.5 rounded-full max-md:size-2"></span>
                     {project.activeSessionCount}
                   </span>
                 {/if}
                 {#if project.kind === 'multi' && project.repos?.length}
                   {#each project.repos as repo (repo.path)}
                     <span
-                      class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px] {repo.missing
+                      class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px] max-md:px-2 max-md:py-0.5 max-md:text-xs {repo.missing
                         ? 'border border-yellow-500/20 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
                         : ''}"
                       title={repo.missing ? `${repo.name} is missing on disk` : repo.path}
                     >
                       {#if !repo.missing}
-                        <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
+                        <span
+                          class="size-1.5 rounded-full max-md:size-2 {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}"
+                          title={repo.dirty ? 'Uncommitted changes' : 'Clean'}
+                        ></span>
                       {/if}
                       <span class="max-w-28 truncate">{repo.name}</span>
                       {#if repo.missing}
@@ -529,8 +548,14 @@
                 {:else}
                   {@const repo = projectStore.repos.find((r) => r.path === project.path)}
                   {#if repo && !repo.missing && repo.branch}
-                    <span class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px]" title={repo.path}>
-                      <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
+                    <span
+                      class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px] max-md:px-2 max-md:py-0.5 max-md:text-xs"
+                      title={repo.path}
+                    >
+                      <span
+                        class="size-1.5 rounded-full max-md:size-2 {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}"
+                        title={repo.dirty ? 'Uncommitted changes' : 'Clean'}
+                      ></span>
                       <span class="max-w-24 truncate">{repo.branch}</span>
                       {#if repo.ahead || repo.behind}
                         <span class="opacity-70">↑{repo.ahead}↓{repo.behind}</span>
@@ -540,80 +565,82 @@
                 {/if}
               </div>
 
-              {#if project.tags?.length}
-                <div class="flex shrink-0 items-center gap-1 max-md:basis-full max-md:overflow-x-auto max-md:py-0.5">
-                  {#each project.tags as tag (tag)}
-                    {@const removable = project.userTags?.includes(tag) === true}
-                    <span
-                      class="flex items-center gap-0.5 rounded-full border px-1.5 py-px text-[10.5px] {removable
-                        ? 'border-border bg-secondary text-secondary-foreground'
-                        : 'border-border/60 bg-muted/60 text-muted-foreground'}"
-                      title={removable ? `Tag: ${tag}` : `Tag from a project source: ${tag}`}
-                    >
-                      {tag}
-                      {#if removable}
-                        <button
-                          class="hover:text-destructive -mr-0.5 rounded-full p-px transition-colors"
-                          aria-label="Remove tag {tag}"
-                          onclick={(e) => {
-                            e.stopPropagation();
-                            void updateProject(project, { removeTags: [tag] });
-                          }}
-                        >
-                          <X class="size-2.5" />
-                        </button>
-                      {/if}
-                    </span>
-                  {/each}
+              <div
+                class="hover:bg-accent/50 flex shrink-0 cursor-pointer items-center gap-1 rounded-md transition-colors max-md:basis-full max-md:overflow-x-auto max-md:py-0.5"
+                role="button"
+                tabindex="0"
+                title="Add tag"
+                onclick={() => openTagDialog(project)}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    openTagDialog(project);
+                  }
+                }}
+              >
+                {#each project.tags ?? [] as tag (tag)}
+                  {@const removable = project.userTags?.includes(tag) === true}
+                  <span
+                    class="flex items-center gap-0.5 rounded-full border px-1.5 py-px text-[10.5px] max-md:gap-1 max-md:px-2 max-md:py-0.5 max-md:text-xs {removable
+                      ? 'border-border bg-secondary text-secondary-foreground'
+                      : 'border-border/60 bg-muted/60 text-muted-foreground'}"
+                    title={removable ? `Tag: ${tag}` : `Tag from a project source: ${tag}`}
+                  >
+                    {tag}
+                    {#if removable}
+                      <button
+                        class="hover:text-destructive -mr-0.5 rounded-full p-px transition-colors max-md:-mr-1 max-md:p-1"
+                        aria-label="Remove tag {tag}"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          void updateProject(project, { removeTags: [tag] });
+                        }}
+                      >
+                        <X class="size-2.5 max-md:size-3" />
+                      </button>
+                    {/if}
+                  </span>
+                {/each}
+                <span
+                  class="border-border/60 text-muted-foreground hidden items-center gap-0.5 rounded-full border border-dashed px-1.5 py-px text-[10.5px] group-hover:flex max-md:flex max-md:text-xs"
+                >
+                  <Plus class="size-2.5 max-md:size-3" />
+                  tag
+                </span>
+              </div>
+
+              {#if project.kind === 'multi'}
+                <div
+                  class="flex shrink-0 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 has-[[data-state=open]]:opacity-100 max-md:opacity-100"
+                >
+                  <DropdownMenu>
+                    <DropdownMenuTrigger>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        class="text-muted-foreground hover:text-sidebar-foreground shrink-0 max-md:size-11"
+                        title="Manage project"
+                        disabled={connection.status !== 'connected'}
+                      >
+                        <EllipsisVertical class="size-4 max-md:size-5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuPortal>
+                      <DropdownMenuContent class="w-48" align="end">
+                        <DropdownMenuItem class="text-destructive focus:bg-destructive/10 dark:focus:bg-destructive/20 gap-2" onSelect={() => (disbandTarget = project)}>
+                          <Trash2 class="size-4" />
+                          Disband project
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenuPortal>
+                  </DropdownMenu>
                 </div>
               {/if}
-
-              <DropdownMenu>
-                <DropdownMenuTrigger>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    class="text-muted-foreground hover:text-sidebar-foreground shrink-0"
-                    title="Manage project"
-                    disabled={connection.status !== 'connected'}
-                  >
-                    <EllipsisVertical class="size-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuPortal>
-                  <DropdownMenuContent class="w-48" align="end">
-                    <DropdownMenuItem class="gap-2" onSelect={() => openTagDialog(project)}>
-                      <Tags class="size-4" />
-                      Add tag…
-                    </DropdownMenuItem>
-                    <DropdownMenuItem class="gap-2" onSelect={() => void updateProject(project, { favorite: !project.favorite })}>
-                      <Star class="size-4 {project.favorite ? 'fill-yellow-500 text-yellow-500' : ''}" />
-                      {project.favorite ? 'Unfavorite' : 'Favorite'}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem class="gap-2" onSelect={() => void updateProject(project, { archived: !project.archived })}>
-                      {#if project.archived}
-                        <Undo2 class="size-4" />
-                        Unarchive project
-                      {:else}
-                        <Archive class="size-4" />
-                        Archive project
-                      {/if}
-                    </DropdownMenuItem>
-                    {#if project.kind === 'multi'}
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem class="text-destructive focus:bg-destructive/10 dark:focus:bg-destructive/20 gap-2" onSelect={() => (disbandTarget = project)}>
-                        <Trash2 class="size-4" />
-                        Disband project
-                      </DropdownMenuItem>
-                    {/if}
-                  </DropdownMenuContent>
-                </DropdownMenuPortal>
-              </DropdownMenu>
 
               <Button
                 variant="ghost"
                 size="icon-sm"
-                class="text-muted-foreground hover:text-sidebar-foreground shrink-0"
+                class="text-muted-foreground hover:text-sidebar-foreground shrink-0 max-md:size-11"
                 title="New session in {project.name}"
                 disabled={connection.status !== 'connected'}
                 onclick={(e) => {
@@ -621,7 +648,7 @@
                   void newSession(project.path);
                 }}
               >
-                <Plus class="size-4" />
+                <Plus class="size-4 max-md:size-5" />
               </Button>
             </div>
 
@@ -637,14 +664,14 @@
 
                 {#if hiddenCount > 0 && !showAll}
                   <button
-                    class="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground rounded-md px-3 py-1.5 text-xs transition-colors"
+                    class="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground rounded-md px-3 py-1.5 text-xs transition-colors max-md:min-h-11 max-md:text-[13px]"
                     onclick={() => toggleSessionList(project.path)}
                   >
                     Show {hiddenCount} more session{hiddenCount !== 1 ? 's' : ''}
                   </button>
                 {:else if showAll && hiddenCount > 0}
                   <button
-                    class="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground rounded-md px-3 py-1.5 text-xs transition-colors"
+                    class="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground rounded-md px-3 py-1.5 text-xs transition-colors max-md:min-h-11 max-md:text-[13px]"
                     onclick={() => toggleSessionList(project.path)}
                   >
                     Show fewer sessions

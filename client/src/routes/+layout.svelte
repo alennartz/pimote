@@ -1,6 +1,12 @@
 <script lang="ts">
   import './layout.css';
 
+  // Side-effect import: registers the registry's URL-sync navigator at app boot.
+  // Lives in the layout (not the dashboard page) so deep links to /sessions/<id>
+  // and reloads on a session route register it too — otherwise every
+  // registry-driven navigation silently no-ops.
+  import '$lib/nav.js';
+
   import ExtensionDialog from '$lib/components/ExtensionDialog.svelte';
   import ExtensionStatus from '$lib/components/ExtensionStatus.svelte';
   import InstallBanner from '$lib/components/InstallBanner.svelte';
@@ -197,7 +203,7 @@
   <!-- Main content -->
   <div class="flex flex-1 flex-col overflow-hidden">
     <!-- Mobile header -->
-    <header class="border-border flex h-12 shrink-0 items-center gap-2 border-b px-3 md:hidden">
+    <header class="border-border flex min-h-12 shrink-0 items-center gap-2 border-b px-3 pt-[max(env(safe-area-inset-top),0.25rem)] md:hidden">
       {#if sessionRegistry.viewedSessionId}
         <button
           class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors"

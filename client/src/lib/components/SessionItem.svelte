@@ -94,7 +94,7 @@
     <ContextMenu.Root>
       <ContextMenu.Trigger class="w-full">
         <button
-          class="active:bg-sidebar-accent/80 w-full rounded-md px-3 py-2 text-left transition-colors active:scale-[0.97] {isActive
+          class="active:bg-sidebar-accent/80 w-full rounded-md px-3 py-2 text-left transition-colors active:scale-[0.97] max-md:min-h-11 max-md:py-2.5 {isActive
             ? 'bg-sidebar-accent'
             : 'hover:bg-sidebar-accent'}"
           onclick={openSession}
@@ -131,14 +131,14 @@
       <ContextMenu.Portal>
         <ContextMenu.Content class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-36 overflow-hidden rounded-lg p-1 shadow-md ring-1">
           <ContextMenu.Item
-            class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none"
+            class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none max-md:min-h-11 max-md:px-3"
             onSelect={openRenameDialog}
           >
             <Pencil class="size-4" />
             Rename session
           </ContextMenu.Item>
           <ContextMenu.Item
-            class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none"
+            class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none max-md:min-h-11 max-md:px-3"
             onSelect={() => {
               void toggleArchived(!session.archived);
             }}
@@ -152,7 +152,7 @@
             {/if}
           </ContextMenu.Item>
           <ContextMenu.Item
-            class="focus:bg-destructive/10 dark:focus:bg-destructive/20 text-destructive flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none"
+            class="focus:bg-destructive/10 dark:focus:bg-destructive/20 text-destructive flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none max-md:min-h-11 max-md:px-3"
             onSelect={() => {
               showDeleteDialog = true;
             }}
