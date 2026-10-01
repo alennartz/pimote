@@ -21,6 +21,7 @@ import {
   PIMOTE_PROJECT_SOURCES_DIR,
   PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
   PIMOTE_SESSION_METADATA_PATH,
+  PIMOTE_SKILLS_DIR,
   PIMOTE_STATIC_HOST_DIR,
 } from './paths.js';
 import { FileSessionMetadataStore } from './session-metadata.js';
@@ -91,7 +92,7 @@ export async function main(options: StartOptions = {}) {
   }
   const staticHostRegistry = new InMemoryStaticHostRegistry();
   const staticHostStore = new FileStaticHostStore(PIMOTE_STATIC_HOST_DIR);
-  const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore });
+  const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore, skillsDir: PIMOTE_SKILLS_DIR });
   const fileDownloads = await bootstrapFileDownloads({ storeDir: PIMOTE_FILE_DOWNLOAD_DIR, validSessionIds });
 
   const sessionManager = await PimoteSessionManager.create(config, pushNotificationService, { staticHostFactory, fileDownloadFactory: fileDownloads.extensionFactory });

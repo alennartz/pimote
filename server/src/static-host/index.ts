@@ -7,6 +7,7 @@ import type { StaticHostStore } from './store.js';
 import { executeRegisterTool, executeRemoveTool, resolveSlugCollision, RegisterToolOutputSchema, RemoveToolOutputSchema, type ToolDeps } from './tools.js';
 import type { StaticHostStoreEntry } from './store.js';
 import { STATIC_HOST_TOOL_DESCRIPTION } from './prompt.js';
+import { ensureStaticReportSkill } from './skill.js';
 
 export { InMemoryStaticHostRegistry } from './registry.js';
 export type { StaticHostRegistry, StaticHostRegistration, StaticHostCardMetadata } from './registry.js';
@@ -19,6 +20,8 @@ export type { RegisterToolInput, RegisterToolOutput, RemoveToolInput, RemoveTool
 export interface CreateStaticHostExtensionOptions {
   registry: StaticHostRegistry;
   store: StaticHostStore;
+  /** Directory where the server-provided static-report skill is materialized. */
+  skillsDir?: string;
 }
 
 /**
@@ -31,6 +34,8 @@ export interface CreateStaticHostExtensionOptions {
  * `ExtensionFactory` itself receives only `ExtensionAPI`, not the sessionId).
  *
  * Lifecycle for one session S:
+ *   - `resources_discover`: materializes and provides the static-report skill
+ *     path so Pi can load its design guidance on demand.
  *   - First handler invocation (`session_start`): reads
  *     `${storeDir}/${S}.json` if present, replays each entry into the registry,
  *     emits a panel snapshot.
@@ -41,7 +46,8 @@ export interface CreateStaticHostExtensionOptions {
  *     stays on disk for the next session load.
  */
 export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions): ExtensionFactory {
-  const { registry, store } = opts;
+  const { registry, store, skillsDir } = opts;
+  let staticReportSkillPromise: Promise<string> | undefined;
 
   function buildCardsFor(sessionId: string): Card[] {
     return registry.listForSession(sessionId).map((entry) => {
@@ -78,6 +84,19 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
   }
 
   return (pi: ExtensionAPI) => {
+    if (skillsDir) {
+      pi.on('resources_discover', async () => {
+        staticReportSkillPromise ??= ensureStaticReportSkill(skillsDir);
+        try {
+          return { skillPaths: [await staticReportSkillPromise] };
+        } catch (err) {
+          staticReportSkillPromise = undefined;
+          console.warn(`[static-host] failed to provide the static-report skill from ${skillsDir}`, err);
+          return {};
+        }
+      });
+    }
+
     pi.registerTool({
       name: 'pimote_static_host',
       label: 'Host static bundle',

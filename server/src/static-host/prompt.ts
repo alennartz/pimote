@@ -1,20 +1,17 @@
-// Description text attached to the `pimote_static_host` tool. The string
-// is visible to the model in the system prompt's tool listing and must
-// substantively cover the two primary use cases, the mandatory responsive-
-// layout rule (with explicit mobile + desktop breakpoints), the no-secrets
-// rule, and a brief workflow note. See `docs/plans/static-resources.md`.
+// Always-on description for `pimote_static_host`. Keep the long-answer
+// admonition here so it can influence whether the tool is called; defer report
+// design and layout instructions to the on-demand `static-report` skill.
 
 export const STATIC_HOST_TOOL_DESCRIPTION: string = [
-  "Host a static HTML/asset bundle from a local folder so the user can view it in their browser. Returns a URL and creates a tappable card in the user's session pointing at the bundle.",
+  "Host a static HTML/asset bundle from a local folder so the user can view it in their browser. Returns a URL and creates a tappable card in the user's session.",
   '',
-  '**When to use this:**',
+  '**Use this by default for long answers; do not ask permission first.** If the answer you are about to give is roughly 300+ words, spans more than a few paragraphs, or needs headings or sections, do not deliver it as a long markdown chat response: build and host an HTML report instead. Also use it for information that benefits from visual layout or interaction, such as comparisons, charts, diffs, code walkthroughs, or navigable data.',
   '',
-  '1. **On-the-fly reports and visualisations.** Reach for this whenever you need to present information that would benefit from richer formatting than plain markdown — charts, comparison tables across many dimensions, syntax-highlighted code walkthroughs, before/after diffs, navigable trees of nested structures. A well-designed HTML report is much easier to read and navigate than a wall of markdown in the chat.',
-  '2. **Ad-hoc interactive tools.** Small single-purpose tools the user can play with for a little while — calculators, form-driven explorers, lightweight UIs that call external APIs via embedded JavaScript, in-memory data playgrounds, anything where interactivity adds value beyond static text. The bundle is real same-origin JS; it can fetch, do DOM things, persist to localStorage, whatever. Use this when the user needs a temporary tool tailored to the task at hand rather than a hand-rolled answer.',
+  'Keep the chat reply to a short summary plus the card. The report replaces the long answer; do not paste a full copy into chat. Short answers stay in chat.',
   '',
-  '**Mandatory: responsive, mobile-and-desktop layout.** Always design the bundle to work equally well on both desktop and mobile form factors. The user may view the same report on either device — even the same report on both. Use fluid layouts, relative units, and media queries. Mentally test your layout at ~360px wide and ~1440px wide before considering it done.',
+  'Before authoring a report bundle, read the `static-report` skill for report design guidance.',
   '',
-  '**No secrets in the bundle.** Bundle files are served verbatim to the browser. Do not embed API keys, tokens, or any other credentials, and do not build bundles that depend on calling services that require them — there is no secret-management story for static-hosted bundles. Stick to public endpoints, in-memory state, and APIs that work without auth.',
+  '**No secrets.** Bundle files are served verbatim. Do not include API keys, tokens, credentials, or calls to services requiring authentication.',
   '',
-  "**Workflow.** Generate the bundle (with at minimum an `index.html`) in a folder, then call this tool with the folder's absolute path, a short descriptive slug, and a title for the card. The user sees a card in their session; tapping it navigates them to the bundle, and browser-back returns them to the main pimote UI.",
+  '**Workflow.** Create a folder containing at least `index.html`, then call this tool with its absolute path, a short lowercase slug, and a card title. The user opens the hosted report from the session card.',
 ].join('\n');

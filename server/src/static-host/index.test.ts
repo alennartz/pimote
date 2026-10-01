@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStaticHostRegistry } from './registry.js';
 import { FileStaticHostStore } from './store.js';
 import { createStaticHostExtension } from './index.js';
+import { STATIC_REPORT_SKILL_NAME } from './skill.js';
 import type { Card } from '../../../shared/dist/index.js';
 
 // --- Fake ExtensionAPI ----------------------------------------------------
@@ -93,7 +94,7 @@ describe('createStaticHostExtension', () => {
     registry = new InMemoryStaticHostRegistry();
     store = new FileStaticHostStore(join(root, 'store'));
     pi = makeFakePi();
-    const factory = createStaticHostExtension({ registry, store });
+    const factory = createStaticHostExtension({ registry, store, skillsDir: join(root, 'skills') });
     await factory(pi.api);
   });
 
@@ -118,12 +119,28 @@ describe('createStaticHostExtension', () => {
     expect(names).toEqual(['pimote_static_host', 'pimote_static_host_remove']);
   });
 
-  it('attaches a substantive description to the register tool', () => {
+  it('keeps the long-answer trigger always-on and defers layout detail to the skill', () => {
     const tool = pi.toolDefs.find((t) => t.name === 'pimote_static_host');
-    expect(tool?.description).toBeTruthy();
-    expect((tool!.description as string).length).toBeGreaterThan(200);
-    expect(tool!.description as string).toMatch(/responsive/i);
-    expect(tool!.description as string).toMatch(/secret/i);
+    const description = tool!.description as string;
+    expect(description).toMatch(/300\+ words/i);
+    expect(description).toMatch(/do not ask permission/i);
+    expect(description).toMatch(/static-report.*skill/i);
+    expect(description).toMatch(/secret/i);
+    expect(description.trim().split(/\s+/).length).toBeLessThan(250);
+    expect(description).not.toMatch(/1440px|line-height|prefers-color-scheme/i);
+  });
+
+  it('provides the report-design skill through resources_discover', async () => {
+    const handler = pi.handlers.get('resources_discover');
+    expect(handler).toBeDefined();
+    const result = await handler!({ type: 'resources_discover', cwd: '/tmp', reason: 'startup' }, makeCtx('sess-X'));
+    const skillFile = join(root, 'skills', STATIC_REPORT_SKILL_NAME, 'SKILL.md');
+    expect(result).toEqual({ skillPaths: [skillFile] });
+    const markdown = await readFile(skillFile, 'utf8');
+    expect(markdown).toMatch(/Adaptive display — mandatory for mobile and desktop/);
+    expect(markdown).toMatch(/~360px/);
+    expect(markdown).toMatch(/~1440px/);
+    expect(markdown).toMatch(/controls easy to tap/);
   });
 
   it('on session_start, replays persisted entries into the registry and emits panel cards', async () => {
