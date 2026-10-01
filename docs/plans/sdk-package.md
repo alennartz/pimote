@@ -55,3 +55,16 @@ None new — npm workspaces, subpath `exports`, and `peerDependenciesMeta` are a
 ### DR Supersessions
 
 None. DR-039 (real types over mirrors) is _followed more fully_ (server adopts SDK `PanelMessage`, twins are guarded); DR-045 (repo index orthogonal to curated projects) and DR-049 (trusted in-process TS project sources via jiti) are unaffected — the seam contract moves home, not shape.
+
+## Tests
+
+> **Skipped.** No tests were written upfront — this is a behavior-neutral restructure (type moves,
+> package rename, publish sequencing). Follow red-green TDD as you implement where a new test makes
+> sense; existing suites (panels `detect.test.ts`, project-sources `builtin.test.ts` / `loader.test.ts`)
+> move with their code and must keep passing. The drift guard (`server/src/sdk-twins.ts`) is a
+> compile-time assertion exercised by `tsc -b` / `npm run check`, not a runtime test.
+
+## Steps
+
+> **Skipped.** Work through the architecture methodically — identify affected files, make changes in a
+> logical order, and commit in coherent units.
