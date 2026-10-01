@@ -41,6 +41,23 @@ describe('mapAgentMessage', () => {
       expect(result.content).toEqual([{ type: 'tool_result', toolCallId: 'tc-1', toolName: 'read', result: 'file contents', isError: undefined }]);
     });
 
+    it('forwards tool result details as structured data for the client', () => {
+      const payload = { slug: 'demo', url: '/s/demo/' };
+      const result = m({
+        role: 'toolResult',
+        toolCallId: 'tc-2',
+        toolName: 'pimote_static_host',
+        content: [{ type: 'text', text: JSON.stringify(payload) }],
+        details: payload,
+      });
+      expect(result.content[0]).toMatchObject({ type: 'tool_result', result: JSON.stringify(payload), data: payload });
+    });
+
+    it('omits data when a tool result has no details', () => {
+      const result = m({ role: 'toolResult', toolCallId: 'tc-3', toolName: 'bash', content: [{ type: 'text', text: 'output' }] });
+      expect(result.content[0]).not.toHaveProperty('data');
+    });
+
     it('preserves native bash result metadata for a context-visible execution', () => {
       const result = m({
         role: 'bashExecution',

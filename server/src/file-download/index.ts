@@ -1,7 +1,8 @@
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { DownloadManager, DownloadUpdateEvent } from './manager.js';
-import { executeCancelFileSendTool, executeSendFileTool, type CancelFileSendToolInput, type FileDownloadToolContext, type SendFileToolInput } from './tools.js';
+import { executeCancelFileSendTool, executeSendFileTool, CancelFileSendToolOutputSchema, SendFileToolOutputSchema, type FileDownloadToolContext } from './tools.js';
+import { jsonToolResult } from '../tool-result.js';
 import { FILE_DOWNLOAD_TOOL_DESCRIPTION } from './prompt.js';
 
 export interface CreateFileDownloadExtensionOptions {
@@ -35,11 +36,11 @@ export function createFileDownloadExtension(options: CreateFileDownloadExtension
       parameters: Type.Object({
         path: Type.String({ description: 'Path to the file, relative to the current project directory or an absolute contained path.' }),
       }),
-      execute: async (_callId: string, input: SendFileToolInput, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) => {
-        const out = await executeSendFileTool(input, toolContext(ctx));
-        return { content: [{ type: 'text', text: JSON.stringify(out) }], details: out };
+      outputSchema: SendFileToolOutputSchema,
+      execute: async (_callId, input, _signal, _onUpdate, ctx) => {
+        return jsonToolResult(await executeSendFileTool(input, toolContext(ctx)));
       },
-    } as unknown as Parameters<ExtensionAPI['registerTool']>[0]);
+    });
 
     pi.registerTool({
       name: 'pimote_cancel_file_send',
@@ -48,11 +49,12 @@ export function createFileDownloadExtension(options: CreateFileDownloadExtension
       parameters: Type.Object({
         id: Type.String({ description: 'Opaque id returned by pimote_send_file.' }),
       }),
-      execute: async (_callId: string, input: CancelFileSendToolInput, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) => {
-        const out = await executeCancelFileSendTool(input, toolContext(ctx));
-        return { content: [{ type: 'text', text: JSON.stringify(out) }], details: out };
+      annotations: { idempotentHint: true },
+      outputSchema: CancelFileSendToolOutputSchema,
+      execute: async (_callId, input, _signal, _onUpdate, ctx) => {
+        return jsonToolResult(await executeCancelFileSendTool(input, toolContext(ctx)));
       },
-    } as unknown as Parameters<ExtensionAPI['registerTool']>[0]);
+    });
 
     pi.on('session_start', async (_event: unknown, ctx: ExtensionContext) => {
       const sessionId = ctx.sessionManager.getSessionId();

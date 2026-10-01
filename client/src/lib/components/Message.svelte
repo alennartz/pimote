@@ -214,10 +214,11 @@
               inProgress={exec?.status === 'running'}
               partialResult={exec?.partialResult ?? ''}
               result={exec?.status === 'completed' ? exec.result : undefined}
+              data={exec?.data}
               isError={exec?.isError}
             />
           {:else if block.type === 'tool_result'}
-            <ToolCall content={block} />
+            <ToolCall content={block} data={block.data} />
           {/if}
         {/each}
         {#if isAbortedAssistant}

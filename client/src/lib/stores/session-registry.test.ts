@@ -565,6 +565,32 @@ describe('SessionRegistry', () => {
       expect(exec.result).toBe('done');
     });
 
+    it('tool_execution_end reduces the SDK AgentToolResult wrapper to text plus data', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_start', 's1', {
+          toolCallId: 'tc2',
+          toolName: 'pimote_static_host',
+          args: {},
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_end', 's1', {
+          toolCallId: 'tc2',
+          result: {
+            content: [{ type: 'text', text: '{"slug":"demo"}' }],
+            details: { slug: 'demo' },
+            structuredContent: { slug: 'demo' },
+          },
+          isError: false,
+        }),
+      );
+      const exec = registry.sessions['s1'].toolExecutions['tc2'];
+      expect(exec.status).toBe('completed');
+      expect(exec.result).toBe('{"slug":"demo"}');
+      expect(exec.data).toEqual({ slug: 'demo' });
+    });
+
     it('toolResult message_end overwrites execution result with canonical data', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.handleEvent(

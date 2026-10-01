@@ -1,9 +1,10 @@
 import type { ExtensionFactory, ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { Card } from '../../../shared/dist/index.js';
+import { jsonToolResult } from '../tool-result.js';
 import type { StaticHostRegistry } from './registry.js';
 import type { StaticHostStore } from './store.js';
-import { executeRegisterTool, executeRemoveTool, resolveSlugCollision, type RegisterToolInput, type RemoveToolInput, type ToolDeps } from './tools.js';
+import { executeRegisterTool, executeRemoveTool, resolveSlugCollision, RegisterToolOutputSchema, RemoveToolOutputSchema, type ToolDeps } from './tools.js';
 import type { StaticHostStoreEntry } from './store.js';
 import { STATIC_HOST_TOOL_DESCRIPTION } from './prompt.js';
 
@@ -92,12 +93,12 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
           }),
         ),
       }),
-      execute: async (_callId: string, input: RegisterToolInput, _abort: unknown, _meta: unknown, ctx: ExtensionContext) => {
+      outputSchema: RegisterToolOutputSchema,
+      execute: async (_callId, input, _abort, _meta, ctx) => {
         const sessionId = ctx.sessionManager.getSessionId();
-        const out = await executeRegisterTool(input, toolDeps(pi, sessionId));
-        return { content: [{ type: 'text', text: JSON.stringify(out) }], details: out };
+        return jsonToolResult(await executeRegisterTool(input, toolDeps(pi, sessionId)));
       },
-    } as unknown as Parameters<ExtensionAPI['registerTool']>[0]);
+    });
 
     pi.registerTool({
       name: 'pimote_static_host_remove',
@@ -106,12 +107,13 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
       parameters: Type.Object({
         slug: Type.String({ description: 'Slug of the bundle to remove.' }),
       }),
-      execute: async (_callId: string, input: RemoveToolInput, _abort: unknown, _meta: unknown, ctx: ExtensionContext) => {
+      annotations: { destructiveHint: true },
+      outputSchema: RemoveToolOutputSchema,
+      execute: async (_callId, input, _abort, _meta, ctx) => {
         const sessionId = ctx.sessionManager.getSessionId();
-        const out = await executeRemoveTool(input, toolDeps(pi, sessionId));
-        return { content: [{ type: 'text', text: JSON.stringify(out) }], details: out };
+        return jsonToolResult(await executeRemoveTool(input, toolDeps(pi, sessionId)));
       },
-    } as unknown as Parameters<ExtensionAPI['registerTool']>[0]);
+    });
 
     pi.on('session_start', async (_ev: unknown, ctx: ExtensionContext) => {
       const sessionId = ctx.sessionManager.getSessionId();

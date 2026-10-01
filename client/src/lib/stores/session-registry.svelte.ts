@@ -105,6 +105,19 @@ function appendBoundedBashOutput(current: string, delta: string, maxBytes: numbe
   };
 }
 
+/** Reduce a wire `tool_execution_end` result — the full SDK AgentToolResult
+ *  (`{content, details, structuredContent}`) — to the display text plus the
+ *  structured payload. Anything else (plain strings) passes through as text
+ *  with no data. */
+function reduceEndEventResult(result: unknown): { text: unknown; data: unknown } {
+  if (result !== null && typeof result === 'object' && Array.isArray((result as { content?: unknown }).content)) {
+    const wrapper = result as { content: Array<{ type: string; text?: string }>; details?: unknown; structuredContent?: unknown };
+    const textBlock = wrapper.content.find((block) => block.type === 'text');
+    return { text: textBlock?.text, data: wrapper.structuredContent ?? wrapper.details };
+  }
+  return { text: result, data: undefined };
+}
+
 export interface BashExecutionState {
   id: string;
   command: string;
@@ -133,7 +146,7 @@ export interface PerSessionState {
   streamingMessage: StreamingMessage | null;
   streamingKey: string | null;
   messageKeys: string[];
-  toolExecutions: Record<string, { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown; isError?: boolean }>;
+  toolExecutions: Record<string, { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown; data?: unknown; isError?: boolean }>;
   /** Transient native bash executions keyed by caller-owned command ID. */
   bashExecutions: Record<string, BashExecutionState>;
   autoCompactionEnabled: boolean;
@@ -552,7 +565,12 @@ export class SessionRegistry {
         const call = session.toolExecutions[end.toolCallId];
         if (call) {
           call.status = 'completed';
-          call.result = end.result;
+          // The wire end event carries the full SDK AgentToolResult
+          // ({content, details, structuredContent}); reduce it to display text
+          // plus the structured payload so live and replayed rendering match.
+          const reduced = reduceEndEventResult(end.result);
+          call.result = reduced.text;
+          if (reduced.data !== undefined) call.data = reduced.data;
           call.isError = end.isError;
         }
         break;
@@ -805,6 +823,7 @@ export class SessionRegistry {
           // Replace incrementally-accumulated data with canonical result
           existing.status = 'completed';
           existing.result = block.result;
+          existing.data = block.data;
           existing.isError = block.isError;
         } else {
           // Rehydration: no prior execution state, create from the result
@@ -814,6 +833,7 @@ export class SessionRegistry {
             partialResult: '',
             status: 'completed',
             result: block.result,
+            data: block.data,
             isError: block.isError,
           };
         }

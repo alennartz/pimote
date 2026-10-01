@@ -1,3 +1,4 @@
+import { Type } from 'typebox';
 import type { DownloadItem, DownloadManager } from './manager.js';
 
 export interface SendFileToolInput {
@@ -7,6 +8,13 @@ export interface SendFileToolInput {
 /** Agent-facing metadata; the one-shot href is reserved for the client event. */
 export type SendFileToolOutput = Pick<DownloadItem, 'id' | 'filename' | 'sizeBytes'>;
 
+/** TypeBox schema of {@link SendFileToolOutput} (the tool's outputSchema). */
+export const SendFileToolOutputSchema = Type.Object({
+  id: Type.String(),
+  filename: Type.String(),
+  sizeBytes: Type.Integer(),
+});
+
 export interface CancelFileSendToolInput {
   id: string;
 }
@@ -14,6 +22,11 @@ export interface CancelFileSendToolInput {
 export interface CancelFileSendToolOutput {
   cancelled: boolean;
 }
+
+/** TypeBox schema of {@link CancelFileSendToolOutput} (the tool's outputSchema). */
+export const CancelFileSendToolOutputSchema = Type.Object({
+  cancelled: Type.Boolean(),
+});
 
 export interface FileDownloadToolContext {
   manager: DownloadManager;

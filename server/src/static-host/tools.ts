@@ -1,5 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
+import { Type } from 'typebox';
 import type { CardColor } from '../../../shared/dist/index.js';
 import type { StaticHostRegistry } from './registry.js';
 import type { StaticHostStore, StaticHostStoreEntry, StaticHostStoreFile } from './store.js';
@@ -24,6 +25,12 @@ export interface RegisterToolOutput {
   url: string;
 }
 
+/** TypeBox schema of {@link RegisterToolOutput} (the tool's outputSchema). */
+export const RegisterToolOutputSchema = Type.Object({
+  slug: Type.String(),
+  url: Type.String(),
+});
+
 /** Input to the `pimote_static_host_remove` tool. */
 export interface RemoveToolInput {
   slug: string;
@@ -34,6 +41,11 @@ export interface RemoveToolOutput {
   /** True if a registration was removed, false if the slug was unknown / not owned by this session. */
   removed: boolean;
 }
+
+/** TypeBox schema of {@link RemoveToolOutput} (the tool's outputSchema). */
+export const RemoveToolOutputSchema = Type.Object({
+  removed: Type.Boolean(),
+});
 
 /** Per-session deps for the tool handlers, threaded by the extension factory. */
 export interface ToolDeps {

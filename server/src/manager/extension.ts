@@ -1,6 +1,7 @@
 import type { ExtensionFactory, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { enrichActiveSessionCounts } from '../project-registry.js';
+import { errorToolResult, jsonToolResult, type JsonToolResult } from '../tool-result.js';
 import type { ManagerToolContext, ManagedSessionSummary } from './types.js';
 
 /**
@@ -21,23 +22,65 @@ const SEARCH_MAX_LIMIT = 100;
 /** Excerpt length for firstMessage in search results. */
 const FIRST_MESSAGE_EXCERPT_LENGTH = 200;
 
-/** A tool result whose text content is the JSON serialization of the details. */
-function jsonToolResult<T>(details: T): { content: [{ type: 'text'; text: string }]; details: T } {
-  return { content: [{ type: 'text', text: JSON.stringify(details) }], details };
-}
-
-/** A rejected-tool result: JSON details plus the error flag, so the model
- *  reacts to the failure instead of treating it as data. */
-function errorToolResult(message: string): { content: [{ type: 'text'; text: string }]; details: { error: string }; isError: true } {
-  const details = { error: message };
-  return { content: [{ type: 'text', text: JSON.stringify(details) }], details, isError: true };
-}
-
 /** Collapse whitespace and truncate to `maxLength` with an ellipsis. */
 function excerpt(text: string, maxLength = FIRST_MESSAGE_EXCERPT_LENGTH): string {
   const normalized = text.replace(/\s+/g, ' ').trim();
   return normalized.length <= maxLength ? normalized : `${normalized.slice(0, maxLength)}…`;
 }
+
+/** Live status of one open session, mirrored from ManagedSessionSummary. */
+const SESSION_STATUS = Type.Union([Type.Literal('working'), Type.Literal('idle')]);
+
+/** Output schemas: the machine-readable contract for each tool's
+ *  structuredContent (see the matching interfaces in ./types.js). */
+const ManagedSessionSummarySchema = Type.Object({
+  sessionId: Type.String(),
+  folderPath: Type.String(),
+  status: SESSION_STATUS,
+  needsAttention: Type.Boolean(),
+});
+
+const RepoInfoSchema = Type.Object({
+  path: Type.String(),
+  name: Type.String(),
+  branch: Type.Union([Type.String(), Type.Null()]),
+  dirty: Type.Boolean(),
+  ahead: Type.Integer(),
+  behind: Type.Integer(),
+  lastActivity: Type.Optional(Type.Integer()),
+  missing: Type.Optional(Type.Boolean()),
+  tags: Type.Optional(Type.Array(Type.String())),
+});
+
+const ProjectInfoSchema = Type.Object({
+  path: Type.String(),
+  name: Type.String(),
+  kind: Type.Union([Type.Literal('single'), Type.Literal('multi')]),
+  repos: Type.Optional(Type.Array(RepoInfoSchema)),
+  tags: Type.Optional(Type.Array(Type.String())),
+  userTags: Type.Optional(Type.Array(Type.String())),
+  favorite: Type.Optional(Type.Boolean()),
+  archived: Type.Optional(Type.Boolean()),
+  activeSessionCount: Type.Integer(),
+  externalProcessCount: Type.Integer(),
+});
+
+const SessionSearchHitSchema = Type.Object({
+  id: Type.String(),
+  name: Type.Optional(Type.String()),
+  firstMessage: Type.String(),
+  modified: Type.String(),
+  folderPath: Type.String(),
+  open: Type.Boolean(),
+  status: Type.Optional(SESSION_STATUS),
+  archived: Type.Boolean(),
+  messageCount: Type.Integer(),
+});
+
+const SessionArchiveOutcomeSchema = Type.Object({
+  sessionId: Type.String(),
+  outcome: Type.Union([Type.Literal('archived'), Type.Literal('open_slot_evicted'), Type.Literal('not_found')]),
+});
 
 /** One search hit, as returned by pimote_search_sessions. */
 interface SessionSearchHit {
@@ -63,7 +106,9 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         'List every pimote project: curated single-repo projects and multi-repo projects, ' +
         'with path, kind, member repos, and favorite/order/archived flags. Takes no arguments.',
       parameters: Type.Object({}),
-      execute: async () => {
+      annotations: { readOnlyHint: true },
+      outputSchema: Type.Array(ProjectInfoSchema),
+      execute: async (_callId, _params) => {
         const projects = await context.projects.list();
         // Live counts, same rule the WS serve-paths use — the agent should
         // never see permanently-zeroed indicators.
@@ -78,6 +123,8 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       description:
         'List every git repository discovered across the configured roots (the discovery index), ' + 'with branch, dirty flag, and ahead/behind counts. Takes no arguments.',
       parameters: Type.Object({}),
+      annotations: { readOnlyHint: true },
+      outputSchema: Type.Array(RepoInfoSchema),
       execute: async () => jsonToolResult(await context.repos.list()),
     });
 
@@ -89,6 +136,8 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         'folder path, working/idle status, and attention flag. This is the live open-sessions view only — ' +
         'for closed sessions and full history, use pimote_search_sessions. Takes no arguments.',
       parameters: Type.Object({}),
+      annotations: { readOnlyHint: true },
+      outputSchema: Type.Array(ManagedSessionSummarySchema),
       execute: async () => jsonToolResult(context.sessions.getAllSessions()),
     });
 
@@ -105,7 +154,12 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         projectPath: Type.Optional(Type.String({ description: 'Restrict the search to this project path (must be a known project). Omit to search every project.' })),
         limit: Type.Optional(Type.Integer({ description: `Maximum number of results (default ${SEARCH_DEFAULT_LIMIT}, max ${SEARCH_MAX_LIMIT}).` })),
       }),
-      execute: async (_callId: string, params: { query: string; projectPath?: string; limit?: number }) => {
+      annotations: { readOnlyHint: true },
+      outputSchema: Type.Object({
+        query: Type.String(),
+        results: Type.Array(SessionSearchHitSchema),
+      }),
+      execute: async (_callId, params): Promise<JsonToolResult<{ error: string } | { query: string; results: SessionSearchHit[] }>> => {
         const query = params.query.trim();
         if (!query) {
           return errorToolResult('query is required');
@@ -151,7 +205,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         hits.sort((a, b) => (a.modified < b.modified ? 1 : a.modified > b.modified ? -1 : 0));
         return jsonToolResult({ query, results: hits.slice(0, limit) });
       },
-    } as unknown as Parameters<ExtensionAPI['registerTool']>[0]);
+    });
 
     pi.registerTool({
       name: 'pimote_start_session',
@@ -165,7 +219,12 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         projectPath: Type.String({ description: 'Absolute path of the project to start the session in (must be a known project).' }),
         firstMessage: Type.Optional(Type.String({ description: 'Optional first user message, sent to the new session right away.' })),
       }),
-      execute: async (_callId: string, params: { projectPath: string; firstMessage?: string }) => {
+      outputSchema: Type.Object({
+        sessionId: Type.String(),
+        projectPath: Type.String(),
+        firstMessageSent: Type.Boolean(),
+      }),
+      execute: async (_callId, params): Promise<JsonToolResult<{ error: string } | { sessionId: string; projectPath: string; firstMessageSent: boolean }>> => {
         const projects = await context.projects.list();
         if (!projects.some((project) => project.path === params.projectPath)) {
           return errorToolResult(`unknown project: ${params.projectPath} — use pimote_list_projects to see known projects`);
@@ -174,7 +233,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         const sessionId = await context.sessions.openSession(params.projectPath, firstMessage);
         return jsonToolResult({ sessionId, projectPath: params.projectPath, firstMessageSent: firstMessage !== undefined });
       },
-    } as unknown as Parameters<ExtensionAPI['registerTool']>[0]);
+    });
 
     pi.registerTool({
       name: 'pimote_archive_sessions',
@@ -187,7 +246,10 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       parameters: Type.Object({
         sessionIds: Type.Array(Type.String(), { minItems: 1, description: 'Session ids to archive.' }),
       }),
-      execute: async (_callId: string, params: { sessionIds: string[] }) => jsonToolResult({ results: await context.sessions.archiveSessions(params.sessionIds) }),
+      outputSchema: Type.Object({
+        results: Type.Array(SessionArchiveOutcomeSchema),
+      }),
+      execute: async (_callId, params) => jsonToolResult({ results: await context.sessions.archiveSessions(params.sessionIds) }),
     });
   };
 }

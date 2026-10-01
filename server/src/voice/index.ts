@@ -356,9 +356,10 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
       parameters: Type.Object({
         text: Type.String({ description: 'The text to speak to the user.' }),
       }),
+      outputSchema: Type.Object({ spoken: Type.Boolean() }),
       execute: async () => {
         if (state.lifecycle.kind === 'active' || state.lifecycle.kind === 'activating') {
-          return { content: [{ type: 'text', text: 'ok' }], details: {} };
+          return { content: [{ type: 'text', text: 'ok' }], details: { spoken: true }, structuredContent: { spoken: true } };
         }
         return {
           content: [
@@ -367,7 +368,8 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
               text: 'Voice call has ended. The user is now in text mode — do NOT call speak() again. Reply with normal assistant text. Any further speak() calls in this session will be rejected.',
             },
           ],
-          details: {},
+          details: { spoken: false },
+          structuredContent: { spoken: false },
           isError: true,
         };
       },

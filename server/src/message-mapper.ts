@@ -213,6 +213,9 @@ export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
             toolCallId: msg.toolCallId,
             toolName: msg.toolName,
             result: text,
+            // Structured payload (same data the tool returned as
+            // structuredContent/details) so the client can render it typed.
+            ...(msg.details !== undefined && msg.details !== null ? { data: msg.details } : {}),
             isError: msg.isError || undefined,
           },
         ],

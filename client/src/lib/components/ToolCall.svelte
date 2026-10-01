@@ -20,6 +20,7 @@
     inProgress = false,
     partialResult = '',
     result = undefined,
+    data = undefined,
     isError = false,
   }: {
     content: PimoteMessageContent;
@@ -27,6 +28,7 @@
     inProgress?: boolean;
     partialResult?: string;
     result?: unknown;
+    data?: unknown;
     isError?: boolean;
   } = $props();
 
@@ -207,7 +209,19 @@
   }
 
   let argsText = $derived(streaming && !content.args ? (content.text ?? '') : formatData(content.args));
-  let resultText = $derived(isResult ? formatData(content.result) : result !== undefined ? formatData(result) : partialResult);
+  // Prefer the structured payload when the text is just its serialization
+  // (pimote tools stringify their payload into the text block) — renders as
+  // pretty typed data instead of a compact JSON string. Built-in tools keep
+  // their prose text; their `data` (details) is metadata, not the result.
+  let resultValue = $derived.by(() => {
+    if (!isResult && result === undefined) return partialResult;
+    const text = isResult ? content.result : result;
+    if (data !== undefined && typeof data !== 'string' && (text === undefined || text === JSON.stringify(data))) {
+      return data;
+    }
+    return text;
+  });
+  let resultText = $derived(formatData(resultValue));
 </script>
 
 <div class="tool-block" bind:this={rootEl} class:tool-result={isResult} class:tool-completed={isCompleted} class:tool-error={isError} class:in-progress={inProgress}>
