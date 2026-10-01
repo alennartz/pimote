@@ -1,4 +1,22 @@
-import type { RepoInfo } from '../../../shared/dist/index.js';
+/**
+ * Repo facts as contributed by sources. Twin of the wire `RepoInfo` in
+ * shared/src/protocol.ts — drift-guarded by server/src/sdk-twins.ts.
+ */
+export interface RepoInfo {
+  path: string;
+  name: string;
+  branch: string | null;
+  dirty: boolean;
+  /** Commits ahead of upstream; 0 when unknown. */
+  ahead: number;
+  behind: number;
+  /** Epoch ms of last session activity in this repo, when known. */
+  lastActivity?: number;
+  /** True when the repo path no longer exists on disk (deleted member, broken symlink). */
+  missing?: boolean;
+  /** Effective tags (user + source-contributed). Absent when untagged. */
+  tags?: string[];
+}
 
 /** Human-readable parameter type for a creator form field. */
 export type ProjectCreatorParamType = 'string' | 'string[]';

@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import { mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isValidProjectName } from '../project-registry.js';
-import type { ProjectCreator } from './types.js';
+import type { ProjectCreator } from '@pimote/sdk/projects';
 
 const execFileAsync = promisify(execFile);
 

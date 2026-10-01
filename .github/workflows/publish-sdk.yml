@@ -1,9 +1,9 @@
-name: Publish @pimote/panels
+name: Publish @pimote/sdk
 
 on:
   push:
     tags:
-      - 'panels-v*'
+      - 'sdk-v*'
 
 permissions:
   contents: read
@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/panels
+        working-directory: packages/sdk
     steps:
       - uses: actions/checkout@v6
 

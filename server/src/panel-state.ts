@@ -1,14 +1,14 @@
 import type { Card } from '../../shared/dist/index.js';
+import type { PanelMessage } from '@pimote/sdk';
 
-/** Panel EventBus message shapes (mirrors @pimote/panels PanelMessage). */
-export type PanelBusMessage = { type: 'cards'; namespace: string; cards: Card[] } | { type: 'clear'; namespace: string };
+export type { PanelMessage };
 
 /**
  * Process a panel bus message and update the panel state map.
  * - 'cards' messages replace the card list for that namespace.
  * - 'clear' messages remove the namespace entirely.
  */
-export function applyPanelMessage(panelState: Map<string, Card[]>, message: PanelBusMessage): void {
+export function applyPanelMessage(panelState: Map<string, Card[]>, message: PanelMessage): void {
   if (message.type === 'cards') {
     panelState.set(message.namespace, message.cards);
   } else if (message.type === 'clear') {

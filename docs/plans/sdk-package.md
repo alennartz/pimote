@@ -88,7 +88,7 @@ Do this **before** any tree changes: the tombstone publish needs `packages/panel
 Steps 4–6 push tags and touch the npm registry — coordinate with the user before executing them.
 
 **Verify:** `npm view @pimote/panels version` → `0.12.2`; `npm view @pimote/panels deprecated` prints the migration message.
-**Status:** in progress
+**Status:** blocked — publish done (CI run 36889179290, 0.12.2 live on npm); `npm deprecate` fails: local npm has no credentials (`npm whoami` → ENEEDAUTH). Needs a logged-in npm session (user action).
 
 ### Step 2: Create `packages/sdk` — panels module moved as-is, workspace swapped
 
@@ -135,7 +135,7 @@ Steps 4–6 push tags and touch the npm registry — coordinate with the user be
 7. `npm install` to refresh the lockfile (drops the panels workspace entry, adds sdk).
 
 **Verify:** `npm run build --workspace=@pimote/sdk && npm run test --workspace=@pimote/sdk -- --run` (moved `detect.test.ts` passes unchanged); `npm ls @pimote/sdk` resolves to `packages/sdk`; root `npm run build` still succeeds.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Add the `projects` seam module to the SDK
 
@@ -170,7 +170,7 @@ Steps 4–6 push tags and touch the npm registry — coordinate with the user be
    ```
 
 **Verify:** `npm run build --workspace=@pimote/sdk` emits `dist/projects/`, `dist/panels/`, and the root barrel `dist/index.js`; `node -e "import('@pimote/sdk/projects').then(m => console.log(Object.keys(m)))"` (from repo root) prints `[]` — types only, no runtime exports.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Write `packages/sdk/README.md`
 
@@ -181,7 +181,7 @@ One section per seam, replacing `packages/panels/README.md` (deleted in Step 2):
 - **Projects** (`@pimote/sdk/projects`): document the discovery/creation seam for user-authored modules: export `sources: ProjectSource[]` / `creators: ProjectCreator[]` from a module in the configured project-sources dir (`~/.config/pimote/project-sources`), the `list()` / `onProjectOpen()` / `describe()` / `create()` contracts, entry shapes (`RepoSourceEntry`, `MultiRepoSourceEntry`), and the `RepoInfo` twin (mirrors the wire type; same-name export so `interface MyEntry extends RepoInfo` works against the SDK alone).
 
 **Verify:** README renders (headings per seam, code blocks import from `@pimote/sdk/panels` / `@pimote/sdk/projects`); `npm run format:check` passes on the new file.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Server adopts the SDK seam types
 
@@ -199,7 +199,7 @@ One section per seam, replacing `packages/panels/README.md` (deleted in Step 2):
 5. Build ordering: add `{ "path": "../packages/sdk" }` to the `references` array in `server/tsconfig.json` (same mechanism as the existing `../shared` reference) so `tsc -b` builds the SDK before the server.
 
 **Verify:** `npm run build --workspace=@pimote/server` succeeds (builds the sdk reference first); `npm run test --workspace=@pimote/server -- --run` passes (`builtin.test.ts`, `loader.test.ts` untouched and green).
-**Status:** not started
+**Status:** done
 
 ### Step 6: Panel message aliasing + drift guard
 
@@ -234,7 +234,7 @@ One section per seam, replacing `packages/panels/README.md` (deleted in Step 2):
    The `_` prefixes satisfy the repo's eslint `varsIgnorePattern: '^_'`.
 
 **Verify:** `npm run build --workspace=@pimote/server` and root `npm run check` pass (a build must precede `check` — sdk `dist/` types are resolved like `shared/dist` today). One-off sanity of the guard: temporarily rename a field in the SDK `RepoInfo` twin → `npm run check` must fail; revert.
-**Status:** not started
+**Status:** done — sanity run: optional-field rename needed `AssertSameKeys` key-set assertions added alongside `AssertEqual` (mutual assignability alone misses optional-field renames); verified check fails on rename, passes after revert.
 
 ### Step 7: Swap publish/CI workflows to the SDK
 
@@ -248,7 +248,7 @@ One section per seam, replacing `packages/panels/README.md` (deleted in Step 2):
    ```
 
 **Verify:** `grep -rn panels .github/workflows/` returns no hits; YAML well-formed (prettier `format:check` covers it).
-**Status:** not started
+**Status:** done
 
 ### Step 8: Update the pimote-release skill
 
@@ -263,7 +263,7 @@ In `.pi/skills/pimote-release/SKILL.md`, replace the panels-package material wit
 - Retagging examples use `sdk-v0.1.0`
 
 **Verify:** `grep -n panels .pi/skills/pimote-release/SKILL.md` returns nothing.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Reference sweep + codemap
 
@@ -277,7 +277,7 @@ Update every live (non-historical) mention of the old package:
 - Leave historical records untouched: `docs/plans/*`, `docs/brainstorms/*`, `docs/decisions/DR-004*`.
 
 **Verify:** `grep -rn "pimote/panels" --exclude-dir=node_modules --exclude-dir=dist .` hits only `docs/plans/`, `docs/brainstorms/`, and `docs/decisions/`.
-**Status:** not started
+**Status:** done — three tolerated extras outside the sweep's scope: the moved (immutable) `detect.test.ts` describe label, a stale npm-generated `extraneous` lockfile entry (same artifact as the pre-existing `packages/voice` ghost), and `.git/` history.
 
 ### Step 10: Full validation + publish SDK 0.13.0
 
@@ -288,4 +288,4 @@ Update every live (non-historical) mention of the old package:
 Tagging/pushing coordinates a registry release — coordinate with the user before step 3.
 
 **Verify:** `npm view @pimote/sdk version` → `0.13.0`; `npm view @pimote/sdk exports` lists `.`, `./panels`, `./projects`.
-**Status:** not started
+**Status:** in progress

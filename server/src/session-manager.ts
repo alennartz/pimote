@@ -17,7 +17,7 @@ import { rendererRegisteredVisibility } from './message-mapper.js';
 import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, DownloadUpdateEvent } from '../../shared/dist/index.js';
 import type { PushNotificationPayload, PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
-import type { PanelBusMessage } from './panel-state.js';
+import type { PanelMessage } from './panel-state.js';
 import { getGitBranch } from './git-branch.js';
 import { LoginOrchestrator } from './login-orchestrator.js';
 import { createVoiceExtension } from './voice/index.js';
@@ -338,7 +338,7 @@ function setupSlotPanelListeners(eventBus: EventBusController, state: SessionSta
     eventBus.emit('pimote:detect:response', { detected: true });
   });
   const unsub2 = eventBus.on('pimote:panels', (data) => {
-    applyPanelMessage(state.panelState, data as PanelBusMessage);
+    applyPanelMessage(state.panelState, data as PanelMessage);
     scheduleSlotPanelPush(state, sessionId, sendEvent);
   });
   const unsub3 = eventBus.on('pimote:navigate', (data) => {

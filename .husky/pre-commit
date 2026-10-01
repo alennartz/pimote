@@ -6,8 +6,8 @@ cd shared && npx tsc --noEmit && cd ..
 echo "Type-checking server..."
 cd server && npx tsc --noEmit && cd ..
 
-echo "Type-checking panels..."
-cd packages/panels && npx tsc --noEmit && cd ../..
+echo "Type-checking sdk..."
+cd packages/sdk && npx tsc --noEmit && cd ../..
 
 echo "Type-checking client..."
 cd client && npx svelte-check --tsconfig ./tsconfig.json

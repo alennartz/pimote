@@ -1315,11 +1315,11 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 
 ## TP-16a: Extension Panel System
 
-The panel system allows pi extensions to push structured card data into the pimote web UI via the `@pimote/panels` package and the pi EventBus. Cards are rendered in a side panel (desktop) or overlay (mobile).
+The panel system allows pi extensions to push structured card data into the pimote web UI via the `@pimote/sdk` package and the pi EventBus. Cards are rendered in a side panel (desktop) or overlay (mobile).
 
 ### TC-16a.01 — Panel appears when extension pushes cards 🟠
 
-- **[P]** Session open; extension uses `@pimote/panels` `detect()` + `PanelHandle.updateCards()` to push cards
+- **[P]** Session open; extension uses `@pimote/sdk` `detect()` + `PanelHandle.updateCards()` to push cards
 - **[E]** On desktop (≥md), a side panel appears right of the main content showing the cards
 - **[E]** Panel has a fixed width (~280px), border-left separator, scrollable if cards overflow
 - **[E]** Main conversation content area narrows to accommodate the panel

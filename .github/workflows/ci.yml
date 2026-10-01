@@ -27,6 +27,6 @@ jobs:
       - name: Test pimote
         run: make test
 
-      - name: Test panels
-        working-directory: packages/panels
+      - name: Test sdk
+        working-directory: packages/sdk
         run: npx vitest --run

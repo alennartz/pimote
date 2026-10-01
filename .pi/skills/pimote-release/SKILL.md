@@ -1,6 +1,6 @@
 ---
 name: pimote-release
-description: Release workflow for this repo's npm packages. Use when preparing or executing a new release of @pimote/pimote or @pimote/panels, deciding the next version number, bumping versions with npm, tagging the correct commit, or checking the publish GitHub Actions run.
+description: Release workflow for this repo's npm packages. Use when preparing or executing a new release of @pimote/pimote or @pimote/sdk, deciding the next version number, bumping versions with npm, tagging the correct commit, or checking the publish GitHub Actions run.
 ---
 
 # Pimote Release
@@ -11,7 +11,7 @@ Use it when the user wants to:
 
 - decide the next release version
 - publish `@pimote/pimote`
-- publish `@pimote/panels`
+- publish `@pimote/sdk`
 - retag and retry a failed publish
 - verify a GitHub Actions publish run
 
@@ -20,7 +20,7 @@ Use it when the user wants to:
 There are two independently published npm packages in this repo:
 
 1. **App package**: `@pimote/pimote`
-2. **Panels package**: `@pimote/panels`
+2. **SDK package**: `@pimote/sdk` at `packages/sdk/`
 
 Always confirm which package is being released before making changes.
 
@@ -44,20 +44,20 @@ npm version major --no-git-tag-version
 npm version 0.1.2 --no-git-tag-version
 ```
 
-### Panels package
+### SDK package
 
 Source of truth:
 
-- `packages/panels/package.json`
+- `packages/sdk/package.json`
 - `package-lock.json` (updated by npm)
 
 Recommended bump commands:
 
 ```bash
-npm version patch --workspace=@pimote/panels --no-git-tag-version
-npm version minor --workspace=@pimote/panels --no-git-tag-version
-npm version major --workspace=@pimote/panels --no-git-tag-version
-npm version 0.1.2 --workspace=@pimote/panels --no-git-tag-version
+npm version patch --workspace=@pimote/sdk --no-git-tag-version
+npm version minor --workspace=@pimote/sdk --no-git-tag-version
+npm version major --workspace=@pimote/sdk --no-git-tag-version
+npm version 0.1.2 --workspace=@pimote/sdk --no-git-tag-version
 ```
 
 ## Ask before choosing the bump
@@ -93,11 +93,11 @@ npm install "/absolute/path/to/$TARBALL"
 npx pimote help
 ```
 
-For **panels releases** run:
+For **sdk releases** run:
 
 ```bash
-npm run build --workspace=@pimote/panels
-npm run test --workspace=@pimote/panels -- --run
+npm run build --workspace=@pimote/sdk
+npm run test --workspace=@pimote/sdk -- --run
 ```
 
 ## Commit flow
@@ -112,11 +112,11 @@ git commit -m "Bump @pimote/pimote to X.Y.Z"
 git push origin main
 ```
 
-### Panels release commit
+### SDK release commit
 
 ```bash
-git add packages/panels/package.json package-lock.json
-git commit -m "Bump @pimote/panels to X.Y.Z"
+git add packages/sdk/package.json package-lock.json
+git commit -m "Bump @pimote/sdk to X.Y.Z"
 git push origin main
 ```
 
@@ -153,16 +153,16 @@ If the tag convention ever changes, update the URL template in `server/src/updat
 same change. A GitHub Release object is not required — GitHub renders the tag page with its commit
 list for any pushed tag, which is the intended fallback when release notes are absent.
 
-### Panels tags
+### SDK tags
 
 ```bash
-git tag panels-vX.Y.Z
-git push origin panels-vX.Y.Z
+git tag sdk-vX.Y.Z
+git push origin sdk-vX.Y.Z
 ```
 
 This triggers:
 
-- `.github/workflows/publish-panels.yml`
+- `.github/workflows/publish-sdk.yml`
 
 ## Checking the publish run
 
@@ -170,7 +170,7 @@ Use the GitHub CLI:
 
 ```bash
 gh run list --workflow "Publish @pimote/pimote" --limit 5
-gh run list --workflow "Publish @pimote/panels" --limit 5
+gh run list --workflow "Publish @pimote/sdk" --limit 5
 ```
 
 Watch a run:
@@ -189,7 +189,7 @@ Verify the published npm version:
 
 ```bash
 npm view @pimote/pimote version
-npm view @pimote/panels version
+npm view @pimote/sdk version
 ```
 
 ## Retagging after a failed run
@@ -209,13 +209,13 @@ git tag pimote-v0.1.0
 git push origin pimote-v0.1.0
 ```
 
-Panels example:
+SDK example:
 
 ```bash
-git tag -d panels-v0.1.0
-git push origin :refs/tags/panels-v0.1.0
-git tag panels-v0.1.0
-git push origin panels-v0.1.0
+git tag -d sdk-v0.1.0
+git push origin :refs/tags/sdk-v0.1.0
+git tag sdk-v0.1.0
+git push origin sdk-v0.1.0
 ```
 
 ## Notes specific to this repo
@@ -235,7 +235,7 @@ git push origin panels-v0.1.0
 
 When using this skill:
 
-1. identify whether the release target is **app** or **panels**
+1. identify whether the release target is **app** or **sdk**
 2. determine whether the user wants **patch**, **minor**, **major**, or an explicit version
 3. run the npm version command
 4. validate

@@ -41,7 +41,7 @@
   "workspaces": [
     "server",
     "client",
-    "packages/panels"
+    "packages/sdk"
   ],
   "scripts": {
     "build": "npm run build:shared && npm run build --workspace=@pimote/server && npm run build --workspace=client",

@@ -12,7 +12,7 @@ graph LR
   Web_Client --> Server
   Android_Client --> Server
   Server --> Agent_Extensions[Agent Extensions]
-  Agent_Extensions --> Panels
+  Agent_Extensions --> SDK
 ```
 
 ### Key Flows
@@ -50,7 +50,7 @@ Hosts pi `AgentSession` instances and exposes the HTTP and WebSocket API.
 
 **Responsibilities:** CLI and configuration, static/PWA and WebSocket serving, session slots and replay buffers, command routing (including native bash execution, extension interception, and cancellation), SDK event boundary for live bash output, project/repo discovery (bounded recursive repo index over roots and registered sources with TTL caches and per-repo git status), curated project registry (favorite/archive overrides, multi-repo project create/disband with symlinked members and generated AGENTS.md, JSON persistence, projects_changed broadcasts), user project sources (jiti-loaded TS modules from a configured dir), ephemeral per-connection manager agent (lifecycle with idle reaper, pimote listing-tool extension, in-memory session factory), ownership/conflict handling, extension UI bridge, auth, push notifications, persistent session metadata, version lookup and TTL-cached npm update checks with per-connection update events
 
-**Dependencies:** Protocol for wire types; Agent Extensions for session tools and resources
+**Dependencies:** Protocol for wire types; Agent Extensions for session tools and resources; `@pimote/sdk` (types-only) for the project-sources seam
 
 **Files:**
 
@@ -64,7 +64,7 @@ In-process pi extensions for optional voice calls, static bundles, and one-shot 
 
 **Responsibilities:** voice interpreter/worker state machine and speechmux bridge, static-host registry/store/HTTP tools, file-offer registry/HTTP tools, EventBus and panel integration
 
-**Dependencies:** Server for lifecycle, routes, and session EventBus; Protocol for client events; Panels for static-host cards; pi SDK extension APIs
+**Dependencies:** Server for lifecycle, routes, and session EventBus; Protocol for client events; SDK panels for static-host cards; pi SDK extension APIs
 
 **Files:**
 
@@ -84,17 +84,17 @@ Installable SvelteKit PWA for browsing, controlling, and rendering remote pi ses
 
 - `client/src/**` (including `client/src/lib/components/Dashboard.svelte`, `client/src/lib/components/ProjectList.svelte`, `client/src/lib/components/ManagerChat.svelte`, `client/src/lib/stores/project-store.svelte.ts`, `client/src/lib/stores/manager-store.svelte.ts`, `client/src/lib/stores/connection.svelte.ts`, `client/src/lib/stores/session-registry.svelte.ts`, `client/src/lib/bash-command.ts`, and `client/src/lib/components/BashExecution.svelte`)
 
-### Panels
+### SDK
 
-Published `@pimote/panels` library through which pi extensions publish scoped card data.
+Published `@pimote/sdk` extensibility package that pi extensions import to talk to pimote.
 
-**Responsibilities:** card types, EventBus detection, namespace-scoped panel handles
+**Responsibilities:** card types, EventBus detection, namespace-scoped panel handles, project discovery/creation seam types
 
 **Dependencies:** pi SDK extension APIs
 
 **Files:**
 
-- `packages/panels/src/**`
+- `packages/sdk/src/**`
 
 ### Android Client
 

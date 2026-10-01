@@ -4,13 +4,13 @@
 [![license](https://img.shields.io/npm/l/%40pimote%2Fpimote?style=flat-square)](LICENSE)
 [![node](https://img.shields.io/node/v/%40pimote%2Fpimote?style=flat-square)](https://www.npmjs.com/package/@pimote/pimote)
 [![publish app](https://github.com/alennartz/pimote/actions/workflows/publish-pimote.yml/badge.svg)](https://github.com/alennartz/pimote/actions/workflows/publish-pimote.yml)
-[![panels](https://img.shields.io/npm/v/%40pimote%2Fpanels?style=flat-square&label=%40pimote%2Fpanels)](https://www.npmjs.com/package/@pimote/panels)
+[![sdk](https://img.shields.io/npm/v/%40pimote%2Fsdk?style=flat-square&label=%40pimote%2Fsdk)](https://www.npmjs.com/package/@pimote/sdk)
 
 A full-featured web client for [pi](https://github.com/mariozechner/pi-coding-agent). Use your coding agent from your phone, tablet, or any browser — with multi-session management, real-time streaming, and push notifications.
 
 Pimote implements all of pi's RPC-compatible UI extension mechanisms (select, confirm, input, editor, status, widgets, panels), so you can use your favorite pi extensions exactly as they work in the terminal — just through a browser.
 
-**Links:** [npm package](https://www.npmjs.com/package/@pimote/pimote) · [panels package](https://www.npmjs.com/package/@pimote/panels) · [issues](https://github.com/alennartz/pimote/issues) · [pi](https://github.com/mariozechner/pi-coding-agent)
+**Links:** [npm package](https://www.npmjs.com/package/@pimote/pimote) · [SDK package](https://www.npmjs.com/package/@pimote/sdk) · [issues](https://github.com/alennartz/pimote/issues) · [pi](https://github.com/mariozechner/pi-coding-agent)
 
 ## Quick start
 
@@ -55,12 +55,12 @@ Phone/Browser ←→ Pimote Server
 
 Pimote is published as the app package `@pimote/pimote` at the repo root, backed by an npm workspace monorepo:
 
-| Package              | Path               | Description                                                          |
-| -------------------- | ------------------ | -------------------------------------------------------------------- |
-| **`@pimote/pimote`** | `./`               | Publishable app package and `pimote` CLI                             |
-| **`@pimote/server`** | `server/`          | Node.js HTTP + WebSocket server hosting pi sessions                  |
-| **client**           | `client/`          | SvelteKit PWA (Svelte 5, Tailwind CSS, shadcn-svelte)                |
-| **`@pimote/panels`** | `packages/panels/` | Standalone library extensions can import to push card data to the UI |
+| Package              | Path            | Description                                                   |
+| -------------------- | --------------- | ------------------------------------------------------------- |
+| **`@pimote/pimote`** | `./`            | Publishable app package and `pimote` CLI                      |
+| **`@pimote/server`** | `server/`       | Node.js HTTP + WebSocket server hosting pi sessions           |
+| **client**           | `client/`       | SvelteKit PWA (Svelte 5, Tailwind CSS, shadcn-svelte)         |
+| **`@pimote/sdk`**    | `packages/sdk/` | Extensibility SDK: panels + project sources for pi extensions |
 
 The `shared/` directory holds TypeScript types for the WebSocket wire protocol shared between server and client — it's a tsc-only project, not a published package. The voice-mode pi extension lives at `server/src/voice/` and is loaded into each session only when voice is configured (see [Voice mode](#voice-mode)). The static-host pi extension lives at `server/src/static-host/` and is loaded unconditionally — it exposes the `pimote_static_host` / `pimote_static_host_remove` agent tools that publish a local folder under `/s/<slug>/` and push a tappable card to the panel UI. The file-download extension is also loaded into every session; it lets the agent offer an individual project file as a one-time, user-approved browser download.
 
@@ -348,12 +348,12 @@ make help           Show make targets
 
 For first-publish steps, see [docs/releasing.md](docs/releasing.md).
 
-## `@pimote/panels`
+## `@pimote/sdk`
 
-A standalone package that pi extensions can import to push structured card data into the Pimote side panel. Cards appear in a responsive side panel (desktop) or overlay (mobile).
+Pimote's extensibility SDK — the package pi extensions import to talk to pimote. The `panels` module pushes structured card data into the Pimote side panel; cards appear in a responsive side panel (desktop) or overlay (mobile).
 
 ```ts
-import { detect } from '@pimote/panels';
+import { detect } from '@pimote/sdk';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 
 const extension: ExtensionFactory = (pi) => {
@@ -374,7 +374,7 @@ const extension: ExtensionFactory = (pi) => {
 export default extension;
 ```
 
-See [`packages/panels/README.md`](packages/panels/README.md) for full API docs.
+See [`packages/sdk/README.md`](packages/sdk/README.md) for full API docs.
 
 ## Status
 

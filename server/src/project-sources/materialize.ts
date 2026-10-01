@@ -1,6 +1,6 @@
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import type { MultiRepoSourceEntry } from './types.js';
+import type { MultiRepoSourceEntry } from '@pimote/sdk/projects';
 
 /**
  * The multi-repo project folder layout, owned by pimote: one absolute symlink

@@ -1,26 +1,30 @@
 {
-  "name": "@pimote/panels",
-  "version": "0.12.2",
-  "description": "Push structured card data from pi extensions to the pimote web client",
+  "name": "@pimote/sdk",
+  "version": "0.13.0",
+  "description": "Pimote extensibility SDK: panel cards and project discovery/creation seams for pi extensions",
   "type": "module",
   "license": "MIT",
   "author": "Antoine Lennartz <alennartz@gmail.com>",
   "repository": {
     "type": "git",
     "url": "https://github.com/alennartz/pimote.git",
-    "directory": "packages/panels"
+    "directory": "packages/sdk"
   },
-  "homepage": "https://github.com/alennartz/pimote/tree/main/packages/panels#readme",
+  "homepage": "https://github.com/alennartz/pimote/tree/main/packages/sdk#readme",
   "bugs": "https://github.com/alennartz/pimote/issues",
   "keywords": [
     "pi",
     "pimote",
     "extension",
+    "sdk",
+    "projects",
     "panels",
     "cards"
   ],
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./panels": "./dist/panels/index.js",
+    "./projects": "./dist/projects/index.js"
   },
   "types": "./dist/index.d.ts",
   "files": [
@@ -36,6 +40,11 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "^0.99.2"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.99.2",

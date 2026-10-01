@@ -3,7 +3,7 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createJiti } from 'jiti';
-import type { ProjectCreator, ProjectSource } from './types.js';
+import type { ProjectCreator, ProjectSource } from '@pimote/sdk/projects';
 
 /** Source/creator modules: regular files with these extensions; everything else is ignored. */
 const MODULE_EXTENSIONS = ['.js', '.mjs', '.cjs', '.ts'];
