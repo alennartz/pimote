@@ -48,17 +48,14 @@ export class ProjectStore {
   private nextSessionRequestId = 0;
 
   /**
-   * Projects with the archived filter applied, displayed in three tiers:
-   * manually ordered projects (user moved them) in explicit order, then
-   * everything else by most recent session activity (old-sidebar behavior),
-   * name as tiebreak. Projects with no sessions sink to the bottom.
+   * Projects with the archived filter applied, favorites first. Within each
+   * tier, most recent session activity (old-sidebar behavior), name as
+   * tiebreak. Projects with no sessions sink to the bottom of their tier.
    */
   get visibleProjects(): ProjectInfo[] {
     const list = this.showArchived ? this.projects : this.projects.filter((p) => !p.archived);
     const recency = (project: ProjectInfo): number => Math.max(0, ...(this.sessions.get(project.path) ?? []).map((s) => toTimestamp(s.modified)));
-    const manuallyOrdered = list.filter((p) => typeof p.order === 'number').sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    const byRecency = list.filter((p) => typeof p.order !== 'number').sort((a, b) => recency(b) - recency(a) || a.name.localeCompare(b.name));
-    return [...manuallyOrdered, ...byRecency];
+    return [...list].sort((a, b) => Number(b.favorite === true) - Number(a.favorite === true) || recency(b) - recency(a) || a.name.localeCompare(b.name));
   }
 
   async loadProjects(): Promise<void> {

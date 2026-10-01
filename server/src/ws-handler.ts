@@ -236,7 +236,6 @@ export class WsHandler {
           await projectRegistry.update({
             projectPath: command.projectPath,
             favorite: command.favorite,
-            order: command.order,
             archived: command.archived,
             addTags: command.addTags,
             removeTags: command.removeTags,

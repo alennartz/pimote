@@ -103,15 +103,17 @@ describe('ProjectStore', () => {
       expect(store.visibleProjects).toEqual([fresh, mid, stale, untouched]);
     });
 
-    it('manually ordered projects keep their curated position ahead of recency', () => {
+    it('favorites float above the rest; recency applies within each tier', () => {
       const store = new ProjectStore();
-      const pinned = makeProject({ path: '/r/pin', name: 'pin', order: 0 });
-      const active = makeProject({ path: '/r/active', name: 'active' });
-      store.projects = [active, pinned];
-      store.sessions.set('/r/active', [makeSession('s1', '2026-03-01T00:00:00Z')]);
-      store.sessions.set('/r/pin', [makeSession('s2', '2026-01-01T00:00:00Z')]);
+      const starred = makeProject({ path: '/r/star', name: 'star', favorite: true });
+      const staleStarred = makeProject({ path: '/r/old-star', name: 'old-star', favorite: true });
+      const freshPlain = makeProject({ path: '/r/fresh', name: 'fresh' });
+      store.projects = [freshPlain, staleStarred, starred];
+      store.sessions.set('/r/star', [makeSession('s1', '2026-03-01T00:00:00Z')]);
+      store.sessions.set('/r/old-star', [makeSession('s2', '2026-01-01T00:00:00Z')]);
+      store.sessions.set('/r/fresh', [makeSession('s3', '2026-02-01T00:00:00Z')]);
 
-      expect(store.visibleProjects).toEqual([pinned, active]);
+      expect(store.visibleProjects).toEqual([starred, staleStarred, freshPlain]);
     });
   });
 

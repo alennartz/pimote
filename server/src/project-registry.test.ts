@@ -65,17 +65,15 @@ describe('ProjectRegistry.list()', () => {
     expect(project?.kind).toBe('single');
     expect(project?.name).toBe('repo-a');
     expect(project?.favorite).toBeUndefined();
-    expect(project?.order).toBeUndefined();
     expect(project?.archived).toBeUndefined();
   });
 
   it('applies curation overrides to single-repo projects and rejects unknown project paths', async () => {
     const registry = makeRegistry();
-    await registry.update({ projectPath: repoA, favorite: true, order: 3, archived: true });
+    await registry.update({ projectPath: repoA, favorite: true, archived: true });
 
     const project = (await registry.list()).find((p) => p.path === repoA);
     expect(project?.favorite).toBe(true);
-    expect(project?.order).toBe(3);
     expect(project?.archived).toBe(true);
     expect(project?.kind).toBe('single');
 
@@ -92,15 +90,14 @@ describe('ProjectRegistry.list()', () => {
     expect(project?.archived).toBe(true);
   });
 
-  it('sorts by manual order where set and by name otherwise', async () => {
+  it('sorts favorites first, then by name', async () => {
     const repoB = join(rootDir, 'repo-b');
     await initRepo(repoB);
 
     const registry = makeRegistry();
     expect((await registry.list()).map((p) => p.path)).toEqual([repoA, repoB]);
 
-    await registry.update({ projectPath: repoB, order: 1 });
-    await registry.update({ projectPath: repoA, order: 2 });
+    await registry.update({ projectPath: repoB, favorite: true });
 
     expect((await registry.list()).map((p) => p.path)).toEqual([repoB, repoA]);
   });

@@ -19,7 +19,6 @@ interface MultiRepoEntry {
 /** Curation flags for one project path; absent keys mean "unset". */
 interface OverrideEntry {
   favorite?: boolean;
-  order?: number;
   archived?: boolean;
   /** User tags at this path. */
   tags?: string[];
@@ -36,7 +35,6 @@ interface RegistryDocument {
 export interface ProjectUpdatePatch {
   projectPath: string;
   favorite?: boolean;
-  order?: number;
   archived?: boolean;
   addTags?: string[];
   removeTags?: string[];
@@ -59,6 +57,11 @@ function parseDocument(raw: string): RegistryDocument {
       if (typeof entry?.path !== 'string' || typeof entry?.name !== 'string') return false;
       return Array.isArray(entry.memberPaths) && entry.memberPaths.every((p) => typeof p === 'string');
     });
+    // Registry files written before manual ordering was retired may still carry
+    // `order` overrides; drop them so they don't leak into ProjectInfo payloads.
+    for (const override of Object.values(parsed.overrides)) {
+      if (override && typeof override === 'object') delete (override as { order?: number }).order;
+    }
     return { version: DOCUMENT_VERSION, multiRepo: entries, overrides: parsed.overrides };
   } catch {
     return emptyDocument();
@@ -167,19 +170,14 @@ function mergedProjects(doc: RegistryDocument, repos: RepoInfo[], sourceProjects
   return projects;
 }
 
-/** Manual order ascending first, then the rest by name. */
+/** Favorites first, then the rest by name. Clients re-sort for display. */
 function sortProjects(projects: ProjectInfo[]): ProjectInfo[] {
-  return [...projects].sort((a, b) => {
-    if (a.order !== undefined && b.order !== undefined) return a.order - b.order || a.name.localeCompare(b.name);
-    if (a.order !== undefined) return -1;
-    if (b.order !== undefined) return 1;
-    return a.name.localeCompare(b.name);
-  });
+  return [...projects].sort((a, b) => Number(b.favorite === true) - Number(a.favorite === true) || a.name.localeCompare(b.name));
 }
 
 /**
  * The persistent user-owned layer over the repo index: multi-repo project
- * projects, curation overrides (favorite / manual order / archived) keyed by
+ * projects, curation overrides (favorite / archived) keyed by
  * repo path for single-repo projects, multi-repo project creation (mkdir + symlinks +
  * generated AGENTS.md), disbanding, and change notifications. Persists as
  * JSON following the session-json-store pattern.
@@ -212,7 +210,6 @@ export class ProjectRegistry {
 
       const override = doc.overrides[patch.projectPath] ?? {};
       if (patch.favorite !== undefined) override.favorite = patch.favorite;
-      if (patch.order !== undefined) override.order = patch.order;
       if (patch.archived !== undefined) override.archived = patch.archived;
       if (patch.addTags?.length || patch.removeTags?.length) {
         const tags = new Set(override.tags ?? []);

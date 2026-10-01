@@ -6,8 +6,6 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import SessionItem from './SessionItem.svelte';
   import Archive from '@lucide/svelte/icons/archive';
-  import ArrowDown from '@lucide/svelte/icons/arrow-down';
-  import ArrowUp from '@lucide/svelte/icons/arrow-up';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import EllipsisVertical from '@lucide/svelte/icons/ellipsis-vertical';
   import FolderIcon from '@lucide/svelte/icons/folder';
@@ -124,10 +122,6 @@
       .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path)),
   );
   const multiRepoCandidateRepos = $derived(projectStore.repos.filter((repo) => !repo.missing));
-
-  function projectIndex(path: string): number {
-    return projectStore.projects.findIndex((p) => p.path === path);
-  }
 
   onMount(() => {
     const unsub = connection.onEvent((event) => {
@@ -316,27 +310,11 @@
   }
 
   /** Apply a curation patch; the store updates via the projects_changed broadcast. */
-  async function updateProject(project: ProjectInfo, patch: { favorite?: boolean; order?: number; archived?: boolean; addTags?: string[]; removeTags?: string[] }) {
+  async function updateProject(project: ProjectInfo, patch: { favorite?: boolean; archived?: boolean; addTags?: string[]; removeTags?: string[] }) {
     try {
       await connection.send({ type: 'update_project', projectPath: project.path, ...patch });
     } catch (e) {
       console.error('Failed to update project:', e);
-    }
-  }
-
-  /** Move a project within the list by renumbering explicit orders to match the new arrangement. */
-  function moveProject(project: ProjectInfo, delta: -1 | 1) {
-    const list = [...projectStore.projects];
-    const from = list.findIndex((p) => p.path === project.path);
-    const to = from + delta;
-    if (from < 0 || to < 0 || to >= list.length) return;
-
-    const reordered = [...list];
-    const [moved] = reordered.splice(from, 1);
-    reordered.splice(to, 0, moved);
-
-    for (let i = 0; i < reordered.length; i++) {
-      if (reordered[i].order !== i) void updateProject(reordered[i], { order: i });
     }
   }
 
@@ -498,7 +476,6 @@
           {@const projectSessions = sessionsFor(project)}
           {@const visibleSessions = showAll ? projectSessions : projectSessions.slice(0, MAX_SESSIONS_SHOWN)}
           {@const hiddenCount = Math.max(0, projectSessions.length - MAX_SESSIONS_SHOWN)}
-          {@const idx = projectIndex(project.path)}
 
           <div class="border-border/60 rounded-lg">
             <div class="flex flex-wrap items-center gap-0.5">
@@ -612,14 +589,6 @@
                     <DropdownMenuItem class="gap-2" onSelect={() => void updateProject(project, { favorite: !project.favorite })}>
                       <Star class="size-4 {project.favorite ? 'fill-yellow-500 text-yellow-500' : ''}" />
                       {project.favorite ? 'Unfavorite' : 'Favorite'}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem class="gap-2" disabled={idx <= 0} onSelect={() => moveProject(project, -1)}>
-                      <ArrowUp class="size-4" />
-                      Move up
-                    </DropdownMenuItem>
-                    <DropdownMenuItem class="gap-2" disabled={idx < 0 || idx >= projectStore.projects.length - 1} onSelect={() => moveProject(project, 1)}>
-                      <ArrowDown class="size-4" />
-                      Move down
                     </DropdownMenuItem>
                     <DropdownMenuItem class="gap-2" onSelect={() => void updateProject(project, { archived: !project.archived })}>
                       {#if project.archived}

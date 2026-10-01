@@ -60,8 +60,6 @@ export interface ProjectInfo {
   /** Own-path user tags — the subset of `tags` that is user-removable. */
   userTags?: string[];
   favorite?: boolean;
-  /** Manual ordering; absent = name sort. */
-  order?: number;
   archived?: boolean;
   activeSessionCount: number;
   externalProcessCount: number;
@@ -471,7 +469,6 @@ export interface UpdateProjectCommand extends CommandBase {
   type: 'update_project';
   projectPath: string;
   favorite?: boolean;
-  order?: number;
   archived?: boolean;
   /** Tags to add (stored as user tags at the project path). */
   addTags?: string[];
