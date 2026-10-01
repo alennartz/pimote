@@ -66,6 +66,8 @@ None. DR-039 (real types over mirrors) is _followed more fully_ (server adopts S
 
 ## Steps
 
+**Pre-implementation commit:** `4b085a5a6e7514bc674f406e0476280909c87f83`
+
 ### Step 1: Tombstone `@pimote/panels` — 0.12.2 + npm deprecate
 
 Do this **before** any tree changes: the tombstone publish needs `packages/panels/` and its workflow to still exist.
@@ -86,7 +88,7 @@ Do this **before** any tree changes: the tombstone publish needs `packages/panel
 Steps 4–6 push tags and touch the npm registry — coordinate with the user before executing them.
 
 **Verify:** `npm view @pimote/panels version` → `0.12.2`; `npm view @pimote/panels deprecated` prints the migration message.
-**Status:** not started
+**Status:** in progress
 
 ### Step 2: Create `packages/sdk` — panels module moved as-is, workspace swapped
 

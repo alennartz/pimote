@@ -1,3 +1,6 @@
+> **DEPRECATED** — `@pimote/panels` has moved to [`@pimote/sdk`](https://www.npmjs.com/package/@pimote/sdk)
+> (panels module: `@pimote/sdk/panels`). This package will not receive further updates.
+
 # @pimote/panels
 
 Push structured card data from [pi](https://github.com/mariozechner/pi-coding-agent) extensions to the [pimote](https://github.com/alennartz/pimote) web client.
