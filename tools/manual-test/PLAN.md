@@ -220,7 +220,7 @@ unit suites.
 
 ### 11. File offer → native download / session inbox
 
-**What:** In a PWA session, an agent offers a project file. The user sees one
+**What:** In a PWA session, an agent offers a file. The user sees one
 actionable toast for the exact offered item, can dismiss it into the viewed
 session's Downloads inbox, and clicks a native same-origin attachment link.
 The browser receives the live file once; the source remains on the server,

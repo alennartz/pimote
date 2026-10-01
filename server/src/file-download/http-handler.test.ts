@@ -181,15 +181,15 @@ describe('serveFileDownloadRoute', () => {
     expect(result.status).toBe(404);
   });
 
-  it('consumes a claim even when current real-path validation rejects a symlink escape', async () => {
+  it('serves a symlink whose target resolves outside the workspace root', async () => {
     const outside = await mkdtemp(join(tmpdir(), 'file-download-outside-'));
     try {
       await writeFile(join(outside, 'secret.txt'), 'secret', 'utf8');
       await symlink(join(outside, 'secret.txt'), join(root, 'escape.txt'));
       claim('escape', { sourcePath: join(root, 'escape.txt'), filename: 'escape.txt' });
       const result = await get('/d/escape');
-      expect(result.status).toBe(404);
-      expect(result.body).not.toContain('secret');
+      expect(result.status).toBe(200);
+      expect(result.body).toBe('secret');
     } finally {
       await rm(outside, { recursive: true, force: true });
     }

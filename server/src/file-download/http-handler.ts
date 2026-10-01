@@ -45,8 +45,8 @@ function closeResponse(res: http.ServerResponse): void {
 
 async function streamDownload(res: http.ServerResponse, source: OpenedDownloadSource): Promise<void> {
   await new Promise<void>((resolve) => {
-    // The descriptor was opened and containment-checked before headers were
-    // sent. Stream from that descriptor instead of reopening a mutable path.
+    // The descriptor was opened and validated before headers were sent. Stream
+    // from that descriptor instead of reopening a mutable path.
     const stream = source.handle.createReadStream({ autoClose: false });
     let settled = false;
     const settle = () => {

@@ -1,10 +1,10 @@
 import { open, realpath, stat, type FileHandle } from 'node:fs/promises';
-import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, resolve } from 'node:path';
 
 export interface ValidateDownloadSourceInput {
   /** Lexical source path captured in the download registration. */
   sourcePath: string;
-  /** Workspace root captured with that registration. */
+  /** Root that relative source paths resolve against. */
   workspaceRoot: string;
 }
 
@@ -23,48 +23,18 @@ export interface OpenedDownloadSource extends ValidatedDownloadSource {
   handle: FileHandle;
 }
 
-function isContainedBy(rootPath: string, candidatePath: string): boolean {
-  const fromRoot = relative(rootPath, candidatePath);
-  return fromRoot === '' || (fromRoot !== '..' && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot));
-}
-
-/**
- * Resolve a registered source path and prove that it remains a regular file
- * inside its captured workspace. The lexical check rejects `..` and absolute
- * escapes before filesystem access; the real-path check rejects symlink
- * escapes after following in-workspace links.
- */
-interface ResolvedDownloadPaths {
-  lexicalSource: string;
-  realRoot: string;
-}
-
-async function resolveDownloadPaths(input: ValidateDownloadSourceInput): Promise<ResolvedDownloadPaths> {
+/** Resolve a registered source path lexically; relative paths join the root. */
+function resolveSourcePath(input: ValidateDownloadSourceInput): string {
   if (typeof input.sourcePath !== 'string' || typeof input.workspaceRoot !== 'string' || input.workspaceRoot.length === 0) {
     throw new Error('download source and workspace root must be paths');
   }
-
-  const lexicalRoot = resolve(input.workspaceRoot);
-  const lexicalSource = isAbsolute(input.sourcePath) ? resolve(input.sourcePath) : resolve(lexicalRoot, input.sourcePath);
-  if (!isContainedBy(lexicalRoot, lexicalSource)) {
-    throw new Error('download source escapes its workspace');
-  }
-
-  const realRoot = await realpath(lexicalRoot);
-  const rootStat = await stat(realRoot);
-  if (!rootStat.isDirectory()) {
-    throw new Error('download workspace is not a directory');
-  }
-
-  return { lexicalSource, realRoot };
+  const root = resolve(input.workspaceRoot);
+  return isAbsolute(input.sourcePath) ? resolve(input.sourcePath) : resolve(root, input.sourcePath);
 }
 
 export async function validateDownloadSource(input: ValidateDownloadSourceInput): Promise<ValidatedDownloadSource> {
-  const { lexicalSource, realRoot } = await resolveDownloadPaths(input);
+  const lexicalSource = resolveSourcePath(input);
   const resolvedPath = await realpath(lexicalSource);
-  if (!isContainedBy(realRoot, resolvedPath)) {
-    throw new Error('download source resolves outside its workspace');
-  }
 
   const sourceStat = await stat(resolvedPath);
   if (!sourceStat.isFile()) {
@@ -81,12 +51,13 @@ export async function validateDownloadSource(input: ValidateDownloadSourceInput)
 /**
  * Open and validate the current source in one operation. Validation based on a
  * pathname alone has a TOCTOU gap: the pathname can be replaced after
- * `realpath`/`stat` and before `createReadStream`. Opening first and validating
- * the descriptor's `/proc/self/fd` target closes that gap; the stream must use
- * this handle rather than reopening the pathname.
+ * `realpath`/`stat` and before `createReadStream`, so the reported size and
+ * regular-file facts could describe a different object than the one streamed.
+ * Opening first and validating the descriptor closes that gap; the stream must
+ * use this handle rather than reopening the pathname.
  */
 export async function openDownloadSource(input: ValidateDownloadSourceInput): Promise<OpenedDownloadSource> {
-  const { lexicalSource, realRoot } = await resolveDownloadPaths(input);
+  const lexicalSource = resolveSourcePath(input);
   const handle = await open(lexicalSource, 'r');
 
   try {
@@ -94,9 +65,6 @@ export async function openDownloadSource(input: ValidateDownloadSourceInput): Pr
     // This is the object that will actually be streamed, even if its pathname
     // is replaced after open().
     const resolvedPath = await realpath(`/proc/self/fd/${handle.fd}`);
-    if (!isContainedBy(realRoot, resolvedPath)) {
-      throw new Error('download source resolves outside its workspace');
-    }
 
     const sourceStat = await handle.stat();
     if (!sourceStat.isFile()) {

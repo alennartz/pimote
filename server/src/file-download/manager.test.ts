@@ -57,11 +57,12 @@ describe('createDownloadManager', () => {
   let manager: DownloadManager;
   let fixtureRoot: string;
   let workspaceRoot: string;
+  let outsideRoot: string;
 
   beforeEach(async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), 'file-download-manager-'));
     workspaceRoot = join(fixtureRoot, 'workspace');
-    const outsideRoot = join(fixtureRoot, 'outside');
+    outsideRoot = join(fixtureRoot, 'outside');
     await mkdir(join(workspaceRoot, 'reports'), { recursive: true });
     await mkdir(outsideRoot, { recursive: true });
     await writeFile(join(workspaceRoot, 'reports', 'report.pdf'), 'report', 'utf8');
@@ -125,9 +126,9 @@ describe('createDownloadManager', () => {
     expect(item.href).toBe(`/d/${item.id}`);
   });
 
-  it('accepts an absolute path only when it remains inside the captured workspace root', async () => {
-    const item = await manager.offer(makeOffer(workspaceRoot, { path: join(workspaceRoot, 'reports', 'report.pdf') }));
-    expect(item.filename).toBe('report.pdf');
+  it('accepts an absolute path outside the workspace root', async () => {
+    const item = await manager.offer(makeOffer(workspaceRoot, { path: join(outsideRoot, 'secret.txt') }));
+    expect(item.filename).toBe('secret.txt');
   });
 
   it('publishes a complete offered snapshot after registering an active session', async () => {
@@ -155,17 +156,19 @@ describe('createDownloadManager', () => {
     await expect(manager.offer(makeOffer(workspaceRoot, { path: 'reports' }))).rejects.toThrow();
   });
 
-  it('rejects a path that resolves outside the workspace root', async () => {
-    await expect(manager.offer(makeOffer(workspaceRoot, { path: '../outside/secret.txt' }))).rejects.toThrow();
+  it('accepts a relative path that climbs out of the workspace root', async () => {
+    const item = await manager.offer(makeOffer(workspaceRoot, { path: '../outside/secret.txt' }));
+    expect(item.filename).toBe('secret.txt');
   });
 
-  it('rejects a symlink whose real path escapes the workspace root', async () => {
-    await expect(manager.offer(makeOffer(workspaceRoot, { path: 'reports/linked-secret.txt' }))).rejects.toThrow();
+  it('accepts a symlink whose real path escapes the workspace root', async () => {
+    const item = await manager.offer(makeOffer(workspaceRoot, { path: 'reports/linked-secret.txt' }));
+    expect(item.filename).toBe('secret.txt');
   });
 
   it('accepts a symlink whose real path remains inside the workspace root', async () => {
     const item = await manager.offer(makeOffer(workspaceRoot, { path: 'reports/linked-inside.txt' }));
-    expect(item.id).toBeTruthy();
+    expect(item.filename).toBe('secret.txt');
   });
 
   it('persists the lexical source, root, derived filename, size, and opaque id', async () => {

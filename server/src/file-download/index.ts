@@ -34,7 +34,7 @@ export function createFileDownloadExtension(options: CreateFileDownloadExtension
       label: 'Offer file download',
       description: FILE_DOWNLOAD_TOOL_DESCRIPTION,
       parameters: Type.Object({
-        path: Type.String({ description: 'Path to the file, relative to the current project directory or an absolute contained path.' }),
+        path: Type.String({ description: 'Path to the file, relative to the current project directory or absolute; it must be readable by the server.' }),
       }),
       outputSchema: SendFileToolOutputSchema,
       execute: async (_callId, input, _signal, _onUpdate, ctx) => {

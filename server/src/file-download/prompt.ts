@@ -6,4 +6,4 @@
  * copy bytes into the agent process or wait for a click.
  */
 export const FILE_DOWNLOAD_TOOL_DESCRIPTION =
-  'Offer a project file as a one-shot native browser download that requires an explicit user click/approval. The download is not completed until the user acts, so keep the live source file available and unchanged until then. Pass only the file path; the server derives the filename and size.';
+  'Offer any file readable by the server as a one-shot native browser download that requires an explicit user click/approval. The path may be relative to the current project directory or an absolute path anywhere on disk. The download is not completed until the user acts, so keep the live source file available and unchanged until then. Pass only the file path; the server derives the filename and size.';

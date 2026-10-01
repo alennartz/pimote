@@ -192,8 +192,8 @@ export function createDownloadManager(options: CreateDownloadManagerOptions): Do
         const entries = entriesFrom(await options.store.read(input.sessionId));
         const entry: DownloadStoreEntry = {
           id: nextOpaqueId(entries),
-          // Keep the lexical path that the agent supplied. The route validates
-          // it again at click time against this captured workspace root.
+          // Keep the lexical path that the agent supplied. The route reopens
+          // it at click time, resolving relative paths against this root.
           sourcePath: input.path,
           workspaceRoot: input.workspaceRoot,
           filename: source.filename,
