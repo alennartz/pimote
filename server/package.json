@@ -10,8 +10,8 @@
     "test": "vitest"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.87.1",
-    "@earendil-works/pi-coding-agent": "^0.87.1",
+    "@earendil-works/pi-agent-core": "^0.99.2",
+    "@earendil-works/pi-coding-agent": "^0.99.2",
     "@streamparser/json": "^0.0.22",
     "jiti": "^2.7.0",
     "semver": "^7.8.5",

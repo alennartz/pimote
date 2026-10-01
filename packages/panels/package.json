@@ -35,10 +35,10 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.87.1"
+    "@earendil-works/pi-coding-agent": "^0.99.2"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.87.1",
+    "@earendil-works/pi-coding-agent": "^0.99.2",
     "typescript": "^6.0.2",
     "vitest": "^4.1.2"
   }
