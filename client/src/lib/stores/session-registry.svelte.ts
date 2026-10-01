@@ -1140,6 +1140,14 @@ export async function routeNotificationIntent(intent: AppNotificationIntent): Pr
     return;
   }
 
+  // A focused existing window can be in backoff or mid-restore. Queue the
+  // adopt intent instead of attempting open_session over a dead socket.
+  if (intent.folderPath && !connection.ready) {
+    connection.pendingAdopt = { sessionId: intent.sessionId, folderPath: intent.folderPath };
+    connection.connect();
+    return;
+  }
+
   if (intent.folderPath) {
     await openExistingSession(intent.sessionId, intent.folderPath, { force: true, switchTo: true });
   }

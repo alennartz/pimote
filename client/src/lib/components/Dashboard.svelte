@@ -141,24 +141,15 @@
     return true;
   }
 
-  // Seed the project list per connection: reconnects drop the guard so the
-  // dashboard refetches against the fresh connection.
-  let loadedProjectsForCurrentConnection = false;
-
+  // Seed the project list per connection. The store owns the freshness policy:
+  // a warm cache serves remounts (server events keep it current), reconnects
+  // refetch via the disconnect invalidation.
   $effect(() => {
-    const status = connection.status;
-
-    if (status === 'connected') {
-      if (!loadedProjectsForCurrentConnection) {
-        loadedProjectsForCurrentConnection = true;
-        untrack(() => {
-          void projectStore.loadProjects();
-        });
-      }
-      return;
+    if (connection.status === 'connected') {
+      untrack(() => {
+        void projectStore.ensureLoaded();
+      });
     }
-
-    loadedProjectsForCurrentConnection = false;
   });
 
   function statusClass(sessionId: string): string {

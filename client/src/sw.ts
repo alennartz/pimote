@@ -230,9 +230,13 @@ self.addEventListener('notificationclick', (event) => {
   const openDownloads = event.notification.data?.openDownloads === true;
 
   event.waitUntil(
-    self.clients.matchAll({ type: 'window' }).then((clients) => {
+    // includeUncontrolled matches windows this worker isn't controlling yet
+    // (first load before activation, or pages left on a previous worker after
+    // a skipWaiting update) — without it an already-open app is invisible here
+    // and a duplicate window gets opened instead of routing the existing one.
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       if (clients.length > 0) {
-        const client = clients[0];
+        const client = clients.find((c) => c.focused) ?? clients[0];
         client.focus();
         if (sessionId) {
           client.postMessage({

@@ -104,7 +104,7 @@ server. `/tree` opens the tree-navigation dialog; selection dispatches
 
 ### 6. Panel cards from extensions
 
-**What:** An extension pushes cards via `@pimote/panels` detect; the
+**What:** An extension pushes cards via `@pimote/sdk` detect; the
 PWA's side panel (desktop) / overlay (mobile) renders them; updates
 from the extension re-render; session switch swaps panel contents.
 

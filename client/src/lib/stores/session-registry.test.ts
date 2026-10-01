@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { PimoteEvent, PimoteAgentMessage } from '@pimote/shared';
-import { SessionRegistry } from './session-registry.svelte.js';
+import { SessionRegistry, routeNotificationIntent, sessionRegistry } from './session-registry.svelte.js';
+import { connection } from './connection.svelte.js';
 
 function makeSessionEvent(type: string, sessionId: string, extra: Record<string, any> = {}): PimoteEvent {
   return { type, sessionId, cursor: 0, ...extra } as any;
@@ -1426,5 +1427,59 @@ describe('SessionRegistry', () => {
 
       expect(registry.sessions['s1'].bashExecutions['bash-1'].output).toBe('hello');
     });
+  });
+});
+
+// --- Notification intent routing -------------------------------------------
+// routeNotificationIntent uses the module-level connection singleton, so it
+// needs the same global stubs as connection.svelte.test.ts before connect()
+// can run.
+
+class FakeWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+
+  readyState = FakeWebSocket.CONNECTING;
+  onopen: (() => void) | null = null;
+  onmessage: ((ev: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+
+  constructor(public url: string) {}
+  send(_data: string): void {}
+  close(): void {}
+}
+
+describe('routeNotificationIntent', () => {
+  beforeEach(() => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('location', { protocol: 'http:', host: 'localhost', href: 'http://localhost/' });
+    vi.stubGlobal('navigator', {});
+    connection.ready = false;
+    connection.pendingAdopt = null;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    connection.pendingAdopt = null;
+    connection.ready = false;
+  });
+
+  it('queues the adopt intent when the socket is not ready instead of losing the click', async () => {
+    await routeNotificationIntent({ sessionId: 's-notification', folderPath: '/repos/proj' });
+
+    expect(connection.pendingAdopt).toEqual({ sessionId: 's-notification', folderPath: '/repos/proj' });
+  });
+
+  it('routes immediately without queueing when the socket is ready and the session is open', async () => {
+    connection.ready = true;
+    sessionRegistry.addSession('s-notification', '/repos/proj', 'proj');
+
+    await routeNotificationIntent({ sessionId: 's-notification', folderPath: '/repos/proj' });
+
+    expect(connection.pendingAdopt).toBeNull();
+    expect(sessionRegistry.viewed?.sessionId).toBe('s-notification');
   });
 });

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { ProjectInfo, SessionInfo } from '@pimote/shared';
   import { projectStore } from '$lib/stores/project-store.svelte.js';
@@ -123,21 +122,8 @@
   );
   const multiRepoCandidateRepos = $derived(projectStore.repos.filter((repo) => !repo.missing));
 
-  onMount(() => {
-    const unsub = connection.onEvent((event) => {
-      if (event.type === 'session_state_changed') {
-        projectStore.applySessionStateChange(event, connection.clientId);
-      } else if (event.type === 'session_deleted') {
-        projectStore.applySessionDeleted(event);
-      } else if (event.type === 'session_renamed') {
-        projectStore.applySessionRenamed(event);
-      } else if (event.type === 'session_archived') {
-        projectStore.applySessionArchived(event);
-      }
-    });
-
-    return unsub;
-  });
+  // Session/project events are routed into the store at module scope
+  // (project-store.svelte.ts) for the app's lifetime, not per-mount.
 
   function toggleProject(path: string) {
     if (collapsedProjects.has(path)) {

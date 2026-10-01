@@ -42,6 +42,10 @@ export class ProjectStore {
   sessions = $state(new SvelteMap<string, SessionInfo[]>());
   loading: boolean = $state(false);
   showArchived: boolean = $state(getShowArchived());
+  /** True once a full load has completed against the current connection. Server
+   *  broadcasts (routed at module scope below) keep the data fresh in the
+   *  meantime, so dashboard remounts need no refetch; any drop invalidates it. */
+  private loadedForCurrentConnection = false;
   private projectsLoadInFlight: Promise<void> | null = null;
   private reposLoadInFlight: Promise<void> | null = null;
   private sessionLoadsInFlight: Map<string, InFlightSessionLoad> = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
@@ -58,6 +62,22 @@ export class ProjectStore {
     return [...list].sort((a, b) => Number(b.favorite === true) - Number(a.favorite === true) || recency(b) - recency(a) || a.name.localeCompare(b.name));
   }
 
+  /**
+   * Full load once per connection. Navigating back to the dashboard serves the
+   * warm cache — server events keep it current while the user is elsewhere —
+   * and a reconnect (disconnect invalidation) refetches against the fresh
+   * connection. `loadProjects()` bypasses this for explicit refreshes.
+   */
+  async ensureLoaded(): Promise<void> {
+    if (this.loadedForCurrentConnection) return;
+    await this.loadProjects();
+  }
+
+  /** Drop the per-connection freshness marker; wired to socket loss below. */
+  invalidateConnection(): void {
+    this.loadedForCurrentConnection = false;
+  }
+
   async loadProjects(): Promise<void> {
     if (this.projectsLoadInFlight) return this.projectsLoadInFlight;
 
@@ -70,6 +90,7 @@ export class ProjectStore {
           const data = response.data as ListProjectsResponseData;
           this.projects = data.projects;
           this.roots = data.roots ?? [];
+          this.loadedForCurrentConnection = true;
           // Repo listing feeds branch chips and missing-detection; refresh it
           // with the projects so they never disagree.
           void this.loadRepos();
@@ -237,9 +258,26 @@ export class ProjectStore {
 
 export const projectStore = new ProjectStore();
 
-// Route server-side project mutations into the store for the lifetime of the app.
+// Route server-side project/session events into the store for the lifetime of
+// the app. This lives here — not in ProjectList's onMount — so the cache stays
+// current while the user is inside a session and returning to the dashboard
+// needs no refetch.
 connection.onEvent((event: PimoteEvent) => {
   if (event.type === 'projects_changed') {
     projectStore.applyProjectsChanged(event);
+  } else if (event.type === 'session_state_changed') {
+    projectStore.applySessionStateChange(event, connection.clientId);
+  } else if (event.type === 'session_deleted') {
+    projectStore.applySessionDeleted(event);
+  } else if (event.type === 'session_renamed') {
+    projectStore.applySessionRenamed(event);
+  } else if (event.type === 'session_archived') {
+    projectStore.applySessionArchived(event);
   }
+});
+
+// Losing the socket ends the connection whose data we loaded; the next
+// ensureLoaded() refetches against the fresh connection.
+connection.onDisconnect(() => {
+  projectStore.invalidateConnection();
 });

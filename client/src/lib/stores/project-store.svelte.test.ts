@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { PimoteEvent, ProjectInfo } from '@pimote/shared';
 
-const { fakeConnection, eventListeners } = vi.hoisted(() => {
+const { fakeConnection, eventListeners, disconnectListeners } = vi.hoisted(() => {
   const eventListeners = new Set<(event: unknown) => void>();
+  const disconnectListeners = new Set<() => void>();
   const fakeConnection = {
     clientId: 'test-client',
     send: vi.fn(),
@@ -10,8 +11,12 @@ const { fakeConnection, eventListeners } = vi.hoisted(() => {
       eventListeners.add(listener);
       return () => eventListeners.delete(listener);
     }),
+    onDisconnect: vi.fn((cb: () => void) => {
+      disconnectListeners.add(cb);
+      return () => disconnectListeners.delete(cb);
+    }),
   };
-  return { fakeConnection, eventListeners };
+  return { fakeConnection, eventListeners, disconnectListeners };
 });
 
 vi.mock('$lib/stores/connection.svelte.js', () => ({ connection: fakeConnection }));
@@ -46,8 +51,8 @@ beforeEach(() => {
 });
 
 describe('ProjectStore', () => {
-  describe('projects_changed routing', () => {
-    it('module-scope subscription replaces the project list', () => {
+  describe('module-scope event routing', () => {
+    it('projects_changed replaces the project list', () => {
       expect(eventListeners.size).toBeGreaterThan(0);
 
       const listener = [...eventListeners].at(-1)!;
@@ -57,10 +62,61 @@ describe('ProjectStore', () => {
       expect(projectStore.projects).toEqual(next);
     });
 
-    it('ignores non-projects_changed events', () => {
+    it('session_state_changed seeds the sessions map while away from the dashboard', () => {
+      const listener = [...eventListeners].at(-1)!;
+      projectStore.sessions.delete('/r/away');
+
+      listener({
+        type: 'session_state_changed',
+        folderPath: '/r/away',
+        sessionId: 's1',
+        liveStatus: 'working',
+        connectedClientId: 'other-client',
+        folderActiveSessionCount: 1,
+      } as PimoteEvent);
+
+      const seeded = projectStore.sessions.get('/r/away');
+      expect(seeded).toHaveLength(1);
+      expect(seeded![0]).toMatchObject({ id: 's1', liveStatus: 'working', isOwnedByMe: false });
+      projectStore.sessions.delete('/r/away');
+    });
+
+    it('session_deleted removes the session from its project', () => {
+      const listener = [...eventListeners].at(-1)!;
+      projectStore.sessions.set('/r/gone', [makeSession('s1', '2024-01-01T00:00:00Z'), makeSession('s2', '2024-01-02T00:00:00Z')]);
+
+      listener({ type: 'session_deleted', folderPath: '/r/gone', sessionId: 's1' } as PimoteEvent);
+
+      expect(projectStore.sessions.get('/r/gone')!.map((s) => s.id)).toEqual(['s2']);
+      projectStore.sessions.delete('/r/gone');
+    });
+
+    it('session_renamed updates the session name in place', () => {
+      const listener = [...eventListeners].at(-1)!;
+      projectStore.sessions.set('/r/renamed', [makeSession('s1', '2024-01-01T00:00:00Z')]);
+
+      listener({ type: 'session_renamed', folderPath: '/r/renamed', sessionId: 's1', name: 'renamed' } as PimoteEvent);
+
+      expect(projectStore.sessions.get('/r/renamed')![0].name).toBe('renamed');
+      projectStore.sessions.delete('/r/renamed');
+    });
+
+    it('session_archived refetches that project’s sessions', async () => {
+      const listener = [...eventListeners].at(-1)!;
+      projectStore.sessions.set('/r/archived', [makeSession('s1', '2024-01-01T00:00:00Z')]);
+      routeSends({ list_sessions: () => ({ success: true, data: { sessions: [] } }) });
+
+      listener({ type: 'session_archived', folderPath: '/r/archived', sessionId: 's1', archived: true } as PimoteEvent);
+      await flush();
+
+      expect(projectStore.sessions.get('/r/archived')).toEqual([]);
+      projectStore.sessions.delete('/r/archived');
+    });
+
+    it('unknown events are ignored', () => {
       const listener = [...eventListeners].at(-1)!;
       const before = projectStore.projects;
-      listener({ type: 'session_renamed', sessionId: 's1', name: 'x' } as PimoteEvent);
+      listener({ type: 'something_else' } as unknown as PimoteEvent);
       expect(projectStore.projects).toBe(before);
     });
 
@@ -163,6 +219,70 @@ describe('ProjectStore', () => {
       await expect(store.loadProjects()).resolves.toBeUndefined();
       expect(store.loading).toBe(false);
       expect(store.projects).toEqual([]);
+    });
+  });
+
+  describe('ensureLoaded', () => {
+    it('serves a warm cache: a second call sends nothing', async () => {
+      const store = new ProjectStore();
+      routeSends({
+        list_projects: () => okListProjects([makeProject({ path: '/r/a', name: 'a' })]),
+        list_sessions: () => ({ success: true, data: { sessions: [] } }),
+      });
+
+      await store.ensureLoaded();
+      const sendsAfterFirstLoad = fakeConnection.send.mock.calls.length;
+
+      await store.ensureLoaded();
+      expect(fakeConnection.send.mock.calls.length).toBe(sendsAfterFirstLoad);
+    });
+
+    it('refetches after a disconnect invalidates the connection', async () => {
+      routeSends({
+        list_projects: () => okListProjects([makeProject({ path: '/r/a', name: 'a' })]),
+        list_repos: () => ({ success: true, data: { repos: [] } }),
+        list_sessions: () => ({ success: true, data: { sessions: [] } }),
+      });
+      expect(disconnectListeners.size).toBeGreaterThan(0);
+      for (const cb of disconnectListeners) cb(); // start from an invalidated store
+
+      await projectStore.ensureLoaded();
+      const sendsAfterFirstLoad = fakeConnection.send.mock.calls.length;
+      await projectStore.ensureLoaded(); // warm cache: no new sends
+      expect(fakeConnection.send.mock.calls.length).toBe(sendsAfterFirstLoad);
+
+      for (const cb of disconnectListeners) cb();
+      await projectStore.ensureLoaded(); // fresh connection: refetches
+      expect(fakeConnection.send.mock.calls.length).toBeGreaterThan(sendsAfterFirstLoad);
+    });
+
+    it('does not mark the connection loaded when the fetch fails', async () => {
+      const store = new ProjectStore();
+      fakeConnection.send.mockRejectedValueOnce(new Error('WebSocket closed'));
+      routeSends({
+        list_projects: () => okListProjects([makeProject({ path: '/r/a', name: 'a' })]),
+        list_sessions: () => ({ success: true, data: { sessions: [] } }),
+      });
+
+      await store.ensureLoaded();
+      await store.ensureLoaded();
+
+      const listProjectsSends = fakeConnection.send.mock.calls.filter(([c]: any[]) => c.type === 'list_projects');
+      expect(listProjectsSends).toHaveLength(2);
+    });
+
+    it('loadProjects() still forces a refresh past a warm cache', async () => {
+      const store = new ProjectStore();
+      routeSends({
+        list_projects: () => okListProjects([makeProject({ path: '/r/a', name: 'a' })]),
+        list_sessions: () => ({ success: true, data: { sessions: [] } }),
+      });
+
+      await store.ensureLoaded();
+      await store.loadProjects();
+
+      const listProjectsSends = fakeConnection.send.mock.calls.filter(([c]: any[]) => c.type === 'list_projects');
+      expect(listProjectsSends).toHaveLength(2);
     });
   });
 
