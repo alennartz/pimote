@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { FolderIndex } from './folder-index.js';
+import { SessionSummaryIndex, sessionDirFor } from './session-summaries.js';
 
 let tempDir: string;
 
@@ -127,78 +128,63 @@ describe('FolderIndex.scan()', () => {
 });
 
 describe('FolderIndex.listSessions()', () => {
-  it('returns empty array when SessionManager.list() fails', async () => {
-    // Use a non-existent path which should cause SessionManager.list() to fail or return empty
+  it('returns empty array when the session directory does not exist', async () => {
     const index = new FolderIndex([]);
     const sessions = await index.listSessions(join(tempDir, 'nonexistent'));
 
     expect(sessions).toEqual([]);
   });
 
-  it('maps pi SessionInfo dates to ISO strings', async () => {
-    // We can test the mapping logic by mocking SessionManager.list()
-    const { SessionManager } = await import('@earendil-works/pi-coding-agent');
+  it('maps session records dates to ISO strings', async () => {
+    const agentDir = join(tempDir, 'agent');
+    const projectDir = join(tempDir, 'project');
+    const sessionDir = sessionDirFor(projectDir, agentDir);
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      join(sessionDir, 's-1.jsonl'),
+      [
+        `{"type":"session","id":"abc-123","timestamp":"2025-06-15T10:30:00.000Z","cwd":"${projectDir}"}`,
+        `{"type":"message","timestamp":"2025-06-15T10:31:00.000Z","message":{"role":"user","content":"Hello world"}}`,
+        `{"type":"session_info","name":"Test Session"}`,
+      ].join('\n') + '\n',
+      'utf8',
+    );
 
-    const mockDate1 = new Date('2025-06-15T10:30:00Z');
-    const mockDate2 = new Date('2025-06-15T11:45:00Z');
+    const index = new FolderIndex([], new SessionSummaryIndex(agentDir));
+    const sessions = await index.listSessions(projectDir);
 
-    const listSpy = vi.spyOn(SessionManager, 'list').mockResolvedValueOnce([
+    expect(sessions).toEqual([
       {
-        path: '/tmp/session-1.jsonl',
         id: 'abc-123',
-        cwd: '/home/user/project',
         name: 'Test Session',
-        parentSessionPath: undefined,
-        created: mockDate1,
-        modified: mockDate2,
-        messageCount: 5,
+        created: '2025-06-15T10:30:00.000Z',
+        modified: '2025-06-15T10:31:00.000Z',
+        messageCount: 1,
         firstMessage: 'Hello world',
-        allMessagesText: 'Hello world ...',
       },
     ]);
-
-    const index = new FolderIndex([]);
-    const sessions = await index.listSessions('/home/user/project');
-
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0]).toEqual({
-      id: 'abc-123',
-      name: 'Test Session',
-      created: '2025-06-15T10:30:00.000Z',
-      modified: '2025-06-15T11:45:00.000Z',
-      messageCount: 5,
-      firstMessage: 'Hello world',
-    });
-
-    listSpy.mockRestore();
   });
 
   it('maps sessions without optional name', async () => {
-    const { SessionManager } = await import('@earendil-works/pi-coding-agent');
+    const agentDir = join(tempDir, 'agent');
+    const projectDir = join(tempDir, 'project');
+    const sessionDir = sessionDirFor(projectDir, agentDir);
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      join(sessionDir, 's-2.jsonl'),
+      [
+        `{"type":"session","id":"def-456","timestamp":"2025-01-01T00:00:00.000Z","cwd":"${projectDir}"}`,
+        `{"type":"message","timestamp":"2025-01-01T00:01:00.000Z","message":{"role":"user","content":"hi"}}`,
+      ].join('\n') + '\n',
+      'utf8',
+    );
 
-    const listSpy = vi.spyOn(SessionManager, 'list').mockResolvedValueOnce([
-      {
-        path: '/tmp/session-2.jsonl',
-        id: 'def-456',
-        cwd: '/home/user/project',
-        name: undefined,
-        parentSessionPath: undefined,
-        created: new Date('2025-01-01T00:00:00Z'),
-        modified: new Date('2025-01-02T00:00:00Z'),
-        messageCount: 0,
-        firstMessage: '',
-        allMessagesText: '',
-      },
-    ]);
-
-    const index = new FolderIndex([]);
-    const sessions = await index.listSessions('/home/user/project');
+    const index = new FolderIndex([], new SessionSummaryIndex(agentDir));
+    const sessions = await index.listSessions(projectDir);
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0].name).toBeUndefined();
-    expect(sessions[0].firstMessage).toBeUndefined();
-
-    listSpy.mockRestore();
+    expect(sessions[0].firstMessage).toBe('hi');
   });
 });
 

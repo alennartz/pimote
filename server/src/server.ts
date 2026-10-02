@@ -196,6 +196,13 @@ export async function createServer(
     WsHandler.broadcastProjectsChanged(projectRegistry, sessionManager, clientRegistry);
   });
 
+  // A stale-serve background refresh of the repo index (listing/status TTL
+  // expiry) rides the same channel, but only when the recomputed view differs
+  // from what the stale serve returned.
+  repoIndex?.setOnRefreshed(() => {
+    if (projectRegistry) WsHandler.broadcastProjectsChanged(projectRegistry, sessionManager, clientRegistry);
+  });
+
   const wss = new WebSocketServer({ noServer: true });
   const clientRegistry: ClientRegistry = new Map();
 

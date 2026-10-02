@@ -91,6 +91,11 @@ export class ProjectStore {
           this.projects = data.projects;
           this.roots = data.roots ?? [];
           this.loadedForCurrentConnection = true;
+          // First paint needs only this response. Session metadata refines sort
+          // order and chips as it lands — holding the spinner until every
+          // per-project list_sessions returns made the dashboard wait on the
+          // slowest project's session history.
+          if (isInitialLoad) this.loading = false;
           // Repo listing feeds branch chips and missing-detection; refresh it
           // with the projects so they never disagree.
           void this.loadRepos();

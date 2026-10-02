@@ -212,6 +212,31 @@ describe('ProjectStore', () => {
       expect(store.sessions.get('/r/b')).toEqual([]);
     });
 
+    it('shows the project list before the per-project session loads finish', async () => {
+      const store = new ProjectStore();
+      const projects = [makeProject({ path: '/r/a', name: 'a' })];
+      let resolveSessions!: (v: unknown) => void;
+      fakeConnection.send.mockImplementation((cmd: any) => {
+        if (cmd.type === 'list_projects') return Promise.resolve(okListProjects(projects));
+        if (cmd.type === 'list_repos') return Promise.resolve({ success: true, data: { repos: [] } });
+        if (cmd.type === 'list_sessions') return new Promise((res) => (resolveSessions = res));
+        throw new Error(`Unexpected command: ${cmd.type}`);
+      });
+
+      const load = store.loadProjects();
+      await flush();
+
+      // Projects are assigned and the spinner is down while list_sessions is
+      // still in flight — the list must not wait on session metadata.
+      expect(store.projects).toEqual(projects);
+      expect(store.loading).toBe(false);
+      expect(store.sessions.has('/r/a')).toBe(false);
+
+      resolveSessions({ success: true, data: { sessions: [makeSession('s1', '2026-01-01T00:00:00Z')] } });
+      await load;
+      expect(store.sessions.get('/r/a')).toHaveLength(1);
+    });
+
     it('a failed load resets loading and leaves state intact', async () => {
       const store = new ProjectStore();
       fakeConnection.send.mockRejectedValue(new Error('WebSocket closed'));

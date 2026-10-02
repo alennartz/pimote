@@ -182,7 +182,10 @@ describe('source-listed multi-repo projects', () => {
     expect((await registry.list()).some((p) => p.name === 'ghost')).toBe(true);
 
     projects = [];
-    clock += 1_000_001; // TTL miss: the next list() re-runs the source and drops 'ghost'
+    clock += 1_000_001; // TTL miss: the stale view is served, a background refresh re-runs the source
+    expect((await registry.list()).map((p) => p.name)).toContain('ghost');
+
+    await index.whenRefreshed();
     const names = (await registry.list()).map((p) => p.name);
     expect(names).toContain('persisted');
     expect(names).not.toContain('ghost');

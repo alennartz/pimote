@@ -1,7 +1,8 @@
 import { readdir, stat, unlink } from 'node:fs/promises';
 import { join, basename } from 'node:path';
-import { SessionManager, type SessionInfo as PiSessionInfo } from '@earendil-works/pi-coding-agent';
+import { SessionManager } from '@earendil-works/pi-coding-agent';
 import type { ProjectInfo, SessionInfo as PimoteSessionInfo } from '../../shared/dist/index.js';
+import { SessionSummaryIndex, type SessionSummary } from './session-summaries.js';
 
 /** Project marker files/directories that identify a folder as a project. */
 const PROJECT_MARKERS = ['.git', 'package.json'] as const;
@@ -19,7 +20,10 @@ function isMissingPathError(error: unknown): boolean {
  * Scans configured root directories for project folders and lists their sessions.
  */
 export class FolderIndex {
-  constructor(private readonly _roots: string[]) {}
+  constructor(
+    private readonly _roots: string[],
+    private readonly summaries: SessionSummaryIndex = new SessionSummaryIndex(),
+  ) {}
 
   /** Returns the configured root directories. */
   get roots(): string[] {
@@ -73,10 +77,14 @@ export class FolderIndex {
 
   /**
    * List raw pi session records for a given folder path.
+   *
+   * Served by the per-file summary cache: warm calls stat the session files
+   * and parse only the ones written since the previous list, instead of
+   * re-reading every session file's full history per request.
    */
-  async listSessionRecords(folderPath: string, options: FolderScanOptions = {}): Promise<PiSessionInfo[]> {
+  async listSessionRecords(folderPath: string, options: FolderScanOptions = {}): Promise<SessionSummary[]> {
     try {
-      return await SessionManager.list(folderPath);
+      return await this.summaries.list(folderPath);
     } catch (err) {
       if (options.failOnError) throw err;
       console.warn(`[FolderIndex] Failed to list sessions for ${folderPath}:`, err);
@@ -86,7 +94,7 @@ export class FolderIndex {
 
   /**
    * List sessions for a given folder path.
-   * Calls the pi SDK's SessionManager.list() and maps results to the shared SessionInfo type.
+   * Maps cached session records to the shared SessionInfo type.
    */
   async listSessions(folderPath: string): Promise<PimoteSessionInfo[]> {
     const piSessions = await this.listSessionRecords(folderPath);

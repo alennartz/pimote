@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, writeFile, readFile, readlink, rm, symlink } from 'node:fs/promises';
@@ -275,7 +275,7 @@ describe('RepoIndex.runOpenHooks()', () => {
 });
 
 describe('RepoIndex.list() — TTL cache', () => {
-  it('serves a cached listing until the TTL expires', async () => {
+  it('serves the cached listing until the TTL expires, then serves it stale while refreshing in the background', async () => {
     const repoA = join(tempDir, 'repo-a');
     const repoB = join(tempDir, 'repo-b');
     await initRepo(repoA);
@@ -287,10 +287,12 @@ describe('RepoIndex.list() — TTL cache', () => {
     clock = 50;
     expect((await index.list()).map((r) => r.path)).toEqual([repoA]);
 
+    // Past the TTL: the stale view is served immediately (no walk on the
+    // request path), while a background refresh picks up repoB.
     clock = 200;
-    const paths = (await index.list()).map((r) => r.path);
-    expect(paths).toContain(repoA);
-    expect(paths).toContain(repoB);
+    expect((await index.list()).map((r) => r.path)).toEqual([repoA]);
+    await index.whenRefreshed();
+    expect((await index.list()).map((r) => r.path).sort()).toEqual([repoA, repoB].sort());
   });
 
   it('re-walks immediately after invalidate()', async () => {
@@ -306,6 +308,43 @@ describe('RepoIndex.list() — TTL cache', () => {
     const paths = (await index.list()).map((r) => r.path);
     expect(paths).toContain(repoA);
     expect(paths).toContain(repoB);
+  });
+});
+
+describe('RepoIndex background refresh — onRefreshed', () => {
+  it('notifies when the refreshed view differs from the stale one', async () => {
+    const repoA = join(tempDir, 'repo-a');
+    const repoB = join(tempDir, 'repo-b');
+    await initRepo(repoA);
+
+    const index = makeIndex();
+    expect(await repoAt(index, repoA)).toBeDefined();
+    const onRefreshed = vi.fn();
+    index.setOnRefreshed(onRefreshed);
+
+    await initRepo(repoB);
+    clock = 5_000; // well past both TTLs
+    await index.list(); // stale serve + kick
+    await index.whenRefreshed();
+
+    expect(onRefreshed).toHaveBeenCalledTimes(1);
+    expect((await index.list()).map((r) => r.path)).toContain(repoB);
+  });
+
+  it('does not notify when a refresh finds nothing changed', async () => {
+    const repoA = join(tempDir, 'repo-a');
+    await initRepo(repoA);
+
+    const index = makeIndex();
+    expect(await repoAt(index, repoA)).toBeDefined();
+    const onRefreshed = vi.fn();
+    index.setOnRefreshed(onRefreshed);
+
+    clock = 5_000; // expired TTLs, nothing changed on disk
+    await index.list();
+    await index.whenRefreshed();
+
+    expect(onRefreshed).not.toHaveBeenCalled();
   });
 });
 
@@ -370,7 +409,11 @@ describe('RepoIndex.list() — git status enrichment', () => {
     clock = 50;
     expect((await repoAt(index, repo))?.dirty).toBe(false);
 
+    // Past the status TTL the stale value is served (no git probe on the
+    // request path); the background refresh re-probes.
     clock = 200;
+    expect((await repoAt(index, repo))?.dirty).toBe(false);
+    await index.whenRefreshed();
     expect((await repoAt(index, repo))?.dirty).toBe(true);
   });
 });
