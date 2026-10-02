@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import type { PimoteEvent, PimoteTreeNode } from '@pimote/shared';
   import { connection } from '$lib/stores/connection.svelte.js';
@@ -45,6 +45,7 @@
   let labelEditor: LabelEditorState | null = $state(null);
   let labelEditorSaving = $state(false);
   let labelEditorInputEl: HTMLInputElement | null = $state(null);
+  let treeListEl: HTMLDivElement | null = $state(null);
 
   const activePath = $derived.by(() => {
     const tree = treeDialogStore.state.tree ?? [];
@@ -58,6 +59,17 @@
   const canNavigate = $derived(
     treeDialogStore.state.open && !!treeDialogStore.state.sessionId && !!treeDialogStore.selectedNodeId && !treeDialogStore.state.loading && !navigating && connection.ready,
   );
+
+  $effect(() => {
+    if (!treeDialogStore.state.open || !treeListEl) return;
+
+    const list = treeListEl;
+    void tick().then(() => {
+      if (treeDialogStore.state.open && treeListEl === list) {
+        list.scrollTop = list.scrollHeight;
+      }
+    });
+  });
 
   $effect(() => {
     if (!treeDialogStore.state.open) {
@@ -406,7 +418,7 @@
         </div>
       </header>
 
-      <div class="min-h-0 flex-1 overflow-auto px-2 py-2 sm:px-3">
+      <div bind:this={treeListEl} class="min-h-0 flex-1 overflow-auto px-2 py-2 sm:px-3">
         {#if treeRows.length === 0}
           <div class="text-muted-foreground px-3 py-6 text-sm">No tree nodes match the current filter.</div>
         {:else}
