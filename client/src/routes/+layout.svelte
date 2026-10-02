@@ -31,10 +31,24 @@
   import { pushSharedImages } from '$lib/stores/input-bar.svelte.js';
   import { resolveAppViewportHeight } from '$lib/app-viewport.js';
   import { onMount } from 'svelte';
+  import { afterNavigate } from '$app/navigation';
+  import { page } from '$app/state';
 
   let { children } = $props();
   let panelOpen = $state(false);
   let appHeight = $state('100dvh');
+
+  // The registry drives the URL (lib/nav.ts); this closes the loop the other
+  // way for the home route. Only the session route adopts its param, so
+  // back/forward to '/' would otherwise leave viewedSessionId set — keeping
+  // session-scoped chrome (the extension status bar, mobile header) visible
+  // on the dashboard. Fires after each navigation completes and the new page
+  // is rendered, so the set-then-navigate sequence in switchTo() never races
+  // a clear. (`navigation.url` is absent on the initial 'enter' event — read
+  // the rendered page's URL instead.)
+  afterNavigate(() => {
+    if (page.url.pathname === '/') sessionRegistry.adoptHomeRoute();
+  });
 
   // Report focus state to SW so it can suppress notifications when app is focused.
   // Workaround for desktop Chrome where WindowClient.focused is unreliable in push handlers.

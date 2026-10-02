@@ -124,6 +124,32 @@ describe('SessionRegistry', () => {
       // The session itself stays open in the tray
       expect(registry.sessions['s1']).toBeDefined();
     });
+
+    it('adoptHomeRoute() clears viewedSessionId after back-navigation to "/"', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.switchTo('s1');
+      expect(registry.viewedSessionId).toBe('s1');
+
+      const toViewed = vi.fn();
+      registry.setViewNavigator({ toViewed });
+      toViewed.mockClear();
+
+      registry.adoptHomeRoute();
+      expect(registry.viewedSessionId).toBeNull();
+      // The URL already says "/" — adopting must not navigate again.
+      expect(toViewed).not.toHaveBeenCalled();
+      // The session itself stays open in the tray, as with goHome()
+      expect(registry.sessions['s1']).toBeDefined();
+    });
+
+    it('adoptHomeRoute() when already home is a no-op', () => {
+      const toViewed = vi.fn();
+      registry.setViewNavigator({ toViewed });
+
+      registry.adoptHomeRoute();
+      expect(registry.viewedSessionId).toBeNull();
+      expect(toViewed).not.toHaveBeenCalled();
+    });
   });
 
   // --------------------------------------------------------------------------

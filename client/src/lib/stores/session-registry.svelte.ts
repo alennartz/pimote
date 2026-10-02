@@ -797,6 +797,20 @@ export class SessionRegistry {
     return true;
   }
 
+  /**
+   * Adopt the home route arrived from the URL (back/forward) without
+   * re-navigating — the browser is already at '/'. Mirror of adoptRouteView:
+   * only the session route adopts its param, so history navigation back to
+   * the dashboard would otherwise leave viewedSessionId set and keep
+   * session-scoped layout chrome (extension status bar, mobile header)
+   * visible on the home page.
+   */
+  adoptHomeRoute(): void {
+    if (this.viewedSessionId === null) return;
+    this.viewedSessionId = null;
+    this.syncViewedPanelStore();
+  }
+
   /** Check if a session ID is currently active */
   isActiveSession(sessionId: string): boolean {
     return sessionId in this.sessions;
