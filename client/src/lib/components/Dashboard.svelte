@@ -12,9 +12,12 @@
   import { formatRelativeTime } from '$lib/format-relative-time.js';
   import Archive from '@lucide/svelte/icons/archive';
   import Bot from '@lucide/svelte/icons/bot';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import X from '@lucide/svelte/icons/x';
 
   let managerOpen = $state(false);
+  // Continue starts collapsed — the header keeps the open count visible.
+  let continueOpen = $state(false);
 
   // --- Continue: swipe-to-close/archive -------------------------------------
   //
@@ -203,56 +206,68 @@
     <!-- Continue: open sessions as cards -->
     {#if sessionRegistry.activeSessions.length > 0 || ghosts.length > 0}
       <section>
-        <div class="text-muted-foreground mb-3 flex items-baseline gap-2">
-          <h2 class="text-foreground text-xs font-semibold tracking-widest uppercase">Continue</h2>
+        <div class="text-muted-foreground mb-3 flex items-center gap-2">
+          <h2 class="text-foreground text-xs font-semibold tracking-widest uppercase">
+            <button
+              type="button"
+              class="hover:text-foreground focus-visible:ring-ring flex min-h-8 items-center gap-1.5 rounded-md pr-1 text-left transition-colors focus-visible:ring-1 focus-visible:outline-none"
+              aria-expanded={continueOpen}
+              onclick={() => (continueOpen = !continueOpen)}
+            >
+              <ChevronRight class="size-3.5 shrink-0 transition-transform {continueOpen ? 'rotate-90' : ''}" />
+              Continue
+            </button>
+          </h2>
           <span class="text-xs">{sessionRegistry.activeSessions.length} open</span>
         </div>
-        <div class="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-          {#each displayItems as item (item.kind === 'session' ? item.sessionId : item.ghost.id)}
-            {#if item.kind === 'session'}
-              {@const session = sessionRegistry.sessions[item.sessionId]}
-              <SwipeableCard
-                actionLeft={{ label: 'Close', icon: X, onAction: () => closeFromHome(item.sessionId) }}
-                actionRight={{ label: 'Archive', icon: Archive, onAction: () => archiveFromHome(item.sessionId) }}
-              >
-                <button
-                  class="bg-card border-border hover:border-ring focus-visible:ring-ring active:bg-secondary w-full rounded-xl border p-3.5 text-left transition-colors focus-visible:ring-1 focus-visible:outline-none"
-                  onclick={() => switchToSession(item.sessionId)}
+        {#if continueOpen}
+          <div class="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {#each displayItems as item (item.kind === 'session' ? item.sessionId : item.ghost.id)}
+              {#if item.kind === 'session'}
+                {@const session = sessionRegistry.sessions[item.sessionId]}
+                <SwipeableCard
+                  actionLeft={{ label: 'Close', icon: X, onAction: () => closeFromHome(item.sessionId) }}
+                  actionRight={{ label: 'Archive', icon: Archive, onAction: () => archiveFromHome(item.sessionId) }}
                 >
-                  <div class="flex items-center gap-2">
-                    <span class="size-2 shrink-0 rounded-full {statusClass(item.sessionId)}"></span>
-                    <span class="text-foreground min-w-0 flex-1 truncate text-sm font-semibold">{session?.projectName}</span>
+                  <button
+                    class="bg-card border-border hover:border-ring focus-visible:ring-ring active:bg-secondary w-full rounded-xl border p-3.5 text-left transition-colors focus-visible:ring-1 focus-visible:outline-none"
+                    onclick={() => switchToSession(item.sessionId)}
+                  >
+                    <div class="flex items-center gap-2">
+                      <span class="size-2 shrink-0 rounded-full {statusClass(item.sessionId)}"></span>
+                      <span class="text-foreground min-w-0 flex-1 truncate text-sm font-semibold">{session?.projectName}</span>
+                    </div>
+                    {#if session}
+                      <div class="text-muted-foreground mt-1 truncate text-xs">
+                        {getSessionDisplayName(session)}
+                      </div>
+                      <div class="text-muted-foreground/80 mt-2 flex items-center gap-1.5 text-xs">
+                        <span>{statusLabel(item.sessionId)}</span>
+                        {#if lastActivity(item.sessionId)}
+                          <span>·</span>
+                          <span>{lastActivity(item.sessionId)}</span>
+                        {/if}
+                      </div>
+                    {/if}
+                  </button>
+                </SwipeableCard>
+              {:else}
+                <div class="border-border/60 bg-muted/30 flex min-h-20 items-center justify-between gap-3 rounded-xl border border-dashed px-4 py-3" out:fade={{ duration: 250 }}>
+                  <div class="min-w-0">
+                    <p class="text-muted-foreground text-sm font-medium">{item.ghost.label}</p>
+                    <p class="text-muted-foreground/70 mt-0.5 truncate text-xs">{item.ghost.displayName}</p>
                   </div>
-                  {#if session}
-                    <div class="text-muted-foreground mt-1 truncate text-xs">
-                      {getSessionDisplayName(session)}
-                    </div>
-                    <div class="text-muted-foreground/80 mt-2 flex items-center gap-1.5 text-xs">
-                      <span>{statusLabel(item.sessionId)}</span>
-                      {#if lastActivity(item.sessionId)}
-                        <span>·</span>
-                        <span>{lastActivity(item.sessionId)}</span>
-                      {/if}
-                    </div>
-                  {/if}
-                </button>
-              </SwipeableCard>
-            {:else}
-              <div class="border-border/60 bg-muted/30 flex min-h-20 items-center justify-between gap-3 rounded-xl border border-dashed px-4 py-3" out:fade={{ duration: 250 }}>
-                <div class="min-w-0">
-                  <p class="text-muted-foreground text-sm font-medium">{item.ghost.label}</p>
-                  <p class="text-muted-foreground/70 mt-0.5 truncate text-xs">{item.ghost.displayName}</p>
+                  <button
+                    class="text-primary hover:bg-accent active:bg-accent/80 shrink-0 rounded-md px-2 py-1.5 text-sm font-medium transition-colors"
+                    onclick={() => void undoGhost(item.ghost)}
+                  >
+                    Undo
+                  </button>
                 </div>
-                <button
-                  class="text-primary hover:bg-accent active:bg-accent/80 shrink-0 rounded-md px-2 py-1.5 text-sm font-medium transition-colors"
-                  onclick={() => void undoGhost(item.ghost)}
-                >
-                  Undo
-                </button>
-              </div>
-            {/if}
-          {/each}
-        </div>
+              {/if}
+            {/each}
+          </div>
+        {/if}
       </section>
     {/if}
 
