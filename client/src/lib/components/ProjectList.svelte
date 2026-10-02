@@ -11,7 +11,6 @@
   import Loader2 from '@lucide/svelte/icons/loader-2';
   import Network from '@lucide/svelte/icons/network';
   import Plus from '@lucide/svelte/icons/plus';
-  import Search from '@lucide/svelte/icons/search';
   import Star from '@lucide/svelte/icons/star';
   import Tag from '@lucide/svelte/icons/tag';
   import X from '@lucide/svelte/icons/x';
@@ -24,10 +23,12 @@
   import { Input } from '$lib/components/ui/input/index.js';
 
   interface Props {
+    /** Homepage search query — owned by the combined toolbar box at the top. */
+    search?: string;
     onSessionSelect?: () => void;
   }
 
-  let { onSessionSelect }: Props = $props();
+  let { search = '', onSessionSelect }: Props = $props();
 
   let openError = $state('');
   // Projects start collapsed — the header is the whole row until opened.
@@ -67,17 +68,7 @@
 
   const MAX_SESSIONS_SHOWN = 6;
 
-  let showNewSessionDialog = $state(false);
   let showArchiveAllDialog = $state(false);
-  let projectSearch = $state('');
-
-  // Create project flow state
-  type DialogMode = 'pick' | 'create-root' | 'create-name';
-  let dialogMode: DialogMode = $state('pick');
-  let createRoot: string = $state('');
-  let createName: string = $state('');
-  let createError: string = $state('');
-  let creating: boolean = $state(false);
 
   // Create project project flow state
   let showMultiRepoDialog = $state(false);
@@ -112,7 +103,7 @@
   // Two-tier search: a project matching by name/path shows all its sessions;
   // one matching only via session data shows just the matching sessions.
   const searchResults = $derived.by(() => {
-    const query = projectSearch.trim().toLowerCase();
+    const query = search.trim().toLowerCase();
     if (!query) return null;
     const projects: ProjectInfo[] = [];
     // Non-reactive derived output — recomputed wholesale on every query change.
@@ -145,15 +136,6 @@
       return total + sessions.filter((s) => !s.archived && !s.liveStatus).length;
     }, 0),
   );
-  const pickerProjects = $derived(
-    [...projectStore.projects]
-      .filter((folder) => {
-        const query = projectSearch.trim().toLowerCase();
-        if (!query) return true;
-        return folder.name.toLowerCase().includes(query) || folder.path.toLowerCase().includes(query);
-      })
-      .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path)),
-  );
   const multiRepoCandidateRepos = $derived(projectStore.repos.filter((repo) => !repo.missing));
 
   // Session/project events are routed into the store at module scope
@@ -175,101 +157,11 @@
     }
   }
 
-  function openNewSessionDialog() {
-    projectSearch = '';
-    dialogMode = 'pick';
-    createRoot = '';
-    createName = '';
-    createError = '';
-    creating = false;
-    showNewSessionDialog = true;
-  }
-
-  function handleNewSessionDialogOpenChange(open: boolean) {
-    showNewSessionDialog = open;
-    if (!open) {
-      projectSearch = '';
-      dialogMode = 'pick';
-      createRoot = '';
-      createName = '';
-      createError = '';
-      creating = false;
-    }
-  }
-
-  function startCreateProject() {
-    const roots = projectStore.roots;
-    if (roots.length === 1) {
-      createRoot = roots[0];
-      dialogMode = 'create-name';
-    } else {
-      dialogMode = 'create-root';
-    }
-    createName = '';
-    createError = '';
-  }
-
-  function selectRoot(root: string) {
-    createRoot = root;
-    dialogMode = 'create-name';
-    createName = '';
-    createError = '';
-  }
-
-  function backToPickMode() {
-    dialogMode = 'pick';
-    createRoot = '';
-    createName = '';
-    createError = '';
-  }
-
-  function backToRootSelection() {
-    dialogMode = 'create-root';
-    createName = '';
-    createError = '';
-  }
-
   function validateProjectName(name: string): string | null {
     if (!name.trim()) return 'Name is required';
     if (name.includes('/') || name.includes('\\')) return 'Name cannot contain path separators';
     if (name === '.' || name === '..') return 'Invalid name';
     return null;
-  }
-
-  async function createProject() {
-    const name = createName.trim();
-    const validationError = validateProjectName(name);
-    if (validationError) {
-      createError = validationError;
-      return;
-    }
-
-    creating = true;
-    createError = '';
-
-    try {
-      const response = await connection.send({
-        type: 'create_project',
-        root: createRoot,
-        name,
-      });
-
-      if (!response.success) {
-        createError = response.error ?? 'Failed to create project';
-        creating = false;
-        return;
-      }
-
-      const folderPath = (response.data as { folderPath: string }).folderPath;
-      // Refresh project list so the new project appears
-      void projectStore.loadProjects();
-      await connection.send({ type: 'open_session', folderPath });
-      showNewSessionDialog = false;
-      onSessionSelect?.();
-    } catch (e) {
-      createError = e instanceof Error ? e.message : 'Failed to create project';
-      creating = false;
-    }
   }
 
   /** True when a project's folder doesn't exist on disk yet — opening it gives
@@ -296,8 +188,6 @@
 
   async function newSession(folderPath: string) {
     try {
-      showNewSessionDialog = false;
-      projectSearch = '';
       onSessionSelect?.();
       await connection.send({
         type: 'open_session',
@@ -413,6 +303,45 @@
 </script>
 
 <div class="flex flex-col gap-2 p-2 max-md:p-0">
+  <!-- Section header + list actions. The former dashboard-side header lives here
+       so the count and the ⋯ menu share one row. -->
+  <div class="text-muted-foreground mb-1 -ml-2 flex items-center gap-2 max-md:ml-0">
+    <h2 class="text-foreground text-xs font-semibold tracking-widest uppercase">Projects</h2>
+    {#if projectStore.projects.length > 0}
+      <span class="text-xs">{projectStore.projects.length}</span>
+    {/if}
+    <div class="ml-auto">
+      <DropdownMenu>
+        <DropdownMenuTrigger>
+          <Button variant="outline" size="icon-sm" class="text-muted-foreground shrink-0 max-md:size-11" title="More project actions">
+            <EllipsisVertical class="size-4 max-md:size-5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuPortal>
+          <DropdownMenuContent class="w-52" align="end">
+            <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || projectStore.roots.length === 0} onSelect={() => openMultiRepoDialog()}>
+              <Network class="size-4" />
+              Create multi-repo project…
+            </DropdownMenuItem>
+            <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || archivableCount === 0} onSelect={() => (showArchiveAllDialog = true)}>
+              <Archive class="size-4" />
+              Archive all inactive…
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem class="gap-2" onSelect={() => projectStore.setShowArchived(!projectStore.showArchived)}>
+              {#if projectStore.showArchived}
+                <Undo2 class="size-4" />
+                Hide archived
+              {:else}
+                <Archive class="size-4" />
+                Show archived
+              {/if}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenuPortal>
+      </DropdownMenu>
+    </div>
+  </div>
   {#if projectStore.loading}
     <div class="text-muted-foreground flex items-center justify-center py-8">
       <Loader2 class="size-5 animate-spin" />
@@ -427,55 +356,6 @@
       {/if}
     </div>
   {:else}
-    <div class="flex flex-col gap-2">
-      <div class="flex items-center gap-1.5">
-        <div
-          class="border-border bg-secondary/50 focus-within:ring-ring flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors focus-within:ring-1 focus-within:outline-none max-md:min-h-11 max-md:rounded-xl max-md:px-3 max-md:py-2"
-        >
-          <Search class="text-muted-foreground size-4 shrink-0 max-md:size-5" />
-          <input
-            bind:value={projectSearch}
-            placeholder="Search projects"
-            aria-label="Search projects"
-            class="text-foreground placeholder:text-muted-foreground w-full min-w-0 bg-transparent text-xs outline-none max-md:text-base"
-          />
-        </div>
-        <Button size="sm" class="shrink-0 max-md:h-11 max-md:rounded-xl max-md:px-4 max-md:text-sm" onclick={openNewSessionDialog} disabled={connection.status !== 'connected'}>
-          <Plus class="size-3.5 max-md:size-4" />
-          New session
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger>
-            <Button variant="outline" size="icon-sm" class="text-muted-foreground shrink-0 max-md:size-11" title="More project actions">
-              <EllipsisVertical class="size-4 max-md:size-5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuPortal>
-            <DropdownMenuContent class="w-52" align="end">
-              <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || projectStore.roots.length === 0} onSelect={() => openMultiRepoDialog()}>
-                <Network class="size-4" />
-                Create multi-repo project…
-              </DropdownMenuItem>
-              <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || archivableCount === 0} onSelect={() => (showArchiveAllDialog = true)}>
-                <Archive class="size-4" />
-                Archive all inactive…
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem class="gap-2" onSelect={() => projectStore.setShowArchived(!projectStore.showArchived)}>
-                {#if projectStore.showArchived}
-                  <Undo2 class="size-4" />
-                  Hide archived
-                {:else}
-                  <Archive class="size-4" />
-                  Show archived
-                {/if}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenuPortal>
-        </DropdownMenu>
-      </div>
-    </div>
-
     {#if openError}
       <p class="text-destructive px-1 text-xs">{openError}</p>
     {/if}
@@ -747,112 +627,6 @@
       <Button variant="outline" onclick={() => (tagTarget = null)}>Cancel</Button>
       <Button onclick={() => void addTag()} disabled={!tagName.trim()}>Add tag</Button>
     </Dialog.Footer>
-  </Dialog.Content>
-</Dialog.Root>
-
-<Dialog.Root open={showNewSessionDialog} onOpenChange={handleNewSessionDialogOpenChange}>
-  <Dialog.Content class="sm:max-w-lg">
-    {#if dialogMode === 'pick'}
-      <Dialog.Header>
-        <Dialog.Title>Start a new session</Dialog.Title>
-        <Dialog.Description>Choose a project to start from. Search is client-side over discovered projects.</Dialog.Description>
-      </Dialog.Header>
-
-      <div class="flex flex-col gap-4">
-        <Input bind:value={projectSearch} placeholder="Search projects" autofocus />
-
-        <div class="border-border max-h-80 overflow-y-auto rounded-md border">
-          {#if pickerProjects.length === 0}
-            <div class="text-muted-foreground px-3 py-6 text-center text-sm">No matching projects.</div>
-          {:else}
-            <div class="flex flex-col p-1">
-              {#each pickerProjects as folder (folder.path)}
-                <button
-                  class="hover:bg-accent hover:text-accent-foreground flex items-start gap-2 rounded-md px-3 py-2 text-left transition-colors"
-                  disabled={connection.status !== 'connected'}
-                  onclick={() => void newSession(folder.path)}
-                >
-                  <FolderIcon class="text-muted-foreground mt-0.5 size-4 shrink-0" />
-                  <div class="min-w-0 flex-1">
-                    <div class="truncate text-sm font-medium">{folder.name}</div>
-                    <div class="text-muted-foreground truncate text-xs">{folder.path}</div>
-                  </div>
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <Dialog.Footer class="flex gap-2">
-          {#if projectStore.roots.length > 0}
-            <Button variant="outline" onclick={startCreateProject}>
-              <Plus class="size-4" />
-              Create new project
-            </Button>
-          {/if}
-          <div class="flex-1"></div>
-          <Button variant="outline" type="button" onclick={() => handleNewSessionDialogOpenChange(false)}>Cancel</Button>
-        </Dialog.Footer>
-      </div>
-    {:else if dialogMode === 'create-root'}
-      <Dialog.Header>
-        <Dialog.Title>Create new project</Dialog.Title>
-        <Dialog.Description>Choose where to create the project.</Dialog.Description>
-      </Dialog.Header>
-
-      <div class="flex flex-col gap-4">
-        <div class="border-border max-h-80 overflow-y-auto rounded-md border">
-          <div class="flex flex-col p-1">
-            {#each projectStore.roots as root (root)}
-              <button class="hover:bg-accent hover:text-accent-foreground flex items-start gap-2 rounded-md px-3 py-2 text-left transition-colors" onclick={() => selectRoot(root)}>
-                <FolderIcon class="text-muted-foreground mt-0.5 size-4 shrink-0" />
-                <div class="min-w-0 flex-1">
-                  <div class="truncate text-sm font-medium">{root}</div>
-                </div>
-              </button>
-            {/each}
-          </div>
-        </div>
-
-        <Dialog.Footer>
-          <Button variant="outline" onclick={backToPickMode}>Back</Button>
-        </Dialog.Footer>
-      </div>
-    {:else if dialogMode === 'create-name'}
-      <Dialog.Header>
-        <Dialog.Title>Create new project</Dialog.Title>
-        <Dialog.Description>New project in <code class="bg-muted rounded px-1 py-0.5 text-xs">{createRoot}</code></Dialog.Description>
-      </Dialog.Header>
-
-      <div class="flex flex-col gap-4">
-        <div class="flex flex-col gap-1.5">
-          <Input
-            bind:value={createName}
-            placeholder="Project name"
-            autofocus
-            disabled={creating}
-            onkeydown={(e) => {
-              if (e.key === 'Enter') void createProject();
-            }}
-          />
-          {#if createError}
-            <p class="text-destructive text-sm">{createError}</p>
-          {/if}
-        </div>
-
-        <Dialog.Footer>
-          <Button variant="outline" onclick={projectStore.roots.length > 1 ? backToRootSelection : backToPickMode} disabled={creating}>Back</Button>
-          <Button onclick={() => void createProject()} disabled={creating || !createName.trim()}>
-            {#if creating}
-              <Loader2 class="size-4 animate-spin" />
-              Creating…
-            {:else}
-              Create
-            {/if}
-          </Button>
-        </Dialog.Footer>
-      </div>
-    {/if}
   </Dialog.Content>
 </Dialog.Root>
 

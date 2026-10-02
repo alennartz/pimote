@@ -2,6 +2,7 @@
   import { onDestroy, untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { fade } from 'svelte/transition';
+  import HomeToolbar from '$lib/components/HomeToolbar.svelte';
   import ProjectList from '$lib/components/ProjectList.svelte';
   import ManagerChat from '$lib/components/ManagerChat.svelte';
   import SwipeableCard, { closeOpenSwipeCard } from '$lib/components/SwipeableCard.svelte';
@@ -11,11 +12,10 @@
   import { getSessionDisplayName } from '$lib/session-summary.js';
   import { formatRelativeTime } from '$lib/format-relative-time.js';
   import Archive from '@lucide/svelte/icons/archive';
-  import Bot from '@lucide/svelte/icons/bot';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import X from '@lucide/svelte/icons/x';
 
-  let managerOpen = $state(false);
+  let search = $state('');
   // Continue starts collapsed — the header keeps the open count visible.
   let continueOpen = $state(false);
 
@@ -190,18 +190,12 @@
       </div>
     </div>
 
-    <!-- Manager: spotlight when idle, conversation only once in use (desktop) -->
-    <div class="hidden md:block">
-      <ManagerChat />
-    </div>
-    <!-- Manager affordance on mobile: opens the fullscreen sheet -->
-    <button
-      class="border-border bg-secondary/60 hover:border-ring hover:ring-ring active:bg-secondary flex min-h-11 w-full items-center gap-2.5 rounded-2xl border px-4 py-3 text-left shadow-lg transition-colors hover:ring-1 md:hidden"
-      onclick={() => (managerOpen = true)}
-    >
-      <Bot class="text-muted-foreground size-5 shrink-0" />
-      <span class="text-muted-foreground text-[15px]">Ask the manager…</span>
-    </button>
+    <!-- One box: search by default; the leading button toggles it into the
+         manager (AI) mode. Same structure on mobile and desktop — only the
+         touch/typography sizing differs. -->
+    <HomeToolbar bind:search />
+    <!-- Manager transcript renders under the box once a conversation starts -->
+    <ManagerChat />
 
     <!-- Continue: open sessions as cards -->
     {#if sessionRegistry.activeSessions.length > 0 || ghosts.length > 0}
@@ -271,39 +265,9 @@
       </section>
     {/if}
 
-    <!-- Projects -->
+    <!-- Projects: header + list actions live with the list itself -->
     <section>
-      <div class="text-muted-foreground mb-3 flex items-baseline gap-2">
-        <h2 class="text-foreground text-xs font-semibold tracking-widest uppercase">Projects</h2>
-        {#if projectStore.projects.length > 0}
-          <span class="text-xs">{projectStore.projects.length}</span>
-        {/if}
-      </div>
-      <ProjectList />
+      <ProjectList {search} />
     </section>
   </div>
 </div>
-
-{#if managerOpen}
-  <!-- Mobile manager sheet -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="fixed inset-0 z-30 bg-black/50 md:hidden" onclick={() => (managerOpen = false)} onkeydown={(e) => e.key === 'Escape' && (managerOpen = false)}></div>
-  <div class="bg-background fixed inset-0 z-40 flex flex-col md:hidden">
-    <div class="border-border flex min-h-12 shrink-0 items-center justify-between border-b px-3" style="padding-top: max(0.25rem, env(safe-area-inset-top));">
-      <div class="flex items-center gap-2">
-        <Bot class="text-muted-foreground size-5" />
-        <span class="text-foreground text-sm font-semibold">Manager</span>
-      </div>
-      <button
-        class="text-muted-foreground hover:text-foreground -mr-1.5 flex size-11 items-center justify-center rounded-md transition-colors"
-        onclick={() => (managerOpen = false)}
-        title="Close manager"
-      >
-        <X class="size-5" />
-      </button>
-    </div>
-    <div class="min-h-0 flex-1">
-      <ManagerChat variant="expanded" />
-    </div>
-  </div>
-{/if}
