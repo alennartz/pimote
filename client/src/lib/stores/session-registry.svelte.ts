@@ -138,6 +138,8 @@ export interface PerSessionState {
   firstMessage: string | undefined;
   messages: PimoteAgentMessage[];
   isStreaming: boolean;
+  /** Invalidates in-flight streaming snapshots when a newer lifecycle event arrives. */
+  streamingRevision: number;
   isCompacting: boolean;
   model: { provider: string; id: string; name: string } | null;
   thinkingLevel: string;
@@ -236,6 +238,7 @@ export class SessionRegistry {
       firstMessage: undefined,
       messages: [],
       isStreaming: false,
+      streamingRevision: 0,
       isCompacting: false,
       model: null,
       thinkingLevel: 'off',
@@ -330,6 +333,7 @@ export class SessionRegistry {
 
     switch (event.type) {
       case 'agent_start':
+        session.streamingRevision++;
         session.status = 'working';
         session.isStreaming = true;
         break;
@@ -345,6 +349,7 @@ export class SessionRegistry {
         // would appear to do nothing. Treat success:false as terminal.
         const retryEvent = event as AutoRetryEndEvent;
         if (retryEvent.success) break;
+        session.streamingRevision++;
         session.status = 'idle';
         session.isStreaming = false;
         session.streamingMessage = null;
@@ -363,6 +368,7 @@ export class SessionRegistry {
         // retry, compaction, or queued follow-up instead of flickering
         // working→idle→working. Content cleanup (clearing the stray streaming
         // placeholder, entry IDs, meta) happens on `agent_end` below.
+        session.streamingRevision++;
         session.status = 'idle';
         session.isStreaming = false;
         // Native recordBashResult() defers persistence while the model is
@@ -1010,6 +1016,8 @@ export const sessionRegistry = new SessionRegistry((event) => {
 });
 
 async function fetchFullSessionData(sessionId: string): Promise<void> {
+  const requestedSession = sessionRegistry.sessions[sessionId];
+  const streamingRevision = requestedSession?.streamingRevision;
   try {
     const [stateRes, msgRes, metaRes, cmdsRes] = await Promise.all([
       connection.send({ type: 'get_state', sessionId }),
@@ -1026,12 +1034,16 @@ async function fetchFullSessionData(sessionId: string): Promise<void> {
       session.model = state.model;
       session.thinkingLevel = state.thinkingLevel;
       session.availableThinkingLevels = state.availableThinkingLevels ?? [];
-      session.isStreaming = state.isStreaming;
+      // A lifecycle event or full resync received while these requests were
+      // pending is newer than this snapshot. Never resurrect stale streaming.
+      if (session === requestedSession && session.streamingRevision === streamingRevision) {
+        session.isStreaming = state.isStreaming;
+        session.status = state.isStreaming ? 'working' : 'idle';
+      }
       session.isCompacting = state.isCompacting;
       session.autoCompactionEnabled = state.autoCompactionEnabled;
       session.messageCount = state.messageCount;
       session.sessionName = state.sessionName ?? null;
-      session.status = state.isStreaming ? 'working' : 'idle';
     }
 
     if (msgRes.success && msgRes.data) {
