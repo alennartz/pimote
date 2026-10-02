@@ -82,7 +82,7 @@ Installable SvelteKit PWA for browsing, controlling, and rendering remote pi ses
 
 **Files:**
 
-- `client/src/**` (including `client/src/lib/components/Dashboard.svelte`, `client/src/lib/components/ProjectList.svelte`, `client/src/lib/components/ManagerChat.svelte`, `client/src/lib/stores/project-store.svelte.ts`, `client/src/lib/stores/manager-store.svelte.ts`, `client/src/lib/stores/connection.svelte.ts`, `client/src/lib/stores/session-registry.svelte.ts`, `client/src/lib/bash-command.ts`, and `client/src/lib/components/BashExecution.svelte`)
+- `client/src/**` (including `client/src/lib/components/Dashboard.svelte`, `client/src/lib/components/ProjectList.svelte`, `client/src/lib/components/ManagerChat.svelte`, `client/src/lib/stores/project-store.svelte.ts`, `client/src/lib/stores/manager-store.svelte.ts`, `client/src/lib/stores/connection.svelte.ts`, `client/src/lib/stores/session-registry.svelte.ts`, `client/src/lib/session-route.ts` (session-URL load-then-show decision), `client/src/lib/bash-command.ts`, and `client/src/lib/components/BashExecution.svelte`)
 
 ### SDK
 

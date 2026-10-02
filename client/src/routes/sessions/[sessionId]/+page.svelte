@@ -9,30 +9,59 @@
   import CallingMode from '$lib/components/CallingMode.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { sessionRegistry, confirmTakeover, dismissTakeover } from '$lib/stores/session-registry.svelte.js';
+  import { sessionRegistry, confirmTakeover, dismissTakeover, openExistingSession } from '$lib/stores/session-registry.svelte.js';
+  import { decideSessionRoute } from '$lib/session-route.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { voiceCallStore } from '$lib/stores/voice-call-store.js';
 
   // The URL is the source of truth for which conversation is open (back/forward,
-  // deep links, reloads). Adopt the route's session into the registry; stale ids
-  // (closed sessions, superseded optimistic pending ids) follow the registry's
-  // current view rather than bouncing home — the pending→real rekey can land
-  // before this effect runs, leaving the URL one step behind.
+  // deep links, reloads). Adopt the route's session into the registry; when the
+  // registry doesn't know it yet, trigger the load and adopt it once it appears
+  // (the pending→real rekey can also land before this effect runs, leaving the
+  // URL one step behind). Only after a failed load — or when nothing can resolve
+  // the id — fall back to the first active session or the dashboard. Never bounce
+  // home while the session can still be loaded.
   const routeSessionId = $derived(page.params.sessionId);
+
+  // Loads triggered from this route that the registry still hasn't produced.
+  // The optimistic add makes the next effect run adopt instead of re-triggering;
+  // a failed load removes the session again and the guard forces the fallback
+  // instead of looping. Deliberately a plain array (not a reactive Set): this is
+  // a one-shot trigger log, not state the effect should re-run on.
+  const attemptedLoads: string[] = [];
 
   $effect(() => {
     const id = routeSessionId;
     if (id === undefined) return; // required param — unreachable, satisfies types
     if (sessionRegistry.viewedSessionId === id) return;
-    if (sessionRegistry.adoptRouteView(id)) {
+
+    const decision = decideSessionRoute({
+      inRegistry: sessionRegistry.isActiveSession(id),
+      folderPath: connection.subscribedSessions.get(id),
+      loadAttempted: attemptedLoads.includes(id),
+      activeSessionIds: sessionRegistry.activeSessions.map((session) => session.sessionId),
+    });
+
+    if (decision.action === 'load') {
+      attemptedLoads.push(id);
+      void openExistingSession(id, decision.folderPath, { force: true, switchTo: false });
+      return;
+    }
+
+    if (decision.action === 'adopt') {
+      sessionRegistry.adoptRouteView(id);
       connection.send({ type: 'view_session', sessionId: id }).catch(() => {});
       return;
     }
-    const current = sessionRegistry.viewedSessionId;
-    if (current) {
+
+    const fallback = decision.sessionId;
+    if (fallback) {
+      sessionRegistry.adoptRouteView(fallback);
+      connection.send({ type: 'view_session', sessionId: fallback }).catch(() => {});
       // eslint-disable-next-line svelte/no-navigation-without-resolve -- dynamic route param, base path is '/'
-      void goto(`/sessions/${encodeURIComponent(current)}`, { replaceState: true });
+      void goto(`/sessions/${encodeURIComponent(fallback)}`, { replaceState: true });
     } else {
+      sessionRegistry.adoptHomeRoute();
       // eslint-disable-next-line svelte/no-navigation-without-resolve -- dynamic route param, base path is '/'
       void goto('/', { replaceState: true });
     }

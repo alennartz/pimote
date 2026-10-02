@@ -1473,13 +1473,20 @@ class FakeWebSocket {
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
 
-  constructor(public url: string) {}
+  static instances: FakeWebSocket[] = [];
+
+  constructor(public url: string) {
+    FakeWebSocket.instances.push(this);
+  }
   send(_data: string): void {}
-  close(): void {}
+  close(): void {
+    this.readyState = FakeWebSocket.CLOSING;
+  }
 }
 
 describe('routeNotificationIntent', () => {
   beforeEach(() => {
+    connection.disconnect();
     vi.stubGlobal('WebSocket', FakeWebSocket);
     vi.stubGlobal('location', { protocol: 'http:', host: 'localhost', href: 'http://localhost/' });
     vi.stubGlobal('navigator', {});
@@ -1491,6 +1498,8 @@ describe('routeNotificationIntent', () => {
     vi.unstubAllGlobals();
     connection.pendingAdopt = null;
     connection.ready = false;
+    connection.removeSubscribedSession('s-notification');
+    connection.removeSubscribedSession('s-folderless-intent');
   });
 
   it('queues the adopt intent when the socket is not ready instead of losing the click', async () => {
@@ -1507,5 +1516,54 @@ describe('routeNotificationIntent', () => {
 
     expect(connection.pendingAdopt).toBeNull();
     expect(sessionRegistry.viewed?.sessionId).toBe('s-notification');
+  });
+
+  it('resolves the folder from subscribed sessions when the intent carries no folderPath', async () => {
+    connection.addSubscribedSession('s-folderless-intent', '/repos/proj');
+
+    await routeNotificationIntent({ sessionId: 's-folderless-intent' });
+
+    expect(connection.pendingAdopt).toEqual({ sessionId: 's-folderless-intent', folderPath: '/repos/proj' });
+  });
+});
+
+// --- Cold boot from a notification click -----------------------------------
+// The service worker opens /?sessionId=..&folderPath=.. with no window clients
+// around; +layout turns that into pendingAdopt before connect(). Pinned here:
+// the intent must be consumed on the first successful open and routed to the
+// session URL, not left on the dashboard.
+
+describe('cold-boot notification adoption', () => {
+  beforeEach(() => {
+    connection.disconnect();
+    FakeWebSocket.instances.length = 0;
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('location', { protocol: 'http:', host: 'localhost', href: 'http://localhost/' });
+    vi.stubGlobal('navigator', {});
+    connection.ready = false;
+    connection.pendingAdopt = null;
+  });
+
+  afterEach(() => {
+    connection.disconnect();
+    vi.unstubAllGlobals();
+    connection.pendingAdopt = null;
+    connection.ready = false;
+  });
+
+  it('consumes pendingAdopt on connect and routes to the session URL', async () => {
+    const toViewed = vi.fn();
+    sessionRegistry.setViewNavigator({ toViewed });
+
+    connection.pendingAdopt = { sessionId: 's-cold-boot', folderPath: '/repos/proj' };
+    connection.connect();
+
+    const ws = FakeWebSocket.instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(toViewed).toHaveBeenCalledWith('s-cold-boot', { replace: false });
+    expect(connection.pendingAdopt).toBeNull();
   });
 });

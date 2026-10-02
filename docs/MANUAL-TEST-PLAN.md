@@ -1256,11 +1256,12 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[S]** Check `/manifest.json` content
 - **[E]** Contains: name, icons (192 + 512), start_url, display mode, theme/background colors
 
-### TC-15.04 — Notification click focuses app 🟡
+### TC-15.04 — Notification click opens the notified session 🟡
 
-- **[P]** App installed as PWA; notification received
-- **[S]** Click the notification
-- **[E]** If app is open: focused. If app is closed: opens to `/`
+- **[P]** App installed as PWA; notification received for session X
+- **[S]** Click the notification (app closed)
+- **[E]** If app is open: focused on session X. If app is closed: opens and lands on `/sessions/<X>` — including after a reload mid-adoption (e.g. `version_mismatch`); the `?sessionId=..&folderPath=..` intent stays in the URL until adoption navigates
+- **[E]** If session X no longer exists: falls back to the first active session, else the dashboard
 
 ### TC-15.05 — Service worker push handler with malformed data 🟡
 

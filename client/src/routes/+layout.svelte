@@ -73,18 +73,26 @@
 
   onMount(() => {
     // A window opened from a notification must wait until persisted sessions
-    // finish restoring before it adopts the notification's owner.
+    // finish restoring before it adopts the notification's owner. The URL is
+    // the intent's home: don't strip the params here — adoption navigates to
+    // /sessions/<id> and drops them naturally, and a reload before adoption
+    // completes re-reads them instead of losing the click.
     const urlParams = new URLSearchParams(window.location.search);
     const notificationSessionId = urlParams.get('sessionId');
     const notificationFolderPath = urlParams.get('folderPath');
     const openDownloads = urlParams.get('openDownloads') === 'true';
-    if (notificationSessionId && notificationFolderPath) {
-      window.history.replaceState({}, '', window.location.pathname);
-      connection.pendingAdopt = {
-        sessionId: notificationSessionId,
-        folderPath: notificationFolderPath,
-        ...(openDownloads ? { openDownloads: true } : {}),
-      };
+    if (notificationSessionId) {
+      const folderPath = notificationFolderPath ?? connection.subscribedSessions.get(notificationSessionId);
+      if (folderPath) {
+        connection.pendingAdopt = {
+          sessionId: notificationSessionId,
+          folderPath,
+          ...(openDownloads ? { openDownloads: true } : {}),
+        };
+      } else {
+        // Nothing can resolve this intent — drop the dead query string.
+        window.history.replaceState({}, '', window.location.pathname);
+      }
     }
 
     connection.connect();

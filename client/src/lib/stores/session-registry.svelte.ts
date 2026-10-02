@@ -1166,17 +1166,24 @@ export async function routeNotificationIntent(intent: AppNotificationIntent): Pr
     return;
   }
 
+  // The intent may carry no folder (stale payload). Every session this client
+  // has opened before keeps its folder in the subscribed map — resolve through
+  // it rather than silently dropping the click.
+  const folderPath = intent.folderPath ?? connection.subscribedSessions.get(intent.sessionId);
+
   // A focused existing window can be in backoff or mid-restore. Queue the
   // adopt intent instead of attempting open_session over a dead socket.
-  if (intent.folderPath && !connection.ready) {
-    connection.pendingAdopt = { sessionId: intent.sessionId, folderPath: intent.folderPath };
+  if (folderPath && !connection.ready) {
+    connection.pendingAdopt = { sessionId: intent.sessionId, folderPath };
     connection.connect();
     return;
   }
 
-  if (intent.folderPath) {
-    await openExistingSession(intent.sessionId, intent.folderPath, { force: true, switchTo: true });
+  if (folderPath) {
+    await openExistingSession(intent.sessionId, folderPath, { force: true, switchTo: true });
   }
+  // No folder resolvable anywhere: stay put. An unresolvable session must not
+  // bounce the view the user is already on.
 }
 
 export async function openExistingSession(sessionId: string, folderPath: string, opts?: { force?: boolean; switchTo?: boolean }): Promise<boolean> {
