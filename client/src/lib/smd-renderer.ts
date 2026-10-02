@@ -33,7 +33,10 @@ function languageFromCodeEl(codeEl: HTMLElement): string | null {
  * Create an smd renderer targeting the given container element,
  * with highlight.js syntax highlighting applied when code blocks close.
  */
-const SAFE_URL_PATTERN = /^(?:https?|mailto):/i;
+// Absolute http(s)/mailto URLs, or a root-relative path (`/s/slug/`).
+// Protocol-relative (`//host`) is deliberately excluded — it leaves the
+// origin — as are all other schemes (`javascript:`, `data:`, ...).
+const SAFE_URL_PATTERN = /^(?:https?:\/\/|mailto:|\/[^/])/i;
 
 /**
  * Create an smd renderer targeting the given container element,

@@ -87,6 +87,27 @@ describe('createRenderer', () => {
       expect(link!.getAttribute('href')).toBe('https://example.com');
     });
 
+    it('keeps the href on a root-relative link', () => {
+      const container = renderComplete('[Hello Page](/s/hello-pimote/)');
+      const link = container.querySelector('a');
+      expect(link).not.toBeNull();
+      expect(link!.getAttribute('href')).toBe('/s/hello-pimote/');
+    });
+
+    it('drops javascript: URLs', () => {
+      const container = renderComplete('[click](javascript:alert(1))');
+      const link = container.querySelector('a');
+      expect(link).not.toBeNull();
+      expect(link!.getAttribute('href')).toBeNull();
+    });
+
+    it('drops protocol-relative URLs', () => {
+      const container = renderComplete('[click](//example.com/x)');
+      const link = container.querySelector('a');
+      expect(link).not.toBeNull();
+      expect(link!.getAttribute('href')).toBeNull();
+    });
+
     it('renders blockquotes', () => {
       const container = renderComplete('> quoted text');
       const bq = container.querySelector('blockquote');
