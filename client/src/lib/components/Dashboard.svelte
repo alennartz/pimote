@@ -5,6 +5,8 @@
   import HomeToolbar from '$lib/components/HomeToolbar.svelte';
   import ProjectList from '$lib/components/ProjectList.svelte';
   import ManagerChat from '$lib/components/ManagerChat.svelte';
+  import { managerStore } from '$lib/stores/manager-store.svelte.js';
+  import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import SwipeableCard, { closeOpenSwipeCard } from '$lib/components/SwipeableCard.svelte';
   import { projectStore } from '$lib/stores/project-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
@@ -16,8 +18,18 @@
   import X from '@lucide/svelte/icons/x';
 
   let search = $state('');
-  // Continue starts collapsed — the header keeps the open count visible.
-  let continueOpen = $state(false);
+  // Once a conversation exists the manager gets its own view: full screen chat
+  // on mobile, a right-hand transcript panel (homepage narrowed to a left rail)
+  // on desktop. Closing it dismisses the conversation, which folds the layout
+  // back to the plain homepage.
+  let managerActive = $derived(managerStore.hasConversation);
+  let mobile = $derived(isMobileViewport());
+  let splitView = $derived(managerActive && !mobile);
+  let fullscreenView = $derived(managerActive && mobile);
+  // Continue starts expanded — the header keeps the open count visible and
+  // lets the user fold it away. It is not rendered on mobile at all: there,
+  // active sessions surface under their project's half-open expander instead.
+  let continueOpen = $state(true);
 
   // --- Continue: swipe-to-close/archive -------------------------------------
   //
@@ -180,94 +192,105 @@
   }
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col overflow-y-auto" onscroll={closeOpenSwipeCard}>
-  <div class="mx-auto flex w-full max-w-2xl flex-col gap-10 px-5 pt-12 pb-28 md:pt-16">
-    <!-- Brand -->
-    <div class="flex flex-col items-center gap-1.5">
-      <div class="flex items-center gap-2.5">
-        <img src="/pwa/icon-512.png" alt="" class="border-border size-9 rounded-xl border object-cover" />
-        <span class="text-foreground text-base font-semibold tracking-tight">Pimote</span>
+<div class="flex min-h-0 flex-1">
+  <div
+    class="flex min-h-0 flex-1 flex-col overflow-y-auto {splitView ? 'md:border-border md:w-1/4 md:max-w-96 md:min-w-80 md:flex-none md:border-r' : ''}"
+    onscroll={closeOpenSwipeCard}
+  >
+    <div class="mx-auto flex w-full max-w-2xl flex-col gap-10 px-5 pt-12 pb-28 md:max-w-4xl md:pt-16">
+      <!-- Brand -->
+      <div class="flex flex-col items-center gap-1.5">
+        <div class="flex items-center gap-2.5">
+          <img src="/pwa/icon-512.png" alt="" class="border-border size-9 rounded-xl border object-cover" />
+          <span class="text-foreground text-base font-semibold tracking-tight">Pimote</span>
+        </div>
       </div>
-    </div>
 
-    <!-- One box: search by default; the leading button toggles it into the
+      <!-- One box: search by default; the leading button toggles it into the
          manager (AI) mode. Same structure on mobile and desktop — only the
          touch/typography sizing differs. -->
-    <HomeToolbar bind:search />
-    <!-- Manager transcript renders under the box once a conversation starts -->
-    <ManagerChat />
+      <HomeToolbar bind:search compact={splitView} />
 
-    <!-- Continue: open sessions as cards -->
-    {#if sessionRegistry.activeSessions.length > 0 || ghosts.length > 0}
-      <section>
-        <div class="text-muted-foreground mb-3 flex items-center gap-2">
-          <h2 class="text-foreground text-xs font-semibold tracking-widest uppercase">
-            <button
-              type="button"
-              class="hover:text-foreground focus-visible:ring-ring flex min-h-8 items-center gap-1.5 rounded-md pr-1 text-left transition-colors focus-visible:ring-1 focus-visible:outline-none"
-              aria-expanded={continueOpen}
-              onclick={() => (continueOpen = !continueOpen)}
-            >
-              <ChevronRight class="size-3.5 shrink-0 transition-transform {continueOpen ? 'rotate-90' : ''}" />
-              Continue
-            </button>
-          </h2>
-          <span class="text-xs">{sessionRegistry.activeSessions.length} open</span>
-        </div>
-        {#if continueOpen}
-          <div class="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-            {#each displayItems as item (item.kind === 'session' ? item.sessionId : item.ghost.id)}
-              {#if item.kind === 'session'}
-                {@const session = sessionRegistry.sessions[item.sessionId]}
-                <SwipeableCard
-                  actionLeft={{ label: 'Close', icon: X, onAction: () => closeFromHome(item.sessionId) }}
-                  actionRight={{ label: 'Archive', icon: Archive, onAction: () => archiveFromHome(item.sessionId) }}
-                >
-                  <button
-                    class="bg-card border-border hover:border-ring focus-visible:ring-ring active:bg-secondary w-full rounded-xl border p-3.5 text-left transition-colors focus-visible:ring-1 focus-visible:outline-none"
-                    onclick={() => switchToSession(item.sessionId)}
-                  >
-                    <div class="flex items-center gap-2">
-                      <span class="size-2 shrink-0 rounded-full {statusClass(item.sessionId)}"></span>
-                      <span class="text-foreground min-w-0 flex-1 truncate text-sm font-semibold">{session?.projectName}</span>
-                    </div>
-                    {#if session}
-                      <div class="text-muted-foreground mt-1 truncate text-xs">
-                        {getSessionDisplayName(session)}
-                      </div>
-                      <div class="text-muted-foreground/80 mt-2 flex items-center gap-1.5 text-xs">
-                        <span>{statusLabel(item.sessionId)}</span>
-                        {#if lastActivity(item.sessionId)}
-                          <span>·</span>
-                          <span>{lastActivity(item.sessionId)}</span>
-                        {/if}
-                      </div>
-                    {/if}
-                  </button>
-                </SwipeableCard>
-              {:else}
-                <div class="border-border/60 bg-muted/30 flex min-h-20 items-center justify-between gap-3 rounded-xl border border-dashed px-4 py-3" out:fade={{ duration: 250 }}>
-                  <div class="min-w-0">
-                    <p class="text-muted-foreground text-sm font-medium">{item.ghost.label}</p>
-                    <p class="text-muted-foreground/70 mt-0.5 truncate text-xs">{item.ghost.displayName}</p>
-                  </div>
-                  <button
-                    class="text-primary hover:bg-accent active:bg-accent/80 shrink-0 rounded-md px-2 py-1.5 text-sm font-medium transition-colors"
-                    onclick={() => void undoGhost(item.ghost)}
-                  >
-                    Undo
-                  </button>
-                </div>
-              {/if}
-            {/each}
+      <!-- Continue: open sessions as cards. Desktop only — mobile drops the
+         section completely rather than nesting an expander under the toolbar. -->
+      {#if !mobile && (sessionRegistry.activeSessions.length > 0 || ghosts.length > 0)}
+        <section>
+          <div class="text-muted-foreground mb-3 flex items-center gap-2">
+            <h2 class="text-foreground text-xs font-semibold tracking-widest uppercase">
+              <button
+                type="button"
+                class="hover:text-foreground focus-visible:ring-ring flex min-h-8 items-center gap-1.5 rounded-md pr-1 text-left transition-colors focus-visible:ring-1 focus-visible:outline-none"
+                aria-expanded={continueOpen}
+                onclick={() => (continueOpen = !continueOpen)}
+              >
+                <ChevronRight class="size-3.5 shrink-0 transition-transform {continueOpen ? 'rotate-90' : ''}" />
+                Continue
+              </button>
+            </h2>
+            <span class="text-xs">{sessionRegistry.activeSessions.length} open</span>
           </div>
-        {/if}
-      </section>
-    {/if}
+          {#if continueOpen}
+            <div class="grid grid-cols-1 gap-2.5 {splitView ? '' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}">
+              {#each displayItems as item (item.kind === 'session' ? item.sessionId : item.ghost.id)}
+                {#if item.kind === 'session'}
+                  {@const session = sessionRegistry.sessions[item.sessionId]}
+                  <SwipeableCard
+                    actionLeft={{ label: 'Close', icon: X, onAction: () => closeFromHome(item.sessionId) }}
+                    actionRight={{ label: 'Archive', icon: Archive, onAction: () => archiveFromHome(item.sessionId) }}
+                  >
+                    <button
+                      class="bg-card border-border hover:border-ring focus-visible:ring-ring active:bg-secondary w-full rounded-xl border p-3.5 text-left transition-colors focus-visible:ring-1 focus-visible:outline-none"
+                      onclick={() => switchToSession(item.sessionId)}
+                    >
+                      <div class="flex items-center gap-2">
+                        <span class="size-2 shrink-0 rounded-full {statusClass(item.sessionId)}"></span>
+                        <span class="text-foreground min-w-0 flex-1 truncate text-sm font-semibold">{session?.projectName}</span>
+                      </div>
+                      {#if session}
+                        <div class="text-muted-foreground mt-1 truncate text-xs">
+                          {getSessionDisplayName(session)}
+                        </div>
+                        <div class="text-muted-foreground/80 mt-2 flex items-center gap-1.5 text-xs">
+                          <span>{statusLabel(item.sessionId)}</span>
+                          {#if lastActivity(item.sessionId)}
+                            <span>·</span>
+                            <span>{lastActivity(item.sessionId)}</span>
+                          {/if}
+                        </div>
+                      {/if}
+                    </button>
+                  </SwipeableCard>
+                {:else}
+                  <div class="border-border/60 bg-muted/30 flex min-h-20 items-center justify-between gap-3 rounded-xl border border-dashed px-4 py-3" out:fade={{ duration: 250 }}>
+                    <div class="min-w-0">
+                      <p class="text-muted-foreground text-sm font-medium">{item.ghost.label}</p>
+                      <p class="text-muted-foreground/70 mt-0.5 truncate text-xs">{item.ghost.displayName}</p>
+                    </div>
+                    <button
+                      class="text-primary hover:bg-accent active:bg-accent/80 shrink-0 rounded-md px-2 py-1.5 text-sm font-medium transition-colors"
+                      onclick={() => void undoGhost(item.ghost)}
+                    >
+                      Undo
+                    </button>
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        </section>
+      {/if}
 
-    <!-- Projects: header + list actions live with the list itself -->
-    <section>
-      <ProjectList {search} />
-    </section>
+      <!-- Projects: header + list actions live with the list itself -->
+      <section>
+        <ProjectList {search} />
+      </section>
+    </div>
   </div>
+  {#if splitView}
+    <ManagerChat variant="panel" />
+  {/if}
 </div>
+
+{#if fullscreenView}
+  <ManagerChat variant="fullscreen" />
+{/if}

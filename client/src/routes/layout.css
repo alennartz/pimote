@@ -83,6 +83,55 @@
   --status-connected: oklch(0.623 0.169 149.2);
   --status-error: oklch(0.396 0.133 25.7);
   --status-reconnecting: oklch(0.77 0.165 70.6);
+
+  /*
+   * Pimote surface ladder — recessed/raised chrome above --background.
+   * Merges of near-identical literals formerly scattered through components
+   * (e.g. sunken merges 0.15 tool bodies with 0.16 code blocks).
+   * Hover/active steps are derived with color-mix() at the use site.
+   */
+  /* Recessed content: code blocks, diffs, expanded tool/thinking bodies */
+  --surface-sunken: oklch(0.155 0.025 258);
+  /* Raised chrome: collapsible headers (tool, thinking, in-progress) */
+  --surface-raised: oklch(0.18 0.028 258);
+  /* Quiet fills: inline code, table headers, excluded output */
+  --surface-subtle: oklch(0.2 0.02 258);
+  /* One step above raised: header hovers, floating copy buttons, user bubble */
+  --surface-hover: oklch(0.22 0.035 259);
+
+  /*
+   * Callout families — accent (border), surface (tinted bg), foreground
+   * (header/toggle text). Translucent applications use color-mix() with
+   * transparent at the use site; hover states are derived, not tokenized.
+   */
+  /* Error callouts: assistant errors */
+  --error-accent: oklch(0.64 0.19 24);
+  --error-surface: oklch(0.22 0.04 24);
+  --error-foreground: oklch(0.74 0.16 24);
+  /* Glyph on the errored assistant avatar — near-white red, no clean color-mix path */
+  --error-avatar-fg: oklch(0.88 0.03 22);
+  /* Teal callouts: skill blocks and bash executions (bash uses a stronger accent) */
+  --skill-accent: oklch(0.55 0.12 170);
+  --skill-surface: oklch(0.2 0.025 172);
+  --skill-foreground: oklch(0.71 0.125 172);
+  --skill-foreground-hover: oklch(0.75 0.12 170);
+  /* Bash execution border — brighter than --skill-accent; color-mix can't bridge the gap */
+  --bash-accent: oklch(0.68 0.14 175);
+  /* Purple callouts: custom messages; also the streaming-collapsible accent */
+  --custom-accent: oklch(0.55 0.1 280);
+  --custom-surface: oklch(0.2 0.02 270);
+  --custom-foreground: oklch(0.7 0.1 280);
+  --custom-foreground-hover: oklch(0.75 0.1 280);
+
+  /* Markdown links */
+  --link: oklch(0.7 0.15 250);
+  --link-hover: oklch(0.8 0.15 250);
+  /* User avatar circle in message gutters */
+  --avatar-bg: oklch(0.35 0.08 250);
+  --avatar-fg: oklch(0.85 0.05 250);
+
+  /* Floating-panel drop shadow color */
+  --shadow-color: oklch(0 0 0 / 0.3);
 }
 
 @theme inline {

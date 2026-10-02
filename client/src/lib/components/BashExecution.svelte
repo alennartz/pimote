@@ -184,9 +184,9 @@
 <style>
   .bash-execution {
     margin: 8px 0;
-    border-left: 3px solid oklch(0.68 0.14 175);
+    border-left: 3px solid var(--bash-accent);
     border-radius: 6px;
-    background: oklch(0.2 0.03 175 / 0.52);
+    background: color-mix(in oklch, var(--skill-surface) 52%, transparent);
     padding: 8px 10px;
     color: var(--foreground);
     font-size: 0.85rem;
@@ -194,7 +194,7 @@
 
   .bash-execution-excluded {
     border-left-color: var(--muted-foreground);
-    background: oklch(0.2 0.02 260 / 0.35);
+    background: color-mix(in oklch, var(--surface-subtle) 35%, transparent);
     color: var(--muted-foreground);
     opacity: 0.78;
   }
@@ -247,13 +247,13 @@
 
   .bash-cancel {
     flex-shrink: 0;
-    color: oklch(0.78 0.12 30);
+    color: color-mix(in oklch, var(--error-accent) 61%, white);
     font-weight: 600;
   }
 
   .bash-toggle {
     display: inline-block;
     margin-top: 5px;
-    color: oklch(0.72 0.13 175);
+    color: var(--skill-foreground);
   }
 </style>

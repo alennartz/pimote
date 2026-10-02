@@ -36,7 +36,7 @@
     margin: 0;
     border-radius: 8px;
     overflow: hidden;
-    background: oklch(0.16 0.03 258);
+    background: var(--surface-sunken);
     border: 1px solid var(--border);
     padding: 12px;
     overflow-x: auto;

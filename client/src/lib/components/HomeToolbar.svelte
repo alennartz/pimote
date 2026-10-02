@@ -11,20 +11,17 @@
   import SendHorizontal from '@lucide/svelte/icons/send-horizontal';
   import Sparkles from '@lucide/svelte/icons/sparkles';
 
-  /** One box, two modes. The leading button swaps between them:
-   *  search (default) filters the project list, the manager mode is the AI
-   *  composer — signalled by the ✨ sparkles glyph, the icon conventionally
-   *  read as "artificial intelligence". */
-  let { search = $bindable('') }: { search?: string } = $props();
+  /** One box, two modes. The leading control is a single toggle button showing
+   *  both glyphs at once — 🔍 for search (default), ✨ for the manager (the
+   *  icon conventionally read as "artificial intelligence"). The active glyph
+   *  is pill-highlighted; clicking anywhere on the pair swaps modes. */
+  let { search = $bindable(''), compact = false }: { search?: string; compact?: boolean } = $props();
 
   let mode = $state<'search' | 'manager'>('search');
-  let draft = $state('');
   let newSessionOpen = $state(false);
 
   let searchEl = $state<HTMLInputElement | null>(null);
   let managerEl = $state<HTMLTextAreaElement | null>(null);
-
-  let canSend = $derived(draft.trim().length > 0 && managerStore.status === 'idle');
 
   async function toggleMode(): Promise<void> {
     mode = mode === 'search' ? 'manager' : 'search';
@@ -34,17 +31,31 @@
     (mode === 'search' ? searchEl : managerEl)?.focus();
   }
 
-  async function send(): Promise<void> {
-    const text = draft;
-    if (!text.trim() || managerStore.status === 'working') return;
-    draft = '';
-    await managerStore.send(text);
+  /** Grow the field to its content so rows=1 never overflows — a fractional
+   *  line-height mismatch would otherwise paint a hairline scrollbar. An empty
+   *  field keeps the rows=1 height: measuring scrollHeight there would pick up
+   *  the wrapped placeholder and inflate the box. */
+  function autosize(el: HTMLTextAreaElement): void {
+    if (!managerStore.draft) {
+      el.style.height = '';
+      el.style.overflow = '';
+      return;
+    }
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
   }
+
+  $effect(() => {
+    const el = managerEl;
+    if (!el) return;
+    void managerStore.draft; // re-run on every keystroke, not just when the field mounts
+    autosize(el);
+  });
 
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      void send();
+      void managerStore.sendDraft();
     }
   }
 </script>
@@ -58,20 +69,26 @@
   >
     <button
       type="button"
-      class="hover:bg-accent active:bg-accent/80 focus-visible:ring-ring flex size-9 shrink-0 items-center justify-center rounded-xl transition-colors focus-visible:ring-1 focus-visible:outline-none max-md:size-10 {mode ===
-      'manager'
-        ? 'text-primary'
-        : 'text-muted-foreground'}"
+      class="hover:bg-accent/50 focus-visible:ring-ring flex shrink-0 items-center gap-0.5 rounded-xl transition-colors focus-visible:ring-1 focus-visible:outline-none"
+      data-mode={mode}
       onclick={() => void toggleMode()}
       title={mode === 'search' ? 'Switch to the manager (AI)' : 'Switch to search'}
       aria-label={mode === 'search' ? 'Switch to the manager' : 'Switch to search'}
-      aria-pressed={mode === 'manager'}
     >
-      {#if mode === 'search'}
+      <span
+        class="flex size-9 items-center justify-center rounded-[11px] transition-colors max-md:size-10 {mode === 'search'
+          ? 'bg-primary/15 text-foreground'
+          : 'text-muted-foreground'}"
+      >
         <Search class="size-4 max-md:size-5" />
-      {:else}
+      </span>
+      <span
+        class="flex size-9 items-center justify-center rounded-[11px] transition-colors max-md:size-10 {mode === 'manager'
+          ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+          : 'text-muted-foreground'}"
+      >
         <Sparkles class="size-4 max-md:size-5" />
-      {/if}
+      </span>
     </button>
 
     {#if mode === 'search'}
@@ -85,7 +102,7 @@
     {:else}
       <textarea
         bind:this={managerEl}
-        bind:value={draft}
+        bind:value={managerStore.draft}
         onkeydown={handleKeydown}
         rows={1}
         placeholder="Ask the manager — start sessions, archive old ones, check status…"
@@ -93,7 +110,7 @@
         enterkeyhint="send"
         spellcheck={!isMobileViewport()}
         aria-label="Message the manager"
-        class="text-foreground placeholder:text-muted-foreground block w-full min-w-0 resize-none bg-transparent text-sm outline-none max-md:text-base"
+        class="text-foreground placeholder:text-muted-foreground block max-h-40 w-full min-w-0 resize-none overflow-y-auto bg-transparent text-sm outline-none max-md:text-base"
       ></textarea>
       {#if managerStore.status === 'working'}
         <button
@@ -104,11 +121,11 @@
         >
           <OctagonX class="size-4 max-md:size-5" />
         </button>
-      {:else if canSend}
+      {:else if managerStore.canSend}
         <button
           class="bg-primary text-primary-foreground hover:bg-primary/80 active:bg-primary/70 flex shrink-0 items-center rounded-lg p-1.5 transition-colors max-md:p-2.5"
           onpointerdown={(e) => e.preventDefault()}
-          onclick={() => void send()}
+          onclick={() => void managerStore.sendDraft()}
           title="Send"
         >
           <SendHorizontal class="size-4 max-md:size-5" />
@@ -117,9 +134,16 @@
     {/if}
   </div>
 
-  <Button size="sm" class="h-11 shrink-0 rounded-xl px-4 text-sm max-md:h-12" onclick={() => (newSessionOpen = true)} disabled={connection.status !== 'connected'}>
-    <Plus class="size-3.5 max-md:size-4" />
-    New session
+  <Button
+    size="sm"
+    class="h-11 shrink-0 rounded-xl text-sm {compact ? 'w-12 px-0' : 'px-4 max-md:w-12 max-md:px-0'}"
+    title="New session"
+    aria-label="New session"
+    onclick={() => (newSessionOpen = true)}
+    disabled={connection.status !== 'connected'}
+  >
+    <Plus class={compact ? 'size-4' : 'size-3.5 max-md:size-5'} />
+    <span class="max-md:hidden" class:hidden={compact}>New session</span>
   </Button>
 </div>
 

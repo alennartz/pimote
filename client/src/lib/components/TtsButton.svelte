@@ -22,7 +22,7 @@
     height: 28px;
     border-radius: 50%;
     border: none;
-    background: oklch(0.28 0.04 260);
+    background: var(--secondary);
     color: var(--foreground);
     display: flex;
     align-items: center;
@@ -32,6 +32,6 @@
   }
 
   .tool-btn:active {
-    background: oklch(0.35 0.04 260);
+    background: color-mix(in oklch, var(--secondary) 90%, white);
   }
 </style>

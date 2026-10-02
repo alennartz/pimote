@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { SvelteSet } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import type { ProjectInfo, SessionInfo } from '@pimote/shared';
   import { projectStore } from '$lib/stores/project-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
+  import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import SessionItem from './SessionItem.svelte';
   import Archive from '@lucide/svelte/icons/archive';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
@@ -31,9 +32,12 @@
   let { search = '', onSessionSelect }: Props = $props();
 
   let openError = $state('');
-  // Projects start collapsed — the header is the whole row until opened.
-  // An active search overrides this so session-level matches stay visible.
-  let expandedProjects = new SvelteSet<string>();
+  // Three-state project expander: 'closed' (nothing), 'active' (half-open —
+  // only sessions currently open on this client), 'all' (every session).
+  // 'active' is the default. An active search overrides all of this so
+  // session-level matches stay visible.
+  type ExpandState = 'closed' | 'active' | 'all';
+  let expandStates = new SvelteMap<string, ExpandState>();
   let expandedSessionLists = new SvelteSet<string>();
 
   // Project row context menu (long-press on touch, right-click on desktop).
@@ -67,6 +71,9 @@
   }
 
   const MAX_SESSIONS_SHOWN = 6;
+
+  /** Client-side active session ids — the filter for the half-open state. */
+  const activeSessionIds = $derived(new SvelteSet(sessionRegistry.activeSessions.map((s) => s.sessionId)));
 
   let showArchiveAllDialog = $state(false);
 
@@ -142,11 +149,10 @@
   // (project-store.svelte.ts) for the app's lifetime, not per-mount.
 
   function toggleProject(path: string) {
-    if (expandedProjects.has(path)) {
-      expandedProjects.delete(path);
-    } else {
-      expandedProjects.add(path);
-    }
+    // Cycle closed → active → all → closed…
+    const current = expandStates.get(path) ?? 'active';
+    const next: ExpandState = current === 'active' ? 'all' : current === 'all' ? 'closed' : 'active';
+    expandStates.set(path, next);
   }
 
   function toggleSessionList(path: string) {
@@ -371,17 +377,23 @@
     {:else}
       <div class="flex flex-col gap-1" bind:this={rowsEl}>
         {#each displayProjects as project (project.path)}
-          {@const expanded = expandedProjects.has(project.path) || searchResults !== null}
+          {@const expandState = searchResults !== null ? 'all' : (expandStates.get(project.path) ?? 'active')}
           {@const hasTags = (project.tags?.length ?? 0) > 0}
           {@const showAll = expandedSessionLists.has(project.path)}
           {@const projectSessions = sessionsFor(project)}
-          {@const visibleSessions = showAll ? projectSessions : projectSessions.slice(0, MAX_SESSIONS_SHOWN)}
-          {@const hiddenCount = Math.max(0, projectSessions.length - MAX_SESSIONS_SHOWN)}
+          {@const listedSessions = expandState === 'all' ? projectSessions : expandState === 'active' ? projectSessions.filter((s) => activeSessionIds.has(s.id)) : []}
+          {@const visibleSessions = showAll ? listedSessions : listedSessions.slice(0, MAX_SESSIONS_SHOWN)}
+          {@const hiddenCount = Math.max(0, listedSessions.length - MAX_SESSIONS_SHOWN)}
+          <!-- Half-open with nothing active renders no session block, so the row keeps
+               its closed shape (bottom-rounded) instead of a dangling open corner. -->
+          {@const showSessionBlock = expandState === 'all' || listedSessions.length > 0}
 
           <div class="border-border/60 rounded-lg">
             <ContextMenu open={rowMenuPath === project.path} onOpenChange={(open) => setRowMenu(project.path, open)}>
               <ContextMenuTrigger
-                class="group hover:bg-accent active:bg-accent/80 flex flex-wrap items-center gap-0.5 transition-colors select-none {expanded ? 'rounded-t-lg' : 'rounded-lg'}"
+                class="group hover:bg-accent active:bg-accent/80 flex flex-wrap items-center gap-0.5 transition-colors select-none {showSessionBlock
+                  ? 'rounded-t-lg'
+                  : 'rounded-lg'}"
               >
                 <button
                   class="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors max-md:min-h-12 max-md:gap-2 max-md:rounded-lg max-md:px-2 max-md:py-2"
@@ -394,7 +406,13 @@
                     toggleProject(project.path);
                   }}
                 >
-                  <ChevronRight class="text-muted-foreground size-3.5 shrink-0 transition-transform max-md:size-5 {expanded ? 'rotate-90' : ''}" />
+                  <ChevronRight
+                    class="text-muted-foreground size-3.5 shrink-0 transition-transform max-md:size-5 {expandState === 'all'
+                      ? 'rotate-90'
+                      : expandState === 'active'
+                        ? 'rotate-45'
+                        : ''}"
+                  />
                   <span class="text-foreground truncate text-[13px] font-medium max-md:text-base {project.archived ? 'opacity-70' : ''}" data-project-name={project.path}
                     >{project.name}</span
                   >
@@ -565,7 +583,7 @@
               </ContextMenuContent>
             </ContextMenu>
 
-            {#if expanded}
+            {#if showSessionBlock}
               <div class="border-sidebar-border ml-4 flex flex-col gap-0.5 border-l pt-1 pl-2">
                 {#each visibleSessions as session (session.id)}
                   <SessionItem {session} folderPath={project.path} {onSessionSelect} />

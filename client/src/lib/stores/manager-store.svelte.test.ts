@@ -145,6 +145,41 @@ describe('ManagerStore', () => {
   // --------------------------------------------------------------------------
   // Reset on disconnect
   // --------------------------------------------------------------------------
+  describe('shared composer state', () => {
+    it('hasConversation flips once a message lands', () => {
+      expect(store.hasConversation).toBe(false);
+      reduce(store, { type: 'message_end', message: assistantMessage('hi'), timestamp: '2026-04-04T12:00:00.000Z' });
+      expect(store.hasConversation).toBe(true);
+    });
+
+    it('canSend requires draft text', () => {
+      expect(store.canSend).toBe(false);
+      store.draft = 'hello';
+      expect(store.canSend).toBe(true);
+    });
+
+    it('sendDraft clears the composer and sends the trimmed text', async () => {
+      const send = vi.spyOn(connection, 'send').mockResolvedValue({ id: 'cmd', success: true } as never);
+      store.draft = '  do it  ';
+
+      await store.sendDraft();
+
+      expect(send).toHaveBeenCalledWith({ type: 'manager_prompt', text: 'do it' });
+      expect(store.draft).toBe('');
+      expect(store.canSend).toBe(false);
+    });
+
+    it('sendDraft ignores an empty or whitespace-only composer', async () => {
+      const send = vi.spyOn(connection, 'send');
+      store.draft = '   ';
+
+      await store.sendDraft();
+
+      expect(send).not.toHaveBeenCalled();
+      expect(store.draft).toBe('   ');
+    });
+  });
+
   describe('reset on disconnect', () => {
     it('clears the transcript and returns to idle', () => {
       reduce(store, { type: 'agent_start' });

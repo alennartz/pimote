@@ -41,6 +41,29 @@ export class ManagerStore {
     return this.session?.status ?? 'idle';
   }
 
+  /** True once a conversation exists — the trigger for opening the manager
+   *  view (mobile full screen, desktop split panel). */
+  get hasConversation(): boolean {
+    return this.messages.length > 0;
+  }
+
+  /** Composer text shared by the homepage box and the full screen chat, so
+   *  both bind one draft no matter which surface started it. */
+  draft = $state('');
+
+  get canSend(): boolean {
+    return this.draft.trim().length > 0 && this.status === 'idle';
+  }
+
+  /** Send whatever is in the shared composer; clears it first so a failed
+   *  prompt doesn't leave the caller's input looking ignored. */
+  async sendDraft(): Promise<void> {
+    const text = this.draft;
+    if (!text.trim() || this.status === 'working') return;
+    this.draft = '';
+    await this.send(text);
+  }
+
   /** Reduce one `manager_event` payload into the transcript. */
   handleManagerEvent(event: ManagerStreamEvent): void {
     this.registry.handleEvent(retargetToManager(event.event));

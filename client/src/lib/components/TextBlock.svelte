@@ -115,18 +115,18 @@
   }
 
   .markdown-content :global(a) {
-    color: oklch(0.7 0.15 250);
+    color: var(--link);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
 
   .markdown-content :global(a:hover) {
-    color: oklch(0.8 0.15 250);
+    color: var(--link-hover);
   }
 
   /* Inline code */
   .markdown-content :global(code) {
-    background: oklch(0.2 0.02 258);
+    background: var(--surface-subtle);
     padding: 0.15em 0.4em;
     border-radius: 4px;
     font-size: 0.9em;
@@ -138,7 +138,7 @@
     margin: 0.75em 0;
     border-radius: 8px;
     overflow: hidden;
-    background: oklch(0.16 0.03 258);
+    background: var(--surface-sunken);
     border: 1px solid var(--border);
     padding: 12px;
     overflow-x: auto;
@@ -168,7 +168,7 @@
     font-family: var(--font-mono, monospace);
     line-height: 1;
     color: var(--muted-foreground);
-    background: oklch(0.22 0.03 258 / 0.85);
+    background: color-mix(in oklch, var(--surface-hover) 85%, transparent);
     border: 1px solid var(--border);
     border-radius: 4px;
     cursor: pointer;
@@ -184,7 +184,7 @@
   .markdown-content :global(.code-block-wrapper > .code-copy-btn.copied) {
     opacity: 1;
     color: var(--foreground);
-    background: oklch(0.28 0.04 260);
+    background: var(--secondary);
   }
 
   .markdown-content :global(pre code) {
@@ -215,7 +215,7 @@
   }
 
   .markdown-content :global(th) {
-    background: oklch(0.2 0.02 258);
+    background: var(--surface-subtle);
     font-weight: 600;
   }
 

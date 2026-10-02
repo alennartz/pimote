@@ -94,7 +94,7 @@
     gap: 6px;
     width: 100%;
     padding: 6px 10px;
-    background: oklch(0.18 0.025 258);
+    background: var(--surface-raised);
     color: var(--muted-foreground);
     font-size: 0.8rem;
     cursor: pointer;
@@ -104,7 +104,7 @@
   }
 
   .thinking-header:hover {
-    background: oklch(0.22 0.03 258);
+    background: var(--surface-hover);
   }
 
   .thinking-label {
@@ -134,7 +134,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--status-streaming, oklch(0.623 0.169 149.2));
+    background: var(--status-streaming);
     animation: blink 1s ease-in-out infinite;
   }
 
@@ -150,7 +150,7 @@
 
   .thinking-content {
     padding: 8px 12px;
-    background: oklch(0.15 0.02 258);
+    background: var(--surface-sunken);
     border-top: 1px solid var(--border);
     max-height: 300px;
     overflow-y: auto;

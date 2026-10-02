@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
-import type { ProjectInfo } from '@pimote/shared';
+import type { ProjectInfo, SessionInfo } from '@pimote/shared';
 
 // bits-ui popper layers expect browser APIs jsdom doesn't ship.
 class TestResizeObserver {
@@ -30,6 +30,7 @@ vi.mock('$lib/stores/connection.svelte.js', () => {
 
 const { default: ProjectList } = await import('./ProjectList.svelte');
 const { projectStore } = await import('$lib/stores/project-store.svelte.js');
+const { sessionRegistry } = await import('$lib/stores/session-registry.svelte.js');
 
 const alpha: ProjectInfo = {
   path: '/w/alpha',
@@ -37,6 +38,22 @@ const alpha: ProjectInfo = {
   kind: 'single',
   activeSessionCount: 0,
   externalProcessCount: 0,
+};
+
+const activeSession: SessionInfo = {
+  id: 'sess-active',
+  name: 'Active session',
+  created: '2026-01-01T00:00:00.000Z',
+  modified: '2026-01-01T00:00:00.000Z',
+  messageCount: 3,
+};
+
+const idleSession: SessionInfo = {
+  id: 'sess-idle',
+  name: 'Idle session',
+  created: '2025-12-01T00:00:00.000Z',
+  modified: '2025-12-01T00:00:00.000Z',
+  messageCount: 1,
 };
 
 let target: HTMLDivElement;
@@ -58,8 +75,8 @@ function menuItem(): Element | null {
   return document.querySelector('[data-slot="context-menu-item"]');
 }
 
-function isExpanded(): boolean {
-  return (target.textContent ?? '').includes('No sessions yet');
+function shows(text: string): boolean {
+  return (target.textContent ?? '').includes(text);
 }
 
 function openMenu() {
@@ -73,25 +90,63 @@ beforeEach(() => {
   projectStore.repos = [];
   projectStore.roots = [];
   projectStore.sessions.clear();
-  projectStore.sessions.set(alpha.path, []);
+  projectStore.sessions.set(alpha.path, [idleSession, activeSession]);
+  // Only the active session is open on this client.
+  sessionRegistry.addSession(activeSession.id, alpha.path, alpha.name);
 });
 
 let destroy: (() => void) | null = null;
 afterEach(() => {
   destroy?.();
   destroy = null;
+  sessionRegistry.removeSession(activeSession.id);
   document.body.innerHTML = '';
 });
 
 describe('project rows', () => {
-  it('starts collapsed and expands on tap', async () => {
+  it('defaults to half-open: only sessions active on this client are listed', async () => {
     destroy = render();
     await tick();
-    expect(isExpanded()).toBe(false);
 
+    expect(shows('Active session')).toBe(true);
+    expect(shows('Idle session')).toBe(false);
+  });
+
+  it('cycles half-open → all → closed → half-open on tap', async () => {
+    destroy = render();
+    await tick();
+
+    // half-open → all
     rowNameButton().click();
     await tick();
-    expect(isExpanded()).toBe(true);
+    expect(shows('Active session')).toBe(true);
+    expect(shows('Idle session')).toBe(true);
+
+    // all → closed
+    rowNameButton().click();
+    await tick();
+    expect(shows('Active session')).toBe(false);
+    expect(shows('Idle session')).toBe(false);
+
+    // closed → half-open
+    rowNameButton().click();
+    await tick();
+    expect(shows('Active session')).toBe(true);
+    expect(shows('Idle session')).toBe(false);
+  });
+
+  it('half-open with no client-active sessions lists nothing', async () => {
+    sessionRegistry.removeSession(activeSession.id);
+    destroy = render();
+    await tick();
+
+    expect(shows('Active session')).toBe(false);
+    expect(shows('Idle session')).toBe(false);
+
+    // The next tap still advances to the full list.
+    rowNameButton().click();
+    await tick();
+    expect(shows('Idle session')).toBe(true);
   });
 
   it('opens the project context menu on right-click / long-press', async () => {
@@ -101,7 +156,8 @@ describe('project rows', () => {
     openMenu();
     await tick();
     expect(menuItem()).not.toBeNull();
-    expect(isExpanded()).toBe(false);
+    // Menu open leaves the default half-open state untouched.
+    expect(shows('Idle session')).toBe(false);
   });
 
   it('swallows the release click that follows a long-press, then behaves normally', async () => {
@@ -113,15 +169,15 @@ describe('project rows', () => {
     expect(menuItem()).not.toBeNull();
 
     // The long-press fires while the finger is down; the release still emits a
-    // click on the row. It must not toggle the project behind the open menu.
+    // click on the row. It must not advance the project behind the open menu.
     rowNameButton().click();
     await tick();
-    expect(isExpanded()).toBe(false);
+    expect(shows('Idle session')).toBe(false);
 
     // The suppression is one-shot: the next, deliberate tap works.
     rowNameButton().click();
     await tick();
-    expect(isExpanded()).toBe(true);
+    expect(shows('Idle session')).toBe(true);
   });
 
   it('opens the Add tag dialog from the menu item', async () => {

@@ -369,8 +369,8 @@
 
   .user-icon {
     margin-top: 2px;
-    background: oklch(0.35 0.08 250);
-    color: oklch(0.85 0.05 250);
+    background: var(--avatar-bg);
+    color: var(--avatar-fg);
   }
 
   button.user-icon {
@@ -380,7 +380,7 @@
   }
 
   button.user-icon:active {
-    background: oklch(0.42 0.08 250);
+    background: color-mix(in oklch, var(--avatar-bg) 89%, white);
   }
 
   .user-icon-col {
@@ -400,24 +400,24 @@
     height: 28px;
     border-radius: 50%;
     border: none;
-    background: oklch(0.28 0.04 260);
+    background: var(--secondary);
     color: var(--foreground);
     cursor: pointer;
     transition: background-color 0.15s;
   }
 
   .fork-btn:hover {
-    background: oklch(0.35 0.04 260);
+    background: color-mix(in oklch, var(--secondary) 90%, white);
   }
 
   .assistant-icon {
-    background: oklch(0.28 0.04 260);
+    background: var(--secondary);
     color: var(--foreground);
   }
 
   .assistant-message.errored .assistant-icon {
-    background: oklch(0.32 0.09 22);
-    color: oklch(0.88 0.03 22);
+    background: color-mix(in oklch, var(--error-accent) 50%, black);
+    color: var(--error-avatar-fg);
   }
 
   button.assistant-icon {
@@ -427,7 +427,7 @@
   }
 
   button.assistant-icon:active {
-    background: oklch(0.35 0.04 260);
+    background: color-mix(in oklch, var(--secondary) 90%, white);
   }
 
   .assistant-icon-col {
@@ -454,8 +454,8 @@
 
   .assistant-error {
     margin-bottom: 8px;
-    border-left: 3px solid oklch(0.64 0.19 24);
-    background: oklch(0.22 0.04 24 / 0.55);
+    border-left: 3px solid var(--error-accent);
+    background: color-mix(in oklch, var(--error-surface) 55%, transparent);
     border-radius: 4px;
     padding: 8px 10px;
   }
@@ -464,7 +464,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    color: oklch(0.74 0.16 24);
+    color: var(--error-foreground);
     font-size: 0.75rem;
     font-weight: 600;
     text-transform: lowercase;
@@ -485,7 +485,7 @@
   }
 
   .user-body {
-    background: oklch(0.22 0.04 260);
+    background: var(--surface-hover);
     padding: 10px 14px;
     border-radius: 12px;
     border-top-left-radius: 4px;
@@ -515,8 +515,8 @@
   /* ---- Skill block (inside user messages) ---- */
 
   .skill-body {
-    border-left: 3px solid oklch(0.55 0.12 170);
-    background: oklch(0.2 0.02 170 / 0.5);
+    border-left: 3px solid var(--skill-accent);
+    background: color-mix(in oklch, var(--skill-surface) 50%, transparent);
     border-radius: 4px;
     overflow: hidden;
   }
@@ -530,14 +530,14 @@
     background: none;
     border: none;
     cursor: pointer;
-    color: oklch(0.7 0.12 170);
+    color: var(--skill-foreground);
     font-size: 0.75rem;
     font-weight: 600;
     text-align: left;
   }
 
   .skill-header:hover {
-    background: oklch(0.25 0.02 170 / 0.5);
+    background: color-mix(in oklch, color-mix(in oklch, var(--skill-surface) 94%, white) 50%, transparent);
   }
 
   .skill-label {
@@ -571,7 +571,7 @@
     bottom: 0;
     height: 32px;
     pointer-events: none;
-    background: linear-gradient(to bottom, oklch(0.2 0.02 170 / 0), oklch(0.2 0.02 170 / 0.95));
+    background: linear-gradient(to bottom, transparent, color-mix(in oklch, var(--skill-surface) 95%, transparent));
   }
 
   .skill-text-expanded {
@@ -585,7 +585,7 @@
     padding: 0;
     background: none;
     border: none;
-    color: oklch(0.65 0.12 170);
+    color: color-mix(in oklch, var(--skill-foreground) 92%, black);
     font-size: 0.75rem;
     cursor: pointer;
     text-decoration: underline;
@@ -593,7 +593,7 @@
   }
 
   .skill-toggle:hover {
-    color: oklch(0.75 0.12 170);
+    color: var(--skill-foreground-hover);
   }
 
   .skill-after {
@@ -609,8 +609,8 @@
   }
 
   .custom-body {
-    border-left: 3px solid oklch(0.55 0.1 280);
-    background: oklch(0.2 0.02 270 / 0.5);
+    border-left: 3px solid var(--custom-accent);
+    background: color-mix(in oklch, var(--custom-surface) 50%, transparent);
     border-radius: 4px;
     overflow: hidden;
   }
@@ -624,14 +624,14 @@
     background: none;
     border: none;
     cursor: pointer;
-    color: oklch(0.7 0.1 280);
+    color: var(--custom-foreground);
     font-size: 0.75rem;
     font-weight: 600;
     text-align: left;
   }
 
   .custom-header:hover {
-    background: oklch(0.25 0.02 270 / 0.5);
+    background: color-mix(in oklch, color-mix(in oklch, var(--custom-surface) 94%, white) 50%, transparent);
   }
 
   .custom-label {
@@ -665,7 +665,7 @@
     bottom: 0;
     height: 48px;
     pointer-events: none;
-    background: linear-gradient(to bottom, oklch(0.2 0.02 270 / 0), oklch(0.2 0.02 270 / 0.95));
+    background: linear-gradient(to bottom, transparent, color-mix(in oklch, var(--custom-surface) 95%, transparent));
   }
 
   .custom-text-expanded {
@@ -679,7 +679,7 @@
     padding: 0;
     background: none;
     border: none;
-    color: oklch(0.65 0.1 280);
+    color: color-mix(in oklch, var(--custom-foreground) 92%, black);
     font-size: 0.75rem;
     cursor: pointer;
     text-decoration: underline;
@@ -687,7 +687,7 @@
   }
 
   .custom-toggle:hover {
-    color: oklch(0.75 0.1 280);
+    color: var(--custom-foreground-hover);
   }
 
   /* ---- Mobile: stack icon row above body, open menu to the right ---- */

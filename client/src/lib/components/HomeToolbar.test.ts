@@ -51,17 +51,20 @@ afterEach(() => {
 });
 
 describe('combined search / manager box', () => {
-  it('defaults to search mode', async () => {
+  it('defaults to search mode with both glyphs visible on one toggle', async () => {
     destroy = render();
     await tick();
 
     expect(document.querySelector('input[aria-label="Search projects"]')).not.toBeNull();
     expect(document.querySelector('textarea[aria-label="Message the manager"]')).toBeNull();
+    // One control, two glyphs: both are always rendered, the active one is highlighted.
+    expect(modeToggle().getAttribute('data-mode')).toBe('search');
     expect(modeToggle().getAttribute('aria-label')).toBe('Switch to the manager');
     expect(modeToggle().querySelector('.lucide-search')).not.toBeNull();
+    expect(modeToggle().querySelector('.lucide-sparkles')).not.toBeNull();
   });
 
-  it('swaps into manager mode with AI (sparkles) iconography, and back', async () => {
+  it('a single tap anywhere on the pair swaps into manager mode, and back', async () => {
     destroy = render();
     await tick();
 
@@ -69,13 +72,16 @@ describe('combined search / manager box', () => {
     await tick();
     expect(document.querySelector('textarea[aria-label="Message the manager"]')).not.toBeNull();
     expect(document.querySelector('input[aria-label="Search projects"]')).toBeNull();
+    expect(modeToggle().getAttribute('data-mode')).toBe('manager');
     expect(modeToggle().getAttribute('aria-label')).toBe('Switch to search');
+    expect(modeToggle().querySelector('.lucide-search')).not.toBeNull();
     expect(modeToggle().querySelector('.lucide-sparkles')).not.toBeNull();
 
     modeToggle().click();
     await tick();
     expect(document.querySelector('input[aria-label="Search projects"]')).not.toBeNull();
     expect(document.querySelector('textarea[aria-label="Message the manager"]')).toBeNull();
+    expect(modeToggle().getAttribute('data-mode')).toBe('search');
   });
 
   it('the New session button opens the project picker', async () => {

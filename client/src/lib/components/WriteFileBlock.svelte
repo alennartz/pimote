@@ -152,7 +152,7 @@
   .wfb-body {
     margin: 0;
     border-radius: 8px;
-    background: oklch(0.16 0.03 258);
+    background: var(--surface-sunken);
     border: 1px solid var(--border);
     padding: 12px;
     padding-right: 56px;
@@ -196,7 +196,7 @@
     font-family: var(--font-mono, monospace);
     line-height: 1;
     color: var(--muted-foreground);
-    background: oklch(0.22 0.03 258 / 0.85);
+    background: color-mix(in oklch, var(--surface-hover) 85%, transparent);
     border: 1px solid var(--border);
     border-radius: 4px;
     cursor: pointer;
@@ -212,7 +212,7 @@
   .code-copy-btn.copied {
     opacity: 1;
     color: var(--foreground);
-    background: oklch(0.28 0.04 260);
+    background: var(--secondary);
   }
 
   .wfb-toggle {

@@ -288,7 +288,7 @@
     gap: 6px;
     width: 100%;
     padding: 6px 10px;
-    background: oklch(0.18 0.025 258);
+    background: var(--surface-raised);
     color: var(--muted-foreground);
     font-size: 0.8rem;
     cursor: pointer;
@@ -298,7 +298,7 @@
   }
 
   .tool-header:hover {
-    background: oklch(0.22 0.03 258);
+    background: var(--surface-hover);
   }
 
   .tool-name {
@@ -329,7 +329,7 @@
 
   .tool-content {
     border-top: 1px solid var(--border);
-    background: oklch(0.15 0.02 258);
+    background: var(--surface-sunken);
   }
 
   .tool-section {
@@ -350,16 +350,16 @@
   }
 
   .in-progress .tool-header {
-    background: oklch(0.18 0.035 258);
+    background: var(--surface-raised);
   }
 
   .tool-result:not(.tool-error) .tool-header :global(svg),
   .tool-completed:not(.tool-error) .tool-header :global(svg) {
-    color: var(--status-connected, oklch(0.623 0.169 149.2));
+    color: var(--status-connected);
   }
 
   .tool-result.tool-error .tool-header :global(svg),
   .tool-completed.tool-error .tool-header :global(svg) {
-    color: var(--destructive, oklch(0.577 0.245 27.325));
+    color: var(--destructive);
   }
 </style>

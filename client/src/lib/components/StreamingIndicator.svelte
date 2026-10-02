@@ -16,7 +16,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background-color: var(--status-streaming, oklch(0.623 0.169 149.2));
+    background-color: var(--status-streaming);
     animation: pulse 1.4s ease-in-out infinite;
   }
 

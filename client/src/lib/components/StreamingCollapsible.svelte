@@ -48,7 +48,7 @@
   }
 
   .streaming-collapsible.accent-purple {
-    --_accent: oklch(0.55 0.1 280);
+    --_accent: var(--custom-accent);
   }
 
   .collapsible-text {

@@ -374,7 +374,7 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    box-shadow: 0 2px 8px oklch(0 0 0 / 0.3);
+    box-shadow: 0 2px 8px var(--shadow-color);
     transition:
       background-color 0.15s,
       transform 0.15s;
