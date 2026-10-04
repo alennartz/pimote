@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { PIMOTE_CONFIG_PATH } from './paths.js';
+import { DEFAULT_APP_NAME } from './branding.js';
 
 export interface ModelRef {
   provider: string;
@@ -21,6 +22,8 @@ export interface PimoteConfig {
   idleTimeout: number;
   bufferSize: number;
   port: number;
+  /** Display name for the web app and installed PWA (tab title, manifest, app name). Default "Pimote". */
+  appName?: string;
   defaultProvider?: string;
   defaultModel?: string;
   defaultThinkingLevel?: string;
@@ -35,6 +38,8 @@ export interface PimoteConfig {
   vapidEmail?: string;
   /** Check npm for newer pimote releases. Default true. */
   updateCheck?: boolean;
+  /** User-defined wrap-tag snippet palette for the AGENTS.md editor toolbar. */
+  tagSnippets?: string[];
 }
 
 export const CONFIG_PATH = PIMOTE_CONFIG_PATH;
@@ -59,7 +64,8 @@ export async function loadConfig(): Promise<PimoteConfig> {
           `  }\n\n` +
           `Optional fields: port (default ${DEFAULTS.port}), ` +
           `idleTimeout (default ${DEFAULTS.idleTimeout}ms), ` +
-          `bufferSize (default ${DEFAULTS.bufferSize})`,
+          `bufferSize (default ${DEFAULTS.bufferSize}), ` +
+          `appName (display name for the web app and installed PWA, default "${DEFAULT_APP_NAME}")`,
         { cause: err },
       );
     }
@@ -90,6 +96,7 @@ export async function loadConfig(): Promise<PimoteConfig> {
     idleTimeout: typeof obj.idleTimeout === 'number' ? obj.idleTimeout : DEFAULTS.idleTimeout,
     bufferSize: typeof obj.bufferSize === 'number' ? obj.bufferSize : DEFAULTS.bufferSize,
     port: typeof obj.port === 'number' ? obj.port : DEFAULTS.port,
+    appName: typeof obj.appName === 'string' ? obj.appName : undefined,
     defaultProvider: typeof obj.defaultProvider === 'string' ? obj.defaultProvider : undefined,
     defaultModel: typeof obj.defaultModel === 'string' ? obj.defaultModel : undefined,
     defaultThinkingLevel: typeof obj.defaultThinkingLevel === 'string' ? obj.defaultThinkingLevel : undefined,
@@ -100,6 +107,7 @@ export async function loadConfig(): Promise<PimoteConfig> {
     vapidPrivateKey: typeof obj.vapidPrivateKey === 'string' ? obj.vapidPrivateKey : undefined,
     vapidEmail: typeof obj.vapidEmail === 'string' ? obj.vapidEmail : undefined,
     updateCheck: typeof obj.updateCheck === 'boolean' ? obj.updateCheck : undefined,
+    tagSnippets: Array.isArray(obj.tagSnippets) ? obj.tagSnippets.filter((s): s is string => typeof s === 'string') : undefined,
   };
 }
 

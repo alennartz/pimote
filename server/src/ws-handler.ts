@@ -32,6 +32,7 @@ import { mapContextEntries, extractMessageEntryIds, rendererRegisteredVisibility
 import type { TreeNavigationStartEvent, TreeNavigationEndEvent } from './event-buffer.js';
 import { sumLifetimeCostUsd } from './session-cost.js';
 import { completeFileRefs } from './file-references.js';
+import { readEditableFile, writeEditableFile } from './file-edit.js';
 import type { AgentSession, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { CallBindError } from './voice-orchestrator.js';
@@ -722,6 +723,17 @@ export class WsHandler {
             this.sendSilentDownloadSnapshot(viewedSlot);
           }
           this.sendResponse(id, true);
+          break;
+        }
+
+        // ---- File editing commands ----
+        case 'file_get': {
+          this.sendResponse(id, true, await readEditableFile(command.path));
+          break;
+        }
+
+        case 'file_put': {
+          this.sendResponse(id, true, await writeEditableFile(command.path, command.content));
           break;
         }
 

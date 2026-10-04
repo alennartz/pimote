@@ -571,6 +571,34 @@ export interface ViewSessionCommand extends CommandBase {
   sessionId: string;
 }
 
+// -- File editing commands --
+
+export interface FileGetCommand extends CommandBase {
+  type: 'file_get';
+  /** Absolute path, or a `~`-prefixed path (the server expands a leading `~`/`~/` to its home directory). */
+  path: string;
+}
+
+export interface FileGetResponseData {
+  /** Resolved absolute path (after `~` expansion). */
+  path: string;
+  exists: boolean;
+  /** UTF-8 text; '' when exists === false. */
+  content: string;
+}
+
+export interface FilePutCommand extends CommandBase {
+  type: 'file_put';
+  path: string;
+  /** The file's complete new contents. Last-write-wins; no versioning. */
+  content: string;
+}
+
+export interface FilePutResponseData {
+  /** Resolved absolute path. */
+  path: string;
+}
+
 // -- Push notification commands --
 
 export interface RegisterPushCommand extends CommandBase {
@@ -736,6 +764,8 @@ export type PimoteCommand =
   | ArchiveSessionCommand
   | TakeoverFolderCommand
   | ViewSessionCommand
+  | FileGetCommand
+  | FilePutCommand
   // Push notifications
   | RegisterPushCommand
   | UnregisterPushCommand

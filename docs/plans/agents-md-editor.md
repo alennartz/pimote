@@ -118,4 +118,6 @@ One unobtrusive icon button in the Dashboard home header (projects column header
 
 ## Steps
 
+**Pre-implementation commit:** `fcc5bf1d69a25af2db6db3f31e173f97a49c0322`
+
 > **Skipped.** Work through the architecture methodically — identify affected files, make changes in a logical order, and commit in coherent units.
