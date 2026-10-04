@@ -121,3 +121,5 @@ One unobtrusive icon button in the Dashboard home header (projects column header
 **Pre-implementation commit:** `fcc5bf1d69a25af2db6db3f31e173f97a49c0322`
 
 > **Skipped.** Work through the architecture methodically — identify affected files, make changes in a logical order, and commit in coherent units.
+
+**Status:** done — implemented directly from the Architecture section (skip-to-implement). Commits: `fcc6f15` (file_get/file_put seam + tag-wrap), `3414c61` (config-file editor dialog), `1f21239` (Agent instructions entry).
