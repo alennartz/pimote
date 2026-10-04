@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
-import type { ProjectInfo, SessionInfo } from '@pimote/shared';
+import type { ProjectInfo, RepoInfo, SessionInfo } from '@pimote/shared';
 
 // bits-ui popper layers expect browser APIs jsdom doesn't ship.
 class TestResizeObserver {
@@ -28,6 +28,7 @@ vi.mock('$lib/stores/connection.svelte.js', () => {
   return { connection };
 });
 
+const { connection } = await import('$lib/stores/connection.svelte.js');
 const { default: ProjectList } = await import('./ProjectList.svelte');
 const { projectStore } = await import('$lib/stores/project-store.svelte.js');
 const { sessionRegistry } = await import('$lib/stores/session-registry.svelte.js');
@@ -38,6 +39,7 @@ const alpha: ProjectInfo = {
   kind: 'single',
   activeSessionCount: 0,
   externalProcessCount: 0,
+  tags: ['web'],
 };
 
 const activeSession: SessionInfo = {
@@ -54,6 +56,28 @@ const idleSession: SessionInfo = {
   created: '2025-12-01T00:00:00.000Z',
   modified: '2025-12-01T00:00:00.000Z',
   messageCount: 1,
+};
+
+// Open in the server's memory, but bound to a different client's connection.
+const remoteSession: SessionInfo = {
+  id: 'sess-remote',
+  name: 'Remote session',
+  created: '2026-01-02T00:00:00.000Z',
+  modified: '2026-01-02T00:00:00.000Z',
+  messageCount: 2,
+  liveStatus: 'working',
+  isOwnedByMe: false,
+};
+
+const multiRepo: RepoInfo = { path: '/w/one', name: 'one', branch: 'main', dirty: false, ahead: 0, behind: 0, missing: false };
+
+const multi: ProjectInfo = {
+  path: '/w/stack',
+  name: 'stack',
+  kind: 'multi',
+  activeSessionCount: 0,
+  externalProcessCount: 0,
+  repos: [multiRepo],
 };
 
 let target: HTMLDivElement;
@@ -104,11 +128,46 @@ afterEach(() => {
 });
 
 describe('project rows', () => {
-  it('defaults to half-open: only sessions active on this client are listed', async () => {
+  it('defaults to half-open: only open sessions are listed', async () => {
     destroy = render();
     await tick();
 
     expect(shows('Active session')).toBe(true);
+    // Idle is open nowhere: not on this client, not bound to another.
+    expect(shows('Idle session')).toBe(false);
+  });
+
+  it('half-open includes sessions open but bound to other clients', async () => {
+    projectStore.sessions.set(alpha.path, [idleSession, activeSession, remoteSession]);
+    destroy = render();
+    await tick();
+
+    expect(shows('Remote session')).toBe(true);
+    expect(shows('Idle session')).toBe(false);
+  });
+
+  it('from closed, half-open still applies when only another client holds a session open', async () => {
+    sessionRegistry.removeSession(activeSession.id);
+    projectStore.sessions.set(alpha.path, [idleSession, remoteSession]);
+    destroy = render();
+    await tick();
+
+    expect(shows('Remote session')).toBe(true);
+    expect(shows('Idle session')).toBe(false);
+
+    // active → all → closed
+    rowNameButton().click();
+    await tick();
+    expect(shows('Idle session')).toBe(true);
+    rowNameButton().click();
+    await tick();
+    expect(shows('Idle session')).toBe(false);
+
+    // closed → half-open, not all: the remote session is still open, so
+    // half-open renders differently from closed.
+    rowNameButton().click();
+    await tick();
+    expect(shows('Remote session')).toBe(true);
     expect(shows('Idle session')).toBe(false);
   });
 
@@ -135,7 +194,7 @@ describe('project rows', () => {
     expect(shows('Idle session')).toBe(false);
   });
 
-  it('half-open with no client-active sessions lists nothing', async () => {
+  it('half-open with nothing open lists nothing', async () => {
     sessionRegistry.removeSession(activeSession.id);
     destroy = render();
     await tick();
@@ -147,6 +206,76 @@ describe('project rows', () => {
     rowNameButton().click();
     await tick();
     expect(shows('Idle session')).toBe(true);
+  });
+
+  it('from closed, skips half-open when nothing would filter in', async () => {
+    sessionRegistry.removeSession(activeSession.id);
+    destroy = render();
+    await tick();
+
+    // active (empty) → all → closed
+    rowNameButton().click();
+    await tick();
+    expect(shows('Idle session')).toBe(true);
+    rowNameButton().click();
+    await tick();
+    expect(shows('Idle session')).toBe(false);
+
+    // closed → straight to all: half-open would render identical to closed.
+    // Every project session shows — open/closed state only gates half-open.
+    rowNameButton().click();
+    await tick();
+    expect(shows('Idle session')).toBe(true);
+    expect(shows('Active session')).toBe(true);
+  });
+
+  it('expands when clicking the row, not just the name', async () => {
+    destroy = render();
+    await tick();
+
+    // The second row (git status + tags) is inside the trigger but outside
+    // the name button — a dead zone before the row carried the click handler.
+    (target.querySelector('.chips') as HTMLElement).click();
+    await tick();
+    expect(shows('Idle session')).toBe(true);
+    expect(shows('Active session')).toBe(true);
+  });
+
+  it('row controls handle their action without expanding the row', async () => {
+    destroy = render();
+    await tick();
+
+    (target.querySelector('button[title="Favorite"]') as HTMLElement).click();
+    await tick();
+    expect(shows('Idle session')).toBe(false);
+    expect(shows('Active session')).toBe(true);
+    expect(connection.send).toHaveBeenCalledWith({ type: 'update_project', projectPath: '/w/alpha', favorite: true });
+
+    (target.querySelector('button[title="New session in alpha"]') as HTMLElement).click();
+    await tick();
+    expect(shows('Idle session')).toBe(false);
+    expect(connection.send).toHaveBeenCalledWith({ type: 'open_session', folderPath: '/w/alpha' });
+  });
+
+  it('the context menu offers Disband without expanding the row', async () => {
+    projectStore.projects = [multi];
+    projectStore.sessions.set(multi.path, [idleSession, activeSession]);
+    sessionRegistry.addSession(activeSession.id, multi.path, multi.name);
+    destroy = render();
+    await tick();
+
+    openMenu();
+    await tick();
+    const items = document.querySelectorAll('[data-slot="context-menu-item"]');
+    expect(items.length).toBe(2);
+    expect(document.body.textContent).toContain('Disband project');
+    expect(shows('Idle session')).toBe(false);
+    expect(shows('Active session')).toBe(true);
+
+    (items[1] as HTMLElement).click();
+    await tick();
+    expect(document.body.textContent).toContain('Disband stack');
+    expect(shows('Idle session')).toBe(false);
   });
 
   it('opens the project context menu on right-click / long-press', async () => {
@@ -193,5 +322,31 @@ describe('project rows', () => {
     await tick();
     expect(document.body.textContent).toContain('Tag the project');
     expect(document.body.textContent).toContain('alpha');
+    expect(shows('Idle session')).toBe(false);
+  });
+});
+
+const { fileEditorStore } = await import('$lib/stores/file-editor.svelte.js');
+
+describe('agent instructions entry', () => {
+  it('opens the config-file editor on ~/.pi/agent/AGENTS.md from the header button', async () => {
+    fileEditorStore.close();
+    vi.mocked(connection.send).mockImplementation(async (command) => {
+      if (command.type === 'file_get') return { id: '1', success: true, data: { path: '/p/AGENTS.md', exists: false, content: '' } };
+      return { id: '1', success: true, data: {} };
+    });
+    destroy = render();
+    await tick();
+
+    const entry = target.querySelector<HTMLButtonElement>('button[aria-label="Agent instructions"]');
+    expect(entry).not.toBeNull();
+    entry!.click();
+
+    await vi.waitFor(() => expect(fileEditorStore.open).toBe(true));
+    expect(fileEditorStore.title).toBe('Agent instructions');
+    // Will-create flow: the file is missing, the editor opens empty.
+    expect(fileEditorStore.exists).toBe(false);
+    expect(vi.mocked(connection.send)).toHaveBeenCalledWith(expect.objectContaining({ type: 'file_get', path: '~/.pi/agent/AGENTS.md' }));
+    fileEditorStore.close();
   });
 });

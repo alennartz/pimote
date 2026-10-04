@@ -4,10 +4,12 @@
   import { projectStore } from '$lib/stores/project-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { AGENT_INSTRUCTIONS_PATH, fileEditorStore } from '$lib/stores/file-editor.svelte.js';
   import SessionItem from './SessionItem.svelte';
+  import ConfigFileEditor from './ConfigFileEditor.svelte';
   import Archive from '@lucide/svelte/icons/archive';
-  import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import EllipsisVertical from '@lucide/svelte/icons/ellipsis-vertical';
+  import FilePen from '@lucide/svelte/icons/file-pen';
   import FolderIcon from '@lucide/svelte/icons/folder';
   import Loader2 from '@lucide/svelte/icons/loader-2';
   import Network from '@lucide/svelte/icons/network';
@@ -15,7 +17,7 @@
   import Star from '@lucide/svelte/icons/star';
   import Tag from '@lucide/svelte/icons/tag';
   import X from '@lucide/svelte/icons/x';
-  import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '$lib/components/ui/context-menu/index.js';
+  import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '$lib/components/ui/context-menu/index.js';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Undo2 from '@lucide/svelte/icons/undo-2';
   import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuSeparator, DropdownMenuTrigger } from '$lib/components/ui/dropdown-menu/index.js';
@@ -33,7 +35,8 @@
 
   let openError = $state('');
   // Three-state project expander: 'closed' (nothing), 'active' (half-open —
-  // only sessions currently open on this client), 'all' (every session).
+  // sessions open on this client plus sessions open but bound to another
+  // client), 'all' (every session).
   // 'active' is the default. An active search overrides all of this so
   // session-level matches stay visible.
   type ExpandState = 'closed' | 'active' | 'all';
@@ -72,8 +75,16 @@
 
   const MAX_SESSIONS_SHOWN = 6;
 
-  /** Client-side active session ids — the filter for the half-open state. */
+  /** Session ids open on this client — the local half of the half-open filter. */
   const activeSessionIds = $derived(new SvelteSet(sessionRegistry.activeSessions.map((s) => s.sessionId)));
+
+  /** Half-open filter: a session is listed when it's open — held by this
+   *  client (registry) or live in the server's memory. A live session bound
+   *  to another client is open too, and the row's live badge counts it, so
+   *  hiding it under the expander would contradict the header. */
+  function isOpenSession(session: SessionInfo): boolean {
+    return activeSessionIds.has(session.id) || session.liveStatus != null;
+  }
 
   let showArchiveAllDialog = $state(false);
 
@@ -149,10 +160,33 @@
   // (project-store.svelte.ts) for the app's lifetime, not per-mount.
 
   function toggleProject(path: string) {
-    // Cycle closed → active → all → closed…
+    // Cycle closed → active → all → closed… From closed, skip half-open when
+    // nothing is open: half-open would render identical to closed, so the tap
+    // would look dead.
     const current = expandStates.get(path) ?? 'active';
-    const next: ExpandState = current === 'active' ? 'all' : current === 'all' ? 'closed' : 'active';
-    expandStates.set(path, next);
+    if (current === 'active') {
+      expandStates.set(path, 'all');
+    } else if (current === 'all') {
+      expandStates.set(path, 'closed');
+    } else {
+      const anyOpen = (projectStore.sessions.get(path) ?? []).some(isOpenSession);
+      expandStates.set(path, anyOpen ? 'active' : 'all');
+    }
+  }
+
+  function handleRowClick(project: ProjectInfo) {
+    if (isMissingProject(project)) {
+      void attemptOpen(project.path);
+      return;
+    }
+    toggleProject(project.path);
+  }
+
+  /** Row 2 (git status + tags) renders only when there's something to show. */
+  function hasRepoInfo(project: ProjectInfo): boolean {
+    if (project.kind === 'multi') return (project.repos?.length ?? 0) > 0;
+    const repo = projectStore.repos.find((r) => r.path === project.path);
+    return !!repo && !repo.missing && !!repo.branch;
   }
 
   function toggleSessionList(path: string) {
@@ -316,7 +350,17 @@
     {#if projectStore.projects.length > 0}
       <span class="text-xs">{projectStore.projects.length}</span>
     {/if}
-    <div class="ml-auto">
+    <div class="ml-auto flex items-center gap-2">
+      <Button
+        variant="outline"
+        size="icon-sm"
+        class="text-muted-foreground shrink-0 max-md:size-11"
+        title="Agent instructions"
+        aria-label="Agent instructions"
+        onclick={() => void fileEditorStore.openFile(AGENT_INSTRUCTIONS_PATH, 'Agent instructions')}
+      >
+        <FilePen class="size-4 max-md:size-5" />
+      </Button>
       <DropdownMenu>
         <DropdownMenuTrigger>
           <Button variant="outline" size="icon-sm" class="text-muted-foreground shrink-0 max-md:size-11" title="More project actions">
@@ -381,205 +425,158 @@
           {@const hasTags = (project.tags?.length ?? 0) > 0}
           {@const showAll = expandedSessionLists.has(project.path)}
           {@const projectSessions = sessionsFor(project)}
-          {@const listedSessions = expandState === 'all' ? projectSessions : expandState === 'active' ? projectSessions.filter((s) => activeSessionIds.has(s.id)) : []}
+          {@const listedSessions = expandState === 'all' ? projectSessions : expandState === 'active' ? projectSessions.filter(isOpenSession) : []}
           {@const visibleSessions = showAll ? listedSessions : listedSessions.slice(0, MAX_SESSIONS_SHOWN)}
           {@const hiddenCount = Math.max(0, listedSessions.length - MAX_SESSIONS_SHOWN)}
-          <!-- Half-open with nothing active renders no session block, so the row keeps
+          <!-- Half-open with nothing open renders no session block, so the row keeps
                its closed shape (bottom-rounded) instead of a dangling open corner. -->
           {@const showSessionBlock = expandState === 'all' || listedSessions.length > 0}
 
           <div class="border-border/60 rounded-lg">
             <ContextMenu open={rowMenuPath === project.path} onOpenChange={(open) => setRowMenu(project.path, open)}>
+              <!-- Whole-row expander: taps land here unless a control stops them.
+                   Every control inside the trigger calls stopPropagation(). -->
               <ContextMenuTrigger
-                class="group hover:bg-accent active:bg-accent/80 flex flex-wrap items-center gap-0.5 transition-colors select-none {showSessionBlock
-                  ? 'rounded-t-lg'
-                  : 'rounded-lg'}"
+                class="group hover:bg-accent active:bg-accent/80 flex cursor-pointer flex-col transition-colors select-none {showSessionBlock ? 'rounded-t-lg' : 'rounded-lg'}"
+                onclick={() => handleRowClick(project)}
               >
-                <button
-                  class="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors max-md:min-h-12 max-md:gap-2 max-md:rounded-lg max-md:px-2 max-md:py-2"
-                  title={isMissingProject(project) ? 'Open — its source will create this folder' : undefined}
-                  onclick={() => {
-                    if (isMissingProject(project)) {
-                      void attemptOpen(project.path);
-                      return;
-                    }
-                    toggleProject(project.path);
-                  }}
-                >
-                  <ChevronRight
-                    class="text-muted-foreground size-3.5 shrink-0 transition-transform max-md:size-5 {expandState === 'all'
-                      ? 'rotate-90'
-                      : expandState === 'active'
-                        ? 'rotate-45'
-                        : ''}"
-                  />
-                  <span class="text-foreground truncate text-[13px] font-medium max-md:text-base {project.archived ? 'opacity-70' : ''}" data-project-name={project.path}
-                    >{project.name}</span
+                <div class="flex items-center gap-0.5">
+                  <button
+                    class="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors max-md:min-h-12 max-md:gap-2 max-md:rounded-lg max-md:px-2 max-md:py-2"
+                    title={isMissingProject(project) ? 'Open — its source will create this folder' : undefined}
+                    aria-expanded={expandState !== 'closed'}
                   >
-                  {#if project.archived}
-                    <span class="bg-muted text-muted-foreground shrink-0 rounded px-1 py-0.5 text-[10px] font-medium tracking-wide uppercase">Archived</span>
-                  {/if}
-                </button>
-                <button
-                  class="group/star flex shrink-0 items-center rounded p-1 transition-colors max-md:-m-1 max-md:p-2"
-                  title={project.favorite ? 'Unfavorite' : 'Favorite'}
-                  aria-label={project.favorite ? `Unfavorite ${project.name}` : `Favorite ${project.name}`}
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    void updateProject(project, { favorite: !project.favorite });
-                  }}
-                >
-                  <Star
-                    class="size-3 transition-colors max-md:size-4 {project.favorite
-                      ? 'fill-yellow-500 text-yellow-500'
-                      : 'text-muted-foreground/40 group-hover/star:text-muted-foreground'}"
-                  />
-                </button>
-                <div class="chips ml-auto flex min-w-0 shrink-0 items-center gap-1 max-md:ml-0 max-md:max-w-[40%] max-md:overflow-x-auto max-md:py-0.5">
-                  {#if project.activeSessionCount > 0}
-                    <span
-                      class="flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-px text-[10.5px] font-medium text-emerald-600 max-md:px-2 max-md:py-0.5 max-md:text-xs dark:text-emerald-400"
-                      title={`${project.activeSessionCount} open session${project.activeSessionCount !== 1 ? 's' : ''}`}
+                    <span class="text-foreground truncate text-[13px] font-medium max-md:text-base {project.archived ? 'opacity-70' : ''}" data-project-name={project.path}
+                      >{project.name}</span
                     >
-                      <span class="bg-status-connected size-1.5 rounded-full max-md:size-2"></span>
-                      {project.activeSessionCount}
-                    </span>
-                  {/if}
-                  {#if project.kind === 'multi' && project.repos?.length}
-                    {#each project.repos as repo (repo.path)}
+                    {#if project.archived}
+                      <span class="bg-muted text-muted-foreground shrink-0 rounded px-1 py-0.5 text-[10px] font-medium tracking-wide uppercase">Archived</span>
+                    {/if}
+                  </button>
+                  <div class="ml-auto flex shrink-0 items-center gap-0.5">
+                    <button
+                      class="group/star flex shrink-0 items-center rounded p-1 transition-colors max-md:-m-1 max-md:p-2"
+                      title={project.favorite ? 'Unfavorite' : 'Favorite'}
+                      aria-label={project.favorite ? `Unfavorite ${project.name}` : `Favorite ${project.name}`}
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        void updateProject(project, { favorite: !project.favorite });
+                      }}
+                    >
+                      <Star
+                        class="size-3 transition-colors max-md:size-4 {project.favorite
+                          ? 'fill-yellow-500 text-yellow-500'
+                          : 'text-muted-foreground/40 group-hover/star:text-muted-foreground'}"
+                      />
+                    </button>
+                    {#if project.activeSessionCount > 0}
                       <span
-                        class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px] max-md:px-2 max-md:py-0.5 max-md:text-xs {repo.missing
-                          ? 'border border-yellow-500/20 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
-                          : ''}"
-                        title={repo.missing ? `${repo.name} is missing on disk` : repo.path}
+                        class="flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-px text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400"
+                        title={`${project.activeSessionCount} open session${project.activeSessionCount !== 1 ? 's' : ''}`}
                       >
-                        {#if !repo.missing}
-                          <span
-                            class="size-1.5 rounded-full max-md:size-2 {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}"
-                            title={repo.dirty ? 'Uncommitted changes' : 'Clean'}
-                          ></span>
-                        {/if}
-                        <span class="max-w-28 truncate">{repo.name}</span>
-                        {#if repo.missing}
-                          <span class="font-medium">missing</span>
-                        {:else if repo.branch}
-                          <span class="max-w-20 truncate opacity-70">{repo.branch}</span>
+                        <span class="bg-status-connected size-1.5 rounded-full"></span>
+                        {project.activeSessionCount}
+                      </span>
+                    {/if}
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      class="text-muted-foreground hover:text-sidebar-foreground shrink-0 max-md:size-11"
+                      title="New session in {project.name}"
+                      disabled={connection.status !== 'connected'}
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        void newSession(project.path);
+                      }}
+                    >
+                      <Plus class="size-4 max-md:size-5" />
+                    </Button>
+                  </div>
+                </div>
+                {#if hasRepoInfo(project) || hasTags}
+                  <div class="chips flex flex-wrap items-center gap-1 pb-1 pl-1.5">
+                    {#if project.kind === 'multi' && project.repos?.length}
+                      {#each project.repos as repo (repo.path)}
+                        <span
+                          class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px] {repo.missing
+                            ? 'border border-yellow-500/20 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
+                            : ''}"
+                          title={repo.missing ? `${repo.name} is missing on disk` : repo.path}
+                        >
+                          {#if !repo.missing}
+                            <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}
+                            ></span>
+                          {/if}
+                          <span class="max-w-28 truncate">{repo.name}</span>
+                          {#if repo.missing}
+                            <span class="font-medium">missing</span>
+                          {:else if repo.branch}
+                            <span class="max-w-20 truncate opacity-70">{repo.branch}</span>
+                          {/if}
+                        </span>
+                      {/each}
+                    {:else}
+                      {@const repo = projectStore.repos.find((r) => r.path === project.path)}
+                      {#if repo && !repo.missing && repo.branch}
+                        <span class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px]" title={repo.path}>
+                          <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
+                          <span class="max-w-24 truncate">{repo.branch}</span>
+                          {#if repo.ahead || repo.behind}
+                            <span class="opacity-70">↑{repo.ahead}↓{repo.behind}</span>
+                          {/if}
+                        </span>
+                      {/if}
+                    {/if}
+                    {#each project.tags ?? [] as tag (tag)}
+                      {@const removable = project.userTags?.includes(tag) === true}
+                      <span
+                        class="flex items-center gap-0.5 rounded-full border px-1.5 py-px text-[10.5px] leading-none {removable
+                          ? 'border-border bg-secondary text-secondary-foreground'
+                          : 'border-border/60 bg-muted/60 text-muted-foreground'}"
+                        title={removable ? `Tag: ${tag}` : `Tag from a project source: ${tag}`}
+                      >
+                        {tag}
+                        {#if removable}
+                          <button
+                            class="hover:text-destructive -mr-0.5 rounded-full p-px transition-colors"
+                            aria-label="Remove tag {tag}"
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              void updateProject(project, { removeTags: [tag] });
+                            }}
+                          >
+                            <X class="size-2.5" />
+                          </button>
                         {/if}
                       </span>
                     {/each}
-                  {:else}
-                    {@const repo = projectStore.repos.find((r) => r.path === project.path)}
-                    {#if repo && !repo.missing && repo.branch}
-                      <span
-                        class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px] max-md:px-2 max-md:py-0.5 max-md:text-xs"
-                        title={repo.path}
-                      >
-                        <span
-                          class="size-1.5 rounded-full max-md:size-2 {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}"
-                          title={repo.dirty ? 'Uncommitted changes' : 'Clean'}
-                        ></span>
-                        <span class="max-w-24 truncate">{repo.branch}</span>
-                        {#if repo.ahead || repo.behind}
-                          <span class="opacity-70">↑{repo.ahead}↓{repo.behind}</span>
-                        {/if}
-                      </span>
-                    {/if}
-                  {/if}
-                </div>
-
-                <div
-                  class="hover:bg-accent/50 flex shrink-0 cursor-pointer items-center gap-1 rounded-md transition-colors max-md:order-last {hasTags
-                    ? 'max-md:basis-full max-md:overflow-x-auto max-md:pl-9'
-                    : 'max-md:hidden'}"
-                  role="button"
-                  tabindex="0"
-                  title="Add tag"
-                  onclick={() => openTagDialog(project)}
-                  onkeydown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      openTagDialog(project);
-                    }
-                  }}
-                >
-                  {#each project.tags ?? [] as tag (tag)}
-                    {@const removable = project.userTags?.includes(tag) === true}
-                    <span
-                      class="flex items-center gap-0.5 rounded-full border px-1.5 py-px text-[10.5px] leading-none max-md:gap-1 max-md:px-1.5 max-md:py-px max-md:text-[11px] {removable
-                        ? 'border-border bg-secondary text-secondary-foreground'
-                        : 'border-border/60 bg-muted/60 text-muted-foreground'}"
-                      title={removable ? `Tag: ${tag}` : `Tag from a project source: ${tag}`}
+                    <button
+                      class="border-border/60 text-muted-foreground hover:text-foreground hover:border-border hidden items-center gap-0.5 rounded-full border border-dashed px-1.5 py-px text-[10.5px] leading-none transition-colors group-hover:flex"
+                      title="Add tag"
+                      aria-label="Add tag to {project.name}"
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        openTagDialog(project);
+                      }}
                     >
-                      {tag}
-                      {#if removable}
-                        <button
-                          class="hover:text-destructive -mr-0.5 rounded-full p-px transition-colors max-md:-mr-1 max-md:p-1"
-                          aria-label="Remove tag {tag}"
-                          onclick={(e) => {
-                            e.stopPropagation();
-                            void updateProject(project, { removeTags: [tag] });
-                          }}
-                        >
-                          <X class="size-2.5 max-md:size-3" />
-                        </button>
-                      {/if}
-                    </span>
-                  {/each}
-                  <span
-                    class="border-border/60 text-muted-foreground hidden items-center gap-0.5 rounded-full border border-dashed px-1.5 py-px text-[10.5px] leading-none group-hover:flex max-md:flex max-md:text-[11px]"
-                  >
-                    <Plus class="size-2.5 max-md:size-3" />
-                    tag
-                  </span>
-                </div>
-
-                {#if project.kind === 'multi'}
-                  <div
-                    class="flex shrink-0 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 has-[[data-state=open]]:opacity-100 max-md:opacity-100"
-                  >
-                    <DropdownMenu>
-                      <DropdownMenuTrigger>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          class="text-muted-foreground hover:text-sidebar-foreground shrink-0 max-md:size-11"
-                          title="Manage project"
-                          disabled={connection.status !== 'connected'}
-                        >
-                          <EllipsisVertical class="size-4 max-md:size-5" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuPortal>
-                        <DropdownMenuContent class="w-48" align="end">
-                          <DropdownMenuItem class="text-destructive focus:bg-destructive/10 dark:focus:bg-destructive/20 gap-2" onSelect={() => (disbandTarget = project)}>
-                            <Trash2 class="size-4" />
-                            Disband project
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenuPortal>
-                    </DropdownMenu>
+                      <Plus class="size-2.5" />
+                      tag
+                    </button>
                   </div>
                 {/if}
-
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  class="text-muted-foreground hover:text-sidebar-foreground shrink-0 max-md:size-11"
-                  title="New session in {project.name}"
-                  disabled={connection.status !== 'connected'}
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    void newSession(project.path);
-                  }}
-                >
-                  <Plus class="size-4 max-md:size-5" />
-                </Button>
               </ContextMenuTrigger>
               <ContextMenuContent>
                 <ContextMenuItem onSelect={() => openTagDialog(project)}>
                   <Tag class="size-4" />
                   Add tag…
                 </ContextMenuItem>
+                {#if project.kind === 'multi'}
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onSelect={() => (disbandTarget = project)}>
+                    <Trash2 class="size-4" />
+                    Disband project
+                  </ContextMenuItem>
+                {/if}
               </ContextMenuContent>
             </ContextMenu>
 
@@ -782,3 +779,5 @@
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
+
+<ConfigFileEditor />
