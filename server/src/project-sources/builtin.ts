@@ -1,19 +1,8 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isValidProjectName } from '../project-registry.js';
 import type { ProjectCreator } from '@pimote/sdk/projects';
-
-const execFileAsync = promisify(execFile);
-
-/** Same env guard as git-branch.ts: inherited Git env vars must not force resolution to another repo. */
-function gitEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  delete env.GIT_DIR;
-  delete env.GIT_WORK_TREE;
-  return env;
-}
+import { gitInitDir } from './git-init.js';
 
 function isMissing(err: unknown): boolean {
   return err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT';
@@ -62,7 +51,7 @@ export function createBuiltinCreator(): ProjectCreator {
       }
 
       await mkdir(target, { recursive: true });
-      await execFileAsync('git', ['init'], { cwd: target, env: gitEnv(), encoding: 'utf-8', timeout: 2000 });
+      await gitInitDir(target);
       return { path: target };
     },
   };

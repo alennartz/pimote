@@ -18,7 +18,7 @@ import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome } from './s
 import { makeDownloadSnapshot, resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests } from './session-manager.js';
 import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
-import type { FolderIndex } from './folder-index.js';
+import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import { enrichActiveSessionCounts, isValidProjectName, type ProjectRegistry } from './project-registry.js';
 import type { ManagerService } from './manager/index.js';
@@ -178,7 +178,7 @@ export class WsHandler {
 
   constructor(
     private readonly sessionManager: PimoteSessionManager,
-    private readonly folderIndex: FolderIndex,
+    private readonly sessionRecords: SessionRecords,
     private readonly ws: WebSocket,
     private readonly pushNotificationService: PushNotificationService,
     private readonly sessionMetadataStore: FileSessionMetadataStore,
@@ -339,7 +339,7 @@ export class WsHandler {
         }
 
         case 'list_sessions': {
-          const sessions = await this.folderIndex.listSessionRecords(command.folderPath);
+          const sessions = await this.sessionRecords.listSessionRecords(command.folderPath);
           const archivedLookup = this.sessionMetadataStore.getArchivedLookup(sessions.map((s) => s.path));
 
           // Build lookup from session ID to managed session for ownership enrichment
@@ -444,7 +444,7 @@ export class WsHandler {
             break;
           }
 
-          const sessionFilePath = await this.folderIndex.resolveSessionPath(command.folderPath, requestedSessionId);
+          const sessionFilePath = await this.sessionRecords.resolveSessionPath(command.folderPath, requestedSessionId);
           if (!sessionFilePath) {
             this.sendResponse(id, false, undefined, 'session_expired');
             break;
@@ -503,7 +503,7 @@ export class WsHandler {
           }
 
           const deleteSlot = this.sessionManager.getSession(deleteSessionId);
-          const deleteSessionPath = deleteSlot?.session.sessionFile ?? (await this.folderIndex.resolveSessionPath(deleteFolderPath, deleteSessionId));
+          const deleteSessionPath = deleteSlot?.session.sessionFile ?? (await this.sessionRecords.resolveSessionPath(deleteFolderPath, deleteSessionId));
 
           // If the session is active in memory, close it first
           if (deleteSlot) {
@@ -519,7 +519,7 @@ export class WsHandler {
           }
 
           // Delete the file from disk
-          const deleted = await this.folderIndex.deleteSession(deleteFolderPath, deleteSessionId);
+          const deleted = await this.sessionRecords.deleteSession(deleteFolderPath, deleteSessionId);
           if (!deleted) {
             this.sendResponse(id, false, undefined, `Session not found: ${deleteSessionId}`);
             break;
@@ -559,7 +559,7 @@ export class WsHandler {
           let archivedCount = 0;
           for (const archiveSessionId of archiveSessionIds) {
             const archiveSlot = this.sessionManager.getSession(archiveSessionId);
-            const archiveSessionPath = archiveSlot?.session.sessionFile ?? (await this.folderIndex.resolveSessionPath(archiveFolderPath, archiveSessionId));
+            const archiveSessionPath = archiveSlot?.session.sessionFile ?? (await this.sessionRecords.resolveSessionPath(archiveFolderPath, archiveSessionId));
             if (!archiveSessionPath) continue;
 
             await this.sessionMetadataStore.setArchived(archiveSessionPath, command.archived);
@@ -588,7 +588,7 @@ export class WsHandler {
           if (renameSlot) {
             renameSlot.session.setSessionName(renameName);
           } else {
-            const renamed = await this.folderIndex.renameSession(renameFolderPath, renameSessionId, renameName);
+            const renamed = await this.sessionRecords.renameSession(renameFolderPath, renameSessionId, renameName);
             if (!renamed) {
               this.sendResponse(id, false, undefined, `Session not found: ${renameSessionId}`);
               break;

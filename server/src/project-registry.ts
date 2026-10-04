@@ -123,26 +123,32 @@ function unionTags(...sets: (string[] | undefined)[]): string[] | undefined {
 
 /** The merged view: every index repo as `single`, every multi-repo project as `multi` with resolved members.
  *  Multi-repo entries come from two layers — persisted (user-created) and source-listed (derived,
- *  gone when the source stops listing). On a path collision the persisted entry wins. */
+ *  gone when the source stops listing). On a path collision the persisted entry wins.
+ *  A scanned repo at a hub's own path is the hub itself (hubs are git repos): the hub row wins
+ *  there too, so membership is not lost because discovery saw the folder first. */
 function mergedProjects(doc: RegistryDocument, repos: RepoInfo[], sourceProjects: MultiRepoSourceEntry[] = []): ProjectInfo[] {
   const byPath = new Map(repos.map((repo) => [repo.path, repo]));
 
   /** Effective tags at a repo path: source-contributed ∪ user. */
   const repoTags = (repoPath: string): string[] | undefined => unionTags(byPath.get(repoPath)?.tags, doc.overrides[repoPath]?.tags);
 
-  const projects: ProjectInfo[] = repos.map((repo) => ({
-    path: repo.path,
-    name: repo.name,
-    kind: 'single' as const,
-    activeSessionCount: 0,
-    externalProcessCount: 0,
-    ...doc.overrides[repo.path],
-    tags: repoTags(repo.path),
-    userTags: doc.overrides[repo.path]?.tags,
-  }));
+  const hubEntries = [...doc.multiRepo, ...sourceProjects];
+  const hubPaths = new Set(hubEntries.map((entry) => entry.path));
+  const projects: ProjectInfo[] = repos
+    .filter((repo) => !hubPaths.has(repo.path))
+    .map((repo) => ({
+      path: repo.path,
+      name: repo.name,
+      kind: 'single' as const,
+      activeSessionCount: 0,
+      externalProcessCount: 0,
+      ...doc.overrides[repo.path],
+      tags: repoTags(repo.path),
+      userTags: doc.overrides[repo.path]?.tags,
+    }));
   const seen = new Set(projects.map((p) => p.path));
 
-  for (const entry of [...doc.multiRepo, ...sourceProjects]) {
+  for (const entry of hubEntries) {
     if (seen.has(entry.path)) continue;
     seen.add(entry.path);
     const members: RepoInfo[] = entry.memberPaths.map((memberPath) => {

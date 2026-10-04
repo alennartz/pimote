@@ -269,7 +269,7 @@ Create `server/src/session-records.ts` with a `SessionRecords` state holder acce
 Replace `FolderIndex` injection with `SessionRecords` in `server/src/index.ts`, `server.ts`, `ws-handler.ts`, and their tests. Pass roots from config/RepoIndex to the creation-root checks rather than putting discovery back into SessionRecords. Move the session-record assertions from `folder-index.test.ts` into `session-records.test.ts`; retire its obsolete roots/one-level marker-discovery assertions. Delete `server/src/folder-index.ts` and its obsolete test file after all imports are removed. Do not change `session-summaries.ts`' cache or session directory encoding.
 
 **Verify:** session-record, session-summary, WS session listing/open/resume/delete/rename/archive, and manager archive-port tests pass. `rg 'folder-index|FolderIndex' server/src` finds no live references; SessionRecords performs no folder discovery.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Replace boot discovery safely
 
@@ -278,7 +278,7 @@ In `server/src/index.ts`, derive the static-host/download boot allow-list from `
 A scanner warning at a configured root for missing/non-directory/unreadable root access suppresses the sweep; warnings below a root, including unreadable markers, dangling symlinks, and unreadable subdirectories, do not. Distinguish root-access operations from an `AGENTS.md` content warning; do not abort on every warning. Session-record enumeration failures still suppress the sweep, preserving the complete-allow-list safety rule. Continue passing `validSessionIds: null` to `bootstrapFileDownloads` on suppressed enumeration; never substitute an empty allow-list on failure. The removal of package.json-only folders from the valid-folder set is intentional.
 
 **Verify:** `server/src/index.test.ts` preserves strict session-enumeration failure coverage and exercises root-warning suppression versus below-root warnings permitting GC. Static-host and file-download suites pass; duplicate occurrences do not trigger duplicate session enumeration.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Adapt the repo index
 
@@ -287,7 +287,7 @@ Replace `walkRoot`/`scanDir` and their bounded-depth constants in `server/src/re
 Keep registered source contribution merging and open hooks, including ergonomic bare repo shapes, source failure isolation, tags, missing source repo placeholders, and separate source hub metadata. Discovery no longer crawls through an included repo looking for nested repos. Update `repo-index.test.ts`' obsolete depth/symlink expectations to the scanner-backed behavior while retaining its cache, git-status, and source tests. Do not filter `list_repos` to configured roots or exclude hubs: the adapter's complete code-folder view is intentional.
 
 **Verify:** repo-index tests pass for sparse stopping, personas excluded, shortcuts included, source merging/missing flags, TTL/status refresh, and unchanged hook ordering. No second recursive folder walker remains in `repo-index.ts`.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Make hubs self-describing
 
@@ -296,7 +296,7 @@ Extend `server/src/project-sources/materialize.ts`' shared materializer with `gi
 Preserve validation before effects (name, known code-member paths, basename collisions, existing target) and the registry's all-or-nothing cleanup on materialization or persistence failure. Leave existing source hub directories untouched on open, including pre-existing git-less hubs; do not backfill `git init` during listing or startup.
 
 **Verify:** materialization/registry/source-open tests confirm `.git`, ignored member links, unchanged AGENTS.md, source hooks after layout creation, member repos surviving deletion, and cleanup after failure. A newly materialized hub scans as code with member shortcut occurrences; a pre-existing hub is not modified.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Build the folder registry
 

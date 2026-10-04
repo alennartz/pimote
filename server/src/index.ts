@@ -3,7 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig, ensureVapidKeys } from './config.js';
 import { createServer } from './server.js';
 import { PimoteSessionManager, createManagerSessionFactory } from './session-manager.js';
-import { FolderIndex } from './folder-index.js';
+import { SessionRecords } from './session-records.js';
+import { scanFolderModel, type FolderOccurrence, type FolderScanWarning, type SparseTree } from './folder-model/index.js';
 import { RepoIndex } from './repo-index.js';
 import { ProjectRegistry } from './project-registry.js';
 import { loadProjectSources } from './project-sources/index.js';
@@ -44,7 +45,7 @@ export async function main(options: StartOptions = {}) {
   // Allow explicit CLI override first, then PORT env var, then config
   const port = options.portOverride ?? (process.env.PORT ? parseInt(process.env.PORT, 10) : config.port);
 
-  const folderIndex = new FolderIndex(config.roots);
+  const sessionRecords = new SessionRecords();
 
   // Project management: discovery index over the configured roots plus any
   // user-registered sources, the persistent curation layer above it, and
@@ -71,24 +72,7 @@ export async function main(options: StartOptions = {}) {
   // registry/store/factory singletons shared by the session manager and the
   // HTTP route handler. The registry is process-lifetime; sessions register
   // and unregister against it as they load and shut down.
-  let validSessionIds: Set<string> | null = new Set<string>();
-  try {
-    // GC must only run from a complete session enumeration. The normal
-    // FolderIndex APIs intentionally degrade to partial results for UI calls;
-    // boot uses strict mode so an inaccessible root/session directory skips
-    // the sweep instead of treating omitted sessions as orphans.
-    const folders = await folderIndex.scan({ failOnError: true });
-    for (const folder of folders) {
-      const records = await folderIndex.listSessionRecords(folder.path, { failOnError: true });
-      for (const rec of records) validSessionIds.add(rec.id);
-    }
-  } catch (err) {
-    // Critical: do NOT run GC with an empty allow-list — that would delete
-    // every persisted bundle on a transient I/O hiccup at boot. Skip the
-    // sweep entirely and let the next clean boot reclaim orphans.
-    console.warn('[pimote] static-host GC: failed to enumerate sessions, skipping sweep this boot', err);
-    validSessionIds = null;
-  }
+  const validSessionIds = await enumerateValidSessionIds(config.roots, sessionRecords);
   if (validSessionIds) {
     await gcStaticHostStore({ storeDir: PIMOTE_STATIC_HOST_DIR, validSessionIds });
   }
@@ -118,11 +102,11 @@ export async function main(options: StartOptions = {}) {
           status: slot.sessionState.status,
           needsAttention: slot.sessionState.needsAttention,
         })),
-      // On-disk records for one project folder: FolderIndex listing enriched
+      // On-disk records for one project folder: SessionRecords listing enriched
       // with the archived flag from the session metadata store, so search
       // results carry the same archived state the WS list_sessions path serves.
       listDiskSessions: async (folderPath) => {
-        const records = await folderIndex.listSessionRecords(folderPath);
+        const records = await sessionRecords.listSessionRecords(folderPath);
         const archivedLookup = sessionMetadataStore.getArchivedLookup(records.map((record) => record.path));
         return records.map((record) => ({
           id: record.id,
@@ -160,7 +144,7 @@ export async function main(options: StartOptions = {}) {
             const slot = sessionManager.getSession(sessionId);
             const resolved = slot?.session.sessionFile
               ? { folderPath: slot.folderPath, sessionPath: slot.session.sessionFile }
-              : await resolveSessionAcrossFolders(folderIndex, folderPaths, sessionId);
+              : await resolveSessionAcrossFolders(sessionRecords, folderPaths, sessionId);
             if (!resolved) return { sessionId, outcome: 'not_found' };
 
             await sessionMetadataStore.setArchived(resolved.sessionPath, true);
@@ -226,7 +210,7 @@ export async function main(options: StartOptions = {}) {
   const server = await createServer(
     config,
     sessionManager,
-    folderIndex,
+    sessionRecords,
     pushNotificationService,
     sessionMetadataStore,
     voiceBoot?.orchestrator,
@@ -297,12 +281,81 @@ function isDirectRun(): boolean {
   return process.argv[1] != null && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 }
 
+/**
+ * The static-host/download boot allow-list: every session recorded in any
+ * folder the folder model discovers, deduplicated by canonical entry path
+ * across the whole occurrence tree, shortcut descendants included.
+ *
+ * Returns null when the enumeration cannot be proven complete — a root-access
+ * scan warning or a strict session-record failure. Critical: never substitute
+ * an empty allow-list on failure; GC against one would delete every persisted
+ * bundle on a transient I/O hiccup at boot. The sweep is skipped instead and
+ * the next clean boot reclaims orphans.
+ */
+async function enumerateValidSessionIds(roots: string[], sessionRecords: SessionRecords): Promise<Set<string> | null> {
+  try {
+    const warnings: FolderScanWarning[] = [];
+    const tree = await scanFolderModel({
+      roots,
+      onWarning: (warning) => {
+        warnings.push(warning);
+        console.warn(`[pimote] folder scan warning at ${warning.path}:`, warning.error);
+      },
+    });
+    if (warnings.some((warning) => isRootAccessWarning(roots, warning))) {
+      console.warn('[pimote] static-host GC: root not accessible, skipping sweep this boot');
+      return null;
+    }
+    const validSessionIds = new Set<string>();
+    for (const folderPath of uniqueEntryPaths(tree)) {
+      // Strict enumeration: one unlistable folder voids completeness too.
+      const records = await sessionRecords.listSessionRecords(folderPath, { failOnError: true });
+      for (const record of records) validSessionIds.add(record.id);
+    }
+    return validSessionIds;
+  } catch (err) {
+    console.warn('[pimote] static-host GC: failed to enumerate sessions, skipping sweep this boot', err);
+    return null;
+  }
+}
+
+/**
+ * Root-access warning: a root-level operation (readdir/lstat/realpath) failed
+ * at a configured root — missing, non-directory, or unreadable root — so whole
+ * subtrees went unenumerated and the sweep is suppressed. Everything else is
+ * local: warnings below a root (unreadable markers, dangling symlinks,
+ * unreadable subdirectories) and AGENTS.md content warnings (readFile) only
+ * drop local discoveries and leave the sweep permitted.
+ */
+function isRootAccessWarning(roots: readonly string[], warning: FolderScanWarning): boolean {
+  return warning.operation !== 'readFile' && roots.includes(warning.path);
+}
+
+/** Unique canonical entry paths across the whole occurrence tree, first *  discovery order, shortcut descendants included, duplicate occurrences *  collapsed. */
+function uniqueEntryPaths(tree: SparseTree): string[] {
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  const visit = (occurrence: FolderOccurrence): void => {
+    if (!seen.has(occurrence.entry.path)) {
+      seen.add(occurrence.entry.path);
+      paths.push(occurrence.entry.path);
+    }
+    occurrence.children.forEach(visit);
+  };
+  tree.occurrences.forEach(visit);
+  return paths;
+}
+
 /** Resolve a session id to its on-disk file path and owning project folder,
  *  scanning the given folders — the manager's archive path when no live slot
  *  holds the id. */
-async function resolveSessionAcrossFolders(folderIndex: FolderIndex, folderPaths: string[], sessionId: string): Promise<{ folderPath: string; sessionPath: string } | undefined> {
+async function resolveSessionAcrossFolders(
+  sessionRecords: SessionRecords,
+  folderPaths: string[],
+  sessionId: string,
+): Promise<{ folderPath: string; sessionPath: string } | undefined> {
   for (const folderPath of folderPaths) {
-    const sessionPath = await folderIndex.resolveSessionPath(folderPath, sessionId);
+    const sessionPath = await sessionRecords.resolveSessionPath(folderPath, sessionId);
     if (sessionPath) return { folderPath, sessionPath };
   }
   return undefined;

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { PimoteConfig } from './config.js';
 import type { PimoteSessionManager } from './session-manager.js';
-import type { FolderIndex } from './folder-index.js';
+import type { SessionRecords } from './session-records.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
@@ -124,7 +124,7 @@ export interface PimoteServer {
 export async function createServer(
   config: PimoteConfig,
   sessionManager: PimoteSessionManager,
-  folderIndex: FolderIndex,
+  sessionRecords: SessionRecords,
   pushNotificationService: PushNotificationService,
   sessionMetadataStore: FileSessionMetadataStore,
   voiceOrchestrator: VoiceOrchestrator | undefined,
@@ -270,7 +270,7 @@ export async function createServer(
     const existing = clientRegistry.get(clientId);
     const handler = new WsHandler(
       sessionManager,
-      folderIndex,
+      sessionRecords,
       ws,
       pushNotificationService,
       sessionMetadataStore,

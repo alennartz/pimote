@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createCommandContextActions, WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { PimoteSessionManager, ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
-import type { FolderIndex } from './folder-index.js';
+import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import type { ProjectRegistry } from './project-registry.js';
 import type { PushNotificationService } from './push-notification.js';
@@ -166,16 +166,14 @@ function createMockSessionManager(sessions: Map<string, ManagedSlot> = new Map()
   return manager as unknown as PimoteSessionManager;
 }
 
-function createMockFolderIndex(roots: string[] = []): FolderIndex {
+function createMockSessionRecords(): SessionRecords {
   return {
-    roots,
-    scan: async () => [],
     listSessions: async () => [],
     listSessionRecords: async () => [],
     resolveSessionPath: async () => undefined,
     renameSession: async () => false,
     deleteSession: async () => false,
-  } as unknown as FolderIndex;
+  } as unknown as SessionRecords;
 }
 
 function createMockWs(): { ws: any; sent: Array<PimoteEvent | PimoteResponse> } {
@@ -230,7 +228,7 @@ function createTestHandler(
   opts?: {
     sessions?: Map<string, ManagedSlot>;
     clientRegistry?: ClientRegistry;
-    folderIndex?: FolderIndex;
+    sessionRecords?: SessionRecords;
     sessionMetadataStore?: ReturnType<typeof createMockSessionMetadataStore>;
     repoIndex?: RepoIndex;
     projectRegistry?: ProjectRegistry;
@@ -240,13 +238,13 @@ function createTestHandler(
   const sessionManager = createMockSessionManager(sessions);
   const clientRegistry = opts?.clientRegistry ?? new Map();
   const { ws, sent } = createMockWs();
-  const folderIndex = opts?.folderIndex ?? createMockFolderIndex();
+  const sessionRecords = opts?.sessionRecords ?? createMockSessionRecords();
   const pushService = createMockPushService();
   const sessionMetadataStore = opts?.sessionMetadataStore ?? createMockSessionMetadataStore();
 
   const handler = new WsHandler(
     sessionManager,
-    folderIndex,
+    sessionRecords,
     ws,
     pushService,
     sessionMetadataStore as any,
@@ -826,15 +824,15 @@ describe('WsHandler', () => {
         return reopenedSessionId;
       };
 
-      const folderIndex = {
-        ...createMockFolderIndex(),
+      const sessionRecords = {
+        ...createMockSessionRecords(),
         resolveSessionPath: async (_folderPath: string, sessionId: string) => (sessionId === reopenedSessionId ? '/tmp/session-1.jsonl' : undefined),
-      } as FolderIndex;
+      } as SessionRecords;
 
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
       const pushService = createMockPushService();
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       await handler.handleMessage(
@@ -880,10 +878,10 @@ describe('WsHandler', () => {
 
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
-      const folderIndex = createMockFolderIndex();
+      const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
+      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       await handler.handleMessage(
@@ -931,10 +929,10 @@ describe('WsHandler', () => {
 
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
-      const folderIndex = createMockFolderIndex();
+      const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
+      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       await handler.handleMessage(
@@ -1110,8 +1108,7 @@ describe('WsHandler', () => {
         ['other-session', otherSession],
       ]);
 
-      const folderIndex = {
-        scan: async () => [],
+      const sessionRecords = {
         listSessionRecords: async (_folderPath: string) => [
           {
             path: '/tmp/file-session-a.jsonl',
@@ -1136,13 +1133,13 @@ describe('WsHandler', () => {
             allMessagesText: '',
           },
         ],
-      } as unknown as FolderIndex;
+      } as unknown as SessionRecords;
 
       const clientRegistry: ClientRegistry = new Map();
       const { handler, sent } = createTestHandler('my-client', {
         sessions,
         clientRegistry,
-        folderIndex,
+        sessionRecords,
       });
 
       await handler.handleMessage(
@@ -1158,7 +1155,7 @@ describe('WsHandler', () => {
       expect(resp!.success).toBe(true);
 
       const listedSessions = (resp!.data as any).sessions;
-      // 2 from folder index + 2 active in-memory (different IDs) = 4
+      // 2 from disk records + 2 active in-memory (different IDs) = 4
       expect(listedSessions).toHaveLength(4);
 
       for (const s of listedSessions) {
@@ -1176,8 +1173,7 @@ describe('WsHandler', () => {
 
       const sessions = new Map([['session-a', mySession]]);
 
-      const folderIndex = {
-        scan: async () => [],
+      const sessionRecords = {
         listSessionRecords: async () => [
           {
             path: '/tmp/session-a.jsonl',
@@ -1191,13 +1187,13 @@ describe('WsHandler', () => {
             allMessagesText: '',
           },
         ],
-      } as unknown as FolderIndex;
+      } as unknown as SessionRecords;
 
       const clientRegistry: ClientRegistry = new Map();
       const { handler, sent } = createTestHandler('my-client', {
         sessions,
         clientRegistry,
-        folderIndex,
+        sessionRecords,
       });
 
       await handler.handleMessage(
@@ -1224,8 +1220,7 @@ describe('WsHandler', () => {
 
       const sessions = new Map([['session-b', otherSession]]);
 
-      const folderIndex = {
-        scan: async () => [],
+      const sessionRecords = {
         listSessionRecords: async () => [
           {
             path: '/tmp/session-b.jsonl',
@@ -1239,13 +1234,13 @@ describe('WsHandler', () => {
             allMessagesText: '',
           },
         ],
-      } as unknown as FolderIndex;
+      } as unknown as SessionRecords;
 
       const clientRegistry: ClientRegistry = new Map();
       const { handler, sent } = createTestHandler('my-client', {
         sessions,
         clientRegistry,
-        folderIndex,
+        sessionRecords,
       });
 
       await handler.handleMessage(
@@ -1266,8 +1261,7 @@ describe('WsHandler', () => {
     it('returns liveStatus=null for sessions that are not active in memory', async () => {
       const sessions = new Map<string, ManagedSlot>();
 
-      const folderIndex = {
-        scan: async () => [],
+      const sessionRecords = {
         listSessionRecords: async () => [
           {
             path: '/tmp/c.jsonl',
@@ -1281,13 +1275,13 @@ describe('WsHandler', () => {
             allMessagesText: '',
           },
         ],
-      } as unknown as FolderIndex;
+      } as unknown as SessionRecords;
 
       const clientRegistry: ClientRegistry = new Map();
       const { handler, sent } = createTestHandler('my-client', {
         sessions,
         clientRegistry,
-        folderIndex,
+        sessionRecords,
       });
 
       await handler.handleMessage(
@@ -1308,8 +1302,7 @@ describe('WsHandler', () => {
 
   describe('archive_session and archived listings', () => {
     it('hides archived sessions from list_sessions by default', async () => {
-      const folderIndex = {
-        scan: async () => [],
+      const sessionRecords = {
         listSessionRecords: async () => [
           {
             path: '/tmp/visible.jsonl',
@@ -1334,10 +1327,10 @@ describe('WsHandler', () => {
             allMessagesText: '',
           },
         ],
-      } as unknown as FolderIndex;
+      } as unknown as SessionRecords;
 
       const { handler, sent } = createTestHandler('client-1', {
-        folderIndex,
+        sessionRecords,
         sessionMetadataStore: createMockSessionMetadataStore(['/tmp/archived.jsonl']),
       });
 
@@ -1347,8 +1340,7 @@ describe('WsHandler', () => {
     });
 
     it('includes archived sessions when includeArchived=true', async () => {
-      const folderIndex = {
-        scan: async () => [],
+      const sessionRecords = {
         listSessionRecords: async () => [
           {
             path: '/tmp/archived.jsonl',
@@ -1362,10 +1354,10 @@ describe('WsHandler', () => {
             allMessagesText: '',
           },
         ],
-      } as unknown as FolderIndex;
+      } as unknown as SessionRecords;
 
       const { handler, sent } = createTestHandler('client-1', {
-        folderIndex,
+        sessionRecords,
         sessionMetadataStore: createMockSessionMetadataStore(['/tmp/archived.jsonl']),
       });
 
@@ -1375,12 +1367,12 @@ describe('WsHandler', () => {
     });
 
     it('archives a session and broadcasts session_archived', async () => {
-      const folderIndex = {
-        ...createMockFolderIndex(),
+      const sessionRecords = {
+        ...createMockSessionRecords(),
         resolveSessionPath: async () => '/tmp/archive-me.jsonl',
-      } as unknown as FolderIndex;
+      } as unknown as SessionRecords;
       const sessionMetadataStore = createMockSessionMetadataStore();
-      const { handler, sent } = createTestHandler('client-1', { folderIndex, sessionMetadataStore });
+      const { handler, sent } = createTestHandler('client-1', { sessionRecords, sessionMetadataStore });
 
       await handler.handleMessage(JSON.stringify({ type: 'archive_session', folderPath: '/home/user/project', sessionIds: ['archive-me'], archived: true, id: 'req-archive' }));
 
@@ -1426,15 +1418,15 @@ describe('WsHandler', () => {
         return reopenedSessionId;
       };
 
-      const folderIndex = {
-        ...createMockFolderIndex(),
+      const sessionRecords = {
+        ...createMockSessionRecords(),
         resolveSessionPath: async () => sessionPath,
-      } as unknown as FolderIndex;
+      } as unknown as SessionRecords;
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
       const pushService = createMockPushService();
       const sessionMetadataStore = createMockSessionMetadataStore([sessionPath]);
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, sessionMetadataStore as any, 'client-1', clientRegistry);
+      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, sessionMetadataStore as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/project', sessionId: reopenedSessionId, id: 'req-open-archived' }));
@@ -1784,10 +1776,10 @@ describe('WsHandler', () => {
 
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
-      const folderIndex = createMockFolderIndex();
+      const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
+      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       await handler.handleMessage(
@@ -1947,7 +1939,7 @@ describe('WsHandler', () => {
 
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
-      const handler = new WsHandler(sessionManager, createMockFolderIndex(), ws, createMockPushService(), createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
+      const handler = new WsHandler(sessionManager, createMockSessionRecords(), ws, createMockPushService(), createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       // Eviction notify is wired at boot in server.ts; mirror it here.
@@ -1960,7 +1952,7 @@ describe('WsHandler', () => {
       const { ws: otherWs, sent: otherSent } = createMockWs();
       const otherHandler = new WsHandler(
         sessionManager,
-        createMockFolderIndex(),
+        createMockSessionRecords(),
         otherWs,
         createMockPushService(),
         createMockSessionMetadataStore() as any,
@@ -2024,10 +2016,10 @@ describe('WsHandler', () => {
 
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
-      const folderIndex = createMockFolderIndex();
+      const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
+      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       await handler.handleMessage(
@@ -2558,7 +2550,7 @@ describe('WsHandler', () => {
       const { ws: wsA, sent: sentA } = createMockWs();
       const handlerA = new WsHandler(
         sessionManager,
-        createMockFolderIndex(),
+        createMockSessionRecords(),
         wsA,
         createMockPushService(),
         createMockSessionMetadataStore() as any,
@@ -2571,7 +2563,7 @@ describe('WsHandler', () => {
       const { ws: wsB, sent: sentB } = createMockWs();
       const handlerB = new WsHandler(
         sessionManager,
-        createMockFolderIndex(),
+        createMockSessionRecords(),
         wsB,
         createMockPushService(),
         createMockSessionMetadataStore() as any,
@@ -2765,10 +2757,10 @@ describe('WsHandler', () => {
 
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
-      const folderIndex = createMockFolderIndex();
+      const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       // First open the session to establish connection
@@ -2835,10 +2827,10 @@ describe('WsHandler', () => {
 
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
-      const folderIndex = createMockFolderIndex();
+      const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       await handler.handleMessage(
@@ -2912,10 +2904,10 @@ describe('WsHandler', () => {
 
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
-      const folderIndex = createMockFolderIndex();
+      const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       await handler.handleMessage(
@@ -2987,10 +2979,10 @@ describe('WsHandler', () => {
 
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
-      const folderIndex = createMockFolderIndex();
+      const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, folderIndex, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       await handler.handleMessage(
@@ -3069,13 +3061,13 @@ describe('WsHandler', () => {
       expect(findResponse(sent, 'req-rename-1')).toMatchObject({ success: true, data: { name: 'Renamed Session' } });
     });
 
-    it('renames an inactive persisted session via FolderIndex', async () => {
+    it('renames an inactive persisted session via SessionRecords', async () => {
       const renameSession = vi.fn().mockResolvedValue(true);
-      const folderIndex = {
-        ...createMockFolderIndex(),
+      const sessionRecords = {
+        ...createMockSessionRecords(),
         renameSession,
-      } as unknown as FolderIndex;
-      const { handler, sent } = createTestHandler('client-1', { folderIndex });
+      } as unknown as SessionRecords;
+      const { handler, sent } = createTestHandler('client-1', { sessionRecords });
 
       await handler.handleMessage(
         JSON.stringify({
@@ -3513,8 +3505,8 @@ describe('WsHandler', () => {
 
   describe('create_project', () => {
     it('rejects empty name', async () => {
-      const folderIndex = createMockFolderIndex(['/home/user/projects']);
-      const { handler, sent } = createTestHandler('client-1', { folderIndex });
+      const sessionRecords = createMockSessionRecords();
+      const { handler, sent } = createTestHandler('client-1', { sessionRecords });
 
       await handler.handleMessage(JSON.stringify({ type: 'create_project', root: '/home/user/projects', name: '', id: 'req-cp-1' }));
 
@@ -3524,8 +3516,8 @@ describe('WsHandler', () => {
     });
 
     it('rejects name with path separators', async () => {
-      const folderIndex = createMockFolderIndex(['/home/user/projects']);
-      const { handler, sent } = createTestHandler('client-1', { folderIndex });
+      const sessionRecords = createMockSessionRecords();
+      const { handler, sent } = createTestHandler('client-1', { sessionRecords });
 
       await handler.handleMessage(JSON.stringify({ type: 'create_project', root: '/home/user/projects', name: 'foo/bar', id: 'req-cp-2' }));
 
@@ -3535,8 +3527,8 @@ describe('WsHandler', () => {
     });
 
     it('rejects . and .. names', async () => {
-      const folderIndex = createMockFolderIndex(['/home/user/projects']);
-      const { handler, sent } = createTestHandler('client-1', { folderIndex });
+      const sessionRecords = createMockSessionRecords();
+      const { handler, sent } = createTestHandler('client-1', { sessionRecords });
 
       await handler.handleMessage(JSON.stringify({ type: 'create_project', root: '/home/user/projects', name: '..', id: 'req-cp-3' }));
 
@@ -3546,8 +3538,10 @@ describe('WsHandler', () => {
     });
 
     it('rejects root not in configured roots', async () => {
-      const folderIndex = createMockFolderIndex(['/home/user/projects']);
-      const { handler, sent } = createTestHandler('client-1', { folderIndex });
+      // Creation-root checks read config roots from the RepoIndex, not from
+      // SessionRecords — the record holder performs no folder discovery.
+      const repoIndex = { roots: ['/home/user/projects'], list: async () => [] } as unknown as RepoIndex;
+      const { handler, sent } = createTestHandler('client-1', { repoIndex });
 
       await handler.handleMessage(JSON.stringify({ type: 'create_project', root: '/tmp/hacked', name: 'evil', id: 'req-cp-4' }));
 

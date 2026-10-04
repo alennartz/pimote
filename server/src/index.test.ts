@@ -2,12 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const config = { roots: ['/workspace'], idleTimeout: 60_000, bufferSize: 10, port: 3000, vapidPublicKey: 'public', vapidPrivateKey: 'private' };
-  const folderIndex = {
-    roots: ['/workspace'],
-    scan: vi.fn(async () => [{ path: '/workspace/project' }]),
+  const sessionRecords = {
     listSessionRecords: vi.fn(async () => [{ id: 'session-1' }]),
     resolveSessionPath: vi.fn(async () => undefined),
   };
+  // Default sparse tree: one discovered code folder below the configured root.
+  const scanFolderModel = vi.fn(async () => ({
+    occurrences: [
+      {
+        path: '/workspace/project',
+        via: 'scan',
+        entry: { path: '/workspace/project', name: 'project', nature: 'code' },
+        children: [],
+      },
+    ],
+  }));
   const sessionManager = {
     startIdleCheck: vi.fn(),
     dispose: vi.fn(async () => undefined),
@@ -38,7 +47,8 @@ const mocks = vi.hoisted(() => {
   const updateChecker = { getStatus: vi.fn(async () => null) };
   return {
     config,
-    folderIndex,
+    sessionRecords,
+    scanFolderModel,
     sessionManager,
     sessionMetadataStore,
     projectRegistry,
@@ -64,11 +74,12 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('./config.js', () => ({ loadConfig: mocks.loadConfig, ensureVapidKeys: mocks.ensureVapidKeys }));
 vi.mock('./server.js', () => ({ createServer: mocks.createServer }));
-vi.mock('./folder-index.js', () => ({
-  FolderIndex: vi.fn(function () {
-    return mocks.folderIndex;
+vi.mock('./session-records.js', () => ({
+  SessionRecords: vi.fn(function () {
+    return mocks.sessionRecords;
   }),
 }));
+vi.mock('./folder-model/index.js', () => ({ scanFolderModel: mocks.scanFolderModel }));
 vi.mock('./session-manager.js', () => ({
   PimoteSessionManager: {
     create: vi.fn(async () => mocks.sessionManager),
@@ -126,9 +137,18 @@ import { PimoteSessionManager } from './session-manager.js';
 
 function resetMocks(): void {
   mocks.config.updateCheck = undefined;
-  mocks.folderIndex.scan.mockReset().mockResolvedValue([{ path: '/workspace/project' }]);
-  mocks.folderIndex.listSessionRecords.mockReset().mockResolvedValue([{ id: 'session-1' }]);
-  mocks.folderIndex.resolveSessionPath.mockReset().mockResolvedValue(undefined);
+  mocks.sessionRecords.listSessionRecords.mockReset().mockResolvedValue([{ id: 'session-1' }]);
+  mocks.sessionRecords.resolveSessionPath.mockReset().mockResolvedValue(undefined);
+  mocks.scanFolderModel.mockReset().mockImplementation(async () => ({
+    occurrences: [
+      {
+        path: '/workspace/project',
+        via: 'scan',
+        entry: { path: '/workspace/project', name: 'project', nature: 'code' },
+        children: [],
+      },
+    ],
+  }));
   mocks.sessionManager.startIdleCheck.mockReset();
   mocks.sessionManager.getAllSessions.mockReset().mockReturnValue([]);
   mocks.sessionManager.getSession.mockReset().mockReturnValue(undefined);
@@ -172,11 +192,12 @@ describe('main — file download bootstrap wiring', () => {
     await main({ portOverride: 4321 });
 
     expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: new Set(['session-1']) }));
+    expect(mocks.scanFolderModel).toHaveBeenCalledWith({ roots: ['/workspace'], onWarning: expect.any(Function) });
     expect(PimoteSessionManager.create).toHaveBeenCalledWith(mocks.config, expect.anything(), expect.objectContaining({ fileDownloadFactory: mocks.downloadFactory }));
     expect(mocks.createServer).toHaveBeenCalledWith(
       mocks.config,
       mocks.sessionManager,
-      mocks.folderIndex,
+      mocks.sessionRecords,
       expect.anything(),
       expect.anything(),
       undefined,
@@ -202,7 +223,7 @@ describe('main — file download bootstrap wiring', () => {
     expect(mocks.createServer).toHaveBeenCalledWith(
       mocks.config,
       mocks.sessionManager,
-      mocks.folderIndex,
+      mocks.sessionRecords,
       expect.anything(),
       expect.anything(),
       undefined,
@@ -216,12 +237,80 @@ describe('main — file download bootstrap wiring', () => {
     );
   });
 
-  it('passes a null allow-list to download bootstrap when session enumeration fails, preserving all persisted registrations', async () => {
-    mocks.folderIndex.scan.mockRejectedValueOnce(new Error('temporary I/O failure'));
+  it('passes a null allow-list to download bootstrap when strict session enumeration fails, preserving all persisted registrations', async () => {
+    mocks.sessionRecords.listSessionRecords.mockRejectedValueOnce(new Error('temporary I/O failure'));
 
     await main();
 
     expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: null }));
+    expect(mocks.gcStaticHostStore).not.toHaveBeenCalled();
+  });
+
+  it('suppresses the sweep when a scanner warning reports root-access failure', async () => {
+    mocks.scanFolderModel.mockImplementationOnce(async (options: { onWarning: (warning: unknown) => void }) => {
+      options.onWarning({ path: '/workspace', operation: 'readdir', error: new Error('EACCES: permission denied') });
+      return {
+        occurrences: [
+          {
+            path: '/workspace/project',
+            via: 'scan',
+            entry: { path: '/workspace/project', name: 'project', nature: 'code' },
+            children: [],
+          },
+        ],
+      };
+    });
+
+    await main();
+
+    // The root's sessions could not be enumerated — never a partial allow-list.
+    expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: null }));
+    expect(mocks.gcStaticHostStore).not.toHaveBeenCalled();
+    expect(mocks.sessionRecords.listSessionRecords).not.toHaveBeenCalled();
+  });
+
+  it('permits the sweep on below-root and AGENTS.md content warnings', async () => {
+    mocks.scanFolderModel.mockImplementationOnce(async (options: { onWarning: (warning: unknown) => void }) => {
+      options.onWarning({ path: '/workspace/unreadable-sub', operation: 'readdir', error: new Error('EACCES') });
+      options.onWarning({ path: '/workspace/dangling', operation: 'realpath', error: new Error('ENOENT') });
+      options.onWarning({ path: '/workspace/project/AGENTS.md', operation: 'readFile', error: new Error('EACCES') });
+      // A content warning at a root path is still content, not root access.
+      options.onWarning({ path: '/workspace', operation: 'readFile', error: new Error('EACCES') });
+      return {
+        occurrences: [
+          {
+            path: '/workspace/project',
+            via: 'scan',
+            entry: { path: '/workspace/project', name: 'project', nature: 'code' },
+            children: [],
+          },
+        ],
+      };
+    });
+
+    await main();
+
+    expect(mocks.gcStaticHostStore).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: new Set(['session-1']) }));
+    expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: new Set(['session-1']) }));
+  });
+
+  it('enumerates each canonical entry once despite duplicate occurrences', async () => {
+    const sharedEntry = { path: '/workspace/shared', name: 'shared', nature: 'code' };
+    const sharedChildren = [{ path: '/workspace/shared/member', via: 'shortcut', entry: { path: '/external/member', name: 'member', nature: 'code' }, children: [] }];
+    mocks.scanFolderModel.mockImplementationOnce(async () => ({
+      occurrences: [
+        { path: '/workspace/shared', via: 'scan', entry: sharedEntry, children: sharedChildren },
+        // Same entry again via a shortcut occurrence reusing first-discovery children.
+        { path: '/workspace/other/shared-link', via: 'shortcut', entry: sharedEntry, children: sharedChildren },
+      ],
+    }));
+
+    await main();
+
+    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledTimes(2);
+    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/shared', { failOnError: true });
+    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/external/member', { failOnError: true });
+    expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: new Set(['session-1']) }));
   });
 });
 
@@ -278,9 +367,9 @@ describe('main — manager toolset port wiring', () => {
     warn.mockRestore();
   });
 
-  it('wires listDiskSessions: search lists every project through FolderIndex and enriches with the archived lookup', async () => {
+  it('wires listDiskSessions: search lists every project through SessionRecords and enriches with the archived lookup', async () => {
     mocks.projectRegistry.list.mockResolvedValue([alphaProject, betaProject]);
-    mocks.folderIndex.listSessionRecords.mockImplementation(async (folderPath: string) =>
+    mocks.sessionRecords.listSessionRecords.mockImplementation(async (folderPath: string) =>
       folderPath === '/workspace/alpha'
         ? [
             {
@@ -299,8 +388,8 @@ describe('main — manager toolset port wiring', () => {
 
     const result = await toolNamed(await registeredManagerTools(), 'pimote_search_sessions').execute('call-1', { query: 'login' }, undefined, undefined, {});
 
-    expect(mocks.folderIndex.listSessionRecords).toHaveBeenCalledWith('/workspace/alpha');
-    expect(mocks.folderIndex.listSessionRecords).toHaveBeenCalledWith('/workspace/beta');
+    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/alpha');
+    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/beta');
     expect(mocks.sessionMetadataStore.getArchivedLookup).toHaveBeenCalledWith(['/sessions/s1.jsonl']);
     expect(result.details.results).toEqual([
       {
@@ -351,18 +440,18 @@ describe('main — manager toolset port wiring', () => {
     expect(mocks.sessionMetadataStore.setArchived).toHaveBeenCalledWith('/sessions/s1.jsonl', true);
     expect(mocks.sessionManager.closeSession).toHaveBeenCalledWith('s1');
     // The live slot's session file wins; no disk scan is needed.
-    expect(mocks.folderIndex.resolveSessionPath).not.toHaveBeenCalled();
+    expect(mocks.sessionRecords.resolveSessionPath).not.toHaveBeenCalled();
     expect(broadcast).toHaveBeenCalledWith({ type: 'session_archived', sessionId: 's1', folderPath: '/workspace/alpha', archived: true });
     expect(result.details.results).toEqual([{ sessionId: 's1', outcome: 'open_slot_evicted' }]);
   });
 
   it('wires archiveSessions for a closed session: resolves the record across project folders, archives on disk, leaves no slot to evict', async () => {
     mocks.projectRegistry.list.mockResolvedValue([alphaProject, betaProject]);
-    mocks.folderIndex.resolveSessionPath.mockImplementation(async (_folderPath: string, sessionId: string) => (sessionId === 's2' ? '/sessions/s2.jsonl' : undefined));
+    mocks.sessionRecords.resolveSessionPath.mockImplementation(async (_folderPath: string, sessionId: string) => (sessionId === 's2' ? '/sessions/s2.jsonl' : undefined));
 
     const result = await toolNamed(await registeredManagerTools(), 'pimote_archive_sessions').execute('call-1', { sessionIds: ['s2'] }, undefined, undefined, {});
 
-    expect(mocks.folderIndex.resolveSessionPath).toHaveBeenCalledWith('/workspace/alpha', 's2');
+    expect(mocks.sessionRecords.resolveSessionPath).toHaveBeenCalledWith('/workspace/alpha', 's2');
     expect(mocks.sessionMetadataStore.setArchived).toHaveBeenCalledWith('/sessions/s2.jsonl', true);
     expect(mocks.sessionManager.closeSession).not.toHaveBeenCalled();
     expect(result.details.results).toEqual([{ sessionId: 's2', outcome: 'archived' }]);

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, writeFile, readFile, readlink, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readlink, rm, stat, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RepoIndex, type RepoIndexOptions } from './repo-index.js';
@@ -50,26 +50,29 @@ function repoAt(index: RepoIndex, repoPath: string): RepoInfo | undefined {
   return index.list().then((repos) => repos.find((r) => r.path === repoPath));
 }
 
-describe('RepoIndex.list() — recursive discovery', () => {
-  it('discovers git repositories up to three directory levels below a root', async () => {
-    const depth1 = join(tempDir, 'one');
-    const depth3 = join(tempDir, 'one', 'two', 'three');
-    const depth4 = join(tempDir, 'one', 'two', 'three', 'four');
-    await initRepo(depth1);
-    await initRepo(depth3);
-    await initRepo(depth4);
+describe('RepoIndex.list() — folder-model discovery', () => {
+  it('discovers repos at any depth below a root through skipped folders', async () => {
+    const deep = join(tempDir, 'a', 'b', 'c', 'd', 'e', 'repo');
+    await initRepo(deep);
 
     const index = makeIndex();
-    const repos = await index.list();
-    const paths = repos.map((r) => r.path);
-
-    expect(paths).toContain(depth1);
-    expect(paths).toContain(depth3);
-    expect(paths).not.toContain(depth4);
+    expect((await index.list()).map((r) => r.path)).toContain(deep);
   });
 
-  it('does not descend into node_modules, .git, dist, build, target, or .venv directories', async () => {
-    const excluded = ['node_modules', '.git', 'dist', 'build', 'target', '.venv'];
+  it('stops discovery at an included repo: nested repos inside it are never listed', async () => {
+    const outer = join(tempDir, 'outer');
+    await initRepo(outer);
+    await initRepo(join(outer, 'inner'));
+    await initRepo(join(outer, 'skipped', 'deep', 'inner-deep'));
+
+    const index = makeIndex();
+    expect((await index.list()).map((r) => r.path)).toEqual([outer]);
+  });
+
+  it('never enters node_modules, dist, build, target, or .venv directories', async () => {
+    // `.git` is deliberately absent from this list: a `.git` entry makes its
+    // folder an included repo before any descent, so pruning it is unreachable.
+    const excluded = ['node_modules', 'dist', 'build', 'target', '.venv'];
     for (const name of excluded) {
       await initRepo(join(tempDir, name, 'nested-repo'));
     }
@@ -84,15 +87,71 @@ describe('RepoIndex.list() — recursive discovery', () => {
     expect(paths.filter((p) => excluded.some((name) => p.includes(join(tempDir, name))))).toEqual([]);
   });
 
-  it('does not follow symlinks that point outside the scanned tree', async () => {
+  it('follows symlinks met during skipped descent and lists their canonical targets', async () => {
     const externalRepo = join(externalDir, 'outside');
     await initRepo(externalRepo);
     await symlink(externalRepo, join(tempDir, 'link'));
 
     const index = makeIndex();
-    const repos = await index.list();
+    expect((await index.list()).map((r) => r.path)).toContain(externalRepo);
+  });
 
-    expect(repos.map((r) => r.path)).not.toContain(externalRepo);
+  it('includes shortcut targets outside the roots: top-level symlinks of an included repo', async () => {
+    const hub = join(tempDir, 'hub');
+    await initRepo(hub);
+    const member = join(externalDir, 'member');
+    await initRepo(member);
+    await symlink(member, join(hub, 'member'));
+
+    const index = makeIndex();
+    const paths = (await index.list()).map((r) => r.path);
+    expect(paths).toContain(hub);
+    expect(paths).toContain(member);
+  });
+
+  it('excludes persona folders even when they contain git', async () => {
+    const persona = join(tempDir, 'persona');
+    await initRepo(persona);
+    await writeFile(join(persona, 'AGENTS.md'), '---\nname: Ada\ndescription: helper\n---\n\n# Ada\n');
+    const code = join(tempDir, 'code');
+    await initRepo(code);
+
+    const index = makeIndex();
+    const paths = (await index.list()).map((r) => r.path);
+    expect(paths).toContain(code);
+    expect(paths).not.toContain(persona);
+  });
+
+  it('excludes persona targets reached through shortcuts', async () => {
+    const hub = join(tempDir, 'hub');
+    await initRepo(hub);
+    const persona = join(externalDir, 'persona');
+    await initRepo(persona);
+    await writeFile(join(persona, 'AGENTS.md'), '---\nname: Ada\n---\n');
+    await symlink(persona, join(hub, 'persona-link'));
+
+    const index = makeIndex();
+    const paths = (await index.list()).map((r) => r.path);
+    expect(paths).toContain(hub);
+    expect(paths).not.toContain(persona);
+  });
+
+  it('lists a newly materialized hub as a repo alongside its members', async () => {
+    const groupPath = join(tempDir, 'group');
+    const member = join(externalDir, 'member-a');
+    await initRepo(member);
+    const index = makeIndex();
+    index.registerSource({
+      id: 'src',
+      list: async () => [{ kind: 'project', path: groupPath, name: 'group', memberPaths: [member] }],
+    });
+
+    await index.runOpenHooks(groupPath);
+    index.invalidate();
+
+    const paths = (await index.list()).map((r) => r.path);
+    expect(paths).toContain(groupPath);
+    expect(paths).toContain(member);
   });
 
   it('discovers repos across all configured roots', async () => {
@@ -190,7 +249,8 @@ describe('RepoIndex.runOpenHooks() — materialization', () => {
       id: 'src',
       list: async () => [{ kind: 'project', path: groupPath, name: 'group', memberPaths: [memberA, virtualMember] }],
       onProjectOpen: async (path) => {
-        // The hook must see the materialized folder already on disk.
+        // The hook must see the complete materialized folder already on disk.
+        expect((await stat(join(groupPath, '.git'))).isDirectory()).toBe(true);
         expect(await readFile(join(groupPath, 'AGENTS.md'), 'utf8')).toContain('member-a');
         order.push(`hook:${path}`);
       },
@@ -202,6 +262,9 @@ describe('RepoIndex.runOpenHooks() — materialization', () => {
     const agents = await readFile(join(groupPath, 'AGENTS.md'), 'utf8');
     expect(agents).toContain('group');
     expect(agents).toContain('virtual-member');
+    // The member links are ignored by git.
+    const ignore = await readFile(join(groupPath, '.gitignore'), 'utf8');
+    expect(ignore.split('\n').filter(Boolean)).toEqual(['member-a', 'virtual-member']);
     expect(order).toEqual([`hook:${groupPath}`]);
   });
 
@@ -220,6 +283,9 @@ describe('RepoIndex.runOpenHooks() — materialization', () => {
 
     await expect(readFile(join(groupPath, 'sentinel.txt'), 'utf8')).resolves.toBe('keep me');
     await expect(readFile(join(groupPath, 'AGENTS.md'), 'utf8')).rejects.toThrow();
+    // No backfill: a pre-existing hub without git stays without git.
+    await expect(stat(join(groupPath, '.git'))).rejects.toThrow();
+    await expect(readFile(join(groupPath, '.gitignore'), 'utf8')).rejects.toThrow();
   });
 });
 

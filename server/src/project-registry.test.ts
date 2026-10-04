@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, rm, readdir, lstat, readlink, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readdir, lstat, readlink, readFile, stat, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -215,7 +215,7 @@ describe('source-listed multi-repo projects', () => {
 });
 
 describe('ProjectRegistry.createMultiRepoProject()', () => {
-  it('creates a multi-repo project with symlinked members and a generated AGENTS.md', async () => {
+  it('creates a multi-repo project with symlinked members, a generated AGENTS.md, a git repo, and ignored member links', async () => {
     const registry = makeRegistry();
     const { path: projectPath } = await registry.createMultiRepoProject('multi', rootDir, [repoA]);
 
@@ -223,6 +223,9 @@ describe('ProjectRegistry.createMultiRepoProject()', () => {
     expect(existsSync(projectPath)).toBe(true);
     expect(existsSync(join(projectPath, 'AGENTS.md'))).toBe(true);
     expect(await findSymlinkTo(projectPath, repoA)).toBeDefined();
+    // The hub is self-describing: a git repo that ignores its member links.
+    expect((await stat(join(projectPath, '.git'))).isDirectory()).toBe(true);
+    expect((await readFile(join(projectPath, '.gitignore'), 'utf8')).split('\n').filter(Boolean)).toEqual(['repo-a']);
 
     const project = (await registry.list()).find((p) => p.path === projectPath);
     expect(project?.kind).toBe('multi');
@@ -267,6 +270,42 @@ describe('ProjectRegistry.createMultiRepoProject()', () => {
     const { path: projectPath } = await second.createMultiRepoProject('multi', rootDir, [repoA]);
     expect(existsSync(projectPath)).toBe(true);
   });
+
+  it('cleans up the hub folder when materialization fails', async () => {
+    const registry = makeRegistry();
+
+    // git init cannot run: materialization fails partway, after the layout exists.
+    const savedPath = process.env.PATH;
+    process.env.PATH = '';
+    try {
+      await expect(registry.createMultiRepoProject('multi', rootDir, [repoA])).rejects.toThrow();
+    } finally {
+      process.env.PATH = savedPath;
+    }
+
+    // All-or-nothing: no half-built hub survives, so a retry can succeed.
+    expect(existsSync(join(rootDir, 'multi'))).toBe(false);
+    expect((await registry.list()).filter((p) => p.name === 'multi')).toHaveLength(0);
+    await registry.createMultiRepoProject('multi', rootDir, [repoA]);
+    expect(existsSync(join(rootDir, 'multi', '.git'))).toBe(true);
+  });
+
+  it('cleans up the hub folder when persistence fails', async () => {
+    const registry = makeRegistry();
+    await mkdir(storeDir, { recursive: true });
+    await chmod(storeDir, 0o555); // registry.json cannot be written
+    try {
+      await expect(registry.createMultiRepoProject('multi', rootDir, [repoA])).rejects.toThrow();
+    } finally {
+      await chmod(storeDir, 0o755);
+    }
+
+    // The fully materialized hub is rolled back together with the lost entry.
+    expect(existsSync(join(rootDir, 'multi'))).toBe(false);
+    expect((await registry.list()).filter((p) => p.name === 'multi')).toHaveLength(0);
+    await registry.createMultiRepoProject('multi', rootDir, [repoA]);
+    expect((await makeRegistry().list()).find((p) => p.name === 'multi')?.kind).toBe('multi');
+  });
 });
 
 describe('ProjectRegistry.disband()', () => {
@@ -305,9 +344,12 @@ describe('ProjectRegistry persistence', () => {
     const first = makeRegistry();
     const { path: projectPath } = await first.createMultiRepoProject('multi', rootDir, [repoA]);
 
+    // A fresh instance re-discovers from scratch: the hub is now scanned as a
+    // code folder, and its hub metadata must win over the discovered row.
     const second = makeRegistry();
     const project = (await second.list()).find((p) => p.path === projectPath);
     expect(project?.kind).toBe('multi');
+    expect(project?.repos?.map((r) => r.path)).toContain(repoA);
   });
 
   it('persists curation overrides across registry instances', async () => {

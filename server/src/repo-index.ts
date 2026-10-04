@@ -1,20 +1,15 @@
 import { execFile } from 'node:child_process';
-import { readdir, stat } from 'node:fs/promises';
-import type { Dirent } from 'node:fs';
-import { basename, join } from 'node:path';
+import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { RepoInfo } from '../../shared/dist/index.js';
 import type { MultiRepoSourceEntry, ProjectSource, RepoSourceEntry, SourceEntry } from './project-sources/index.js';
+import { scanFolderModel, type FolderEntry, type FolderOccurrence, type SparseTree } from './folder-model/index.js';
 import { getGitBranch } from './git-branch.js';
 import { materializeMultiRepoFolder } from './project-sources/materialize.js';
 
 const execFileAsync = promisify(execFile);
 
 const DEFAULT_TTL_MS = 30_000;
-/** Directories below a root that are scanned for repos; their subdirectories are not. */
-const MAX_DEPTH_BELOW_ROOT = 3;
-const GIT_DIR_NAME = '.git';
-const EXCLUDED_DIR_NAMES = new Set(['node_modules', '.git', 'dist', 'build', 'target', '.venv']);
 
 /** Per-repo git status, cached on its own TTL. */
 interface RepoStatus {
@@ -56,6 +51,22 @@ function parseCount(output: string | null): number {
   return Number.isFinite(value) ? value : 0;
 }
 
+/**
+ * The scanner-to-repo adapter: every unique canonical code entry across the
+ * whole occurrence tree — scan reaches, shortcut targets outside the roots,
+ * discovered hubs — keyed by its canonical path. Persona entries are dropped
+ * even when they contain git; occurrence reach paths never identify a repo.
+ */
+function collectCodeEntries(tree: SparseTree): FolderEntry[] {
+  const byPath = new Map<string, FolderEntry>();
+  const visit = (occurrence: FolderOccurrence): void => {
+    if (occurrence.entry.nature === 'code') byPath.set(occurrence.entry.path, occurrence.entry);
+    for (const child of occurrence.children) visit(child);
+  };
+  for (const occurrence of tree.occurrences) visit(occurrence);
+  return [...byPath.values()];
+}
+
 /** Branch, dirty flag, and ahead/behind for one repo. Failed probes yield neutral values. */
 async function readGitStatus(cwd: string): Promise<Omit<RepoStatus, 'at'>> {
   const git = gitRunner(cwd);
@@ -75,8 +86,11 @@ async function readGitStatus(cwd: string): Promise<Omit<RepoStatus, 'at'>> {
 /**
  * Discovery over configured roots plus registered sources.
  *
- * Bounded-depth recursive walk (depth 3; skips node_modules, .git, dist,
- * build, target, .venv; does not follow symlinks except inside multi-repo project folders),
+ * Discovery consumes the folder-model sparse scan (`scanFolderModel`): every
+ * unique canonical code folder across all occurrences becomes one repo entry
+ * — scan reaches, shortcut targets outside the roots, and hub folders alike —
+ * while persona folders are excluded even when they contain git. Descent
+ * stops at included folders, so nested repos inside a repo are never crawled.
  * TTL-cached repo listing, and per-repo git status enrichment (branch, dirty,
  * ahead/behind) with its own TTL. Expired caches are served stale while a
  * background refresh runs (see `list()`). Derived state only — no persistence.
@@ -127,7 +141,7 @@ export class RepoIndex {
       if (this.now() - cached.at >= this.ttlMs || cached.entries.some((entry) => this.statusExpired(entry))) this.kickRefresh();
       return await Promise.all(cached.entries.map((entry) => this.resolveServed(entry)));
     }
-    const base = await this.walk();
+    const base = await this.discover();
     return await Promise.all(base.map((entry) => this.resolveServed(entry)));
   }
 
@@ -144,8 +158,8 @@ export class RepoIndex {
     await this.refreshInFlight;
   }
 
-  /** Single-flight full re-walk; shared by cold lists and background refreshes. */
-  private walk(): Promise<RepoInfo[]> {
+  /** Single-flight full re-scan; shared by cold lists and background refreshes. */
+  private discover(): Promise<RepoInfo[]> {
     if (!this.listingPromise) {
       const generation = this.walkGeneration;
       this.listingPromise = this.discoverAndStamp()
@@ -173,7 +187,7 @@ export class RepoIndex {
     const before = this.snapshot();
     this.refreshInFlight = (async () => {
       try {
-        if (!this.listing || this.now() - this.listing.at >= this.ttlMs) await this.walk();
+        if (!this.listing || this.now() - this.listing.at >= this.ttlMs) await this.discover();
         const listing = this.listing;
         if (listing) await Promise.all(listing.entries.map((entry) => this.refreshStatus(entry)));
       } catch (error) {
@@ -266,15 +280,15 @@ export class RepoIndex {
     this.sources.push(source);
   }
 
-  /** Fresh discovery: walk all roots, merge source contributions, mark vanished paths. */
+  /** Fresh discovery: scan the folder model, merge source contributions, mark vanished paths. */
   private async discoverAndStamp(): Promise<RepoInfo[]> {
     const byPath = new Map<string, RepoInfo>();
-    for (const root of this._roots) {
-      for (const repoPath of await this.walkRoot(root)) {
-        if (!byPath.has(repoPath)) {
-          byPath.set(repoPath, { path: repoPath, name: basename(repoPath), branch: null, dirty: false, ahead: 0, behind: 0 });
-        }
-      }
+    const tree = await scanFolderModel({
+      roots: this._roots,
+      onWarning: (warning) => console.warn(`[repo-index] scan warning at ${warning.path}`, warning.error),
+    });
+    for (const entry of collectCodeEntries(tree)) {
+      byPath.set(entry.path, { path: entry.path, name: entry.name, branch: null, dirty: false, ahead: 0, behind: 0 });
     }
 
     const sourceProjects: MultiRepoSourceEntry[] = [];
@@ -315,40 +329,6 @@ export class RepoIndex {
     }
     this.listing = { entries, at: this.now() };
     return entries;
-  }
-
-  /** Walk one root, collecting repo directories up to MAX_DEPTH_BELOW_ROOT levels beneath it. */
-  private async walkRoot(root: string): Promise<string[]> {
-    return await this.scanDir(root, 0);
-  }
-
-  /** The root itself and directories up to MAX_DEPTH_BELOW_ROOT levels beneath it are scanned; a `.git` entry makes a repo. */
-  private async scanDir(dir: string, depth: number): Promise<string[]> {
-    let entries: Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch (error) {
-      console.warn(`[repo-index] skipping unreadable directory ${dir}`, error);
-      return [];
-    }
-
-    let isRepo = false;
-    const subdirs: Dirent[] = [];
-    for (const entry of entries) {
-      if (entry.name === GIT_DIR_NAME) isRepo = true;
-      // Never follow symlinks; only real directories are walked or excluded.
-      if (entry.isSymbolicLink() || !entry.isDirectory()) continue;
-      if (EXCLUDED_DIR_NAMES.has(entry.name)) continue;
-      subdirs.push(entry);
-    }
-
-    const found: string[] = [];
-    if (isRepo) found.push(dir);
-    if (depth >= MAX_DEPTH_BELOW_ROOT) return found;
-    for (const subdir of subdirs) {
-      found.push(...(await this.scanDir(join(dir, subdir.name), depth + 1)));
-    }
-    return found;
   }
 
   /** A path that no longer stats is kept, marked `missing`, with its entry values untouched. */
