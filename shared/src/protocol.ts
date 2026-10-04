@@ -47,6 +47,30 @@ export interface RepoInfo {
   tags?: string[];
 }
 
+/**
+ * A discovered folder of interest plus its curation state (folder-model
+ * foundation). Successor of `ProjectInfo`, which it renames and reshapes once
+ * the projects→folders rename lands.
+ */
+export interface FolderInfo {
+  /** Canonical path — curation key. */
+  path: string;
+  /** Basename. */
+  name: string;
+  nature: 'code' | 'persona';
+  persona?: { name: string; description?: string };
+  /** > 0 → hub icon variant. */
+  shortcutCount: number;
+  favorite: boolean;
+  archived: boolean;
+  tags: string[];
+  /** Curation entry with no discovered folder. */
+  missing: boolean;
+  // Session/git chip fields carried over from ProjectInfo, unchanged.
+  activeSessionCount: number;
+  externalProcessCount: number;
+}
+
 /** A user-curated project: a single repo, or a multi-repo project folder. */
 export interface ProjectInfo {
   /** Repo dir (single) or project dir (multi). */

@@ -1,5 +1,6 @@
-import type { ProjectInfo, RepoInfo } from '../../../shared/dist/index.js';
+import type { FolderInfo, ProjectInfo, RepoInfo } from '../../../shared/dist/index.js';
 import type { PimoteConfig } from '../config.js';
+import type { SparseTree } from '../folder-model/index.js';
 
 /** Live snapshot of one open session, as the manager tools see it. */
 export interface ManagedSessionSummary {
@@ -68,6 +69,32 @@ export interface ProjectRegistryPort {
 /** Narrow RepoIndex seam for manager tools. */
 export interface RepoIndexPort {
   list(): Promise<RepoInfo[]>;
+}
+
+/** Narrow folder-model seam for manager tools: the sparse tree report. */
+export interface FolderModelPort {
+  tree(): Promise<SparseTree>;
+}
+
+/** Curation patch for one folder entry; keyed by canonical entry path. */
+export interface FolderUpdatePatch {
+  folderPath: string;
+  favorite?: boolean;
+  archived?: boolean;
+  addTags?: string[];
+  removeTags?: string[];
+}
+
+/**
+ * Folder-registry seam for manager tools (folder-model successor of
+ * `ProjectRegistryPort`): overrides merged over all included entries, code and
+ * persona alike.
+ */
+export interface FolderRegistryPort {
+  list(): Promise<FolderInfo[]>;
+  update(patch: FolderUpdatePatch): Promise<void>;
+  createHub(input: { name: string; memberPaths: string[] }): Promise<FolderInfo>;
+  disbandHub(folderPath: string): Promise<void>;
 }
 
 /**

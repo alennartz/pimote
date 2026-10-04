@@ -135,3 +135,65 @@ interface ManagerToolContext {
 - **DR-046** (Multi-repo projects as hub folders with symlinks and a generated AGENTS.md) — superseded because "hubs are never walker-discovered repos, invisible to the repo index" no longer holds: hubs gain `git init` + a `.gitignore` for the member symlinks and are discovered as code folders whose members appear as shortcut occurrences. Symlink mechanics and the generated `AGENTS.md` contract are unchanged.
 - **DR-047** (The manager agent is global and ephemeral) — not superseded; re-derived: conversation ephemerality stands _because_ persona memory is folder-resident artifacts (e.g. a `memory.md` linked from the persona's `AGENTS.md`). The manager inherits this with no special case. A proper revisit belongs to the next pull (manager lifecycle).
 - **New DR-051** (Unified folder model) — the replacement record: taxonomy (code/persona via marker), sparse discovery, shortcut recursion, identity-by-canonical-path, hubs as code folders, persistence-by-artifacts. Carries provenance lines for DR-045 and DR-046 (deleted at their last recorded commits).
+
+## Tests
+
+**Pre-test-write commit:** `d9cac01064653cb9ece35e79338883e4c1bb6c51`
+
+### Interface Files
+
+- `server/src/folder-model/index.ts` — the folder-model module's entire external interface: `FolderNature`, `PersonaInfo`, `FolderEntry`, `FolderOccurrence`, `SparseTree`, `FolderFs`, `ScanFolderModelOptions`, and the `scanFolderModel` stub (throws `"not implemented"`). Note: `FolderFs` gained a fourth operation, `readFile(path): Promise<string>`, beyond the plan's `readdir`/`lstat`/`realpath` — the discovery contract must read `AGENTS.md` content to detect the front-matter marker, and the seam is documented as "the only fs operations the scanner performs; injectable for tests", so content reads must pass through it.
+- `shared/src/protocol.ts` — `FolderInfo` wire type added (the `ProjectInfo` successor: `nature`, `persona`, `shortcutCount`, `missing`, required `favorite`/`archived`/`tags`, plus ProjectInfo's session/git chip fields `activeSessionCount`/`externalProcessCount`). Added alongside `ProjectInfo`; the rename/reshaping of live call sites belongs to the implementation pull.
+- `server/src/manager/types.ts` — `FolderModelPort` (`{ tree(): Promise<SparseTree> }`), `FolderUpdatePatch` (curation patch keyed by `folderPath`), and `FolderRegistryPort` (`list`/`update`/`createHub`/`disbandHub`) as the folder-model successors of `ProjectRegistryPort`. `ManagerToolContext`'s `projects`→`folders` rename plus its `tree` field is deferred to the implementation pull: it forces renames through live manager/registry behavior, which is not structural work.
+
+### Test Files
+
+- `server/src/folder-model/folder-model.test.ts` — 23 behavioral tests of `scanFolderModel` against an in-memory `FolderFs` fake (deterministic, no real filesystem): classification taxonomy, pruning, sparse descent, shortcut occurrences and recursion, visit-once identity, multi-root and empty boundaries. All 23 are red at this commit (the stub throws `"not implemented"`); the 694 pre-existing tests stay green.
+
+### Behaviors Covered
+
+#### Classification (discovery contract rules 2–3)
+
+- A folder whose `AGENTS.md` begins with a YAML front-matter block containing a `name:` key is a persona: the entry carries `persona` with the front-matter name and description (description omitted when absent); `name` is the folder's basename, never the persona name; extra front-matter keys are ignored.
+- A folder with a `.git` directory or a `.git` file is code; code entries carry no `persona`.
+- Marker wins over git when both are present.
+- Front matter without a `name:` key, an `AGENTS.md` without front matter, and a front-matter block that does not begin the file are not markers: the folder stays skipped and descent continues through it.
+- `package.json` alone is not an inclusion marker.
+
+#### Pruning (rule 1)
+
+- `node_modules`, `.git`, `dist`, `build`, `target`, `.venv` below a root are never entered — folders hidden inside them are undiscovered — while sibling folders are found normally.
+- Pruning applies at any depth below a root.
+
+#### Sparse descent (rules 3, 8)
+
+- Discovery descends through skipped folders to included ones; skipped folders never appear as nodes and their segments survive only inside the occurrence's `path` string.
+- Descent stops at an included folder: nested git repos and nested persona markers are never separately included.
+
+#### Shortcuts (rules 4–6)
+
+- A top-level symlink of an included folder whose real path lies outside the folder becomes a shortcut occurrence (via `'shortcut'`) wrapping the target's entry.
+- Entering a shortcut restarts discovery at the target: the target is classified and its own shortcuts recur as nested shortcut occurrences.
+- If the shortcut target is skipped, discovery descends through it: each included folder found below becomes a shortcut occurrence whose `path` extends the symlink path with the collapsed skipped structure; the skipped target itself is never an entry.
+- Top-level symlinks that resolve inside the folder, and symlinks to files, are not shortcuts.
+- Symlinks met during skipped descent are followed like ordinary folders — no out-of-tree condition; the target-side folder surfaces as a scan occurrence.
+
+#### Identity (rule 7)
+
+- Identity is the canonical real path: one entry per folder no matter how many shortcuts reach it; later occurrences reference the same entry.
+- Children come from the first discovery: a later shortcut occurrence carries the same target shortcuts as the first-discovery occurrence (the paths of shared children are deliberately unpinned).
+- Shortcut cycles terminate; the back-reference occurrence points at the already-discovered entry.
+
+#### Roots
+
+- Every configured root is scanned; scan occurrences from all roots land in one flat `occurrences` list.
+- Empty roots list yields `{ occurrences: [] }`; an all-skipped tree yields `{ occurrences: [] }`.
+
+### Contract interpretations pinned by these tests
+
+Flagged for review — the plan text admits more than one reading at these points:
+
+1. **`FolderFs.readFile`** added (see Interface Files) — the marker contract cannot be expressed through `readdir`/`lstat`/`realpath` alone.
+2. **Occurrence `path` is the reach path.** Scanned occurrences use the walked path from the root (skipped and followed-symlink segments inline); shortcut occurrences extend their parent occurrence's path. This is what makes rule 8 ("skipped path structure is collapsed into occurrence `path` strings") hold in the two edge cases — descent through a skipped-context symlink, and a shortcut whose target has skipped structure — where the type comment's "real directory path / symlink path" is too terse.
+3. **Rule 7's "(children come from the first discovery)"** read as: later occurrences carry the first discovery's children (not leaf stubs, not recomputed).
+4. **`FolderUpdatePatch`** shape was not given in the plan; modeled as the `ProjectUpdatePatch` rename keyed by `folderPath` (`favorite`/`archived`/`addTags`/`removeTags`).
