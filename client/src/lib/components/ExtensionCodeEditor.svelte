@@ -12,14 +12,16 @@
     value = $bindable(''),
     language = null,
     autofocus = true,
+    editorView = $bindable<EditorView | null>(null),
   }: {
     value?: string;
     language?: EditorLanguage | null;
     autofocus?: boolean;
+    /** Seam for toolbars: the live CodeMirror view (selection + transactions). */
+    editorView?: EditorView | null;
   } = $props();
 
   let host = $state<HTMLDivElement | null>(null);
-  let view = $state<EditorView | null>(null);
   let syncingFromView = false;
 
   const languageCompartment = new Compartment();
@@ -79,7 +81,7 @@
   onMount(() => {
     if (!host) return;
 
-    view = new EditorView({
+    editorView = new EditorView({
       state: EditorState.create({
         doc: value,
         extensions: buildExtensions(language),
@@ -88,30 +90,30 @@
     });
 
     if (autofocus) {
-      view.focus();
+      editorView.focus();
     }
 
     return () => {
-      view?.destroy();
-      view = null;
+      editorView?.destroy();
+      editorView = null;
     };
   });
 
   $effect(() => {
-    if (!view || syncingFromView) return;
+    if (!editorView || syncingFromView) return;
 
-    const currentDoc = view.state.doc.toString();
+    const currentDoc = editorView.state.doc.toString();
     if (currentDoc === value) return;
 
-    view.dispatch({
+    editorView.dispatch({
       changes: { from: 0, to: currentDoc.length, insert: value },
     });
   });
 
   $effect(() => {
-    if (!view) return;
+    if (!editorView) return;
 
-    view.dispatch({
+    editorView.dispatch({
       effects: languageCompartment.reconfigure(getCodeMirrorLanguageExtension(language) ?? []),
     });
   });
