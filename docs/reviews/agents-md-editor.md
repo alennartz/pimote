@@ -33,7 +33,7 @@ The main dialog takes `open={fileEditorStore.open}` one-way. Esc or an overlay c
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `server/src/branding.ts:1-58`; `server/src/config.ts:4, 25-26, 67-68, 99`
-- **Status:** open
+- **Status:** dismissed
 
 Nothing in the plan covers app-name branding, yet commit `fcc6f15` bundles `branding.ts` (with tests) and an `appName` config key. Only tests call `resolveAppName`, `applyAppNameToHtml`, and `applyAppNameToManifest`; nothing reads `config.appName`. At HEAD this is a hypothetical seam for a feature that doesn't exist yet, and `loadConfig`'s error text now advertises `appName` to users while nothing consumes it. It hurts reviewability and reverts. (If this belongs to concurrent work whose wiring lands elsewhere, dismiss accordingly.)
 
@@ -69,7 +69,7 @@ The temp-file-plus-rename write replaces the path itself. If `AGENTS.md` is a sy
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `client/src/lib/components/ProjectList.svelte:85-92, 160-192, 428-441, 496-577` (commit `1f21239`)
-- **Status:** open
+- **Status:** dismissed
 
 The plan's Dashboard entry step specifies one icon button. The same commit also redefines the half-open session filter, makes the whole row a click-to-expand target, moves repo chips/tags to a second row, and relocates "Disband project" into the context menu — real behavior changes to an existing feature with no plan step. Tests were updated to the new semantics rather than weakened. Likely intentional concurrent work; noting per the reverse-check.
 
@@ -87,7 +87,7 @@ The plan's Dashboard entry step specifies one icon button. The same commit also 
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/config.ts:41-42, 110` vs `client/src/lib/stores/file-editor.svelte.ts:16-27`
-- **Status:** open
+- **Status:** dismissed
 
 Nothing on the server reads `PimoteConfig.tagSnippets`, so that parsing is dead. The client re-parses the raw config file with different rules — it drops invalid tag names, the server keeps them. The duplicated operation will drift.
 
@@ -96,7 +96,7 @@ Nothing on the server reads `PimoteConfig.tagSnippets`, so that parsing is dead.
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/file-edit.ts:7-15`
-- **Status:** open
+- **Status:** resolved
 
 `resolve()` depends on the server's working directory, so the "Pure" label is wrong. Relative paths and `~user/...` paths silently resolve against that directory, and `file_put` would create a literal `~user` folder. The protocol contract says absolute or `~` paths only; other paths should be rejected.
 

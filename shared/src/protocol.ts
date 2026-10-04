@@ -575,7 +575,7 @@ export interface ViewSessionCommand extends CommandBase {
 
 export interface FileGetCommand extends CommandBase {
   type: 'file_get';
-  /** Absolute path, or a `~`-prefixed path (the server expands a leading `~`/`~/` to its home directory). */
+  /** Absolute path, a `~`-prefixed path (the server expands a leading `~`/`~/` to its home directory), or a relative path (resolved against the server's working directory). */
   path: string;
 }
 

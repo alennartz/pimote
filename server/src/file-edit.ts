@@ -5,7 +5,9 @@ import { basename, dirname, join, resolve } from 'node:path';
 import type { FileGetResponseData, FilePutResponseData } from '../../shared/dist/index.js';
 
 /**
- * Pure. Expands leading `~`/`~/` against homeDir; resolves otherwise. Throws on empty path.
+ * Expands leading `~`/`~/` against homeDir; resolves everything else via
+ * `path.resolve` (relative paths resolve against the process working
+ * directory). Throws on empty path.
  */
 export function resolveFilePath(path: string, homeDir: string): string {
   if (path === '') throw new Error('path is required');
