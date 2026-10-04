@@ -166,14 +166,22 @@ export function swipeVelocity(samples: SwipeSample[], thresholds: SwipeThreshold
   return dt > 0 ? (end.x - begin.x) / dt : 0;
 }
 
+/**
+ * What the card does after an action resolves:
+ *   - collapse → the item left its list; the card animates out and the cell collapses
+ *   - stay     → the item is still listed; the card springs back to rest
+ * A rejected promise is treated as 'stay' (the failed-action path).
+ */
+export type SwipeActionOutcome = 'collapse' | 'stay';
+
 /** Definition of one swipe action (tray button + long-press menu entry). */
 export interface SwipeActionDef {
   label: string;
   icon?: import('svelte').Component<{ class?: string }>;
   /**
-   * Perform the action. Return true when it succeeded (the card animates
-   * out and collapses) or false / reject when it failed (the card springs
-   * back to rest).
+   * Perform the action. Resolve 'collapse' when the card should animate out
+   * and collapse (the item left its list), 'stay' when the item remains
+   * listed and the card should spring back to rest.
    */
-  onAction: () => Promise<boolean>;
+  onAction: () => Promise<SwipeActionOutcome>;
 }

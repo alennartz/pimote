@@ -31,6 +31,7 @@
     swipeTranslate,
     swipeVelocity,
     type SwipeActionDef,
+    type SwipeActionOutcome,
     type SwipeSample,
     type SwipeSide,
     type SwipeTickLevel,
@@ -41,6 +42,12 @@
     actionLeft?: SwipeActionDef;
     /** Revealed by dragging the card right (tray on the left edge). */
     actionRight?: SwipeActionDef;
+    /**
+     * Wrap the card in a context menu offering both actions (long-press /
+     * right-click). Set false when the row already has its own context menu —
+     * two nested menus would both open on one long-press.
+     */
+    contextMenu?: boolean;
     children: Snippet;
   }
 
@@ -48,7 +55,7 @@
   // opaque, full-width surface (e.g. `bg-card w-full`) or the trays will show
   // through when the card is at rest.
 
-  let { actionLeft, actionRight, children }: Props = $props();
+  let { actionLeft, actionRight, contextMenu = true, children }: Props = $props();
 
   type Phase = 'idle' | 'dragging' | 'exiting' | 'done';
 
@@ -128,6 +135,16 @@
       }
     }
 
+    // No action on this edge (e.g. a closed session has no Close tray): the
+    // card holds at rest instead of revealing an empty gap behind it.
+    if (!actionFor(side)) {
+      tickLevel = 0;
+      armedSide = null;
+      pushSample(current);
+      dx = 0;
+      return;
+    }
+
     // One subtle tick per gesture, on the first threshold crossing: the
     // reveal crossing from rest, or the armed crossing when continuing an
     // already-open tray out toward fire. Later crossings (including armed)
@@ -193,7 +210,14 @@
     snapTo(0);
   }
 
-  /** Play the exit animation, run the action, and collapse the card — or spring back on failure. */
+  // A tray's action can vanish while its side is open (e.g. the session is
+  // closed elsewhere and the Close tray disappears) — close the tray rather
+  // than leave the card parked over an empty gap.
+  $effect(() => {
+    if (phase === 'idle' && dx !== 0 && !actionFor(dx < 0 ? 'left' : 'right')) closeTray();
+  });
+
+  /** Run the action, then fly out + collapse ('collapse') or spring back to rest ('stay'). */
   async function fire(side: SwipeSide) {
     const action = actionFor(side);
     if (!action || phase === 'exiting' || phase === 'done') return;
@@ -201,20 +225,21 @@
     phase = 'exiting';
     suppressClick = true;
 
-    const width = cellEl?.offsetWidth ?? 320;
-    dx = (side === 'left' ? -1 : 1) * (width + 24);
+    // Hold at the release position while the action runs: a 'stay' outcome
+    // springs back from there (a fly-out first would read as a failed swipe),
+    // and a fast local round trip makes the 'collapse' fly-out below feel
+    // immediate.
+    const outcome = await action.onAction().catch((): SwipeActionOutcome => 'stay');
 
-    const ok = await action
-      .onAction()
-      .catch(() => false)
-      .then((result) => result === true);
-
-    if (!ok) {
-      dx = 0;
+    if (outcome === 'stay') {
       phase = 'idle';
+      snapTo(0); // resets armedSide/activeSide and releases the open-card claim
       suppressClick = false;
       return;
     }
+
+    const width = cellEl?.offsetWidth ?? 320;
+    dx = (side === 'left' ? -1 : 1) * (width + 24);
 
     const cell = cellEl;
     if (cell && typeof cell.animate === 'function') {
@@ -251,7 +276,9 @@
 
 {#snippet cell()}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div bind:this={cellEl} class="relative" out:slide={{ duration: 150 }}>
+  <!-- overflow-hidden masks the surface as it slides past the row's own
+       bounds (rows sit close to the viewport edge on mobile). -->
+  <div bind:this={cellEl} class="relative overflow-hidden" out:slide={{ duration: 150 }}>
     {#if actionLeft}
       <div
         class="absolute inset-y-0 right-0 flex w-[80px] items-stretch justify-center rounded-r-xl {armedSide === 'left'
@@ -301,7 +328,7 @@
   </div>
 {/snippet}
 
-{#if actionLeft || actionRight}
+{#if contextMenu && (actionLeft || actionRight)}
   <ContextMenu.Root>
     <ContextMenu.Trigger class="block">
       {@render cell()}

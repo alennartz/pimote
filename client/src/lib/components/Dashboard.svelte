@@ -8,6 +8,7 @@
   import { managerStore } from '$lib/stores/manager-store.svelte.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import SwipeableCard, { closeOpenSwipeCard } from '$lib/components/SwipeableCard.svelte';
+  import type { SwipeActionOutcome } from '$lib/components/swipe-action.js';
   import { projectStore } from '$lib/stores/project-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { closeSession, openExistingSession, sessionRegistry, switchToSession } from '$lib/stores/session-registry.svelte.js';
@@ -105,7 +106,7 @@
     return sessions[index + 1]?.sessionId ?? null;
   }
 
-  async function closeFromHome(sessionId: string): Promise<boolean> {
+  async function closeFromHome(sessionId: string): Promise<SwipeActionOutcome> {
     // Capture metadata up front — the registry entry disappears on session_closed.
     const session = sessionRegistry.sessions[sessionId];
     const folderPath = session?.folderPath ?? '';
@@ -115,7 +116,7 @@
       await connection.send({ type: 'close_session', sessionId });
     } catch (e) {
       console.error('Failed to close session:', e);
-      return false;
+      return 'stay';
     }
     addGhost({
       label: 'Session closed',
@@ -123,12 +124,12 @@
       anchorSessionId: anchor,
       undo: () => void openExistingSession(sessionId, folderPath, { switchTo: false }),
     });
-    return true;
+    return 'collapse';
   }
 
-  async function archiveFromHome(sessionId: string): Promise<boolean> {
+  async function archiveFromHome(sessionId: string): Promise<SwipeActionOutcome> {
     const session = sessionRegistry.sessions[sessionId];
-    if (!session) return false;
+    if (!session) return 'stay';
     const folderPath = session.folderPath;
     const displayName = getSessionDisplayName(session) ?? session.projectName;
     const anchor = anchorAfter(sessionId);
@@ -136,11 +137,11 @@
       const response = await connection.send({ type: 'archive_session', folderPath, sessionIds: [sessionId], archived: true });
       if (!response.success) {
         console.error('Failed to archive session:', response.error);
-        return false;
+        return 'stay';
       }
     } catch (e) {
       console.error('Failed to archive session:', e);
-      return false;
+      return 'stay';
     }
     // Archived sessions leave the Continue list — the card goes with it.
     closeSession(sessionId);
@@ -153,7 +154,7 @@
         await openExistingSession(sessionId, folderPath, { switchTo: false });
       },
     });
-    return true;
+    return 'collapse';
   }
 
   // Seed the project list per connection. The store owns the freshness policy:
