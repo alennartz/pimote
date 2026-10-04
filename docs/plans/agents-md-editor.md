@@ -109,3 +109,13 @@ Snippets live in `PimoteConfig.tagSnippets?: string[]` (`~/.config/pimote/config
 #### Dashboard entry
 
 One unobtrusive icon button in the Dashboard home header (projects column header on desktop, the home header row on mobile) labeled "Agent instructions"; opens the dialog targeting `~/.pi/agent/AGENTS.md` via `file_get`.
+
+## Tests
+
+> **Skipped.** No tests were written upfront. Follow red-green TDD as you implement —
+> write a focused failing test, make it pass, move on. Aim for component-boundary
+> behavioral tests (inputs, outputs, observable effects), not exhaustive coverage.
+
+## Steps
+
+> **Skipped.** Work through the architecture methodically — identify affected files, make changes in a logical order, and commit in coherent units.
