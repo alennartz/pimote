@@ -40,6 +40,18 @@ _Avoid_: reference, link
 **Occurrence**:
 One place in the sparse tree where an entry appears. Occurrences share the entry's identity.
 
+**Agent instructions file**:
+The user-level `~/.pi/agent/AGENTS.md` file that supplies instructions to pi agents.
+_Avoid_: project instructions (ambiguous with a code folder's AGENTS.md)
+
+**File-edit command**:
+A server-level WebSocket command for reading or atomically writing a file by path, independent of any session.
+_Avoid_: session file command
+
+**Tag snippet**:
+A user-configured tag name offered as a one-tap wrapper in the Agent instructions editor; configured with `tagSnippets` in Pimote's config file.
+_Avoid_: tag template
+
 ## Relationships
 
 - A **scan root** anchors discovery: folders are **skipped** until **included** as a **code folder** or **persona folder**

@@ -62,7 +62,7 @@ Pimote is published as the app package `@pimote/pimote` at the repo root, backed
 | **client**           | `client/`       | SvelteKit PWA (Svelte 5, Tailwind CSS, shadcn-svelte)         |
 | **`@pimote/sdk`**    | `packages/sdk/` | Extensibility SDK: panels + project sources for pi extensions |
 
-The `shared/` directory holds TypeScript types for the WebSocket wire protocol shared between server and client — it's a tsc-only project, not a published package. The voice-mode pi extension lives at `server/src/voice/` and is loaded into each session only when voice is configured (see [Voice mode](#voice-mode)). The static-host pi extension lives at `server/src/static-host/` and is loaded unconditionally — it exposes the `pimote_static_host` / `pimote_static_host_remove` agent tools that publish a local folder under `/s/<slug>/` and push a tappable card to the panel UI. The file-download extension is also loaded into every session; it lets the agent offer any file readable by the server as a one-time, user-approved browser download.
+The `shared/` directory holds TypeScript types for the WebSocket wire protocol shared between server and client — it's a tsc-only project, not a published package. The voice-mode pi extension lives at `server/src/voice/` and is loaded into each session only when voice is configured (see [Voice mode](#voice-mode)). The static-host pi extension lives at `server/src/static-host/` and is loaded unconditionally — it exposes the `pimote_static_host` / `pimote_static_host_remove` agent tools that publish a local folder under `/s/<slug>/` and push a tappable card to the panel UI. The file-download extension is also loaded into every session; it lets the agent offer any file readable by the server as a one-time, user-approved browser download. The Dashboard also includes an **Agent instructions** editor for the user-level `~/.pi/agent/AGENTS.md`, with optional tag-wrap snippets configured by `tagSnippets` in `~/.config/pimote/config.json` (the snippet lookup does not currently honor a custom `$XDG_CONFIG_HOME`).
 
 A separate **native Android client** lives at `mobile/android/` — a voice-first Kotlin app that places calls through the system telephony stack (`SelfManagedConnectionService`), and exposes your projects as Android system contacts so they're callable by name from Google Assistant / Gemini ("Hey Google, call <project>") and from the dialer's name search. It also ships an **Android Auto** surface (`CarAppService`, currently dev-mode / sideloaded) with a project list that places a new-session call on tap and a recency list that resumes a past session. Independent Gradle project, Docker-based build (`make android-test` / `make android-build`), not part of the npm workspace; speaks the same WebSocket protocol as the PWA. See `mobile/android/README.md`.
 
@@ -121,7 +121,7 @@ Pimote bridges all of pi's UI extension mechanisms over WebSocket:
 - **Status bar** — live status entries from extensions
 - **Panels** — structured card data pushed by extensions, displayed in a side panel (desktop) or overlay (mobile); cards may declare an `href` to render as a tappable link
 
-This means any pi extension that uses the standard UI APIs works in Pimote without modification.
+This means any pi extension that uses the standard UI APIs works in Pimote without modification. Separately, a server-level `file_get` / `file_put` protocol pair supports reading and atomically writing files for the Agent instructions editor; these commands are not tied to a session. Saves use last-write-wins (there is no conflict detection).
 
 Pimote also ships in-server pi extensions. The static-host extension gives the agent two tools, `pimote_static_host` and `pimote_static_host_remove`, for publishing a local folder of static files (built PWA, report, demo, etc.) at `/s/<slug>/` on the same origin as the Pimote UI. Each registration emits a tappable panel card pointing at the bundle. Bundle registrations are persisted per session under `~/.local/state/pimote/static-host/` and garbage-collected on server boot.
 
@@ -209,20 +209,27 @@ With this config, if `/home/you/projects/` contains `my-app/` and `another-repo/
 
 ### Options
 
-| Field                     | Type                  | Default                            | Description                                                                  |
-| ------------------------- | --------------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
-| `roots`                   | `string[]`            | **(required)**                     | Parent directories to scan for projects                                      |
-| `projectSourcesDir`       | `string`              | `~/.config/pimote/project-sources` | Directory scanned for user project-source modules (pluggable repo discovery) |
-| `port`                    | `number`              | `3000`                             | Server port                                                                  |
-| `idleTimeout`             | `number`              | `1800000`                          | Idle session reap timeout (ms, default 30min)                                |
-| `bufferSize`              | `number`              | `1000`                             | Event ring buffer size per session                                           |
-| `defaultProvider`         | `string`              | —                                  | Default LLM provider                                                         |
-| `defaultModel`            | `string`              | —                                  | Default model                                                                |
-| `defaultThinkingLevel`    | `string`              | —                                  | Default thinking level                                                       |
-| `defaultInterpreterModel` | `{provider, modelId}` | —                                  | Voice interpreter model (falls back to `defaultProvider`/`defaultModel`)     |
-| `defaultWorkerModel`      | `{provider, modelId}` | —                                  | Voice worker model passed to `my-pi` subagent spawns                         |
-| `voice`                   | `object`              | —                                  | Voice subsystem config (see below)                                           |
-| `updateCheck`             | `boolean`             | `true`                             | Check npm for newer Pimote releases and notify connected clients             |
+| Field                     | Type                  | Default                            | Description                                                                        |
+| ------------------------- | --------------------- | ---------------------------------- | ---------------------------------------------------------------------------------- |
+| `roots`                   | `string[]`            | **(required)**                     | Parent directories to scan for projects                                            |
+| `projectSourcesDir`       | `string`              | `~/.config/pimote/project-sources` | Directory scanned for user project-source modules (pluggable repo discovery)       |
+| `port`                    | `number`              | `3000`                             | Server port                                                                        |
+| `appName`                 | `string`              | `Pimote`                           | Display name: browser tab title, iOS app title, and installed PWA name             |
+| `idleTimeout`             | `number`              | `1800000`                          | Idle session reap timeout (ms, default 30min)                                      |
+| `bufferSize`              | `number`              | `1000`                             | Event ring buffer size per session                                                 |
+| `defaultProvider`         | `string`              | —                                  | Default LLM provider                                                               |
+| `defaultModel`            | `string`              | —                                  | Default model                                                                      |
+| `defaultThinkingLevel`    | `string`              | —                                  | Default thinking level                                                             |
+| `defaultInterpreterModel` | `{provider, modelId}` | —                                  | Voice interpreter model (falls back to `defaultProvider`/`defaultModel`)           |
+| `defaultWorkerModel`      | `{provider, modelId}` | —                                  | Voice worker model passed to `my-pi` subagent spawns                               |
+| `voice`                   | `object`              | —                                  | Voice subsystem config (see below)                                                 |
+| `tagSnippets`             | `string[]`            | —                                  | Optional tag names shown as one-tap wrap snippets in the Agent instructions editor |
+| `updateCheck`             | `boolean`             | `true`                             | Check npm for newer Pimote releases and notify connected clients                   |
+
+`appName` is applied at serve time — the server rewrites the PWA manifest and
+HTML shell on the way out, so a change takes effect on the next page reload.
+Note that browsers capture the app name at install time: an already-installed
+PWA keeps its old name on the home screen until it is reinstalled.
 
 #### Voice mode
 
