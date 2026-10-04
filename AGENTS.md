@@ -9,6 +9,7 @@ Pimote is a PWA + Node.js server for remote access to pi (a coding agent), plus 
 ## Project References
 
 - **Codemap**: [codemap.md](codemap.md) — module map, responsibilities, dependencies, file ownership
+- **Glossary**: [glossary.md](glossary.md) — the project's domain language — use its terms in code, docs, and conversation
 - **Deployment**: [Deployment.md](Deployment.md) — local hosting setup, systemd service, make targets (gitignored)
 
 ## Maintenance Instructions
