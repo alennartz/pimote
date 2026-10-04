@@ -25,6 +25,9 @@
     if (!open) {
       // A fresh open retries a previously failed chunk load.
       if (editorLoadError) editorLoadError = null;
+      // Toolbar state is per-open too: no stale tag input or typed tag name.
+      tagInputVisible = false;
+      tagName = '';
       return;
     }
     if (editorModule || editorLoadError) return;

@@ -68,9 +68,9 @@ simple save.
   view seam (`view.dispatch({selection})`) rather than a real mouse drag —
   selection _dynamics_ are synthetic; the wrap semantics themselves run
   through the real toolbar → `wrapWithTag` → editor transaction path.
-  If live typing through the DOM (`execCommand('insertText')`) proves flaky in
-  headless Chromium the driver falls back to view transactions for text entry
-  too (noted in Results if used).
+  Text entry runs through the real DOM input path (`insertText` + Enter
+  keydown); `execCommand('insertText')` cannot reproduce a leading newline,
+  so the driver types newlines as Enter keydowns, as a human would.
 - Single-user, last-write-wins: concurrent-writer behavior (explicitly out of
   scope per the brainstorm) and two-client sync are not exercised.
 - Desktop viewport only. Mobile soft-keyboard behavior is unprobed — an
@@ -86,12 +86,38 @@ real PWA, so no escalation is needed.
 
 ## Results
 
-(filled after execution)
+Driver run end-to-end (real sandboxed pimote + real PWA via `agent-browser`):
+**35/35 checks pass** (`node tools/manual-test/agents-md-editor-smoke/agents-md-editor-smoke.mjs`).
+
+- Smoke Suite (journey 13 + journey 1's dashboard entry surface): **pass** —
+  coherence: looks coherent.
+- 1. Entry button + open: **pass** — coherence: looks coherent (unobtrusive
+     header button → dialog with title, resolved path, content, toolbar).
+- 2. Edit + save round-trip (incl. reopen shows saved content): **pass** —
+     coherence: looks coherent (screenshot: dialog reads as intended).
+- 3. Tag-wrap freeform (inline wrap + selection restored): **pass**.
+- 4. Tag-wrap snippet button (block insert at cursor): **pass**.
+- 5. Cancel / discard-confirm (Keep editing, Esc veto, Discard, disk
+     unchanged): **pass** — coherence: looks off on one point → fixed-inline
+     below.
+
+**Fixed-inline:** a reopened dialog kept the tag toolbar's input open and
+pre-filled with the previous tag name (dialog-local `tagInputVisible` /
+`tagName` were never reset on close). Fix: reset both when the dialog closes
+(`ConfigFileEditor.svelte`, the open-effect's `!open` branch). Note for
+cleanup's DR consideration: per-open UI state should reset alongside the
+store's per-file state. The fix is applied but unpinned and un-re-verified
+(close-out scope excluded both).
 
 ## Plan Updates
 
-(filled after execution)
+- **Added** journey 13 — AGENTS.md editor (home button → config-file editor
+  dialog → edit/save → tag-wrap toolbar → cancel/discard), driver
+  `tools/manual-test/agents-md-editor-smoke/`. This topic's own primary
+  journey, promoted during this run.
 
 ## Open Issues
 
-(filled after execution)
+- The toolbar-residue fix (above) is applied but not pinned by a component
+  test and the smoke was not re-run against it; the driver has no
+  reopen-residue assertion yet.

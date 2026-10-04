@@ -259,6 +259,19 @@ are the multi-repo model; the manager is the dashboard's second half.
 **Driver:** `tools/manual-test/project-management-smoke/` (real sandboxed
 server + `agent-browser` + a second WebSocket probe client).
 
+## 13. AGENTS.md editor
+
+**What:** The home-page "Agent instructions" button opens the config-file
+editor dialog on `~/.pi/agent/AGENTS.md` — raw markdown editor with a tag-wrap
+toolbar (freeform tag input + `tagSnippets` snippet buttons), save
+(last-write-wins), and cancel with a discard confirmation.
+
+**Why:** The first-class config-editing surface (first citizen of the future
+server-configuration workflow), added by the `agents-md-editor` topic.
+
+**Driver:** `tools/manual-test/agents-md-editor-smoke/` (sandboxed pimote +
+`agent-browser`).
+
 ## Automation gap (recorded, not an action item for this topic)
 
 Journeys 2–7 currently have no automation driver of their own. This is a
