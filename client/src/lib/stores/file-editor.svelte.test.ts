@@ -59,6 +59,7 @@ describe('openFile', () => {
 
     await pending;
     expect(store.loading).toBe(false);
+    expect(store.loaded).toBe(true);
     expect(store.exists).toBe(true);
     expect(store.content).toBe('# Agents\n');
     expect(store.resolvedPath).toBe('/home/u/.pi/agent/AGENTS.md');
@@ -85,6 +86,7 @@ describe('openFile', () => {
     expect(store.open).toBe(true);
     expect(store.error).toBe('EACCES');
     expect(store.content).toBe('');
+    expect(store.loaded).toBe(false);
   });
 
   it('ignores a stale response from a superseded open', async () => {
@@ -227,6 +229,37 @@ describe('save', () => {
     expect(await store.save()).toBe(false);
     expect(calls).toEqual([]);
   });
+
+  it('refuses to save after a failed load (never truncates the file)', async () => {
+    const { send, calls } = fakeSend(async (command) => {
+      if (command.type !== 'file_get') return { id: command.id ?? '', success: true, data: {} };
+      if (command.path === '~/.config/pimote/config.json') return { id: command.id ?? '', success: true, data: { path: '/c', exists: false, content: '' } };
+      return { id: command.id ?? '', success: false, error: 'EACCES' };
+    });
+    const store = new FileEditorStore(send);
+    await store.openFile('~/.pi/agent/AGENTS.md', 'Agent instructions');
+
+    expect(await store.save()).toBe(false);
+    expect(calls.filter((c) => c.type === 'file_put')).toEqual([]);
+  });
+
+  it('refuses to save while the load is still in flight', async () => {
+    let resolveGet: (r: PimoteResponse) => void = () => {};
+    const pendingGet = new Promise<PimoteResponse>((resolve) => (resolveGet = resolve));
+    const { send, calls } = fakeSend(async (command) => {
+      if (command.type !== 'file_get') return { id: command.id ?? '', success: true, data: {} };
+      if (command.path === '~/.config/pimote/config.json') return { id: command.id ?? '', success: true, data: { path: '/c', exists: false, content: '' } };
+      return pendingGet;
+    });
+    const store = new FileEditorStore(send);
+    const opening = store.openFile('~/.pi/agent/AGENTS.md', 'Agent instructions');
+
+    expect(await store.save()).toBe(false);
+    expect(calls.filter((c) => c.type === 'file_put')).toEqual([]);
+
+    resolveGet(fileGetResponse('base'));
+    await opening;
+  });
 });
 
 describe('close', () => {
@@ -239,6 +272,7 @@ describe('close', () => {
 
     store.close();
     expect(store.open).toBe(false);
+    expect(store.loaded).toBe(false);
     expect(store.content).toBe('');
     expect(store.dirty).toBe(false);
     expect(store.error).toBeNull();

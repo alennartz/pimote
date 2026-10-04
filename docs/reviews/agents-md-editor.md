@@ -15,7 +15,7 @@ The plan was implemented faithfully — every architecture item (protocol comman
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `client/src/lib/stores/file-editor.svelte.ts:77-79, 116-135`; `client/src/lib/components/ConfigFileEditor.svelte:100-102, 139`
-- **Status:** open
+- **Status:** resolved
 
 `openFile` resets `content` and `baseline` to `''`. If `file_get` fails (permission error, non-UTF-8 file, dropped socket) or hasn't returned yet, `content` stays `''`, `dirty` is false, and Save stays enabled — `save()` checks neither `loading` nor `error`. One click sends `file_put` with `''` and truncates an existing `AGENTS.md`. After a failed load the header also says "New file — it will be created on save," inviting the overwrite. Save should require a completed successful load.
 
@@ -24,7 +24,7 @@ The plan was implemented faithfully — every architecture item (protocol comman
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `client/src/lib/components/ConfigFileEditor.svelte:80-82, 90`
-- **Status:** open
+- **Status:** resolved
 
 The main dialog takes `open={fileEditorStore.open}` one-way. Esc or an overlay click closes it inside bits-ui (whose root setter overrides the unbound prop locally to `false`), then `onOpenChange(false)` runs. With unsaved edits, `requestClose()` opens the confirmation dialog and leaves `fileEditorStore.open` true — the editor is now hidden while the store says it is open. "Keep editing" doesn't bring it back; the header button calls `openFile`, which sets `open = true`, but that is no change, so the dialog never re-renders. The edits are lost until a page reload. Tests miss this because they drive Cancel, which bypasses bits-ui.
 
@@ -42,7 +42,7 @@ Nothing in the plan covers app-name branding, yet commit `fcc6f15` bundles `bran
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/stores/file-editor.svelte.ts:126-127`; `client/src/lib/components/ConfigFileEditor.svelte:122-123`
-- **Status:** open
+- **Status:** resolved
 
 The editor accepts typing while the file is loading. When `loadFile` resolves it overwrites both `content` and `baseline`, so those keystrokes vanish with no unsaved-changes warning. Easy to hit on a slow mobile link.
 
@@ -51,7 +51,7 @@ The editor accepts typing while the file is loading. When `loadFile` resolves it
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/components/ConfigFileEditor.svelte:21-27`
-- **Status:** open
+- **Status:** resolved
 
 The `import()` of `ExtensionCodeEditor` has no catch. A chunk-load failure (stale PWA chunk after a deploy, or offline) yields an unhandled rejection and a dialog stuck on "Loading editor…" with no error state — while, per finding 1, Save can still write whatever is in `content`.
 
@@ -60,7 +60,7 @@ The `import()` of `ExtensionCodeEditor` has no catch. A chunk-load failure (stal
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/file-edit.ts:51-63`
-- **Status:** open
+- **Status:** resolved
 
 The temp-file-plus-rename write replaces the path itself. If `AGENTS.md` is a symlink into a dotfiles repo (a common setup), it becomes a regular file and the real target never receives the edit. The write also drops the original mode and owner — the temp file gets `0666 & ~umask`, so a `0600` file such as `config.json` (which holds `vapidPrivateKey`) becomes world-readable under a typical umask. Resolve with `realpath` and copy the mode across, or write in place.
 
@@ -78,7 +78,7 @@ The plan's Dashboard entry step specifies one icon button. The same commit also 
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/stores/file-editor.svelte.ts:59-71, 101-113`
-- **Status:** open
+- **Status:** resolved
 
 `openFile` and `close` each inline the identical per-file state reset (`loading/saving/exists/path/resolvedPath/title/content/baseline/error/snippets`), differing only in `open` and the generation bump. The reset should live in one private function; as written, adding a field will drift one of the two paths.
 
@@ -105,7 +105,7 @@ Nothing on the server reads `PimoteConfig.tagSnippets`, so that parsing is dead.
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/components/ConfigFileEditor.svelte:59-64`
-- **Status:** open
+- **Status:** resolved
 
 CodeMirror's default setup already binds this key to "find previous" and doesn't stop the key event from reaching the dialog, so with the editor focused one key press opens both the search panel and the tag input.
 

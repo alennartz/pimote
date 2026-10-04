@@ -79,6 +79,15 @@ function tagInput(): HTMLInputElement | null {
   return document.querySelector('input[aria-label="Tag name"]');
 }
 
+function confirmDialog(): HTMLElement | null {
+  return [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find((d) => d.textContent?.includes('Discard unsaved changes?')) ?? null;
+}
+
+/** The main editor dialog element (as opposed to the confirmation dialog). */
+function editorDialog(): HTMLElement | null {
+  return document.querySelector('.cm-editor')?.closest('[role="dialog"]') ?? null;
+}
+
 async function typeTag(tag: string): Promise<HTMLInputElement> {
   button('Wrap selection with a tag').click();
   await tick();
@@ -193,10 +202,6 @@ describe('ConfigFileEditor', () => {
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: 'edited' } });
     await tick();
 
-    function confirmDialog(): HTMLElement | null {
-      return [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find((d) => d.textContent?.includes('Discard unsaved changes?')) ?? null;
-    }
-
     button('Cancel').click();
     await tick();
     await tick();
@@ -242,5 +247,98 @@ describe('ConfigFileEditor', () => {
       if (!input) throw new Error('tag input not shown');
       expect(document.activeElement).toBe(input);
     });
+  });
+
+  it('ctrl+shift+g with the editor focused does not also trigger find-previous', async () => {
+    const view = await openEditor('# Hello\n');
+
+    view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'G', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    await tick();
+
+    // CodeMirror's Mod-Shift-g (find previous) must not open the search panel.
+    expect(document.querySelector('.cm-panel')).toBeNull();
+    expect(tagInput()).not.toBeNull();
+  });
+
+  it('escape with unsaved edits keeps the dialog open and asks for confirmation', async () => {
+    const view = await openEditor('# Hello\n');
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: 'edited' } });
+    await tick();
+
+    // Esc goes through bits-ui's own close path (unlike Cancel).
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await tick();
+    await tick();
+
+    // The editor dialog must stay open — not close and merely linger in the DOM.
+    expect(editorDialog()?.getAttribute('data-state')).toBe('open');
+    expect(confirmDialog()).not.toBeNull();
+    expect(fileEditorStore.open).toBe(true);
+
+    button('Keep editing').click();
+    await vi.waitFor(() => expect(confirmDialog()).toBeNull());
+
+    // The editor is still there with the unsaved edits intact.
+    expect(document.querySelector('.cm-editor')).not.toBeNull();
+    expect(editorDialog()?.getAttribute('data-state')).toBe('open');
+    expect(fileEditorStore.open).toBe(true);
+    expect(fileEditorStore.content).toBe('edited');
+  });
+
+  it('escape without unsaved changes closes the dialog', async () => {
+    await openEditor('# Hello\n');
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await tick();
+
+    expect(confirmDialog()).toBeNull();
+    expect(fileEditorStore.open).toBe(false);
+  });
+
+  it('keeps the editor unmounted and save disabled until the load completes', async () => {
+    let resolveGet: (r: PimoteResponse) => void = () => {};
+    const pendingGet = new Promise<PimoteResponse>((resolve) => (resolveGet = resolve));
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    component = mount(ConfigFileEditor, { target });
+    await tick();
+    respond((command) => {
+      if (command.type === 'file_get' && command.path === '~/.config/pimote/config.json') {
+        return { id: '1', success: true, data: { path: '/c', exists: false, content: '' } };
+      }
+      if (command.type === 'file_get') return pendingGet;
+      return { id: '1', success: true, data: { path: '/p/AGENTS.md' } };
+    });
+    void fileEditorStore.openFile('~/.pi/agent/AGENTS.md', 'Agent instructions');
+    await tick();
+    await tick();
+
+    // While the load is in flight nothing can be typed or saved.
+    expect(document.querySelector('.cm-editor')).toBeNull();
+    expect(button('Save').disabled).toBe(true);
+
+    resolveGet({ id: '1', success: true, data: { path: '/p/AGENTS.md', exists: true, content: '# Hello\n' } });
+    await editor();
+    expect(button('Save').disabled).toBe(false);
+  });
+
+  it('disables save and hides the will-create hint after a failed load', async () => {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    component = mount(ConfigFileEditor, { target });
+    await tick();
+    respond((command) => {
+      if (command.type === 'file_get' && command.path === '~/.config/pimote/config.json') {
+        return { id: '1', success: true, data: { path: '/c', exists: false, content: '' } };
+      }
+      return { id: '1', success: false, error: 'EACCES' };
+    });
+    void fileEditorStore.openFile('~/.pi/agent/AGENTS.md', 'Agent instructions');
+    await vi.waitFor(() => expect(fileEditorStore.error).toBe('EACCES'));
+    await tick();
+
+    expect(document.querySelector('.cm-editor')).toBeNull();
+    expect(button('Save').disabled).toBe(true);
+    expect(document.body.textContent).not.toContain('New file — it will be created on save.');
   });
 });

@@ -35,6 +35,8 @@ export function parseTagSnippets(configText: string): string[] {
 export class FileEditorStore {
   open = $state(false);
   loading = $state(false);
+  /** True only after a completed successful load; saves are refused until then. */
+  loaded = $state(false);
   saving = $state(false);
   exists = $state(false);
   path = $state<string | null>(null);
@@ -58,17 +60,11 @@ export class FileEditorStore {
   /** Opens the dialog on `path` and loads the file. A missing file opens empty (will-create). */
   async openFile(path: string, title: string): Promise<void> {
     const generation = ++this.generation;
+    this.resetFileState();
     this.open = true;
     this.loading = true;
-    this.saving = false;
-    this.exists = false;
     this.path = path;
-    this.resolvedPath = null;
     this.title = title;
-    this.content = '';
-    this.baseline = '';
-    this.error = null;
-    this.snippets = [];
     void this.loadSnippets(generation);
     await this.loadFile(path, generation);
   }
@@ -76,7 +72,9 @@ export class FileEditorStore {
   /** Saves the full content via file_put and closes on success. Returns whether it saved. */
   async save(): Promise<boolean> {
     const path = this.path;
-    if (!this.open || this.saving || path === null) return false;
+    // `loaded` is the truncation guard: after a failed or unfinished load
+    // `content` is '' and saving would empty an existing file.
+    if (!this.open || this.saving || !this.loaded || path === null) return false;
     this.saving = true;
     this.error = null;
     const content = this.content;
@@ -100,9 +98,15 @@ export class FileEditorStore {
   /** Closes the dialog and resets all per-file state. */
   close(): void {
     this.generation += 1;
+    this.resetFileState();
     this.open = false;
+  }
+
+  /** Per-file dialog state, shared by openFile and close so the two can't drift. */
+  private resetFileState(): void {
     this.loading = false;
     this.saving = false;
+    this.loaded = false;
     this.exists = false;
     this.path = null;
     this.resolvedPath = null;
@@ -126,6 +130,7 @@ export class FileEditorStore {
       this.content = data.content;
       this.baseline = data.content;
       this.resolvedPath = data.path;
+      this.loaded = true;
     } catch (cause) {
       if (generation !== this.generation) return;
       this.error = cause instanceof Error ? cause.message : 'Failed to read file';

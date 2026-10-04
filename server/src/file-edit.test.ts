@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm, readdir, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readdir, readFile, symlink, lstat, stat, chmod } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { resolveFilePath, readEditableFile, writeEditableFile } from './file-edit.js';
@@ -125,6 +125,42 @@ describe('writeEditableFile', () => {
     const filePath = join(tempDir, 'doc.md');
     await writeEditableFile(filePath, 'content');
     expect(await readdir(tempDir)).toEqual(['doc.md']);
+  });
+
+  it('writes through a symlink, keeping the link and updating the real target', async () => {
+    await mkdir(join(tempDir, 'dotfiles'));
+    const realPath = join(tempDir, 'dotfiles', 'AGENTS.md');
+    await writeFile(realPath, 'old', 'utf-8');
+    const linkPath = join(tempDir, 'AGENTS.md');
+    await symlink(realPath, linkPath);
+
+    await writeEditableFile(linkPath, 'new');
+
+    expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+    expect(await readFile(realPath, 'utf-8')).toBe('new');
+  });
+
+  it('writes through a dangling symlink instead of replacing it', async () => {
+    await mkdir(join(tempDir, 'dotfiles'));
+    const realPath = join(tempDir, 'dotfiles', 'AGENTS.md');
+    const linkPath = join(tempDir, 'AGENTS.md');
+    await symlink(realPath, linkPath);
+
+    await writeEditableFile(linkPath, 'new');
+
+    expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+    expect(await readFile(realPath, 'utf-8')).toBe('new');
+  });
+
+  it('preserves the existing file mode', async () => {
+    const filePath = join(tempDir, 'config.json');
+    await writeFile(filePath, '{}', 'utf-8');
+    await chmod(filePath, 0o600);
+
+    await writeEditableFile(filePath, '{"a":1}');
+
+    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+    expect(await readFile(filePath, 'utf-8')).toBe('{"a":1}');
   });
 
   it('leaves no temp files behind when the write fails', async () => {
