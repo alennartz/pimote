@@ -213,6 +213,34 @@ describe('scanFolderModel — classification', () => {
     expect(paths(tree.occurrences)).toEqual(['/root1/w/inner']);
   });
 
+  it('captures quoted YAML strings and ignores other agent-definition keys', async () => {
+    const tree = await scan(['/root1'], {
+      '/root1': dir({ p: dir({ 'AGENTS.md': file('---\nname: "007"\ndescription: "A name: with punctuation"\ntools: [read, bash]\nmodel: example\n---\nprompt') }) }),
+    });
+    expect(tree.occurrences[0].entry.persona).toEqual({ name: '007', description: 'A name: with punctuation' });
+  });
+
+  it.each(['123', 'true', 'null', '[agent]', '{key: value}'])('rejects a non-string YAML name (%s)', async (name) => {
+    const tree = await scan(['/root1'], {
+      '/root1': dir({ w: dir({ 'AGENTS.md': file(`---\nname: ${name}\n---\n`), inner: repo() }) }),
+    });
+    expect(paths(tree.occurrences)).toEqual(['/root1/w/inner']);
+  });
+
+  it.each(['---\nname: missing-close\n', '---\nname: [broken\n---\n'])('falls back to git for malformed front matter (%s)', async (content) => {
+    const tree = await scan(['/root1'], {
+      '/root1': dir({ w: dir({ '.git': dir(), 'AGENTS.md': file(content) }) }),
+    });
+    expect(tree.occurrences[0].entry).toEqual({ path: '/root1/w', name: 'w', nature: 'code' });
+  });
+
+  it('classifies marker-less AGENTS.md plus git as code', async () => {
+    const tree = await scan(['/root1'], {
+      '/root1': dir({ w: dir({ '.git': dir(), 'AGENTS.md': file('project instructions') }) }),
+    });
+    expect(tree.occurrences[0].entry).toEqual({ path: '/root1/w', name: 'w', nature: 'code' });
+  });
+
   it('does not treat package.json as an inclusion marker', async () => {
     const tree = await scan(['/root1'], {
       '/root1': dir({
@@ -233,7 +261,6 @@ describe('scanFolderModel — pruning', () => {
         build: dir({ deep: repo() }),
         target: dir({ deep: repo() }),
         '.venv': dir({ deep: repo() }),
-        '.git': dir({ deep: repo() }),
         plain: dir({ repo: repo() }),
       }),
     });
@@ -355,6 +382,30 @@ describe('scanFolderModel — shortcuts', () => {
     expect(tree.occurrences[0].children).toEqual([]);
   });
 
+  it('recognizes a sibling with a shared path prefix as outside the included folder', async () => {
+    const tree = await scan(['/root1/a'], {
+      '/root1': dir({ a: dir({ '.git': dir(), sibling: link('/root1/ab'), self: link('/root1/a') }), ab: repo() }),
+    });
+    expect(tree.occurrences[0].children.map(shape)).toEqual([{ path: '/root1/a/sibling', via: 'shortcut', entryPath: '/root1/ab' }]);
+  });
+
+  it('follows in-tree symlinks during skipped descent without an out-of-tree condition', async () => {
+    const tree = await scan(['/root1'], {
+      '/root1': dir({ alias: link('/root1/w'), w: dir({ r: repo() }) }),
+    });
+    expect(paths(tree.occurrences).sort()).toEqual(['/root1/alias/r', '/root1/w/r']);
+    expect(tree.occurrences.every((o) => o.via === 'scan')).toBe(true);
+    expect(tree.occurrences[0].entry).toBe(tree.occurrences[1].entry);
+  });
+
+  it('prunes while descending through a skipped shortcut target', async () => {
+    const tree = await scan(['/root1'], {
+      '/root1': dir({ a: dir({ '.git': dir(), link: link('/ext') }) }),
+      '/ext': dir({ node_modules: dir({ hidden: repo() }), w: dir({ r: repo() }) }),
+    });
+    expect(tree.occurrences[0].children.map(shape)).toEqual([{ path: '/root1/a/link/w/r', via: 'shortcut', entryPath: '/ext/w/r' }]);
+  });
+
   it('follows out-of-tree symlinks during skipped descent like ordinary folders', async () => {
     const tree = await scan(['/root1'], {
       '/root1': dir({ s: dir({ link: link('/ext/x') }) }),
@@ -374,6 +425,14 @@ describe('scanFolderModel — shortcuts', () => {
 });
 
 describe('scanFolderModel — identity', () => {
+  it('terminates symlink cycles through skipped directories without losing healthy folders', async () => {
+    const tree = await scan(['/root1'], {
+      '/root1': dir({ w: dir({ back: link('/root1'), r: repo() }) }),
+    });
+    expect(paths(tree.occurrences)).toEqual(['/root1/w/r']);
+    expect(() => JSON.stringify(tree)).not.toThrow();
+  });
+
   it('shares one entry across shortcut occurrences and takes children from the first discovery', async () => {
     const tree = await scan(['/root1'], {
       '/root1': dir({ a: dir({ '.git': dir(), l1: link('/ext/t'), l2: link('/ext/t') }) }),
@@ -389,7 +448,7 @@ describe('scanFolderModel — identity', () => {
     // One entry, one identity — later encounters reference the same entry.
     expect(first.entry.path).toBe('/ext/t');
     expect(second.entry.path).toBe('/ext/t');
-    expect(second.entry).toEqual(first.entry);
+    expect(second.entry).toBe(first.entry);
 
     // Children come from the first discovery: both occurrences show the
     // target's own shortcuts (paths are deliberately not asserted here —
@@ -417,11 +476,25 @@ describe('scanFolderModel — identity', () => {
     // The cycle closes on the already-discovered entry and discovery stops there.
     const backToA = toB.children[0];
     expect(shape(backToA)).toEqual({ path: '/root1/a/link/back', via: 'shortcut', entryPath: '/root1/a' });
-    expect(backToA.entry).toEqual(a.entry);
+    expect(backToA.entry).toBe(a.entry);
+    expect(backToA.children).toEqual([]);
+    expect(() => JSON.stringify(tree)).not.toThrow();
   });
 });
 
 describe('scanFolderModel — roots', () => {
+  it('classifies configured roots normally and stops at included roots', async () => {
+    const tree = await scan(['/code', '/persona'], {
+      '/code': dir({ '.git': dir(), nested: repo() }),
+      '/persona': dir({ 'AGENTS.md': marker('chief'), nested: repo() }),
+    });
+
+    expect(paths(tree.occurrences).sort()).toEqual(['/code', '/persona']);
+    expect(tree.occurrences.find((o) => o.path === '/code')?.entry.nature).toBe('code');
+    expect(tree.occurrences.find((o) => o.path === '/persona')?.entry.nature).toBe('persona');
+    expect(tree.occurrences.every((o) => o.children.length === 0)).toBe(true);
+  });
+
   it('scans every configured root', async () => {
     const tree = await scan(['/root1', '/root2'], {
       '/root1': dir({ r1: repo() }),
@@ -442,5 +515,69 @@ describe('scanFolderModel — roots', () => {
       '/root1': dir({ a: dir({ b: dir({ c: dir() }) }) }),
     });
     expect(tree).toEqual({ occurrences: [] });
+  });
+});
+
+describe('scanFolderModel — filesystem failures', () => {
+  it('warns and skips missing/non-directory roots while scanning healthy roots', async () => {
+    const warnings: { path: string }[] = [];
+    const tree = await scanFolderModel({
+      roots: ['/missing', '/file', '/root1'],
+      fs: memFs({ '/file': file(), '/root1': dir({ r: repo() }) }),
+      onWarning: (warning) => warnings.push(warning),
+    });
+    expect(paths(tree.occurrences)).toEqual(['/root1/r']);
+    expect(warnings.some((w) => w.path === '/missing')).toBe(true);
+    expect(warnings.some((w) => w.path === '/file')).toBe(true);
+  });
+
+  it('warns and skips dangling/looping shortcuts without hiding healthy shortcuts', async () => {
+    const warnings: { path: string }[] = [];
+    const tree = await scanFolderModel({
+      roots: ['/root1'],
+      fs: memFs({
+        '/root1': dir({ a: dir({ '.git': dir(), dangling: link('/missing'), loop: link('/loop'), good: link('/ext') }) }),
+        '/loop': link('/loop'),
+        '/ext': repo(),
+      }),
+      onWarning: (warning) => warnings.push(warning),
+    });
+    expect(tree.occurrences[0].children.map(shape)).toEqual([{ path: '/root1/a/good', via: 'shortcut', entryPath: '/ext' }]);
+    expect(warnings.some((w) => w.path === '/root1/a/dangling')).toBe(true);
+    expect(warnings.some((w) => w.path === '/root1/a/loop')).toBe(true);
+  });
+
+  it.each(['readdir', 'lstat', 'realpath'] as const)('warns on %s failure and preserves healthy siblings', async (operation) => {
+    const fs = memFs({ '/root1': dir({ bad: dir({ r: repo() }), good: repo() }) });
+    const original = fs[operation];
+    const error = new Error('permission denied');
+    fs[operation] = (async (path: string) => {
+      if (path === '/root1/bad') throw error;
+      return original(path);
+    }) as (typeof fs)[typeof operation];
+    const warnings: { path: string; operation: string; error: unknown }[] = [];
+    const tree = await scanFolderModel({ roots: ['/root1'], fs, onWarning: (warning) => warnings.push(warning) });
+    expect(paths(tree.occurrences)).toEqual(['/root1/good']);
+    expect(warnings).toContainEqual({ path: '/root1/bad', operation, error });
+  });
+
+  it('warns on unreadable AGENTS.md and falls back to git or skipped descent', async () => {
+    const fs = memFs({
+      '/root1': dir({
+        code: dir({ '.git': dir(), 'AGENTS.md': marker('unreadable') }),
+        skipped: dir({ 'AGENTS.md': marker('unreadable'), r: repo() }),
+      }),
+    });
+    const error = new Error('permission denied');
+    fs.readFile = async () => {
+      throw error;
+    };
+    const warnings: { path: string; operation: string; error: unknown }[] = [];
+    const tree = await scanFolderModel({ roots: ['/root1'], fs, onWarning: (warning) => warnings.push(warning) });
+    expect(paths(tree.occurrences).sort()).toEqual(['/root1/code', '/root1/skipped/r']);
+    expect(tree.occurrences.every((o) => o.entry.nature === 'code')).toBe(true);
+    for (const path of ['/root1/code/AGENTS.md', '/root1/skipped/AGENTS.md']) {
+      expect(warnings).toContainEqual({ path, operation: 'readFile', error });
+    }
   });
 });

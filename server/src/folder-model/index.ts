@@ -31,13 +31,13 @@ export interface FolderEntry {
 
 /** One way the sparse tree reaches an entry. */
 export interface FolderOccurrence {
-  /** Where it appears: real directory path (via 'scan') or symlink path (via 'shortcut').
-   *  Skipped path structure is collapsed into occurrence `path` strings — skipped
-   *  folders never appear as nodes. */
+  /** Reach path: walked path for scans; symlink-based path for shortcuts.
+   * Skipped segments remain inline, including followed symlinks. Not necessarily
+   * canonical. Reused children retain their first-discovery reach paths. */
   path: string;
   via: 'scan' | 'shortcut';
   entry: FolderEntry;
-  /** Shortcut occurrences at this folder's top level. */
+  /** First-discovery shortcuts; in-progress cycle back-references are leaves. */
   children: FolderOccurrence[];
 }
 
@@ -55,9 +55,17 @@ export interface FolderFs {
   readFile(path: string): Promise<string>;
 }
 
+export interface FolderScanWarning {
+  path: string;
+  operation: 'readdir' | 'lstat' | 'realpath' | 'readFile';
+  error: unknown;
+}
+
 export interface ScanFolderModelOptions {
   roots: string[];
   fs?: FolderFs;
+  /** Local fs failures report here; defaults to console.warn. */
+  onWarning?: (warning: FolderScanWarning) => void;
 }
 
 /**

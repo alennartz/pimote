@@ -40,11 +40,12 @@ export interface FolderEntry {
 }
 
 export interface FolderOccurrence {
-  /** Where it appears: real directory path (via 'scan') or symlink path (via 'shortcut'). */
+  /** Reach path: walked scan path or symlink-based shortcut path, skipped segments inline.
+   * Reused children retain first-discovery reach paths; entry.path alone is canonical. */
   path: string;
   via: 'scan' | 'shortcut';
   entry: FolderEntry;
-  /** Shortcut occurrences at this folder's top level. */
+  /** First-discovery shortcuts; in-progress cycle back-references are leaves. */
   children: FolderOccurrence[];
 }
 
@@ -57,21 +58,35 @@ export interface FolderFs {
   readdir(path: string): Promise<Dirent[]>;
   lstat(path: string): Promise<Stats>;
   realpath(path: string): Promise<string>;
+  readFile(path: string): Promise<string>; // UTF-8 AGENTS.md contents
 }
 
-export function scanFolderModel(options: { roots: string[]; fs?: FolderFs }): Promise<SparseTree>;
+export interface FolderScanWarning {
+  path: string;
+  operation: 'readdir' | 'lstat' | 'realpath' | 'readFile';
+  error: unknown;
+}
+
+export interface ScanFolderModelOptions {
+  roots: string[];
+  fs?: FolderFs;
+  onWarning?: (warning: FolderScanWarning) => void; // defaults to console.warn
+}
+
+export function scanFolderModel(options: ScanFolderModelOptions): Promise<SparseTree>;
 ```
 
 **Discovery contract** (what the tests pin down):
 
-1. From each scan root, walk directories; prune `node_modules`, `.git`, `dist`, `build`, `target`, `.venv` anywhere below a root.
+1. Classify each scan root normally (no root exception), then walk directories when skipped; prune `node_modules`, `.git`, `dist`, `build`, `target`, `.venv` anywhere below a root. `.git` descent pruning is effectively unreachable: its presence includes its parent before descent. The configured root itself is not pruned by basename.
 2. Classification, in order: `AGENTS.md` beginning with a YAML front-matter block (`---` … `---`) containing a string `name:` key → **persona** (marker; `name`/`description` captured into `persona`); else a `.git` entry (directory _or_ file) → **code**; else **skipped** → descend into it.
 3. Marker wins over git when both are present. A marker-less, git-less `AGENTS.md` includes nothing.
 4. Once a folder is **included**, descent stops. Its top-level entries that are symlinks to directories whose real path lies outside the folder become **shortcut occurrences**.
 5. Entering a shortcut restarts discovery at the target: classify the target; if skipped, descend through it; its own shortcuts recur the same way.
 6. Symlinks found while descending through **skipped** folders are followed like ordinary folders — no out-of-tree condition there.
-7. Identity is the canonical real path; each entry is discovered once. Later encounters emit occurrences referencing the same entry (children come from the first discovery). Cycles terminate by this rule.
-8. Skipped path structure is collapsed into occurrence `path` strings — skipped folders never appear as nodes.
+7. Identity is the canonical real path; each entry is discovered once. Later encounters reference the same entry object. Completed entries reuse first-discovery children (including their reach paths); encounters with an in-progress entry emit leaf occurrences (`children: []`). Cycles terminate and the result remains finite and JSON-safe. Track skipped directories canonically too to terminate skipped-directory cycles, without losing later non-cyclic reach occurrences.
+8. Skipped path structure is collapsed into occurrence `path` strings — skipped folders never appear as nodes. Occurrence paths record reach, not identity: followed-symlink segments survive in scan paths; shortcut descendants extend the symlink reach path.
+9. Filesystem failures are local: missing/non-directory roots, dangling/looping symlinks, unreadable directories and unreadable `AGENTS.md` warn via `onWarning` (default `console.warn`) and do not hide healthy siblings. An unreadable marker behaves as absent, allowing git fallback or skipped descent. Malformed YAML, an unclosed front-matter block, or a non-string YAML `name` is no marker and falls back to git; quoted YAML strings are accepted.
 
 **Wire — `FolderInfo`** (`shared/src/protocol.ts`, renamed from `ProjectInfo`):
 
@@ -93,6 +108,14 @@ interface FolderInfo {
 **Registry seam** (renamed from `ProjectRegistryPort`):
 
 ```ts
+interface FolderUpdatePatch {
+  folderPath: string;
+  favorite?: boolean;
+  archived?: boolean;
+  addTags?: string[];
+  removeTags?: string[];
+}
+
 interface FolderRegistryPort {
   list(): Promise<FolderInfo[]>; // overrides merged over all included entries
   update(patch: FolderUpdatePatch): Promise<void>; // keyed by canonical path
@@ -148,13 +171,15 @@ interface ManagerToolContext {
 
 ### Test Files
 
-- `server/src/folder-model/folder-model.test.ts` — 23 behavioral tests of `scanFolderModel` against an in-memory `FolderFs` fake (deterministic, no real filesystem): classification taxonomy, pruning, sparse descent, shortcut occurrences and recursion, visit-once identity, multi-root and empty boundaries. All 23 are red at this commit (the stub throws `"not implemented"`); the 694 pre-existing tests stay green.
+- `server/src/folder-model/folder-model.test.ts` — 43 behavioral cases of `scanFolderModel` against an in-memory `FolderFs` fake (deterministic, no real filesystem): classification taxonomy, YAML boundaries, pruning, sparse descent, shortcut occurrences and recursion, visit-once identity, included roots, multi-root and empty boundaries, and local filesystem failure warnings. All 43 remain red after review (the stub throws `"not implemented"`); this is the expected Red Gate, not a review defect.
+
+**Approved scope:** this phase pins the scanner seam. Registry merge (including personas), hub materialization, config, manager tool wiring, and UI icon boundary tests will be written red-green during implementation against the Interfaces above. Persona artifact memory and manager lifecycle remain outside this increment.
 
 ### Behaviors Covered
 
 #### Classification (discovery contract rules 2–3)
 
-- A folder whose `AGENTS.md` begins with a YAML front-matter block containing a `name:` key is a persona: the entry carries `persona` with the front-matter name and description (description omitted when absent); `name` is the folder's basename, never the persona name; extra front-matter keys are ignored.
+- A folder whose `AGENTS.md` begins with a YAML front-matter block containing a string `name:` key is a persona: the entry carries `persona` with the front-matter name and description (description omitted when absent); `name` is the folder's basename, never the persona name; extra front-matter keys are ignored.
 - A folder with a `.git` directory or a `.git` file is code; code entries carry no `persona`.
 - Marker wins over git when both are present.
 - Front matter without a `name:` key, an `AGENTS.md` without front matter, and a front-matter block that does not begin the file are not markers: the folder stays skipped and descent continues through it.
@@ -162,7 +187,7 @@ interface ManagerToolContext {
 
 #### Pruning (rule 1)
 
-- `node_modules`, `.git`, `dist`, `build`, `target`, `.venv` below a root are never entered — folders hidden inside them are undiscovered — while sibling folders are found normally.
+- `node_modules`, `dist`, `build`, `target`, `.venv` below a root are never entered — folders hidden inside them are undiscovered — while sibling folders are found normally. `.git` is a classification marker before descent, so no contradictory fixture treats its parent as skipped.
 - Pruning applies at any depth below a root.
 
 #### Sparse descent (rules 3, 8)
@@ -191,9 +216,19 @@ interface ManagerToolContext {
 
 ### Contract interpretations pinned by these tests
 
-Flagged for review — the plan text admits more than one reading at these points:
+Approved during test review — the architecture above now incorporates these interpretations:
 
 1. **`FolderFs.readFile`** added (see Interface Files) — the marker contract cannot be expressed through `readdir`/`lstat`/`realpath` alone.
 2. **Occurrence `path` is the reach path.** Scanned occurrences use the walked path from the root (skipped and followed-symlink segments inline); shortcut occurrences extend their parent occurrence's path. This is what makes rule 8 ("skipped path structure is collapsed into occurrence `path` strings") hold in the two edge cases — descent through a skipped-context symlink, and a shortcut whose target has skipped structure — where the type comment's "real directory path / symlink path" is too terse.
-3. **Rule 7's "(children come from the first discovery)"** read as: later occurrences carry the first discovery's children (not leaf stubs, not recomputed).
-4. **`FolderUpdatePatch`** shape was not given in the plan; modeled as the `ProjectUpdatePatch` rename keyed by `folderPath` (`favorite`/`archived`/`addTags`/`removeTags`).
+3. **Rule 7's "(children come from the first discovery)"**: completed entries carry first-discovery children with original reach paths; in-progress back-references are leaves. Same-entry references use object identity; skipped-directory cycles also terminate.
+4. **`FolderUpdatePatch`** shape was not given in the plan; approved as the `ProjectUpdatePatch` rename keyed by `folderPath` (`favorite`/`archived`/`addTags`/`removeTags`).
+5. **Roots, failures, and scope:** roots classify normally; local filesystem failures warn through the new optional warning callback; this gate covers the scanner only, with other planned boundary tests deferred to implementation.
+
+### Review-added coverage
+
+- Quoted YAML strings, full agent-definition extra keys, non-string YAML names, malformed/unclosed blocks, and marker-less git fallback.
+- Included code/persona roots, shared-prefix sibling containment, in-tree skipped-context symlinks, pruning under skipped shortcut targets.
+- Shared entry object identity, finite/JSON-safe included cycles, and skipped-directory cycle termination.
+- Missing/non-directory roots; dangling/looping shortcuts; local `readdir`/`lstat`/`realpath` failures; unreadable markers with git fallback or continued descent. Warning assertions use the public callback, not global console spies.
+
+**Review status:** approved
