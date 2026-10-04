@@ -92,6 +92,8 @@ The reset is extracted into a private `resetFileState()` called by both `openFil
 
 Marked `dismissed` in the old review doc with no stated reason and no code change. The dead server-side parse and the divergent client re-parse both remain. The rationale should be written down — "keep the config type documented" is a plausible one, but it is not recorded anywhere.
 
+**Dismissal rationale (recorded per this re-review):** planned duplication per the plan's snippet-transport section — no server-info channel exists, so the client re-parses `config.json` leniently.
+
 ### 10. `resolveFilePath` is labelled "Pure" but isn't, and accepts paths the protocol forbids
 
 - **Category:** code correctness
@@ -117,7 +119,7 @@ The shortcut is now handled by a capture-phase `keydown` listener on the dialog 
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/components/ConfigFileEditor.svelte:90-96, 101-106`
-- **Status:** open
+- **Status:** resolved
 
 `requestClose` and `onDismissAttempt` each inline the same operation — `confirmDiscardOpen = true; fileEditorStore.open = true` — with divergent bodies. In `requestClose` the `fileEditorStore.open = true` is a no-op: its only caller is the Cancel button (`:179`), reached with the dialog already open (`onOpenChange(false)` can't arrive with dirty state, since Esc/overlay are vetoed). Its comment ("keep the store and dialog open together") implies it is load-bearing. Per design doctrine each business operation belongs in one function; the two close paths drifting apart is exactly what finding 2 was, so collapsing them now is cheap insurance.
 
@@ -126,7 +128,7 @@ The shortcut is now handled by a capture-phase `keydown` listener on the dialog 
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/components/ConfigFileEditor.test.ts`; `client/src/lib/components/ConfigFileEditor-load-failure.test.ts`; `server/src/file-edit.test.ts`
-- **Status:** open
+- **Status:** resolved
 
 The added coverage is good but misses: overlay-click with unsaved edits (finding 2's second trigger), retrying the editor load after closing and reopening (finding 5's recovery path), and a symlink chain with a relative link target (handled correctly in `realPathForWrite` via `resolve(dirname(current), link)`, but unpinned).
 

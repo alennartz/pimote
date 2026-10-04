@@ -4,7 +4,9 @@ import { mount, tick, unmount } from 'svelte';
 import type { PimoteCommand, PimoteResponse } from '@pimote/shared';
 
 // The lazy editor chunk fails to load (stale PWA chunk after a deploy, offline).
+const mockState = vi.hoisted(() => ({ attempts: 0 }));
 vi.mock('$lib/components/ExtensionCodeEditor.svelte', () => {
+  mockState.attempts += 1;
   throw new Error('chunk load failed');
 });
 
@@ -39,6 +41,7 @@ let component: ReturnType<typeof mount> | undefined;
 
 beforeEach(() => {
   fileEditorStore.close();
+  mockState.attempts = 0;
   vi.mocked(connection.send).mockImplementation(async (command: PimoteCommand): Promise<PimoteResponse> => {
     if (command.type === 'file_get') {
       return { id: '1', success: true, data: { path: '/p/AGENTS.md', exists: true, content: '# Hello\n' } };
@@ -66,5 +69,25 @@ describe('ConfigFileEditor editor chunk failure', () => {
       expect(document.body.textContent).toContain('The editor failed to load');
     });
     expect(document.body.textContent).not.toContain('Loading editor…');
+  });
+
+  it('clears the error on close and retries the import on reopen', async () => {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    component = mount(ConfigFileEditor, { target });
+    await tick();
+    void fileEditorStore.openFile('~/.pi/agent/AGENTS.md', 'Agent instructions');
+    await vi.waitFor(() => expect(mockState.attempts).toBe(1));
+
+    fileEditorStore.close();
+    await tick();
+    void fileEditorStore.openFile('~/.pi/agent/AGENTS.md', 'Agent instructions');
+
+    // Reopening must attempt the import again instead of staying in the
+    // error state forever.
+    await vi.waitFor(() => expect(mockState.attempts).toBe(2));
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain('The editor failed to load');
+    });
   });
 });

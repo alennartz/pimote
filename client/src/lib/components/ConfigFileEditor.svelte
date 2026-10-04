@@ -86,12 +86,10 @@
     void focusTagInput();
   }
 
-  /** Close request (Cancel button): unsaved changes must be confirmed first. */
+  /** Close request (Cancel button or a bits-ui close): unsaved edits must be confirmed first. */
   function requestClose(): void {
     if (fileEditorStore.dirty) {
       confirmDiscardOpen = true;
-      // Decline the close: keep the store and dialog open together.
-      fileEditorStore.open = true;
       return;
     }
     fileEditorStore.close();
@@ -101,8 +99,7 @@
   function onDismissAttempt(event: Event): void {
     if (!fileEditorStore.dirty) return;
     event.preventDefault();
-    confirmDiscardOpen = true;
-    fileEditorStore.open = true;
+    requestClose();
   }
 
   function discardAndClose(): void {

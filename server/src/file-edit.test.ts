@@ -152,6 +152,21 @@ describe('writeEditableFile', () => {
     expect(await readFile(realPath, 'utf-8')).toBe('new');
   });
 
+  it('writes through a dangling symlink with a relative target in a chain', async () => {
+    await mkdir(join(tempDir, 'dotfiles'));
+    await mkdir(join(tempDir, 'links'));
+    // Both links are relative and dangle: the real target is never created first.
+    await symlink(join('..', 'dotfiles', 'AGENTS.md'), join(tempDir, 'links', 'mid'));
+    const linkPath = join(tempDir, 'AGENTS.md');
+    await symlink(join('links', 'mid'), linkPath);
+
+    await writeEditableFile(linkPath, 'new');
+
+    expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+    expect((await lstat(join(tempDir, 'links', 'mid'))).isSymbolicLink()).toBe(true);
+    expect(await readFile(join(tempDir, 'dotfiles', 'AGENTS.md'), 'utf-8')).toBe('new');
+  });
+
   it('preserves the existing file mode', async () => {
     const filePath = join(tempDir, 'config.json');
     await writeFile(filePath, '{}', 'utf-8');

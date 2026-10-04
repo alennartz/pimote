@@ -295,6 +295,33 @@ describe('ConfigFileEditor', () => {
     expect(fileEditorStore.open).toBe(false);
   });
 
+  it('overlay click with unsaved edits keeps the dialog open and asks for confirmation', async () => {
+    const view = await openEditor('# Hello\n');
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: 'edited' } });
+    await tick();
+    // bits-ui's dismissable layer attaches one tick after opening and debounces
+    // outside interactions by 10ms — let both settle before clicking.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Coordinates matter: bits-ui deems a click "truly outside" by rect bounds,
+    // and jsdom rects are all zeros.
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, clientX: 500, clientY: 500 }));
+    await vi.waitFor(() => expect(confirmDialog()).not.toBeNull());
+
+    expect(editorDialog()?.getAttribute('data-state')).toBe('open');
+    expect(fileEditorStore.open).toBe(true);
+    expect(fileEditorStore.content).toBe('edited');
+  });
+
+  it('overlay click without unsaved changes closes the dialog', async () => {
+    await openEditor('# Hello\n');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, clientX: 500, clientY: 500 }));
+    await vi.waitFor(() => expect(fileEditorStore.open).toBe(false));
+    expect(confirmDialog()).toBeNull();
+  });
+
   it('keeps the editor unmounted and save disabled until the load completes', async () => {
     let resolveGet: (r: PimoteResponse) => void = () => {};
     const pendingGet = new Promise<PimoteResponse>((resolve) => (resolveGet = resolve));
