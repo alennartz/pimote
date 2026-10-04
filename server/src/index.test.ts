@@ -86,11 +86,11 @@ vi.mock('./session-manager.js', () => ({
   },
   createManagerSessionFactory: mocks.createManagerSessionFactory,
 }));
-vi.mock('./project-registry.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./project-registry.js')>();
+vi.mock('./folder-registry.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./folder-registry.js')>();
   return {
     ...actual,
-    ProjectRegistry: vi.fn(function () {
+    FolderRegistry: vi.fn(function () {
       return mocks.projectRegistry;
     }),
   };

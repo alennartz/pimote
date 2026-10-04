@@ -9,7 +9,7 @@ import { gitInitDir } from './git-init.js';
  * (each member is an independent git repo whose own AGENTS.md takes
  * precedence), plus `git init` and a .gitignore for the member links — the
  * hub is a self-describing git repo whose members surface as shortcuts.
- * Both `ProjectRegistry.createMultiRepoProject` and the open-time
+ * Both `FolderRegistry.createHub` and the open-time
  * materialization of source-listed hubs render this same layout through this
  * function — user sources never replicate it by hand.
  */

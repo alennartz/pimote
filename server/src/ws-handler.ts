@@ -20,7 +20,7 @@ import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
-import { enrichActiveSessionCounts, isValidProjectName, type ProjectRegistry } from './project-registry.js';
+import { enrichActiveSessionCounts, isValidProjectName, toProjectInfo, type FolderRegistry } from './folder-registry.js';
 import type { ManagerService } from './manager/index.js';
 import type { ProjectCreator } from './project-sources/index.js';
 import type { ManagerSession } from './manager/index.js';
@@ -186,7 +186,7 @@ export class WsHandler {
     private readonly clientRegistry: ClientRegistry,
     private readonly voiceOrchestrator?: VoiceOrchestrator,
     private readonly repoIndex?: RepoIndex,
-    private readonly projectRegistry?: ProjectRegistry,
+    private readonly projectRegistry?: FolderRegistry,
     private readonly managerService?: ManagerService,
     private readonly creators?: ProjectCreator[],
   ) {
@@ -220,9 +220,9 @@ export class WsHandler {
         // ---- Server-level commands ----
         case 'list_projects': {
           const { repoIndex, projectRegistry } = this.requireProjectDeps();
-          const projects = await projectRegistry.list();
-          enrichActiveSessionCounts(projects, this.sessionManager.getAllSessions());
-          this.sendResponse(id, true, { projects, roots: repoIndex.roots });
+          const folders = await projectRegistry.list();
+          enrichActiveSessionCounts(folders, this.sessionManager.getAllSessions());
+          this.sendResponse(id, true, { projects: folders.map(toProjectInfo), roots: repoIndex.roots });
           break;
         }
 
@@ -235,7 +235,7 @@ export class WsHandler {
         case 'update_project': {
           const { projectRegistry } = this.requireProjectDeps();
           await projectRegistry.update({
-            projectPath: command.projectPath,
+            folderPath: command.projectPath,
             favorite: command.favorite,
             archived: command.archived,
             addTags: command.addTags,
@@ -251,14 +251,14 @@ export class WsHandler {
             this.sendResponse(id, false, undefined, 'Root is not a configured project root');
             break;
           }
-          const created = await projectRegistry.createMultiRepoProject(command.name, command.root, command.repoPaths);
+          const created = await projectRegistry.createHub({ name: command.name, root: command.root, memberPaths: command.repoPaths });
           this.sendResponse(id, true, { projectPath: created.path });
           break;
         }
 
         case 'disband_project': {
           const { projectRegistry } = this.requireProjectDeps();
-          await projectRegistry.disband(command.projectPath);
+          await projectRegistry.disbandHub(command.projectPath);
           this.sendResponse(id, true);
           break;
         }
@@ -1722,17 +1722,17 @@ export class WsHandler {
     this.sendEvent(event);
   }
 
-  /** Broadcast the merged project list to ALL connected clients. Used after
+  /** Broadcast the merged folder list to ALL connected clients. Used after
    *  registry mutations (via the registry's onChange in server.ts) and after
    *  create_project (folder creation isn't a registry mutation). */
-  static broadcastProjectsChanged(projectRegistry: ProjectRegistry, sessionManager: PimoteSessionManager, clientRegistry: ClientRegistry): void {
+  static broadcastProjectsChanged(projectRegistry: FolderRegistry, sessionManager: PimoteSessionManager, clientRegistry: ClientRegistry): void {
     void projectRegistry
       .list()
-      .then((projects) => {
+      .then((folders) => {
         // Serve the same enriched view as list_projects — a broadcast with
         // zeroed counts would wipe every live indicator client-side.
-        enrichActiveSessionCounts(projects, sessionManager.getAllSessions());
-        const event: ProjectsChangedEvent = { type: 'projects_changed', projects };
+        enrichActiveSessionCounts(folders, sessionManager.getAllSessions());
+        const event: ProjectsChangedEvent = { type: 'projects_changed', projects: folders.map(toProjectInfo) };
         for (const [, handler] of clientRegistry) {
           handler.sendToClient(event);
         }
@@ -1743,7 +1743,7 @@ export class WsHandler {
   }
 
   /** The project-management wiring; every project/manager command requires it. */
-  private requireProjectDeps(): { repoIndex: RepoIndex; projectRegistry: ProjectRegistry; managerService: ManagerService; creators: ProjectCreator[] } {
+  private requireProjectDeps(): { repoIndex: RepoIndex; projectRegistry: FolderRegistry; managerService: ManagerService; creators: ProjectCreator[] } {
     if (!this.repoIndex || !this.projectRegistry || !this.managerService || !this.creators) {
       throw new Error('Project management is not available on this connection');
     }

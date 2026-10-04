@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { ProjectInfo } from '../../../shared/dist/index.js';
+import type { FolderInfo } from '../../../shared/dist/index.js';
 import { createManagerExtension } from './extension.js';
 import type { DiskSessionRecord, ManagerToolContext, ManagerSessionSummary } from './types.js';
 
@@ -27,7 +27,7 @@ function spyPorts() {
       openSession: vi.fn(async (_folderPath: string, _firstMessage?: string) => 'session-new'),
       archiveSessions: vi.fn(async (_sessionIds: string[]) => []),
     },
-    projects: { list: vi.fn(async () => [] as ProjectInfo[]) },
+    projects: { list: vi.fn(async () => [] as FolderInfo[]) },
     repos: { list: vi.fn(async () => []) },
   };
 }
@@ -36,8 +36,19 @@ function makeContext(ports: ReturnType<typeof spyPorts>): ManagerToolContext {
   return { ...ports, config: { roots: ['/tmp'], idleTimeout: 1_000, bufferSize: 10, port: 3000 } };
 }
 
-function makeProject(path: string): ProjectInfo {
-  return { path, name: path.split('/').pop() ?? path, kind: 'single', activeSessionCount: 0, externalProcessCount: 0 };
+function makeFolder(path: string): FolderInfo {
+  return {
+    path,
+    name: path.split('/').pop() ?? path,
+    nature: 'code',
+    shortcutCount: 0,
+    favorite: false,
+    archived: false,
+    tags: [],
+    missing: false,
+    activeSessionCount: 0,
+    externalProcessCount: 0,
+  };
 }
 
 function makeRecord(overrides: Partial<DiskSessionRecord> & { id: string }): DiskSessionRecord {
@@ -84,7 +95,7 @@ describe('pimote_search_sessions', () => {
 
   it('matches name and firstMessage across every project, newest first, with open state and excerpts', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeProject('/w/alpha'), makeProject('/w/beta')]);
+    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha'), makeFolder('/w/beta')]);
     ports.sessions.listDiskSessions.mockImplementation(async (folderPath: string) => {
       if (folderPath === '/w/alpha') {
         return [
@@ -120,7 +131,7 @@ describe('pimote_search_sessions', () => {
 
   it('honors the limit, capping above the maximum', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeProject('/w/alpha')]);
+    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha')]);
     ports.sessions.listDiskSessions.mockResolvedValue(
       ['a', 'b', 'c'].map((id) => makeRecord({ id, name: `login ${id}`, modified: `2025-06-0${id.charCodeAt(0) - 96}T10:00:00.000Z` })),
     );
@@ -135,7 +146,7 @@ describe('pimote_search_sessions', () => {
 
   it('searches only the given projectPath when provided', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeProject('/w/alpha'), makeProject('/w/beta')]);
+    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha'), makeFolder('/w/beta')]);
     ports.sessions.listDiskSessions.mockResolvedValue([makeRecord({ id: 's1', name: 'login bug' })]);
 
     const result = (await searchTool(ports).execute('call-1', { query: 'login', projectPath: '/w/beta' }, undefined, undefined, {})) as {
@@ -149,7 +160,7 @@ describe('pimote_search_sessions', () => {
 
   it('rejects an unknown projectPath without touching the session port', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeProject('/w/alpha')]);
+    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha')]);
 
     const result = (await searchTool(ports).execute('call-1', { query: 'login', projectPath: '/w/unknown' }, undefined, undefined, {})) as {
       details: { error: string };
@@ -163,7 +174,7 @@ describe('pimote_search_sessions', () => {
 
   it('rejects a whitespace-only query', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeProject('/w/alpha')]);
+    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha')]);
 
     const result = (await searchTool(ports).execute('call-1', { query: '   ' }, undefined, undefined, {})) as { details: { error: string }; isError: boolean };
 
@@ -184,7 +195,7 @@ describe('pimote_start_session', () => {
 
   it('opens a session in a known project and forwards the firstMessage', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeProject('/w/alpha')]);
+    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha')]);
     ports.sessions.openSession.mockResolvedValue('sess-42');
 
     const result = (await startTool(ports).execute('call-1', { projectPath: '/w/alpha', firstMessage: ' fix the flaky test ' }, undefined, undefined, {})) as {
@@ -197,7 +208,7 @@ describe('pimote_start_session', () => {
 
   it('opens a session without a firstMessage when none is given', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeProject('/w/alpha')]);
+    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha')]);
     ports.sessions.openSession.mockResolvedValue('sess-43');
 
     const result = (await startTool(ports).execute('call-1', { projectPath: '/w/alpha' }, undefined, undefined, {})) as { details: { firstMessageSent: boolean } };
@@ -208,7 +219,7 @@ describe('pimote_start_session', () => {
 
   it('rejects an unknown project without opening a session', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeProject('/w/alpha')]);
+    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha')]);
 
     const result = (await startTool(ports).execute('call-1', { projectPath: '/w/unknown' }, undefined, undefined, {})) as { details: { error: string }; isError: boolean };
 

@@ -309,7 +309,7 @@ Source-listed repos/hubs and registry hubs absent on disk get `missing: true`; o
 Persist `hubs` instead of `multiRepo` in the unchanged `registry.json` store location, reading old `multiRepo` documents compatibly. Prefer `hubs` when the new key exists; preserve valid entries, override flags, and user tags, and retain malformed-entry isolation/legacy-order stripping. No store-directory move or bulk migration. Implement `createHub({ name, root, memberPaths }): Promise<FolderInfo>` and `disbandHub(folderPath)` with existing safety/ownership behavior. Source hubs retain the current refusal to disband when there is no persisted registry entry; their UI eligibility does not grant deletion ownership. Keep the active-session enrichment helper typed for FolderInfo and shared by all serve paths.
 
 **Verify:** folder-registry tests exercise code/persona curation, discovered hub collisions, legacy/new persistence, orphan overrides omitted, absent source/registry rows, git-less legacy hubs, required defaults, tags/member chips, createHub's full FolderInfo result, disband safety, notifications, and recovery after failed writes. Existing registry data round-trips without loss.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Rename the wire and WS routes
 

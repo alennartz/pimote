@@ -6,7 +6,8 @@ import { PimoteSessionManager, createManagerSessionFactory } from './session-man
 import { SessionRecords } from './session-records.js';
 import { scanFolderModel, type FolderOccurrence, type FolderScanWarning, type SparseTree } from './folder-model/index.js';
 import { RepoIndex } from './repo-index.js';
-import { ProjectRegistry } from './project-registry.js';
+import { FolderRegistry } from './folder-registry.js';
+import type { FolderModelPort } from './manager/types.js';
 import { loadProjectSources } from './project-sources/index.js';
 import { createBuiltinCreator } from './project-sources/builtin.js';
 import type { ProjectCreator } from './project-sources/index.js';
@@ -47,16 +48,21 @@ export async function main(options: StartOptions = {}) {
 
   const sessionRecords = new SessionRecords();
 
-  // Project management: discovery index over the configured roots plus any
-  // user-registered sources, the persistent curation layer above it, and
-  // the built-in creator backing the dashboard's create-project flow.
+  // Folder management: the on-demand folder-tree port over the configured
+  // roots (a fresh scanFolderModel call per request — no shared scanner
+  // cache), the repo index over the same roots plus any user-registered
+  // sources, the persistent curation layer above them, and the built-in
+  // creator backing the dashboard's create-project flow.
+  const folderTree: FolderModelPort = {
+    tree: () => scanFolderModel({ roots: config.roots }),
+  };
   const repoIndex = new RepoIndex(config.roots);
   const loadedSources = await loadProjectSources(config.projectSourcesDir ?? PIMOTE_PROJECT_SOURCES_DIR);
   for (const source of loadedSources.sources) {
     repoIndex.registerSource(source);
   }
   const creators: ProjectCreator[] = [createBuiltinCreator(), ...loadedSources.creators];
-  const projectRegistry = new ProjectRegistry(repoIndex, PIMOTE_PROJECTS_DIR);
+  const projectRegistry = new FolderRegistry(repoIndex, PIMOTE_PROJECTS_DIR, folderTree);
 
   // Initialize push notification service
   await migratePushSubscriptionStore(LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_PUSH_SUBSCRIPTIONS_PATH);

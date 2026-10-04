@@ -1,6 +1,6 @@
 import { mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { isValidProjectName } from '../project-registry.js';
+import { isValidProjectName } from '../folder-registry.js';
 import type { ProjectCreator } from '@pimote/sdk/projects';
 import { gitInitDir } from './git-init.js';
 

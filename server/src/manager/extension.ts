@@ -1,6 +1,6 @@
 import type { ExtensionFactory, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { enrichActiveSessionCounts } from '../project-registry.js';
+import { enrichActiveSessionCounts, toProjectInfo } from '../folder-registry.js';
 import { errorToolResult, jsonToolResult, type JsonToolResult } from '../tool-result.js';
 import type { ManagerToolContext, ManagedSessionSummary } from './types.js';
 
@@ -109,11 +109,13 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       annotations: { readOnlyHint: true },
       outputSchema: Type.Array(ProjectInfoSchema),
       execute: async (_callId, _params) => {
-        const projects = await context.projects.list();
+        const folders = await context.projects.list();
         // Live counts, same rule the WS serve-paths use — the agent should
         // never see permanently-zeroed indicators.
-        enrichActiveSessionCounts(projects, context.sessions.getAllSessions());
-        return jsonToolResult(projects);
+        enrichActiveSessionCounts(folders, context.sessions.getAllSessions());
+        // The tool's structured output still speaks the legacy ProjectInfo
+        // shape until the wire rename lands.
+        return jsonToolResult(folders.map(toProjectInfo));
       },
     });
 

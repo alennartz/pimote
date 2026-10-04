@@ -1,4 +1,4 @@
-import type { FolderInfo, ProjectInfo, RepoInfo } from '../../../shared/dist/index.js';
+import type { FolderInfo, RepoInfo } from '../../../shared/dist/index.js';
 import type { PimoteConfig } from '../config.js';
 import type { SparseTree } from '../folder-model/index.js';
 
@@ -61,9 +61,10 @@ export interface SessionManagerPort {
   archiveSessions(sessionIds: string[]): Promise<SessionArchiveOutcome[]>;
 }
 
-/** Narrow ProjectRegistry seam for manager tools. */
+/** Narrow folder-registry seam for manager tools. The name survives until the
+ *  vocabulary rename; its signatures already match `FolderRegistry`. */
 export interface ProjectRegistryPort {
-  list(): Promise<ProjectInfo[]>;
+  list(): Promise<FolderInfo[]>;
 }
 
 /** Narrow RepoIndex seam for manager tools. */
@@ -93,7 +94,7 @@ export interface FolderUpdatePatch {
 export interface FolderRegistryPort {
   list(): Promise<FolderInfo[]>;
   update(patch: FolderUpdatePatch): Promise<void>;
-  createHub(input: { name: string; memberPaths: string[] }): Promise<FolderInfo>;
+  createHub(input: { name: string; root: string; memberPaths: string[] }): Promise<FolderInfo>;
   disbandHub(folderPath: string): Promise<void>;
 }
 

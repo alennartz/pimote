@@ -64,8 +64,12 @@ export interface FolderInfo {
   favorite: boolean;
   archived: boolean;
   tags: string[];
-  /** Curation entry with no discovered folder. */
+  /** True when a source-listed repo/hub or registry hub is absent on disk. */
   missing: boolean;
+  /** Member repos; only on registry/source hubs — these rows are disband-eligible. */
+  repos?: RepoInfo[];
+  /** Own-path user tags — the subset of `tags` that is user-removable. */
+  userTags?: string[];
   // Session/git chip fields carried over from ProjectInfo, unchanged.
   activeSessionCount: number;
   externalProcessCount: number;

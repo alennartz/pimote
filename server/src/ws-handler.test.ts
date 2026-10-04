@@ -3,7 +3,7 @@ import { createCommandContextActions, WsHandler, type ClientRegistry } from './w
 import type { PimoteSessionManager, ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
-import type { ProjectRegistry } from './project-registry.js';
+import type { FolderRegistry } from './folder-registry.js';
 import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer } from './event-buffer.js';
 import type { DownloadItem, PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
@@ -231,7 +231,7 @@ function createTestHandler(
     sessionRecords?: SessionRecords;
     sessionMetadataStore?: ReturnType<typeof createMockSessionMetadataStore>;
     repoIndex?: RepoIndex;
-    projectRegistry?: ProjectRegistry;
+    projectRegistry?: FolderRegistry;
   },
 ): TestContext {
   const sessions = opts?.sessions ?? new Map();
@@ -3492,7 +3492,7 @@ describe('WsHandler', () => {
   describe('list_projects — roots', () => {
     it('includes roots in list_projects response', async () => {
       const repoIndex = { roots: ['/home/user/projects', '/opt/repos'], list: async () => [] } as unknown as RepoIndex;
-      const projectRegistry = { list: async () => [] } as unknown as ProjectRegistry;
+      const projectRegistry = { list: async () => [] } as unknown as FolderRegistry;
       const { handler, sent } = createTestHandler('client-1', { repoIndex, projectRegistry });
 
       await handler.handleMessage(JSON.stringify({ type: 'list_projects', id: 'req-roots' }));

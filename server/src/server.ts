@@ -10,7 +10,7 @@ import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { RepoIndex } from './repo-index.js';
-import type { ProjectRegistry } from './project-registry.js';
+import type { FolderRegistry } from './folder-registry.js';
 import type { ManagerService } from './manager/index.js';
 import type { ProjectCreator } from './project-sources/index.js';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
@@ -132,7 +132,7 @@ export async function createServer(
   fileDownloads: DownloadManager,
   updateChecker?: UpdateChecker,
   repoIndex?: RepoIndex,
-  projectRegistry?: ProjectRegistry,
+  projectRegistry?: FolderRegistry,
   managerService?: ManagerService,
   creators?: ProjectCreator[],
 ): Promise<PimoteServer> {
@@ -205,7 +205,7 @@ export async function createServer(
     if (ownerClientId) clientRegistry.get(ownerClientId)?.sendDisplacedEvent(sessionId);
   };
 
-  // Project registry mutations (update / createMultiRepoProject / disband) broadcast the
+  // Folder registry mutations (update / createHub / disbandHub) broadcast the
   // merged list to every connected client.
   projectRegistry?.onChange(() => {
     WsHandler.broadcastProjectsChanged(projectRegistry, sessionManager, clientRegistry);
