@@ -1,6 +1,7 @@
 <script lang="ts">
   import { managerStore } from '$lib/stores/manager-store.svelte.js';
   import MessageList from './MessageList.svelte';
+  import ManagerResources from './ManagerResources.svelte';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import Bot from '@lucide/svelte/icons/bot';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
@@ -71,6 +72,7 @@
       </button>
     </div>
     <MessageList source={managerStore.session} />
+    <ManagerResources source={managerStore.session} />
   </div>
 {:else}
   <!-- Mobile: full screen chat under a header identical to the session page's -->
@@ -93,6 +95,7 @@
     </header>
 
     <MessageList source={managerStore.session} />
+    <ManagerResources source={managerStore.session} />
 
     <!-- Composer mirroring the session InputBar: same shell, inset send/abort -->
     <div class="border-border bg-background relative shrink-0 border-t px-3 pt-2 pb-[max(env(safe-area-inset-bottom),8px)]">

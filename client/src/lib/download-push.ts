@@ -1,4 +1,5 @@
 import type { DownloadNotificationIntent } from './download-notification-intent.js';
+import { getAppName } from './branding.js';
 
 /** The download-only subset of the VAPID JSON payload consumed by the service worker. */
 export interface DownloadPushPayload {
@@ -34,7 +35,7 @@ export function planDownloadPushDelivery(args: { payload: DownloadPushPayload; a
   }
 
   const { payload } = args;
-  const title = payload.sessionName || payload.projectName || 'Pimote';
+  const title = payload.sessionName || payload.projectName || getAppName();
 
   return {
     kind: 'system',

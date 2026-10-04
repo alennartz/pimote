@@ -20,6 +20,7 @@ function makeManager(claims: Map<string, DownloadClaim | undefined>): DownloadMa
   return {
     activate: vi.fn(),
     deactivate: vi.fn(),
+    detach: vi.fn(),
     offer: vi.fn(),
     cancel: vi.fn(),
     claim: vi.fn(async (id: string) => claims.get(id)),

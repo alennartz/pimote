@@ -7,6 +7,9 @@ import { FILE_DOWNLOAD_TOOL_DESCRIPTION } from './prompt.js';
 
 export interface CreateFileDownloadExtensionOptions {
   manager: DownloadManager;
+  retainOnShutdown?: boolean;
+  /** Snapshot a file before offering it from an ephemeral workspace. */
+  preparePath?: (path: string, workspaceRoot: string) => Promise<string>;
 }
 
 /** Build the pi extension adapter for session-scoped file downloads. */
@@ -38,7 +41,8 @@ export function createFileDownloadExtension(options: CreateFileDownloadExtension
       }),
       outputSchema: SendFileToolOutputSchema,
       execute: async (_callId, input, _signal, _onUpdate, ctx) => {
-        return jsonToolResult(await executeSendFileTool(input, toolContext(ctx)));
+        const path = options.preparePath ? await options.preparePath(input.path, ctx.cwd) : input.path;
+        return jsonToolResult(await executeSendFileTool({ path }, toolContext(ctx)));
       },
     });
 
@@ -62,7 +66,9 @@ export function createFileDownloadExtension(options: CreateFileDownloadExtension
     });
 
     pi.on('session_shutdown', (_event: unknown, ctx: ExtensionContext) => {
-      manager.deactivate(ctx.sessionManager.getSessionId());
+      const sessionId = ctx.sessionManager.getSessionId();
+      if (options.retainOnShutdown) manager.detach(sessionId);
+      else manager.deactivate(sessionId);
     });
   };
 }

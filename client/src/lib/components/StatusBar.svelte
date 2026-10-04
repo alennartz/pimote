@@ -9,6 +9,7 @@
   import { updateStore } from '$lib/stores/update.svelte.js';
   import { getContextDisplay, getContextTone, getSessionDisplayName, formatCombinedCost } from '$lib/session-summary.js';
   import { getRestoreModeLabel } from '$lib/restore-status.js';
+  import { getAppName } from '$lib/branding.js';
   import { GitBranch, House } from '@lucide/svelte';
   import SessionRenameDialog from './SessionRenameDialog.svelte';
   import CallButton from './CallButton.svelte';
@@ -145,7 +146,7 @@
       {@const updateStatus = updateStore.status}
       {#if updateStatus}
         <Separator orientation="vertical" class="mx-0.5 h-4" />
-        <div class="flex items-center gap-1.5" title={`Pimote update: running ${updateStatus.currentVersion}, available ${updateStatus.latestVersion}`}>
+        <div class="flex items-center gap-1.5" title={`${getAppName()} update: running ${updateStatus.currentVersion}, available ${updateStatus.latestVersion}`}>
           <span>Running {updateStatus.currentVersion} → {updateStatus.latestVersion}</span>
           <!-- updateStatus.releaseUrl is a server-supplied external release URL, not a SPA route, so resolve() does not apply. -->
           <!-- eslint-disable svelte/no-navigation-without-resolve -->

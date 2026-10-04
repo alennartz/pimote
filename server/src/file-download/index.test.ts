@@ -36,6 +36,7 @@ function makeManager(): DownloadManager & {
   return {
     activate: vi.fn(async (_sessionId: string, _publish: (event: DownloadUpdateEvent) => void) => {}),
     deactivate: vi.fn(),
+    detach: vi.fn(),
     offer: vi.fn(async () => ({ id: 'opaque-1', filename: 'report.pdf', sizeBytes: 42, href: '/d/opaque-1' })),
     cancel: vi.fn(async () => ({ cancelled: true })),
     claim: vi.fn(),
@@ -111,6 +112,26 @@ describe('createFileDownloadExtension', () => {
     const tool = pi.toolDefs.find((candidate) => candidate.name === 'pimote_cancel_file_send')!;
     await tool.execute('call-2', { id: 'opaque-1' }, undefined, undefined, makeContext('session-1'));
     expect(manager.cancel).toHaveBeenCalledWith('session-1', 'opaque-1');
+  });
+
+  it('snapshots the source before offering a manager download', async () => {
+    const manager = makeManager();
+    const pi = makePi();
+    const preparePath = vi.fn(async () => '/artifacts/report.pdf');
+    await createFileDownloadExtension({ manager, preparePath })(pi.api);
+    const tool = pi.toolDefs.find((candidate) => candidate.name === 'pimote_send_file')!;
+    await tool.execute('call-1', { path: 'report.pdf' }, undefined, undefined, makeContext());
+    expect(preparePath).toHaveBeenCalledWith('report.pdf', '/workspace/project');
+    expect(manager.offer).toHaveBeenCalledWith({ sessionId: 'session-1', workspaceRoot: '/workspace/project', path: '/artifacts/report.pdf' });
+  });
+
+  it('detaches manager shutdown without revoking links', async () => {
+    const manager = makeManager();
+    const pi = makePi();
+    await createFileDownloadExtension({ manager, retainOnShutdown: true })(pi.api);
+    await pi.handlers.get('session_shutdown')!({}, makeContext());
+    expect(manager.detach).toHaveBeenCalledWith('session-1');
+    expect(manager.deactivate).not.toHaveBeenCalled();
   });
 
   it('deactivates process ownership on session_shutdown while retaining persistence', async () => {

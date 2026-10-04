@@ -12,11 +12,13 @@ import type { ProjectCreator } from './project-sources/index.js';
 import { ManagerService } from './manager/index.js';
 import type { ManagerToolContext, SessionArchiveOutcome } from './manager/index.js';
 import { createManagerExtension } from './manager/index.js';
+import { resetManagerResourceRoot } from './manager/resources.js';
 import { PushNotificationService } from './push-notification.js';
 import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore } from './push-infrastructure.js';
 import {
   LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
   PIMOTE_FILE_DOWNLOAD_DIR,
+  PIMOTE_MANAGER_RESOURCES_DIR,
   PIMOTE_PROJECTS_DIR,
   PIMOTE_PROJECT_SOURCES_DIR,
   PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
@@ -94,6 +96,7 @@ export async function main(options: StartOptions = {}) {
   const staticHostStore = new FileStaticHostStore(PIMOTE_STATIC_HOST_DIR);
   const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore, skillsDir: PIMOTE_SKILLS_DIR });
   const fileDownloads = await bootstrapFileDownloads({ storeDir: PIMOTE_FILE_DOWNLOAD_DIR, validSessionIds });
+  await resetManagerResourceRoot(PIMOTE_MANAGER_RESOURCES_DIR);
 
   const sessionManager = await PimoteSessionManager.create(config, pushNotificationService, { staticHostFactory, fileDownloadFactory: fileDownloads.extensionFactory });
 
@@ -179,6 +182,13 @@ export async function main(options: StartOptions = {}) {
       config,
       modelRuntime: sessionManager.getModelRuntime(),
       managerExtensionFactory: createManagerExtension(managerContext),
+      resources: {
+        root: PIMOTE_MANAGER_RESOURCES_DIR,
+        registry: staticHostRegistry,
+        store: staticHostStore,
+        downloads: fileDownloads.manager,
+        skillsDir: PIMOTE_SKILLS_DIR,
+      },
     }),
   });
 

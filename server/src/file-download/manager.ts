@@ -37,6 +37,8 @@ export interface DownloadClaim {
 export interface DownloadManager {
   activate(sessionId: string, publish: (update: DownloadUpdateEvent) => void): Promise<void>;
   deactivate(sessionId: string): void;
+  /** Detach an ephemeral chat's publisher while keeping its offers claimable. */
+  detach(sessionId: string): void;
   offer(input: OfferDownloadInput): Promise<DownloadItem>;
   cancel(sessionId: string, id: string): Promise<{ cancelled: boolean }>;
   /** Rejects when durable single-use removal cannot complete; callers must serve no bytes. */
@@ -96,6 +98,7 @@ export function createDownloadManager(options: CreateDownloadManagerOptions): Do
   const persistenceQueues = new Map<string, Promise<void>>();
   const reservedClaimIds = new Set<string>();
   const lifecycleVersions = new Map<string, number>();
+  const detachedSessions = new Set<string>();
 
   function serializeSession<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
     const previous = persistenceQueues.get(sessionId) ?? Promise.resolve();
@@ -169,21 +172,28 @@ export function createDownloadManager(options: CreateDownloadManagerOptions): Do
   return {
     async activate(sessionId, publish): Promise<void> {
       const lifecycleVersion = advanceLifecycle(sessionId);
+      detachedSessions.delete(sessionId);
       await serializeSession(sessionId, async () => {
         const entries = entriesFrom(await options.store.read(sessionId));
         // A shutdown or newer activation may have happened while storage was
         // loading. Do not resurrect a session after that lifecycle changed.
         if (lifecycleVersions.get(sessionId) !== lifecycleVersion) return;
         replaceActiveEntries(sessionId, entries);
-        publishersBySession.set(sessionId, publish);
+        if (!detachedSessions.has(sessionId)) publishersBySession.set(sessionId, publish);
         publishSnapshot(sessionId, 'restored');
       });
     },
 
     deactivate(sessionId): void {
       advanceLifecycle(sessionId);
+      detachedSessions.delete(sessionId);
       publishersBySession.delete(sessionId);
       removeActiveEntries(sessionId);
+    },
+
+    detach(sessionId): void {
+      detachedSessions.add(sessionId);
+      publishersBySession.delete(sessionId);
     },
 
     async offer(input): Promise<DownloadItem> {

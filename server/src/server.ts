@@ -15,18 +15,22 @@ import type { ManagerService } from './manager/index.js';
 import type { ProjectCreator } from './project-sources/index.js';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { serveStaticHostRoute, type StaticHostRegistry } from './static-host/index.js';
+import { applyAppNameToHtml, applyAppNameToManifest, resolveAppName } from './branding.js';
 import { serveFileDownloadRoute, type DownloadManager } from './file-download/index.js';
 import crypto from 'node:crypto';
 import type { UpdateAvailableEvent, VersionMismatchEvent } from '../../shared/dist/index.js';
 import type { UpdateChecker } from './update-check.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const CLIENT_DIR = process.env.CLIENT_DIR || join(__dirname, '..', '..', 'client', 'build');
+/** Directory holding the built client bundle. Resolved per call so tests can point it elsewhere. */
+function clientDir(): string {
+  return process.env.CLIENT_DIR || join(__dirname, '..', '..', 'client', 'build');
+}
 
 /** Read the SvelteKit build version from _app/version.json. Returns null if unavailable. */
 async function loadClientVersion(): Promise<string | null> {
   try {
-    const raw = await readFile(join(CLIENT_DIR, '_app', 'version.json'), 'utf-8');
+    const raw = await readFile(join(clientDir(), '_app', 'version.json'), 'utf-8');
     const data = JSON.parse(raw);
     return data.version ?? null;
   } catch {
@@ -48,13 +52,17 @@ const MIME_TYPES: Record<string, string> = {
   '.webmanifest': 'application/manifest+json',
 };
 
-/** Try to serve a static file from CLIENT_DIR. Returns true if served. */
-async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
+/**
+ * Try to serve a static file from the client dir. Returns true if served.
+ * Branded surfaces (PWA manifest, HTML shell) are rewritten to `appName`.
+ */
+async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, appName: string): Promise<boolean> {
   const urlPath = req.url === '/' ? '/index.html' : req.url!.split('?')[0];
-  const filePath = join(CLIENT_DIR, urlPath);
+  const dir = clientDir();
+  const filePath = join(dir, urlPath);
 
-  // Prevent directory traversal — ensure path is within CLIENT_DIR
-  if (!filePath.startsWith(CLIENT_DIR + '/') && filePath !== CLIENT_DIR) {
+  // Prevent directory traversal — ensure path is within the client dir
+  if (!filePath.startsWith(dir + '/') && filePath !== dir) {
     return false;
   }
 
@@ -63,8 +71,14 @@ async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse):
     if (stats.isFile()) {
       const ext = extname(filePath);
       const mime = MIME_TYPES[ext] || 'application/octet-stream';
-      const content = await readFile(filePath);
+      let content: Buffer | string = await readFile(filePath);
       const headers: Record<string, string> = { 'Content-Type': mime };
+
+      if (urlPath === '/pwa/manifest.json') {
+        content = applyAppNameToManifest(content.toString('utf-8'), appName);
+      } else if (ext === '.html') {
+        content = applyAppNameToHtml(content.toString('utf-8'), appName);
+      }
 
       // HTML, SW, and manifest must not be cached by CDN/proxies.
       // Immutable hashed assets (_app/immutable/) are safe to cache.
@@ -87,12 +101,12 @@ async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse):
 }
 
 /** Serve index.html as SPA fallback. */
-async function serveFallback(res: http.ServerResponse): Promise<void> {
+async function serveFallback(res: http.ServerResponse, appName: string): Promise<void> {
   try {
-    const indexPath = join(CLIENT_DIR, 'index.html');
-    const content = await readFile(indexPath);
+    const indexPath = join(clientDir(), 'index.html');
+    const content = await readFile(indexPath, 'utf-8');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(content);
+    res.end(applyAppNameToHtml(content, appName));
   } catch {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'not found' }));
@@ -122,11 +136,12 @@ export async function createServer(
   managerService?: ManagerService,
   creators?: ProjectCreator[],
 ): Promise<PimoteServer> {
+  const appName = resolveAppName(config);
   const clientVersion = await loadClientVersion();
   if (clientVersion) {
     console.log(`[pimote] Client build version: ${clientVersion}`);
   } else {
-    console.warn(`[pimote] Could not read client build version from ${CLIENT_DIR}/_app/version.json`);
+    console.warn(`[pimote] Could not read client build version from ${clientDir()}/_app/version.json`);
   }
   const httpServer = http.createServer(async (req, res) => {
     // 1. Health check
@@ -145,7 +160,7 @@ export async function createServer(
 
     // 3. Static file lookup
     if (req.method === 'GET') {
-      const served = await serveStatic(req, res);
+      const served = await serveStatic(req, res, appName);
       if (served) return;
     }
 
@@ -165,7 +180,7 @@ export async function createServer(
 
     // 4. SPA fallback — serve index.html for unmatched GET routes
     if (req.method === 'GET') {
-      await serveFallback(res);
+      await serveFallback(res, appName);
       return;
     }
 

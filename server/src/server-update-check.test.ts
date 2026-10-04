@@ -8,6 +8,7 @@ function makeDownloads(): DownloadManager {
   return {
     activate: vi.fn(),
     deactivate: vi.fn(),
+    detach: vi.fn(),
     offer: vi.fn(),
     cancel: vi.fn(),
     claim: vi.fn(),

@@ -22,6 +22,7 @@
   import SessionSettingsDialog from '$lib/components/SessionSettingsDialog.svelte';
   import SessionRenameDialog from '$lib/components/SessionRenameDialog.svelte';
   import { getContextDisplay, getContextTone, getSessionDisplayName } from '$lib/session-summary.js';
+  import { getAppName } from '$lib/branding.js';
   import PanelRight from '@lucide/svelte/icons/panel-right';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import { connection } from '$lib/stores/connection.svelte.js';
@@ -194,12 +195,14 @@
     };
   });
 
+  const appName = getAppName();
+
   let browserTitle = $derived.by(() => {
     const extensionTitle = sessionRegistry.viewed?.extensionTitle ?? null;
-    return extensionTitle ? `Pimote — ${extensionTitle}` : 'Pimote';
+    return extensionTitle ? `${appName} — ${extensionTitle}` : appName;
   });
 
-  let mobileHeaderTitle = $derived(getSessionDisplayName(sessionRegistry.viewed) ?? 'Pimote');
+  let mobileHeaderTitle = $derived(getSessionDisplayName(sessionRegistry.viewed) ?? appName);
   let mobileContextDisplay = $derived(getContextDisplay(sessionRegistry.viewed, { compact: true }));
   let mobileContextTone = $derived(getContextTone(sessionRegistry.viewed?.contextUsage?.percent));
   let mobileContextChipClass = $derived(

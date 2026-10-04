@@ -77,6 +77,19 @@ describe('ManagerStore', () => {
       });
     });
 
+    it('reduces report cards and download snapshots onto the manager slot', () => {
+      const cards = [{ id: 'report', header: { title: 'Report' }, href: '/s/report/' }];
+      const downloads = [{ id: 'file-1', filename: 'report.txt', sizeBytes: 12, href: '/d/file-1' }];
+      reduce(store, { type: 'panel_update', cards });
+      reduce(store, { type: 'download_update', cause: 'offered', offeredDownloadId: 'file-1', downloads });
+      expect(store.session!.panelCards).toEqual(cards);
+      expect(store.session!.downloads).toEqual(downloads);
+      reduce(store, { type: 'download_update', cause: 'consumed', downloads: [] });
+      expect(store.session!.downloads).toEqual([]);
+      store.reset();
+      expect(store.session!.panelCards).toEqual([]);
+    });
+
     it('records the last bot activity timestamp from mapped events', () => {
       reduce(store, { type: 'message_end', message: assistantMessage('hi'), timestamp: '2026-04-04T12:00:00.000Z' });
       expect(store.session!.lastBotActivityTimestamp).toBe('2026-04-04T12:00:00.000Z');

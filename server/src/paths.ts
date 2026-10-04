@@ -28,4 +28,6 @@ export const PIMOTE_SKILLS_DIR = join(PIMOTE_STATE_DIR, 'skills');
 export const PIMOTE_STATIC_HOST_DIR = join(PIMOTE_STATE_DIR, 'static-host');
 /** Directory holding per-session pending-download persistence files (`<sessionId>.json`). */
 export const PIMOTE_FILE_DOWNLOAD_DIR = join(PIMOTE_STATE_DIR, 'file-downloads');
+/** Snapshots published by ephemeral managers, reclaimed at boot or lease expiry. */
+export const PIMOTE_MANAGER_RESOURCES_DIR = join(PIMOTE_STATE_DIR, 'manager-resources');
 export const LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH = join(PIMOTE_CONFIG_DIR, 'push-subscriptions.json');

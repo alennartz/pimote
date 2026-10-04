@@ -12,6 +12,7 @@ function makeManager(): DownloadManager & {
   return {
     activate: vi.fn(),
     deactivate: vi.fn(),
+    detach: vi.fn(),
     offer: vi.fn(async () => offered),
     cancel: vi.fn(async () => ({ cancelled: true })),
     claim: vi.fn(),

@@ -22,6 +22,10 @@ export interface CreateStaticHostExtensionOptions {
   store: StaticHostStore;
   /** Directory where the server-provided static-report skill is materialized. */
   skillsDir?: string;
+  /** Manager artifacts outlive their ephemeral session until its resource lease expires. */
+  retainOnShutdown?: boolean;
+  /** Snapshot bundles owned by an ephemeral workspace before registration. */
+  prepareFolder?: (folder: string) => Promise<string>;
 }
 
 /**
@@ -115,7 +119,8 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
       outputSchema: RegisterToolOutputSchema,
       execute: async (_callId, input, _abort, _meta, ctx) => {
         const sessionId = ctx.sessionManager.getSessionId();
-        return jsonToolResult(await executeRegisterTool(input, toolDeps(pi, sessionId)));
+        const folder = opts.prepareFolder ? await opts.prepareFolder(input.folder) : input.folder;
+        return jsonToolResult(await executeRegisterTool({ ...input, folder }, toolDeps(pi, sessionId)));
       },
     });
 
@@ -171,7 +176,7 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
 
     pi.on('session_shutdown', async (_ev: unknown, ctx: ExtensionContext) => {
       const sessionId = ctx.sessionManager.getSessionId();
-      registry.unregisterAllForSession(sessionId);
+      if (!opts.retainOnShutdown) registry.unregisterAllForSession(sessionId);
     });
   };
 }
