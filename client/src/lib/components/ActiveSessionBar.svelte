@@ -11,6 +11,7 @@
   import { sessionRegistry, switchToSession, closeSession, newSessionInProject } from '$lib/stores/session-registry.svelte.js';
   import { getExtensionUiQueue } from '$lib/stores/extension-ui-queue.svelte.js';
   import { getSessionPillSwipeHintShown, setSessionPillSwipeHintShown } from '$lib/stores/persistence.js';
+  import { getSessionChipLabel, getSessionDisplayName } from '$lib/session-summary.js';
   import { shouldOpenSessionPillActions } from './session-pill-gesture.js';
 
   const uiQueue = getExtensionUiQueue();
@@ -177,7 +178,7 @@
       {@const actionSession = sessionRegistry.sessions[mobileActionsSessionId]}
       <div class="bg-popover text-popover-foreground ring-foreground/10 flex items-center gap-2 rounded-2xl px-2 py-1 shadow-md ring-1 md:hidden">
         <div class="min-w-0 flex-1 px-1">
-          <div class="truncate text-xs font-medium">{actionSession.projectName}</div>
+          <div class="truncate text-xs font-medium">{getSessionChipLabel(actionSession) ?? actionSession.projectName}</div>
           <div class="text-muted-foreground text-[11px]">Session actions</div>
         </div>
         <button
@@ -201,6 +202,7 @@
       {#each sessionRegistry.activeSessions as session (session.sessionId)}
         {@const isViewed = sessionRegistry.viewedSessionId === session.sessionId}
         {@const hasPendingUi = uiQueue.hasRequestForSession(session.sessionId)}
+        {@const chipLabel = getSessionChipLabel(session) ?? session.projectName}
         <ContextMenu.Root>
           <ContextMenu.Trigger class="shrink-0">
             <button
@@ -222,7 +224,7 @@
               ontouchmove={(e) => handleTouchMove(session.sessionId, e)}
               ontouchend={() => handleTouchEnd(session.sessionId)}
               ontouchcancel={resetTouchState}
-              title={session.projectName}
+              title={getSessionDisplayName(session) ?? session.projectName}
             >
               <span class="relative flex size-2">
                 {#if hasPendingUi}
@@ -236,7 +238,7 @@
                   <span class="relative inline-flex size-2 rounded-full bg-gray-400"></span>
                 {/if}
               </span>
-              <span class="max-w-[80px] truncate">{session.projectName}</span>
+              <span class="max-w-[80px] truncate">{chipLabel}</span>
               <span
                 class="{isViewed
                   ? 'text-primary-foreground/50 hover:bg-primary-foreground/20 hover:text-primary-foreground'
