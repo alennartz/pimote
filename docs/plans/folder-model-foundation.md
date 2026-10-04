@@ -247,6 +247,8 @@ Approved during test review — the architecture above now incorporates these in
 
 ## Steps
 
+**Pre-implementation commit:** `df02e7cca702b702fe3e4f5d14790fe1e8efae13`
+
 Execution notes: keep the 43 scanner cases in `server/src/folder-model/folder-model.test.ts` immutable. The other seams follow the approved red-green implementation scope: exercise each changed contract before implementing it, using the existing registry, adapter, manager, boot, and client test suites. Do not create separate test-writing phases. Existing tests for superseded walkers must be retired or revised to the new discovery contract, not used to preserve depth bounds or package.json inclusion. Preserve existing cache/queue/subscription state holders; introduce no process-global mutable discovery state. Compute classification and merged views from explicit inputs, with filesystem, persistence, and notification effects at the edges.
 
 ### Step 1: Implement folder discovery
@@ -258,7 +260,7 @@ Implement the nine Discovery rules without the old repo walk's depth limit: root
 Expose the approved `classifyFolder(fs, path)` helper alongside the scanner for session-event fallback. Share marker/git classification with discovery; only this fallback returns `nature: 'code'` when neither marker exists. It does not add a skipped cwd to discovery. Keep scanner warning behavior independent of this fallback policy.
 
 **Verify:** `npm test --workspace server -- --run src/folder-model/folder-model.test.ts` passes all 43 unchanged cases; `npx tsc -b server --pretty false` passes. Repeated scans have independent identity state.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Extract session records
 
@@ -322,7 +324,20 @@ Replace `buildProjectInfo` with an asynchronous folder resolver used by open, ta
 
 ### Step 8: Settle the SDK rename carve-out
 
-**Either/or — pending user scope decision; select exactly one variant before implementation.** This is the sole unresolved rename-scope point, not permission to invent a new source contract.
+**Selected variant (scope ruling): FULL-RENAME.** The published `@pimote/sdk` seam renames to folder vocabulary with a documented 0.x breaking bump and no compatibility type aliases — "project" survives nowhere in product vocabulary. Public successors/compatibility seams:
+
+- `ProjectSource`→`FolderSource`, `ProjectCreator`→`FolderCreator`, `ProjectCreatorDescriptor`→`FolderCreatorDescriptor`, `ProjectCreatorParamType`→`FolderCreatorParamType`
+- `MultiRepoSourceEntry`→`HubSourceEntry`; entry discriminator `kind: 'project'`→`kind: 'hub'`
+- source hook `onProjectOpen`→`onFolderOpen` (parameter `projectPath`→`folderPath`)
+- package subpath and source directory `@pimote/sdk/projects`→`@pimote/sdk/folders`
+- config key `projectSourcesDir`→`folderSourcesDir` with legacy-key read compat (compatibility seam, documented)
+- physical default sources dir `~/.pimote/project-sources`→`~/.pimote/folder-sources` with legacy-dir fallback so existing installed sources keep loading (compatibility seam, documented)
+- server directory `server/src/project-sources`→`server/src/folder-sources` with folder-vocabulary internals (`loadFolderSources`, `LoadedFolderSources`, …)
+- wire command `create_project`→`create_folder`; manager tool parameter/output keys `projectPath`→`folderPath` (tool names: only `pimote_list_projects`→`pimote_list_folders` plus new `pimote_folder_tree`)
+- SDK version 0.14.0→0.15.0 with a breaking-change note in the SDK README
+- Android and unrelated agent extensions untouched; historical DRs, brainstorms, and superseded plans keep their wording
+
+**Either/or — resolved by scope ruling; the FULL-RENAME variant below is selected (see the successor table above).** This is the sole unresolved rename-scope point, not permission to invent a new source contract.
 
 - **Stable SDK variant (architecture's current carve-out):** leave `packages/sdk`, Android, and agent extensions untouched. Keep SDK `ProjectSource`/`ProjectCreator`, `MultiRepoSourceEntry`, `kind: 'project'`, source hook `onProjectOpen`, `projectSourcesDir`, and the published `@pimote/sdk/projects` entrypoint stable. Server adapters may use folder/hub local vocabulary while translating through those stable types. Keep the `create_project` command and remaining manager tools' `projectPath` parameter/output keys as currently specified; only their descriptions change. Update `server/src/project-sources/builtin.ts`' registry import after the file rename without renaming the published seam. Keep persistence/config physical paths stable.
 - **Full source/creator rename variant (only if explicitly approved):** perform a separate coherent source/creator rename through `packages/sdk/src/projects/**` and its exports, `server/src/project-sources/**`, `repo-index.ts`, `index.ts`, `config.ts`, `paths.ts`, `ws-handler.ts`, NewSessionDialog, their suites, and source documentation/smoke fixtures. The user decision must specify the public successors/compatibility aliases for source types, entry discriminators, hook names, package subpath, config key, and `create_project`/manager parameter keys before changing them. Preserve source entry behavior, hook order, lazy materialization, creator behavior, registry storage, and existing installed source loading. Do not turn a mechanical rename into discovery or lifecycle redesign. This variant explicitly replaces the current SDK-untouched carve-out; Android and unrelated agent extensions remain untouched.

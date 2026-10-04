@@ -1,12 +1,17 @@
 import type { Dirent, Stats } from 'node:fs';
+import { classifyListing } from './classification.js';
+import { nodeFolderFs } from './node-folder-fs.js';
+import { createScanContext, discoverRoots } from './traversal.js';
 
 /**
  * Folder model — the deep module that owns folder discovery.
  *
  * Marker-aware nature classification, sparse-tree scanning (descent through
  * skipped folders, stop at included ones, shortcut recursion), canonical-path
- * identity with visit-once semantics. Depends on node `fs`/`path` only — no
- * protocol types, no server internals. Everything lives behind one function.
+ * identity with visit-once semantics. Depends on node `fs`/`path` plus YAML
+ * parsing for AGENTS.md front matter — no protocol types, no server internals.
+ * Discovery sits behind `scanFolderModel`; the shared `classifyFolder` helper
+ * serves session-event fallback without adding discovery entries.
  */
 
 /** A folder of interest is exactly one of these two natures. */
@@ -72,7 +77,25 @@ export interface ScanFolderModelOptions {
  * Discover the sparse folder tree from the scan roots.
  *
  * Pure and on-demand: the only computation is classification and reach.
+ * Identity state is local to each call — repeated scans are independent.
  */
-export async function scanFolderModel(_options: ScanFolderModelOptions): Promise<SparseTree> {
-  throw new Error('not implemented');
+export async function scanFolderModel(options: ScanFolderModelOptions): Promise<SparseTree> {
+  const fs = options.fs ?? nodeFolderFs;
+  const onWarning = options.onWarning ?? console.warn;
+  return discoverRoots(createScanContext(fs, onWarning), options.roots);
+}
+
+/**
+ * Session-event fallback only: apply marker/git classification to one cwd,
+ * returning code when neither marker exists; does not make it a discovered entry.
+ */
+export async function classifyFolder(fs: FolderFs, path: string): Promise<{ nature: FolderNature; persona?: PersonaInfo }> {
+  let listing: Dirent[];
+  try {
+    listing = await fs.readdir(path);
+  } catch {
+    return { nature: 'code' };
+  }
+  const classification = await classifyListing(fs, path, listing);
+  return classification ?? { nature: 'code' };
 }
