@@ -15,11 +15,11 @@ First shippable slice of the unified folder model: sparse-tree discovery from th
 
 ### New Modules
 
-**`server/src/folder-model/`** — the deep module that owns folder discovery. Responsibilities: marker-aware nature classification, sparse-tree scanning (descent through skipped folders, stop at included ones, shortcut recursion), canonical-path identity with visit-once semantics. Dependencies: node `fs`/`path` only — no protocol types, no server internals. Everything below sits behind one function.
+**`server/src/folder-model/`** — the deep module that owns folder discovery. Responsibilities: marker-aware nature classification, sparse-tree scanning (descent through skipped folders, stop at included ones, shortcut recursion), canonical-path identity with visit-once semantics. Dependencies: node `fs`/`path` + `yaml` for marker front matter — no protocol types, no server internals. Discovery sits behind `scanFolderModel`; the shared `classifyFolder` helper serves session-event fallback without adding discovery entries.
 
 ### Interfaces
 
-**folder-model — the entire external interface:**
+**folder-model — the external interface:**
 
 ```ts
 export type FolderNature = 'code' | 'persona';
@@ -74,6 +74,16 @@ export interface ScanFolderModelOptions {
 }
 
 export function scanFolderModel(options: ScanFolderModelOptions): Promise<SparseTree>;
+
+/** Session-event fallback only: apply marker/git classification to one cwd,
+ * returning code when neither marker exists; does not make it a discovered entry. */
+export function classifyFolder(
+  fs: FolderFs,
+  path: string,
+): Promise<{
+  nature: FolderNature;
+  persona?: PersonaInfo;
+}>;
 ```
 
 **Discovery contract** (what the tests pin down):
@@ -100,7 +110,9 @@ interface FolderInfo {
   favorite: boolean;
   archived: boolean;
   tags: string[];
-  missing: boolean; // curation entry with no discovered folder
+  missing: boolean; // source-listed repo/hub or registry hub absent on disk
+  repos?: RepoInfo[]; // registry/source hubs only; these rows are disband-eligible
+  userTags?: string[]; // own-path user-removable subset of tags
   // plus the session/git chip fields ProjectInfo carries today, unchanged
 }
 ```
@@ -119,7 +131,7 @@ interface FolderUpdatePatch {
 interface FolderRegistryPort {
   list(): Promise<FolderInfo[]>; // overrides merged over all included entries
   update(patch: FolderUpdatePatch): Promise<void>; // keyed by canonical path
-  createHub(input: { name: string; memberPaths: string[] }): Promise<FolderInfo>;
+  createHub(input: { name: string; root: string; memberPaths: string[] }): Promise<FolderInfo>;
   disbandHub(folderPath: string): Promise<void>;
 }
 ```
@@ -154,10 +166,10 @@ interface ManagerToolContext {
 
 ### DR Supersessions
 
-- **DR-045** (Repo index orthogonal to curated projects) — superseded, absorbed: the discovery/curation split survives verbatim, but discovery is now the folder model's sparse scan instead of the RepoIndex walk, and curation keys on canonical folder paths. New decision captured in DR-051 with provenance.
+- **DR-045** (Repo index orthogonal to curated projects) — superseded, absorbed: the discovery/curation split survives verbatim, but discovery is now the folder model's sparse scan instead of the RepoIndex walk, and curation keys on canonical folder paths. New decision captured in DR-053 with provenance.
 - **DR-046** (Multi-repo projects as hub folders with symlinks and a generated AGENTS.md) — superseded because "hubs are never walker-discovered repos, invisible to the repo index" no longer holds: hubs gain `git init` + a `.gitignore` for the member symlinks and are discovered as code folders whose members appear as shortcut occurrences. Symlink mechanics and the generated `AGENTS.md` contract are unchanged.
 - **DR-047** (The manager agent is global and ephemeral) — not superseded; re-derived: conversation ephemerality stands _because_ persona memory is folder-resident artifacts (e.g. a `memory.md` linked from the persona's `AGENTS.md`). The manager inherits this with no special case. A proper revisit belongs to the next pull (manager lifecycle).
-- **New DR-051** (Unified folder model) — the replacement record: taxonomy (code/persona via marker), sparse discovery, shortcut recursion, identity-by-canonical-path, hubs as code folders, persistence-by-artifacts. Carries provenance lines for DR-045 and DR-046 (deleted at their last recorded commits).
+- **New DR-053** (Unified folder model) — the replacement record: taxonomy (code/persona via marker), sparse discovery, shortcut recursion, identity-by-canonical-path, hubs as code folders, persistence-by-artifacts. Carries provenance lines for DR-045 and DR-046 (deleted at their last recorded commits).
 
 ## Tests
 
@@ -173,7 +185,7 @@ interface ManagerToolContext {
 
 - `server/src/folder-model/folder-model.test.ts` — 43 behavioral cases of `scanFolderModel` against an in-memory `FolderFs` fake (deterministic, no real filesystem): classification taxonomy, YAML boundaries, pruning, sparse descent, shortcut occurrences and recursion, visit-once identity, included roots, multi-root and empty boundaries, and local filesystem failure warnings. All 43 remain red after review (the stub throws `"not implemented"`); this is the expected Red Gate, not a review defect.
 
-**Approved scope:** this phase pins the scanner seam. Registry merge (including personas), hub materialization, config, manager tool wiring, and UI icon boundary tests will be written red-green during implementation against the Interfaces above. Persona artifact memory and manager lifecycle remain outside this increment.
+**Approved scope:** this phase pins the scanner seam. Registry merge (including personas), hub materialization, config, manager tool wiring, and UI icon boundary tests will be written red-green during implementation against the Interfaces above. Persona artifact memory and manager lifecycle remain outside this increment. The approved implementation additions retain `root` on hub creation, `repos`/`userTags` on FolderInfo, strict session-record GC safety, and a shared single-cwd classifier for unlisted session events; Step 8 records the one pending SDK rename carve-out.
 
 ### Behaviors Covered
 
@@ -232,3 +244,142 @@ Approved during test review — the architecture above now incorporates these in
 - Missing/non-directory roots; dangling/looping shortcuts; local `readdir`/`lstat`/`realpath` failures; unreadable markers with git fallback or continued descent. Warning assertions use the public callback, not global console spies.
 
 **Review status:** approved
+
+## Steps
+
+Execution notes: keep the 43 scanner cases in `server/src/folder-model/folder-model.test.ts` immutable. The other seams follow the approved red-green implementation scope: exercise each changed contract before implementing it, using the existing registry, adapter, manager, boot, and client test suites. Do not create separate test-writing phases. Existing tests for superseded walkers must be retired or revised to the new discovery contract, not used to preserve depth bounds or package.json inclusion. Preserve existing cache/queue/subscription state holders; introduce no process-global mutable discovery state. Compute classification and merged views from explicit inputs, with filesystem, persistence, and notification effects at the edges.
+
+### Step 1: Implement folder discovery
+
+Implement `scanFolderModel` behind `server/src/folder-model/index.ts`; private files within that directory may hold marker parsing and traversal. Install `yaml` with `npm install yaml --workspace=@pimote/server` rather than editing manifests. Update the module comment to describe node fs/path plus YAML parsing, without importing protocol or server internals. Supply the default Node adapter for all four `FolderFs` operations; reads are UTF-8 and failures use `onWarning`, defaulting to `console.warn`.
+
+Implement the nine Discovery rules without the old repo walk's depth limit: roots classify normally, skipped structure collapses into reach paths, included entries stop ordinary descent, shortcuts restart discovery, and all identities use canonical paths. Preserve first-discovery children, shared entry objects, leaf back-references, finite JSON serialization, and skipped-cycle termination without dropping later non-cyclic reaches. Marker parsing must handle real YAML strings, malformed blocks, and git fallback. Keep visited/in-progress state local to each scan, not shared across scans.
+
+Expose the approved `classifyFolder(fs, path)` helper alongside the scanner for session-event fallback. Share marker/git classification with discovery; only this fallback returns `nature: 'code'` when neither marker exists. It does not add a skipped cwd to discovery. Keep scanner warning behavior independent of this fallback policy.
+
+**Verify:** `npm test --workspace server -- --run src/folder-model/folder-model.test.ts` passes all 43 unchanged cases; `npx tsc -b server --pretty false` passes. Repeated scans have independent identity state.
+**Status:** not started
+
+### Step 2: Extract session records
+
+Create `server/src/session-records.ts` with a `SessionRecords` state holder accepting `SessionSummaryIndex` (defaulting to today's instance). Move `listSessionRecords`, `resolveSessionPath`, `deleteSession`, and `renameSession` from `folder-index.ts`, preserving result types, missing-session behavior, summary caching, append-session-info renaming, and strict `failOnError` enumeration. Retain `listSessions`' existing ISO-date mapping if used by the migrated session tests; it is a session-record convenience, not discovery. Rename the strict options type to session-record vocabulary.
+
+Replace `FolderIndex` injection with `SessionRecords` in `server/src/index.ts`, `server.ts`, `ws-handler.ts`, and their tests. Pass roots from config/RepoIndex to the creation-root checks rather than putting discovery back into SessionRecords. Move the session-record assertions from `folder-index.test.ts` into `session-records.test.ts`; retire its obsolete roots/one-level marker-discovery assertions. Delete `server/src/folder-index.ts` and its obsolete test file after all imports are removed. Do not change `session-summaries.ts`' cache or session directory encoding.
+
+**Verify:** session-record, session-summary, WS session listing/open/resume/delete/rename/archive, and manager archive-port tests pass. `rg 'folder-index|FolderIndex' server/src` finds no live references; SessionRecords performs no folder discovery.
+**Status:** not started
+
+### Step 3: Replace boot discovery safely
+
+In `server/src/index.ts`, derive the static-host/download boot allow-list from `scanFolderModel({ roots: config.roots, onWarning })`, deduplicating canonical entry paths across the entire occurrence tree, including shortcut descendants. Enumerate those folders through `SessionRecords.listSessionRecords(path, { failOnError: true })`.
+
+A scanner warning at a configured root for missing/non-directory/unreadable root access suppresses the sweep; warnings below a root, including unreadable markers, dangling symlinks, and unreadable subdirectories, do not. Distinguish root-access operations from an `AGENTS.md` content warning; do not abort on every warning. Session-record enumeration failures still suppress the sweep, preserving the complete-allow-list safety rule. Continue passing `validSessionIds: null` to `bootstrapFileDownloads` on suppressed enumeration; never substitute an empty allow-list on failure. The removal of package.json-only folders from the valid-folder set is intentional.
+
+**Verify:** `server/src/index.test.ts` preserves strict session-enumeration failure coverage and exercises root-warning suppression versus below-root warnings permitting GC. Static-host and file-download suites pass; duplicate occurrences do not trigger duplicate session enumeration.
+**Status:** not started
+
+### Step 4: Adapt the repo index
+
+Replace `walkRoot`/`scanDir` and their bounded-depth constants in `server/src/repo-index.ts` with `scanFolderModel` consumption. Collect unique canonical code entries from all occurrences, including shortcut targets outside roots and discovered hubs; exclude persona entries even when they contain git. Retain the public `list(): Promise<RepoInfo[]>`, roots getter, listing/status TTLs, stale-while-revalidate behavior, single-flight protection, invalidation generation, neutral failed git probes, and change-only refresh notifications.
+
+Keep registered source contribution merging and open hooks, including ergonomic bare repo shapes, source failure isolation, tags, missing source repo placeholders, and separate source hub metadata. Discovery no longer crawls through an included repo looking for nested repos. Update `repo-index.test.ts`' obsolete depth/symlink expectations to the scanner-backed behavior while retaining its cache, git-status, and source tests. Do not filter `list_repos` to configured roots or exclude hubs: the adapter's complete code-folder view is intentional.
+
+**Verify:** repo-index tests pass for sparse stopping, personas excluded, shortcuts included, source merging/missing flags, TTL/status refresh, and unchanged hook ordering. No second recursive folder walker remains in `repo-index.ts`.
+**Status:** not started
+
+### Step 5: Make hubs self-describing
+
+Extend `server/src/project-sources/materialize.ts`' shared materializer with `git init` and a `.gitignore` listing member symlink basenames. Keep absolute symlinks and generated `AGENTS.md` content unchanged, including the member instructions precedence contract. Guard git environment variables as the built-in creator already does. Both explicit hub creation and missing-source-hub open-time materialization must use this function, not duplicate the layout.
+
+Preserve validation before effects (name, known code-member paths, basename collisions, existing target) and the registry's all-or-nothing cleanup on materialization or persistence failure. Leave existing source hub directories untouched on open, including pre-existing git-less hubs; do not backfill `git init` during listing or startup.
+
+**Verify:** materialization/registry/source-open tests confirm `.git`, ignored member links, unchanged AGENTS.md, source hooks after layout creation, member repos surviving deletion, and cleanup after failure. A newly materialized hub scans as code with member shortcut occurrences; a pre-existing hub is not modified.
+**Status:** not started
+
+### Step 6: Build the folder registry
+
+Rename `server/src/project-registry.ts` and its suite to `folder-registry.ts`/`folder-registry.test.ts`, exporting `FolderRegistry` and folder update vocabulary. Inject the folder-tree port alongside RepoIndex and storeDir; merge the scan's unique canonical entries with source-listed repos/hubs and registry hubs rather than deriving the entire list from repos. Keep classification/merge logic behind this module, with pure view construction and explicit persistence effects.
+
+Use `FolderInfo` from `shared/src/protocol.ts`, retaining `repos?: RepoInfo[]` only on registry/source hubs and `userTags?: string[]` for removable own-path tags. Default `favorite`, `archived`, and `missing` to false and `tags` to an empty array. Merge persona metadata and basename entry names; set `shortcutCount` from first-discovery immediate shortcut children. Preserve member git chips and tag unions (source + own user tags + member tags), favorites ordering, canonical-path curation, mutation serialization, atomic writes, reload-on-failure, and subscriptions. On path collisions enrich an existing scanned row with registry/source hub metadata instead of losing membership because discovery saw it first; persisted hub metadata wins over source metadata as today.
+
+Source-listed repos/hubs and registry hubs absent on disk get `missing: true`; orphaned curation overrides alone produce no row. Pre-existing registry hubs without git remain listed as `nature: 'code'`, `shortcutCount: memberPaths.length`, without disk changes. Preserve path-keyed override orphaning on moves. `update` accepts all listed code/persona/source/registry paths, rejecting unknown paths.
+
+Persist `hubs` instead of `multiRepo` in the unchanged `registry.json` store location, reading old `multiRepo` documents compatibly. Prefer `hubs` when the new key exists; preserve valid entries, override flags, and user tags, and retain malformed-entry isolation/legacy-order stripping. No store-directory move or bulk migration. Implement `createHub({ name, root, memberPaths }): Promise<FolderInfo>` and `disbandHub(folderPath)` with existing safety/ownership behavior. Source hubs retain the current refusal to disband when there is no persisted registry entry; their UI eligibility does not grant deletion ownership. Keep the active-session enrichment helper typed for FolderInfo and shared by all serve paths.
+
+**Verify:** folder-registry tests exercise code/persona curation, discovered hub collisions, legacy/new persistence, orphan overrides omitted, absent source/registry rows, git-less legacy hubs, required defaults, tags/member chips, createHub's full FolderInfo result, disband safety, notifications, and recovery after failed writes. Existing registry data round-trips without loss.
+**Status:** not started
+
+### Step 7: Rename the wire and WS routes
+
+In `shared/src/protocol.ts`, promote FolderInfo to the live type, add its approved optional `repos`/`userTags`, correct the `missing` comment, and remove ProjectInfo. Rename command/response/event types and union members for `list_folders`, `update_folder`, `create_hub`, `disband_hub`, and `folders_changed`. Use `folders` list/event payloads, `folderPath` for curation/disband paths, and `memberPaths` plus unchanged `root` for create_hub. Its path-only response becomes `{ folderPath: string }`; the registry operation itself returns FolderInfo. Change session-opened/replaced and open-session response folder fields to FolderInfo. Update mirror commentary to acknowledge Android's existing FolderInfo/list_folders vocabulary without editing Kotlin.
+
+Update `server/src/ws-handler.ts`, `server.ts`, `index.ts`, and their test fixtures as one server-side rename unit: inject FolderRegistry, route the new commands, validate create_hub root against configured roots, broadcast `folders_changed` after curation/hub/create-folder changes and changed repo refreshes, and preserve live session count enrichment. Invalidate RepoIndex after hub disk changes so a subsequent member-picker/list_repos request sees the new filesystem state. Keep server response admission/error behavior and two-client sync.
+
+Replace `buildProjectInfo` with an asynchronous folder resolver used by open, takeover, and session replacement. Listed paths use registry FolderInfo so persona metadata and curation are preserved. Unlisted arbitrary-cwd workflows remain supported: call `classifyFolder` with the Node FolderFs adapter, then return basename, that nature/persona, `shortcutCount: 0`, `favorite/archived: false`, `tags: []`, `missing: false`, and the existing session counts. Do not list or curate the fallback cwd merely because a session was opened there.
+
+**Verify:** build shared types with `npm run build:shared`; WS/server/boot tests pass for renamed payloads, counts, root validation, broadcasts, hub errors, and listed/unlisted persona session events. No live ProjectInfo or old curated command/event tokens remain in server/shared. Client migration follows next; intermediate cross-workspace type errors are confined to that pending unit.
+**Status:** not started
+
+### Step 8: Settle the SDK rename carve-out
+
+**Either/or — pending user scope decision; select exactly one variant before implementation.** This is the sole unresolved rename-scope point, not permission to invent a new source contract.
+
+- **Stable SDK variant (architecture's current carve-out):** leave `packages/sdk`, Android, and agent extensions untouched. Keep SDK `ProjectSource`/`ProjectCreator`, `MultiRepoSourceEntry`, `kind: 'project'`, source hook `onProjectOpen`, `projectSourcesDir`, and the published `@pimote/sdk/projects` entrypoint stable. Server adapters may use folder/hub local vocabulary while translating through those stable types. Keep the `create_project` command and remaining manager tools' `projectPath` parameter/output keys as currently specified; only their descriptions change. Update `server/src/project-sources/builtin.ts`' registry import after the file rename without renaming the published seam. Keep persistence/config physical paths stable.
+- **Full source/creator rename variant (only if explicitly approved):** perform a separate coherent source/creator rename through `packages/sdk/src/projects/**` and its exports, `server/src/project-sources/**`, `repo-index.ts`, `index.ts`, `config.ts`, `paths.ts`, `ws-handler.ts`, NewSessionDialog, their suites, and source documentation/smoke fixtures. The user decision must specify the public successors/compatibility aliases for source types, entry discriminators, hook names, package subpath, config key, and `create_project`/manager parameter keys before changing them. Preserve source entry behavior, hook order, lazy materialization, creator behavior, registry storage, and existing installed source loading. Do not turn a mechanical rename into discovery or lifecycle redesign. This variant explicitly replaces the current SDK-untouched carve-out; Android and unrelated agent extensions remain untouched.
+
+**Verify:** the chosen variant is recorded here, public export/type checks pass, and source loader/built-in creator/index hook suites pass. Search distinguishes intentional compatibility names from missed live-call-site renames; do not blindly replace every occurrence of “project.”
+**Status:** not started
+
+### Step 9: Add managerRoot configuration
+
+Add required loaded `managerRoot: string` to `PimoteConfig` in `server/src/config.ts`: default `~`, expand leading `~`/`~/` to the home directory at load, validate an explicitly supplied value as a string, and report config errors consistently with roots. Today's roots validation is string-based, not filesystem-existence validation; do not add existence checks for managerRoot or silently alter roots semantics. Update typed config fixtures across affected server tests and document the option in README's config table/example. Preserve concurrent `tagSnippets` and file-editor config fields.
+
+Pass the loaded value through ManagerToolContext.config. Do not append managerRoot to scan roots or move the manager's actual cwd from its current temporary resource directory; that lifecycle change belongs to the next pull.
+
+**Verify:** config tests cover default home expansion, explicit absolute/tilde paths, invalid values, and unchanged roots; manager factory/boot tests still use today's lifecycle and tree scans use config.roots only.
+**Status:** not started
+
+### Step 10: Wire manager folder tools
+
+Update `server/src/manager/types.ts`/`index.ts` to export FolderRegistryPort, FolderUpdatePatch, and FolderModelPort, remove ProjectRegistryPort, include `root` in createHub input, and replace ManagerToolContext.projects with `.folders` plus `.tree`. Construct the tree port in `server/src/index.ts` as an on-demand `scanFolderModel({ roots: config.roots })` closure and inject it into both registry and manager; do not add a shared scanner cache. Migrate search/archive known-folder enumeration to FolderRegistry and session-record calls to SessionRecords.
+
+In `server/src/manager/extension.ts`, rename `pimote_list_projects` to `pimote_list_folders`, update its structured output schema to all FolderInfo fields (including optional hub repos/userTags), and preserve enriched live counts. Register read-only, zero-argument `pimote_folder_tree` returning the injected SparseTree as structured JSON, with a recursive occurrence schema matching entry/path/via/children. Keep tree types in folder-model/manager, not the wire protocol, since there is no tree WS command. Describe code/persona, canonical identity versus reach paths, and unfiltered repo discovery accurately. Preserve the other tools' behavior; apply parameter naming only according to Step 8's selected variant.
+
+**Verify:** manager extension and boot-port wiring tests pass for exact tool registration, FolderInfo schema/defaults, persona search/start paths, live counts, and finite recursive tree output. Tools use only injected ports and never raw filesystem access.
+**Status:** not started
+
+### Step 11: Rename the client data flow
+
+Rename `client/src/lib/stores/project-store.svelte.ts` and its suite to `folder-store.svelte.ts`/`folder-store.svelte.test.ts`, exporting FolderStore/folderStore with `folders`, `visibleFolders`, `loadFolders`, and `applyFoldersChanged`. Consume the new list/event payloads and FolderInfo; preserve per-connection loading, first-paint behavior, stale event routing, single-flight repo/session loads, archived filters, session recency ordering, and session-event reducers.
+
+Rename ProjectList files to FolderList and update imports/references in `Dashboard.svelte`, `NewSessionDialog.svelte`, and client tests. Rename client-owned list variables/actions and presentation copy coherently, sending `update_folder`, `create_hub` (root/memberPaths), and `disband_hub` (folderPath). Retain the NewSessionDialog creation wire seam chosen in Step 8. Preserve Agent instructions/file-editor integration and tag snippet behavior. Do not rename unrelated wire/push metadata merely because it contains a project word.
+
+**Verify:** folder-store tests, connection tests, manager-store fixtures, Dashboard/NewSessionDialog suites, and `npm run check --workspace=client` pass. Reconnect loads list_folders once; folders_changed replaces the list without wiping live session indicators.
+**Status:** not started
+
+### Step 12: Render folder nature and hub state
+
+In `client/src/lib/components/FolderList.svelte`, render four distinct inline SVG row icons selected only by `nature` × `shortcutCount > 0`: code, code-hub, persona, persona-hub. Persona rows show `persona.name` with optional description as subtitle; code rows retain basename. Keep row keys, curation patches, and session lookup keyed by canonical path. Make persona display names discoverable in the existing client-side folder search/picker without changing session-search semantics.
+
+Replace `kind === 'multi'` membership-chip/disband eligibility with `repos !== undefined`; a shortcut-bearing folder gets a hub icon without automatically gaining registry deletion rights. Use FolderInfo.missing for row missing behavior instead of inferring it from whether all members are missing. Keep the flat list, member/git/tag chips, removable userTags, favorites/archive behavior, session expanders, live badges, and create/disband dialog workflows; relabel dialogs to hub vocabulary without adding editing/lifecycle features. Preserve the existing unavailable-source disband error path.
+
+**Verify:** FolderList UI tests cover all four icon selections, persona name/subtitle, code basename, generic shortcut hubs versus registry/source hub menu eligibility, missing rows, chips, tags, and create/disband command payloads. Existing file-editor, session-expander, archive, and favorites regressions pass; no tree UI is introduced.
+**Status:** not started
+
+### Step 13: Update smoke fixtures and documentation
+
+Update `tools/manual-test/project-management-smoke/project-management-smoke.mjs` in its existing location, plus `tools/manual-test/PLAN.md`/`README.md`, for folder/hub wire vocabulary, FolderInfo defaults, manager tool names, and scanner semantics. Remove the obsolete depth-bound/nested-repo expectations: fixtures must place discoverable nested entries beneath skipped wrappers, not inside included git repos. Keep two-client sync, warm-cache/reconnect, session/history, source hooks, hub disband, and manager workflows. Add persona and shortcut-linked external repo fixture coverage to the existing journey, including the four icon variants where applicable.
+
+Refresh stale `codemap.md` ownership/responsibilities for folder-model/, session-records.ts, folder-registry.ts, FolderList/folder-store, sparse scanning, and the restored Android naming alignment. Update README's dashboard/discovery/config/hub description (no depth-three claim, no reordering feature claim); keep SDK compatibility documentation aligned with Step 8. Maintain glossary's existing code/persona/shortcut terms. Do not edit external `product-manager/AGENTS.md` or root its lifecycle here: the brainstorm's bootstrap note is not a repository implementation interface.
+
+**Verify:** the documented sandboxed smoke driver passes with the new wire surface; source fixtures match the selected SDK variant. `rg` checks find no stale live curated-project commands/types/imports, except deliberately retained compatibility seams, historical DRs, and historical artifacts. Codemap points to existing renamed files.
+**Status:** not started
+
+### Step 14: Record the decision and validate the slice
+
+Following the decision-records skill, create `docs/decisions/DR-053-unified-folder-model.md` with the approved taxonomy/marker choice, sparse discovery and shortcut identity, hubs as git repos, canonical-path curation trade-off, and artifact-resident persona persistence. Capture DR-045/046's last commit hashes with `git log -1 --format=%H -- <file>`, include their provenance in DR-053, then delete those superseded records. Leave DR-047 accepted and DR-051/052 untouched. Explain rejected alternatives and accepted costs rather than writing a feature inventory. Do not implement persona memory or manager lifecycle.
+
+Run the complete server/client regression suites and production checks after the coherent rename units converge. Inspect diffs for accidental physical registry/config directory moves, SDK/Android/extension edits outside the selected scope, scanner test changes, lifecycle changes, and unrelated concurrent edits. Exercise the running pimote-in-pimote workflow against the built slice without interrupting its current session; deployment/restart is not an implicit part of this step.
+
+**Verify:** `npm test --workspace server -- --run`, `npm test --workspace client -- --run`, `npm run build`, `npm run check`, `npm run lint`, and formatting checks pass; the folder-management smoke passes. All 43 scanner cases remain unchanged and green, DR-053 has both provenance lines, and existing registry/session artifacts survive the renamed surfaces.
+**Status:** not started
