@@ -41,7 +41,7 @@ export interface RepoInfo {
   /** Epoch ms of last session activity in this repo, when known. */
   lastActivity?: number;
   /** True when the repo path no longer exists on disk (deleted member, broken symlink).
-   *  Projects always remain editable: members can be removed regardless of state. */
+   *  Hubs always remain editable: members can be removed regardless of state. */
   missing?: boolean;
   /** Effective tags (user + source-contributed). Absent when untagged. */
   tags?: string[];
