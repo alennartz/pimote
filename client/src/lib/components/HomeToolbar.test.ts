@@ -55,7 +55,7 @@ describe('combined search / manager box', () => {
     destroy = render();
     await tick();
 
-    expect(document.querySelector('input[aria-label="Search projects"]')).not.toBeNull();
+    expect(document.querySelector('input[aria-label="Search folders"]')).not.toBeNull();
     expect(document.querySelector('textarea[aria-label="Message the manager"]')).toBeNull();
     // One control, two glyphs: both are always rendered, the active one is highlighted.
     expect(modeToggle().getAttribute('data-mode')).toBe('search');
@@ -71,7 +71,7 @@ describe('combined search / manager box', () => {
     modeToggle().click();
     await tick();
     expect(document.querySelector('textarea[aria-label="Message the manager"]')).not.toBeNull();
-    expect(document.querySelector('input[aria-label="Search projects"]')).toBeNull();
+    expect(document.querySelector('input[aria-label="Search folders"]')).toBeNull();
     expect(modeToggle().getAttribute('data-mode')).toBe('manager');
     expect(modeToggle().getAttribute('aria-label')).toBe('Switch to search');
     expect(modeToggle().querySelector('.lucide-search')).not.toBeNull();
@@ -79,12 +79,12 @@ describe('combined search / manager box', () => {
 
     modeToggle().click();
     await tick();
-    expect(document.querySelector('input[aria-label="Search projects"]')).not.toBeNull();
+    expect(document.querySelector('input[aria-label="Search folders"]')).not.toBeNull();
     expect(document.querySelector('textarea[aria-label="Message the manager"]')).toBeNull();
     expect(modeToggle().getAttribute('data-mode')).toBe('search');
   });
 
-  it('the New session button opens the project picker', async () => {
+  it('the New session button opens the folder picker', async () => {
     destroy = render();
     await tick();
 

@@ -48,15 +48,15 @@ Defines the TypeScript WebSocket contract shared by server and web client.
 
 Hosts pi `AgentSession` instances and exposes the HTTP and WebSocket API.
 
-**Responsibilities:** CLI and configuration (including optional tagSnippets), static/PWA and WebSocket serving, session slots and replay buffers, command routing (including native bash execution, extension interception, cancellation, and generic file_get/file_put dispatch), file-edit service (leading-tilde path expansion, UTF-8 reads, atomic writes preserving symlinks and file mode), SDK event boundary for live bash output, project/repo discovery (bounded recursive repo index over roots and registered sources, stale-while-revalidate TTL caches with change-notifying background refresh, and per-repo git status), per-file session summary cache behind session listings (mtime+size keyed; serves list metadata without re-parsing session history), curated project registry (favorite/archive overrides, multi-repo project create/disband with symlinked members and generated AGENTS.md, JSON persistence, projects_changed broadcasts), user project sources (jiti-loaded TS modules from a configured dir), ephemeral per-connection manager agent (lifecycle with idle reaper, pimote session-management tools, in-memory session factory, static hosting/download artifact snapshots retained for 24 hours after disposal and cleared on restart), ownership/conflict handling, extension UI bridge, auth, push notifications, persistent session metadata, version lookup and TTL-cached npm update checks with per-connection update events
+**Responsibilities:** CLI and configuration (including optional tagSnippets), static/PWA and WebSocket serving, session slots and replay buffers, command routing (including native bash execution, extension interception, cancellation, and generic file_get/file_put dispatch), file-edit service (leading-tilde path expansion, UTF-8 reads, atomic writes preserving symlinks and file mode), SDK event boundary for live bash output, project/repo discovery (bounded recursive repo index over roots and registered sources, stale-while-revalidate TTL caches with change-notifying background refresh, and per-repo git status), per-file session summary cache behind session listings (mtime+size keyed; serves list metadata without re-parsing session history), curated project registry (favorite/archive overrides, multi-repo project create/disband with symlinked members and generated AGENTS.md, JSON persistence, projects_changed broadcasts), user folder sources (jiti-loaded TS modules from a configured dir), ephemeral per-connection manager agent (lifecycle with idle reaper, pimote session-management tools, in-memory session factory, static hosting/download artifact snapshots retained for 24 hours after disposal and cleared on restart), ownership/conflict handling, extension UI bridge, auth, push notifications, persistent session metadata, version lookup and TTL-cached npm update checks with per-connection update events
 
-**Dependencies:** Protocol for wire types; Agent Extensions for session tools and resources; `@pimote/sdk` (types-only) for the project-sources seam
+**Dependencies:** Protocol for wire types; Agent Extensions for session tools and resources; `@pimote/sdk` (types-only) for the folder-sources seam
 
 **Files:**
 
 - `server/src/*.ts`
 - `server/src/manager/**`
-- `server/src/project-sources/**`
+- `server/src/folder-sources/**`
 
 ### Agent Extensions
 
@@ -88,7 +88,7 @@ Installable SvelteKit PWA for browsing, controlling, and rendering remote pi ses
 
 Published `@pimote/sdk` extensibility package that pi extensions import to talk to pimote.
 
-**Responsibilities:** card types, EventBus detection, namespace-scoped panel handles, project discovery/creation seam types
+**Responsibilities:** card types, EventBus detection, namespace-scoped panel handles, folder discovery/creation seam types
 
 **Dependencies:** pi SDK extension APIs
 

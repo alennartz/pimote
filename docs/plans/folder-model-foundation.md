@@ -320,7 +320,7 @@ Update `server/src/ws-handler.ts`, `server.ts`, `index.ts`, and their test fixtu
 Replace `buildProjectInfo` with an asynchronous folder resolver used by open, takeover, and session replacement. Listed paths use registry FolderInfo so persona metadata and curation are preserved. Unlisted arbitrary-cwd workflows remain supported: call `classifyFolder` with the Node FolderFs adapter, then return basename, that nature/persona, `shortcutCount: 0`, `favorite/archived: false`, `tags: []`, `missing: false`, and the existing session counts. Do not list or curate the fallback cwd merely because a session was opened there.
 
 **Verify:** build shared types with `npm run build:shared`; WS/server/boot tests pass for renamed payloads, counts, root validation, broadcasts, hub errors, and listed/unlisted persona session events. No live ProjectInfo or old curated command/event tokens remain in server/shared. Client migration follows next; intermediate cross-workspace type errors are confined to that pending unit.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Settle the SDK rename carve-out
 
@@ -343,7 +343,7 @@ Replace `buildProjectInfo` with an asynchronous folder resolver used by open, ta
 - **Full source/creator rename variant (only if explicitly approved):** perform a separate coherent source/creator rename through `packages/sdk/src/projects/**` and its exports, `server/src/project-sources/**`, `repo-index.ts`, `index.ts`, `config.ts`, `paths.ts`, `ws-handler.ts`, NewSessionDialog, their suites, and source documentation/smoke fixtures. The user decision must specify the public successors/compatibility aliases for source types, entry discriminators, hook names, package subpath, config key, and `create_project`/manager parameter keys before changing them. Preserve source entry behavior, hook order, lazy materialization, creator behavior, registry storage, and existing installed source loading. Do not turn a mechanical rename into discovery or lifecycle redesign. This variant explicitly replaces the current SDK-untouched carve-out; Android and unrelated agent extensions remain untouched.
 
 **Verify:** the chosen variant is recorded here, public export/type checks pass, and source loader/built-in creator/index hook suites pass. Search distinguishes intentional compatibility names from missed live-call-site renames; do not blindly replace every occurrence of “project.”
-**Status:** not started
+**Status:** done
 
 ### Step 9: Add managerRoot configuration
 
@@ -352,7 +352,7 @@ Add required loaded `managerRoot: string` to `PimoteConfig` in `server/src/confi
 Pass the loaded value through ManagerToolContext.config. Do not append managerRoot to scan roots or move the manager's actual cwd from its current temporary resource directory; that lifecycle change belongs to the next pull.
 
 **Verify:** config tests cover default home expansion, explicit absolute/tilde paths, invalid values, and unchanged roots; manager factory/boot tests still use today's lifecycle and tree scans use config.roots only.
-**Status:** not started
+**Status:** done
 
 ### Step 10: Wire manager folder tools
 
@@ -361,7 +361,7 @@ Update `server/src/manager/types.ts`/`index.ts` to export FolderRegistryPort, Fo
 In `server/src/manager/extension.ts`, rename `pimote_list_projects` to `pimote_list_folders`, update its structured output schema to all FolderInfo fields (including optional hub repos/userTags), and preserve enriched live counts. Register read-only, zero-argument `pimote_folder_tree` returning the injected SparseTree as structured JSON, with a recursive occurrence schema matching entry/path/via/children. Keep tree types in folder-model/manager, not the wire protocol, since there is no tree WS command. Describe code/persona, canonical identity versus reach paths, and unfiltered repo discovery accurately. Preserve the other tools' behavior; apply parameter naming only according to Step 8's selected variant.
 
 **Verify:** manager extension and boot-port wiring tests pass for exact tool registration, FolderInfo schema/defaults, persona search/start paths, live counts, and finite recursive tree output. Tools use only injected ports and never raw filesystem access.
-**Status:** not started
+**Status:** done
 
 ### Step 11: Rename the client data flow
 
@@ -370,7 +370,7 @@ Rename `client/src/lib/stores/project-store.svelte.ts` and its suite to `folder-
 Rename ProjectList files to FolderList and update imports/references in `Dashboard.svelte`, `NewSessionDialog.svelte`, and client tests. Rename client-owned list variables/actions and presentation copy coherently, sending `update_folder`, `create_hub` (root/memberPaths), and `disband_hub` (folderPath). Retain the NewSessionDialog creation wire seam chosen in Step 8. Preserve Agent instructions/file-editor integration and tag snippet behavior. Do not rename unrelated wire/push metadata merely because it contains a project word.
 
 **Verify:** folder-store tests, connection tests, manager-store fixtures, Dashboard/NewSessionDialog suites, and `npm run check --workspace=client` pass. Reconnect loads list_folders once; folders_changed replaces the list without wiping live session indicators.
-**Status:** not started
+**Status:** done
 
 ### Step 12: Render folder nature and hub state
 
@@ -379,7 +379,7 @@ In `client/src/lib/components/FolderList.svelte`, render four distinct inline SV
 Replace `kind === 'multi'` membership-chip/disband eligibility with `repos !== undefined`; a shortcut-bearing folder gets a hub icon without automatically gaining registry deletion rights. Use FolderInfo.missing for row missing behavior instead of inferring it from whether all members are missing. Keep the flat list, member/git/tag chips, removable userTags, favorites/archive behavior, session expanders, live badges, and create/disband dialog workflows; relabel dialogs to hub vocabulary without adding editing/lifecycle features. Preserve the existing unavailable-source disband error path.
 
 **Verify:** FolderList UI tests cover all four icon selections, persona name/subtitle, code basename, generic shortcut hubs versus registry/source hub menu eligibility, missing rows, chips, tags, and create/disband command payloads. Existing file-editor, session-expander, archive, and favorites regressions pass; no tree UI is introduced.
-**Status:** not started
+**Status:** done
 
 ### Step 13: Update smoke fixtures and documentation
 

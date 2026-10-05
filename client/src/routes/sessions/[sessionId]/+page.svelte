@@ -115,7 +115,7 @@
     {/if}
     {#if sessionRegistry.viewed?.conflictingProcesses?.length}
       <div class="bg-destructive/10 border-destructive/30 text-destructive flex items-center gap-2 border-b px-4 py-2 text-sm">
-        <span>External pi processes detected in this project.</span>
+        <span>External pi processes detected in this folder.</span>
         <button class="bg-destructive text-primary-foreground hover:bg-destructive/80 ml-auto rounded px-3 py-1 text-xs font-medium" onclick={killConflicts}>
           Kill &amp; Continue
         </button>

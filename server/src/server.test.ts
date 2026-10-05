@@ -15,6 +15,9 @@ vi.mock('./file-download/index.js', () => ({
 }));
 
 import { createServer, type PimoteServer } from './server.js';
+import type { FolderRegistry } from './folder-registry.js';
+import type { RepoIndex } from './repo-index.js';
+import type { FolderInfo, PimoteEvent } from '../../shared/dist/index.js';
 
 function makeDownloads(): DownloadManager {
   return {
@@ -52,7 +55,7 @@ describe('createServer — file download route wiring', () => {
     });
 
     server = await createServer(
-      { roots: [], idleTimeout: 60_000, bufferSize: 10, port: 0 },
+      { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0 },
       {} as any,
       {} as any,
       {} as any,
@@ -69,6 +72,76 @@ describe('createServer — file download route wiring', () => {
     expect(response.status).toBe(200);
     await expect(response.text()).resolves.toBe('downloaded');
     expect(serveFileDownloadRoute).toHaveBeenCalledWith(expect.anything(), expect.anything(), downloads);
+  });
+});
+
+describe('createServer — folders_changed broadcast wiring', () => {
+  let server: PimoteServer;
+
+  afterEach(async () => {
+    await server?.close();
+  });
+
+  it('broadcasts the merged folder list on registry mutations and on repo-index refreshes', async () => {
+    const folder: FolderInfo = {
+      path: '/w/a',
+      name: 'a',
+      nature: 'code',
+      shortcutCount: 0,
+      favorite: true,
+      archived: false,
+      tags: [],
+      missing: false,
+      activeSessionCount: 0,
+      externalProcessCount: 0,
+    };
+    const registryListeners: Array<() => void> = [];
+    const folderRegistry = {
+      onChange: (cb: () => void) => {
+        registryListeners.push(cb);
+        return () => {};
+      },
+      list: async () => [{ ...folder }],
+    } as unknown as FolderRegistry;
+    const refreshListeners: Array<() => void> = [];
+    const repoIndex = {
+      roots: ['/w'],
+      list: async () => [],
+      setOnRefreshed: (cb: () => void) => {
+        refreshListeners.push(cb);
+      },
+    } as unknown as RepoIndex;
+
+    server = await createServer(
+      { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0 },
+      { getAllSessions: () => [] } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      undefined,
+      new InMemoryStaticHostRegistry(),
+      makeDownloads(),
+      undefined,
+      repoIndex,
+      folderRegistry,
+    );
+    await server.start(0);
+
+    const seen: PimoteEvent[] = [];
+    server.clientRegistry.set('c1', { sendToClient: (event: PimoteEvent) => seen.push(event) } as any);
+
+    // Curation and hub changes route through the registry subscription.
+    expect(registryListeners).toHaveLength(1);
+    registryListeners[0]!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen).toContainEqual({ type: 'folders_changed', folders: [{ ...folder }] });
+
+    // Changed repo refreshes ride the same channel.
+    seen.length = 0;
+    expect(refreshListeners).toHaveLength(1);
+    refreshListeners[0]!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen).toContainEqual({ type: 'folders_changed', folders: [{ ...folder }] });
   });
 });
 
@@ -98,7 +171,7 @@ describe('createServer — app name branding', () => {
 
   async function startWith(config: Record<string, unknown>): Promise<string> {
     server = await createServer(
-      { roots: [], idleTimeout: 60_000, bufferSize: 10, port: 0, ...config } as any,
+      { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0, ...config } as any,
       {} as any,
       {} as any,
       {} as any,

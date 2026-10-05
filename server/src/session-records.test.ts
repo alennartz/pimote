@@ -15,9 +15,9 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-/** One session file in the project's session directory. */
-async function writeSession(projectDir: string, agentDir: string, file: string, lines: string[]): Promise<string> {
-  const sessionDir = sessionDirFor(projectDir, agentDir);
+/** One session file in the folder's session directory. */
+async function writeSession(folderDir: string, agentDir: string, file: string, lines: string[]): Promise<string> {
+  const sessionDir = sessionDirFor(folderDir, agentDir);
   await mkdir(sessionDir, { recursive: true });
   const sessionPath = join(sessionDir, file);
   await writeFile(sessionPath, lines.join('\n') + '\n', 'utf8');
@@ -38,15 +38,15 @@ describe('SessionRecords.listSessions()', () => {
 
   it('maps session records dates to ISO strings', async () => {
     const agentDir = join(tempDir, 'agent');
-    const projectDir = join(tempDir, 'project');
-    await writeSession(projectDir, agentDir, 's-1.jsonl', [
-      `{"type":"session","id":"abc-123","timestamp":"2025-06-15T10:30:00.000Z","cwd":"${projectDir}"}`,
+    const folderDir = join(tempDir, 'project');
+    await writeSession(folderDir, agentDir, 's-1.jsonl', [
+      `{"type":"session","id":"abc-123","timestamp":"2025-06-15T10:30:00.000Z","cwd":"${folderDir}"}`,
       `{"type":"message","timestamp":"2025-06-15T10:31:00.000Z","message":{"role":"user","content":"Hello world"}}`,
       `{"type":"session_info","name":"Test Session"}`,
     ]);
 
     const records = sessionRecordsFor(agentDir);
-    const sessions = await records.listSessions(projectDir);
+    const sessions = await records.listSessions(folderDir);
 
     expect(sessions).toEqual([
       {
@@ -62,14 +62,14 @@ describe('SessionRecords.listSessions()', () => {
 
   it('maps sessions without optional name', async () => {
     const agentDir = join(tempDir, 'agent');
-    const projectDir = join(tempDir, 'project');
-    await writeSession(projectDir, agentDir, 's-2.jsonl', [
-      `{"type":"session","id":"def-456","timestamp":"2025-01-01T00:00:00.000Z","cwd":"${projectDir}"}`,
+    const folderDir = join(tempDir, 'project');
+    await writeSession(folderDir, agentDir, 's-2.jsonl', [
+      `{"type":"session","id":"def-456","timestamp":"2025-01-01T00:00:00.000Z","cwd":"${folderDir}"}`,
       `{"type":"message","timestamp":"2025-01-01T00:01:00.000Z","message":{"role":"user","content":"hi"}}`,
     ]);
 
     const records = sessionRecordsFor(agentDir);
-    const sessions = await records.listSessions(projectDir);
+    const sessions = await records.listSessions(folderDir);
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0].name).toBeUndefined();
@@ -80,9 +80,9 @@ describe('SessionRecords.listSessions()', () => {
 describe('SessionRecords.listSessionRecords()', () => {
   it('returns raw session summaries served by the summary cache', async () => {
     const agentDir = join(tempDir, 'agent');
-    const projectDir = join(tempDir, 'project');
-    const sessionPath = await writeSession(projectDir, agentDir, 's-1.jsonl', [
-      `{"type":"session","id":"abc-123","timestamp":"2025-06-15T10:30:00.000Z","cwd":"${projectDir}"}`,
+    const folderDir = join(tempDir, 'project');
+    const sessionPath = await writeSession(folderDir, agentDir, 's-1.jsonl', [
+      `{"type":"session","id":"abc-123","timestamp":"2025-06-15T10:30:00.000Z","cwd":"${folderDir}"}`,
       `{"type":"message","timestamp":"2025-06-15T10:31:00.000Z","message":{"role":"user","content":"Hello world"}}`,
     ]);
 
@@ -90,14 +90,14 @@ describe('SessionRecords.listSessionRecords()', () => {
     const listSpy = vi.spyOn(summaries, 'list');
     const records = new SessionRecords(summaries);
 
-    const result = await records.listSessionRecords(projectDir);
+    const result = await records.listSessionRecords(folderDir);
 
-    expect(listSpy).toHaveBeenCalledWith(projectDir);
+    expect(listSpy).toHaveBeenCalledWith(folderDir);
     expect(result).toEqual([
       {
         path: sessionPath,
         id: 'abc-123',
-        cwd: projectDir,
+        cwd: folderDir,
         name: undefined,
         parentSessionPath: undefined,
         created: new Date('2025-06-15T10:30:00.000Z'),
@@ -112,16 +112,16 @@ describe('SessionRecords.listSessionRecords()', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       const agentDir = join(tempDir, 'agent');
-      const projectDir = join(tempDir, 'project');
+      const folderDir = join(tempDir, 'project');
       // A file where the session directory should be: readdir fails with
       // something other than ENOENT, so enumeration cannot prove its result.
-      const sessionDir = sessionDirFor(projectDir, agentDir);
+      const sessionDir = sessionDirFor(folderDir, agentDir);
       await mkdir(sessionDir, { recursive: true });
       await rm(sessionDir, { recursive: true, force: true });
       await writeFile(sessionDir, 'not a directory', 'utf8');
 
       const records = sessionRecordsFor(agentDir);
-      await expect(records.listSessionRecords(projectDir)).resolves.toEqual([]);
+      await expect(records.listSessionRecords(folderDir)).resolves.toEqual([]);
       expect(warn).toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -130,25 +130,25 @@ describe('SessionRecords.listSessionRecords()', () => {
 
   it('throws on enumeration failure in strict mode', async () => {
     const agentDir = join(tempDir, 'agent');
-    const projectDir = join(tempDir, 'project');
-    const sessionDir = sessionDirFor(projectDir, agentDir);
+    const folderDir = join(tempDir, 'project');
+    const sessionDir = sessionDirFor(folderDir, agentDir);
     await mkdir(sessionDir, { recursive: true });
     await rm(sessionDir, { recursive: true, force: true });
     await writeFile(sessionDir, 'not a directory', 'utf8');
 
     const records = sessionRecordsFor(agentDir);
-    await expect(records.listSessionRecords(projectDir, { failOnError: true })).rejects.toThrow();
+    await expect(records.listSessionRecords(folderDir, { failOnError: true })).rejects.toThrow();
   });
 });
 
 describe('SessionRecords.resolveSessionPath()', () => {
   it('resolves a session id to its file path', async () => {
     const agentDir = join(tempDir, 'agent');
-    const projectDir = join(tempDir, 'project');
-    const sessionPath = await writeSession(projectDir, agentDir, 's-1.jsonl', [`{"type":"session","id":"abc-123","timestamp":"2025-06-15T10:30:00.000Z","cwd":"${projectDir}"}`]);
+    const folderDir = join(tempDir, 'project');
+    const sessionPath = await writeSession(folderDir, agentDir, 's-1.jsonl', [`{"type":"session","id":"abc-123","timestamp":"2025-06-15T10:30:00.000Z","cwd":"${folderDir}"}`]);
 
     const records = sessionRecordsFor(agentDir);
-    await expect(records.resolveSessionPath(projectDir, 'abc-123')).resolves.toBe(sessionPath);
+    await expect(records.resolveSessionPath(folderDir, 'abc-123')).resolves.toBe(sessionPath);
   });
 
   it('returns undefined for a missing session', async () => {
@@ -197,12 +197,12 @@ describe('SessionRecords.renameSession()', () => {
 describe('SessionRecords.deleteSession()', () => {
   it('deletes the session file when found', async () => {
     const agentDir = join(tempDir, 'agent');
-    const projectDir = join(tempDir, 'project');
-    await writeSession(projectDir, agentDir, 's-1.jsonl', [`{"type":"session","id":"abc-123","timestamp":"2025-06-15T10:30:00.000Z","cwd":"${projectDir}"}`]);
+    const folderDir = join(tempDir, 'project');
+    await writeSession(folderDir, agentDir, 's-1.jsonl', [`{"type":"session","id":"abc-123","timestamp":"2025-06-15T10:30:00.000Z","cwd":"${folderDir}"}`]);
 
     const records = sessionRecordsFor(agentDir);
-    await expect(records.deleteSession(projectDir, 'abc-123')).resolves.toBe(true);
-    await expect(records.resolveSessionPath(projectDir, 'abc-123')).resolves.toBeUndefined();
+    await expect(records.deleteSession(folderDir, 'abc-123')).resolves.toBe(true);
+    await expect(records.resolveSessionPath(folderDir, 'abc-123')).resolves.toBeUndefined();
   });
 
   it('returns false when the session cannot be found', async () => {

@@ -16,11 +16,17 @@ export const PIMOTE_CONFIG_PATH = join(PIMOTE_CONFIG_DIR, 'config.json');
 export const PIMOTE_PUSH_SUBSCRIPTIONS_PATH = join(PIMOTE_STATE_DIR, 'push-subscriptions.json');
 export const PIMOTE_SESSION_METADATA_PATH = join(PIMOTE_STATE_DIR, 'session-metadata.json');
 
-/** Directory scanned for user project-source modules (dynamic-imported extensible discovery). */
-export const PIMOTE_PROJECT_SOURCES_DIR = join(PIMOTE_CONFIG_DIR, 'project-sources');
+/** Directory scanned for user folder-source modules (dynamic-imported extensible discovery). */
+export const PIMOTE_FOLDER_SOURCES_DIR = join(PIMOTE_CONFIG_DIR, 'folder-sources');
+/** Deprecated legacy sources dir — read-compat fallback when PIMOTE_FOLDER_SOURCES_DIR is absent (will be retired). */
+export const LEGACY_PIMOTE_PROJECT_SOURCES_DIR = join(PIMOTE_CONFIG_DIR, 'project-sources');
 
-/** Directory holding the project registry store (`registry.json`). */
-export const PIMOTE_PROJECTS_DIR = join(PIMOTE_STATE_DIR, 'projects');
+/**
+ * Directory holding the folder registry store (`registry.json`). The physical
+ * path string is intentionally unchanged from the earlier state dir — registry
+ * storage must not move (existing registry data has to survive this rename).
+ */
+export const PIMOTE_REGISTRY_STORE_DIR = join(PIMOTE_STATE_DIR, 'projects');
 
 /** Directory holding server-provided pi skills materialized for progressive discovery. */
 export const PIMOTE_SKILLS_DIR = join(PIMOTE_STATE_DIR, 'skills');

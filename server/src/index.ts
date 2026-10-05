@@ -8,9 +8,9 @@ import { scanFolderModel, type FolderOccurrence, type FolderScanWarning, type Sp
 import { RepoIndex } from './repo-index.js';
 import { FolderRegistry } from './folder-registry.js';
 import type { FolderModelPort } from './manager/types.js';
-import { loadProjectSources } from './project-sources/index.js';
-import { createBuiltinCreator } from './project-sources/builtin.js';
-import type { ProjectCreator } from './project-sources/index.js';
+import { loadFolderSources, resolveSourcesDir } from './folder-sources/index.js';
+import { createBuiltinCreator } from './folder-sources/builtin.js';
+import type { FolderCreator } from './folder-sources/index.js';
 import { ManagerService } from './manager/index.js';
 import type { ManagerToolContext, SessionArchiveOutcome } from './manager/index.js';
 import { createManagerExtension } from './manager/index.js';
@@ -21,8 +21,7 @@ import {
   LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
   PIMOTE_FILE_DOWNLOAD_DIR,
   PIMOTE_MANAGER_RESOURCES_DIR,
-  PIMOTE_PROJECTS_DIR,
-  PIMOTE_PROJECT_SOURCES_DIR,
+  PIMOTE_REGISTRY_STORE_DIR,
   PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
   PIMOTE_SESSION_METADATA_PATH,
   PIMOTE_SKILLS_DIR,
@@ -52,17 +51,17 @@ export async function main(options: StartOptions = {}) {
   // roots (a fresh scanFolderModel call per request — no shared scanner
   // cache), the repo index over the same roots plus any user-registered
   // sources, the persistent curation layer above them, and the built-in
-  // creator backing the dashboard's create-project flow.
+  // creator backing the dashboard's create-folder flow.
   const folderTree: FolderModelPort = {
     tree: () => scanFolderModel({ roots: config.roots }),
   };
   const repoIndex = new RepoIndex(config.roots);
-  const loadedSources = await loadProjectSources(config.projectSourcesDir ?? PIMOTE_PROJECT_SOURCES_DIR);
+  const loadedSources = await loadFolderSources(await resolveSourcesDir(config.folderSourcesDir));
   for (const source of loadedSources.sources) {
     repoIndex.registerSource(source);
   }
-  const creators: ProjectCreator[] = [createBuiltinCreator(), ...loadedSources.creators];
-  const projectRegistry = new FolderRegistry(repoIndex, PIMOTE_PROJECTS_DIR, folderTree);
+  const creators: FolderCreator[] = [createBuiltinCreator(), ...loadedSources.creators];
+  const folderRegistry = new FolderRegistry(repoIndex, PIMOTE_REGISTRY_STORE_DIR, folderTree);
 
   // Initialize push notification service
   await migratePushSubscriptionStore(LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_PUSH_SUBSCRIPTIONS_PATH);
@@ -108,7 +107,7 @@ export async function main(options: StartOptions = {}) {
           status: slot.sessionState.status,
           needsAttention: slot.sessionState.needsAttention,
         })),
-      // On-disk records for one project folder: SessionRecords listing enriched
+      // On-disk records for one folder: SessionRecords listing enriched
       // with the archived flag from the session metadata store, so search
       // results carry the same archived state the WS list_sessions path serves.
       listDiskSessions: async (folderPath) => {
@@ -144,7 +143,7 @@ export async function main(options: StartOptions = {}) {
       // lingers as an open one. Broadcast mirrors the WS flow so connected
       // dashboards update immediately.
       archiveSessions: async (sessionIds: string[]): Promise<SessionArchiveOutcome[]> => {
-        const folderPaths = [...new Set((await projectRegistry.list()).map((project) => project.path))];
+        const folderPaths = [...new Set((await folderRegistry.list()).map((folder) => folder.path))];
         return Promise.all(
           sessionIds.map(async (sessionId): Promise<SessionArchiveOutcome> => {
             const slot = sessionManager.getSession(sessionId);
@@ -163,8 +162,9 @@ export async function main(options: StartOptions = {}) {
         );
       },
     },
-    projects: projectRegistry,
+    folders: folderRegistry,
     repos: repoIndex,
+    tree: folderTree,
     config,
   };
   const managerService = new ManagerService({
@@ -224,7 +224,7 @@ export async function main(options: StartOptions = {}) {
     fileDownloads.manager,
     updateChecker,
     repoIndex,
-    projectRegistry,
+    folderRegistry,
     managerService,
     creators,
   );
@@ -352,7 +352,7 @@ function uniqueEntryPaths(tree: SparseTree): string[] {
   return paths;
 }
 
-/** Resolve a session id to its on-disk file path and owning project folder,
+/** Resolve a session id to its on-disk file path and owning folder,
  *  scanning the given folders — the manager's archive path when no live slot
  *  holds the id. */
 async function resolveSessionAcrossFolders(

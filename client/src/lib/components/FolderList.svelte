@@ -1,7 +1,7 @@
 <script lang="ts">
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-  import type { ProjectInfo, SessionInfo } from '@pimote/shared';
-  import { projectStore } from '$lib/stores/project-store.svelte.js';
+  import type { FolderInfo, SessionInfo } from '@pimote/shared';
+  import { folderStore } from '$lib/stores/folder-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { AGENT_INSTRUCTIONS_PATH, fileEditorStore } from '$lib/stores/file-editor.svelte.js';
@@ -34,7 +34,7 @@
   let { search = '', onSessionSelect }: Props = $props();
 
   let openError = $state('');
-  // Three-state project expander: 'closed' (nothing), 'active' (half-open —
+  // Three-state folder expander: 'closed' (nothing), 'active' (half-open —
   // sessions open on this client plus sessions open but bound to another
   // client), 'all' (every session).
   // 'active' is the default. An active search overrides all of this so
@@ -43,7 +43,7 @@
   let expandStates = new SvelteMap<string, ExpandState>();
   let expandedSessionLists = new SvelteSet<string>();
 
-  // Project row context menu (long-press on touch, right-click on desktop).
+  // Folder row context menu (long-press on touch, right-click on desktop).
   // A long-press opens the menu while the finger is still down, so the release
   // would fire a click that toggles the row behind the menu — swallow it.
   let rowMenuPath = $state<string | null>(null);
@@ -86,26 +86,44 @@
     return activeSessionIds.has(session.id) || session.liveStatus != null;
   }
 
+  /** Row icon: nature × shortcut presence only. Shortcut-bearing rows get the
+   *  hub variant even without hub registry membership — `repos` gates the
+   *  membership chips and disband rights, never the icon. */
+  function folderIconKind(folder: FolderInfo): 'code' | 'code-hub' | 'persona' | 'persona-hub' {
+    const hub = folder.shortcutCount > 0;
+    return folder.nature === 'persona' ? (hub ? 'persona-hub' : 'persona') : hub ? 'code-hub' : 'code';
+  }
+
+  /** Persona rows lead with the persona's display name; code rows keep the basename. */
+  function displayName(folder: FolderInfo): string {
+    return folder.persona?.name ?? folder.name;
+  }
+
+  /** Persona rows may carry a description as the row's subtitle line. */
+  function subtitle(folder: FolderInfo): string | undefined {
+    return folder.nature === 'persona' ? folder.persona?.description : undefined;
+  }
+
   let showArchiveAllDialog = $state(false);
 
-  // Create project project flow state
-  let showMultiRepoDialog = $state(false);
-  let multiRepoName = $state('');
-  let multiRepoRoot = $state('');
-  let multiRepoMembers = new SvelteSet<string>();
-  let multiRepoError = $state('');
-  let multiRepoCreating = $state(false);
+  // Create hub flow state
+  let showHubDialog = $state(false);
+  let hubName = $state('');
+  let hubRoot = $state('');
+  let hubMembers = new SvelteSet<string>();
+  let hubError = $state('');
+  let hubCreating = $state(false);
 
   // Disband confirmation state
-  let disbandTarget = $state<ProjectInfo | null>(null);
+  let disbandTarget = $state<FolderInfo | null>(null);
 
   // Add-tag dialog state
-  let tagTarget = $state<ProjectInfo | null>(null);
+  let tagTarget = $state<FolderInfo | null>(null);
   let tagName = $state('');
   let tagError = $state('');
 
-  function openTagDialog(project: ProjectInfo) {
-    tagTarget = project;
+  function openTagDialog(folder: FolderInfo) {
+    tagTarget = folder;
     tagName = '';
     tagError = '';
   }
@@ -113,53 +131,54 @@
   async function addTag() {
     const tag = tagName.trim();
     if (!tag || !tagTarget) return;
-    const project = tagTarget;
+    const folder = tagTarget;
     tagTarget = null;
-    await updateProject(project, { addTags: [tag] });
+    await updateFolder(folder, { addTags: [tag] });
   }
 
-  // Two-tier search: a project matching by name/path shows all its sessions;
-  // one matching only via session data shows just the matching sessions.
+  // Two-tier search: a folder matching by display name/path/tags shows all its
+  // sessions; one matching only via session data shows just the matching
+  // sessions.
   const searchResults = $derived.by(() => {
     const query = search.trim().toLowerCase();
     if (!query) return null;
-    const projects: ProjectInfo[] = [];
+    const folders: FolderInfo[] = [];
     // Non-reactive derived output — recomputed wholesale on every query change.
     // eslint-disable-next-line svelte/prefer-svelte-reactivity
     const sessionView = new Map<string, SessionInfo[]>();
-    for (const project of projectStore.visibleProjects) {
-      const sessions = projectStore.sessions.get(project.path) ?? [];
-      const tagMatch = (project.tags ?? []).some((t) => t.toLowerCase().includes(query));
-      const projectMatch = tagMatch || project.name.toLowerCase().includes(query) || project.path.toLowerCase().includes(query);
+    for (const folder of folderStore.visibleFolders) {
+      const sessions = folderStore.sessions.get(folder.path) ?? [];
+      const tagMatch = (folder.tags ?? []).some((t) => t.toLowerCase().includes(query));
+      const folderMatch = tagMatch || displayName(folder).toLowerCase().includes(query) || folder.name.toLowerCase().includes(query) || folder.path.toLowerCase().includes(query);
       const sessionMatches = sessions.filter((s) => (s.name ?? '').toLowerCase().includes(query) || (s.firstMessage ?? '').toLowerCase().includes(query));
-      if (projectMatch) {
-        projects.push(project);
-        sessionView.set(project.path, sessions);
+      if (folderMatch) {
+        folders.push(folder);
+        sessionView.set(folder.path, sessions);
       } else if (sessionMatches.length > 0) {
-        projects.push(project);
-        sessionView.set(project.path, sessionMatches);
+        folders.push(folder);
+        sessionView.set(folder.path, sessionMatches);
       }
     }
-    return { projects, sessionView };
+    return { folders, sessionView };
   });
 
-  const displayProjects = $derived(searchResults ? searchResults.projects : projectStore.visibleProjects);
+  const displayFolders = $derived(searchResults ? searchResults.folders : folderStore.visibleFolders);
 
-  function sessionsFor(project: ProjectInfo): SessionInfo[] {
-    return searchResults?.sessionView.get(project.path) ?? projectStore.sessions.get(project.path) ?? [];
+  function sessionsFor(folder: FolderInfo): SessionInfo[] {
+    return searchResults?.sessionView.get(folder.path) ?? folderStore.sessions.get(folder.path) ?? [];
   }
   const archivableCount = $derived(
-    projectStore.projects.reduce((total, project) => {
-      const sessions = projectStore.sessions.get(project.path) ?? [];
+    folderStore.folders.reduce((total, folder) => {
+      const sessions = folderStore.sessions.get(folder.path) ?? [];
       return total + sessions.filter((s) => !s.archived && !s.liveStatus).length;
     }, 0),
   );
-  const multiRepoCandidateRepos = $derived(projectStore.repos.filter((repo) => !repo.missing));
+  const hubCandidateRepos = $derived(folderStore.repos.filter((repo) => !repo.missing));
 
-  // Session/project events are routed into the store at module scope
-  // (project-store.svelte.ts) for the app's lifetime, not per-mount.
+  // Session/folder events are routed into the store at module scope
+  // (folder-store.svelte.ts) for the app's lifetime, not per-mount.
 
-  function toggleProject(path: string) {
+  function toggleFolder(path: string) {
     // Cycle closed → active → all → closed… From closed, skip half-open when
     // nothing is open: half-open would render identical to closed, so the tap
     // would look dead.
@@ -169,23 +188,23 @@
     } else if (current === 'all') {
       expandStates.set(path, 'closed');
     } else {
-      const anyOpen = (projectStore.sessions.get(path) ?? []).some(isOpenSession);
+      const anyOpen = (folderStore.sessions.get(path) ?? []).some(isOpenSession);
       expandStates.set(path, anyOpen ? 'active' : 'all');
     }
   }
 
-  function handleRowClick(project: ProjectInfo) {
-    if (isMissingProject(project)) {
-      void attemptOpen(project.path);
+  function handleRowClick(folder: FolderInfo) {
+    if (folder.missing) {
+      void attemptOpen(folder.path);
       return;
     }
-    toggleProject(project.path);
+    toggleFolder(folder.path);
   }
 
   /** Row 2 (git status + tags) renders only when there's something to show. */
-  function hasRepoInfo(project: ProjectInfo): boolean {
-    if (project.kind === 'multi') return (project.repos?.length ?? 0) > 0;
-    const repo = projectStore.repos.find((r) => r.path === project.path);
+  function hasRepoInfo(folder: FolderInfo): boolean {
+    if (folder.repos !== undefined) return folder.repos.length > 0;
+    const repo = folderStore.repos.find((r) => r.path === folder.path);
     return !!repo && !repo.missing && !!repo.branch;
   }
 
@@ -197,32 +216,22 @@
     }
   }
 
-  function validateProjectName(name: string): string | null {
+  function validateFolderName(name: string): string | null {
     if (!name.trim()) return 'Name is required';
     if (name.includes('/') || name.includes('\\')) return 'Name cannot contain path separators';
     if (name === '.' || name === '..') return 'Invalid name';
     return null;
   }
 
-  /** True when a project's folder doesn't exist on disk yet — opening it gives
-   *  its source's onProjectOpen hook the chance to materialize it. */
-  function isMissingProject(project: ProjectInfo): boolean {
-    if (project.kind === 'single') {
-      return projectStore.repos.find((r) => r.path === project.path)?.missing === true;
-    }
-    const repos = project.repos ?? [];
-    return repos.length > 0 && repos.every((r) => r.missing);
-  }
-
-  /** Open attempt against a (possibly virtual) project: the server awaits the
-   *  source's onProjectOpen hooks before opening the session. */
+  /** Open attempt against a (possibly virtual) folder: the server awaits the
+   *  source's onFolderOpen hooks before opening the session. */
   async function attemptOpen(folderPath: string) {
     openError = '';
     try {
       const response = await connection.send({ type: 'open_session', folderPath });
-      if (!response.success) openError = response.error ?? 'Failed to open project';
+      if (!response.success) openError = response.error ?? 'Failed to open folder';
     } catch (e) {
-      openError = e instanceof Error ? e.message : 'Failed to open project';
+      openError = e instanceof Error ? e.message : 'Failed to open folder';
     }
   }
 
@@ -242,13 +251,13 @@
     showArchiveAllDialog = false;
     try {
       await Promise.all(
-        projectStore.projects.map((project) => {
-          const sessions = projectStore.sessions.get(project.path) ?? [];
+        folderStore.folders.map((folder) => {
+          const sessions = folderStore.sessions.get(folder.path) ?? [];
           const ids = sessions.filter((s) => !s.archived && !s.liveStatus).map((s) => s.id);
           if (ids.length === 0) return;
           return connection.send({
             type: 'archive_session',
-            folderPath: project.path,
+            folderPath: folder.path,
             sessionIds: ids,
             archived: true,
           });
@@ -259,85 +268,84 @@
     }
   }
 
-  /** Apply a curation patch; the store updates via the projects_changed broadcast. */
-  async function updateProject(project: ProjectInfo, patch: { favorite?: boolean; archived?: boolean; addTags?: string[]; removeTags?: string[] }) {
+  /** Apply a curation patch; the store updates via the folders_changed broadcast. */
+  async function updateFolder(folder: FolderInfo, patch: { favorite?: boolean; archived?: boolean; addTags?: string[]; removeTags?: string[] }) {
     try {
-      await connection.send({ type: 'update_project', projectPath: project.path, ...patch });
+      await connection.send({ type: 'update_folder', folderPath: folder.path, ...patch });
     } catch (e) {
-      console.error('Failed to update project:', e);
+      console.error('Failed to update folder:', e);
     }
   }
 
-  async function disbandProject() {
+  async function disbandHub() {
     const target = disbandTarget;
     disbandTarget = null;
     if (!target) return;
     try {
-      await connection.send({ type: 'disband_project', projectPath: target.path });
+      await connection.send({ type: 'disband_hub', folderPath: target.path });
     } catch (e) {
-      console.error('Failed to disband project:', e);
+      console.error('Failed to disband hub:', e);
     }
   }
 
-  function openMultiRepoDialog() {
-    multiRepoName = '';
-    multiRepoRoot = '';
-    multiRepoError = '';
-    multiRepoCreating = false;
-    multiRepoMembers.clear();
-    showMultiRepoDialog = true;
-    void projectStore.loadRepos();
+  function openHubDialog() {
+    hubName = '';
+    hubRoot = '';
+    hubError = '';
+    hubCreating = false;
+    hubMembers.clear();
+    showHubDialog = true;
+    void folderStore.loadRepos();
   }
 
-  function handleMultiRepoDialogOpenChange(open: boolean) {
-    showMultiRepoDialog = open;
+  function handleHubDialogOpenChange(open: boolean) {
+    showHubDialog = open;
     if (!open) {
-      multiRepoName = '';
-      multiRepoRoot = '';
-      multiRepoError = '';
-      multiRepoCreating = false;
-      multiRepoMembers.clear();
+      hubName = '';
+      hubRoot = '';
+      hubError = '';
+      hubCreating = false;
+      hubMembers.clear();
     }
   }
 
-  function toggleMultiRepoMember(path: string) {
-    if (multiRepoMembers.has(path)) {
-      multiRepoMembers.delete(path);
+  function toggleHubMember(path: string) {
+    if (hubMembers.has(path)) {
+      hubMembers.delete(path);
     } else {
-      multiRepoMembers.add(path);
+      hubMembers.add(path);
     }
   }
 
-  async function createMultiRepoProject() {
-    const name = multiRepoName.trim();
-    const validationError =
-      validateProjectName(name) ?? (!multiRepoRoot ? 'Choose a root folder' : null) ?? (multiRepoMembers.size === 0 ? 'Select at least one member repository' : null);
+  async function createHub() {
+    const name = hubName.trim();
+    const validationError = validateFolderName(name) ?? (!hubRoot ? 'Choose a root folder' : null) ?? (hubMembers.size === 0 ? 'Select at least one member repository' : null);
     if (validationError) {
-      multiRepoError = validationError;
+      hubError = validationError;
       return;
     }
 
-    multiRepoCreating = true;
-    multiRepoError = '';
+    hubCreating = true;
+    hubError = '';
 
     try {
       const response = await connection.send({
-        type: 'create_multi_repo_project',
+        type: 'create_hub',
         name,
-        root: multiRepoRoot,
-        repoPaths: [...multiRepoMembers],
+        root: hubRoot,
+        memberPaths: [...hubMembers],
       });
 
       if (!response.success) {
-        multiRepoError = response.error ?? 'Failed to create multi-repo project';
-        multiRepoCreating = false;
+        hubError = response.error ?? 'Failed to create hub';
+        hubCreating = false;
         return;
       }
 
-      handleMultiRepoDialogOpenChange(false);
+      handleHubDialogOpenChange(false);
     } catch (e) {
-      multiRepoError = e instanceof Error ? e.message : 'Failed to create multi-repo project';
-      multiRepoCreating = false;
+      hubError = e instanceof Error ? e.message : 'Failed to create hub';
+      hubCreating = false;
     }
   }
 </script>
@@ -346,9 +354,9 @@
   <!-- Section header + list actions. The former dashboard-side header lives here
        so the count and the ⋯ menu share one row. -->
   <div class="text-muted-foreground mb-1 -ml-2 flex items-center gap-2 max-md:ml-0">
-    <h2 class="text-foreground text-xs font-semibold tracking-widest uppercase">Projects</h2>
-    {#if projectStore.projects.length > 0}
-      <span class="text-xs">{projectStore.projects.length}</span>
+    <h2 class="text-foreground text-xs font-semibold tracking-widest uppercase">Folders</h2>
+    {#if folderStore.folders.length > 0}
+      <span class="text-xs">{folderStore.folders.length}</span>
     {/if}
     <div class="ml-auto flex items-center gap-2">
       <Button
@@ -363,23 +371,23 @@
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger>
-          <Button variant="outline" size="icon-sm" class="text-muted-foreground shrink-0 max-md:size-11" title="More project actions">
+          <Button variant="outline" size="icon-sm" class="text-muted-foreground shrink-0 max-md:size-11" title="More folder actions">
             <EllipsisVertical class="size-4 max-md:size-5" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuPortal>
           <DropdownMenuContent class="w-52" align="end">
-            <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || projectStore.roots.length === 0} onSelect={() => openMultiRepoDialog()}>
+            <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || folderStore.roots.length === 0} onSelect={() => openHubDialog()}>
               <Network class="size-4" />
-              Create multi-repo project…
+              Create hub…
             </DropdownMenuItem>
             <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || archivableCount === 0} onSelect={() => (showArchiveAllDialog = true)}>
               <Archive class="size-4" />
               Archive all inactive…
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem class="gap-2" onSelect={() => projectStore.setShowArchived(!projectStore.showArchived)}>
-              {#if projectStore.showArchived}
+            <DropdownMenuItem class="gap-2" onSelect={() => folderStore.setShowArchived(!folderStore.showArchived)}>
+              {#if folderStore.showArchived}
                 <Undo2 class="size-4" />
                 Hide archived
               {:else}
@@ -392,17 +400,17 @@
       </DropdownMenu>
     </div>
   </div>
-  {#if projectStore.loading}
+  {#if folderStore.loading}
     <div class="text-muted-foreground flex items-center justify-center py-8">
       <Loader2 class="size-5 animate-spin" />
-      <span class="ml-2 text-sm">Loading projects…</span>
+      <span class="ml-2 text-sm">Loading folders…</span>
     </div>
-  {:else if projectStore.projects.length === 0}
+  {:else if folderStore.folders.length === 0}
     <div class="text-muted-foreground px-3 py-8 text-center text-sm">
       {#if connection.status !== 'connected'}
         Connecting to server…
       {:else}
-        No projects configured
+        No folders configured
       {/if}
     </div>
   {:else}
@@ -410,22 +418,23 @@
       <p class="text-destructive px-1 text-xs">{openError}</p>
     {/if}
 
-    {#if displayProjects.length === 0}
+    {#if displayFolders.length === 0}
       <div class="text-muted-foreground px-3 py-8 text-center text-sm">
-        {#if projectStore.showArchived}
-          No projects.
+        {#if folderStore.showArchived}
+          No folders.
         {:else}
-          No projects yet. Archived projects are hidden.
+          No folders yet. Archived folders are hidden.
         {/if}
       </div>
     {:else}
       <div class="flex flex-col gap-1" bind:this={rowsEl}>
-        {#each displayProjects as project (project.path)}
-          {@const expandState = searchResults !== null ? 'all' : (expandStates.get(project.path) ?? 'active')}
-          {@const hasTags = (project.tags?.length ?? 0) > 0}
-          {@const showAll = expandedSessionLists.has(project.path)}
-          {@const projectSessions = sessionsFor(project)}
-          {@const listedSessions = expandState === 'all' ? projectSessions : expandState === 'active' ? projectSessions.filter(isOpenSession) : []}
+        {#each displayFolders as folder (folder.path)}
+          {@const expandState = searchResults !== null ? 'all' : (expandStates.get(folder.path) ?? 'active')}
+          {@const iconKind = folderIconKind(folder)}
+          {@const hasTags = (folder.tags?.length ?? 0) > 0}
+          {@const showAll = expandedSessionLists.has(folder.path)}
+          {@const folderSessions = sessionsFor(folder)}
+          {@const listedSessions = expandState === 'all' ? folderSessions : expandState === 'active' ? folderSessions.filter(isOpenSession) : []}
           {@const visibleSessions = showAll ? listedSessions : listedSessions.slice(0, MAX_SESSIONS_SHOWN)}
           {@const hiddenCount = Math.max(0, listedSessions.length - MAX_SESSIONS_SHOWN)}
           <!-- Half-open with nothing open renders no session block, so the row keeps
@@ -433,70 +442,146 @@
           {@const showSessionBlock = expandState === 'all' || listedSessions.length > 0}
 
           <div class="border-border/60 rounded-lg">
-            <ContextMenu open={rowMenuPath === project.path} onOpenChange={(open) => setRowMenu(project.path, open)}>
+            <ContextMenu open={rowMenuPath === folder.path} onOpenChange={(open) => setRowMenu(folder.path, open)}>
               <!-- Whole-row expander: taps land here unless a control stops them.
                    Every control inside the trigger calls stopPropagation(). -->
               <ContextMenuTrigger
                 class="group hover:bg-accent active:bg-accent/80 flex cursor-pointer flex-col transition-colors select-none {showSessionBlock ? 'rounded-t-lg' : 'rounded-lg'}"
-                onclick={() => handleRowClick(project)}
+                onclick={() => handleRowClick(folder)}
               >
                 <div class="flex items-center gap-0.5">
                   <button
                     class="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors max-md:min-h-12 max-md:gap-2 max-md:rounded-lg max-md:px-2 max-md:py-2"
-                    title={isMissingProject(project) ? 'Open — its source will create this folder' : undefined}
+                    title={folder.missing ? 'Open — its source will create this folder' : undefined}
                     aria-expanded={expandState !== 'closed'}
                   >
-                    <span class="text-foreground truncate text-[13px] font-medium max-md:text-base {project.archived ? 'opacity-70' : ''}" data-project-name={project.path}
-                      >{project.name}</span
-                    >
-                    {#if project.archived}
+                    <!-- Four row icons: code / code-hub / persona / persona-hub,
+                         selected only by nature × shortcutCount > 0. -->
+                    {#if iconKind === 'code'}
+                      <svg
+                        class="text-muted-foreground size-4 shrink-0 max-md:size-5"
+                        data-folder-icon="code"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="m8 6-5 6 5 6" />
+                        <path d="m16 6 5 6-5 6" />
+                        <path d="m13.5 4-3 16" />
+                      </svg>
+                    {:else if iconKind === 'code-hub'}
+                      <svg
+                        class="text-muted-foreground size-4 shrink-0 max-md:size-5"
+                        data-folder-icon="code-hub"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <rect x="2.5" y="9" width="6" height="6" rx="1.5" />
+                        <rect x="15.5" y="2.5" width="6" height="6" rx="1.5" />
+                        <rect x="15.5" y="15.5" width="6" height="6" rx="1.5" />
+                        <path d="M8.5 12h3.5v-6h3.5" />
+                        <path d="M12 12v6h3.5" />
+                      </svg>
+                    {:else if iconKind === 'persona'}
+                      <svg
+                        class="text-muted-foreground size-4 shrink-0 max-md:size-5"
+                        data-folder-icon="persona"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <circle cx="12" cy="8" r="3.5" />
+                        <path d="M5 20a7 7 0 0 1 14 0" />
+                      </svg>
+                    {:else}
+                      <svg
+                        class="text-muted-foreground size-4 shrink-0 max-md:size-5"
+                        data-folder-icon="persona-hub"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <circle cx="8" cy="7" r="3" />
+                        <path d="M2 19.5a6 6 0 0 1 12 0" />
+                        <circle cx="19.5" cy="5.5" r="1.75" />
+                        <circle cx="19.5" cy="13.5" r="1.75" />
+                        <path d="M11.2 6.2 17.7 5.3" />
+                        <path d="M11.2 10.6 17.7 12.7" />
+                      </svg>
+                    {/if}
+                    <span class="min-w-0 flex-1">
+                      <span class="text-foreground block truncate text-[13px] font-medium max-md:text-base {folder.archived ? 'opacity-70' : ''}" data-folder-path={folder.path}
+                        >{displayName(folder)}</span
+                      >
+                      {#if subtitle(folder)}
+                        <span class="text-muted-foreground block truncate text-[11px]">{subtitle(folder)}</span>
+                      {/if}
+                    </span>
+                    {#if folder.archived}
                       <span class="bg-muted text-muted-foreground shrink-0 rounded px-1 py-0.5 text-[10px] font-medium tracking-wide uppercase">Archived</span>
                     {/if}
                   </button>
                   <div class="ml-auto flex shrink-0 items-center gap-0.5">
                     <button
                       class="group/star flex shrink-0 items-center rounded p-1 transition-colors max-md:-m-1 max-md:p-2"
-                      title={project.favorite ? 'Unfavorite' : 'Favorite'}
-                      aria-label={project.favorite ? `Unfavorite ${project.name}` : `Favorite ${project.name}`}
+                      title={folder.favorite ? 'Unfavorite' : 'Favorite'}
+                      aria-label={folder.favorite ? `Unfavorite ${displayName(folder)}` : `Favorite ${displayName(folder)}`}
                       onclick={(e) => {
                         e.stopPropagation();
-                        void updateProject(project, { favorite: !project.favorite });
+                        void updateFolder(folder, { favorite: !folder.favorite });
                       }}
                     >
                       <Star
-                        class="size-3 transition-colors max-md:size-4 {project.favorite
+                        class="size-3 transition-colors max-md:size-4 {folder.favorite
                           ? 'fill-yellow-500 text-yellow-500'
                           : 'text-muted-foreground/40 group-hover/star:text-muted-foreground'}"
                       />
                     </button>
-                    {#if project.activeSessionCount > 0}
+                    {#if folder.activeSessionCount > 0}
                       <span
                         class="flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-px text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400"
-                        title={`${project.activeSessionCount} open session${project.activeSessionCount !== 1 ? 's' : ''}`}
+                        title={`${folder.activeSessionCount} open session${folder.activeSessionCount !== 1 ? 's' : ''}`}
                       >
                         <span class="bg-status-connected size-1.5 rounded-full"></span>
-                        {project.activeSessionCount}
+                        {folder.activeSessionCount}
                       </span>
                     {/if}
                     <Button
                       variant="ghost"
                       size="icon-sm"
                       class="text-muted-foreground hover:text-sidebar-foreground shrink-0 max-md:size-11"
-                      title="New session in {project.name}"
+                      title="New session in {displayName(folder)}"
                       disabled={connection.status !== 'connected'}
                       onclick={(e) => {
                         e.stopPropagation();
-                        void newSession(project.path);
+                        void newSession(folder.path);
                       }}
                     >
                       <Plus class="size-4 max-md:size-5" />
                     </Button>
                   </div>
                 </div>
-                {#if hasRepoInfo(project) || hasTags}
+                {#if hasRepoInfo(folder) || hasTags}
                   <div class="chips flex flex-wrap items-center gap-1 pb-1 pl-1.5">
-                    {#if project.kind === 'multi' && project.repos?.length}
-                      {#each project.repos as repo (repo.path)}
+                    {#if folder.repos && folder.repos.length > 0}
+                      {#each folder.repos as repo (repo.path)}
                         <span
                           class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px] {repo.missing
                             ? 'border border-yellow-500/20 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
@@ -516,7 +601,7 @@
                         </span>
                       {/each}
                     {:else}
-                      {@const repo = projectStore.repos.find((r) => r.path === project.path)}
+                      {@const repo = folderStore.repos.find((r) => r.path === folder.path)}
                       {#if repo && !repo.missing && repo.branch}
                         <span class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px]" title={repo.path}>
                           <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
@@ -527,13 +612,13 @@
                         </span>
                       {/if}
                     {/if}
-                    {#each project.tags ?? [] as tag (tag)}
-                      {@const removable = project.userTags?.includes(tag) === true}
+                    {#each folder.tags ?? [] as tag (tag)}
+                      {@const removable = folder.userTags?.includes(tag) === true}
                       <span
                         class="flex items-center gap-0.5 rounded-full border px-1.5 py-px text-[10.5px] leading-none {removable
                           ? 'border-border bg-secondary text-secondary-foreground'
                           : 'border-border/60 bg-muted/60 text-muted-foreground'}"
-                        title={removable ? `Tag: ${tag}` : `Tag from a project source: ${tag}`}
+                        title={removable ? `Tag: ${tag}` : `Tag from a folder source: ${tag}`}
                       >
                         {tag}
                         {#if removable}
@@ -542,7 +627,7 @@
                             aria-label="Remove tag {tag}"
                             onclick={(e) => {
                               e.stopPropagation();
-                              void updateProject(project, { removeTags: [tag] });
+                              void updateFolder(folder, { removeTags: [tag] });
                             }}
                           >
                             <X class="size-2.5" />
@@ -553,10 +638,10 @@
                     <button
                       class="border-border/60 text-muted-foreground hover:text-foreground hover:border-border hidden items-center gap-0.5 rounded-full border border-dashed px-1.5 py-px text-[10.5px] leading-none transition-colors group-hover:flex"
                       title="Add tag"
-                      aria-label="Add tag to {project.name}"
+                      aria-label="Add tag to {displayName(folder)}"
                       onclick={(e) => {
                         e.stopPropagation();
-                        openTagDialog(project);
+                        openTagDialog(folder);
                       }}
                     >
                       <Plus class="size-2.5" />
@@ -566,15 +651,18 @@
                 {/if}
               </ContextMenuTrigger>
               <ContextMenuContent>
-                <ContextMenuItem onSelect={() => openTagDialog(project)}>
+                <ContextMenuItem onSelect={() => openTagDialog(folder)}>
                   <Tag class="size-4" />
                   Add tag…
                 </ContextMenuItem>
-                {#if project.kind === 'multi'}
+                <!-- Registry/source hubs only: `repos` marks persisted hub
+                     membership. A generic shortcut-bearing folder shows the hub
+                     icon but gains no deletion rights. -->
+                {#if folder.repos !== undefined}
                   <ContextMenuSeparator />
-                  <ContextMenuItem onSelect={() => (disbandTarget = project)}>
+                  <ContextMenuItem onSelect={() => (disbandTarget = folder)}>
                     <Trash2 class="size-4" />
-                    Disband project
+                    Disband hub
                   </ContextMenuItem>
                 {/if}
               </ContextMenuContent>
@@ -583,24 +671,24 @@
             {#if showSessionBlock}
               <div class="border-sidebar-border ml-4 flex flex-col gap-0.5 border-l pt-1 pl-2">
                 {#each visibleSessions as session (session.id)}
-                  <SessionItem {session} folderPath={project.path} {onSessionSelect} />
+                  <SessionItem {session} folderPath={folder.path} {onSessionSelect} />
                 {/each}
 
-                {#if projectSessions.length === 0}
+                {#if folderSessions.length === 0}
                   <div class="text-muted-foreground px-3 py-1 text-xs">No sessions yet</div>
                 {/if}
 
                 {#if hiddenCount > 0 && !showAll}
                   <button
                     class="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground rounded-md px-3 py-1.5 text-xs transition-colors max-md:min-h-11 max-md:text-[13px]"
-                    onclick={() => toggleSessionList(project.path)}
+                    onclick={() => toggleSessionList(folder.path)}
                   >
                     Show {hiddenCount} more session{hiddenCount !== 1 ? 's' : ''}
                   </button>
                 {:else if showAll && hiddenCount > 0}
                   <button
                     class="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground rounded-md px-3 py-1.5 text-xs transition-colors max-md:min-h-11 max-md:text-[13px]"
-                    onclick={() => toggleSessionList(project.path)}
+                    onclick={() => toggleSessionList(folder.path)}
                   >
                     Show fewer sessions
                   </button>
@@ -623,7 +711,7 @@
   <Dialog.Content class="sm:max-w-sm">
     <Dialog.Header>
       <Dialog.Title>Add tag</Dialog.Title>
-      <Dialog.Description>Tag the project <code class="bg-muted rounded px-1 py-0.5 text-xs">{tagTarget?.name}</code></Dialog.Description>
+      <Dialog.Description>Tag the folder <code class="bg-muted rounded px-1 py-0.5 text-xs">{tagTarget ? displayName(tagTarget) : ''}</code></Dialog.Description>
     </Dialog.Header>
     <div class="flex flex-col gap-1.5">
       <Input
@@ -650,7 +738,7 @@
     <Dialog.Header>
       <Dialog.Title>Archive all inactive sessions</Dialog.Title>
       <Dialog.Description>
-        This will archive {archivableCount} inactive session{archivableCount !== 1 ? 's' : ''} across all projects. Active sessions will not be affected.
+        This will archive {archivableCount} inactive session{archivableCount !== 1 ? 's' : ''} across all folders. Active sessions will not be affected.
       </Dialog.Description>
     </Dialog.Header>
     <Dialog.Footer>
@@ -660,41 +748,41 @@
   </Dialog.Content>
 </Dialog.Root>
 
-<Dialog.Root open={showMultiRepoDialog} onOpenChange={handleMultiRepoDialogOpenChange}>
+<Dialog.Root open={showHubDialog} onOpenChange={handleHubDialogOpenChange}>
   <Dialog.Content class="sm:max-w-lg">
     <Dialog.Header>
-      <Dialog.Title>Create multi-repo project</Dialog.Title>
-      <Dialog.Description>Creates a multi-repo project folder with symlinks to each member repository and an AGENTS.md naming the members.</Dialog.Description>
+      <Dialog.Title>Create hub</Dialog.Title>
+      <Dialog.Description>Creates a hub folder with symlinks to each member repository and an AGENTS.md naming the members.</Dialog.Description>
     </Dialog.Header>
 
     <div class="flex flex-col gap-4">
       <Input
-        bind:value={multiRepoName}
-        placeholder="Project name"
-        disabled={multiRepoCreating}
+        bind:value={hubName}
+        placeholder="Hub name"
+        disabled={hubCreating}
         onkeydown={(e) => {
-          if (e.key === 'Enter') void createMultiRepoProject();
+          if (e.key === 'Enter') void createHub();
         }}
       />
 
       <div class="flex flex-col gap-1.5">
         <div class="text-muted-foreground text-xs font-medium">Root folder</div>
-        {#if projectStore.roots.length === 0}
+        {#if folderStore.roots.length === 0}
           <div class="text-muted-foreground px-3 py-2 text-sm">No roots configured.</div>
         {:else}
           <div class="border-border max-h-36 overflow-y-auto rounded-md border">
             <div class="flex flex-col p-1">
-              {#each projectStore.roots as root (root)}
+              {#each folderStore.roots as root (root)}
                 <button
-                  class="hover:bg-accent hover:text-accent-foreground flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors {multiRepoRoot === root
+                  class="hover:bg-accent hover:text-accent-foreground flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors {hubRoot === root
                     ? 'bg-accent text-accent-foreground'
                     : ''}"
-                  disabled={multiRepoCreating}
-                  onclick={() => (multiRepoRoot = root)}
+                  disabled={hubCreating}
+                  onclick={() => (hubRoot = root)}
                 >
                   <FolderIcon class="text-muted-foreground size-4 shrink-0" />
                   <span class="min-w-0 flex-1 truncate">{root}</span>
-                  {#if multiRepoRoot === root}
+                  {#if hubRoot === root}
                     <span class="text-primary size-2 shrink-0 rounded-full"></span>
                   {/if}
                 </button>
@@ -706,9 +794,9 @@
 
       <div class="flex flex-col gap-1.5">
         <div class="text-muted-foreground text-xs font-medium">Member repositories</div>
-        {#if multiRepoCandidateRepos.length === 0}
+        {#if hubCandidateRepos.length === 0}
           <div class="text-muted-foreground px-3 py-2 text-sm">
-            {#if projectStore.repos.length === 0}
+            {#if folderStore.repos.length === 0}
               No repositories discovered yet.
             {:else}
               No available repositories — all discovered repos are missing on disk.
@@ -717,14 +805,14 @@
         {:else}
           <div class="border-border max-h-60 overflow-y-auto rounded-md border">
             <div class="flex flex-col p-1">
-              {#each multiRepoCandidateRepos as repo (repo.path)}
-                {@const selected = multiRepoMembers.has(repo.path)}
+              {#each hubCandidateRepos as repo (repo.path)}
+                {@const selected = hubMembers.has(repo.path)}
                 <button
                   class="hover:bg-accent hover:text-accent-foreground flex items-center gap-2 rounded-md px-3 py-2 text-left transition-colors {selected
                     ? 'bg-accent text-accent-foreground'
                     : ''}"
-                  disabled={multiRepoCreating}
-                  onclick={() => toggleMultiRepoMember(repo.path)}
+                  disabled={hubCreating}
+                  onclick={() => toggleHubMember(repo.path)}
                 >
                   <input type="checkbox" checked={selected} class="pointer-events-none" tabindex={-1} />
                   <div class="min-w-0 flex-1">
@@ -743,18 +831,18 @@
         {/if}
       </div>
 
-      {#if multiRepoError}
-        <p class="text-destructive text-sm">{multiRepoError}</p>
+      {#if hubError}
+        <p class="text-destructive text-sm">{hubError}</p>
       {/if}
 
       <Dialog.Footer>
-        <Button variant="outline" onclick={() => handleMultiRepoDialogOpenChange(false)} disabled={multiRepoCreating}>Cancel</Button>
-        <Button onclick={() => void createMultiRepoProject()} disabled={multiRepoCreating || !multiRepoName.trim() || !multiRepoRoot || multiRepoMembers.size === 0}>
-          {#if multiRepoCreating}
+        <Button variant="outline" onclick={() => handleHubDialogOpenChange(false)} disabled={hubCreating}>Cancel</Button>
+        <Button onclick={() => void createHub()} disabled={hubCreating || !hubName.trim() || !hubRoot || hubMembers.size === 0}>
+          {#if hubCreating}
             <Loader2 class="size-4 animate-spin" />
             Creating…
           {:else}
-            Create project
+            Create hub
           {/if}
         </Button>
       </Dialog.Footer>
@@ -770,12 +858,12 @@
 >
   <Dialog.Content showCloseButton={false}>
     <Dialog.Header>
-      <Dialog.Title>Disband {disbandTarget?.name}</Dialog.Title>
-      <Dialog.Description>This deletes the multi-repo project folder and removes the project from the list. Member repositories are not touched.</Dialog.Description>
+      <Dialog.Title>Disband {disbandTarget ? displayName(disbandTarget) : ''}</Dialog.Title>
+      <Dialog.Description>This deletes the hub folder and removes the hub from the list. Member repositories are not touched.</Dialog.Description>
     </Dialog.Header>
     <Dialog.Footer>
       <Button variant="outline" onclick={() => (disbandTarget = null)}>Cancel</Button>
-      <Button variant="destructive" onclick={disbandProject}>Disband</Button>
+      <Button variant="destructive" onclick={disbandHub}>Disband</Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

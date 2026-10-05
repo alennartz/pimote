@@ -64,12 +64,12 @@ describe('ManagerStore', () => {
     });
 
     it('reduces tool execution events into toolExecutions', () => {
-      reduce(store, { type: 'tool_execution_start', toolCallId: 'tc1', toolName: 'pimote_list_projects', args: {} });
+      reduce(store, { type: 'tool_execution_start', toolCallId: 'tc1', toolName: 'pimote_list_folders', args: {} });
       reduce(store, { type: 'tool_execution_update', toolCallId: 'tc1', content: 'listing…' });
       reduce(store, { type: 'tool_execution_end', toolCallId: 'tc1', result: '[]' });
 
       expect(store.session!.toolExecutions['tc1']).toEqual({
-        name: 'pimote_list_projects',
+        name: 'pimote_list_folders',
         args: {},
         partialResult: 'listing…',
         status: 'completed',
@@ -103,12 +103,12 @@ describe('ManagerStore', () => {
     it('send() issues manager_prompt with trimmed text and echoes it optimistically on success', async () => {
       const send = vi.spyOn(connection, 'send').mockResolvedValue({ id: 'cmd-1', success: true } as never);
 
-      await store.send('  list projects  ');
+      await store.send('  list folders  ');
 
-      expect(send).toHaveBeenCalledWith({ type: 'manager_prompt', text: 'list projects' });
+      expect(send).toHaveBeenCalledWith({ type: 'manager_prompt', text: 'list folders' });
       expect(store.messages).toHaveLength(1);
       expect(store.messages[0].role).toBe('user');
-      expect(store.messages[0].content).toEqual([{ type: 'text', text: 'list projects' }]);
+      expect(store.messages[0].content).toEqual([{ type: 'text', text: 'list folders' }]);
     });
 
     it('send() adds no echo when the server rejects the prompt', async () => {

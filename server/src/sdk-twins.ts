@@ -1,6 +1,6 @@
 import type { Card, RepoInfo } from '../../shared/dist/index.js';
 import type { Card as SdkCard, PanelMessage } from '@pimote/sdk/panels';
-import type { RepoInfo as SdkRepoInfo } from '@pimote/sdk/projects';
+import type { RepoInfo as SdkRepoInfo } from '@pimote/sdk/folders';
 
 type AssertEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 

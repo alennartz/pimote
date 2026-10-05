@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { FolderInfo, RepoInfo } from '../../shared/dist/index.js';
-import { FolderRegistry, enrichActiveSessionCounts, toProjectInfo } from './folder-registry.js';
+import { FolderRegistry, enrichActiveSessionCounts } from './folder-registry.js';
 import { RepoIndex } from './repo-index.js';
 import { scanFolderModel } from './folder-model/index.js';
 import type { FolderModelPort } from './manager/types.js';
@@ -76,10 +76,10 @@ async function findRow(registry: FolderRegistry, path: string): Promise<FolderIn
   return (await registry.list()).find((folder) => folder.path === path);
 }
 
-/** A symlink inside `projectDir` pointing at `target`, if any. */
-async function findSymlinkTo(projectDir: string, target: string): Promise<string | undefined> {
-  for (const entry of await readdir(projectDir)) {
-    const full = join(projectDir, entry);
+/** A symlink inside `folderDir` pointing at `target`, if any. */
+async function findSymlinkTo(folderDir: string, target: string): Promise<string | undefined> {
+  for (const entry of await readdir(folderDir)) {
+    const full = join(folderDir, entry);
     const info = await lstat(full);
     if (info.isSymbolicLink() && (await readlink(full)) === target) return full;
   }
@@ -224,7 +224,7 @@ describe('FolderRegistry.update()', () => {
 describe('hub rows and path collisions', () => {
   function makeIndexWithHubs(hubs: { path: string; name: string; memberPaths: string[]; tags?: string[] }[]): RepoIndex {
     const index = makeIndex();
-    index.registerSource({ id: 'test-source', list: async () => hubs.map((h) => ({ kind: 'project' as const, ...h })) });
+    index.registerSource({ id: 'test-source', list: async () => hubs.map((h) => ({ kind: 'hub' as const, ...h })) });
     return index;
   }
 
@@ -266,7 +266,7 @@ describe('hub rows and path collisions', () => {
     const index = makeIndex();
     index.registerSource({
       id: 'test-source',
-      list: async () => [{ kind: 'project' as const, path: hubPath, name: 'from-source', memberPaths: [repoB] }],
+      list: async () => [{ kind: 'hub' as const, path: hubPath, name: 'from-source', memberPaths: [repoB] }],
     });
     const registry = makeRegistry(index);
 
@@ -286,7 +286,7 @@ describe('hub rows and path collisions', () => {
     const index = new RepoIndex([rootDir], { now: () => clock, ttlMs: 1_000_000, statusTtlMs: 1_000_000 });
     index.registerSource({
       id: 'test-source',
-      list: async () => hubs.map((h) => ({ kind: 'project' as const, ...h })),
+      list: async () => hubs.map((h) => ({ kind: 'hub' as const, ...h })),
     });
     const registry = makeRegistry(index);
     await registry.createHub({ name: 'persisted', root: rootDir, memberPaths: [] });
@@ -602,7 +602,7 @@ describe('FolderRegistry.disbandHub()', () => {
   it('refuses to disband a source hub without a persisted registry entry', async () => {
     const hubPath = join(rootDir, 'src-hub');
     const index = makeIndex();
-    index.registerSource({ id: 'src', list: async () => [{ kind: 'project' as const, path: hubPath, name: 'src-hub', memberPaths: [repoA] }] });
+    index.registerSource({ id: 'src', list: async () => [{ kind: 'hub' as const, path: hubPath, name: 'src-hub', memberPaths: [repoA] }] });
     const registry = makeRegistry(index);
     await index.runOpenHooks(hubPath); // open-time materialization
     expect(existsSync(join(hubPath, '.git'))).toBe(true);
@@ -653,10 +653,5 @@ describe('serve-path helpers', () => {
     const folders = [row('/a'), row('/b')];
     enrichActiveSessionCounts(folders, [{ folderPath: '/a' }, { folderPath: '/a' }, { folderPath: null }]);
     expect(folders.map((folder) => folder.activeSessionCount)).toEqual([2, 0]);
-  });
-
-  it('toProjectInfo maps folder rows to the legacy wire shape by hub membership', () => {
-    expect(toProjectInfo(row('/a'))).toMatchObject({ path: '/a', kind: 'single', activeSessionCount: 0 });
-    expect(toProjectInfo({ ...row('/a'), repos: [] })).toMatchObject({ path: '/a', kind: 'multi' });
   });
 });

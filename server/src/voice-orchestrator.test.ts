@@ -9,6 +9,7 @@ import type { EventBusController } from '@earendil-works/pi-coding-agent';
 function fakeConfig(overrides: Partial<PimoteConfig> = {}): PimoteConfig {
   return {
     roots: ['/tmp'],
+    managerRoot: '/tmp/manager-root',
     idleTimeout: 1000,
     bufferSize: 10,
     port: 3000,

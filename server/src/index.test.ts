@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
-  const config = { roots: ['/workspace'], idleTimeout: 60_000, bufferSize: 10, port: 3000, vapidPublicKey: 'public', vapidPrivateKey: 'private' };
+  const config = { roots: ['/workspace'], managerRoot: '/srv/manager-home', idleTimeout: 60_000, bufferSize: 10, port: 3000, vapidPublicKey: 'public', vapidPrivateKey: 'private' };
   const sessionRecords = {
     listSessionRecords: vi.fn(async () => [{ id: 'session-1' }]),
     resolveSessionPath: vi.fn(async () => undefined),
@@ -31,7 +31,7 @@ const mocks = vi.hoisted(() => {
     getArchivedLookup: vi.fn(() => new Map<string, boolean>()),
     setArchived: vi.fn(async () => undefined),
   };
-  const projectRegistry = {
+  const folderRegistry = {
     list: vi.fn(async () => []),
   };
   const server = {
@@ -51,7 +51,7 @@ const mocks = vi.hoisted(() => {
     scanFolderModel,
     sessionManager,
     sessionMetadataStore,
-    projectRegistry,
+    folderRegistry,
     server,
     createManagerSessionFactory,
     staticHostRegistry,
@@ -91,7 +91,7 @@ vi.mock('./folder-registry.js', async (importOriginal) => {
   return {
     ...actual,
     FolderRegistry: vi.fn(function () {
-      return mocks.projectRegistry;
+      return mocks.folderRegistry;
     }),
   };
 });
@@ -156,7 +156,7 @@ function resetMocks(): void {
   mocks.sessionManager.openSession.mockReset().mockResolvedValue('session-new');
   mocks.sessionMetadataStore.getArchivedLookup.mockReset().mockReturnValue(new Map<string, boolean>());
   mocks.sessionMetadataStore.setArchived.mockReset().mockResolvedValue(undefined);
-  mocks.projectRegistry.list.mockReset().mockResolvedValue([]);
+  mocks.folderRegistry.list.mockReset().mockResolvedValue([]);
   mocks.createManagerSessionFactory.mockClear();
   mocks.server.clientRegistry.clear();
   mocks.server.start.mockReset().mockResolvedValue(undefined);
@@ -325,6 +325,8 @@ describe('main — manager toolset port wiring', () => {
 
   interface FakeToolDef {
     name: string;
+    parameters: { type?: string; properties?: Record<string, unknown> };
+    annotations: { readOnlyHint?: boolean };
     execute: (...args: unknown[]) => Promise<{ details: any }>;
   }
 
@@ -351,8 +353,8 @@ describe('main — manager toolset port wiring', () => {
     return def;
   }
 
-  const alphaProject = { path: '/workspace/alpha', name: 'alpha', kind: 'single' as const, activeSessionCount: 0, externalProcessCount: 0 };
-  const betaProject = { path: '/workspace/beta', name: 'beta', kind: 'single' as const, activeSessionCount: 0, externalProcessCount: 0 };
+  const alphaFolder = { path: '/workspace/alpha', name: 'alpha', nature: 'code' as const };
+  const betaFolder = { path: '/workspace/beta', name: 'beta', nature: 'code' as const };
 
   beforeEach(() => {
     resetMocks();
@@ -367,8 +369,92 @@ describe('main — manager toolset port wiring', () => {
     warn.mockRestore();
   });
 
-  it('wires listDiskSessions: search lists every project through SessionRecords and enriches with the archived lookup', async () => {
-    mocks.projectRegistry.list.mockResolvedValue([alphaProject, betaProject]);
+  it('registers exactly the pinned manager toolset, with pimote_folder_tree read-only and zero-argument', async () => {
+    const tools = await registeredManagerTools();
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'pimote_list_folders',
+      'pimote_folder_tree',
+      'pimote_list_repos',
+      'pimote_list_sessions',
+      'pimote_search_sessions',
+      'pimote_start_session',
+      'pimote_archive_sessions',
+    ]);
+    const tree = toolNamed(tools, 'pimote_folder_tree');
+    expect(tree.annotations.readOnlyHint).toBe(true);
+    expect(Object.keys(tree.parameters.properties ?? {})).toHaveLength(0);
+  });
+
+  it('wires pimote_folder_tree through the on-demand scan port: finite recursive structured output, no scanner cache', async () => {
+    const tree = {
+      occurrences: [
+        {
+          path: '/workspace/shared',
+          via: 'scan',
+          entry: { path: '/workspace/shared', name: 'shared', nature: 'code' },
+          children: [{ path: '/workspace/shared/link', via: 'shortcut', entry: { path: '/external/member', name: 'member', nature: 'code' }, children: [] }],
+        },
+      ],
+    };
+    mocks.scanFolderModel.mockImplementation(async () => tree);
+
+    const def = toolNamed(await registeredManagerTools(), 'pimote_folder_tree');
+    const result = await def.execute('call-1', {}, undefined, undefined, {});
+
+    expect(result.details).toEqual(tree);
+    // Finite and JSON-safe end to end.
+    expect(JSON.parse(JSON.stringify(result.details))).toEqual(tree);
+    // On demand: every tree request rescans from config.roots — no shared scanner cache.
+    const scansBefore = mocks.scanFolderModel.mock.calls.length;
+    await def.execute('call-2', {}, undefined, undefined, {});
+    expect(mocks.scanFolderModel.mock.calls.length).toBe(scansBefore + 1);
+    expect(mocks.scanFolderModel).toHaveBeenLastCalledWith({ roots: ['/workspace'] });
+  });
+
+  it('wires pimote_list_folders: FolderInfo defaults materialized and live counts enriched through the session manager', async () => {
+    mocks.folderRegistry.list.mockResolvedValue([
+      { path: '/workspace/alpha', name: 'alpha', nature: 'code' },
+      { path: '/workspace/personas/ada', name: 'ada', nature: 'persona', persona: { name: 'Ada' } },
+    ]);
+    mocks.sessionManager.getAllSessions.mockReturnValue([
+      { sessionState: { id: 's1', status: 'idle', needsAttention: false }, folderPath: '/workspace/alpha' },
+      { sessionState: { id: 's2', status: 'working', needsAttention: true }, folderPath: '/workspace/alpha' },
+    ]);
+
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_list_folders').execute('call-1', {}, undefined, undefined, {});
+
+    expect(result.details).toEqual([
+      {
+        path: '/workspace/alpha',
+        name: 'alpha',
+        nature: 'code',
+        shortcutCount: 0,
+        favorite: false,
+        archived: false,
+        tags: [],
+        missing: false,
+        activeSessionCount: 2,
+        externalProcessCount: 0,
+      },
+      {
+        path: '/workspace/personas/ada',
+        name: 'ada',
+        nature: 'persona',
+        persona: { name: 'Ada' },
+        shortcutCount: 0,
+        favorite: false,
+        archived: false,
+        tags: [],
+        missing: false,
+        activeSessionCount: 0,
+        externalProcessCount: 0,
+      },
+    ]);
+  });
+
+  it('wires listDiskSessions: search lists every folder through SessionRecords and enriches with the archived lookup', async () => {
+    mocks.folderRegistry.list.mockResolvedValue([alphaFolder, betaFolder]);
     mocks.sessionRecords.listSessionRecords.mockImplementation(async (folderPath: string) =>
       folderPath === '/workspace/alpha'
         ? [
@@ -406,7 +492,7 @@ describe('main — manager toolset port wiring', () => {
   });
 
   it('wires openSession: start_session opens through the session manager and prompts the firstMessage', async () => {
-    mocks.projectRegistry.list.mockResolvedValue([alphaProject]);
+    mocks.folderRegistry.list.mockResolvedValue([alphaFolder]);
     mocks.sessionManager.openSession.mockResolvedValue('sess-9');
     const prompt = vi.fn(async () => undefined);
     mocks.sessionManager.getSession.mockReturnValue({ session: { sessionFile: '/sessions/sess-9.jsonl', prompt }, folderPath: '/workspace/alpha' });
@@ -414,23 +500,33 @@ describe('main — manager toolset port wiring', () => {
     const tools = await registeredManagerTools();
     const withMessage = await toolNamed(tools, 'pimote_start_session').execute(
       'call-1',
-      { projectPath: '/workspace/alpha', firstMessage: 'do the thing' },
+      { folderPath: '/workspace/alpha', firstMessage: 'do the thing' },
       undefined,
       undefined,
       {},
     );
-    const withoutMessage = await toolNamed(tools, 'pimote_start_session').execute('call-2', { projectPath: '/workspace/alpha' }, undefined, undefined, {});
+    const withoutMessage = await toolNamed(tools, 'pimote_start_session').execute('call-2', { folderPath: '/workspace/alpha' }, undefined, undefined, {});
 
     expect(mocks.sessionManager.openSession).toHaveBeenNthCalledWith(1, '/workspace/alpha');
     expect(mocks.sessionManager.openSession).toHaveBeenNthCalledWith(2, '/workspace/alpha');
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith('do the thing');
-    expect(withMessage.details).toEqual({ sessionId: 'sess-9', projectPath: '/workspace/alpha', firstMessageSent: true });
-    expect(withoutMessage.details).toEqual({ sessionId: 'sess-9', projectPath: '/workspace/alpha', firstMessageSent: false });
+    expect(withMessage.details).toEqual({ sessionId: 'sess-9', folderPath: '/workspace/alpha', firstMessageSent: true });
+    expect(withoutMessage.details).toEqual({ sessionId: 'sess-9', folderPath: '/workspace/alpha', firstMessageSent: false });
+  });
+
+  it('wires openSession for a persona folder', async () => {
+    mocks.folderRegistry.list.mockResolvedValue([{ path: '/workspace/personas/ada', name: 'ada', nature: 'persona', persona: { name: 'Ada' } }]);
+    mocks.sessionManager.openSession.mockResolvedValue('sess-10');
+
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_start_session').execute('call-1', { folderPath: '/workspace/personas/ada' }, undefined, undefined, {});
+
+    expect(mocks.sessionManager.openSession).toHaveBeenCalledWith('/workspace/personas/ada');
+    expect(result.details).toEqual({ sessionId: 'sess-10', folderPath: '/workspace/personas/ada', firstMessageSent: false });
   });
 
   it('wires archiveSessions for an open session: canonical archive on the slot file, slot evicted, clients notified', async () => {
-    mocks.projectRegistry.list.mockResolvedValue([alphaProject]);
+    mocks.folderRegistry.list.mockResolvedValue([alphaFolder]);
     mocks.sessionManager.getSession.mockReturnValue({ session: { sessionFile: '/sessions/s1.jsonl' }, folderPath: '/workspace/alpha' });
     const broadcast = vi.fn();
     mocks.server.clientRegistry.set('client-1', { sendToClient: broadcast });
@@ -445,8 +541,8 @@ describe('main — manager toolset port wiring', () => {
     expect(result.details.results).toEqual([{ sessionId: 's1', outcome: 'open_slot_evicted' }]);
   });
 
-  it('wires archiveSessions for a closed session: resolves the record across project folders, archives on disk, leaves no slot to evict', async () => {
-    mocks.projectRegistry.list.mockResolvedValue([alphaProject, betaProject]);
+  it('wires archiveSessions for a closed session: resolves the record across folders, archives on disk, leaves no slot to evict', async () => {
+    mocks.folderRegistry.list.mockResolvedValue([alphaFolder, betaFolder]);
     mocks.sessionRecords.resolveSessionPath.mockImplementation(async (_folderPath: string, sessionId: string) => (sessionId === 's2' ? '/sessions/s2.jsonl' : undefined));
 
     const result = await toolNamed(await registeredManagerTools(), 'pimote_archive_sessions').execute('call-1', { sessionIds: ['s2'] }, undefined, undefined, {});
@@ -458,12 +554,21 @@ describe('main — manager toolset port wiring', () => {
   });
 
   it('wires archiveSessions for an unknown session id: reports not_found without touching the metadata store', async () => {
-    mocks.projectRegistry.list.mockResolvedValue([alphaProject]);
+    mocks.folderRegistry.list.mockResolvedValue([alphaFolder]);
 
     const result = await toolNamed(await registeredManagerTools(), 'pimote_archive_sessions').execute('call-1', { sessionIds: ['ghost'] }, undefined, undefined, {});
 
     expect(mocks.sessionMetadataStore.setArchived).not.toHaveBeenCalled();
     expect(mocks.sessionManager.closeSession).not.toHaveBeenCalled();
     expect(result.details.results).toEqual([{ sessionId: 'ghost', outcome: 'not_found' }]);
+  });
+
+  it('passes the loaded managerRoot through the manager factory config without scanning it', async () => {
+    await main({ portOverride: 4321 });
+
+    const { config } = mocks.createManagerSessionFactory.mock.calls[0][0];
+    expect(config.managerRoot).toBe('/srv/manager-home');
+    // The manager root is the persona's working directory — never a scan root.
+    expect(mocks.scanFolderModel).toHaveBeenCalledWith({ roots: ['/workspace'], onWarning: expect.any(Function) });
   });
 });

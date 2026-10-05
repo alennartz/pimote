@@ -8,6 +8,7 @@ import type { WsHandler } from './ws-handler.js';
 function fakeConfig(): PimoteConfig {
   return {
     roots: ['/tmp'],
+    managerRoot: '/tmp/manager-root',
     idleTimeout: 1000,
     bufferSize: 10,
     port: 3000,

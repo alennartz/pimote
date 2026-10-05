@@ -95,8 +95,8 @@
       <input
         bind:this={searchEl}
         bind:value={search}
-        placeholder="Search projects"
-        aria-label="Search projects"
+        placeholder="Search folders"
+        aria-label="Search folders"
         class="text-foreground placeholder:text-muted-foreground w-full min-w-0 bg-transparent text-sm outline-none max-md:text-base"
       />
     {:else}

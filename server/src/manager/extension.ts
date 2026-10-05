@@ -1,7 +1,8 @@
 import type { ExtensionFactory, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { enrichActiveSessionCounts, toProjectInfo } from '../folder-registry.js';
+import { enrichActiveSessionCounts } from '../folder-registry.js';
 import { errorToolResult, jsonToolResult, type JsonToolResult } from '../tool-result.js';
+import type { FolderInfo } from '../../../shared/dist/index.js';
 import type { ManagerToolContext, ManagedSessionSummary } from './types.js';
 
 /**
@@ -9,11 +10,12 @@ import type { ManagerToolContext, ManagedSessionSummary } from './types.js';
  * manager's pimote toolset, acting only through the injected
  * `ManagerToolContext` — never raw fs.
  *
- * Toolset: the listing tools (`pimote_list_projects` → `projects.list()`,
- * `pimote_list_repos` → `repos.list()`, `pimote_list_sessions` →
- * `sessions.getAllSessions()`), plus the session-space tools: search over
- * on-disk history (`pimote_search_sessions`), starting sessions
- * (`pimote_start_session`), and archiving (`pimote_archive_sessions`).
+ * Toolset: the folder-view tools (`pimote_list_folders` → `folders.list()`,
+ * `pimote_folder_tree` → `tree.tree()`, `pimote_list_repos` → `repos.list()`,
+ * `pimote_list_sessions` → `sessions.getAllSessions()`), plus the
+ * session-space tools: search over on-disk history (`pimote_search_sessions`),
+ * starting sessions (`pimote_start_session`), and archiving
+ * (`pimote_archive_sessions`).
  */
 
 /** Default/capped result count for pimote_search_sessions. */
@@ -52,18 +54,74 @@ const RepoInfoSchema = Type.Object({
   tags: Type.Optional(Type.Array(Type.String())),
 });
 
-const ProjectInfoSchema = Type.Object({
-  path: Type.String(),
+/** Persona metadata on a persona folder's entry. */
+const PersonaInfoSchema = Type.Object({
   name: Type.String(),
-  kind: Type.Union([Type.Literal('single'), Type.Literal('multi')]),
-  repos: Type.Optional(Type.Array(RepoInfoSchema)),
-  tags: Type.Optional(Type.Array(Type.String())),
-  userTags: Type.Optional(Type.Array(Type.String())),
-  favorite: Type.Optional(Type.Boolean()),
-  archived: Type.Optional(Type.Boolean()),
-  activeSessionCount: Type.Integer(),
-  externalProcessCount: Type.Integer(),
+  description: Type.Optional(Type.String()),
 });
+
+/** Structured output for `pimote_list_folders`: the complete `FolderInfo`
+ *  wire row (shared/src/protocol.ts). The defaulted fields
+ *  (favorite/archived/missing false, tags empty, counts zero) are required and
+ *  annotated with their defaults; only `persona`, `repos` (hub members), and
+ *  `userTags` are optional. */
+const FolderInfoSchema = Type.Object({
+  path: Type.String({ description: 'Canonical path — the folder identity and curation key.' }),
+  name: Type.String({ description: 'Folder basename; persona folders carry the basename here, never the persona name.' }),
+  nature: Type.Union([Type.Literal('code'), Type.Literal('persona')]),
+  persona: Type.Optional(PersonaInfoSchema),
+  shortcutCount: Type.Integer({ default: 0, description: 'Immediate shortcut occurrences; > 0 marks a hub.' }),
+  favorite: Type.Boolean({ default: false }),
+  archived: Type.Boolean({ default: false }),
+  tags: Type.Array(Type.String(), { default: [] }),
+  missing: Type.Boolean({ default: false, description: 'Source-listed repo/hub or registry hub absent on disk.' }),
+  repos: Type.Optional(Type.Array(RepoInfoSchema)),
+  userTags: Type.Optional(Type.Array(Type.String())),
+  activeSessionCount: Type.Integer({ default: 0 }),
+  externalProcessCount: Type.Integer({ default: 0 }),
+});
+
+/** Pure row shaping at the tool boundary: the `FolderInfo` row with every
+ *  defaulted field made concrete, so each emitted row satisfies the output
+ *  schema even when a source row omits a defaulted field. */
+function applyFolderDefaults(folder: FolderInfo): FolderInfo {
+  return {
+    ...folder,
+    shortcutCount: folder.shortcutCount ?? 0,
+    favorite: folder.favorite ?? false,
+    archived: folder.archived ?? false,
+    tags: folder.tags ?? [],
+    missing: folder.missing ?? false,
+    activeSessionCount: folder.activeSessionCount ?? 0,
+    externalProcessCount: folder.externalProcessCount ?? 0,
+  };
+}
+
+/**
+ * Structured output for `pimote_folder_tree`: the folder-model `SparseTree`
+ * shape as one self-contained recursive JSON schema — occurrences reference
+ * their entry and recurse through `children`. The tree types stay in
+ * folder-model/manager (there is no tree wire command); this schema is the
+ * tool's structured-output contract only.
+ */
+const SparseTreeSchema = Type.Cyclic(
+  {
+    FolderEntry: Type.Object({
+      path: Type.String({ description: 'Canonical (real) path — the entry identity.' }),
+      name: Type.String({ description: 'Folder basename; never the persona name.' }),
+      nature: Type.Union([Type.Literal('code'), Type.Literal('persona')]),
+      persona: Type.Optional(PersonaInfoSchema),
+    }),
+    FolderOccurrence: Type.Object({
+      path: Type.String({ description: 'Reach path: walked scan path or symlink shortcut path, skipped segments collapsed inline. Identity is entry.path.' }),
+      via: Type.Union([Type.Literal('scan'), Type.Literal('shortcut')]),
+      entry: Type.Ref('FolderEntry'),
+      children: Type.Array(Type.Ref('FolderOccurrence')),
+    }),
+    SparseTree: Type.Object({ occurrences: Type.Array(Type.Ref('FolderOccurrence')) }),
+  },
+  'SparseTree',
+);
 
 const SessionSearchHitSchema = Type.Object({
   id: Type.String(),
@@ -100,30 +158,50 @@ interface SessionSearchHit {
 export function createManagerExtension(context: ManagerToolContext): ExtensionFactory {
   return (pi: ExtensionAPI) => {
     pi.registerTool({
-      name: 'pimote_list_projects',
-      label: 'List projects',
+      name: 'pimote_list_folders',
+      label: 'List folders',
       description:
-        'List every pimote project: curated single-repo projects and multi-repo projects, ' +
-        'with path, kind, member repos, and favorite/order/archived flags. Takes no arguments.',
+        'List every known folder: code folders (git-initialized — repos and hub folders) and persona folders ' +
+        '(agent homes whose AGENTS.md carries persona marker front matter), each keyed by its canonical path. ' +
+        'Rows carry nature and persona metadata, shortcut count (hub variant), favorite/archived/tags curation, ' +
+        'the missing flag, member repos on hub rows, and live session counts. Shortcut reach paths are not ' +
+        'separate folders — identity is the canonical path. Takes no arguments.',
       parameters: Type.Object({}),
       annotations: { readOnlyHint: true },
-      outputSchema: Type.Array(ProjectInfoSchema),
+      outputSchema: Type.Array(FolderInfoSchema),
       execute: async (_callId, _params) => {
-        const folders = await context.projects.list();
+        const folders = await context.folders.list();
         // Live counts, same rule the WS serve-paths use — the agent should
         // never see permanently-zeroed indicators.
         enrichActiveSessionCounts(folders, context.sessions.getAllSessions());
-        // The tool's structured output still speaks the legacy ProjectInfo
-        // shape until the wire rename lands.
-        return jsonToolResult(folders.map(toProjectInfo));
+        return jsonToolResult(folders.map(applyFolderDefaults));
       },
+    });
+
+    pi.registerTool({
+      name: 'pimote_folder_tree',
+      label: 'Folder tree',
+      description:
+        'Report the sparse folder tree over the configured scan roots as structured JSON: every discovered ' +
+        'folder entry (code or persona) with its shortcut occurrences. Each occurrence carries a reach path — ' +
+        'the walked scan path or symlink shortcut path with skipped segments collapsed inline — plus the entry, ' +
+        'whose canonical path is the folder identity; occurrences reached several ways share one entry. ' +
+        'Shortcut occurrences nest their target discoveries in children. Computed on demand from the scan roots. ' +
+        'Takes no arguments.',
+      parameters: Type.Object({}),
+      annotations: { readOnlyHint: true },
+      outputSchema: SparseTreeSchema,
+      execute: async (_callId, _params) => jsonToolResult(await context.tree.tree()),
     });
 
     pi.registerTool({
       name: 'pimote_list_repos',
       label: 'List repos',
       description:
-        'List every git repository discovered across the configured roots (the discovery index), ' + 'with branch, dirty flag, and ahead/behind counts. Takes no arguments.',
+        'List every git repository in the complete code-folder view: folders discovered below the scan roots, ' +
+        'hub folders, shortcut targets outside the roots, and folders contributed by registered sources — ' +
+        'deliberately not filtered to the configured scan roots. Persona folders are excluded even when ' +
+        'git-initialized. Each row carries branch, dirty flag, and ahead/behind counts. Takes no arguments.',
       parameters: Type.Object({}),
       annotations: { readOnlyHint: true },
       outputSchema: Type.Array(RepoInfoSchema),
@@ -134,7 +212,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       name: 'pimote_list_sessions',
       label: 'List sessions',
       description:
-        'List all currently open pimote sessions across every project, with session id, ' +
+        'List all currently open pimote sessions across every folder, with session id, ' +
         'folder path, working/idle status, and attention flag. This is the live open-sessions view only — ' +
         'for closed sessions and full history, use pimote_search_sessions. Takes no arguments.',
       parameters: Type.Object({}),
@@ -147,13 +225,13 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       name: 'pimote_search_sessions',
       label: 'Search sessions',
       description:
-        'Search on-disk session history across every pimote project (open and closed sessions alike), ' +
+        'Search on-disk session history across every known folder (open and closed sessions alike), ' +
         'matching the query case-insensitively against session name and first message. Returns id, name, ' +
-        'first-message excerpt, last-modified time, project folder path, open/closed state, and archived ' +
+        'first-message excerpt, last-modified time, folder path, open/closed state, and archived ' +
         'flag, newest first. Use pimote_list_sessions for the live open-sessions view only.',
       parameters: Type.Object({
         query: Type.String({ description: 'Case-insensitive substring matched against session name and first message.' }),
-        projectPath: Type.Optional(Type.String({ description: 'Restrict the search to this project path (must be a known project). Omit to search every project.' })),
+        folderPath: Type.Optional(Type.String({ description: 'Restrict the search to this folder path (must be a known folder — code or persona). Omit to search every folder.' })),
         limit: Type.Optional(Type.Integer({ description: `Maximum number of results (default ${SEARCH_DEFAULT_LIMIT}, max ${SEARCH_MAX_LIMIT}).` })),
       }),
       annotations: { readOnlyHint: true },
@@ -167,15 +245,15 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
           return errorToolResult('query is required');
         }
 
-        const projects = await context.projects.list();
+        const folders = await context.folders.list();
         let folderPaths: string[];
-        if (params.projectPath !== undefined) {
-          if (!projects.some((project) => project.path === params.projectPath)) {
-            return errorToolResult(`unknown project: ${params.projectPath} — use pimote_list_projects to see known projects`);
+        if (params.folderPath !== undefined) {
+          if (!folders.some((folder) => folder.path === params.folderPath)) {
+            return errorToolResult(`unknown folder: ${params.folderPath} — use pimote_list_folders to see known folders`);
           }
-          folderPaths = [params.projectPath];
+          folderPaths = [params.folderPath];
         } else {
-          folderPaths = [...new Set(projects.map((project) => project.path))];
+          folderPaths = [...new Set(folders.map((folder) => folder.path))];
         }
 
         const limit = Math.min(Math.max(1, params.limit ?? SEARCH_DEFAULT_LIMIT), SEARCH_MAX_LIMIT);
@@ -213,27 +291,27 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       name: 'pimote_start_session',
       label: 'Start session',
       description:
-        'Start a new agent session in a known pimote project and return its session id. ' +
+        'Start a new agent session in a known folder and return its session id. ' +
         'With a firstMessage the new session is tasked immediately and the agent run continues in the ' +
-        'background; the tool returns as soon as the session is open. projectPath must be one of the ' +
-        'paths returned by pimote_list_projects.',
+        'background; the tool returns as soon as the session is open. folderPath must be one of the ' +
+        'paths returned by pimote_list_folders.',
       parameters: Type.Object({
-        projectPath: Type.String({ description: 'Absolute path of the project to start the session in (must be a known project).' }),
+        folderPath: Type.String({ description: 'Absolute canonical path of the folder to start the session in (must be a known folder).' }),
         firstMessage: Type.Optional(Type.String({ description: 'Optional first user message, sent to the new session right away.' })),
       }),
       outputSchema: Type.Object({
         sessionId: Type.String(),
-        projectPath: Type.String(),
+        folderPath: Type.String(),
         firstMessageSent: Type.Boolean(),
       }),
-      execute: async (_callId, params): Promise<JsonToolResult<{ error: string } | { sessionId: string; projectPath: string; firstMessageSent: boolean }>> => {
-        const projects = await context.projects.list();
-        if (!projects.some((project) => project.path === params.projectPath)) {
-          return errorToolResult(`unknown project: ${params.projectPath} — use pimote_list_projects to see known projects`);
+      execute: async (_callId, params): Promise<JsonToolResult<{ error: string } | { sessionId: string; folderPath: string; firstMessageSent: boolean }>> => {
+        const folders = await context.folders.list();
+        if (!folders.some((folder) => folder.path === params.folderPath)) {
+          return errorToolResult(`unknown folder: ${params.folderPath} — use pimote_list_folders to see known folders`);
         }
         const firstMessage = params.firstMessage?.trim() || undefined;
-        const sessionId = await context.sessions.openSession(params.projectPath, firstMessage);
-        return jsonToolResult({ sessionId, projectPath: params.projectPath, firstMessageSent: firstMessage !== undefined });
+        const sessionId = await context.sessions.openSession(params.folderPath, firstMessage);
+        return jsonToolResult({ sessionId, folderPath: params.folderPath, firstMessageSent: firstMessage !== undefined });
       },
     });
 

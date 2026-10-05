@@ -96,6 +96,7 @@ function createMockPushService(): PushNotificationService {
 function createTestConfig(overrides: Partial<PimoteConfig> = {}): PimoteConfig {
   return {
     roots: ['/tmp/test-root'],
+    managerRoot: '/tmp/manager-root',
     idleTimeout: 300_000,
     bufferSize: 100,
     port: 3000,

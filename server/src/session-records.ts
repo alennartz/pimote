@@ -4,7 +4,7 @@ import type { SessionInfo as PimoteSessionInfo } from '../../shared/dist/index.j
 import { SessionSummaryIndex, type SessionSummary } from './session-summaries.js';
 
 /**
- * On-disk session records for project folders.
+ * On-disk session records for folders.
  *
  * Pure session-record access — listing, resolution, rename, delete — served by
  * the per-file summary cache; no folder discovery lives here. Folder sets come

@@ -35,7 +35,7 @@ Usage:
 
 Options:
   -p, --port <port>                  Override the server port for this run, or set it during init
-  -r, --root <path>                  Add a project root during init (repeatable)
+  -r, --root <path>                  Add a scan root during init (repeatable)
   -h, --help                         Show this help
   -v, --version                      Show the installed version
 
@@ -73,7 +73,7 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
-async function looksLikeProjectDirectory(path: string): Promise<boolean> {
+async function looksLikeCodeFolder(path: string): Promise<boolean> {
   return (await pathExists(join(path, '.git'))) || (await pathExists(join(path, 'package.json')));
 }
 
@@ -98,7 +98,7 @@ export async function normalizeRoots(values: string[]): Promise<string[]> {
     .filter(Boolean);
 
   if (parts.length === 0) {
-    throw new Error('At least one project root is required.');
+    throw new Error('At least one scan root is required.');
   }
 
   const uniqueRoots: string[] = [];
@@ -107,7 +107,7 @@ export async function normalizeRoots(values: string[]): Promise<string[]> {
   for (const part of parts) {
     const resolved = resolve(expandHomePath(part));
     if (!(await isDirectory(resolved))) {
-      throw new Error(`Project root does not exist or is not a directory: ${part}`);
+      throw new Error(`Scan root does not exist or is not a directory: ${part}`);
     }
     if (!seen.has(resolved)) {
       seen.add(resolved);
@@ -120,7 +120,7 @@ export async function normalizeRoots(values: string[]): Promise<string[]> {
 
 async function suggestDefaultRoot(): Promise<string> {
   const cwd = process.cwd();
-  if (await looksLikeProjectDirectory(cwd)) {
+  if (await looksLikeCodeFolder(cwd)) {
     return dirname(cwd);
   }
 
@@ -176,7 +176,7 @@ async function writeConfig(configPath: string, config: Record<string, unknown>):
 function printSetupIntro(configPath: string, stateDir: string, isUpdate: boolean): void {
   console.log(isUpdate ? '[pimote] Updating Pimote setup.' : '[pimote] Welcome to Pimote.');
   console.log('');
-  console.log('Pimote runs a local web app for pi. It scans the project roots you choose,');
+  console.log('Pimote runs a local web app for pi. It discovers your folders under the roots you choose,');
   console.log('starts a local server, and opens your pi sessions in the browser.');
   console.log('');
   console.log('Before you start chatting, make sure pi has at least one working provider/model');
@@ -195,7 +195,7 @@ async function promptWithDefault(rl: ReturnType<typeof createInterface>, label: 
 
 async function promptForRoots(rl: ReturnType<typeof createInterface>, defaultRoots: string[]): Promise<string[]> {
   while (true) {
-    const answer = await promptWithDefault(rl, 'Project roots (comma-separated parent directories to scan for repos)', defaultRoots.join(', '));
+    const answer = await promptWithDefault(rl, 'Scan roots (comma-separated parent directories to scan for folders)', defaultRoots.join(', '));
 
     try {
       return await normalizeRoots([answer]);
@@ -234,8 +234,8 @@ async function runInteractiveInit(options: ResolveInitConfigOptions): Promise<{ 
   const defaultPort = cliPort ?? (typeof existingConfig.port === 'number' ? existingConfig.port : 3000);
 
   printSetupIntro(configPath, stateDir, Object.keys(existingConfig).length > 0);
-  console.log('Tip: roots should be parent directories like ~/projects, not individual repos.');
-  console.log('Pimote scans each root recursively up to three levels deep and discovers repos by looking for .git.');
+  console.log('Tip: scan roots should be parent directories like ~/projects, not individual code folders.');
+  console.log('Pimote discovers folders below each scan root sparsely: code folders by .git, persona folders by AGENTS.md markers.');
   console.log('');
 
   const rl = createInterface({ input, output });

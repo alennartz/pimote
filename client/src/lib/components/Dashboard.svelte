@@ -3,13 +3,13 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { fade } from 'svelte/transition';
   import HomeToolbar from '$lib/components/HomeToolbar.svelte';
-  import ProjectList from '$lib/components/ProjectList.svelte';
+  import FolderList from '$lib/components/FolderList.svelte';
   import ManagerChat from '$lib/components/ManagerChat.svelte';
   import { managerStore } from '$lib/stores/manager-store.svelte.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import SwipeableCard, { closeOpenSwipeCard } from '$lib/components/SwipeableCard.svelte';
   import type { SwipeActionOutcome } from '$lib/components/swipe-action.js';
-  import { projectStore } from '$lib/stores/project-store.svelte.js';
+  import { folderStore } from '$lib/stores/folder-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { closeSession, openExistingSession, sessionRegistry, switchToSession } from '$lib/stores/session-registry.svelte.js';
   import { getSessionDisplayName } from '$lib/session-summary.js';
@@ -29,7 +29,7 @@
   let fullscreenView = $derived(managerActive && mobile);
   // Continue starts expanded — the header keeps the open count visible and
   // lets the user fold it away. It is not rendered on mobile at all: there,
-  // active sessions surface under their project's half-open expander instead.
+  // active sessions surface under their folder's half-open expander instead.
   let continueOpen = $state(true);
 
   // --- Continue: swipe-to-close/archive -------------------------------------
@@ -157,13 +157,13 @@
     return 'collapse';
   }
 
-  // Seed the project list per connection. The store owns the freshness policy:
+  // Seed the folder list per connection. The store owns the freshness policy:
   // a warm cache serves remounts (server events keep it current), reconnects
   // refetch via the disconnect invalidation.
   $effect(() => {
     if (connection.status === 'connected') {
       untrack(() => {
-        void projectStore.ensureLoaded();
+        void folderStore.ensureLoaded();
       });
     }
   });
@@ -281,9 +281,9 @@
         </section>
       {/if}
 
-      <!-- Projects: header + list actions live with the list itself -->
+      <!-- Folders: header + list actions live with the list itself -->
       <section>
-        <ProjectList {search} />
+        <FolderList {search} />
       </section>
     </div>
   </div>

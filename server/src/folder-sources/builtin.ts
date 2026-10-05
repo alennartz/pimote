@@ -1,7 +1,7 @@
 import { mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { isValidProjectName } from '../folder-registry.js';
-import type { ProjectCreator } from '@pimote/sdk/projects';
+import { isValidFolderName } from '../folder-registry.js';
+import type { FolderCreator } from '@pimote/sdk/folders';
 import { gitInitDir } from './git-init.js';
 
 function isMissing(err: unknown): boolean {
@@ -9,18 +9,18 @@ function isMissing(err: unknown): boolean {
 }
 
 /**
- * The built-in ProjectCreator: makes a new single-repo project from
+ * The built-in FolderCreator: makes a new single-repo folder from
  * `{ root, name }` — mkdir under `root` and `git init` it. Registered
  * in-process alongside user-authored creators; backs the dashboard's
- * create-project flow (root + name → mkdir + git init). Rejects when the
+ * create-folder flow (root + name → mkdir + git init). Rejects when the
  * target folder already exists, creating nothing.
  */
-export function createBuiltinCreator(): ProjectCreator {
+export function createBuiltinCreator(): FolderCreator {
   return {
     id: 'builtin-folder',
 
     describe() {
-      return { label: 'New project folder', paramSchema: { root: 'string', name: 'string' } };
+      return { label: 'New code folder', paramSchema: { root: 'string', name: 'string' } };
     },
 
     async create(params: Record<string, unknown>): Promise<{ path: string }> {
@@ -28,17 +28,17 @@ export function createBuiltinCreator(): ProjectCreator {
       const name = params.name;
 
       // Validate everything before any filesystem mutation. Shared rule with
-      // the registry and the WS create_project path.
-      if (typeof name !== 'string' || !isValidProjectName(name)) {
-        throw new Error('Invalid project name');
+      // the registry and the WS create_folder path.
+      if (typeof name !== 'string' || !isValidFolderName(name)) {
+        throw new Error('Invalid folder name');
       }
       if (typeof root !== 'string' || !root) {
-        throw new Error('Invalid project root');
+        throw new Error('Invalid root');
       }
       try {
         await stat(root);
       } catch {
-        throw new Error('Project root does not exist');
+        throw new Error('Root does not exist');
       }
 
       const target = join(root, name);

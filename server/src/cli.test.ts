@@ -59,32 +59,32 @@ describe('cli parseArgs', () => {
 
 describe('cli config initialization', () => {
   it('writes config non-interactively from CLI args and preserves unrelated settings', async () => {
-    const projectRoot = join(tempDir, 'projects');
+    const scanRoot = join(tempDir, 'projects');
     const configDir = join(tempDir, 'config', 'pimote');
     const configPath = join(configDir, 'config.json');
-    await mkdir(projectRoot, { recursive: true });
+    await mkdir(scanRoot, { recursive: true });
     await mkdir(configDir, { recursive: true });
     await writeFile(configPath, JSON.stringify({ bufferSize: 42, defaultModel: 'sonnet' }, null, 2));
 
     const cli = await loadCliModule();
-    await cli.initializeConfig({ command: 'init', cliPort: 3456, cliRoots: [projectRoot] });
+    await cli.initializeConfig({ command: 'init', cliPort: 3456, cliRoots: [scanRoot] });
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     expect(written).toEqual({
       bufferSize: 42,
       defaultModel: 'sonnet',
-      roots: [projectRoot],
+      roots: [scanRoot],
       port: 3456,
     });
   });
 
   it('auto-creates missing config before start when roots and port are provided', async () => {
-    const projectRoot = join(tempDir, 'workspace-root');
+    const scanRoot = join(tempDir, 'workspace-root');
     const expectedConfigPath = join(tempDir, 'config', 'pimote', 'config.json');
-    await mkdir(projectRoot, { recursive: true });
+    await mkdir(scanRoot, { recursive: true });
 
     const cli = await loadCliModule();
-    const result = await cli.ensureConfigForStart({ command: 'start', roots: [projectRoot], port: 4567 });
+    const result = await cli.ensureConfigForStart({ command: 'start', roots: [scanRoot], port: 4567 });
 
     expect(result).toEqual({
       created: true,
@@ -94,7 +94,7 @@ describe('cli config initialization', () => {
 
     const written = JSON.parse(await readFile(expectedConfigPath, 'utf-8'));
     expect(written).toEqual({
-      roots: [projectRoot],
+      roots: [scanRoot],
       port: 4567,
     });
   });

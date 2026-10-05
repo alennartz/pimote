@@ -370,7 +370,7 @@ The dashboard's projects column lists every discovered project; expand a row to 
 - **[S]** Click "Create new project" button at the bottom of the project picker dialog
 - **[S]** If multiple roots configured: select a root from the list. If single root: skip to name entry.
 - **[S]** Enter a project name and click "Create"
-- **[E]** `create_project` command sent with `root` and `name`
+- **[E]** `create_folder` command sent with `root` and `name`
 - **[E]** Server creates directory at `<root>/<name>` and runs `git init`
 - **[E]** Project list refreshes to include the new project
 - **[E]** A new session opens in the created project
@@ -390,7 +390,7 @@ The dashboard's projects column lists every discovered project; expand a row to 
 
 ### TC-04.14 — Create project with invalid root 🟡
 
-- **[P]** (Via raw WS) Send `create_project` with a `root` that is not in the configured roots
+- **[P]** (Via raw WS) Send `create_folder` with a `root` that is not in the configured roots
 - **[E]** Response: `success: false, error: "Root is not a configured project root"`
 
 ### TC-04.15 — Create project button hidden when no roots 🟡

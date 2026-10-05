@@ -12,7 +12,7 @@ import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderRegistry } from './folder-registry.js';
 import type { ManagerService } from './manager/index.js';
-import type { ProjectCreator } from './project-sources/index.js';
+import type { FolderCreator } from './folder-sources/index.js';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { serveStaticHostRoute, type StaticHostRegistry } from './static-host/index.js';
 import { applyAppNameToHtml, applyAppNameToManifest, resolveAppName } from './branding.js';
@@ -132,9 +132,9 @@ export async function createServer(
   fileDownloads: DownloadManager,
   updateChecker?: UpdateChecker,
   repoIndex?: RepoIndex,
-  projectRegistry?: FolderRegistry,
+  folderRegistry?: FolderRegistry,
   managerService?: ManagerService,
-  creators?: ProjectCreator[],
+  creators?: FolderCreator[],
 ): Promise<PimoteServer> {
   const appName = resolveAppName(config);
   const clientVersion = await loadClientVersion();
@@ -207,15 +207,15 @@ export async function createServer(
 
   // Folder registry mutations (update / createHub / disbandHub) broadcast the
   // merged list to every connected client.
-  projectRegistry?.onChange(() => {
-    WsHandler.broadcastProjectsChanged(projectRegistry, sessionManager, clientRegistry);
+  folderRegistry?.onChange(() => {
+    WsHandler.broadcastFoldersChanged(folderRegistry, sessionManager, clientRegistry);
   });
 
   // A stale-serve background refresh of the repo index (listing/status TTL
   // expiry) rides the same channel, but only when the recomputed view differs
   // from what the stale serve returned.
   repoIndex?.setOnRefreshed(() => {
-    if (projectRegistry) WsHandler.broadcastProjectsChanged(projectRegistry, sessionManager, clientRegistry);
+    if (folderRegistry) WsHandler.broadcastFoldersChanged(folderRegistry, sessionManager, clientRegistry);
   });
 
   const wss = new WebSocketServer({ noServer: true });
@@ -278,7 +278,7 @@ export async function createServer(
       clientRegistry,
       voiceOrchestrator,
       repoIndex,
-      projectRegistry,
+      folderRegistry,
       managerService,
       creators,
     );

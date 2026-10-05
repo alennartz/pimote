@@ -19,20 +19,20 @@ export interface RepoInfo {
 }
 
 /** Human-readable parameter type for a creator form field. */
-export type ProjectCreatorParamType = 'string' | 'string[]';
+export type FolderCreatorParamType = 'string' | 'string[]';
 
-/** A repo entry contributed to the discovery index (feeds single-repo projects). */
+/** A repo entry contributed to the discovery index (feeds single-repo folders). */
 export interface RepoSourceEntry extends RepoInfo {
   kind: 'repo';
 }
 
 /**
- * A multi-repo project entry contributed to the project layer. `memberPaths`
+ * A hub folder entry contributed to the folder layer. `memberPaths`
  * are concrete paths that may not exist on disk yet; the server derives
  * existence state itself — sources never flag "virtual".
  */
-export interface MultiRepoSourceEntry {
-  kind: 'project';
+export interface HubSourceEntry {
+  kind: 'hub';
   path: string;
   name: string;
   memberPaths: string[];
@@ -40,16 +40,16 @@ export interface MultiRepoSourceEntry {
   tags?: string[];
 }
 
-/** Anything a source lists: a repo, or a multi-repo project over member paths. */
-export type SourceEntry = RepoSourceEntry | MultiRepoSourceEntry;
+/** Anything a source lists: a repo, or a hub folder over member paths. */
+export type SourceEntry = RepoSourceEntry | HubSourceEntry;
 
 /**
- * Extensible discovery seam: a source contributes repos and multi-repo
- * projects to the project layer. Built in: the filesystem walker over
+ * Extensible discovery seam: a source contributes repos and hub
+ * folders to the folder layer. Built in: the filesystem walker over
  * configured roots. User-authored sources are dynamic-imported from the
- * configured project-sources directory.
+ * configured folder-sources directory.
  */
-export interface ProjectSource {
+export interface FolderSource {
   readonly id: string;
   /** Discover entries; called on cache miss. Must not mutate anything. */
   list(): Promise<SourceEntry[]>;
@@ -60,23 +60,23 @@ export interface ProjectSource {
    * if the entry is theirs and missing; do other open-time work otherwise.
    * A thrown error aborts the open and surfaces the message to the user.
    */
-  onProjectOpen?(projectPath: string): Promise<void>;
+  onFolderOpen?(folderPath: string): Promise<void>;
 }
 
 /** Human-readable description of a creator's form, for the creation UI. */
-export interface ProjectCreatorDescriptor {
+export interface FolderCreatorDescriptor {
   label: string;
-  paramSchema: Record<string, ProjectCreatorParamType>;
+  paramSchema: Record<string, FolderCreatorParamType>;
 }
 
 /**
- * Extensible creation seam: a creator makes a new project directory from
+ * Extensible creation seam: a creator makes a new folder from
  * user-supplied params. Built in: mkdir + git init. User-authored creators
- * are dynamic-imported from the configured project-sources directory.
+ * are dynamic-imported from the configured folder-sources directory.
  */
-export interface ProjectCreator {
+export interface FolderCreator {
   readonly id: string;
   /** Human-readable description for the creation UI. */
-  describe(): ProjectCreatorDescriptor;
+  describe(): FolderCreatorDescriptor;
   create(params: Record<string, unknown>): Promise<{ path: string }>;
 }

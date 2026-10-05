@@ -1,12 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
+import { Value } from 'typebox/value';
 import type { FolderInfo } from '../../../shared/dist/index.js';
 import { createManagerExtension } from './extension.js';
 import type { DiskSessionRecord, ManagerToolContext, ManagerSessionSummary } from './types.js';
+import type { SparseTree } from '../folder-model/index.js';
 
 // Minimal fake ExtensionAPI: records registerTool defs and hands back
 // observable port-routing behavior when the tests drive `execute` directly.
-function makeFakePi(): { toolDefs: Array<{ name: string; execute: (...args: unknown[]) => unknown }>; api: any } {
-  const toolDefs: Array<{ name: string; execute: (...args: unknown[]) => unknown }> = [];
+function makeFakePi(): { toolDefs: any[]; api: any } {
+  const toolDefs: any[] = [];
   const api = {
     registerTool(def: any) {
       toolDefs.push(def);
@@ -17,7 +19,15 @@ function makeFakePi(): { toolDefs: Array<{ name: string; execute: (...args: unkn
   return { toolDefs, api: api as any };
 }
 
-const MANAGER_TOOL_NAMES = ['pimote_list_projects', 'pimote_list_repos', 'pimote_list_sessions', 'pimote_search_sessions', 'pimote_start_session', 'pimote_archive_sessions'];
+const MANAGER_TOOL_NAMES = [
+  'pimote_list_folders',
+  'pimote_folder_tree',
+  'pimote_list_repos',
+  'pimote_list_sessions',
+  'pimote_search_sessions',
+  'pimote_start_session',
+  'pimote_archive_sessions',
+];
 
 function spyPorts() {
   return {
@@ -27,13 +37,14 @@ function spyPorts() {
       openSession: vi.fn(async (_folderPath: string, _firstMessage?: string) => 'session-new'),
       archiveSessions: vi.fn(async (_sessionIds: string[]) => []),
     },
-    projects: { list: vi.fn(async () => [] as FolderInfo[]) },
+    folders: { list: vi.fn(async () => [] as FolderInfo[]) },
     repos: { list: vi.fn(async () => []) },
+    tree: { tree: vi.fn(async () => ({ occurrences: [] })) },
   };
 }
 
 function makeContext(ports: ReturnType<typeof spyPorts>): ManagerToolContext {
-  return { ...ports, config: { roots: ['/tmp'], idleTimeout: 1_000, bufferSize: 10, port: 3000 } };
+  return { ...ports, config: { roots: ['/tmp'], managerRoot: '/srv/manager-home', idleTimeout: 1_000, bufferSize: 10, port: 3000 } };
 }
 
 function makeFolder(path: string): FolderInfo {
@@ -49,6 +60,10 @@ function makeFolder(path: string): FolderInfo {
     activeSessionCount: 0,
     externalProcessCount: 0,
   };
+}
+
+function makePersonaFolder(path: string): FolderInfo {
+  return { ...makeFolder(path), nature: 'persona', persona: { name: 'Ada', description: 'helpful agent' } };
 }
 
 function makeRecord(overrides: Partial<DiskSessionRecord> & { id: string }): DiskSessionRecord {
@@ -70,17 +85,194 @@ describe('createManagerExtension()', () => {
     const { toolDefs, api } = makeFakePi();
     createManagerExtension(makeContext(ports))(api);
 
-    for (const name of ['pimote_list_projects', 'pimote_list_repos', 'pimote_list_sessions']) {
+    for (const name of ['pimote_list_folders', 'pimote_folder_tree', 'pimote_list_repos', 'pimote_list_sessions']) {
       const def = toolDefs.find((t) => t.name === name);
       expect(def, name).toBeDefined();
-      await def!.execute('call-1', {}, undefined, undefined, {});
+      await def.execute('call-1', {}, undefined, undefined, {});
     }
 
-    expect(ports.projects.list).toHaveBeenCalledTimes(1);
+    expect(ports.folders.list).toHaveBeenCalledTimes(1);
+    expect(ports.tree.tree).toHaveBeenCalledTimes(1);
     expect(ports.repos.list).toHaveBeenCalledTimes(1);
-    // Called by pimote_list_sessions and by the projects tool's live-count
+    // Called by pimote_list_sessions and by the folders tool's live-count
     // enrichment.
     expect(ports.sessions.getAllSessions).toHaveBeenCalledTimes(2);
+  });
+
+  it('describes folder nature, identity versus reach, and unfiltered repo discovery accurately', () => {
+    const { toolDefs, api } = makeFakePi();
+    createManagerExtension(makeContext(spyPorts()))(api);
+    const descriptionOf = (name: string) => toolDefs.find((t) => t.name === name).description as string;
+
+    // Code/persona nature is explained wherever folders surface.
+    expect(descriptionOf('pimote_list_folders')).toContain('code');
+    expect(descriptionOf('pimote_list_folders')).toContain('persona');
+    // Canonical identity versus reach paths.
+    expect(descriptionOf('pimote_folder_tree')).toContain('canonical');
+    expect(descriptionOf('pimote_folder_tree')).toContain('reach');
+    // Unfiltered repo discovery: the complete code-folder view, persona folders excluded.
+    expect(descriptionOf('pimote_list_repos')).toContain('not filtered');
+    expect(descriptionOf('pimote_list_repos')).toContain('Persona folders are excluded');
+  });
+});
+
+describe('pimote_list_folders', () => {
+  function listTool(ports: ReturnType<typeof spyPorts>) {
+    const { toolDefs, api } = makeFakePi();
+    createManagerExtension(makeContext(ports))(api);
+    return toolDefs.find((t) => t.name === 'pimote_list_folders');
+  }
+
+  it('declares the complete FolderInfo schema: all fields, defaults on the defaulted ones, only persona/repos/userTags optional', () => {
+    const def = listTool(spyPorts());
+    const schema = def.outputSchema.items;
+
+    expect(Object.keys(schema.properties).sort()).toEqual(
+      ['activeSessionCount', 'archived', 'externalProcessCount', 'favorite', 'missing', 'name', 'nature', 'path', 'persona', 'repos', 'shortcutCount', 'tags', 'userTags'].sort(),
+    );
+    expect([...schema.required].sort()).toEqual(
+      ['activeSessionCount', 'archived', 'externalProcessCount', 'favorite', 'missing', 'name', 'nature', 'path', 'shortcutCount', 'tags'].sort(),
+    );
+    expect(schema.properties.favorite.default).toBe(false);
+    expect(schema.properties.archived.default).toBe(false);
+    expect(schema.properties.missing.default).toBe(false);
+    expect(schema.properties.tags.default).toEqual([]);
+    expect(schema.properties.shortcutCount.default).toBe(0);
+    expect(schema.properties.activeSessionCount.default).toBe(0);
+    expect(schema.properties.externalProcessCount.default).toBe(0);
+  });
+
+  it('serves every FolderInfo field with wire defaults, preserving persona and hub metadata', async () => {
+    const ports = spyPorts();
+    const sparseRow = { path: '/w/alpha', name: 'alpha', nature: 'code' } as FolderInfo;
+    const personaRow = makePersonaFolder('/w/personas/ada');
+    const hubRow: FolderInfo = {
+      ...makeFolder('/w/hubs/mono'),
+      shortcutCount: 2,
+      favorite: true,
+      archived: true,
+      tags: ['team', 'own'],
+      userTags: ['own'],
+      missing: true,
+      repos: [{ path: '/w/alpha', name: 'alpha', branch: 'main', dirty: false, ahead: 1, behind: 2, missing: false, tags: ['team'] }],
+    };
+    ports.folders.list.mockResolvedValue([sparseRow, personaRow, hubRow]);
+
+    const result = (await listTool(ports).execute('call-1', {}, undefined, undefined, {})) as { details: FolderInfo[] };
+
+    const [sparse, persona, hub] = result.details;
+    // Defaults materialized on the sparse row.
+    expect(sparse).toEqual({
+      path: '/w/alpha',
+      name: 'alpha',
+      nature: 'code',
+      shortcutCount: 0,
+      favorite: false,
+      archived: false,
+      tags: [],
+      missing: false,
+      activeSessionCount: 0,
+      externalProcessCount: 0,
+    });
+    // Persona metadata rides through.
+    expect(persona.nature).toBe('persona');
+    expect(persona.persona).toEqual({ name: 'Ada', description: 'helpful agent' });
+    // Hub metadata rides through.
+    expect(hub.repos).toHaveLength(1);
+    expect(hub.userTags).toEqual(['own']);
+    expect(hub.shortcutCount).toBe(2);
+    expect(hub.favorite).toBe(true);
+    expect(hub.archived).toBe(true);
+    expect(hub.missing).toBe(true);
+  });
+
+  it('enriches live session counts from the session port', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([{ ...makeFolder('/w/alpha'), externalProcessCount: 3 }]);
+    ports.sessions.getAllSessions.mockReturnValue([
+      { sessionId: 's1', folderPath: '/w/alpha', status: 'idle', needsAttention: false },
+      { sessionId: 's2', folderPath: '/w/alpha', status: 'working', needsAttention: false },
+      { sessionId: 's3', folderPath: '/w/beta', status: 'idle', needsAttention: false },
+    ]);
+
+    const result = (await listTool(ports).execute('call-1', {}, undefined, undefined, {})) as { details: FolderInfo[] };
+
+    expect(result.details[0].activeSessionCount).toBe(2);
+    expect(result.details[0].externalProcessCount).toBe(3);
+  });
+});
+
+describe('pimote_folder_tree', () => {
+  function treeTool(ports: ReturnType<typeof spyPorts>) {
+    const { toolDefs, api } = makeFakePi();
+    createManagerExtension(makeContext(ports))(api);
+    return toolDefs.find((t) => t.name === 'pimote_folder_tree');
+  }
+
+  const sampleTree: SparseTree = {
+    occurrences: [
+      {
+        path: '/root/hub',
+        via: 'scan',
+        entry: { path: '/root/hub', name: 'hub', nature: 'code' },
+        children: [
+          { path: '/root/hub/link', via: 'shortcut', entry: { path: '/external/member', name: 'member', nature: 'code' }, children: [] },
+          {
+            path: '/root/hub/ada-link',
+            via: 'shortcut',
+            entry: { path: '/external/ada', name: 'ada', nature: 'persona', persona: { name: 'Ada' } },
+            // First-discovery children reused; a cycle back-reference stays a leaf.
+            children: [{ path: '/root/hub/ada-link/hub-link', via: 'shortcut', entry: { path: '/root/hub', name: 'hub', nature: 'code' }, children: [] }],
+          },
+        ],
+      },
+    ],
+  };
+
+  it('is read-only and takes no arguments', () => {
+    const def = treeTool(spyPorts());
+
+    expect(def.annotations.readOnlyHint).toBe(true);
+    expect(def.parameters.type).toBe('object');
+    expect(Object.keys(def.parameters.properties ?? {})).toHaveLength(0);
+  });
+
+  it('returns the injected sparse tree as finite, JSON-serializable structured output', async () => {
+    const ports = spyPorts();
+    ports.tree.tree.mockResolvedValue(sampleTree);
+
+    const result = (await treeTool(ports).execute('call-1', {}, undefined, undefined, {})) as { details: SparseTree };
+
+    expect(ports.tree.tree).toHaveBeenCalledTimes(1);
+    expect(result.details).toEqual(sampleTree);
+    // Finite and JSON-safe end to end (the scanner guarantees acyclic shapes;
+    // the tool must not break that).
+    expect(JSON.parse(JSON.stringify(result.details))).toEqual(sampleTree);
+  });
+
+  it('declares a recursive occurrence schema (path/via/entry/children) that the output validates against', () => {
+    const ports = spyPorts();
+    ports.tree.tree.mockResolvedValue(sampleTree);
+    const def = treeTool(ports);
+
+    const defs = def.outputSchema.$defs;
+    const occurrence = defs.FolderOccurrence;
+    expect([...occurrence.required].sort()).toEqual(['children', 'entry', 'path', 'via']);
+    // Recursion: children items reference the occurrence schema again.
+    expect(occurrence.properties.children.items.$ref).toBe('FolderOccurrence');
+    expect(def.outputSchema.$ref).toBe('SparseTree');
+    const entry = defs.FolderEntry;
+    expect([...entry.required].sort()).toEqual(['name', 'nature', 'path']);
+  });
+
+  it('emits tree output that validates against its own recursive schema', async () => {
+    const ports = spyPorts();
+    ports.tree.tree.mockResolvedValue(sampleTree);
+    const def = treeTool(ports);
+
+    const result = await def.execute('call-1', {}, undefined, undefined, {});
+
+    expect(Value.Check(def.outputSchema, result.structuredContent)).toBe(true);
   });
 });
 
@@ -93,9 +285,9 @@ describe('pimote_search_sessions', () => {
     return def;
   }
 
-  it('matches name and firstMessage across every project, newest first, with open state and excerpts', async () => {
+  it('matches name and firstMessage across every folder, newest first, with open state and excerpts', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha'), makeFolder('/w/beta')]);
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha'), makeFolder('/w/beta')]);
     ports.sessions.listDiskSessions.mockImplementation(async (folderPath: string) => {
       if (folderPath === '/w/alpha') {
         return [
@@ -131,7 +323,7 @@ describe('pimote_search_sessions', () => {
 
   it('honors the limit, capping above the maximum', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha')]);
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
     ports.sessions.listDiskSessions.mockResolvedValue(
       ['a', 'b', 'c'].map((id) => makeRecord({ id, name: `login ${id}`, modified: `2025-06-0${id.charCodeAt(0) - 96}T10:00:00.000Z` })),
     );
@@ -144,12 +336,12 @@ describe('pimote_search_sessions', () => {
     expect(uncapped.details.results).toHaveLength(3);
   });
 
-  it('searches only the given projectPath when provided', async () => {
+  it('searches only the given folderPath when provided', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha'), makeFolder('/w/beta')]);
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha'), makeFolder('/w/beta')]);
     ports.sessions.listDiskSessions.mockResolvedValue([makeRecord({ id: 's1', name: 'login bug' })]);
 
-    const result = (await searchTool(ports).execute('call-1', { query: 'login', projectPath: '/w/beta' }, undefined, undefined, {})) as {
+    const result = (await searchTool(ports).execute('call-1', { query: 'login', folderPath: '/w/beta' }, undefined, undefined, {})) as {
       details: { results: Array<Record<string, unknown>> };
     };
 
@@ -158,23 +350,37 @@ describe('pimote_search_sessions', () => {
     expect(result.details.results[0].folderPath).toBe('/w/beta');
   });
 
-  it('rejects an unknown projectPath without touching the session port', async () => {
+  it('searches persona folders', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha')]);
+    ports.folders.list.mockResolvedValue([makePersonaFolder('/w/personas/ada')]);
+    ports.sessions.listDiskSessions.mockResolvedValue([makeRecord({ id: 's1', name: 'login bug' })]);
 
-    const result = (await searchTool(ports).execute('call-1', { query: 'login', projectPath: '/w/unknown' }, undefined, undefined, {})) as {
+    const result = (await searchTool(ports).execute('call-1', { query: 'login', folderPath: '/w/personas/ada' }, undefined, undefined, {})) as {
+      details: { results: Array<Record<string, unknown>> };
+    };
+
+    expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/personas/ada');
+    expect(result.details.results[0].folderPath).toBe('/w/personas/ada');
+  });
+
+  it('rejects an unknown folderPath without touching the session port', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
+
+    const result = (await searchTool(ports).execute('call-1', { query: 'login', folderPath: '/w/unknown' }, undefined, undefined, {})) as {
       details: { error: string };
       isError: boolean;
     };
 
     expect(result.isError).toBe(true);
-    expect(result.details.error).toContain('unknown project');
+    expect(result.details.error).toContain('unknown folder');
+    expect(result.details.error).toContain('use pimote_list_folders to see known folders');
     expect(ports.sessions.listDiskSessions).not.toHaveBeenCalled();
   });
 
   it('rejects a whitespace-only query', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha')]);
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
 
     const result = (await searchTool(ports).execute('call-1', { query: '   ' }, undefined, undefined, {})) as { details: { error: string }; isError: boolean };
 
@@ -193,38 +399,52 @@ describe('pimote_start_session', () => {
     return def;
   }
 
-  it('opens a session in a known project and forwards the firstMessage', async () => {
+  it('opens a session in a known folder and forwards the firstMessage', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha')]);
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
     ports.sessions.openSession.mockResolvedValue('sess-42');
 
-    const result = (await startTool(ports).execute('call-1', { projectPath: '/w/alpha', firstMessage: ' fix the flaky test ' }, undefined, undefined, {})) as {
-      details: { sessionId: string; projectPath: string; firstMessageSent: boolean };
+    const result = (await startTool(ports).execute('call-1', { folderPath: '/w/alpha', firstMessage: ' fix the flaky test ' }, undefined, undefined, {})) as {
+      details: { sessionId: string; folderPath: string; firstMessageSent: boolean };
     };
 
     expect(ports.sessions.openSession).toHaveBeenCalledWith('/w/alpha', 'fix the flaky test');
-    expect(result.details).toEqual({ sessionId: 'sess-42', projectPath: '/w/alpha', firstMessageSent: true });
+    expect(result.details).toEqual({ sessionId: 'sess-42', folderPath: '/w/alpha', firstMessageSent: true });
   });
 
   it('opens a session without a firstMessage when none is given', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha')]);
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
     ports.sessions.openSession.mockResolvedValue('sess-43');
 
-    const result = (await startTool(ports).execute('call-1', { projectPath: '/w/alpha' }, undefined, undefined, {})) as { details: { firstMessageSent: boolean } };
+    const result = (await startTool(ports).execute('call-1', { folderPath: '/w/alpha' }, undefined, undefined, {})) as { details: { firstMessageSent: boolean } };
 
     expect(ports.sessions.openSession).toHaveBeenCalledWith('/w/alpha', undefined);
     expect(result.details.firstMessageSent).toBe(false);
   });
 
-  it('rejects an unknown project without opening a session', async () => {
+  it('opens a session in a persona folder', async () => {
     const ports = spyPorts();
-    ports.projects.list.mockResolvedValue([makeFolder('/w/alpha')]);
+    ports.folders.list.mockResolvedValue([makePersonaFolder('/w/personas/ada')]);
+    ports.sessions.openSession.mockResolvedValue('sess-44');
 
-    const result = (await startTool(ports).execute('call-1', { projectPath: '/w/unknown' }, undefined, undefined, {})) as { details: { error: string }; isError: boolean };
+    const result = (await startTool(ports).execute('call-1', { folderPath: '/w/personas/ada' }, undefined, undefined, {})) as {
+      details: { sessionId: string; folderPath: string };
+    };
+
+    expect(ports.sessions.openSession).toHaveBeenCalledWith('/w/personas/ada', undefined);
+    expect(result.details).toEqual({ sessionId: 'sess-44', folderPath: '/w/personas/ada', firstMessageSent: false });
+  });
+
+  it('rejects an unknown folder without opening a session', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
+
+    const result = (await startTool(ports).execute('call-1', { folderPath: '/w/unknown' }, undefined, undefined, {})) as { details: { error: string }; isError: boolean };
 
     expect(result.isError).toBe(true);
-    expect(result.details.error).toContain('unknown project');
+    expect(result.details.error).toContain('unknown folder');
+    expect(result.details.error).toContain('use pimote_list_folders to see known folders');
     expect(ports.sessions.openSession).not.toHaveBeenCalled();
   });
 });

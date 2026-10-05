@@ -3,6 +3,8 @@ import { classifyListing } from './classification.js';
 import { nodeFolderFs } from './node-folder-fs.js';
 import { createScanContext, discoverRoots } from './traversal.js';
 
+export { nodeFolderFs } from './node-folder-fs.js';
+
 /**
  * Folder model — the deep module that owns folder discovery.
  *

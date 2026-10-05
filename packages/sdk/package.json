@@ -1,7 +1,7 @@
 {
   "name": "@pimote/sdk",
-  "version": "0.14.0",
-  "description": "Pimote extensibility SDK: panel cards and project discovery/creation seams for pi extensions",
+  "version": "0.15.0",
+  "description": "Pimote extensibility SDK: panel cards and folder discovery/creation seams for pi extensions",
   "type": "module",
   "license": "MIT",
   "author": "Antoine Lennartz <alennartz@gmail.com>",
@@ -17,14 +17,14 @@
     "pimote",
     "extension",
     "sdk",
-    "projects",
+    "folders",
     "panels",
     "cards"
   ],
   "exports": {
     ".": "./dist/index.js",
     "./panels": "./dist/panels/index.js",
-    "./projects": "./dist/projects/index.js"
+    "./folders": "./dist/folders/index.js"
   },
   "types": "./dist/index.d.ts",
   "files": [

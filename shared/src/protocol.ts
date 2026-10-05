@@ -5,11 +5,11 @@
 //
 // KEEP IN SYNC WITH: mobile/android/app/src/main/kotlin/com/pimote/android/protocol/Protocol.kt
 //
-// PENDING MIRROR UPDATE: Protocol.kt still mirrors the pre-rename surface
-// (FolderInfo / list_folders). The project-management rename below is
-// intentionally not yet reflected on the Kotlin side — updating that mirror is
-// accepted debt for a future Android update (field additions are safe via
-// ignoreUnknownKeys; renames are not).
+// MIRROR NOTE: Android already speaks the folder vocabulary (FolderInfo /
+// list_folders); the TS side's project names were the stale half of that drift,
+// and the wire rename realigns the two surfaces. The Kotlin mirror is a
+// hand-written subset — do not edit Kotlin from TS-side changes: field
+// additions are safe via ignoreUnknownKeys; renames are not.
 //
 // The native Android client hand-mirrors a subset of these types as Kotlin
 // data classes. Any change to the following types MUST be reflected on the
@@ -19,7 +19,7 @@
 //   - CallBindErrorCode
 //   - OpenSessionCommand / OpenSessionResponseData
 //   - ListSessionsCommand
-//   - ProjectInfo / SessionInfo
+//   - FolderInfo / SessionInfo
 //   - SessionOpenedEvent / SessionRenamedEvent / SessionArchivedEvent /
 //     SessionDeletedEvent / SessionReplacedEvent
 // See docs/plans/native-android-client.md §Protocol DTOs.
@@ -49,8 +49,8 @@ export interface RepoInfo {
 
 /**
  * A discovered folder of interest plus its curation state (folder-model
- * foundation). Successor of `ProjectInfo`, which it renames and reshapes once
- * the projects→folders rename lands.
+ * foundation). The live wire folder row: list_folders, folders_changed, and
+ * the session folder payloads all serve this shape.
  */
 export interface FolderInfo {
   /** Canonical path — curation key. */
@@ -70,25 +70,7 @@ export interface FolderInfo {
   repos?: RepoInfo[];
   /** Own-path user tags — the subset of `tags` that is user-removable. */
   userTags?: string[];
-  // Session/git chip fields carried over from ProjectInfo, unchanged.
-  activeSessionCount: number;
-  externalProcessCount: number;
-}
-
-/** A user-curated project: a single repo, or a multi-repo project folder. */
-export interface ProjectInfo {
-  /** Repo dir (single) or project dir (multi). */
-  path: string;
-  name: string;
-  kind: 'single' | 'multi';
-  /** Member repos; present when kind === 'multi' (member repos). */
-  repos?: RepoInfo[];
-  /** Effective tags: own user+source tags, plus inherited member-repo tags for multi projects. */
-  tags?: string[];
-  /** Own-path user tags — the subset of `tags` that is user-removable. */
-  userTags?: string[];
-  favorite?: boolean;
-  archived?: boolean;
+  // Session/git chip fields, unchanged from the pre-rename project row.
   activeSessionCount: number;
   externalProcessCount: number;
 }
@@ -474,19 +456,19 @@ export interface SetTreeLabelCommand extends CommandBase {
   label?: string;
 }
 
-// -- Project management commands --
+// -- Folder management commands --
 
-export interface CreateProjectCommand extends CommandBase {
-  type: 'create_project';
+export interface CreateFolderCommand extends CommandBase {
+  type: 'create_folder';
   /** Must be one of the configured roots */
   root: string;
   /** Folder name — no slashes, non-empty */
   name: string;
 }
 
-/** List curated projects (merged repo index + registry overrides). resp: ListProjectsResponseData */
-export interface ListProjectsCommand extends CommandBase {
-  type: 'list_projects';
+/** List discovered folders (merged scan + registry curation). resp: ListFoldersResponseData */
+export interface ListFoldersCommand extends CommandBase {
+  type: 'list_folders';
 }
 
 /** List the discovery index (repos), used by multi-repo configuration and creation flows. resp: ListReposResponseData */
@@ -494,32 +476,32 @@ export interface ListReposCommand extends CommandBase {
   type: 'list_repos';
 }
 
-/** Apply curation flags to a project. Single-repo curation writes registry overrides. */
-export interface UpdateProjectCommand extends CommandBase {
-  type: 'update_project';
-  projectPath: string;
+/** Apply curation flags to a folder (favorite/archive/tags), keyed by canonical path. */
+export interface UpdateFolderCommand extends CommandBase {
+  type: 'update_folder';
+  folderPath: string;
   favorite?: boolean;
   archived?: boolean;
-  /** Tags to add (stored as user tags at the project path). */
+  /** Tags to add (stored as user tags at the folder path). */
   addTags?: string[];
   /** User tags to remove. Source-contributed and inherited tags are not removable. */
   removeTags?: string[];
 }
 
-/** Create a multi-repo project: mkdir + symlinks to member repos + generated AGENTS.md. resp: CreateMultiRepoProjectResponseData */
-export interface CreateMultiRepoProjectCommand extends CommandBase {
-  type: 'create_multi_repo_project';
+/** Create a hub folder: mkdir + symlinks to member repos + generated AGENTS.md. resp: CreateHubResponseData */
+export interface CreateHubCommand extends CommandBase {
+  type: 'create_hub';
   name: string;
   /** Must be one of the configured roots */
   root: string;
-  /** Every repoPath must exist in the repo index. */
-  repoPaths: string[];
+  /** Every memberPath must exist in the repo index. */
+  memberPaths: string[];
 }
 
-/** Remove a multi-repo project: registry entry deleted, multi-repo project folder deleted. */
-export interface DisbandProjectCommand extends CommandBase {
-  type: 'disband_project';
-  projectPath: string;
+/** Remove a hub folder: registry entry deleted, hub folder deleted. */
+export interface DisbandHubCommand extends CommandBase {
+  type: 'disband_hub';
+  folderPath: string;
 }
 
 /** Prompt the connection's ephemeral manager agent. */
@@ -533,8 +515,8 @@ export interface ManagerAbortCommand extends CommandBase {
   type: 'manager_abort';
 }
 
-export interface ListProjectsResponseData {
-  projects: ProjectInfo[];
+export interface ListFoldersResponseData {
+  folders: FolderInfo[];
   roots: string[];
 }
 
@@ -542,8 +524,8 @@ export interface ListReposResponseData {
   repos: RepoInfo[];
 }
 
-export interface CreateMultiRepoProjectResponseData {
-  projectPath: string;
+export interface CreateHubResponseData {
+  folderPath: string;
 }
 
 // -- Server-level commands --
@@ -774,13 +756,13 @@ export type PimoteCommand =
   | ForkCommand
   | NavigateTreeCommand
   | SetTreeLabelCommand
-  // Project management
-  | CreateProjectCommand
-  | ListProjectsCommand
+  // Folder management
+  | CreateFolderCommand
+  | ListFoldersCommand
   | ListReposCommand
-  | UpdateProjectCommand
-  | CreateMultiRepoProjectCommand
-  | DisbandProjectCommand
+  | UpdateFolderCommand
+  | CreateHubCommand
+  | DisbandHubCommand
   | ManagerPromptCommand
   | ManagerAbortCommand
   // Server-level
@@ -1040,7 +1022,7 @@ export interface ExtensionUiRequestEvent {
 export interface SessionOpenedEvent {
   type: 'session_opened';
   sessionId: string;
-  folder: ProjectInfo;
+  folder: FolderInfo;
 }
 
 export interface SessionClosedEvent {
@@ -1073,7 +1055,7 @@ export interface SessionReplacedEvent {
   type: 'session_replaced';
   oldSessionId: string;
   newSessionId: string;
-  folder: ProjectInfo;
+  folder: FolderInfo;
 }
 
 export interface SessionStateChangedEvent {
@@ -1099,12 +1081,12 @@ export interface ConnectionRestoredEvent {
   sessionId: string;
 }
 
-// -- Project management events --
+// -- Folder management events --
 
-/** Broadcast after a project registry mutation; carries the full merged project list. */
-export interface ProjectsChangedEvent {
-  type: 'projects_changed';
-  projects: ProjectInfo[];
+/** Broadcast after a folder registry mutation; carries the full merged folder list. */
+export interface FoldersChangedEvent {
+  type: 'folders_changed';
+  folders: FolderInfo[];
 }
 
 /** Streams the connection's ephemeral manager session: the same session event
@@ -1313,7 +1295,7 @@ export type PimoteEvent =
   | SessionReplacedEvent
   | SessionStateChangedEvent
   | ConnectionRestoredEvent
-  | ProjectsChangedEvent
+  | FoldersChangedEvent
   | ManagerStreamEvent
   | SessionRestoreEvent
   | BufferedEventsEvent

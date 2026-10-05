@@ -1,10 +1,10 @@
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import type { MultiRepoSourceEntry } from '@pimote/sdk/projects';
+import type { HubSourceEntry } from '@pimote/sdk/folders';
 import { gitInitDir } from './git-init.js';
 
 /**
- * The multi-repo hub folder layout, owned by pimote: one absolute symlink
+ * The hub folder layout, owned by pimote: one absolute symlink
  * per member, a generated AGENTS.md declaring the sub-project convention
  * (each member is an independent git repo whose own AGENTS.md takes
  * precedence), plus `git init` and a .gitignore for the member links — the
@@ -13,7 +13,7 @@ import { gitInitDir } from './git-init.js';
  * materialization of source-listed hubs render this same layout through this
  * function — user sources never replicate it by hand.
  */
-export async function materializeMultiRepoFolder(entry: MultiRepoSourceEntry): Promise<void> {
+export async function materializeHubFolder(entry: HubSourceEntry): Promise<void> {
   await mkdir(entry.path, { recursive: true });
   for (const memberPath of entry.memberPaths) {
     // Dangling symlinks are fine: members may themselves be listed-but-not-yet-
@@ -30,11 +30,11 @@ function memberIgnore(memberPaths: string[]): string {
   return memberPaths.map((memberPath) => `${basename(memberPath)}\n`).join('');
 }
 
-/** The generated project AGENTS.md: members plus the sub-project convention. */
-export function agentsMarkdown(projectName: string, memberPaths: string[]): string {
+/** The generated hub AGENTS.md: members plus the sub-project convention. */
+export function agentsMarkdown(hubName: string, memberPaths: string[]): string {
   const members = memberPaths.map((memberPath) => `- ${basename(memberPath)} → ${memberPath}`).join('\n');
   return [
-    `# ${projectName}`,
+    `# ${hubName}`,
     '',
     'A multi-repo project. The member repositories below are symlinked into this directory:',
     '',

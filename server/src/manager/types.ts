@@ -10,7 +10,7 @@ export interface ManagedSessionSummary {
   needsAttention: boolean;
 }
 
-/** One on-disk session record for a project folder, as the manager tools see it. */
+/** One on-disk session record for a folder, as the manager tools see it. */
 export interface DiskSessionRecord {
   id: string;
   /** User-defined display name, when the session has one. */
@@ -31,7 +31,7 @@ export interface SessionArchiveOutcome {
   /** - `archived`: on-disk record marked archived.
    *  - `open_slot_evicted`: the session was live; its slot was closed and the
    *    on-disk record marked archived.
-   *  - `not_found`: no live slot and no on-disk record in any project. */
+   *  - `not_found`: no live slot and no on-disk record in any folder. */
   outcome: 'archived' | 'open_slot_evicted' | 'not_found';
 }
 
@@ -45,7 +45,7 @@ export interface SessionManagerPort {
   /** All currently open sessions across every folder. */
   getAllSessions(): ManagedSessionSummary[];
 
-  /** On-disk session records for one project folder (pi SessionManager.list
+  /** On-disk session records for one folder (pi SessionManager.list
    *  for that cwd — open and closed sessions alike). */
   listDiskSessions(folderPath: string): Promise<DiskSessionRecord[]>;
 
@@ -59,12 +59,6 @@ export interface SessionManagerPort {
    *  that is currently open has its live slot evicted (closed) as part of
    *  archiving. Reports a per-id outcome. */
   archiveSessions(sessionIds: string[]): Promise<SessionArchiveOutcome[]>;
-}
-
-/** Narrow folder-registry seam for manager tools. The name survives until the
- *  vocabulary rename; its signatures already match `FolderRegistry`. */
-export interface ProjectRegistryPort {
-  list(): Promise<FolderInfo[]>;
 }
 
 /** Narrow RepoIndex seam for manager tools. */
@@ -87,9 +81,8 @@ export interface FolderUpdatePatch {
 }
 
 /**
- * Folder-registry seam for manager tools (folder-model successor of
- * `ProjectRegistryPort`): overrides merged over all included entries, code and
- * persona alike.
+ * Folder-registry seam for manager tools (narrow DI port per DR-039):
+ * overrides merged over all included entries, code and persona alike.
  */
 export interface FolderRegistryPort {
   list(): Promise<FolderInfo[]>;
@@ -104,7 +97,8 @@ export interface FolderRegistryPort {
  */
 export interface ManagerToolContext {
   sessions: SessionManagerPort;
-  projects: ProjectRegistryPort;
+  folders: FolderRegistryPort;
   repos: RepoIndexPort;
+  tree: FolderModelPort;
   config: PimoteConfig;
 }

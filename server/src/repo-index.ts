@@ -2,10 +2,10 @@ import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { RepoInfo } from '../../shared/dist/index.js';
-import type { MultiRepoSourceEntry, ProjectSource, RepoSourceEntry, SourceEntry } from './project-sources/index.js';
+import type { HubSourceEntry, FolderSource, RepoSourceEntry, SourceEntry } from './folder-sources/index.js';
 import { scanFolderModel, type FolderEntry, type FolderOccurrence, type SparseTree } from './folder-model/index.js';
 import { getGitBranch } from './git-branch.js';
-import { materializeMultiRepoFolder } from './project-sources/materialize.js';
+import { materializeHubFolder } from './folder-sources/materialize.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -99,9 +99,9 @@ export class RepoIndex {
   private readonly ttlMs: number;
   private readonly statusTtlMs: number;
   private readonly now: () => number;
-  private readonly sources: ProjectSource[] = [];
+  private readonly sources: FolderSource[] = [];
   private listing: { entries: RepoInfo[]; at: number } | null = null;
-  private sourceProjects: { entries: MultiRepoSourceEntry[]; at: number } | null = null;
+  private sourceHubs: { entries: HubSourceEntry[]; at: number } | null = null;
   private readonly statusCache = new Map<string, RepoStatus>();
   private listingPromise: Promise<RepoInfo[]> | null = null;
   private refreshInFlight: Promise<void> | null = null;
@@ -131,7 +131,7 @@ export class RepoIndex {
    * should not wait on it — while a background refresh repopulates both the
    * listing and the status cache. The refresh notifies `onRefreshed` only if
    * the recomputed view differs from what was served, so clients get a
-   * `projects_changed` broadcast on real changes (new repo, branch switch,
+   * `folders_changed` broadcast on real changes (new repo, branch switch,
    * dirty state) without a fixed refresh cadence. Only a cold cache (first
    * list, or after `invalidate()`) blocks on the walk.
    */
@@ -224,47 +224,47 @@ export class RepoIndex {
       .sort(byPath);
     return JSON.stringify({
       listing: this.listing ? [...this.listing.entries].sort(byPath) : null,
-      sourceProjects: this.sourceProjects ? [...this.sourceProjects.entries].sort(byPath) : null,
+      sourceHubs: this.sourceHubs ? [...this.sourceHubs.entries].sort(byPath) : null,
       statuses,
     });
   }
 
   /**
-   * Multi-repo projects contributed by registered sources, cached with the same
+   * Hub folders contributed by registered sources, cached with the same
    * TTL as the repo listing. Derived, never persisted — if a source stops
-   * listing an entry, it disappears from the project layer. `list()` owns the
+   * listing an entry, it disappears from the folder layer. `list()` owns the
    * staleness policy (serve stale + background refresh), so this just awaits it.
    */
-  async listSourceProjects(): Promise<MultiRepoSourceEntry[]> {
+  async listSourceHubs(): Promise<HubSourceEntry[]> {
     await this.list();
-    return this.sourceProjects?.entries ?? [];
+    return this.sourceHubs?.entries ?? [];
   }
 
   /**
-   * Fan one open attempt out to every source's onProjectOpen hook, awaited in
+   * Fan one open attempt out to every source's onFolderOpen hook, awaited in
    * registration order. Sources self-filter by path (probe the disk, scaffold
    * if the entry is theirs and missing). The first thrown error aborts the
    * open and surfaces to the caller.
    */
-  async runOpenHooks(projectPath: string): Promise<void> {
-    // Standard-layout materialization: an open of a source-listed multi-repo
-    // project whose folder doesn't exist gets the pimote layout (symlinks to
+  async runOpenHooks(folderPath: string): Promise<void> {
+    // Standard-layout materialization: an open of a source-listed hub
+    // whose folder doesn't exist gets the pimote layout (symlinks to
     // members + AGENTS.md) built from the server's own code — user sources
     // never replicate the convention. Dangling member symlinks are fine and
     // self-heal when a member materializes.
-    const projects = await this.listSourceProjects();
-    const entry = projects.find((project) => project.path === projectPath);
+    const hubs = await this.listSourceHubs();
+    const entry = hubs.find((hub) => hub.path === folderPath);
     if (entry) {
       try {
-        await stat(projectPath);
+        await stat(folderPath);
       } catch {
-        await materializeMultiRepoFolder(entry);
+        await materializeHubFolder(entry);
       }
     }
 
     for (const source of this.sources) {
-      if (!source.onProjectOpen) continue;
-      await source.onProjectOpen(projectPath);
+      if (!source.onFolderOpen) continue;
+      await source.onFolderOpen(folderPath);
     }
   }
 
@@ -276,7 +276,7 @@ export class RepoIndex {
   }
 
   /** Register an additional discovery source; its repos join future listings. */
-  registerSource(source: ProjectSource): void {
+  registerSource(source: FolderSource): void {
     this.sources.push(source);
   }
 
@@ -291,8 +291,8 @@ export class RepoIndex {
       byPath.set(entry.path, { path: entry.path, name: entry.name, branch: null, dirty: false, ahead: 0, behind: 0 });
     }
 
-    const sourceProjects: MultiRepoSourceEntry[] = [];
-    const seenProjectPaths = new Set<string>();
+    const sourceHubs: HubSourceEntry[] = [];
+    const seenHubPaths = new Set<string>();
     for (const source of this.sources) {
       let contributed: SourceEntry[];
       try {
@@ -304,24 +304,24 @@ export class RepoIndex {
       for (const raw of contributed) {
         // Tolerate ergonomic modules that return bare repo shapes without a kind.
         let entry: SourceEntry;
-        if ('kind' in raw && raw.kind === 'project') {
+        if ('kind' in raw && raw.kind === 'hub') {
           entry = raw;
         } else {
           const repo = raw as RepoSourceEntry;
           const { kind: _kind, ...repoFields } = repo;
           entry = { kind: 'repo', ...repoFields };
         }
-        if (entry.kind === 'project') {
-          if (!seenProjectPaths.has(entry.path)) {
-            seenProjectPaths.add(entry.path);
-            sourceProjects.push(entry);
+        if (entry.kind === 'hub') {
+          if (!seenHubPaths.has(entry.path)) {
+            seenHubPaths.add(entry.path);
+            sourceHubs.push(entry);
           }
           continue;
         }
         if (!byPath.has(entry.path)) byPath.set(entry.path, entry);
       }
     }
-    this.sourceProjects = { entries: sourceProjects, at: this.now() };
+    this.sourceHubs = { entries: sourceHubs, at: this.now() };
 
     const entries: RepoInfo[] = [];
     for (const repo of byPath.values()) {

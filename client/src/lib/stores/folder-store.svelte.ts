@@ -1,9 +1,9 @@
-// ProjectStore — manages project, repo, and session listing
+// FolderStore — manages folder, repo, and session listing
 import type {
-  ListProjectsResponseData,
+  ListFoldersResponseData,
   ListReposResponseData,
-  ProjectInfo,
-  ProjectsChangedEvent,
+  FolderInfo,
+  FoldersChangedEvent,
   PimoteEvent,
   RepoInfo,
   SessionInfo,
@@ -35,8 +35,8 @@ function sortSessionsByRecency(sessions: SessionInfo[]): SessionInfo[] {
   return [...sessions].sort((a, b) => toTimestamp(b.modified) - toTimestamp(a.modified) || toTimestamp(b.created) - toTimestamp(a.created) || a.id.localeCompare(b.id));
 }
 
-export class ProjectStore {
-  projects: ProjectInfo[] = $state([]);
+export class FolderStore {
+  folders: FolderInfo[] = $state([]);
   repos: RepoInfo[] = $state([]);
   roots: string[] = $state([]);
   sessions = $state(new SvelteMap<string, SessionInfo[]>());
@@ -46,19 +46,19 @@ export class ProjectStore {
    *  broadcasts (routed at module scope below) keep the data fresh in the
    *  meantime, so dashboard remounts need no refetch; any drop invalidates it. */
   private loadedForCurrentConnection = false;
-  private projectsLoadInFlight: Promise<void> | null = null;
+  private foldersLoadInFlight: Promise<void> | null = null;
   private reposLoadInFlight: Promise<void> | null = null;
   private sessionLoadsInFlight: Map<string, InFlightSessionLoad> = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
   private nextSessionRequestId = 0;
 
   /**
-   * Projects with the archived filter applied, favorites first. Within each
+   * Folders with the archived filter applied, favorites first. Within each
    * tier, most recent session activity (old-sidebar behavior), name as
-   * tiebreak. Projects with no sessions sink to the bottom of their tier.
+   * tiebreak. Folders with no sessions sink to the bottom of their tier.
    */
-  get visibleProjects(): ProjectInfo[] {
-    const list = this.showArchived ? this.projects : this.projects.filter((p) => !p.archived);
-    const recency = (project: ProjectInfo): number => Math.max(0, ...(this.sessions.get(project.path) ?? []).map((s) => toTimestamp(s.modified)));
+  get visibleFolders(): FolderInfo[] {
+    const list = this.showArchived ? this.folders : this.folders.filter((f) => !f.archived);
+    const recency = (folder: FolderInfo): number => Math.max(0, ...(this.sessions.get(folder.path) ?? []).map((s) => toTimestamp(s.modified)));
     return [...list].sort((a, b) => Number(b.favorite === true) - Number(a.favorite === true) || recency(b) - recency(a) || a.name.localeCompare(b.name));
   }
 
@@ -66,11 +66,11 @@ export class ProjectStore {
    * Full load once per connection. Navigating back to the dashboard serves the
    * warm cache — server events keep it current while the user is elsewhere —
    * and a reconnect (disconnect invalidation) refetches against the fresh
-   * connection. `loadProjects()` bypasses this for explicit refreshes.
+   * connection. `loadFolders()` bypasses this for explicit refreshes.
    */
   async ensureLoaded(): Promise<void> {
     if (this.loadedForCurrentConnection) return;
-    await this.loadProjects();
+    await this.loadFolders();
   }
 
   /** Drop the per-connection freshness marker; wired to socket loss below. */
@@ -78,39 +78,39 @@ export class ProjectStore {
     this.loadedForCurrentConnection = false;
   }
 
-  async loadProjects(): Promise<void> {
-    if (this.projectsLoadInFlight) return this.projectsLoadInFlight;
+  async loadFolders(): Promise<void> {
+    if (this.foldersLoadInFlight) return this.foldersLoadInFlight;
 
-    this.projectsLoadInFlight = (async () => {
-      const isInitialLoad = this.projects.length === 0;
+    this.foldersLoadInFlight = (async () => {
+      const isInitialLoad = this.folders.length === 0;
       if (isInitialLoad) this.loading = true;
       try {
-        const response = await connection.send({ type: 'list_projects' });
+        const response = await connection.send({ type: 'list_folders' });
         if (response.success && response.data) {
-          const data = response.data as ListProjectsResponseData;
-          this.projects = data.projects;
+          const data = response.data as ListFoldersResponseData;
+          this.folders = data.folders;
           this.roots = data.roots ?? [];
           this.loadedForCurrentConnection = true;
           // First paint needs only this response. Session metadata refines sort
           // order and chips as it lands — holding the spinner until every
-          // per-project list_sessions returns made the dashboard wait on the
-          // slowest project's session history.
+          // per-folder list_sessions returns made the dashboard wait on the
+          // slowest folder's session history.
           if (isInitialLoad) this.loading = false;
           // Repo listing feeds branch chips and missing-detection; refresh it
-          // with the projects so they never disagree.
+          // with the folders so they never disagree.
           void this.loadRepos();
-          await Promise.all(data.projects.map((project) => this.loadSessions(project.path)));
+          await Promise.all(data.folders.map((folder) => this.loadSessions(folder.path)));
         }
       } catch (e) {
-        console.error('[ProjectStore] Failed to load projects:', e);
+        console.error('[FolderStore] Failed to load folders:', e);
       } finally {
         if (isInitialLoad) this.loading = false;
       }
     })().finally(() => {
-      this.projectsLoadInFlight = null;
+      this.foldersLoadInFlight = null;
     });
 
-    return this.projectsLoadInFlight;
+    return this.foldersLoadInFlight;
   }
 
   /** Single-flight: branch chips and missing-detection read this listing. */
@@ -122,7 +122,7 @@ export class ProjectStore {
           this.repos = (response.data as ListReposResponseData).repos;
         }
       } catch (e) {
-        console.error('[ProjectStore] Failed to load repos:', e);
+        console.error('[FolderStore] Failed to load repos:', e);
       } finally {
         this.reposLoadInFlight = null;
       }
@@ -130,26 +130,26 @@ export class ProjectStore {
     return this.reposLoadInFlight;
   }
 
-  /** Whole-list replacement driven by the server's projects_changed broadcast. */
-  applyProjectsChanged(event: ProjectsChangedEvent): void {
-    this.projects = event.projects;
+  /** Whole-list replacement driven by the server's folders_changed broadcast. */
+  applyFoldersChanged(event: FoldersChangedEvent): void {
+    this.folders = event.folders;
   }
 
   applySessionStateChange(event: SessionStateChangedEvent, myClientId: string): void {
-    const project = this.projects.find((p) => p.path === event.folderPath);
-    if (project) {
-      project.activeSessionCount = event.folderActiveSessionCount;
+    const folder = this.folders.find((f) => f.path === event.folderPath);
+    if (folder) {
+      folder.activeSessionCount = event.folderActiveSessionCount;
     }
 
     const isOwnedByMe = event.connectedClientId === myClientId;
-    const projectSessions = this.sessions.get(event.folderPath);
-    if (projectSessions) {
-      const idx = projectSessions.findIndex((s) => s.id === event.sessionId);
+    const folderSessions = this.sessions.get(event.folderPath);
+    if (folderSessions) {
+      const idx = folderSessions.findIndex((s) => s.id === event.sessionId);
       if (idx >= 0) {
         // Update in place — merge event metadata with existing entry
         this.sessions.set(
           event.folderPath,
-          projectSessions.map((s, i) =>
+          folderSessions.map((s, i) =>
             i === idx
               ? {
                   ...s,
@@ -166,7 +166,7 @@ export class ProjectStore {
         // New active session — add directly from event data
         const now = nowIso();
         const updated = [
-          ...projectSessions,
+          ...folderSessions,
           {
             id: event.sessionId,
             name: event.sessionName ?? '',
@@ -182,7 +182,7 @@ export class ProjectStore {
         this.sessions.set(event.folderPath, sortSessionsByRecency(updated));
       }
     } else if (event.liveStatus !== null) {
-      // Sessions for this project not loaded yet — seed with this entry
+      // Sessions for this folder not loaded yet — seed with this entry
       const now = nowIso();
       this.sessions.set(event.folderPath, [
         {
@@ -201,19 +201,19 @@ export class ProjectStore {
   }
 
   applySessionDeleted(event: SessionDeletedEvent): void {
-    const projectSessions = this.sessions.get(event.folderPath);
-    if (projectSessions) {
-      const filtered = projectSessions.filter((s) => s.id !== event.sessionId);
+    const folderSessions = this.sessions.get(event.folderPath);
+    if (folderSessions) {
+      const filtered = folderSessions.filter((s) => s.id !== event.sessionId);
       this.sessions.set(event.folderPath, filtered);
     }
   }
 
   applySessionRenamed(event: SessionRenamedEvent): void {
-    const projectSessions = this.sessions.get(event.folderPath);
-    if (!projectSessions) return;
+    const folderSessions = this.sessions.get(event.folderPath);
+    if (!folderSessions) return;
     this.sessions.set(
       event.folderPath,
-      projectSessions.map((s) => (s.id === event.sessionId ? { ...s, name: event.name } : s)),
+      folderSessions.map((s) => (s.id === event.sessionId ? { ...s, name: event.name } : s)),
     );
   }
 
@@ -226,7 +226,7 @@ export class ProjectStore {
   setShowArchived(show: boolean): void {
     this.showArchived = show;
     setShowArchived(show);
-    void Promise.all(this.projects.map((project) => this.loadSessions(project.path)));
+    void Promise.all(this.folders.map((folder) => this.loadSessions(folder.path)));
   }
 
   async loadSessions(folderPath: string): Promise<void> {
@@ -248,7 +248,7 @@ export class ProjectStore {
           this.sessions.set(folderPath, sortSessionsByRecency(data.sessions));
         }
       } catch (e) {
-        console.error('[ProjectStore] Failed to load sessions:', e);
+        console.error('[FolderStore] Failed to load sessions:', e);
       } finally {
         if (this.sessionLoadsInFlight.get(folderPath)?.requestId === requestId) {
           this.sessionLoadsInFlight.delete(folderPath);
@@ -261,28 +261,28 @@ export class ProjectStore {
   }
 }
 
-export const projectStore = new ProjectStore();
+export const folderStore = new FolderStore();
 
-// Route server-side project/session events into the store for the lifetime of
-// the app. This lives here — not in ProjectList's onMount — so the cache stays
+// Route server-side folder/session events into the store for the lifetime of
+// the app. This lives here — not in FolderList's onMount — so the cache stays
 // current while the user is inside a session and returning to the dashboard
 // needs no refetch.
 connection.onEvent((event: PimoteEvent) => {
-  if (event.type === 'projects_changed') {
-    projectStore.applyProjectsChanged(event);
+  if (event.type === 'folders_changed') {
+    folderStore.applyFoldersChanged(event);
   } else if (event.type === 'session_state_changed') {
-    projectStore.applySessionStateChange(event, connection.clientId);
+    folderStore.applySessionStateChange(event, connection.clientId);
   } else if (event.type === 'session_deleted') {
-    projectStore.applySessionDeleted(event);
+    folderStore.applySessionDeleted(event);
   } else if (event.type === 'session_renamed') {
-    projectStore.applySessionRenamed(event);
+    folderStore.applySessionRenamed(event);
   } else if (event.type === 'session_archived') {
-    projectStore.applySessionArchived(event);
+    folderStore.applySessionArchived(event);
   }
 });
 
 // Losing the socket ends the connection whose data we loaded; the next
 // ensureLoaded() refetches against the fresh connection.
 connection.onDisconnect(() => {
-  projectStore.invalidateConnection();
+  folderStore.invalidateConnection();
 });

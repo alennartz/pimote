@@ -1,4 +1,5 @@
 import type { WebSocket } from 'ws';
+import { basename } from 'node:path';
 import type {
   PimoteCommand,
   PimoteResponse,
@@ -11,7 +12,8 @@ import type {
   RestoreMode,
   SessionRestoreEvent,
   SessionStateChangedEvent,
-  ProjectsChangedEvent,
+  FolderInfo,
+  FoldersChangedEvent,
   PimoteTreeNode,
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome } from './session-manager.js';
@@ -20,9 +22,10 @@ import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
-import { enrichActiveSessionCounts, isValidProjectName, toProjectInfo, type FolderRegistry } from './folder-registry.js';
+import { enrichActiveSessionCounts, isValidFolderName, type FolderRegistry } from './folder-registry.js';
+import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import type { ManagerService } from './manager/index.js';
-import type { ProjectCreator } from './project-sources/index.js';
+import type { FolderCreator } from './folder-sources/index.js';
 import type { ManagerSession } from './manager/index.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
@@ -93,6 +96,27 @@ function previewForEntry(entry: SessionTreeNode['entry']): string {
   }
 
   return entry.type;
+}
+
+/** The synthetic folder row for a session cwd the registry does not list:
+ *  classified on the fly (marker/git → nature/persona) with plain defaults.
+ *  Pure construction from explicit inputs — the cwd is never listed or
+ *  curated merely because a session was opened there. */
+async function buildFallbackFolder(folderPath: string): Promise<FolderInfo> {
+  const { nature, persona } = await classifyFolder(nodeFolderFs, folderPath);
+  return {
+    path: folderPath,
+    name: basename(folderPath),
+    nature,
+    ...(persona ? { persona } : {}),
+    shortcutCount: 0,
+    favorite: false,
+    archived: false,
+    tags: [],
+    missing: false,
+    activeSessionCount: 0,
+    externalProcessCount: 0,
+  };
 }
 
 /** Map pi SDK tree nodes to the wire transfer shape used by pimote clients. */
@@ -186,9 +210,9 @@ export class WsHandler {
     private readonly clientRegistry: ClientRegistry,
     private readonly voiceOrchestrator?: VoiceOrchestrator,
     private readonly repoIndex?: RepoIndex,
-    private readonly projectRegistry?: FolderRegistry,
+    private readonly folderRegistry?: FolderRegistry,
     private readonly managerService?: ManagerService,
-    private readonly creators?: ProjectCreator[],
+    private readonly creators?: FolderCreator[],
   ) {
     this.clientId = clientId;
   }
@@ -218,24 +242,24 @@ export class WsHandler {
     try {
       switch (command.type) {
         // ---- Server-level commands ----
-        case 'list_projects': {
-          const { repoIndex, projectRegistry } = this.requireProjectDeps();
-          const folders = await projectRegistry.list();
+        case 'list_folders': {
+          const { repoIndex, folderRegistry } = this.requireFolderDeps();
+          const folders = await folderRegistry.list();
           enrichActiveSessionCounts(folders, this.sessionManager.getAllSessions());
-          this.sendResponse(id, true, { projects: folders.map(toProjectInfo), roots: repoIndex.roots });
+          this.sendResponse(id, true, { folders, roots: repoIndex.roots });
           break;
         }
 
         case 'list_repos': {
-          const { repoIndex } = this.requireProjectDeps();
+          const { repoIndex } = this.requireFolderDeps();
           this.sendResponse(id, true, { repos: await repoIndex.list() });
           break;
         }
 
-        case 'update_project': {
-          const { projectRegistry } = this.requireProjectDeps();
-          await projectRegistry.update({
-            folderPath: command.projectPath,
+        case 'update_folder': {
+          const { folderRegistry } = this.requireFolderDeps();
+          await folderRegistry.update({
+            folderPath: command.folderPath,
             favorite: command.favorite,
             archived: command.archived,
             addTags: command.addTags,
@@ -245,26 +269,32 @@ export class WsHandler {
           break;
         }
 
-        case 'create_multi_repo_project': {
-          const { repoIndex, projectRegistry } = this.requireProjectDeps();
+        case 'create_hub': {
+          const { repoIndex, folderRegistry } = this.requireFolderDeps();
           if (!repoIndex.roots.includes(command.root)) {
-            this.sendResponse(id, false, undefined, 'Root is not a configured project root');
+            this.sendResponse(id, false, undefined, 'Root is not a configured scan root');
             break;
           }
-          const created = await projectRegistry.createHub({ name: command.name, root: command.root, memberPaths: command.repoPaths });
-          this.sendResponse(id, true, { projectPath: created.path });
+          const created = await folderRegistry.createHub({ name: command.name, root: command.root, memberPaths: command.memberPaths });
+          // The hub folder just changed on disk; drop the cached listing so a
+          // subsequent member-picker request sees the new filesystem state.
+          repoIndex.invalidate();
+          this.sendResponse(id, true, { folderPath: created.path });
           break;
         }
 
-        case 'disband_project': {
-          const { projectRegistry } = this.requireProjectDeps();
-          await projectRegistry.disbandHub(command.projectPath);
+        case 'disband_hub': {
+          const { repoIndex, folderRegistry } = this.requireFolderDeps();
+          await folderRegistry.disbandHub(command.folderPath);
+          // The hub folder just left the disk; drop the cached listing so a
+          // subsequent member-picker request sees the new filesystem state.
+          repoIndex.invalidate();
           this.sendResponse(id, true);
           break;
         }
 
         case 'manager_prompt': {
-          const { managerService } = this.requireProjectDeps();
+          const { managerService } = this.requireFolderDeps();
           const manager = await managerService.getOrCreate(this.clientId);
           // One subscription per connection, bound to the live manager session
           // (a reaped-and-recreated session needs a fresh listener).
@@ -283,7 +313,7 @@ export class WsHandler {
         }
 
         case 'manager_abort': {
-          const { managerService } = this.requireProjectDeps();
+          const { managerService } = this.requireFolderDeps();
           const manager = managerService.get(this.clientId);
           if (!manager) {
             // Nothing running — no manager session to abort, and none should
@@ -296,23 +326,23 @@ export class WsHandler {
           break;
         }
 
-        case 'create_project': {
+        case 'create_folder': {
           const name = command.name;
           const root = command.root;
 
           // Validate name: non-empty, no path separators, not . or ..
-          if (!isValidProjectName(name)) {
-            this.sendResponse(id, false, undefined, 'Invalid project name');
+          if (!isValidFolderName(name)) {
+            this.sendResponse(id, false, undefined, 'Invalid folder name');
             break;
           }
 
           // Validate root is one of the configured roots
           if (!this.repoIndex?.roots.includes(root)) {
-            this.sendResponse(id, false, undefined, 'Root is not a configured project root');
+            this.sendResponse(id, false, undefined, 'Root is not a configured scan root');
             break;
           }
 
-          const deps = this.requireProjectDeps();
+          const deps = this.requireFolderDeps();
 
           // Route through the creator whose form matches { root, name } — the
           // built-in folder creator, or a user-authored one taking its slot.
@@ -321,7 +351,7 @@ export class WsHandler {
             return 'root' in schema && 'name' in schema;
           });
           if (!creator) {
-            this.sendResponse(id, false, undefined, 'No project creator available');
+            this.sendResponse(id, false, undefined, 'No folder creator available');
             break;
           }
 
@@ -329,11 +359,11 @@ export class WsHandler {
             const created = await creator.create({ root, name });
             // Otherwise the 30s listing TTL hides the new repo from the index.
             deps.repoIndex.invalidate();
-            WsHandler.broadcastProjectsChanged(deps.projectRegistry, this.sessionManager, this.clientRegistry);
+            WsHandler.broadcastFoldersChanged(deps.folderRegistry, this.sessionManager, this.clientRegistry);
             this.sendResponse(id, true, { folderPath: created.path });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            this.sendResponse(id, false, undefined, `Failed to create project: ${message}`);
+            this.sendResponse(id, false, undefined, `Failed to create folder: ${message}`);
           }
           break;
         }
@@ -399,8 +429,8 @@ export class WsHandler {
         case 'open_session': {
           // New session creation
           if (!command.sessionId) {
-            // Project-source open hooks run before the session does: a source
-            // can materialize a listed-but-missing project folder on first open.
+            // Folder-source open hooks run before the session does: a source
+            // can materialize a listed-but-missing folder on first open.
             await this.repoIndex?.runOpenHooks(command.folderPath);
             const sessionId = await this.sessionManager.openSession(command.folderPath);
             const newSlot = this.sessionManager.getSession(sessionId)!;
@@ -410,7 +440,7 @@ export class WsHandler {
             this.sendEvent({
               type: 'session_opened',
               sessionId,
-              folder: this.buildProjectInfo(newSlot.folderPath),
+              folder: await this.resolveFolderInfo(newSlot.folderPath),
             });
 
             WsHandler.broadcastSidebarUpdate(sessionId, newSlot.folderPath, this.sessionManager, this.clientRegistry);
@@ -621,7 +651,7 @@ export class WsHandler {
           this.sendEvent({
             type: 'session_opened',
             sessionId: takeoverSessionId,
-            folder: this.buildProjectInfo(takeoverSlot.folderPath),
+            folder: await this.resolveFolderInfo(takeoverSlot.folderPath),
           });
 
           WsHandler.broadcastSidebarUpdate(takeoverSessionId, takeoverSlot.folderPath, this.sessionManager, this.clientRegistry);
@@ -1432,10 +1462,7 @@ export class WsHandler {
       type: 'session_replaced',
       oldSessionId: oldId,
       newSessionId: newId,
-      folder: {
-        ...this.buildProjectInfo(folderPath),
-        activeSessionCount: this.sessionManager.getAllSessions().filter((s) => s.folderPath === folderPath).length,
-      },
+      folder: await this.resolveFolderInfo(folderPath),
     });
     this.sendSilentDownloadSnapshot(slot);
 
@@ -1458,14 +1485,17 @@ export class WsHandler {
     });
   }
 
-  private buildProjectInfo(folderPath: string) {
-    return {
-      path: folderPath,
-      name: folderPath.split('/').pop() ?? folderPath,
-      kind: 'single' as const,
-      activeSessionCount: 1,
-      externalProcessCount: 0,
-    };
+  /** The folder row for a session's working directory, for session events
+   *  (open, takeover, replacement). Listed paths serve the registry's FolderInfo
+   *  row so persona metadata and curation survive; unlisted arbitrary cwds are
+   *  classified on the fly and served as a synthetic row — opening a session
+   *  there never lists or curates the folder. Live session counts come from the
+   *  same enrichment every serve path uses. */
+  private async resolveFolderInfo(folderPath: string): Promise<FolderInfo> {
+    const listed = this.folderRegistry ? (await this.folderRegistry.list()).find((folder) => folder.path === folderPath) : undefined;
+    const folder: FolderInfo = listed ?? (await buildFallbackFolder(folderPath));
+    enrichActiveSessionCounts([folder], this.sessionManager.getAllSessions());
+    return folder;
   }
 
   private async sendConflictEventIfNeeded(sessionId: string, folderPath: string): Promise<void> {
@@ -1724,30 +1754,30 @@ export class WsHandler {
 
   /** Broadcast the merged folder list to ALL connected clients. Used after
    *  registry mutations (via the registry's onChange in server.ts) and after
-   *  create_project (folder creation isn't a registry mutation). */
-  static broadcastProjectsChanged(projectRegistry: FolderRegistry, sessionManager: PimoteSessionManager, clientRegistry: ClientRegistry): void {
-    void projectRegistry
+   *  create_folder (folder creation isn't a registry mutation). */
+  static broadcastFoldersChanged(folderRegistry: FolderRegistry, sessionManager: PimoteSessionManager, clientRegistry: ClientRegistry): void {
+    void folderRegistry
       .list()
       .then((folders) => {
-        // Serve the same enriched view as list_projects — a broadcast with
+        // Serve the same enriched view as list_folders — a broadcast with
         // zeroed counts would wipe every live indicator client-side.
         enrichActiveSessionCounts(folders, sessionManager.getAllSessions());
-        const event: ProjectsChangedEvent = { type: 'projects_changed', projects: folders.map(toProjectInfo) };
+        const event: FoldersChangedEvent = { type: 'folders_changed', folders };
         for (const [, handler] of clientRegistry) {
           handler.sendToClient(event);
         }
       })
       .catch((err) => {
-        console.error('[WsHandler] Failed to broadcast projects_changed:', err);
+        console.error('[WsHandler] Failed to broadcast folders_changed:', err);
       });
   }
 
-  /** The project-management wiring; every project/manager command requires it. */
-  private requireProjectDeps(): { repoIndex: RepoIndex; projectRegistry: FolderRegistry; managerService: ManagerService; creators: ProjectCreator[] } {
-    if (!this.repoIndex || !this.projectRegistry || !this.managerService || !this.creators) {
-      throw new Error('Project management is not available on this connection');
+  /** The folder-management wiring; every folder/manager command requires it. */
+  private requireFolderDeps(): { repoIndex: RepoIndex; folderRegistry: FolderRegistry; managerService: ManagerService; creators: FolderCreator[] } {
+    if (!this.repoIndex || !this.folderRegistry || !this.managerService || !this.creators) {
+      throw new Error('Folder management is not available on this connection');
     }
-    return { repoIndex: this.repoIndex, projectRegistry: this.projectRegistry, managerService: this.managerService, creators: this.creators };
+    return { repoIndex: this.repoIndex, folderRegistry: this.folderRegistry, managerService: this.managerService, creators: this.creators };
   }
 
   /** Broadcast a session_state_changed event to ALL connected clients. */

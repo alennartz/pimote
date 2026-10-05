@@ -1,6 +1,6 @@
 <script lang="ts">
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { projectStore } from '$lib/stores/project-store.svelte.js';
+  import { folderStore } from '$lib/stores/folder-store.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -41,20 +41,26 @@
     if (!value) reset();
   }
 
-  // Client-side picker over discovered projects — independent of the
-  // homepage search so opening it never disturbs the list behind it.
-  const pickerProjects = $derived(
-    [...projectStore.projects]
+  // Client-side picker over discovered folders — independent of the
+  // homepage search so opening it never disturbs the list behind it. Persona
+  // folders match on their display name too.
+  const pickerFolders = $derived(
+    [...folderStore.folders]
       .filter((folder) => {
         const needle = query.trim().toLowerCase();
         if (!needle) return true;
-        return folder.name.toLowerCase().includes(needle) || folder.path.toLowerCase().includes(needle);
+        return folder.name.toLowerCase().includes(needle) || (folder.persona?.name ?? '').toLowerCase().includes(needle) || folder.path.toLowerCase().includes(needle);
       })
       .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path)),
   );
 
-  function startCreateProject(): void {
-    const roots = projectStore.roots;
+  /** Persona folders lead with the persona's display name; code folders keep the basename. */
+  function pickerLabel(folder: { name: string; persona?: { name: string } }): string {
+    return folder.persona?.name ?? folder.name;
+  }
+
+  function startCreateFolder(): void {
+    const roots = folderStore.roots;
     if (roots.length === 1) {
       createRoot = roots[0];
       mode = 'create-name';
@@ -85,16 +91,16 @@
     createError = '';
   }
 
-  function validateProjectName(name: string): string | null {
+  function validateFolderName(name: string): string | null {
     if (!name.trim()) return 'Name is required';
     if (name.includes('/') || name.includes('\\')) return 'Name cannot contain path separators';
     if (name === '.' || name === '..') return 'Invalid name';
     return null;
   }
 
-  async function createProject(): Promise<void> {
+  async function createFolder(): Promise<void> {
     const name = createName.trim();
-    const validationError = validateProjectName(name);
+    const validationError = validateFolderName(name);
     if (validationError) {
       createError = validationError;
       return;
@@ -105,24 +111,24 @@
 
     try {
       const response = await connection.send({
-        type: 'create_project',
+        type: 'create_folder',
         root: createRoot,
         name,
       });
 
       if (!response.success) {
-        createError = response.error ?? 'Failed to create project';
+        createError = response.error ?? 'Failed to create folder';
         creating = false;
         return;
       }
 
       const folderPath = (response.data as { folderPath: string }).folderPath;
-      // Refresh project list so the new project appears
-      void projectStore.loadProjects();
+      // Refresh folder list so the new folder appears
+      void folderStore.loadFolders();
       await connection.send({ type: 'open_session', folderPath });
       handleOpenChange(false);
     } catch (e) {
-      createError = e instanceof Error ? e.message : 'Failed to create project';
+      createError = e instanceof Error ? e.message : 'Failed to create folder';
       creating = false;
     }
   }
@@ -142,18 +148,18 @@
     {#if mode === 'pick'}
       <Dialog.Header>
         <Dialog.Title>Start a new session</Dialog.Title>
-        <Dialog.Description>Choose a project to start from. Search is client-side over discovered projects.</Dialog.Description>
+        <Dialog.Description>Choose a folder to start from. Search is client-side over discovered folders.</Dialog.Description>
       </Dialog.Header>
 
       <div class="flex flex-col gap-4">
-        <Input bind:value={query} placeholder="Search projects" autofocus />
+        <Input bind:value={query} placeholder="Search folders" autofocus />
 
         <div class="border-border max-h-80 overflow-y-auto rounded-md border">
-          {#if pickerProjects.length === 0}
-            <div class="text-muted-foreground px-3 py-6 text-center text-sm">No matching projects.</div>
+          {#if pickerFolders.length === 0}
+            <div class="text-muted-foreground px-3 py-6 text-center text-sm">No matching folders.</div>
           {:else}
             <div class="flex flex-col p-1">
-              {#each pickerProjects as folder (folder.path)}
+              {#each pickerFolders as folder (folder.path)}
                 <button
                   class="hover:bg-accent hover:text-accent-foreground flex items-start gap-2 rounded-md px-3 py-2 text-left transition-colors"
                   disabled={connection.status !== 'connected'}
@@ -161,7 +167,7 @@
                 >
                   <FolderIcon class="text-muted-foreground mt-0.5 size-4 shrink-0" />
                   <div class="min-w-0 flex-1">
-                    <div class="truncate text-sm font-medium">{folder.name}</div>
+                    <div class="truncate text-sm font-medium">{pickerLabel(folder)}</div>
                     <div class="text-muted-foreground truncate text-xs">{folder.path}</div>
                   </div>
                 </button>
@@ -171,10 +177,10 @@
         </div>
 
         <Dialog.Footer class="flex gap-2">
-          {#if projectStore.roots.length > 0}
-            <Button variant="outline" onclick={startCreateProject}>
+          {#if folderStore.roots.length > 0}
+            <Button variant="outline" onclick={startCreateFolder}>
               <Plus class="size-4" />
-              Create new project
+              Create new folder
             </Button>
           {/if}
           <div class="flex-1"></div>
@@ -183,14 +189,14 @@
       </div>
     {:else if mode === 'create-root'}
       <Dialog.Header>
-        <Dialog.Title>Create new project</Dialog.Title>
-        <Dialog.Description>Choose where to create the project.</Dialog.Description>
+        <Dialog.Title>Create new folder</Dialog.Title>
+        <Dialog.Description>Choose where to create the folder.</Dialog.Description>
       </Dialog.Header>
 
       <div class="flex flex-col gap-4">
         <div class="border-border max-h-80 overflow-y-auto rounded-md border">
           <div class="flex flex-col p-1">
-            {#each projectStore.roots as root (root)}
+            {#each folderStore.roots as root (root)}
               <button class="hover:bg-accent hover:text-accent-foreground flex items-start gap-2 rounded-md px-3 py-2 text-left transition-colors" onclick={() => selectRoot(root)}>
                 <FolderIcon class="text-muted-foreground mt-0.5 size-4 shrink-0" />
                 <div class="min-w-0 flex-1">
@@ -207,19 +213,19 @@
       </div>
     {:else if mode === 'create-name'}
       <Dialog.Header>
-        <Dialog.Title>Create new project</Dialog.Title>
-        <Dialog.Description>New project in <code class="bg-muted rounded px-1 py-0.5 text-xs">{createRoot}</code></Dialog.Description>
+        <Dialog.Title>Create new folder</Dialog.Title>
+        <Dialog.Description>New folder in <code class="bg-muted rounded px-1 py-0.5 text-xs">{createRoot}</code></Dialog.Description>
       </Dialog.Header>
 
       <div class="flex flex-col gap-4">
         <div class="flex flex-col gap-1.5">
           <Input
             bind:value={createName}
-            placeholder="Project name"
+            placeholder="Folder name"
             autofocus
             disabled={creating}
             onkeydown={(e) => {
-              if (e.key === 'Enter') void createProject();
+              if (e.key === 'Enter') void createFolder();
             }}
           />
           {#if createError}
@@ -228,8 +234,8 @@
         </div>
 
         <Dialog.Footer>
-          <Button variant="outline" onclick={projectStore.roots.length > 1 ? backToRootSelection : backToPickMode} disabled={creating}>Back</Button>
-          <Button onclick={() => void createProject()} disabled={creating || !createName.trim()}>
+          <Button variant="outline" onclick={folderStore.roots.length > 1 ? backToRootSelection : backToPickMode} disabled={creating}>Back</Button>
+          <Button onclick={() => void createFolder()} disabled={creating || !createName.trim()}>
             {#if creating}
               <Loader2 class="size-4 animate-spin" />
               Creating…

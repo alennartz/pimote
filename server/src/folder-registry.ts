@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join, sep } from 'node:path';
-import type { FolderInfo, ProjectInfo, RepoInfo } from '../../shared/dist/index.js';
+import type { FolderInfo, RepoInfo } from '../../shared/dist/index.js';
 import type { FolderEntry, FolderOccurrence, SparseTree } from './folder-model/index.js';
 import type { FolderModelPort, FolderRegistryPort, FolderUpdatePatch } from './manager/types.js';
-import { materializeMultiRepoFolder } from './project-sources/materialize.js';
-import type { MultiRepoSourceEntry } from './project-sources/index.js';
+import { materializeHubFolder } from './folder-sources/materialize.js';
+import type { HubSourceEntry } from './folder-sources/index.js';
 import type { RepoIndex } from './repo-index.js';
 
 export type { FolderUpdatePatch } from './manager/types.js';
@@ -69,35 +69,25 @@ function parseDocument(raw: string): RegistryDocument {
 }
 
 /**
- * The project-name rule shared by every server-side creation path
- * (create_project, hub creation, the built-in creator): non-empty, no path
+ * The folder-name rule shared by every server-side creation path
+ * (create_folder, hub creation, the built-in creator): non-empty, no path
  * separators, not . or ..
  */
-export function isValidProjectName(name: string): boolean {
+export function isValidFolderName(name: string): boolean {
   return !!name && !name.includes('/') && !name.includes(sep) && name !== '.' && name !== '..';
 }
 
 /**
  * Enrich folders in place with live session counts: a session counts toward
  * the folder whose path it runs in (exact match). Derived state the registry
- * itself cannot know — every path that serves `FolderInfo`s (list_projects,
- * the projects_changed broadcast, the manager tool) runs its list through
- * this so no consumer ever sees zeroed counts.
+ * itself cannot know — every path that serves `FolderInfo`s (list_folders,
+ * the folders_changed broadcast, the manager tool, session events) runs its
+ * list through this so no consumer ever sees zeroed counts.
  */
 export function enrichActiveSessionCounts(folders: FolderInfo[], activeSessions: ReadonlyArray<{ folderPath: string | null }>): void {
   for (const folder of folders) {
     folder.activeSessionCount = activeSessions.filter((session) => session.folderPath === folder.path).length;
   }
-}
-
-/**
- * Legacy wire adapter: the folder row as today's `ProjectInfo` wire shape,
- * discriminated by hub membership (`kind: 'multi'` ⇔ `repos` present). Serve
- * paths use it until the wire rename lands; the extra folder fields ride
- * along additively.
- */
-export function toProjectInfo(folder: FolderInfo): ProjectInfo {
-  return { ...folder, kind: folder.repos === undefined ? 'single' : 'multi' };
 }
 
 /** Whether anything (file, directory, symlink) exists at the path. */
@@ -166,7 +156,7 @@ interface HubMetadata {
   sourceTags?: string[];
 }
 
-function hubMetadata(sourceHubs: MultiRepoSourceEntry[], doc: RegistryDocument): Map<string, HubMetadata> {
+function hubMetadata(sourceHubs: HubSourceEntry[], doc: RegistryDocument): Map<string, HubMetadata> {
   const hubs = new Map<string, HubMetadata>();
   for (const source of sourceHubs) {
     hubs.set(source.path, { name: source.name, memberPaths: source.memberPaths, sourceTags: source.tags });
@@ -182,7 +172,7 @@ interface FolderViewInputs {
   doc: RegistryDocument;
   tree: SparseTree;
   repos: RepoInfo[];
-  sourceHubs: MultiRepoSourceEntry[];
+  sourceHubs: HubSourceEntry[];
   /** Paths verified absent on disk; every unlisted path counts as present. */
   absent: ReadonlySet<string>;
 }
@@ -290,7 +280,7 @@ export class FolderRegistry implements FolderRegistryPort {
 
   /** The merged view over one folder tree; pure construction, edge probes first. */
   private async viewOver(tree: SparseTree): Promise<FolderInfo[]> {
-    const [doc, repos, sourceHubs] = await Promise.all([this.document(), this.repos.list(), this.repos.listSourceProjects()]);
+    const [doc, repos, sourceHubs] = await Promise.all([this.document(), this.repos.list(), this.repos.listSourceHubs()]);
     const absent = await resolveAbsentPaths(repos, hubMetadata(sourceHubs, doc).keys());
     return mergedFolders({ doc, tree, repos, sourceHubs, absent });
   }
@@ -334,7 +324,7 @@ export class FolderRegistry implements FolderRegistryPort {
       const byPath = new Map(repos.map((repo) => [repo.path, repo]));
 
       const { name, root } = input;
-      if (!isValidProjectName(name)) throw new Error(`Invalid project name: ${name}`);
+      if (!isValidFolderName(name)) throw new Error(`Invalid folder name: ${name}`);
       const unknown = input.memberPaths.find((memberPath) => !byPath.has(memberPath));
       if (unknown !== undefined) throw new Error(`Unknown repo: ${unknown}`);
       const memberPaths = input.memberPaths.map((memberPath) => byPath.get(memberPath)!.path);
@@ -350,7 +340,7 @@ export class FolderRegistry implements FolderRegistryPort {
       if (await pathExists(target)) throw new Error(`Directory already exists: ${target}`);
 
       try {
-        await materializeMultiRepoFolder({ kind: 'project', path: target, name, memberPaths });
+        await materializeHubFolder({ kind: 'hub', path: target, name, memberPaths });
         doc.hubs.push({ path: target, name, memberPaths });
         await this.persist(doc);
       } catch (error) {
@@ -372,7 +362,7 @@ export class FolderRegistry implements FolderRegistryPort {
    * until a scan observes the folder).
    */
   private async hubRow(doc: RegistryDocument, repos: RepoInfo[], target: string): Promise<FolderInfo> {
-    const sourceHubs = await this.repos.listSourceProjects();
+    const sourceHubs = await this.repos.listSourceHubs();
     const row = mergedFolders({ doc, tree: { occurrences: [] }, repos, sourceHubs, absent: new Set() }).find((folder) => folder.path === target);
     if (!row) throw new Error(`Hub row missing after creation: ${target}`);
     return row;

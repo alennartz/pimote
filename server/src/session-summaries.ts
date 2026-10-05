@@ -25,7 +25,7 @@ export interface SessionSummary {
 }
 
 /**
- * The default session directory for a project folder. Mirrors pi's
+ * The default session directory for a folder. Mirrors pi's
  * `getDefaultSessionDir()` — not re-exported by the package root, so the
  * encoding is reproduced here: resolve the cwd, strip one leading separator,
  * turn remaining separators and colons into dashes, wrap in `--` under
@@ -166,7 +166,7 @@ async function summarize(filePath: string, stats: Stats): Promise<SessionSummary
 }
 
 /**
- * Per-file summary cache over a project's session directory.
+ * Per-file summary cache over a folder's session directory.
  *
  * Session listings are pure functions of append-only `.jsonl` files, so a file
  * whose `(mtimeMs, size)` is unchanged since last time is served from cache —

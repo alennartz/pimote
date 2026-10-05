@@ -1,12 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 import { createCommandContextActions, WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { PimoteSessionManager, ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderRegistry } from './folder-registry.js';
+import type { FolderCreator } from './folder-sources/index.js';
 import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer } from './event-buffer.js';
-import type { DownloadItem, PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
+import type { DownloadItem, FolderInfo, PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
 
 describe('extension command context actions', () => {
   it('delegates waitForIdle to the SDK settle-aware primitive', async () => {
@@ -231,7 +235,8 @@ function createTestHandler(
     sessionRecords?: SessionRecords;
     sessionMetadataStore?: ReturnType<typeof createMockSessionMetadataStore>;
     repoIndex?: RepoIndex;
-    projectRegistry?: FolderRegistry;
+    folderRegistry?: FolderRegistry;
+    creators?: FolderCreator[];
   },
 ): TestContext {
   const sessions = opts?.sessions ?? new Map();
@@ -252,9 +257,9 @@ function createTestHandler(
     clientRegistry,
     undefined,
     opts?.repoIndex,
-    opts?.projectRegistry,
-    { disposeClient: () => {} } as never, // managerService: only truthiness is required by requireProjectDeps; cleanup() no-op
-    [], // creators
+    opts?.folderRegistry,
+    { disposeClient: () => {} } as never, // managerService: only truthiness is required by requireFolderDeps; cleanup() no-op
+    opts?.creators ?? [], // creators
   );
 
   clientRegistry.set(clientId, handler);
@@ -273,6 +278,27 @@ function findEvents(sent: Array<any>, type: string): PimoteEvent[] {
 }
 
 const pendingDownload: DownloadItem = { id: 'opaque-1', filename: 'report.pdf', sizeBytes: 42, href: '/d/opaque-1' };
+
+function folderRow(path: string, overrides: Partial<FolderInfo> = {}): FolderInfo {
+  return {
+    path,
+    name: basename(path),
+    nature: 'code',
+    shortcutCount: 0,
+    favorite: false,
+    archived: false,
+    tags: [],
+    missing: false,
+    activeSessionCount: 0,
+    externalProcessCount: 0,
+    ...overrides,
+  };
+}
+
+/** Let queued promise chains (fire-and-forget broadcasts) settle. */
+function flushPromises(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 // --- Tests ---
 
@@ -390,13 +416,13 @@ describe('WsHandler', () => {
     });
   });
 
-  describe('open_session — project source open hooks', () => {
+  describe('open_session — folder source open hooks', () => {
     it('runs runOpenHooks before opening a new session', async () => {
       const order: string[] = [];
       const repoIndex = {
         roots: ['/home/user/projects'],
         list: async () => [],
-        listSourceProjects: async () => [],
+        listSourceHubs: async () => [],
         runOpenHooks: async (path: string) => {
           order.push(`hooks:${path}`);
         },
@@ -421,7 +447,7 @@ describe('WsHandler', () => {
       const repoIndex = {
         roots: ['/home/user/projects'],
         list: async () => [],
-        listSourceProjects: async () => [],
+        listSourceHubs: async () => [],
         runOpenHooks: async () => {
           throw new Error('scaffold failed: unmounted volume');
         },
@@ -1801,6 +1827,18 @@ describe('WsHandler', () => {
       expect((replaced[0] as any).oldSessionId).toBe('old-session');
       expect((replaced[0] as any).newSessionId).toBe('new-session');
       expect((replaced[0] as any).folder.path).toBe('/home/user/project');
+      // Unlisted cwd: the fallback row is the classified basename with plain defaults.
+      expect((replaced[0] as any).folder).toMatchObject({
+        name: 'project',
+        nature: 'code',
+        shortcutCount: 0,
+        favorite: false,
+        archived: false,
+        tags: [],
+        missing: false,
+        activeSessionCount: 1,
+        externalProcessCount: 0,
+      });
 
       const stateChanges = findEvents(sent, 'session_state_changed');
       const oldChange = stateChanges.find((e: any) => e.sessionId === 'old-session');
@@ -3489,52 +3527,210 @@ describe('WsHandler', () => {
     });
   });
 
-  describe('list_projects — roots', () => {
-    it('includes roots in list_projects response', async () => {
+  describe('list_folders', () => {
+    it('includes roots and serves registry FolderInfo rows with live session counts', async () => {
       const repoIndex = { roots: ['/home/user/projects', '/opt/repos'], list: async () => [] } as unknown as RepoIndex;
-      const projectRegistry = { list: async () => [] } as unknown as FolderRegistry;
-      const { handler, sent } = createTestHandler('client-1', { repoIndex, projectRegistry });
+      const personaRow = folderRow('/home/user/projects/agent', {
+        nature: 'persona',
+        persona: { name: 'Helper', description: 'helps' },
+        favorite: true,
+        tags: ['x'],
+        userTags: ['x'],
+      });
+      const folderRegistry = { list: async () => [personaRow, folderRow('/home/user/projects/api')] } as unknown as FolderRegistry;
+      const sessions = new Map<string, ManagedSlot>([
+        ['s1', createMockSlot({ id: 's1', folderPath: '/home/user/projects/agent' })],
+        ['s2', createMockSlot({ id: 's2', folderPath: '/home/user/projects/agent' })],
+      ]);
+      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry, sessions });
 
-      await handler.handleMessage(JSON.stringify({ type: 'list_projects', id: 'req-roots' }));
+      await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'req-list' }));
 
-      const resp = findResponse(sent, 'req-roots');
+      const resp = findResponse(sent, 'req-list');
       expect(resp!.success).toBe(true);
-      expect((resp!.data as any).roots).toEqual(['/home/user/projects', '/opt/repos']);
+      const data = resp!.data as { roots: string[]; folders: FolderInfo[] };
+      expect(data.roots).toEqual(['/home/user/projects', '/opt/repos']);
+      expect(data.folders).toHaveLength(2);
+      expect(data.folders[0]).toMatchObject({
+        path: '/home/user/projects/agent',
+        nature: 'persona',
+        persona: { name: 'Helper', description: 'helps' },
+        favorite: true,
+        tags: ['x'],
+        userTags: ['x'],
+        activeSessionCount: 2,
+      });
+      expect(data.folders[1]).toMatchObject({ path: '/home/user/projects/api', nature: 'code', activeSessionCount: 0 });
     });
   });
 
-  describe('create_project', () => {
+  describe('update_folder', () => {
+    it('forwards the curation patch keyed by folderPath', async () => {
+      const update = vi.fn(async () => {});
+      const repoIndex = { roots: ['/w'], list: async () => [] } as unknown as RepoIndex;
+      const folderRegistry = { list: async () => [], update } as unknown as FolderRegistry;
+      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry });
+
+      await handler.handleMessage(JSON.stringify({ type: 'update_folder', id: 'req-up', folderPath: '/w/a', favorite: true, addTags: ['x'], removeTags: ['y'] }));
+
+      expect(update).toHaveBeenCalledWith({ folderPath: '/w/a', favorite: true, archived: undefined, addTags: ['x'], removeTags: ['y'] });
+      expect(findResponse(sent, 'req-up')).toMatchObject({ success: true });
+    });
+
+    it('surfaces an unknown-folder rejection as an error response', async () => {
+      const repoIndex = { roots: ['/w'], list: async () => [] } as unknown as RepoIndex;
+      const folderRegistry = {
+        list: async () => [],
+        update: async () => {
+          throw new Error('Unknown folder: /w/nope');
+        },
+      } as unknown as FolderRegistry;
+      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry });
+
+      await handler.handleMessage(JSON.stringify({ type: 'update_folder', id: 'req-up-err', folderPath: '/w/nope', favorite: true }));
+
+      expect(findResponse(sent, 'req-up-err')).toMatchObject({ success: false, error: 'Unknown folder: /w/nope' });
+    });
+  });
+
+  describe('create_hub', () => {
+    it('rejects a root outside the configured roots without touching the registry', async () => {
+      const createHub = vi.fn();
+      const invalidate = vi.fn();
+      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate } as unknown as RepoIndex;
+      const folderRegistry = { list: async () => [], createHub } as unknown as FolderRegistry;
+      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry });
+
+      await handler.handleMessage(JSON.stringify({ type: 'create_hub', id: 'req-ch-1', name: 'hub', root: '/tmp/hacked', memberPaths: ['/home/user/projects/a'] }));
+
+      expect(findResponse(sent, 'req-ch-1')).toMatchObject({ success: false, error: 'Root is not a configured scan root' });
+      expect(createHub).not.toHaveBeenCalled();
+      expect(invalidate).not.toHaveBeenCalled();
+    });
+
+    it('creates the hub with memberPaths, responds with folderPath, and invalidates the repo index', async () => {
+      const invalidate = vi.fn();
+      const createHub = vi.fn(async () => folderRow('/home/user/projects/hub', { repos: [] }));
+      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate } as unknown as RepoIndex;
+      const folderRegistry = { list: async () => [], createHub } as unknown as FolderRegistry;
+      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry });
+
+      await handler.handleMessage(
+        JSON.stringify({ type: 'create_hub', id: 'req-ch-2', name: 'hub', root: '/home/user/projects', memberPaths: ['/home/user/projects/a', '/home/user/projects/b'] }),
+      );
+
+      expect(createHub).toHaveBeenCalledWith({ name: 'hub', root: '/home/user/projects', memberPaths: ['/home/user/projects/a', '/home/user/projects/b'] });
+      expect(findResponse(sent, 'req-ch-2')).toMatchObject({ success: true, data: { folderPath: '/home/user/projects/hub' } });
+      expect(invalidate).toHaveBeenCalledOnce();
+    });
+
+    it('surfaces hub validation errors without invalidating the index', async () => {
+      const invalidate = vi.fn();
+      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate } as unknown as RepoIndex;
+      const folderRegistry = {
+        list: async () => [],
+        createHub: async () => {
+          throw new Error('Unknown repo: /home/user/projects/ghost');
+        },
+      } as unknown as FolderRegistry;
+      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry });
+
+      await handler.handleMessage(JSON.stringify({ type: 'create_hub', id: 'req-ch-3', name: 'hub', root: '/home/user/projects', memberPaths: ['/home/user/projects/ghost'] }));
+
+      expect(findResponse(sent, 'req-ch-3')).toMatchObject({ success: false, error: 'Unknown repo: /home/user/projects/ghost' });
+      expect(invalidate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('disband_hub', () => {
+    it('disbands by folderPath and invalidates the repo index', async () => {
+      const invalidate = vi.fn();
+      const disbandHub = vi.fn(async () => {});
+      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate } as unknown as RepoIndex;
+      const folderRegistry = { list: async () => [], disbandHub } as unknown as FolderRegistry;
+      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry });
+
+      await handler.handleMessage(JSON.stringify({ type: 'disband_hub', id: 'req-dh-1', folderPath: '/home/user/projects/hub' }));
+
+      expect(disbandHub).toHaveBeenCalledWith('/home/user/projects/hub');
+      expect(findResponse(sent, 'req-dh-1')).toMatchObject({ success: true });
+      expect(invalidate).toHaveBeenCalledOnce();
+    });
+
+    it('surfaces disband errors without invalidating the index', async () => {
+      const invalidate = vi.fn();
+      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate } as unknown as RepoIndex;
+      const folderRegistry = {
+        list: async () => [],
+        disbandHub: async () => {
+          throw new Error('Not a hub folder: /home/user/projects/x');
+        },
+      } as unknown as FolderRegistry;
+      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry });
+
+      await handler.handleMessage(JSON.stringify({ type: 'disband_hub', id: 'req-dh-2', folderPath: '/home/user/projects/x' }));
+
+      expect(findResponse(sent, 'req-dh-2')).toMatchObject({ success: false, error: 'Not a hub folder: /home/user/projects/x' });
+      expect(invalidate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('folders_changed broadcast', () => {
+    it('sends the enriched merged list to every connected client', async () => {
+      const folderRegistry = { list: async () => [folderRow('/w/a'), folderRow('/w/b')] } as unknown as FolderRegistry;
+      const sessions = new Map<string, ManagedSlot>([['s1', createMockSlot({ id: 's1', folderPath: '/w/a' })]]);
+      const clientRegistry: ClientRegistry = new Map();
+      const a = createTestHandler('A', { sessions, clientRegistry, folderRegistry });
+      const b = createTestHandler('B', { sessions, clientRegistry, folderRegistry });
+      a.sent.length = 0;
+      b.sent.length = 0;
+
+      WsHandler.broadcastFoldersChanged(folderRegistry, a.sessionManager, clientRegistry);
+      await flushPromises();
+
+      for (const sent of [a.sent, b.sent]) {
+        const events = findEvents(sent, 'folders_changed');
+        expect(events).toHaveLength(1);
+        expect((events[0] as any).folders).toMatchObject([
+          { path: '/w/a', activeSessionCount: 1 },
+          { path: '/w/b', activeSessionCount: 0 },
+        ]);
+      }
+    });
+  });
+
+  describe('create_folder', () => {
     it('rejects empty name', async () => {
       const sessionRecords = createMockSessionRecords();
       const { handler, sent } = createTestHandler('client-1', { sessionRecords });
 
-      await handler.handleMessage(JSON.stringify({ type: 'create_project', root: '/home/user/projects', name: '', id: 'req-cp-1' }));
+      await handler.handleMessage(JSON.stringify({ type: 'create_folder', root: '/home/user/projects', name: '', id: 'req-cp-1' }));
 
       const resp = findResponse(sent, 'req-cp-1');
       expect(resp!.success).toBe(false);
-      expect(resp!.error).toBe('Invalid project name');
+      expect(resp!.error).toBe('Invalid folder name');
     });
 
     it('rejects name with path separators', async () => {
       const sessionRecords = createMockSessionRecords();
       const { handler, sent } = createTestHandler('client-1', { sessionRecords });
 
-      await handler.handleMessage(JSON.stringify({ type: 'create_project', root: '/home/user/projects', name: 'foo/bar', id: 'req-cp-2' }));
+      await handler.handleMessage(JSON.stringify({ type: 'create_folder', root: '/home/user/projects', name: 'foo/bar', id: 'req-cp-2' }));
 
       const resp = findResponse(sent, 'req-cp-2');
       expect(resp!.success).toBe(false);
-      expect(resp!.error).toBe('Invalid project name');
+      expect(resp!.error).toBe('Invalid folder name');
     });
 
     it('rejects . and .. names', async () => {
       const sessionRecords = createMockSessionRecords();
       const { handler, sent } = createTestHandler('client-1', { sessionRecords });
 
-      await handler.handleMessage(JSON.stringify({ type: 'create_project', root: '/home/user/projects', name: '..', id: 'req-cp-3' }));
+      await handler.handleMessage(JSON.stringify({ type: 'create_folder', root: '/home/user/projects', name: '..', id: 'req-cp-3' }));
 
       const resp = findResponse(sent, 'req-cp-3');
       expect(resp!.success).toBe(false);
-      expect(resp!.error).toBe('Invalid project name');
+      expect(resp!.error).toBe('Invalid folder name');
     });
 
     it('rejects root not in configured roots', async () => {
@@ -3543,11 +3739,148 @@ describe('WsHandler', () => {
       const repoIndex = { roots: ['/home/user/projects'], list: async () => [] } as unknown as RepoIndex;
       const { handler, sent } = createTestHandler('client-1', { repoIndex });
 
-      await handler.handleMessage(JSON.stringify({ type: 'create_project', root: '/tmp/hacked', name: 'evil', id: 'req-cp-4' }));
+      await handler.handleMessage(JSON.stringify({ type: 'create_folder', root: '/tmp/hacked', name: 'evil', id: 'req-cp-4' }));
 
       const resp = findResponse(sent, 'req-cp-4');
       expect(resp!.success).toBe(false);
-      expect(resp!.error).toBe('Root is not a configured project root');
+      expect(resp!.error).toBe('Root is not a configured scan root');
+    });
+
+    it('broadcasts folders_changed to every client and invalidates the repo index after creating a folder', async () => {
+      const invalidate = vi.fn();
+      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate } as unknown as RepoIndex;
+      const folderRegistry = { list: async () => [folderRow('/home/user/projects/new')] } as unknown as FolderRegistry;
+      const creators = [
+        {
+          describe: () => ({ paramSchema: { root: {}, name: {} } }),
+          create: async ({ root, name }: { root: string; name: string }) => ({ path: `${root}/${name}` }),
+        } as unknown as FolderCreator,
+      ];
+      const clientRegistry: ClientRegistry = new Map();
+      const a = createTestHandler('A', { repoIndex, folderRegistry, creators, clientRegistry });
+      const b = createTestHandler('B', { repoIndex, folderRegistry, creators, clientRegistry });
+      a.sent.length = 0;
+      b.sent.length = 0;
+
+      await a.handler.handleMessage(JSON.stringify({ type: 'create_folder', root: '/home/user/projects', name: 'new', id: 'req-cp-5' }));
+
+      expect(findResponse(a.sent, 'req-cp-5')).toMatchObject({ success: true, data: { folderPath: '/home/user/projects/new' } });
+      expect(invalidate).toHaveBeenCalledOnce();
+      await flushPromises();
+      expect(findEvents(a.sent, 'folders_changed')).toHaveLength(1);
+      expect(findEvents(b.sent, 'folders_changed')).toHaveLength(1);
+    });
+  });
+
+  describe('session folder resolution (session events)', () => {
+    it('serves the registry FolderInfo row (persona metadata + curation) in session_opened', async () => {
+      const row = folderRow('/home/user/projects/agent', {
+        nature: 'persona',
+        persona: { name: 'Helper', description: 'helps' },
+        shortcutCount: 2,
+        favorite: true,
+        archived: true,
+        tags: ['t'],
+        userTags: ['t'],
+      });
+      const update = vi.fn(async () => {});
+      const folderRegistry = { list: async () => [row], update } as unknown as FolderRegistry;
+      const sessions = new Map<string, ManagedSlot>([['new-session-id', createMockSlot({ id: 'new-session-id', folderPath: '/home/user/projects/agent' })]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions, folderRegistry });
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/projects/agent', id: 'req-open-listed' }));
+
+      expect(findResponse(sent, 'req-open-listed')).toMatchObject({ success: true, data: { sessionId: 'new-session-id' } });
+      const opened = findEvents(sent, 'session_opened');
+      expect(opened).toHaveLength(1);
+      expect((opened[0] as any).folder).toMatchObject({
+        path: '/home/user/projects/agent',
+        name: 'agent',
+        nature: 'persona',
+        persona: { name: 'Helper', description: 'helps' },
+        shortcutCount: 2,
+        favorite: true,
+        archived: true,
+        tags: ['t'],
+        userTags: ['t'],
+        missing: false,
+        activeSessionCount: 1,
+        externalProcessCount: 0,
+      });
+    });
+
+    it('classifies an unlisted cwd on the fly and never lists or curates it', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'pimote-folder-'));
+      writeFileSync(join(dir, 'AGENTS.md'), '---\nname: Sidekick\ndescription: runs errands\n---\n\n# Sidekick\n');
+      try {
+        const update = vi.fn(async () => {});
+        const folderRegistry = { list: async () => [], update } as unknown as FolderRegistry;
+        const sessions = new Map<string, ManagedSlot>([['new-session-id', createMockSlot({ id: 'new-session-id', folderPath: dir })]]);
+        const { handler, sent } = createTestHandler('client-1', { sessions, folderRegistry });
+
+        await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: dir, id: 'req-open-persona' }));
+
+        const opened = findEvents(sent, 'session_opened');
+        expect(opened).toHaveLength(1);
+        expect((opened[0] as any).folder).toMatchObject({
+          path: dir,
+          name: basename(dir),
+          nature: 'persona',
+          persona: { name: 'Sidekick', description: 'runs errands' },
+          shortcutCount: 0,
+          favorite: false,
+          archived: false,
+          tags: [],
+          missing: false,
+          activeSessionCount: 1,
+          externalProcessCount: 0,
+        });
+        // Opening a session in an unlisted cwd neither lists nor curates it.
+        expect(update).not.toHaveBeenCalled();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('serves an unlisted code cwd as a plain fallback row', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'pimote-folder-'));
+      try {
+        const folderRegistry = { list: async () => [] } as unknown as FolderRegistry;
+        const sessions = new Map<string, ManagedSlot>([['new-session-id', createMockSlot({ id: 'new-session-id', folderPath: dir })]]);
+        const { handler, sent } = createTestHandler('client-1', { sessions, folderRegistry });
+
+        await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: dir, id: 'req-open-code' }));
+
+        const opened = findEvents(sent, 'session_opened');
+        expect((opened[0] as any).folder).toMatchObject({
+          path: dir,
+          name: basename(dir),
+          nature: 'code',
+          shortcutCount: 0,
+          favorite: false,
+          archived: false,
+          tags: [],
+          missing: false,
+          activeSessionCount: 1,
+        });
+        expect((opened[0] as any).folder.persona).toBeUndefined();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves the folder row for takeover_folder', async () => {
+      const row = folderRow('/home/user/projects/agent', { favorite: true, tags: ['kept'] });
+      const folderRegistry = { list: async () => [row] } as unknown as FolderRegistry;
+      const sessions = new Map<string, ManagedSlot>([['new-session-id', createMockSlot({ id: 'new-session-id', folderPath: '/home/user/projects/agent' })]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions, folderRegistry });
+
+      await handler.handleMessage(JSON.stringify({ type: 'takeover_folder', folderPath: '/home/user/projects/agent', id: 'req-takeover' }));
+
+      expect(findResponse(sent, 'req-takeover')).toMatchObject({ success: true, data: { sessionId: 'new-session-id' } });
+      const opened = findEvents(sent, 'session_opened');
+      expect(opened).toHaveLength(1);
+      expect((opened[0] as any).folder).toMatchObject({ path: '/home/user/projects/agent', favorite: true, tags: ['kept'], activeSessionCount: 1 });
     });
   });
 

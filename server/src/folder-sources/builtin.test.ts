@@ -26,7 +26,7 @@ describe('createBuiltinCreator()', () => {
     expect(paramSchema).toMatchObject({ root: 'string', name: 'string' });
   });
 
-  it('creates the project folder and git-inits it', async () => {
+  it('creates the code folder and git-inits it', async () => {
     const root = join(tempDir, 'root');
     await mkdir(root, { recursive: true });
 

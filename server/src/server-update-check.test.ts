@@ -41,7 +41,7 @@ describe('createServer — update notification wiring', () => {
     };
 
     server = await createServer(
-      { roots: [], idleTimeout: 60_000, bufferSize: 10, port: 0 },
+      { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0 },
       {} as any,
       {} as any,
       {} as any,
@@ -73,7 +73,7 @@ describe('createServer — update notification wiring', () => {
     };
 
     server = await createServer(
-      { roots: [], idleTimeout: 60_000, bufferSize: 10, port: 0 },
+      { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0 },
       {} as any,
       {} as any,
       {} as any,

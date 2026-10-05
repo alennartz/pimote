@@ -3,7 +3,7 @@
 Pimote's extensibility SDK — everything a [pi](https://github.com/mariozechner/pi-coding-agent) extension imports to talk to [pimote](https://github.com/alennartz/pimote). One subpath module per extension seam:
 
 - **`@pimote/sdk/panels`** — push structured card data to the pimote web client
-- **`@pimote/sdk/projects`** — contribute project discovery and creation to pimote's project layer
+- **`@pimote/sdk/folders`** — contribute folder discovery and creation to pimote's folder layer
 
 The root `@pimote/sdk` import re-exports both modules.
 
@@ -111,17 +111,17 @@ Detection uses pi's EventBus for a synchronous in-process round-trip — pimote'
 
 When pimote isn't present, the EventBus emit fires with no listener, `detect()` returns `null`, and there's zero overhead.
 
-## Projects — `@pimote/sdk/projects`
+## Folders — `@pimote/sdk/folders`
 
-Type-only module for user-authored project-source modules: pimote scans a project-sources directory (default `~/.config/pimote/project-sources`, configurable via `projectSourcesDir`), dynamic-imports every JS/TS module it finds, and collects each module's exported `sources` and `creators` arrays. Sources contribute repos and multi-repo projects to pimote's project layer; creators make new project directories from user-supplied form params.
+Type-only module for user-authored folder-source modules: pimote scans a folder-sources directory (default `~/.config/pimote/folder-sources`, configurable via `folderSourcesDir`), dynamic-imports every JS/TS module it finds, and collects each module's exported `sources` and `creators` arrays. Sources contribute repos and hub folders to pimote's folder layer; creators make new folders from user-supplied form params.
 
 ### Writing a module
 
 ```ts
-// ~/.config/pimote/project-sources/my-source.ts
-import type { ProjectSource, ProjectCreator } from '@pimote/sdk/projects';
+// ~/.config/pimote/folder-sources/my-source.ts
+import type { FolderSource, FolderCreator } from '@pimote/sdk/folders';
 
-export const sources: ProjectSource[] = [
+export const sources: FolderSource[] = [
   {
     id: 'my-source',
     async list() {
@@ -140,42 +140,42 @@ export const sources: ProjectSource[] = [
   },
 ];
 
-export const creators: ProjectCreator[] = [
+export const creators: FolderCreator[] = [
   {
     id: 'my-creator',
     describe() {
-      return { label: 'New API project', paramSchema: { name: 'string', tags: 'string[]' } };
+      return { label: 'New API folder', paramSchema: { name: 'string', tags: 'string[]' } };
     },
     async create(params) {
       const path = `/home/me/work/${String(params.name)}`;
-      // ... scaffold the project directory ...
+      // ... scaffold the folder ...
       return { path };
     },
   },
 ];
 ```
 
-### `ProjectSource`
+### `FolderSource`
 
-The discovery seam. `list()` is called on cache miss and must return the current entries without mutating anything. The optional `onProjectOpen(projectPath)` hook is awaited before any open of a listed entry proceeds — whether the target exists on disk or not, and from every open path (row click, new session, manager tool). Sources self-filter by path: probe the disk and scaffold if the entry is theirs and missing; do other open-time work otherwise. A thrown error aborts the open and surfaces the message to the user.
+The discovery seam. `list()` is called on cache miss and must return the current entries without mutating anything. The optional `onFolderOpen(folderPath)` hook is awaited before any open of a listed entry proceeds — whether the target exists on disk or not, and from every open path (row click, new session, manager tool). Sources self-filter by path: probe the disk and scaffold if the entry is theirs and missing; do other open-time work otherwise. A thrown error aborts the open and surfaces the message to the user.
 
-### `ProjectCreator`
+### `FolderCreator`
 
-The creation seam. `describe()` returns the human-readable form for the creation UI — a `label` plus a `paramSchema` mapping param names to `'string' | 'string[]'`. `create(params)` receives the user-supplied params, makes the project directory, and returns its `{ path }`.
+The creation seam. `describe()` returns the human-readable form for the creation UI — a `label` plus a `paramSchema` mapping param names to `'string' | 'string[]'`. `create(params)` receives the user-supplied params, makes the folder, and returns its `{ path }`.
 
 ### Entry shapes
 
-`list()` returns `SourceEntry[]` — a repo or a multi-repo project:
+`list()` returns `SourceEntry[]` — a repo or a hub folder:
 
 ```ts
-/** Feeds a single-repo project. Extends `RepoInfo`. */
+/** Feeds a single-repo folder. Extends `RepoInfo`. */
 interface RepoSourceEntry extends RepoInfo {
   kind: 'repo';
 }
 
-/** Feeds a multi-repo project over member paths. */
-interface MultiRepoSourceEntry {
-  kind: 'project';
+/** Feeds a hub folder over member paths. */
+interface HubSourceEntry {
+  kind: 'hub';
   path: string;
   name: string;
   memberPaths: string[];
@@ -187,6 +187,27 @@ interface MultiRepoSourceEntry {
 ### `RepoInfo`
 
 Repo facts as contributed by sources: `path`, `name`, `branch` (`string | null`), `dirty`, `ahead`, `behind`, and optional `lastActivity` (epoch ms), `missing` (repo path no longer exists on disk), and `tags`. It mirrors pimote's wire `RepoInfo` type — same name, same fields — so extension authors can write `interface MyEntry extends RepoInfo` against the SDK alone.
+
+## Breaking changes
+
+### 0.15.0 (0.x breaking)
+
+The discovery/creation seam is renamed to folder vocabulary — "project" is gone from the SDK surface. No compatibility type aliases exist; source modules must be updated against these successors:
+
+| Retired name (≤0.14.x)                         | Replacement (0.15.0)                                                                   |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `@pimote/sdk/projects` subpath                 | `@pimote/sdk/folders`                                                                  |
+| `ProjectSource`                                | `FolderSource`                                                                         |
+| `ProjectCreator`                               | `FolderCreator`                                                                        |
+| `ProjectCreatorDescriptor`                     | `FolderCreatorDescriptor`                                                              |
+| `ProjectCreatorParamType`                      | `FolderCreatorParamType`                                                               |
+| `MultiRepoSourceEntry`                         | `HubSourceEntry`                                                                       |
+| entry discriminator `kind: 'project'`          | entry discriminator `kind: 'hub'`                                                      |
+| `onProjectOpen(projectPath)`                   | `onFolderOpen(folderPath)`                                                             |
+| config key `projectSourcesDir`                 | `folderSourcesDir` (legacy key still read as a deprecated fallback)                    |
+| sources dir `~/.config/pimote/project-sources` | `~/.config/pimote/folder-sources` (legacy dir still loaded when the new one is absent) |
+
+Every name in the left column is retired; each is listed here only so existing modules can be migrated. The wire command for the built-in creation flow is likewise renamed (`create_project` → `create_folder`).
 
 ## License
 

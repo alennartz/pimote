@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { PIMOTE_CONFIG_PATH } from './paths.js';
 import { DEFAULT_APP_NAME } from './branding.js';
 
@@ -17,8 +18,13 @@ export interface VoiceConfig {
 
 export interface PimoteConfig {
   roots: string[];
-  /** Directory scanned for user project-source modules. Default: PIMOTE_PROJECT_SOURCES_DIR. */
-  projectSourcesDir?: string;
+  /**
+   * The manager persona's working directory — deliberately distinct from the scan roots and never scanned.
+   * Default `~` (the home directory); a leading `~`/`~/` is expanded to the home directory at load.
+   */
+  managerRoot: string;
+  /** Directory scanned for user folder-source modules. Default: PIMOTE_FOLDER_SOURCES_DIR. */
+  folderSourcesDir?: string;
   idleTimeout: number;
   bufferSize: number;
   port: number;
@@ -50,6 +56,15 @@ const DEFAULTS = {
   port: 3000,
 } as const;
 
+const DEFAULT_MANAGER_ROOT = '~';
+
+/** Expand a leading `~`/`~/` to the home directory; any other value passes through unchanged. */
+function expandHomePath(value: string, home: string): string {
+  if (value === '~') return home;
+  if (value.startsWith('~/')) return join(home, value.slice(2));
+  return value;
+}
+
 export async function loadConfig(): Promise<PimoteConfig> {
   let raw: string;
   try {
@@ -60,11 +75,12 @@ export async function loadConfig(): Promise<PimoteConfig> {
         `Config file not found at ${CONFIG_PATH}\n\n` +
           `Create it with at least a "roots" array, e.g.:\n\n` +
           `  {\n` +
-          `    "roots": ["/path/to/your/project"]\n` +
+          `    "roots": ["/path/to/scan/roots"]\n` +
           `  }\n\n` +
           `Optional fields: port (default ${DEFAULTS.port}), ` +
           `idleTimeout (default ${DEFAULTS.idleTimeout}ms), ` +
           `bufferSize (default ${DEFAULTS.bufferSize}), ` +
+          `managerRoot (the manager persona's working directory, default "${DEFAULT_MANAGER_ROOT}"), ` +
           `appName (display name for the web app and installed PWA, default "${DEFAULT_APP_NAME}")`,
         { cause: err },
       );
@@ -90,9 +106,16 @@ export async function loadConfig(): Promise<PimoteConfig> {
     throw new Error(`Config "roots" must be a non-empty array of strings in ${CONFIG_PATH}`);
   }
 
+  // Validate managerRoot — string-based like roots; deliberately no filesystem-existence checks.
+  if (obj.managerRoot !== undefined && (typeof obj.managerRoot !== 'string' || obj.managerRoot.length === 0)) {
+    throw new Error(`Config "managerRoot" must be a non-empty string in ${CONFIG_PATH}`);
+  }
+
   return {
     roots: obj.roots,
-    projectSourcesDir: typeof obj.projectSourcesDir === 'string' ? obj.projectSourcesDir : undefined,
+    managerRoot: expandHomePath(typeof obj.managerRoot === 'string' ? obj.managerRoot : DEFAULT_MANAGER_ROOT, homedir()),
+    // Deprecated legacy key read-compat: `projectSourcesDir` is superseded by `folderSourcesDir` (will be retired).
+    folderSourcesDir: typeof obj.folderSourcesDir === 'string' ? obj.folderSourcesDir : typeof obj.projectSourcesDir === 'string' ? obj.projectSourcesDir : undefined,
     idleTimeout: typeof obj.idleTimeout === 'number' ? obj.idleTimeout : DEFAULTS.idleTimeout,
     bufferSize: typeof obj.bufferSize === 'number' ? obj.bufferSize : DEFAULTS.bufferSize,
     port: typeof obj.port === 'number' ? obj.port : DEFAULTS.port,

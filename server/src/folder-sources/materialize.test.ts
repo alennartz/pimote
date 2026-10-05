@@ -4,8 +4,8 @@ import { promisify } from 'node:util';
 import { mkdtemp, mkdir, rm, readFile, readlink, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { MultiRepoSourceEntry } from '@pimote/sdk/projects';
-import { materializeMultiRepoFolder } from './materialize.js';
+import type { HubSourceEntry } from '@pimote/sdk/folders';
+import { materializeHubFolder } from './materialize.js';
 import { scanFolderModel } from '../folder-model/index.js';
 
 const execFileAsync = promisify(execFile);
@@ -23,8 +23,8 @@ afterEach(async () => {
   await rm(externalDir, { recursive: true, force: true });
 });
 
-function hubEntry(path: string, name: string, memberPaths: string[]): MultiRepoSourceEntry {
-  return { kind: 'project', path, name, memberPaths };
+function hubEntry(path: string, name: string, memberPaths: string[]): HubSourceEntry {
+  return { kind: 'hub', path, name, memberPaths };
 }
 
 /** A folder the folder model classifies as code (a `.git` entry is enough for classification). */
@@ -32,7 +32,7 @@ async function codeFolder(path: string): Promise<void> {
   await mkdir(join(path, '.git'), { recursive: true });
 }
 
-describe('materializeMultiRepoFolder()', () => {
+describe('materializeHubFolder()', () => {
   it('materializes absolute member symlinks, the generated AGENTS.md, a git repo, and a member .gitignore', async () => {
     const memberA = join(externalDir, 'member-a');
     const memberB = join(externalDir, 'member-b');
@@ -40,7 +40,7 @@ describe('materializeMultiRepoFolder()', () => {
     await codeFolder(memberB);
     const hub = join(tempDir, 'group');
 
-    await materializeMultiRepoFolder(hubEntry(hub, 'group', [memberA, memberB]));
+    await materializeHubFolder(hubEntry(hub, 'group', [memberA, memberB]));
 
     expect(await readlink(join(hub, 'member-a'))).toBe(memberA);
     expect(await readlink(join(hub, 'member-b'))).toBe(memberB);
@@ -75,7 +75,7 @@ describe('materializeMultiRepoFolder()', () => {
 
   it('writes an empty .gitignore for a hub without members', async () => {
     const hub = join(tempDir, 'empty-group');
-    await materializeMultiRepoFolder(hubEntry(hub, 'empty-group', []));
+    await materializeHubFolder(hubEntry(hub, 'empty-group', []));
 
     expect((await readFile(join(hub, '.gitignore'), 'utf8')).trim()).toBe('');
   });
@@ -86,7 +86,7 @@ describe('materializeMultiRepoFolder()', () => {
     process.env.GIT_DIR = bogusGitDir;
     process.env.GIT_WORK_TREE = join(tempDir, 'bogus-work-tree');
     try {
-      await materializeMultiRepoFolder(hubEntry(hub, 'group', []));
+      await materializeHubFolder(hubEntry(hub, 'group', []));
     } finally {
       delete process.env.GIT_DIR;
       delete process.env.GIT_WORK_TREE;
@@ -102,7 +102,7 @@ describe('materializeMultiRepoFolder()', () => {
     await codeFolder(memberA);
     await codeFolder(memberB);
     const hub = join(tempDir, 'group');
-    await materializeMultiRepoFolder(hubEntry(hub, 'group', [memberA, memberB]));
+    await materializeHubFolder(hubEntry(hub, 'group', [memberA, memberB]));
 
     const tree = await scanFolderModel({ roots: [hub], onWarning: () => {} });
     expect(tree.occurrences).toHaveLength(1);

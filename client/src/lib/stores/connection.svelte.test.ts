@@ -96,7 +96,7 @@ describe('ConnectionStore — socket identity guards', () => {
     // Proof the live socket wasn't clobbered: a send is accepted (would reject
     // synchronously with "WebSocket not connected" if this.ws had been nulled).
     let rejected = false;
-    c.send({ type: 'list_projects' } as never).catch(() => {
+    c.send({ type: 'list_folders' } as never).catch(() => {
       rejected = true;
     });
     await flush();

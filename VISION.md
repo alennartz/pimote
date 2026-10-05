@@ -39,7 +39,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Optionally upgrades a session into a voice call (PWA-only in v1) — the server bridges to a speechmux sidecar and the pi session runs under a voice-interpreter extension that mediates between spoken user turns and a `my-pi` worker subagent
 - Single-tab per browser (multi-tab not supported — shared localStorage would cause conflicts)
 
-**`@pimote/sdk`** — The workspace extensibility package (`packages/sdk/`) that pi extensions import to talk to pimote. Panels card-push (`@pimote/sdk/panels`) provides `detect()` for pimote detection and `PanelHandle` for updating/clearing cards via the pi EventBus; the project discovery/creation seam types (`@pimote/sdk/projects`) let user modules register project sources and creators. Cards flow through the server (throttled) to the client panel.
+**`@pimote/sdk`** — The workspace extensibility package (`packages/sdk/`) that pi extensions import to talk to pimote. Panels card-push (`@pimote/sdk/panels`) provides `detect()` for pimote detection and `PanelHandle` for updating/clearing cards via the pi EventBus; the folder discovery/creation seam types (`@pimote/sdk/folders`) let user modules register folder sources and creators. Cards flow through the server (throttled) to the client panel.
 
 ## Architecture
 

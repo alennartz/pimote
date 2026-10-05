@@ -194,13 +194,14 @@ npm start
 
 Pimote reads its config from `~/.config/pimote/config.json` (respects `$XDG_CONFIG_HOME`).
 
-The first-run wizard creates this file for you, but you can also edit it manually. The most important setting is `roots`: parent directories that contain your projects. Pimote walks each root recursively up to three levels deep and discovers repos by looking for `.git` (skipping `node_modules`, `dist`, `build`, `target`, `.venv`). Additional repos and multi-repo projects can be contributed by project sources — TypeScript modules in `projectSourcesDir` (default `~/.config/pimote/project-sources/`). A source exports a `sources` array; each source `list()`s entries (`{ kind: 'repo', ... }` or `{ kind: 'project', path, name, memberPaths }`) — paths need not exist on disk yet, and missing ones are shown with a warning chip. An optional awaited `onProjectOpen(path)` hook runs before any open of a listed entry (row click, new session, manager tool) — for custom provisioning. A missing multi-repo project entry is materialized automatically first (folder + member symlinks + AGENTS.md, built by pimote itself); missing repo entries are the extension's job inside `onProjectOpen`. A thrown error aborts the open. A `creators` array provides explicit creation flows (built in: mkdir + git init).
+The first-run wizard creates this file for you, but you can also edit it manually. The most important setting is `roots`: parent directories that contain your projects. Pimote walks each root recursively up to three levels deep and discovers repos by looking for `.git` (skipping `node_modules`, `dist`, `build`, `target`, `.venv`). Additional repos and hub folders can be contributed by folder sources — TypeScript modules in `folderSourcesDir` (default `~/.config/pimote/folder-sources/`). A source exports a `sources` array; each source `list()`s entries (`{ kind: 'repo', ... }` or `{ kind: 'hub', path, name, memberPaths }`) — paths need not exist on disk yet, and missing ones are shown with a warning chip. An optional awaited `onFolderOpen(path)` hook runs before any open of a listed entry (row click, new session, manager tool) — for custom provisioning. A missing hub entry is materialized automatically first (folder + member symlinks + AGENTS.md, built by pimote itself); missing repo entries are the extension's job inside `onFolderOpen`. A thrown error aborts the open. A `creators` array provides explicit creation flows (built in: mkdir + git init).
 
 Example:
 
 ```json
 {
   "roots": ["/home/you/projects", "/home/you/work"],
+  "managerRoot": "~",
   "port": 3000
 }
 ```
@@ -209,22 +210,23 @@ With this config, if `/home/you/projects/` contains `my-app/` and `another-repo/
 
 ### Options
 
-| Field                     | Type                  | Default                            | Description                                                                        |
-| ------------------------- | --------------------- | ---------------------------------- | ---------------------------------------------------------------------------------- |
-| `roots`                   | `string[]`            | **(required)**                     | Parent directories to scan for projects                                            |
-| `projectSourcesDir`       | `string`              | `~/.config/pimote/project-sources` | Directory scanned for user project-source modules (pluggable repo discovery)       |
-| `port`                    | `number`              | `3000`                             | Server port                                                                        |
-| `appName`                 | `string`              | `Pimote`                           | Display name: browser tab title, iOS app title, and installed PWA name             |
-| `idleTimeout`             | `number`              | `1800000`                          | Idle session reap timeout (ms, default 30min)                                      |
-| `bufferSize`              | `number`              | `1000`                             | Event ring buffer size per session                                                 |
-| `defaultProvider`         | `string`              | —                                  | Default LLM provider                                                               |
-| `defaultModel`            | `string`              | —                                  | Default model                                                                      |
-| `defaultThinkingLevel`    | `string`              | —                                  | Default thinking level                                                             |
-| `defaultInterpreterModel` | `{provider, modelId}` | —                                  | Voice interpreter model (falls back to `defaultProvider`/`defaultModel`)           |
-| `defaultWorkerModel`      | `{provider, modelId}` | —                                  | Voice worker model passed to `my-pi` subagent spawns                               |
-| `voice`                   | `object`              | —                                  | Voice subsystem config (see below)                                                 |
-| `tagSnippets`             | `string[]`            | —                                  | Optional tag names shown as one-tap wrap snippets in the Agent instructions editor |
-| `updateCheck`             | `boolean`             | `true`                             | Check npm for newer Pimote releases and notify connected clients                   |
+| Field                     | Type                  | Default                           | Description                                                                                                                                                      |
+| ------------------------- | --------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `roots`                   | `string[]`            | **(required)**                    | Parent directories to scan for projects                                                                                                                          |
+| `managerRoot`             | `string`              | `~`                               | The manager persona's working directory — distinct from the scanned roots and never scanned itself; a leading `~`/`~/` expands to the home directory             |
+| `folderSourcesDir`        | `string`              | `~/.config/pimote/folder-sources` | Directory scanned for user folder-source modules (pluggable repo discovery; reads the deprecated legacy `projectSourcesDir` key as a fallback — will be retired) |
+| `port`                    | `number`              | `3000`                            | Server port                                                                                                                                                      |
+| `appName`                 | `string`              | `Pimote`                          | Display name: browser tab title, iOS app title, and installed PWA name                                                                                           |
+| `idleTimeout`             | `number`              | `1800000`                         | Idle session reap timeout (ms, default 30min)                                                                                                                    |
+| `bufferSize`              | `number`              | `1000`                            | Event ring buffer size per session                                                                                                                               |
+| `defaultProvider`         | `string`              | —                                 | Default LLM provider                                                                                                                                             |
+| `defaultModel`            | `string`              | —                                 | Default model                                                                                                                                                    |
+| `defaultThinkingLevel`    | `string`              | —                                 | Default thinking level                                                                                                                                           |
+| `defaultInterpreterModel` | `{provider, modelId}` | —                                 | Voice interpreter model (falls back to `defaultProvider`/`defaultModel`)                                                                                         |
+| `defaultWorkerModel`      | `{provider, modelId}` | —                                 | Voice worker model passed to `my-pi` subagent spawns                                                                                                             |
+| `voice`                   | `object`              | —                                 | Voice subsystem config (see below)                                                                                                                               |
+| `tagSnippets`             | `string[]`            | —                                 | Optional tag names shown as one-tap wrap snippets in the Agent instructions editor                                                                               |
+| `updateCheck`             | `boolean`             | `true`                            | Check npm for newer Pimote releases and notify connected clients                                                                                                 |
 
 `appName` is applied at serve time — the server rewrites the PWA manifest and
 HTML shell on the way out, so a change takes effect on the next page reload.

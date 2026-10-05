@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadProjectSources } from './loader.js';
+import { loadFolderSources, resolveSourcesDir } from './loader.js';
 
 let sourcesDir: string;
 
 beforeEach(async () => {
-  sourcesDir = await mkdtemp(join(tmpdir(), 'project-sources-test-'));
+  sourcesDir = await mkdtemp(join(tmpdir(), 'folder-sources-test-'));
 });
 
 afterEach(async () => {
@@ -19,7 +19,7 @@ async function writeModule(name: string, code: string): Promise<void> {
   await writeFile(join(sourcesDir, name), code, 'utf8');
 }
 
-describe('loadProjectSources()', () => {
+describe('loadFolderSources()', () => {
   it('collects sources and creators from every module in the directory', async () => {
     await writeModule(
       'a.mjs',
@@ -30,7 +30,7 @@ describe('loadProjectSources()', () => {
     );
     await writeModule(`b.mjs`, `export const sources = [{ id: 'source-b', list: async () => [] }];`);
 
-    const { sources, creators } = await loadProjectSources(sourcesDir);
+    const { sources, creators } = await loadFolderSources(sourcesDir);
 
     expect(sources.map((s) => s.id).sort()).toEqual(['source-a', 'source-b']);
     expect(creators.map((c) => c.id)).toEqual(['creator-a']);
@@ -41,7 +41,7 @@ describe('loadProjectSources()', () => {
     await writeModule(`broken-throw.mjs`, `throw new Error('boom');\nexport const sources = [];`);
     await writeModule(`broken-syntax.mjs`, `export const = ;`);
 
-    const { sources } = await loadProjectSources(sourcesDir);
+    const { sources } = await loadFolderSources(sourcesDir);
 
     expect(sources.map((s) => s.id)).toEqual(['good']);
   });
@@ -50,7 +50,7 @@ describe('loadProjectSources()', () => {
     await writeModule('a.mjs', `export const sources = [{ id: 'source-a', list: async () => [] }];`);
     await writeModule('ts-source.ts', `export const sources = [{ id: 'source-ts', list: async () => [] }];`);
 
-    const { sources } = await loadProjectSources(sourcesDir);
+    const { sources } = await loadFolderSources(sourcesDir);
 
     expect(sources.map((s) => s.id).sort()).toEqual(['source-a', 'source-ts']);
   });
@@ -59,16 +59,42 @@ describe('loadProjectSources()', () => {
     await writeModule('README.txt', 'not a module');
     await writeModule('notes.json', '{ "not": "a module" }');
 
-    const { sources, creators } = await loadProjectSources(sourcesDir);
+    const { sources, creators } = await loadFolderSources(sourcesDir);
 
     expect(sources).toEqual([]);
     expect(creators).toEqual([]);
   });
 
   it('returns empty results for a missing directory', async () => {
-    const { sources, creators } = await loadProjectSources(join(sourcesDir, 'does-not-exist'));
+    const { sources, creators } = await loadFolderSources(join(sourcesDir, 'does-not-exist'));
 
     expect(sources).toEqual([]);
     expect(creators).toEqual([]);
+  });
+});
+
+describe('resolveSourcesDir()', () => {
+  it('prefers an explicitly configured directory unchanged', async () => {
+    const configured = join(sourcesDir, 'configured');
+    const preferred = join(sourcesDir, 'preferred');
+    const legacy = join(sourcesDir, 'legacy');
+
+    await expect(resolveSourcesDir(configured, { preferred, legacy })).resolves.toBe(configured);
+  });
+
+  it('uses the preferred directory when it exists', async () => {
+    const preferred = join(sourcesDir, 'preferred');
+    const legacy = join(sourcesDir, 'legacy');
+    await mkdir(preferred, { recursive: true });
+
+    await expect(resolveSourcesDir(undefined, { preferred, legacy })).resolves.toBe(preferred);
+  });
+
+  it('falls back to the legacy directory when the preferred one is absent', async () => {
+    const preferred = join(sourcesDir, 'preferred');
+    const legacy = join(sourcesDir, 'legacy');
+    await mkdir(legacy, { recursive: true });
+
+    await expect(resolveSourcesDir(undefined, { preferred, legacy })).resolves.toBe(legacy);
   });
 });

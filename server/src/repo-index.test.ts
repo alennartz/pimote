@@ -143,7 +143,7 @@ describe('RepoIndex.list() — folder-model discovery', () => {
     const index = makeIndex();
     index.registerSource({
       id: 'src',
-      list: async () => [{ kind: 'project', path: groupPath, name: 'group', memberPaths: [member] }],
+      list: async () => [{ kind: 'hub', path: groupPath, name: 'group', memberPaths: [member] }],
     });
 
     await index.runOpenHooks(groupPath);
@@ -202,17 +202,17 @@ describe('RepoIndex.list() — registered sources', () => {
     expect(listed?.missing).toBe(true);
   });
 
-  it('routes source project entries to listSourceProjects, not the repo listing', async () => {
+  it('routes source hub entries to listSourceHubs, not the repo listing', async () => {
     const index = makeIndex();
     index.registerSource({
       id: 'test-source',
-      list: async () => [{ kind: 'project', path: join(tempDir, 'virtual-group'), name: 'virtual-group', memberPaths: [join(tempDir, 'alpha')] }],
+      list: async () => [{ kind: 'hub', path: join(tempDir, 'virtual-group'), name: 'virtual-group', memberPaths: [join(tempDir, 'alpha')] }],
     });
 
-    const projects = await index.listSourceProjects();
-    expect(projects).toHaveLength(1);
-    expect(projects[0]).toMatchObject({ name: 'virtual-group', memberPaths: [join(tempDir, 'alpha')] });
-    // The project entry must not leak into the repo index.
+    const hubs = await index.listSourceHubs();
+    expect(hubs).toHaveLength(1);
+    expect(hubs[0]).toMatchObject({ name: 'virtual-group', memberPaths: [join(tempDir, 'alpha')] });
+    // The hub entry must not leak into the repo index.
     expect((await index.list()).some((r) => r.path === join(tempDir, 'virtual-group'))).toBe(false);
   });
 
@@ -238,7 +238,7 @@ describe('RepoIndex.list() — registered sources', () => {
 });
 
 describe('RepoIndex.runOpenHooks() — materialization', () => {
-  it('materializes the standard layout for a missing source-listed project before hooks run', async () => {
+  it('materializes the standard layout for a missing source-listed hub before hooks run', async () => {
     const groupPath = join(tempDir, 'group');
     const memberA = join(externalDir, 'member-a');
     await mkdir(memberA, { recursive: true });
@@ -247,8 +247,8 @@ describe('RepoIndex.runOpenHooks() — materialization', () => {
     const index = makeIndex();
     index.registerSource({
       id: 'src',
-      list: async () => [{ kind: 'project', path: groupPath, name: 'group', memberPaths: [memberA, virtualMember] }],
-      onProjectOpen: async (path) => {
+      list: async () => [{ kind: 'hub', path: groupPath, name: 'group', memberPaths: [memberA, virtualMember] }],
+      onFolderOpen: async (path) => {
         // The hook must see the complete materialized folder already on disk.
         expect((await stat(join(groupPath, '.git'))).isDirectory()).toBe(true);
         expect(await readFile(join(groupPath, 'AGENTS.md'), 'utf8')).toContain('member-a');
@@ -268,15 +268,15 @@ describe('RepoIndex.runOpenHooks() — materialization', () => {
     expect(order).toEqual([`hook:${groupPath}`]);
   });
 
-  it('leaves an existing project folder untouched', async () => {
+  it('leaves an existing hub folder untouched', async () => {
     const groupPath = join(tempDir, 'existing-group');
     await mkdir(groupPath, { recursive: true });
     await writeFile(join(groupPath, 'sentinel.txt'), 'keep me');
     const index = makeIndex();
     index.registerSource({
       id: 'src',
-      list: async () => [{ kind: 'project', path: groupPath, name: 'existing-group', memberPaths: [] }],
-      onProjectOpen: async () => {},
+      list: async () => [{ kind: 'hub', path: groupPath, name: 'existing-group', memberPaths: [] }],
+      onFolderOpen: async () => {},
     });
 
     await index.runOpenHooks(groupPath);
@@ -296,7 +296,7 @@ describe('RepoIndex.runOpenHooks()', () => {
     index.registerSource({
       id: 'a',
       list: async () => [],
-      onProjectOpen: async (path) => {
+      onFolderOpen: async (path) => {
         await new Promise((r) => setTimeout(r, 5));
         calls.push(`a:${path}`);
       },
@@ -304,7 +304,7 @@ describe('RepoIndex.runOpenHooks()', () => {
     index.registerSource({
       id: 'b',
       list: async () => [],
-      onProjectOpen: async (path) => calls.push(`b:${path}`),
+      onFolderOpen: async (path) => calls.push(`b:${path}`),
     });
 
     await index.runOpenHooks('/r/some-project');
@@ -317,14 +317,14 @@ describe('RepoIndex.runOpenHooks()', () => {
     index.registerSource({
       id: 'boom',
       list: async () => [],
-      onProjectOpen: async () => {
+      onFolderOpen: async () => {
         throw new Error('scaffold failed: unmounted volume');
       },
     });
     index.registerSource({
       id: 'never',
       list: async () => [],
-      onProjectOpen: async () => {
+      onFolderOpen: async () => {
         secondCalled = true;
       },
     });
@@ -333,7 +333,7 @@ describe('RepoIndex.runOpenHooks()', () => {
     expect(secondCalled).toBe(false);
   });
 
-  it('is a no-op when no source defines onProjectOpen', async () => {
+  it('is a no-op when no source defines onFolderOpen', async () => {
     const index = makeIndex();
     index.registerSource({ id: 'plain', list: async () => [] });
     await expect(index.runOpenHooks('/r/x')).resolves.toBeUndefined();
