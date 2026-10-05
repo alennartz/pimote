@@ -612,7 +612,11 @@ async function main() {
     );
     assert(westGit, 'hub is self-describing: git init ran in the hub folder');
     const westIgnore = await readFile(join(westDir, '.gitignore'), 'utf8').catch(() => '');
-    assert(westIgnore.split('\n').includes('alpha') && westIgnore.split('\n').includes('beta'), '.gitignore lists the member symlink names');
+    const westIgnoreLines = westIgnore.split('\n').filter(Boolean);
+    assert(
+      westIgnoreLines.includes('/alpha') && westIgnoreLines.includes('/beta'),
+      `.gitignore lists root-anchored member symlink patterns (got: ${JSON.stringify(westIgnoreLines)})`,
+    );
     const agentsMd = await readFile(join(westDir, 'AGENTS.md'), 'utf8');
     assert(/alpha/i.test(agentsMd) && /beta/i.test(agentsMd) && /agents\.md/i.test(agentsMd), 'AGENTS.md names both members and the AGENTS convention');
     const aGotHub = await probeA.waitForEvent('folders_changed', (e) => e.folders?.some((f) => f.path === westDir && (f.repos?.length ?? 0) === 2));
@@ -647,6 +651,106 @@ async function main() {
     // Re-create west over WS so the browser phase can observe it appearing
     // live via folders_changed (two-client sync in the browser direction).
     await probeB.send({ type: 'create_hub', name: 'west', root: rootA, memberPaths: [join(rootA, 'alpha'), join(rootA, 'beta')] });
+
+    // ============================================================
+    section('W — unscanned-cwd session fallback (classifyFolder)');
+    // ============================================================
+    // Sessions may live in cwds outside the scan roots (voice, takeover,
+    // session-replacement flows): list/open must work there and serve a
+    // synthetic folder row classified on the fly — without listing or
+    // curating the cwd merely because a session was opened in it.
+    const strayCode = join(sandboxHome, 'stray-code'); // no git, no marker
+    const strayPersona = join(sandboxHome, 'stray-persona'); // marker front matter
+    await mkdir(strayCode, { recursive: true });
+    await writePersona(strayPersona, 'Stray Persona', 'Persona outside the scan roots');
+    await seedSession(join(agentDir, 'sessions'), strayCode, 'Session in an unscanned cwd', 'Answer from the fallback.');
+
+    const straySessions = await probeA.send({ type: 'list_sessions', folderPath: strayCode });
+    assert(
+      straySessions.success === true && straySessions.data.sessions.some((s) => s.firstMessage === 'Session in an unscanned cwd'),
+      'list_sessions lists sessions in an unscanned cwd',
+    );
+
+    const codeOpen = await probeA.send({ type: 'open_session', folderPath: strayCode });
+    assert(codeOpen.success === true && Boolean(codeOpen.data?.sessionId), 'open_session succeeds in an unscanned plain cwd');
+    const codeOpened = await probeA.waitForEvent('session_opened', (e) => e.sessionId === codeOpen.data.sessionId);
+    const codeFolder = codeOpened?.folder;
+    assert(
+      codeFolder?.path === strayCode && codeFolder?.name === 'stray-code' && codeFolder?.nature === 'code' && codeFolder?.persona === undefined && codeFolder?.shortcutCount === 0,
+      'fallback folder row: basename name, code nature (no marker, no git), shortcutCount 0',
+    );
+    assert(
+      codeFolder?.favorite === false && codeFolder?.archived === false && codeFolder?.missing === false && Array.isArray(codeFolder?.tags) && codeFolder?.tags.length === 0,
+      'fallback folder row carries plain defaults (favorite/archived/missing false, tags empty)',
+    );
+
+    const personaOpen = await probeA.send({ type: 'open_session', folderPath: strayPersona });
+    assert(personaOpen.success === true && Boolean(personaOpen.data?.sessionId), 'open_session succeeds in an unscanned persona-marker cwd');
+    const personaOpened = await probeA.waitForEvent('session_opened', (e) => e.sessionId === personaOpen.data?.sessionId);
+    const personaFolder = personaOpened?.folder;
+    assert(
+      personaFolder?.nature === 'persona' &&
+        personaFolder?.name === 'stray-persona' &&
+        personaFolder?.persona?.name === 'Stray Persona' &&
+        personaFolder?.persona?.description === 'Persona outside the scan roots',
+      'fallback classifies the marker cwd as persona with its front-matter metadata',
+    );
+
+    const afterFallback = await probeA.send({ type: 'list_folders' });
+    assert(
+      !afterFallback.data.folders.some((f) => f.path === strayCode || f.path === strayPersona),
+      'unscanned cwds are never listed merely because a session was opened there',
+    );
+
+    // ============================================================
+    section('W — legacy registry read-compat (multiRepo → hubs)');
+    // ============================================================
+    // A registry.json written before the rename (legacy `multiRepo` key)
+    // must load unchanged — hub membership, overrides, and user tags all
+    // survive — and the next write persists the `hubs` key.
+    const registryPath = join(sandboxHome, '.local', 'state', 'pimote', 'projects', 'registry.json');
+    await mkdir(join(sandboxHome, '.local', 'state', 'pimote', 'projects'), { recursive: true });
+    await writeFile(
+      registryPath,
+      JSON.stringify(
+        {
+          version: 1,
+          overrides: {
+            [join(rootA, 'beta')]: { favorite: true },
+            [join(rootB, 'delta')]: { favorite: true, tags: ['legacy-tag'] },
+          },
+          multiRepo: [{ path: westDir, name: 'west', memberPaths: [join(rootA, 'alpha'), join(rootA, 'beta')] }],
+        },
+        null,
+        2,
+      ),
+    );
+    await stopPimote(child);
+    child = startPimote({ port, sandboxHome, agentDir, configPath, logPath });
+    await waitForListening(child, port, logPath);
+    probeA.close();
+    probeB.close();
+    probeA = new WsProbe(port, `pm-probe-a3-${randomUUID().slice(0, 8)}`);
+    probeB = new WsProbe(port, `pm-probe-b3-${randomUUID().slice(0, 8)}`);
+    await probeA.open();
+    await probeB.open();
+
+    const legacyList = await probeA.send({ type: 'list_folders' });
+    const legacyWest = legacyList.data?.folders?.find((f) => f.path === westDir);
+    assert(legacyWest?.nature === 'code' && legacyWest?.shortcutCount === 2 && legacyWest?.repos?.length === 2, 'legacy multiRepo hub loads: row, member repos, shortcut count');
+    const legacyDelta = legacyList.data?.folders?.find((f) => f.path === join(rootB, 'delta'));
+    assert(
+      legacyDelta?.favorite === true && legacyDelta?.tags?.includes('legacy-tag') && legacyDelta?.userTags?.includes('legacy-tag'),
+      'legacy overrides load: favorite and removable user tags',
+    );
+    assert(legacyList.data?.folders?.find((f) => f.path === join(rootA, 'beta'))?.favorite === true, 'existing favorite override survives the legacy document');
+
+    // The next mutation re-persists the document under the new `hubs` key.
+    const migrateResp = await probeA.send({ type: 'update_folder', folderPath: join(rootA, 'alpha'), addTags: ['migrated'] });
+    assert(migrateResp.success === true, 'curation mutation after legacy load succeeds');
+    const persisted = JSON.parse(await readFile(registryPath, 'utf8'));
+    assert(Array.isArray(persisted.hubs) && persisted.hubs.some((h) => h.path === westDir) && persisted.multiRepo === undefined, 'next write persists the hubs key (multiRepo retired)');
+    await probeA.send({ type: 'update_folder', folderPath: join(rootA, 'alpha'), removeTags: ['migrated'] });
 
     // ============================================================
     section('B — dashboard render (desktop): icons, personas, sparse scan');
@@ -1032,7 +1136,8 @@ async function main() {
       let replied = false;
       for (let i = 0; i < 90; i++) {
         await wait(1000);
-        const pong = await evalBrowser(`/PONG/i.test((document.querySelector('main') ?? document.body).innerText)`);
+        // Assistant text only — the user's own prompt contains "PONG".
+        const pong = await evalBrowser(`/PONG/i.test(Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' '))`);
         if (pong === true) {
           replied = true;
           break;
@@ -1065,15 +1170,14 @@ async function main() {
         await wait(1000);
         const state = await evalBrowser(
           `(() => {
-            const main = document.querySelector('main') ?? document.body;
-            const text = main.innerText;
-            const toolCall = Boolean(main.querySelector('[class*="tool"], details, pre')) && /pimote_list_folders/i.test(text);
-            return { toolCall, tail: text.slice(-400) };
+            const assistant = Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ');
+            const toolNames = Array.from(document.querySelectorAll('.tool-block .tool-name')).map((e) => e.textContent.trim());
+            return { toolCall: toolNames.includes('pimote_list_folders'), assistant, tail: document.body.innerText.slice(-400) };
           })()`,
         );
         if (state?.toolCall) sawToolCall = true;
         if (state && !state.tail.includes('Abort')) {
-          const numbers = state.tail.match(/\d+/g);
+          const numbers = String(state.assistant ?? '').match(/\d+/g);
           if (numbers?.length) answer = Number(numbers[numbers.length - 1]);
           if (answer !== null && (state.toolCall || i > 30)) break;
         }
@@ -1081,6 +1185,49 @@ async function main() {
       soft(sawToolCall, 'manager rendered a pimote_list_folders tool call', 'model chose not to call the tool');
       soft(answer === expectedCount, `manager answered the folder count (${answer} vs expected ${expectedCount})`, 'model reply unparseable or wrong');
       await browser(['screenshot', join(shotsDir, '08-manager-tool.png')], { allowFailure: true });
+    }
+
+    // ============================================================
+    section('B — manager tool use (pimote_folder_tree)');
+    // ============================================================
+    if (jetsonUsable) {
+      await ensureManagerMode();
+      await fillSelector(
+        'textarea[aria-label="Message the manager"]',
+        'Call the pimote_folder_tree tool now (it takes no arguments). After it returns, reply with ONLY the word TREEDONE, nothing else.',
+      );
+      await evalBrowser(`(() => { const b = document.querySelector('button[title="Send"]'); if (!b) return false; b.click(); return true; })()`);
+      let sawTreeCall = false;
+      let treeDone = false;
+      for (let i = 0; i < 90; i++) {
+        await wait(1000);
+        const state = await evalBrowser(
+          `(() => {
+            // Role-scoped: the user's own prompt names the tool and TREEDONE.
+            const assistant = Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ');
+            const toolNames = Array.from(document.querySelectorAll('.tool-block .tool-name')).map((e) => e.textContent.trim());
+            return { toolCall: toolNames.includes('pimote_folder_tree'), done: /TREEDONE/.test(assistant), tail: document.body.innerText.slice(-400) };
+          })()`,
+        );
+        if (state?.toolCall) sawTreeCall = true;
+        if (state?.done) {
+          treeDone = true;
+          break;
+        }
+        if (state && !state.tail.includes('Abort') && i > 30) break;
+      }
+      soft(sawTreeCall, 'manager rendered a pimote_folder_tree tool call', 'model chose not to call the tool');
+      soft(treeDone, 'manager answered from the folder tree (TREEDONE)', 'model reply unparseable or missing');
+      if (sawTreeCall) {
+        // Expand the tool block and look at the rendered result payload.
+        await evalBrowser(`(() => { const b = Array.from(document.querySelectorAll('.tool-block')).find((x) => x.querySelector('.tool-name')?.textContent.trim() === 'pimote_folder_tree'); if (!b) return false; b.querySelector('.tool-header')?.click(); return true; })()`);
+        await wait(300);
+        const shape = await evalBrowser(
+          `(() => { const b = Array.from(document.querySelectorAll('.tool-block')).find((x) => x.querySelector('.tool-name')?.textContent.trim() === 'pimote_folder_tree'); const t = b?.innerText ?? ''; return /occurrences/i.test(t) && /shortcut/i.test(t); })()`,
+        );
+        soft(shape, 'rendered tree tool output carries the occurrences/shortcut shape', 'result render collapsed or tool errored');
+      }
+      await browser(['screenshot', join(shotsDir, '08b-manager-tree.png')], { allowFailure: true });
     }
 
     // ============================================================
