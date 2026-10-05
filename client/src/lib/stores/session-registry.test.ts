@@ -239,6 +239,35 @@ describe('SessionRegistry', () => {
       expect(registry.sessions['s2'].gitBranch).toBe('feature/worktree');
       expect(registry.sessions['s3'].gitBranch).toBe('release');
     });
+
+    it('session_state_changed updates and clears the active session name', () => {
+      registry.addSession('s1', '/repo/app', 'app');
+      registry.sessions['s1'].sessionName = 'Previous name';
+
+      registry.handleEvent({
+        type: 'session_state_changed',
+        sessionId: 's1',
+        folderPath: '/repo/app',
+        liveStatus: 'working',
+        connectedClientId: null,
+        folderActiveSessionCount: 1,
+        folderActiveStatus: 'working',
+        sessionName: 'New name',
+      });
+      expect(registry.sessions['s1'].sessionName).toBe('New name');
+
+      registry.handleEvent({
+        type: 'session_state_changed',
+        sessionId: 's1',
+        folderPath: '/repo/app',
+        liveStatus: 'working',
+        connectedClientId: null,
+        folderActiveSessionCount: 1,
+        folderActiveStatus: 'working',
+        sessionName: '',
+      });
+      expect(registry.sessions['s1'].sessionName).toBeNull();
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -768,6 +797,33 @@ describe('SessionRegistry', () => {
       expect(session.conflictingRemoteSessions).toEqual([]);
       expect(session.bashExecutions).toEqual({});
       expect(session.lastBotActivityTimestamp).toBeNull();
+    });
+
+    it('full_resync clears widgetCards like panelCards (no ghost carry-over)', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const before = registry.sessions['s1'];
+      before.panelCards = [{ id: 'subagents:test-review', header: { title: 'test-review' } }];
+      before.widgetCards = { 'widget:status': { id: 'widget:status', header: { title: 'Status' }, body: [] } };
+
+      registry.handleEvent({
+        type: 'full_resync',
+        sessionId: 's1',
+        state: {
+          model: null,
+          thinkingLevel: 'default',
+          isStreaming: false,
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 's1',
+          autoCompactionEnabled: true,
+          messageCount: 0,
+        },
+        messages: [],
+      });
+
+      const session = registry.sessions['s1'];
+      expect(session.panelCards).toEqual([]);
+      expect(session.widgetCards).toEqual({});
     });
   });
 

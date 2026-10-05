@@ -611,7 +611,11 @@ export class SessionRegistry {
         rebuilt.isRestoring = session.isRestoring;
         // Don't carry over panelCards — server will send panel_update if panels are active.
         // Carrying over stale cards causes ghost panels after agent teardown + reconnect.
-        rebuilt.widgetCards = session.widgetCards;
+        // widgetCards get the same treatment: unlike panel cards there is no server-side
+        // widget snapshot that could correct stale entries, so carrying them over keeps
+        // ghost widgets alive forever (a clear emitted while this client was disconnected
+        // is unrecoverable). Extensions re-emit live widgets as setWidget events after a
+        // reset.
         rebuilt.model = state.model;
         rebuilt.thinkingLevel = state.thinkingLevel;
         rebuilt.availableThinkingLevels = state.availableThinkingLevels ?? [];
@@ -645,6 +649,9 @@ export class SessionRegistry {
 
       case 'session_state_changed': {
         const changed = event as SessionStateChangedEvent;
+        if (changed.sessionName !== undefined) {
+          session.sessionName = changed.sessionName || null;
+        }
         if (changed.gitBranch !== undefined) {
           for (const candidate of Object.values(this.sessions)) {
             if (candidate.folderPath === changed.folderPath) {

@@ -17,7 +17,7 @@ import type {
   PimoteTreeNode,
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome } from './session-manager.js';
-import { makeDownloadSnapshot, resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests } from './session-manager.js';
+import { makeDownloadSnapshot, resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests, requestSlotPanelResync } from './session-manager.js';
 import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
 import type { SessionRecords } from './session-records.js';
@@ -1426,6 +1426,11 @@ export class WsHandler {
     // Re-deliver any pending UI requests to the new client (recovers lost dialogs)
     replaySlotPendingUiRequests(slot);
     this.sendSilentDownloadSnapshot(slot);
+
+    // Ask extensions to re-project steady panel state: the panel snapshot sent on
+    // (re)connect reflects only the last emitted state and is empty after a server
+    // restart or session reopen.
+    requestSlotPanelResync(slot, 'claim');
   }
 
   /** Notify-only reaction to a session reset that the session manager has ALREADY
@@ -1465,6 +1470,10 @@ export class WsHandler {
       folder: await this.resolveFolderInfo(folderPath),
     });
     this.sendSilentDownloadSnapshot(slot);
+
+    // The rebuilt session state starts with an empty panel snapshot — ask the
+    // re-bound extensions to re-project steady state onto it.
+    requestSlotPanelResync(slot, 'reset');
 
     // Broadcast sidebar updates for both old (now inactive) and new (now active)
     WsHandler.broadcastSidebarUpdate(oldId, folderPath, this.sessionManager, this.clientRegistry);
@@ -1802,7 +1811,8 @@ export class WsHandler {
     let messageCount: number | undefined;
     if (slot) {
       const session = slot.session;
-      sessionName = session.sessionName || undefined;
+      // Empty string explicitly clears a previously displayed session name.
+      sessionName = session.sessionName ?? '';
       messageCount = session.messages.length;
       const firstUserMsg = session.messages.find((m) => m.role === 'user');
       if (firstUserMsg) {

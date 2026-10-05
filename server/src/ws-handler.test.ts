@@ -10,6 +10,7 @@ import type { FolderRegistry } from './folder-registry.js';
 import type { FolderCreator } from './folder-sources/index.js';
 import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer } from './event-buffer.js';
+import type { EventBusController } from '@earendil-works/pi-coding-agent';
 import type { DownloadItem, FolderInfo, PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
 
 describe('extension command context actions', () => {
@@ -72,6 +73,7 @@ function createMockSlot(
     session: any;
     panelState: Map<string, any>;
     downloads: DownloadItem[];
+    eventBus: EventBusController | null;
   }> = {},
 ): ManagedSlot {
   const id = overrides.id ?? 'session-1';
@@ -116,7 +118,7 @@ function createMockSlot(
   const slot: ManagedSlot = {
     runtime: { session: mockSession } as any,
     folderPath: overrides.folderPath ?? '/home/user/project',
-    eventBusRef: { current: null },
+    eventBusRef: { current: overrides.eventBus ?? null },
     connection,
     sessionState,
     get session() {
@@ -3130,6 +3132,27 @@ describe('WsHandler', () => {
     });
   });
 
+  describe('session name state broadcasts', () => {
+    it('sends an explicit empty name when a live session name is cleared', () => {
+      const slot = createMockSlot({ id: 'session-1', folderPath: '/home/user/project' });
+      (slot.session as any).sessionName = undefined;
+      const manager = createMockSessionManager(new Map([['session-1', slot]]));
+      const events: PimoteEvent[] = [];
+      const clients = new Map([
+        [
+          'client-1',
+          {
+            sendToClient: (event: PimoteEvent) => events.push(event),
+          } as any,
+        ],
+      ]) as unknown as ClientRegistry;
+
+      WsHandler.broadcastSidebarUpdate('session-1', '/home/user/project', manager, clients);
+
+      expect(findEvents(events, 'session_state_changed')).toMatchObject([{ sessionId: 'session-1', sessionName: '' }]);
+    });
+  });
+
   describe('get_commands', () => {
     function createSessionWithSources(opts: {
       skills?: Array<{ name: string; description: string }>;
@@ -4037,5 +4060,96 @@ describe('WsHandler', () => {
       expect(abort).not.toHaveBeenCalled();
       expect(findResponse(sent, 'bash-abort-1')).toMatchObject({ success: true });
     });
+  });
+});
+
+describe('panel resync requests', () => {
+  function createCapturingBus(): EventBusController & { emits: Array<{ channel: string; data: unknown }> } {
+    const emits: Array<{ channel: string; data: unknown }> = [];
+    return {
+      emits,
+      emit: (channel: string, data: unknown) => {
+        emits.push({ channel, data });
+      },
+      on: () => () => {},
+      clear: () => {},
+    };
+  }
+
+  it('emits pimote:panels:sync with reason "claim" when a client claims a session', async () => {
+    const bus = createCapturingBus();
+    const session = createMockSlot({ id: 'session-1', connectedClientId: 'client-1', eventBus: bus });
+    const sessions = new Map([['session-1', session]]);
+    const { handler } = createTestHandler('client-1', { sessions });
+
+    await handler.handleMessage(
+      JSON.stringify({
+        type: 'open_session',
+        folderPath: '/home/user/project',
+        sessionId: 'session-1',
+        id: 'req-claim',
+      }),
+    );
+
+    const syncs = bus.emits.filter((e) => e.channel === 'pimote:panels:sync');
+    expect(syncs).toHaveLength(1);
+    expect(syncs[0].data).toEqual({ reason: 'claim' });
+  });
+
+  it('emits pimote:panels:sync with reason "reset" after a session replacement rebinds extensions', async () => {
+    let capturedOnReset: (() => Promise<void>) | undefined;
+    const bus = createCapturingBus();
+    const mockAgentSession = {
+      sessionId: 'old-session',
+      subscribe: () => () => {},
+      dispose: () => {},
+      messages: [],
+      model: null,
+      thinkingLevel: 'default',
+      getAvailableThinkingLevels: () => [],
+      isStreaming: false,
+      isCompacting: false,
+      sessionFile: undefined,
+      sessionName: undefined,
+      autoCompactionEnabled: false,
+      bindExtensions: async (bindings: any) => {
+        if (bindings.commandContextActions) {
+          capturedOnReset = async () => {
+            mockAgentSession.sessionId = 'new-session';
+            await bindings.commandContextActions.newSession();
+          };
+        }
+      },
+      modelRuntime: { getAvailable: async () => [] },
+      clearQueue: () => ({ steering: [], followUp: [] }),
+      navigateTree: async () => ({ cancelled: false }),
+      sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
+    } as any;
+
+    const slot = createMockSlot({ id: 'old-session', session: mockAgentSession, connectedClientId: null, eventBus: bus });
+    (slot.runtime as any).newSession = async () => {
+      mockAgentSession.sessionId = 'new-session';
+      return { cancelled: false };
+    };
+
+    const sessions = new Map([['old-session', slot]]);
+    const { handler, sessionManager } = createTestHandler('my-client', { sessions });
+    (sessionManager as any).rebuildSessionState = (s: ManagedSlot) => {
+      s.sessionState = { ...s.sessionState, id: s.runtime.session.sessionId };
+    };
+
+    await handler.handleMessage(
+      JSON.stringify({
+        type: 'open_session',
+        folderPath: '/home/user/project',
+        sessionId: 'old-session',
+        id: 'req-open',
+      }),
+    );
+    expect(capturedOnReset).toBeDefined();
+    await capturedOnReset!();
+
+    const syncs = bus.emits.filter((e) => e.channel === 'pimote:panels:sync');
+    expect(syncs.map((s) => (s.data as { reason: string }).reason)).toEqual(['claim', 'reset']);
   });
 });

@@ -187,6 +187,15 @@ export async function routeSlotDownloadUpdate(update: DownloadUpdateEvent, optio
   }
 }
 
+/** Ask the extension side to re-project its steady panel state (ordinary
+ *  `pimote:panels` messages). Emitted when a client (re)claims a session or the
+ *  session state is reset: pimote's panel snapshot is in-memory and can be empty
+ *  or stale after a restart, and extension repaints are otherwise driven by state
+ *  transitions. Fire-and-forget; extensions that don't know the channel ignore it. */
+export function requestSlotPanelResync(slot: ManagedSlot, reason: 'claim' | 'reset'): void {
+  slot.eventBusRef.current?.emit('pimote:panels:sync', { reason });
+}
+
 /** Create a pending promise for a UI dialog response. Stores the request event for replay on reconnect. */
 export function waitForSlotUiResponse(slot: ManagedSlot, requestId: string, requestEvent: PimoteEvent): Promise<unknown> {
   return new Promise<unknown>((resolve) => {
@@ -263,6 +272,11 @@ export function createSessionState(
     if (event.type === 'agent_start' && state.status !== 'working') {
       state.status = 'working';
       state.idleSince = null;
+      callbacks.onStatusChange?.(sessionId, folderPath);
+    } else if (event.type === 'session_info_changed') {
+      // Session names are part of the sidebar/session metadata snapshot rather
+      // than a streamed conversation event. Broadcast that snapshot immediately
+      // so the active title and folder session row both stay current.
       callbacks.onStatusChange?.(sessionId, folderPath);
     } else if (event.type === 'agent_end' && !event.willRetry) {
       // Content/attempt-boundary work that must run at `agent_end`, NOT at the

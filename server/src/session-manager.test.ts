@@ -153,6 +153,38 @@ describe('session lifecycle idle boundary', () => {
     expect(sendEvent.mock.calls.map(([event]) => event.type)).toEqual(['agent_start', 'agent_end', 'agent_settled']);
   });
 
+  it('notifies sidebar listeners immediately when session info changes', () => {
+    let listener: ((event: any) => void) | undefined;
+    const session = {
+      sessionId: 'name-change-test',
+      sessionName: 'New name',
+      isStreaming: true,
+      messages: [],
+      subscribe: vi.fn((fn: (event: any) => void) => {
+        listener = fn;
+        return vi.fn();
+      }),
+    } as any;
+    const onStatusChange = vi.fn();
+
+    createSessionState(
+      session,
+      { on: vi.fn(() => vi.fn()) } as any,
+      createTestConfig(),
+      {
+        onStatusChange,
+        sendEvent: vi.fn(),
+        notify: vi.fn(async () => {}),
+      },
+      { slot: createFakeSlot({ id: 'name-change-test' }) },
+      '/home/user/project',
+    );
+
+    listener!({ type: 'session_info_changed', name: 'New name' });
+
+    expect(onStatusChange).toHaveBeenCalledExactlyOnceWith('name-change-test', '/home/user/project');
+  });
+
   it('does not emit a second idle transition for duplicate settle events', () => {
     let listener: ((event: any) => void) | undefined;
     const session = {
