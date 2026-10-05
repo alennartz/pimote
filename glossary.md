@@ -40,6 +40,10 @@ _Avoid_: reference, link
 **Occurrence**:
 One place in the sparse tree where an entry appears. Occurrences share the entry's identity.
 
+**Hub**:
+A code folder that composes other code folders: one top-level symlink per member repo, its own `git init` + `.gitignore`, and a generated `AGENTS.md` naming the members. Its member symlinks surface as shortcut occurrences; disbanding deletes only the hub folder, never the members.
+_Avoid_: multi-repo project
+
 **Agent instructions file**:
 The user-level `~/.pi/agent/AGENTS.md` file that supplies instructions to pi agents.
 _Avoid_: project instructions (ambiguous with a code folder's AGENTS.md)
@@ -57,6 +61,7 @@ _Avoid_: tag template
 - A **scan root** anchors discovery: folders are **skipped** until **included** as a **code folder** or **persona folder**
 - A **persona folder**'s `AGENTS.md` is an agent definition — **persona marker** front matter plus persona prompt body
 - A **shortcut** adds **occurrences** of an entry, never new entries; identity is the canonical path
+- A **hub** is an ordinary code folder the folder model discovers like any other; its shortcuts point at its members
 - A **persona folder** persists by leaving artifacts in its own folder; conversations are ephemeral
 
 ## Flagged ambiguities

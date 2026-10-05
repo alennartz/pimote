@@ -179,7 +179,7 @@ export interface SessionReplacedEvent {
   type: 'session_replaced';
   oldSessionId: string;
   newSessionId: string;
-  folder: ProjectInfo;
+  folder: FolderInfo;
 }
 ```
 

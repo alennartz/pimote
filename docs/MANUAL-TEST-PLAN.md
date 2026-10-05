@@ -13,7 +13,7 @@
 2. [TP-01: Server Startup & Configuration](#tp-01-server-startup--configuration)
 3. [TP-02: HTTP Server & Static File Serving](#tp-02-http-server--static-file-serving)
 4. [TP-03: WebSocket Connection Lifecycle](#tp-03-websocket-connection-lifecycle)
-5. [TP-04: Project & Session Browsing (Dashboard)](#tp-04-project--session-browsing-dashboard)
+5. [TP-04: Folder & Session Browsing (Dashboard)](#tp-04-folder--session-browsing-dashboard)
 6. [TP-05: Session Lifecycle (Open / Close / Reap)](#tp-05-session-lifecycle-open--close--reap)
 7. [TP-06: Conversation — Prompt, Bang Bash, Steer, Follow-Up, Abort](#tp-06-conversation--prompt-bang-bash-steer-follow-up-abort)
 8. [TP-07: Real-Time Streaming & Message Rendering](#tp-07-real-time-streaming--message-rendering)
@@ -201,7 +201,7 @@
 
 - **[P]** Server is running
 - **[S]** Open client in browser
-- **[E]** Dashboard shows the connected state: while disconnected the project list reads "Connecting to server…" with controls disabled; once connected the list loads and the **New session** button enables
+- **[E]** Dashboard shows the connected state: while disconnected the folder list reads "Connecting to server…" with controls disabled; once connected the list loads and the **New session** button enables
 - **[E]** `connection.status` transitions: `disconnected` → `connecting` → `connected`
 - **[E]** WebSocket URL includes `?clientId=<uuid>` query parameter (persisted in localStorage; generated via `crypto.randomUUID()` on first visit, reused on subsequent visits)
 
@@ -296,60 +296,61 @@
 
 ---
 
-## TP-04: Project & Session Browsing (Dashboard)
+## TP-04: Folder & Session Browsing (Dashboard)
 
-The dashboard's projects column lists every discovered project; expand a row to see its sessions. Curation (favorites, ordering, archive), multi-repo hub projects, and the manager agent have dedicated coverage in journey 12 of the persistent manual-test plan ([tools/manual-test/PLAN.md](../tools/manual-test/PLAN.md)).
+The dashboard's folders column lists every discovered folder; expand a row to see its sessions. Curation (favorites, archive), hub folders, and the manager agent have dedicated coverage in journey 12 of the persistent manual-test plan ([tools/manual-test/PLAN.md](../tools/manual-test/PLAN.md)).
 
-### TC-04.01 — Project list loads on connection 🔴
+### TC-04.01 — Folder list loads on connection 🔴
 
-- **[P]** Roots contain git repos
+- **[P]** Roots contain git repos and persona folders
 - **[S]** Open client; observe the dashboard
-- **[E]** Project list populates with projects from all configured roots (plus any project sources)
-- **[E]** Each project shows its `name` (directory basename); hub projects also show member repo chips with branch and dirty dot
+- **[E]** Folder list populates with folders from all configured roots (plus any folder sources)
+- **[E]** Each folder shows its display name (persona name for persona folders, directory basename otherwise) and one of four nature icons (code, code-hub, persona, persona-hub — selected by `nature` × `shortcutCount > 0`); hub folders also show member repo chips with branch and dirty dot
+- **[E]** Each row carries FolderInfo defaults: `favorite: false`, `archived: false`, `tags: []`, `missing: false`, `shortcutCount`, `persona` iff `nature === 'persona'`
 
 ### TC-04.02 — Empty root directory 🟡
 
-- **[P]** One root exists but contains no project directories
-- **[S]** Load project list
-- **[E]** That root contributes no projects; no error
+- **[P]** One root exists but contains no folders of interest
+- **[S]** Load folder list
+- **[E]** That root contributes no folders; no error
 
 ### TC-04.03 — Inaccessible root directory 🟡
 
 - **[P]** One root path does not exist or has no read permission
-- **[S]** Load project list
+- **[S]** Load folder list
 - **[E]** Server logs warning; other roots still scanned; no crash
 
-### TC-04.04 — Non-repo directories filtered out 🟡
+### TC-04.04 — Skipped folders filtered out (sparse scan) 🟡
 
-- **[P]** A root contains subdirectories without `.git`
-- **[S]** Load project list
-- **[E]** Those directories do not appear; discovery is recursive to three levels below each root (skipping `node_modules`, `dist`, `build`, `target`, `.venv`)
+- **[P]** A root contains plain subdirectories without `.git` and without persona marker front matter
+- **[S]** Load folder list
+- **[E]** Those directories do not appear; discovery descends through them (skipped structure collapses into reach paths) and surfaces included folders at any depth — there is no depth bound; `node_modules`, `dist`, `build`, `target`, `.venv` are pruned; included folders stop descent
 
-### TC-04.05 — Project active enrichment 🟠
+### TC-04.05 — Folder active enrichment 🟠
 
-- **[P]** Open a session for project A (currently working), project B (idle), no session for project C
-- **[S]** Reload project list
-- **[E]** Projects A and B: `activeSessionCount: 1` and the active dot renders; project C: `activeSessionCount: 0`, no dot
+- **[P]** Open a session for folder A (currently working), folder B (idle), no session for folder C
+- **[S]** Reload folder list
+- **[E]** Folders A and B: `activeSessionCount: 1` and the active dot renders; folder C: `activeSessionCount: 0`, no dot
 - **[E]** Session rows carry `liveStatus` (`working` / `idle`) and `isOwnedByMe` enrichment
 
-### TC-04.06 — Attention status not shown on the project row 🟡
+### TC-04.06 — Attention status not shown on the folder row 🟡
 
 - **[P]** Session B has `needsAttention = true` (agent finished while not viewed)
-- **[S]** Reload project list
-- **[E]** The project row shows no attention marker — attention surfaces via notifications and the active session bar, not the projects column
+- **[S]** Reload folder list
+- **[E]** The folder row shows no attention marker — attention surfaces via notifications and the active session bar, not the folders column
 
 ### TC-04.07 — Session list for a folder 🔴
 
-- **[P]** Project has 3+ pi sessions
-- **[S]** Click/expand the project row in the dashboard
+- **[P]** Folder has 3+ pi sessions
+- **[S]** Click/expand the folder row in the dashboard
 - **[E]** Lists sessions with: id, name (if set), created date, modified date, message count, first message preview
 - **[E]** Sessions sorted by modified date (most recent first, or per SDK ordering)
 - **[E]** Each session enriched with `isOwnedByMe` (true if this client owns the live session) and `liveStatus` (working/idle/null if not managed)
 
 ### TC-04.08 — Session list for folder with no sessions 🟡
 
-- **[P]** Project exists but has no pi sessions
-- **[S]** Click/expand the project
+- **[P]** Folder exists but has no pi sessions
+- **[S]** Click/expand the folder
 - **[E]** Empty session list; no error
 
 ### TC-04.09 — Click session to open 🔴
@@ -360,59 +361,59 @@ The dashboard's projects column lists every discovered project; expand a row to 
 
 ### TC-04.10 — Open new session (no existing session selected) 🔴
 
-- **[P]** Project row visible
-- **[S]** Click the project's "+" (new session) action
-- **[E]** New session created for that project; conversation view shows empty state
+- **[P]** Folder row visible
+- **[S]** Click the folder's "+" (new session) action
+- **[E]** New session created for that folder; conversation view shows empty state
 
-### TC-04.11 — Create new project from session picker 🟠
+### TC-04.11 — Create new folder from session picker 🟠
 
 - **[P]** At least one root configured; "New session" dialog open
-- **[S]** Click "Create new project" button at the bottom of the project picker dialog
+- **[S]** Click "Create new folder" button at the bottom of the folder picker dialog
 - **[S]** If multiple roots configured: select a root from the list. If single root: skip to name entry.
-- **[S]** Enter a project name and click "Create"
+- **[S]** Enter a folder name and click "Create"
 - **[E]** `create_folder` command sent with `root` and `name`
 - **[E]** Server creates directory at `<root>/<name>` and runs `git init`
-- **[E]** Project list refreshes to include the new project
-- **[E]** A new session opens in the created project
+- **[E]** Folder list refreshes to include the new folder
+- **[E]** A new session opens in the created folder
 
-### TC-04.12 — Create project with invalid name 🟡
+### TC-04.12 — Create folder with invalid name 🟡
 
-- **[P]** Create project dialog is at the name entry step
+- **[P]** Create folder dialog is at the name entry step
 - **[S]** Enter a name containing `/` or `\`, or enter `.` or `..`, or leave it empty
 - **[E]** Validation error displayed inline; no command sent to server
 
-### TC-04.13 — Create project with duplicate name 🟡
+### TC-04.13 — Create folder with duplicate name 🟡
 
-- **[P]** A project directory already exists at the target path
-- **[S]** Enter the existing project's name and click "Create"
+- **[P]** A folder directory already exists at the target path
+- **[S]** Enter the existing folder's name and click "Create"
 - **[E]** Server returns error: "Directory already exists"
 - **[E]** Error displayed in the dialog; dialog remains open for correction
 
-### TC-04.14 — Create project with invalid root 🟡
+### TC-04.14 — Create folder with invalid root 🟡
 
 - **[P]** (Via raw WS) Send `create_folder` with a `root` that is not in the configured roots
-- **[E]** Response: `success: false, error: "Root is not a configured project root"`
+- **[E]** Response: `success: false, error: "Root is not a configured scan root"`
 
-### TC-04.15 — Create project button hidden when no roots 🟡
+### TC-04.15 — Create folder button hidden when no roots 🟡
 
-- **[P]** `list_projects` returned no roots (edge case)
+- **[P]** `list_folders` returned no roots (edge case)
 - **[S]** Open "New session" dialog
-- **[E]** "Create new project" button is not shown
+- **[E]** "Create new folder" button is not shown
 
-### TC-04.16 — Create project with single root skips root selection 🟡
+### TC-04.16 — Create folder with single root skips root selection 🟡
 
 - **[P]** Config has exactly one root directory
-- **[S]** Click "Create new project"
+- **[S]** Click "Create new folder"
 - **[E]** Dialog skips root selection and goes directly to the name entry step
 - **[E]** The selected root is shown in the dialog description
 
-### TC-04.17 — Create project back navigation 🟡
+### TC-04.17 — Create folder back navigation 🟡
 
 - **[P]** Multiple roots configured; currently on name entry step
 - **[S]** Click "Back"
 - **[E]** Returns to root selection step
 - **[S]** Click "Back" again
-- **[E]** Returns to the project picker list
+- **[E]** Returns to the folder picker list
 
 ---
 
@@ -1009,7 +1010,7 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[P]** An external `pi` process is running in the target folder (started via terminal)
 - **[S]** Open a session for that folder
 - **[E]** `session_conflict` event received with `processes` list of `{ pid, command }` entries
-- **[E]** Conflict banner appears: "External pi processes detected in this project."
+- **[E]** Conflict banner appears: "External pi processes detected in this folder."
 - **[E]** Two buttons: "Kill & Continue", "Dismiss"
 
 ### TC-12.01a — Remote pimote session conflict detected on session open 🟠
@@ -1275,14 +1276,14 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 ### TC-16.01 — Desktop layout 🟠
 
 - **[S]** Open on desktop browser (>768px width)
-- **[E]** Dashboard shows the projects column beside the manager chat, side by side
+- **[E]** Dashboard shows the folders column beside the manager chat, side by side
 - **[E]** No mobile manager button or sheet
 - **[E]** Conversation fills remaining width (unless an extension panel is active — see [TP-16a](#tp-16a-extension-panel-system))
 
 ### TC-16.02 — Mobile layout 🟠
 
 - **[S]** Open on phone or narrow browser (<768px)
-- **[E]** Projects list is fullscreen; the manager chat is hidden
+- **[E]** Folders list is fullscreen; the manager chat is hidden
 - **[S]** Tap the floating Manager button (bottom right)
 - **[E]** Manager chat opens as a fullscreen sheet with a dark backdrop
 - **[S]** Tap the backdrop or the X button
@@ -1294,10 +1295,10 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[S]** Press Escape
 - **[E]** Sheet closes
 
-### TC-16.04 — Project list fullscreen on mobile landing 🟡
+### TC-16.04 — Folder list fullscreen on mobile landing 🟡
 
 - **[P]** No session selected, mobile viewport
-- **[E]** Project list fills the main content area; opening a session replaces it with the conversation view
+- **[E]** Folder list fills the main content area; opening a session replaces it with the conversation view
 
 ### TC-16.05 — ActiveSessionBar on mobile 🟠
 

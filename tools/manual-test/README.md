@@ -354,20 +354,29 @@ UN_SHOTS=/tmp/update-notification-shots node tools/manual-test/update-notificati
 
 ### project-management-smoke
 
-**Purpose:** Exercise the project-management dashboard end-to-end (the
-`project-management` topic). Boots a real pimote server in an isolated HOME
-against a fabricated two-root project tree (nested repos at depth 2/3, a
-depth-4 negative fixture, a dirty repo, named branches, a fabricated pi
-session), seeds a local model via `PI_CODING_AGENT_DIR` for the manager LLM,
-and drives the real PWA via `agent-browser` plus a second WebSocket probe
-client. Covers: discovery shape and depth bound, `update_project` /
-`projects_changed` two-client sync (both directions), hub create/disband
-round-trips with on-disk symlink + AGENTS.md assertions, favorites, manual
-ordering, archive/show-archived, create-project (mkdir + git init),
-resume of an existing session, the active-session dot, dashboard search, the
-manager chat (streamed reply, `pimote_list_projects` tool use, abort,
-ephemeral reset on reconnect), the missing-member warning chip, and the
-mobile manager affordance.
+**Purpose:** Exercise the folder-management dashboard end-to-end (the
+`project-management` topic, folder-model vocabulary). Boots a real pimote
+server in an isolated HOME against a fabricated two-root folder tree (nested
+entries at arbitrary depth beneath a _skipped_ wrapper — never inside
+included git repos, a dirty repo, named branches, two persona folders via
+`AGENTS.md` marker front matter, a shortcut-linked external repo via a
+top-level out-of-tree symlink, a fabricated pi session), plus a folder-source
+fixture module (missing repo entry provisioned by its `onFolderOpen` hook and
+an unopened hub entry). Seeds a local model via `PI_CODING_AGENT_DIR` for the
+manager LLM, and drives the real PWA via `agent-browser` plus a second
+WebSocket probe client. Covers: sparse discovery shape (no depth bound,
+skipped wrappers collapse into reach paths), FolderInfo defaults
+(nature/persona/shortcutCount/missing/repos?/userTags?) and the four row icon
+variants (code, code-hub, persona, persona-hub), `update_folder` /
+`folders_changed` two-client sync (both directions), hub create/disband
+round-trips with on-disk symlink + `git init` + `.gitignore` + `AGENTS.md`
+assertions, source-contributed tags and the `onFolderOpen` provisioning hook,
+favorites (favorites-first ordering), archive/show-archived, create-folder
+(mkdir + git init), resume of an existing session, the active-session dot,
+dashboard and picker search (persona display names included), the manager
+chat (streamed reply, `pimote_list_folders` tool use, abort, ephemeral reset
+on reconnect), the missing-member warning chip, and the mobile manager
+affordance.
 
 **Location:** `tools/manual-test/project-management-smoke/project-management-smoke.mjs`
 

@@ -388,7 +388,7 @@ Update `tools/manual-test/project-management-smoke/project-management-smoke.mjs`
 Refresh stale `codemap.md` ownership/responsibilities for folder-model/, session-records.ts, folder-registry.ts, FolderList/folder-store, sparse scanning, and the restored Android naming alignment. Update README's dashboard/discovery/config/hub description (no depth-three claim, no reordering feature claim); keep SDK compatibility documentation aligned with Step 8. Maintain glossary's existing code/persona/shortcut terms. Do not edit external `product-manager/AGENTS.md` or root its lifecycle here: the brainstorm's bootstrap note is not a repository implementation interface.
 
 **Verify:** the documented sandboxed smoke driver passes with the new wire surface; source fixtures match the selected SDK variant. `rg` checks find no stale live curated-project commands/types/imports, except deliberately retained compatibility seams, historical DRs, and historical artifacts. Codemap points to existing renamed files.
-**Status:** not started
+**Status:** done
 
 ### Step 14: Record the decision and validate the slice
 

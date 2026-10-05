@@ -20,9 +20,10 @@ items that must be exercised each run even if only by a human.
 
 **What:** PWA connects to the pimote server; the **dashboard** (the landing
 surface since the `project-management` topic removed the sidebar) lists
-discovered projects (`list_projects`), the user starts a new session from a
-project row (or creates/resumes one), session metadata appears in the
-active-session bar, and closing the viewed session returns to the dashboard.
+discovered folders (`list_folders` — code and persona folders over the sparse
+folder model), the user starts a new session from a folder row (or
+creates/resumes one), session metadata appears in the active-session bar, and
+closing the viewed session returns to the dashboard.
 
 **Why:** Entry point for every other journey. If this breaks, everything
 breaks.
@@ -241,17 +242,23 @@ LLM/tool turn. Focused/background push planning and inbox-adoption contracts
 are covered by the client unit tests; OS Web Push delivery remains
 environment-bounded in headless Chromium.
 
-## 12. Dashboard: projects, hubs, and manager
+## 12. Dashboard: folders, hubs, and manager
 
 **What:** The dashboard is the product home (the `project-management`
-topic): the projects list renders every discovered repo (recursive discovery
-to depth 3) with favorites, manual ordering, archive/show-archived, inline
-expansion of per-project sessions, and repo status chips (branch + dirty dot)
-on multi-repo hub projects; the hub dialog composes a project from indexed
-repos (server creates symlink hub + AGENTS.md) and disband removes it;
-`projects_changed` keeps two clients in sync in both directions; the manager
-chat prompts a per-connection ephemeral agent whose pimote toolset answers
-over real server APIs, with abort and transcript reset on reconnect.
+topic): the folders list renders every discovered folder — sparse discovery
+with no depth bound (nested entries under skipped wrappers surface at any
+depth; included folders stop descent) — with a code/persona nature icon in
+four variants (code, code-hub, persona, persona-hub by nature ×
+shortcutCount), favorites, archive/show-archived, inline expansion of
+per-folder sessions, and repo status chips (branch + dirty dot) on hub
+folders; the hub dialog composes a hub folder from indexed repos (server
+creates the symlink hub + `git init` + `.gitignore` + generated `AGENTS.md`)
+and disband removes it; `folders_changed` keeps two clients in sync in both
+directions; folder sources contribute repo/hub entries (missing ones
+provision via `onFolderOpen` at open time); the manager chat prompts a
+per-connection ephemeral agent whose pimote toolset (`pimote_list_folders`,
+`pimote_folder_tree`, …) answers over real server APIs, with abort and
+transcript reset on reconnect.
 
 **Why:** This replaced the sidebar as the primary navigation surface; hubs
 are the multi-repo model; the manager is the dashboard's second half.

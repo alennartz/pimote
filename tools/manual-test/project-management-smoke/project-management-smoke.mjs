@@ -1,17 +1,24 @@
 #!/usr/bin/env node
-// End-to-end smoke for the project-management topic (dashboard, multi-repo projects, manager).
+// End-to-end smoke for the folder-management topic (dashboard, hubs, manager).
 //
 // Boots the real pimote server in an isolated HOME against a fabricated
-// multi-root project tree (nested repos, a dirty repo, named branches, a
+// multi-root folder tree (nested entries beneath skipped wrappers, persona
+// folders, a shortcut-linked external repo, a dirty repo, named branches, a
 // fabricated pi session), seeds a local model via PI_CODING_AGENT_DIR for the
 // manager LLM, and drives the real PWA with agent-browser plus a second
-// WebSocket probe client (two-client `projects_changed` sync).
+// WebSocket probe client (two-client `folders_changed` sync).
+//
+// Discovery semantics under test: sparse scan with no depth bound (nested
+// entries under SKIPPED wrappers are discovered, never inside included git
+// repos), personas via AGENTS.md marker front matter, shortcuts via top-level
+// out-of-tree symlinks of included folders, and FolderInfo defaults
+// (nature/persona/shortcutCount/missing/repos?/userTags?).
 //
 // Optional environment variables:
 //   PM_SHOTS=/tmp/dir  keep coherence screenshots outside the disposable sandbox
 //   PM_KEEP=1          keep the sandbox even on a passing run
 
-import { copyFile, mkdir, mkdtemp, readFile, readlink, rm, stat, writeFile, appendFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile, appendFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -78,6 +85,13 @@ async function gitInit(dir, branch, { dirty = false, commit = true } = {}) {
   if (dirty) await writeFile(join(dir, 'dirty.txt'), 'uncommitted\n');
 }
 
+/** Persona folder: AGENTS.md opening with YAML front matter (string `name:` key). */
+async function writePersona(dir, name, description) {
+  await mkdir(dir, { recursive: true });
+  const front = ['---', `name: ${name}`, `description: ${description}`, '---'].join('\n');
+  await writeFile(join(dir, 'AGENTS.md'), `${front}\nYou are ${name}, a fixture persona.\n`);
+}
+
 async function seedSession(sessionsRoot, projectDir, userText, assistantText) {
   const sessionId = randomUUID();
   const sessionsDir = sessionsRoot;
@@ -117,6 +131,49 @@ async function seedSession(sessionsRoot, projectDir, userText, assistantText) {
   ];
   await writeFile(join(sessionDir, filename), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   return sessionId;
+}
+
+/**
+ * Folder-source fixture module (folder vocabulary — the `@pimote/sdk/folders`
+ * seam: FolderSource.list() contributes `{ kind: 'repo' }` / `{ kind: 'hub' }`
+ * entries, `onFolderOpen(folderPath)` provisions before any open). Written as
+ * plain .mjs with JSDoc type references so the loader needs no workspace
+ * resolution from the sandbox.
+ */
+function folderSourceModule({ repoDir, hubDir, memberPath, hookLog }) {
+  return `// Smoke fixture folder source — @pimote/sdk/folders vocabulary.
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
+const execFile = promisify(execFileCb);
+
+const REPO = ${JSON.stringify(repoDir)};
+const HUB = ${JSON.stringify(hubDir)};
+const MEMBER = ${JSON.stringify(memberPath)};
+const HOOK_LOG = ${JSON.stringify(hookLog)};
+
+/** @type {import('@pimote/sdk/folders').FolderSource} */
+const smokeSource = {
+  id: 'smoke-source',
+  async list() {
+    /** @type {import('@pimote/sdk/folders').SourceEntry[]} */
+    return [
+      { kind: 'repo', path: REPO, name: 'source-repo', branch: null, dirty: false, ahead: 0, behind: 0, tags: ['from-source'] },
+      { kind: 'hub', path: HUB, name: 'kiwi', memberPaths: [MEMBER] },
+    ];
+  },
+  /** Open hook: self-filter by path, scaffold the missing repo entry. */
+  async onFolderOpen(folderPath) {
+    await appendFile(HOOK_LOG, folderPath + '\\n');
+    if (folderPath === REPO) {
+      await mkdir(REPO, { recursive: true });
+      await execFile('git', ['-C', REPO, 'init', '-b', 'main']);
+      await writeFile(REPO + '/README.md', '# source-repo\\n');
+    }
+  },
+};
+export const sources = [smokeSource];
+`;
 }
 
 // ------------------------------------------------------------------ server
@@ -301,10 +358,78 @@ async function wait(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// --------------------------------------------------------------- ui helpers
+
+/** Text content of a folder row (icon label, name/subtitle, chips, badges). */
+async function rowText(path) {
+  return String(
+    await evalBrowser(`(() => {
+      const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(path)} + '"]');
+      return s?.closest('.group')?.textContent ?? '';
+    })()`),
+  );
+}
+
+/** Row icon variant: code | code-hub | persona | persona-hub. */
+async function rowIcon(path) {
+  return await evalBrowser(`(() => {
+    const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(path)} + '"]');
+    return s?.closest('button')?.querySelector('svg[data-folder-icon]')?.getAttribute('data-folder-icon') ?? null;
+  })()`);
+}
+
+/** Open the row context menu (long-press / right-click surface). */
+async function openRowMenu(path) {
+  const opened = await evalBrowser(`(() => {
+    const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(path)} + '"]');
+    const trigger = s?.closest('.group');
+    if (!trigger) return false;
+    const rect = trigger.getBoundingClientRect();
+    trigger.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: rect.left + 24, clientY: rect.top + 12 }));
+    return true;
+  })()`);
+  await wait(400);
+  return opened === true;
+}
+
+/** Click a context/dropdown menu item by its text. */
+async function clickMenuItem(text) {
+  const clicked = await evalBrowser(`(() => {
+    const item = Array.from(document.querySelectorAll('[role="menuitem"], [data-slot="context-menu-item"], [data-slot="dropdown-menu-item"]')).find((i) => i.textContent?.trim().includes(${JSON.stringify(text)}));
+    if (!item) return false;
+    item.click();
+    return true;
+  })()`);
+  await wait(500);
+  return clicked === true;
+}
+
+/** Click a dialog button whose trimmed text matches exactly. */
+async function clickDialogButton(text) {
+  const clicked = await evalBrowser(`(() => {
+    const btns = Array.from(document.querySelectorAll('[role="dialog"] button')).filter((b) => b.textContent?.trim() === ${JSON.stringify(text)});
+    if (!btns.length) return false;
+    btns.at(-1).click();
+    return true;
+  })()`);
+  await wait(500);
+  return clicked === true;
+}
+
+/** Put the one-box toolbar into manager mode (its composer replaces search). */
+async function ensureManagerMode() {
+  const ready = await evalBrowser(`Boolean(document.querySelector('textarea[aria-label="Message the manager"]'))`);
+  if (ready !== true) {
+    await evalBrowser(`(() => { const b = document.querySelector('button[aria-label="Switch to the manager"]'); if (!b) return false; b.click(); return true; })()`);
+    await wait(300);
+  }
+  return (await evalBrowser(`Boolean(document.querySelector('textarea[aria-label="Message the manager"]'))`)) === true;
+}
+
 // -------------------------------------------------------------------- main
 
 async function main() {
-  console.log('[pm-smoke] project-management dashboard/multi-repo-project/manager smoke');
+  console.log('[pm-smoke] folder-management dashboard/hub/manager smoke');
   const sandboxHome = await mkdtemp(join(tmpdir(), 'project-management-smoke-'));
   const configDir = join(sandboxHome, '.config', 'pimote');
   await mkdir(configDir, { recursive: true });
@@ -323,20 +448,40 @@ async function main() {
     jetsonUsable = false;
   }
 
-  // --- Project tree.
+  // --- Folder tree (two configured roots + one external dir outside them).
+  //     gamma is a SKIPPED wrapper (no marker, no .git): nested entries under
+  //     it are discovered at any depth — there is no depth bound. Included
+  //     git repos stop descent, so no fixture nests repos inside them.
   const rootA = join(sandboxHome, 'projects');
   const rootB = join(sandboxHome, 'work');
+  const externalDir = join(sandboxHome, 'external'); // outside the scan roots
   await gitInit(join(rootA, 'alpha'), 'main');
   await gitInit(join(rootA, 'beta'), 'main', { dirty: true });
   await gitInit(join(rootA, 'gamma', 'lib'), 'main');
   await gitInit(join(rootA, 'gamma', 'sub', 'deep-repo'), 'main');
-  await gitInit(join(rootA, 'gamma', 'sub', 'deeper', 'deepest'), 'main'); // depth 4 — must NOT be discovered
+  await gitInit(join(rootA, 'gamma', 'sub', 'deeper', 'deepest'), 'main'); // deep under a skipped wrapper — discovered
   await gitInit(join(rootB, 'delta'), 'feature/zebra');
+  await gitInit(join(externalDir, 'charlie'), 'main'); // external repo, reached via shortcut
+  await writePersona(join(rootA, 'omega'), 'Omega', 'Fixture persona without shortcuts');
+  await writePersona(join(rootA, 'sigma'), 'Sigma Persona', 'Fixture persona with a shortcut');
+  await symlink(join(externalDir, 'charlie'), join(rootA, 'sigma', 'ext')); // top-level out-of-tree symlink → shortcut
   await seedSession(join(agentDir, 'sessions'), join(rootA, 'alpha'), 'What is the launch checklist?', '1. Fuel the rocket. 2. Wake the manager.');
+
+  // --- Folder-source fixture (SDK folder vocabulary): a missing repo entry
+  //     provisioned by its onFolderOpen hook (under a scan root, so the next
+  //     scan flips its missing state), plus a hub entry that pimote would
+  //     materialize on open (never opened here).
+  const sourceRepoDir = join(rootB, 'source-repo');
+  const sourceHubDir = join(externalDir, 'kiwi');
+  const hookLog = join(sandboxHome, 'folder-source-hooks.log');
+  const sourcesDir = join(sandboxHome, 'folder-sources');
+  await mkdir(sourcesDir, { recursive: true });
+  await writeFile(join(sourcesDir, 'smoke-folder-source.mjs'), folderSourceModule({ repoDir: sourceRepoDir, hubDir: sourceHubDir, memberPath: join(rootB, 'delta'), hookLog }));
 
   const configPath = join(configDir, 'config.json');
   const config = {
     roots: [rootA, rootB],
+    folderSourcesDir: sourcesDir,
     port: 0, // replaced below
     bufferSize: 100,
     updateCheck: false,
@@ -360,83 +505,131 @@ async function main() {
   const limaDir = join(rootA, 'lima');
   const zuluDir = join(rootA, 'zulu');
   const epsilon = join(rootA, 'epsilon');
+  const omegaDir = join(rootA, 'omega');
+  const sigmaDir = join(rootA, 'sigma');
+  const charlieDir = join(externalDir, 'charlie');
+  const deepRepoDir = join(rootA, 'gamma', 'sub', 'deep-repo');
 
   try {
     child = startPimote({ port, sandboxHome, agentDir, configPath, logPath });
     await waitForListening(child, port, logPath);
 
     // ============================================================
-    section('W — WebSocket structural probes');
+    section('W — list_folders structural probes (sparse scan, personas, shortcuts)');
     // ============================================================
     let probeA = new WsProbe(port, `pm-probe-a-${randomUUID().slice(0, 8)}`);
     let probeB = new WsProbe(port, `pm-probe-b-${randomUUID().slice(0, 8)}`);
     await probeA.open();
     await probeB.open();
 
-    const list1 = await probeA.send({ type: 'list_projects' });
-    const projects1 = list1.data?.projects ?? [];
-    const byPath = new Map(projects1.map((p) => [p.path, p]));
-    assert(list1.success === true, 'list_projects succeeds');
+    const list1 = await probeA.send({ type: 'list_folders' });
+    const folders1 = list1.data?.folders ?? [];
+    const byPath = new Map(folders1.map((f) => [f.path, f]));
+    assert(list1.success === true, 'list_folders succeeds');
     assert(list1.data?.roots?.length === 2 && list1.data.roots.includes(rootA) && list1.data.roots.includes(rootB), 'roots echo both configured roots');
     for (const name of ['alpha', 'beta', 'delta']) {
-      assert(byPath.has(name === 'delta' ? join(rootB, 'delta') : join(rootA, name)), `discovered single project: ${name}`);
+      assert(byPath.has(name === 'delta' ? join(rootB, 'delta') : join(rootA, name)), `discovered code folder: ${name}`);
     }
-    // gamma itself is a plain directory, not a repo — only its children are repos.
-    assert(!byPath.has(join(rootA, 'gamma')), 'plain directory containing repos is NOT listed as a project');
-    assert(byPath.has(join(rootA, 'gamma', 'lib')), 'depth-2 repo discovered (gamma/lib)');
-    assert(byPath.has(join(rootA, 'gamma', 'sub', 'deep-repo')), 'depth-3 repo discovered (gamma/sub/deep-repo)');
-    assert(!byPath.has(join(rootA, 'gamma', 'sub', 'deeper', 'deepest')), 'depth-4 repo NOT discovered (depth bound)');
-    assert(byPath.get(join(rootA, 'alpha'))?.kind === 'single', 'alpha is a single project');
-    // branch/dirty live on RepoInfo (list_repos and member repos), not ProjectInfo.
+    // Sparse descent: skipped wrappers are not entries; nested entries below
+    // them surface at any depth — there is no depth bound.
+    assert(!byPath.has(join(rootA, 'gamma')), 'skipped wrapper (gamma) is NOT a folder row');
+    assert(byPath.has(join(rootA, 'gamma', 'lib')), 'nested entry under skipped wrapper discovered (gamma/lib)');
+    assert(byPath.has(deepRepoDir), 'nested entry discovered (gamma/sub/deep-repo)');
+    assert(byPath.has(join(rootA, 'gamma', 'sub', 'deeper', 'deepest')), 'deeply nested entry discovered — no depth bound (…/deepest)');
+    // Persona folders (marker front matter, no .git).
+    const omega = byPath.get(omegaDir);
+    const sigma = byPath.get(sigmaDir);
+    assert(
+      omega?.nature === 'persona' && omega?.persona?.name === 'Omega' && omega?.persona?.description === 'Fixture persona without shortcuts',
+      'persona row carries nature + persona metadata',
+    );
+    assert(omega?.name === 'omega', 'folder name is the basename, never the persona name');
+    assert(sigma?.nature === 'persona' && sigma?.persona?.name === 'Sigma Persona', 'second persona row carries its marker name');
+    assert(sigma?.shortcutCount === 1, 'shortcut-bearing persona reports shortcutCount 1 (persona-hub variant)');
+    assert((byPath.get(join(rootA, 'beta'))?.shortcutCount ?? -1) === 0, 'plain code folder reports shortcutCount 0');
+    // Shortcut-linked external repo: discovered through sigma's symlink.
+    assert(byPath.get(charlieDir)?.nature === 'code', 'external repo reached via shortcut is its own code folder row');
+    // Source-contributed rows.
+    const sourceRepoRow = byPath.get(sourceRepoDir);
+    assert(sourceRepoRow?.missing === true, 'source-listed repo absent on disk reports missing: true');
+    assert(
+      JSON.stringify(sourceRepoRow?.tags) === JSON.stringify(['from-source']) && (sourceRepoRow?.userTags ?? []).length === 0,
+      'source tags land on the row without user tags',
+    );
+    const kiwi = byPath.get(sourceHubDir);
+    assert(kiwi?.missing === true && kiwi?.repos?.length === 1, 'source hub row is missing on disk with its member repo listed');
+    // FolderInfo defaults across the board.
+    const badDefaults = folders1.filter(
+      (f) =>
+        typeof f.path !== 'string' ||
+        typeof f.name !== 'string' ||
+        f.name !== f.path.split('/').filter(Boolean).at(-1) ||
+        (f.nature !== 'code' && f.nature !== 'persona') ||
+        typeof f.shortcutCount !== 'number' ||
+        f.favorite !== false ||
+        f.archived !== false ||
+        !Array.isArray(f.tags) ||
+        typeof f.missing !== 'boolean' ||
+        typeof f.activeSessionCount !== 'number' ||
+        typeof f.externalProcessCount !== 'number',
+    );
+    assert(badDefaults.length === 0, `every FolderInfo row carries required defaults + basename names (${folders1.length} rows)`);
+    const badPersona = folders1.filter((f) => (f.nature === 'persona') !== Boolean(f.persona));
+    assert(badPersona.length === 0, 'persona metadata present iff nature === "persona"');
+
+    // branch/dirty live on RepoInfo (list_repos and member repos), not FolderInfo.
     const reposList = await probeA.send({ type: 'list_repos' });
     const repoByPath = new Map((reposList.data?.repos ?? []).map((r) => [r.path, r]));
     assert(repoByPath.get(join(rootB, 'delta'))?.branch === 'feature/zebra', 'delta reports branch feature/zebra (list_repos)');
     assert(repoByPath.get(join(rootA, 'beta'))?.dirty === true, 'beta reports dirty=true (list_repos)');
     assert(repoByPath.get(join(rootA, 'alpha'))?.dirty === false, 'alpha reports dirty=false (list_repos)');
     assert(repoByPath.get(join(rootA, 'alpha'))?.branch === 'main', 'alpha reports branch main (list_repos)');
-    assert(
-      projects1.every((p) => typeof p.activeSessionCount === 'number'),
-      'every project carries activeSessionCount',
-    );
-    const sortedNames = projects1.map((p) => p.name);
-    const nameSorted = [...sortedNames].sort((a, b) => a.localeCompare(b));
-    assert(JSON.stringify(sortedNames) === JSON.stringify(nameSorted), 'default listing is name-sorted');
+    assert(repoByPath.has(charlieDir), 'shortcut target repo appears in the repo index (list_repos)');
+    assert(!repoByPath.has(omegaDir) && !repoByPath.has(sigmaDir), 'persona folders are excluded from the repo index');
 
-    section('W — update_project favorite + registry round-trip');
-    const favResp = await probeA.send({ type: 'update_project', projectPath: join(rootA, 'beta'), favorite: true });
-    assert(favResp.success === true, 'update_project favorite succeeds');
-    const list2 = await probeA.send({ type: 'list_projects' });
-    assert(list2.data.projects.find((p) => p.path === join(rootA, 'beta'))?.favorite === true, 'favorite round-trips through the registry');
-    const bEvent = await probeB.waitForEvent('projects_changed', (e) => e.projects?.some((p) => p.path === join(rootA, 'beta') && p.favorite === true));
-    assert(Boolean(bEvent), 'client B receives projects_changed with the favorite (two-client sync)');
+    section('W — update_folder favorite + registry round-trip');
+    const favResp = await probeA.send({ type: 'update_folder', folderPath: join(rootA, 'beta'), favorite: true });
+    assert(favResp.success === true, 'update_folder favorite succeeds');
+    const list2 = await probeA.send({ type: 'list_folders' });
+    assert(list2.data.folders.find((f) => f.path === join(rootA, 'beta'))?.favorite === true, 'favorite round-trips through the registry');
+    const bEvent = await probeB.waitForEvent('folders_changed', (e) => e.folders?.some((f) => f.path === join(rootA, 'beta') && f.favorite === true));
+    assert(Boolean(bEvent), 'client B receives folders_changed with the favorite (two-client sync)');
 
-    section('W — create_multi_repo_project + disband_project (server-level, disk effects)');
-    const createResp = await probeB.send({ type: 'create_multi_repo_project', name: 'west', root: rootA, repoPaths: [join(rootA, 'alpha'), join(rootA, 'beta')] });
-    assert(createResp.success === true && createResp.data?.projectPath === westDir, 'create_multi_repo_project returns the project path');
+    section('W — create_hub + disband_hub (server-level, disk effects)');
+    const createResp = await probeB.send({ type: 'create_hub', name: 'west', root: rootA, memberPaths: [join(rootA, 'alpha'), join(rootA, 'beta')] });
+    assert(createResp.success === true && createResp.data?.folderPath === westDir, 'create_hub returns the hub folder path');
     const westStat = await stat(join(westDir, 'AGENTS.md')).then(
       () => true,
       () => false,
     );
-    assert(westStat, 'multi-repo project folder exists on disk with AGENTS.md');
+    assert(westStat, 'hub folder exists on disk with AGENTS.md');
     const linkAlpha = await readlink(join(westDir, 'alpha')).catch(() => null);
     const linkBeta = await readlink(join(westDir, 'beta')).catch(() => null);
     assert(linkAlpha === join(rootA, 'alpha') && linkBeta === join(rootA, 'beta'), 'symlinks point at the absolute member paths');
+    const westGit = await stat(join(westDir, '.git')).then(
+      () => true,
+      () => false,
+    );
+    assert(westGit, 'hub is self-describing: git init ran in the hub folder');
+    const westIgnore = await readFile(join(westDir, '.gitignore'), 'utf8').catch(() => '');
+    assert(westIgnore.split('\n').includes('alpha') && westIgnore.split('\n').includes('beta'), '.gitignore lists the member symlink names');
     const agentsMd = await readFile(join(westDir, 'AGENTS.md'), 'utf8');
     assert(/alpha/i.test(agentsMd) && /beta/i.test(agentsMd) && /agents\.md/i.test(agentsMd), 'AGENTS.md names both members and the AGENTS convention');
-    const aGotProject = await probeA.waitForEvent('projects_changed', (e) => e.projects?.some((p) => p.path === westDir && p.kind === 'multi'));
-    assert(Boolean(aGotProject), 'client A receives projects_changed with the new multi-repo project');
-    const list3 = await probeA.send({ type: 'list_projects' });
-    const west = list3.data.projects.find((p) => p.path === westDir);
-    assert(west?.repos?.length === 2 && west.repos.every((r) => r.branch), 'multi-repo project lists both members with branch info');
+    const aGotHub = await probeA.waitForEvent('folders_changed', (e) => e.folders?.some((f) => f.path === westDir && (f.repos?.length ?? 0) === 2));
+    assert(Boolean(aGotHub), 'client A receives folders_changed with the new hub row (two-client sync)');
+    const list3 = await probeA.send({ type: 'list_folders' });
+    const west = list3.data.folders.find((f) => f.path === westDir);
+    assert(west?.repos?.length === 2 && west.repos.every((r) => r.branch), 'hub row lists both members with branch info (disband-eligible repos)');
+    assert(west?.nature === 'code' && west?.shortcutCount === 2, 'hub classifies as code with shortcutCount = member count');
     assert(west.repos.find((r) => r.path === join(rootA, 'beta'))?.dirty === true, 'member repo chip data carries dirty=true for beta');
 
-    const disbandResp = await probeB.send({ type: 'disband_project', projectPath: westDir });
-    assert(disbandResp.success === true, 'disband_project succeeds');
+    const disbandResp = await probeB.send({ type: 'disband_hub', folderPath: westDir });
+    assert(disbandResp.success === true, 'disband_hub succeeds');
     const westGone = await stat(westDir).then(
       () => false,
       () => true,
     );
-    assert(westGone, 'multi-repo project folder deleted from disk after disband');
+    assert(westGone, 'hub folder deleted from disk after disband');
     const alphaAlive = await stat(join(rootA, 'alpha', '.git')).then(
       () => true,
       () => false,
@@ -446,15 +639,17 @@ async function main() {
       () => false,
     );
     assert(alphaAlive && betaAlive, 'member repos untouched by disband');
-    const refuse = await probeB.send({ type: 'disband_project', projectPath: join(rootA, 'alpha') });
-    assert(refuse.success === false, 'disband refuses a single-repo project');
+    const refuse = await probeB.send({ type: 'disband_hub', folderPath: join(rootA, 'alpha') });
+    assert(refuse.success === false, 'disband refuses a plain code folder');
+    const refuseSource = await probeB.send({ type: 'disband_hub', folderPath: sourceHubDir });
+    assert(refuseSource.success === false, 'disband refuses a source hub without a registry entry (no deletion ownership)');
 
     // Re-create west over WS so the browser phase can observe it appearing
-    // live via projects_changed (two-client sync in the browser direction).
-    await probeB.send({ type: 'create_multi_repo_project', name: 'west', root: rootA, repoPaths: [join(rootA, 'alpha'), join(rootA, 'beta')] });
+    // live via folders_changed (two-client sync in the browser direction).
+    await probeB.send({ type: 'create_hub', name: 'west', root: rootA, memberPaths: [join(rootA, 'alpha'), join(rootA, 'beta')] });
 
     // ============================================================
-    section('B — dashboard render (desktop)');
+    section('B — dashboard render (desktop): icons, personas, sparse scan');
     // ============================================================
     await browser(['close'], { allowFailure: true });
     await browser(['set', 'viewport', '1280', '900']);
@@ -463,66 +658,73 @@ async function main() {
     const snap = (await browser(['snapshot', '-i'])).stdout;
     assert(snap.includes('New session'), 'dashboard exposes the New session button');
     const pageText = String(await evalBrowser('document.body.innerText'));
-    for (const name of ['alpha', 'beta', 'delta', 'lib', 'deep-repo']) {
-      assert(pageText.includes(name), `dashboard lists project ${name}`);
+    for (const name of ['alpha', 'beta', 'delta', 'lib', 'deep-repo', 'deepest', 'charlie', 'source-repo', 'kiwi', 'Omega', 'Sigma Persona', 'west']) {
+      assert(pageText.includes(name), `dashboard lists folder ${name}`);
     }
-    assert(!pageText.includes('deepest'), 'depth-4 repo absent from the dashboard');
-    // Multi-repo project creation lives in the toolbar overflow menu (redesign: compact projects toolbar).
-    await browser(['click', 'button[title="More project actions"]']);
+    assert(!pageText.includes('gamma'), 'skipped wrapper gamma absent from the dashboard');
+    // Four icon variants by nature × shortcutCount.
+    assert((await rowIcon(join(rootA, 'beta'))) === 'code', 'beta renders the code icon');
+    assert((await rowIcon(westDir)) === 'code-hub', 'west renders the code-hub icon');
+    assert((await rowIcon(omegaDir)) === 'persona', 'omega renders the persona icon');
+    assert((await rowIcon(sigmaDir)) === 'persona-hub', 'sigma renders the persona-hub icon');
+    // Persona rows lead with the persona display name + description subtitle.
+    const omegaText = await rowText(omegaDir);
+    assert(omegaText.includes('Omega') && omegaText.includes('Fixture persona without shortcuts'), 'persona row shows the persona name and description subtitle');
+    const sigmaText = await rowText(sigmaDir);
+    assert(sigmaText.includes('Sigma Persona') && !sigmaText.includes('sigma'), 'persona row never shows the folder basename as its name');
+    // Hub create lives in the toolbar overflow menu (folder vocabulary).
+    await browser(['click', 'button[title="More folder actions"]']);
     await browser(['wait', 400]);
-    const multiRepoMenuSnap = (await browser(['snapshot', '-i'])).stdout;
-    assert(multiRepoMenuSnap.includes('Create multi-repo project'), 'toolbar exposes the multi-repo project creation control');
+    const toolbarMenuSnap = (await browser(['snapshot', '-i'])).stdout;
+    assert(toolbarMenuSnap.includes('Create hub'), 'toolbar exposes the hub creation control');
     await browser(['press', 'Escape']);
     await browser(['wait', 300]);
-    const managerVisible = await evalBrowser(
-      `(() => { const ta = document.querySelector('textarea[aria-label="Message the manager"]'); return Boolean(ta && ta.offsetParent !== null); })()`,
-    );
-    assert(managerVisible === true, 'manager chat is side-by-side on desktop');
+    const managerAffordance = await evalBrowser(`Boolean(document.querySelector('button[aria-label="Switch to the manager"]'))`);
+    assert(managerAffordance === true, 'manager affordance is in the home toolbar');
 
     // west was created by client B before this browser loaded, so it is
-    // part of the initial list_projects payload.
-    assert(pageText.includes('west'), 'multi-repo project created over WS is in the dashboard listing');
+    // part of the initial list_folders payload.
+    const westText = await rowText(westDir);
+    assert(westText.includes('alpha') && westText.includes('beta'), 'hub member chips render on the west row');
 
-    // Live broadcast INTO the browser: client A (probe) favorites a project;
+    // Live broadcast INTO the browser: client A (probe) favorites a folder;
     // the dashboard re-renders without a reload.
-    await probeA.send({ type: 'update_project', projectPath: join(rootA, 'gamma', 'lib'), favorite: true });
+    await probeA.send({ type: 'update_folder', folderPath: join(rootA, 'gamma', 'lib'), favorite: true });
     let libStar = false;
     for (let i = 0; i < 20; i++) {
       await wait(300);
       libStar = await evalBrowser(
-        `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('lib')); return Boolean(row?.querySelector('svg.fill-yellow-500')); })()`,
+        `(() => { const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(join(rootA, 'gamma', 'lib'))} + '"]'); return Boolean(s?.closest('.group')?.querySelector('svg.fill-yellow-500')); })()`,
       );
       if (libStar === true) break;
     }
-    assert(libStar === true, 'favorite made by client A appears live in client A browser (projects_changed re-render)');
-    const westChipText = await evalBrowser(
-      `Array.from(document.querySelectorAll('span[title]')).filter(s => s.querySelector('span') && /alpha|beta/.test(s.textContent ?? '')).map(s => s.getAttribute('title')).join('|')`,
-    );
-    assert(String(westChipText).includes(join(rootA, 'alpha')), 'west member chips render (title carries repo path)');
+    assert(libStar === true, 'favorite made by client A appears live in the browser (folders_changed re-render)');
 
     await browser(['screenshot', join(shotsDir, '01-dashboard.png')], { allowFailure: true });
 
     // ============================================================
-    section('B — new-session dialog search');
+    section('B — new-session dialog search (folders + persona display names)');
     // ============================================================
-    await evalBrowser(
-      `(() => { const b = Array.from(document.querySelectorAll('button')).find(b => !b.getAttribute('title') && b.textContent?.trim().startsWith('New session')); b?.click(); return Boolean(b); })()`,
-    );
+    await evalBrowser(`(() => { const b = document.querySelector('button[aria-label="New session"]'); if (!b) return false; b.click(); return true; })()`);
     await browser(['wait', 400]);
-    await fillSelector('input[placeholder="Search projects"]', 'alp');
+    await fillSelector('[role="dialog"] input[placeholder="Search folders"]', 'alp');
     await browser(['wait', 300]);
     const searchText = String(await evalBrowser('document.body.innerText'));
-    assert(searchText.includes('alpha'), 'search keeps matching project alpha');
-    assert(!/\bdelta\b/.test(searchText.split('Start a new session')[1] ?? ''), 'search filters non-matching projects in the picker');
+    assert(searchText.includes('alpha'), 'search keeps matching folder alpha');
+    assert(!/\bdelta\b/.test(searchText.split('Start a new session')[1] ?? ''), 'search filters non-matching folders in the picker');
+    await fillSelector('[role="dialog"] input[placeholder="Search folders"]', 'Sigma Persona');
+    await browser(['wait', 300]);
+    const personaSearch = String(await evalBrowser(`(() => { const d = document.querySelector('[role="dialog"]'); return d ? d.innerText : ''; })()`));
+    assert(personaSearch.includes('Sigma Persona') && !personaSearch.includes('delta'), 'picker search matches persona display names and filters the rest');
     await browser(['screenshot', join(shotsDir, '02-search.png')], { allowFailure: true });
     await browser(['find', 'role', 'button', 'click', '--name', 'Cancel']);
     await browser(['wait', 300]);
 
     // ============================================================
-    section('B — new session from a project (journey 1)');
+    section('B — new session from a folder (journey 1) + warm cache');
     // ============================================================
     const newSessionOk = await evalBrowser(`(() => { const b = document.querySelector('button[title="New session in alpha"]'); if (!b) return false; b.click(); return true; })()`);
-    assert(newSessionOk === true, 'per-project new-session button clickable');
+    assert(newSessionOk === true, 'per-folder new-session button clickable');
     // The session composer replaces the manager pane; placeholders are not in
     // innerText, so assert on elements: a non-manager textarea + StatusBar gear.
     let composerSeen = false;
@@ -546,6 +748,7 @@ async function main() {
     await browser(['wait', 1500]);
     const dashText = String(await evalBrowser('document.body.innerText'));
     assert(dashText.includes('New session'), 'closing the session returns to the dashboard');
+    assert((await rowText(join(rootA, 'beta'))).includes('beta'), 'warm cache: folder list survives session navigation without a reload');
     // Live-session indicator across clients: the probe opens a session in
     // beta; the dashboard (still open in the browser) lights beta's dot.
     await probeA.send({ type: 'open_session', folderPath: join(rootA, 'beta') });
@@ -553,7 +756,7 @@ async function main() {
     for (let i = 0; i < 20; i++) {
       await wait(500);
       betaDot = await evalBrowser(
-        `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('beta')); return Boolean(row?.querySelector('.bg-status-connected')); })()`,
+        `(() => { const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(join(rootA, 'beta'))} + '"]'); return Boolean(s?.closest('.group')?.querySelector('.bg-status-connected')); })()`,
       );
       if (betaDot === true) break;
     }
@@ -562,10 +765,16 @@ async function main() {
     // ============================================================
     section('B — resume fabricated session (journey 1/2 settled half)');
     // ============================================================
+    // One row tap expands the folder to its full session history.
+    await evalBrowser(
+      `(() => { const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(join(rootA, 'alpha'))} + '"]'); if (!s) return false; s.closest('button').click(); return true; })()`,
+    );
+    await browser(['wait', 600]);
     const resumeOk = await evalBrowser(
       `(() => { const rows = Array.from(document.querySelectorAll('button')).filter(b => (b.textContent ?? '').includes('launch checklist')); if (!rows.length) return 'no-row'; rows[0].click(); return 'clicked'; })()`,
     );
     log('resume row:', resumeOk);
+    assert(resumeOk === 'clicked', 'session history row for the fabricated session is listed');
     await browser(['wait', 3000]);
     const resumeText = String(await evalBrowser('document.body.innerText'));
     assert(resumeText.includes('What is the launch checklist?'), 'resume renders the fabricated user message');
@@ -575,145 +784,102 @@ async function main() {
     await browser(['wait', 1500]);
 
     // ============================================================
-    section('B — favorite + reload persistence');
+    section('B — favorite + reload persistence (reconnect refetch)');
     // ============================================================
-    const favBefore = Number(await evalBrowser(`document.querySelectorAll('main .rounded-lg svg.fill-yellow-500').length`));
-    const favClick = await evalBrowser(
-      `(() => { const rows = Array.from(document.querySelectorAll('button[title^="Manage project"]')); for (const manage of rows) { if ((manage.closest('.rounded-lg')?.textContent ?? '').trim().startsWith('alpha')) { manage.click(); return true; } } return false; })()`,
-    );
-    log('favorite menu open:', favClick);
-    await browser(['wait', 400]);
-    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Favorite']);
+    const favBefore = Number(await evalBrowser(`document.querySelectorAll('svg.fill-yellow-500').length`));
+    const favClick = await evalBrowser(`(() => { const b = document.querySelector('button[aria-label="Favorite alpha"]'); if (!b) return false; b.click(); return true; })()`);
+    assert(favClick === true, 'alpha star button clickable');
     await browser(['wait', 800]);
-    const favAfter = Number(await evalBrowser(`document.querySelectorAll('main .rounded-lg svg.fill-yellow-500').length`));
+    const favAfter = Number(await evalBrowser(`document.querySelectorAll('svg.fill-yellow-500').length`));
     assert(favAfter === favBefore + 1, `alpha star toggled to favorite (${favBefore} → ${favAfter})`);
     await browser(['reload']);
     await browser(['wait', 2500]);
     const alphaStarAfterReload = await evalBrowser(
-      `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('alpha')); return Boolean(row?.querySelector('svg.fill-yellow-500')); })()`,
+      `(() => { const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(join(rootA, 'alpha'))} + '"]'); return Boolean(s?.closest('.group')?.querySelector('svg.fill-yellow-500')); })()`,
     );
     assert(alphaStarAfterReload === true, 'favorite survives reload');
+    // Favorites-first ordering (manual ordering is retired).
+    const favoriteOrder = await evalBrowser(`(() => {
+      const rows = Array.from(document.querySelectorAll('[data-folder-path]'));
+      const flags = rows.map((s) => Boolean(s.closest('.group')?.querySelector('svg.fill-yellow-500')));
+      const lastFav = flags.lastIndexOf(true);
+      const firstPlain = flags.indexOf(false);
+      return firstPlain === -1 || lastFav < firstPlain;
+    })()`);
+    assert(favoriteOrder === true, 'favorite rows sort above non-favorite rows');
 
     // ============================================================
     section('B — tags (add, search, persist, remove)');
     // ============================================================
-    await evalBrowser(
-      `(() => { const rows = Array.from(document.querySelectorAll('button[title^="Manage project"]')); for (const manage of rows) { if ((manage.closest('.rounded-lg')?.textContent ?? '').trim().startsWith('alpha')) { manage.click(); return true; } } return false; })()`,
-    );
-    await browser(['wait', 400]);
-    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Add tag']);
+    await evalBrowser(`(() => { const b = document.querySelector('button[aria-label="Add tag to alpha"]'); if (!b) return false; b.click(); return true; })()`);
     await browser(['wait', 400]);
     await fillSelector('[role="dialog"] input[placeholder="Tag name"]', 'client-work');
-    await browser(['find', 'role', 'button', 'click', '--name', 'Add tag']);
+    await clickDialogButton('Add tag');
     await browser(['wait', 800]);
-    const tagChip = await evalBrowser(
-      `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('alpha')); return row?.textContent?.includes('client-work') ? 'chip' : 'none'; })()`,
-    );
-    assert(tagChip === 'chip', 'tag chip renders on the project row');
-    // Search over tags surfaces the project
-    await fillSelector('input[placeholder="Search projects"]', 'client-work');
+    assert((await rowText(join(rootA, 'alpha'))).includes('client-work'), 'tag chip renders on the folder row');
+    // Search over tags surfaces the folder (toolbar search box).
+    await fillSelector('input[aria-label="Search folders"]', 'client-work');
     await browser(['wait', 400]);
     const tagSearch = String(await evalBrowser('document.body.innerText'));
-    assert(tagSearch.includes('alpha'), 'tag search surfaces the tagged project');
-    await fillSelector('input[placeholder="Search projects"]', '');
+    assert(tagSearch.includes('alpha'), 'tag search surfaces the tagged folder');
+    await fillSelector('input[aria-label="Search folders"]', '');
     await browser(['wait', 300]);
     // Reload persistence
     await browser(['reload']);
     await browser(['wait', 2500]);
-    const tagAfterReload = await evalBrowser(
-      `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('alpha')); return row?.textContent?.includes('client-work') ? 'chip' : 'none'; })()`,
-    );
-    assert(tagAfterReload === 'chip', 'tag survives reload');
+    assert((await rowText(join(rootA, 'alpha'))).includes('client-work'), 'tag survives reload');
     // Remove via chip ×
-    await evalBrowser(
-      `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('alpha')); const x = row?.querySelector('button[aria-label="Remove tag client-work"]'); if (!x) return false; x.click(); return true; })()`,
-    );
+    await evalBrowser(`(() => { const x = document.querySelector('button[aria-label="Remove tag client-work"]'); if (!x) return false; x.click(); return true; })()`);
     await browser(['wait', 800]);
-    const tagRemoved = await evalBrowser(
-      `(() => { const row = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('alpha')); return row?.textContent?.includes('client-work') ? 'chip' : 'gone'; })()`,
-    );
-    assert(tagRemoved === 'gone', 'tag removal via chip x works');
-
-    // ============================================================
-    section('B — manual order (move up)');
-    // ============================================================
-    // Move delta up until it reaches the top (name-sorted start position may vary).
-    const firstNameEval = `(() => { const s = document.querySelector('main .rounded-lg [data-project-name]'); return s?.textContent?.trim() ?? ''; })()`;
-    let first = String(await evalBrowser(firstNameEval));
-    log('list order before move, first row:', first);
-    let moves = 0;
-    while (first !== 'delta' && moves < 8) {
-      const opened = await evalBrowser(
-        `(() => { const rows = Array.from(document.querySelectorAll('button[title^="Manage project"]')); for (const manage of rows) { if ((manage.closest('.rounded-lg')?.textContent ?? '').includes('delta')) { manage.click(); return true; } } return false; })()`,
-      );
-      if (opened !== true) break;
-      await browser(['wait', 500]);
-      const disabled = await evalBrowser(
-        `(() => { const item = Array.from(document.querySelectorAll('[role="menuitem"]')).find(i => i.textContent?.includes('Move up')); return item ? item.getAttribute('disabled') !== null || item.dataset.disabled === '' : 'no-menu'; })()`,
-      );
-      if (disabled === true) break;
-      await browser(['find', 'role', 'menuitem', 'click', '--name', 'Move up']);
-      await browser(['wait', 1200]);
-      first = String(await evalBrowser(firstNameEval));
-      moves++;
-    }
-    assert(first === 'delta', `moved delta to the top of the list in ${moves} move(s) (got "${first}")`);
-    await browser(['reload']);
-    await browser(['wait', 2500]);
-    const deltaFirstAfterReload = await evalBrowser(
-      `(() => { const first = document.querySelector('main .rounded-lg [data-project-name]'); return first?.textContent?.trim() ?? ''; })()`,
-    );
-    assert(deltaFirstAfterReload === 'delta', 'manual order survives reload');
+    assert(!(await rowText(join(rootA, 'alpha'))).includes('client-work'), 'tag removal via chip x works');
+    // Source-contributed tags are not user-removable.
+    const sourceRowText = await rowText(sourceRepoDir);
+    assert(sourceRowText.includes('from-source'), 'source tag chip renders on the source row');
+    const removableSourceTag = await evalBrowser(`Boolean(document.querySelector('button[aria-label="Remove tag from-source"]'))`);
+    assert(removableSourceTag === false, 'source-contributed tags carry no remove affordance');
 
     // ============================================================
     section('B — archive / show-archived');
     // ============================================================
-    await evalBrowser(
-      `(() => { const rows = Array.from(document.querySelectorAll('button[title^="Manage project"]')); for (const manage of rows) { if ((manage.closest('.rounded-lg')?.textContent ?? '').includes('deep-repo')) { manage.click(); return true; } } return false; })()`,
-    );
-    await browser(['wait', 500]);
-    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Archive project']);
-    await browser(['wait', 1000]);
-    const deepRowExpr = `Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.trim().startsWith('deep-repo'))`;
-    const deepHidden = await evalBrowser(`Boolean((${deepRowExpr})?.textContent?.includes('deep-repo'))`);
-    assert(deepHidden === false, 'archived project hidden by default');
-    await browser(['click', 'button[title="More project actions"]']);
+    await probeA.send({ type: 'update_folder', folderPath: deepRepoDir, archived: true });
+    let deepHidden = false;
+    for (let i = 0; i < 20; i++) {
+      await wait(300);
+      deepHidden = (await evalBrowser(`Boolean(document.querySelector('[data-folder-path="' + ${JSON.stringify(deepRepoDir)} + '"]'))`)) === false;
+      if (deepHidden) break;
+    }
+    assert(deepHidden === true, 'archived folder hidden by default (folders_changed applied)');
+    await browser(['click', 'button[title="More folder actions"]']);
     await browser(['wait', 400]);
-    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Show archived']);
-    await browser(['wait', 1200]);
-    const deepRowShown = await evalBrowser(
-      `(() => { const row = (${deepRowExpr}); return row ? (row.textContent?.includes('Archived') ? 'badge' : 'visible-no-badge') : 'hidden'; })()`,
-    );
-    assert(deepRowShown === 'badge', 'show-archived reveals project with Archived badge');
+    const showArchivedClicked = await clickMenuItem('Show archived');
+    assert(showArchivedClicked === true, 'toolbar exposes Show archived');
+    await browser(['wait', 800]);
+    const deepBadge = await rowText(deepRepoDir);
+    assert(deepBadge.includes('Archived'), 'show-archived reveals the folder with an Archived badge');
     await browser(['screenshot', join(shotsDir, '04-archived.png')], { allowFailure: true });
-    await evalBrowser(
-      `(() => { const rows = Array.from(document.querySelectorAll('button[title^="Manage project"]')); for (const manage of rows) { if ((manage.closest('.rounded-lg')?.textContent ?? '').includes('deep-repo')) { manage.click(); return true; } } return false; })()`,
-    );
-    await browser(['wait', 500]);
-    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Unarchive project']);
-    await browser(['wait', 1000]);
-    const unarchivedBadge = await evalBrowser(`(() => { const row = (${deepRowExpr}); return row ? row.textContent?.includes('Archived') : 'hidden'; })()`);
-    assert(unarchivedBadge === false, 'unarchive removes the badge');
+    await probeA.send({ type: 'update_folder', folderPath: deepRepoDir, archived: false });
+    await wait(1200);
+    assert(!(await rowText(deepRepoDir)).includes('Archived'), 'unarchive removes the badge');
+    await browser(['click', 'button[title="More folder actions"]']);
+    await browser(['wait', 400]);
+    await clickMenuItem('Hide archived');
+    await browser(['wait', 600]);
 
     // ============================================================
-    section('B — create project (mkdir + git init)');
+    section('B — create folder (mkdir + git init)');
     // ============================================================
-    await evalBrowser(
-      `(() => { const b = Array.from(document.querySelectorAll('button')).find(b => !b.getAttribute('title') && b.textContent?.trim().startsWith('New session')); b?.click(); return Boolean(b); })()`,
-    );
+    await evalBrowser(`(() => { const b = document.querySelector('button[aria-label="New session"]'); if (!b) return false; b.click(); return true; })()`);
     await browser(['wait', 400]);
-    await browser(['find', 'role', 'button', 'click', '--name', 'Create new project']);
+    await browser(['find', 'role', 'button', 'click', '--name', 'Create new folder']);
     await browser(['wait', 400]);
     // Two roots configured → root picker. Pick root A.
     await evalBrowser(
       `(() => { const btns = Array.from(document.querySelectorAll('[role="dialog"] button')).filter(b => b.textContent?.trim() === ${JSON.stringify(rootA)}); btns[0]?.click(); return btns.length; })()`,
     );
     await browser(['wait', 300]);
-    await fillSelector('[role="dialog"] input[placeholder="Project name"]', 'epsilon');
+    await fillSelector('[role="dialog"] input[placeholder="Folder name"]', 'epsilon');
     await browser(['wait', 200]);
-    await evalBrowser(
-      `(() => { const btns = Array.from(document.querySelectorAll('[role="dialog"] button')).filter(b => b.textContent?.trim() === 'Create'); btns.at(-1)?.click(); return btns.length; })()`,
-    );
+    await clickDialogButton('Create');
     let createOpened = false;
     for (let i = 0; i < 30; i++) {
       await wait(500);
@@ -727,7 +893,7 @@ async function main() {
     await evalBrowser(`document.querySelector('button.bg-primary span[title="Close session"]')?.click()`);
     await browser(['wait', 2000]);
     const dashAfterCreate = String(await evalBrowser('document.body.innerText'));
-    assert(dashAfterCreate.includes('epsilon'), 'created project appears in the dashboard');
+    assert(dashAfterCreate.includes('epsilon'), 'created folder appears in the dashboard');
     const epsilonGit = await stat(join(epsilon, '.git')).then(
       () => true,
       () => false,
@@ -735,18 +901,19 @@ async function main() {
     assert(epsilonGit, 'epsilon/.git exists on disk (mkdir + git init)');
 
     // ============================================================
-    section('B — multi-repo project creation via UI dialog + repo chips');
+    section('B — hub creation via UI dialog + member chips');
     // ============================================================
-    await browser(['click', 'button[title="More project actions"]']);
+    await browser(['click', 'button[title="More folder actions"]']);
     await browser(['wait', 400]);
-    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Create multi-repo project']);
+    const createHubMenu = await clickMenuItem('Create hub');
+    assert(createHubMenu === true, 'toolbar menu opens the hub dialog');
     await browser(['wait', 600]);
-    await fillSelector('[role="dialog"] input[placeholder="Project name"]', 'lima');
+    await fillSelector('[role="dialog"] input[placeholder="Hub name"]', 'lima');
     await browser(['wait', 200]);
     const rootPick = await evalBrowser(
       `(() => { const btns = Array.from(document.querySelectorAll('[role="dialog"] button')).filter(b => b.textContent?.trim() === ${JSON.stringify(rootA)}); if (!btns.length) return 0; btns[0].click(); return btns.length; })()`,
     );
-    assert(Number(rootPick) >= 1, 'multi-repo project dialog lists configured roots');
+    assert(Number(rootPick) >= 1, 'hub dialog lists configured roots');
     const memberClicks = await evalBrowser(
       `(() => {
         const rows = Array.from(document.querySelectorAll('[role="dialog"] button')).filter(b => b.textContent?.includes(${JSON.stringify(join(rootA, 'alpha'))}) || b.textContent?.includes(${JSON.stringify(join(rootB, 'delta'))}));
@@ -755,41 +922,36 @@ async function main() {
       })()`,
     );
     assert(Number(memberClicks) === 2, 'member picker lists alpha and delta; both selected');
-    await browser(['screenshot', join(shotsDir, '05-multi-repo-dialog.png')], { allowFailure: true });
-    await browser(['find', 'role', 'button', 'click', '--name', 'Create project']);
+    await browser(['screenshot', join(shotsDir, '05-hub-dialog.png')], { allowFailure: true });
+    await clickDialogButton('Create hub');
     await browser(['wait', 1500]);
     const afterCreate = String(await evalBrowser('document.body.innerText'));
     assert(afterCreate.includes('lima'), 'lima appears in the dashboard after UI creation');
-    const limaChips = String(
-      await evalBrowser(
-        `(() => { const projectRow = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.includes('lima')); return projectRow?.textContent ?? ''; })()`,
-      ),
-    );
+    const limaChips = await rowText(limaDir);
     assert(limaChips.includes('alpha') && /main/.test(limaChips), 'lima chip: alpha with branch main');
     assert(limaChips.includes('delta') && /feature\/zebra/.test(limaChips), 'lima chip: delta with branch feature/zebra');
-    await browser(['screenshot', join(shotsDir, '06-multi-repo-chips.png')], { allowFailure: true });
+    await browser(['screenshot', join(shotsDir, '06-hub-chips.png')], { allowFailure: true });
 
     // Dirty chip visual: west contains beta (dirty).
     const westDirty = await evalBrowser(
-      `(() => { const projectRow = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.includes('west')); if (!projectRow) return 'no-row'; const chips = Array.from(projectRow.querySelectorAll('span[title]')).find(s => (s.getAttribute('title') ?? '').includes('beta')); return chips?.querySelector('span[title="Uncommitted changes"]') ? 'dirty-dot' : 'no-dirty-dot'; })()`,
+      `(() => { const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(westDir)} + '"]'); const row = s?.closest('.group'); const chip = Array.from(row?.querySelectorAll('span[title]') ?? []).find(x => (x.getAttribute('title') ?? '').includes('beta')); return chip?.querySelector('span[title="Uncommitted changes"]') ? 'dirty-dot' : 'no-dirty-dot'; })()`,
     );
     assert(westDirty === 'dirty-dot', 'beta chip in west shows the dirty dot');
 
     // ============================================================
     section('B — disband via UI confirm');
     // ============================================================
-    await evalBrowser(
-      `(() => { const rows = Array.from(document.querySelectorAll('button[title^="Manage project"]')); for (const manage of rows) { if ((manage.closest('.rounded-lg')?.textContent ?? '').includes('lima')) { manage.click(); return true; } } return false; })()`,
-    );
-    await browser(['wait', 500]);
-    await browser(['find', 'role', 'menuitem', 'click', '--name', 'Disband project']);
+    const limaMenu = await openRowMenu(limaDir);
+    assert(limaMenu === true, 'row context menu opens on the hub row');
+    const disbandItem = await clickMenuItem('Disband hub');
+    assert(disbandItem === true, 'context menu exposes Disband hub');
     await browser(['wait', 400]);
-    await evalBrowser(
-      `(() => { const btns = Array.from(document.querySelectorAll('[role="dialog"] button')).filter(b => b.textContent?.trim() === 'Disband'); btns.at(-1)?.click(); return btns.length; })()`,
-    );
+    const disbandDialogText = String(await evalBrowser(`(() => { const d = document.querySelector('[role="dialog"]'); return d ? d.textContent : ''; })()`));
+    assert(disbandDialogText.includes('This deletes the hub folder'), 'disband dialog warns in hub vocabulary');
+    await clickDialogButton('Disband');
     await browser(['wait', 1500]);
     const afterDisband = String(await evalBrowser('document.body.innerText'));
-    assert(!afterDisband.includes('lima'), 'disbanded multi-repo project removed from the dashboard');
+    assert(!afterDisband.includes('lima'), 'disbanded hub removed from the dashboard');
     const limaGone = await stat(limaDir).then(
       () => false,
       () => true,
@@ -800,14 +962,57 @@ async function main() {
       () => false,
     );
     assert(deltaAlive, 'member repo delta untouched by UI disband');
+    // A generic shortcut-bearing folder shows the hub icon but gains no
+    // deletion rights — sigma is not a registry/source hub.
+    const sigmaMenu = await openRowMenu(sigmaDir);
+    const sigmaDisband = await evalBrowser(
+      `Boolean(Array.from(document.querySelectorAll('[role="menuitem"], [data-slot="context-menu-item"]')).find(i => i.textContent?.includes('Disband hub')))`,
+    );
+    assert(sigmaMenu && sigmaDisband === false, 'generic shortcut persona has no Disband hub menu entry');
+    await browser(['press', 'Escape']);
+    await browser(['wait', 300]);
+
+    // ============================================================
+    section('B — source hooks: missing source repo provisions on open');
+    // ============================================================
+    assert((await rowText(sourceRepoDir)).includes('source-repo'), 'missing source repo renders as a folder row');
+    const missingTitle = await evalBrowser(
+      `(() => { const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(sourceRepoDir)} + '"]'); return s?.closest('button')?.getAttribute('title') ?? ''; })()`,
+    );
+    assert(missingTitle === 'Open — its source will create this folder', 'missing folder row carries the source-creation title');
+    const sourceRowClicked = await evalBrowser(
+      `(() => { const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(sourceRepoDir)} + '"]'); if (!s) return false; s.closest('button').click(); return true; })()`,
+    );
+    assert(sourceRowClicked === true, 'clicking the missing row attempts the open');
+    let provisioned = false;
+    for (let i = 0; i < 20; i++) {
+      await wait(400);
+      provisioned = await stat(join(sourceRepoDir, '.git')).then(
+        () => true,
+        () => false,
+      );
+      if (provisioned) break;
+    }
+    assert(provisioned, 'onFolderOpen hook provisioned the missing repo (mkdir + git init)');
+    const hookRan = await readFile(hookLog, 'utf8').then(
+      (text) => text.split('\n').includes(sourceRepoDir),
+      () => false,
+    );
+    assert(hookRan, 'onFolderOpen hook ran for the opened folder path');
+    const listAfterHook = await probeA.send({ type: 'list_folders' });
+    assert(listAfterHook.data.folders.find((f) => f.path === sourceRepoDir)?.missing === false, 'provisioned repo no longer reports missing');
+    await evalBrowser(`document.querySelector('button.bg-primary span[title="Close session"]')?.click()`);
+    await browser(['wait', 1500]);
 
     // ============================================================
     section('B — manager chat: streamed response (live LLM)');
     // ============================================================
     if (jetsonUsable) {
+      const managerMode = await ensureManagerMode();
+      assert(managerMode, 'manager composer reachable from the home toolbar');
       const filled = await fillSelector('textarea[aria-label="Message the manager"]', 'Reply with exactly: PONG');
       assert(filled, 'manager composer accepts text');
-      await browser(['find', 'role', 'button', 'click', '--name', 'Send']);
+      await evalBrowser(`(() => { const b = document.querySelector('button[title="Send"]'); if (!b) return false; b.click(); return true; })()`);
       // Catch the working state (Abort button) early.
       let sawAbort = false;
       for (let i = 0; i < 12; i++) {
@@ -819,6 +1024,11 @@ async function main() {
         }
       }
       soft(sawAbort, 'Send swaps to Abort while the manager is working', 'local model answered too fast to observe');
+      // First admitted prompt opens the manager panel side-by-side on desktop.
+      const panelSeen = await evalBrowser(
+        `(() => { const b = document.querySelector('[aria-label="Dismiss manager conversation"]'); return Boolean(b && b.offsetParent !== null); })()`,
+      );
+      assert(panelSeen === true, 'manager conversation opens side-by-side on desktop');
       let replied = false;
       for (let i = 0; i < 90; i++) {
         await wait(1000);
@@ -838,16 +1048,17 @@ async function main() {
     }
 
     // ============================================================
-    section('B — manager tool use (pimote_list_projects through the ports)');
+    section('B — manager tool use (pimote_list_folders through the ports)');
     // ============================================================
     if (jetsonUsable) {
-      const listNow = await probeA.send({ type: 'list_projects' });
-      const expectedCount = listNow.data.projects.length;
+      const listNow = await probeA.send({ type: 'list_folders' });
+      const expectedCount = listNow.data.folders.length;
+      await ensureManagerMode();
       await fillSelector(
         'textarea[aria-label="Message the manager"]',
-        'Call the pimote_list_projects tool now. After it returns, reply with ONLY the number of projects, nothing else.',
+        'Call the pimote_list_folders tool now. After it returns, reply with ONLY the number of folders, nothing else.',
       );
-      await browser(['find', 'role', 'button', 'click', '--name', 'Send']);
+      await evalBrowser(`(() => { const b = document.querySelector('button[title="Send"]'); if (!b) return false; b.click(); return true; })()`);
       let sawToolCall = false;
       let answer = null;
       for (let i = 0; i < 90; i++) {
@@ -856,7 +1067,7 @@ async function main() {
           `(() => {
             const main = document.querySelector('main') ?? document.body;
             const text = main.innerText;
-            const toolCall = Boolean(main.querySelector('[class*="tool"], details, pre')) && /pimote_list_projects/i.test(text);
+            const toolCall = Boolean(main.querySelector('[class*="tool"], details, pre')) && /pimote_list_folders/i.test(text);
             return { toolCall, tail: text.slice(-400) };
           })()`,
         );
@@ -867,8 +1078,8 @@ async function main() {
           if (answer !== null && (state.toolCall || i > 30)) break;
         }
       }
-      soft(sawToolCall, 'manager rendered a pimote_list_projects tool call', 'model chose not to call the tool');
-      soft(answer === expectedCount, `manager answered the project count (${answer} vs expected ${expectedCount})`, 'model reply unparseable or wrong');
+      soft(sawToolCall, 'manager rendered a pimote_list_folders tool call', 'model chose not to call the tool');
+      soft(answer === expectedCount, `manager answered the folder count (${answer} vs expected ${expectedCount})`, 'model reply unparseable or wrong');
       await browser(['screenshot', join(shotsDir, '08-manager-tool.png')], { allowFailure: true });
     }
 
@@ -876,34 +1087,36 @@ async function main() {
     section('B — manager abort');
     // ============================================================
     if (jetsonUsable) {
+      await ensureManagerMode();
       await fillSelector('textarea[aria-label="Message the manager"]', 'Count from 1 to 300 slowly, writing every number on its own line. Do not stop early.');
-      await browser(['find', 'role', 'button', 'click', '--name', 'Send']);
+      await evalBrowser(`(() => { const b = document.querySelector('button[title="Send"]'); if (!b) return false; b.click(); return true; })()`);
       let abortClicked = false;
       for (let i = 0; i < 40; i++) {
         await wait(500);
         const working = await evalBrowser(`Boolean(document.querySelector('button[title="Abort"]'))`);
         if (working === true) {
-          await browser(['find', 'role', 'button', 'click', '--name', 'Abort']);
+          await evalBrowser(`(() => { const b = document.querySelector('button[title="Abort"]'); if (!b) return false; b.click(); return true; })()`);
           abortClicked = true;
           break;
         }
       }
       assert(abortClicked, 'abort flow: Abort button appeared and was clicked');
-      let backToSend = false;
+      // The toolbar renders Send only with a non-empty draft, so idle-after-
+      // abort reads as the Abort control clearing.
+      let idleAgain = false;
       for (let i = 0; i < 20; i++) {
         await wait(500);
-        const send = await evalBrowser(`Boolean(document.querySelector('button[title="Send"]'))`);
-        if (send === true) {
-          backToSend = true;
+        const working = await evalBrowser(`Boolean(document.querySelector('button[title="Abort"]'))`);
+        if (working === false) {
+          idleAgain = true;
           break;
         }
       }
-      assert(backToSend, 'abort returns the manager to idle (Send visible again)');
-      if (abortClicked && backToSend) {
-        const countNumbers = () =>
-          evalBrowser(
-            `(() => { const area = Array.from(document.querySelectorAll('div')).filter(d => d.querySelector?.('textarea[aria-label="Message the manager"]')).at(-1); return ((area ?? document.body).innerText.match(/\\b\\d+\\b/g) ?? []).length; })()`,
-          );
+      assert(idleAgain, 'abort returns the manager to idle (Abort clears)');
+      if (abortClicked && idleAgain) {
+        // Numeric tokens across the page: the rest of the dashboard is static
+        // over the window, so a frozen count means the stream stopped.
+        const countNumbers = () => evalBrowser(`(document.body.innerText.match(/\\b\\d+\\b/g) ?? []).length`);
         await wait(1500);
         const n1 = Number(await countNumbers());
         await wait(3000);
@@ -917,17 +1130,14 @@ async function main() {
     // ============================================================
     await browser(['reload']);
     await browser(['wait', 3000]);
-    const managerArea = String(
-      await evalBrowser(
-        `(() => { const panes = Array.from(document.querySelectorAll('div')).filter(d => d.querySelector?.('textarea[aria-label="Message the manager"]')); const pane = panes.at(-1); return pane ? pane.innerText : document.body.innerText; })()`,
-      ),
-    );
-    assert(!managerArea.includes('PONG'), 'fresh connection starts with an empty manager transcript');
+    const managerGone = await evalBrowser(`Boolean(document.querySelector('[aria-label="Dismiss manager conversation"]'))`);
+    const pageAfterReload = String(await evalBrowser('document.body.innerText'));
+    assert(managerGone === false && !pageAfterReload.includes('PONG'), 'fresh connection starts with an empty manager transcript');
 
     // ============================================================
     section('B — missing member chip after disk deletion + restart');
     // ============================================================
-    await probeA.send({ type: 'create_multi_repo_project', name: 'zulu', root: rootA, repoPaths: [join(rootA, 'beta')] });
+    await probeA.send({ type: 'create_hub', name: 'zulu', root: rootA, memberPaths: [join(rootA, 'beta')] });
     await rm(join(rootA, 'beta'), { recursive: true, force: true });
     await stopPimote(child);
     child = startPimote({ port, sandboxHome, agentDir, configPath, logPath });
@@ -938,15 +1148,17 @@ async function main() {
     probeB = new WsProbe(port, `pm-probe-b2-${randomUUID().slice(0, 8)}`);
     await probeA.open();
     await probeB.open();
+    const reconnectList = await probeA.send({ type: 'list_folders' });
+    assert(reconnectList.success === true && reconnectList.data.folders.some((f) => f.path === zuluDir), 'probes reconnect after restart; list_folders serves the warm registry');
     await browser(['reload']);
     await browser(['wait', 3500]);
     const missingChip = await evalBrowser(
-      `(() => { const projectRow = Array.from(document.querySelectorAll('main .rounded-lg')).find(r => r.textContent?.includes('zulu')); if (!projectRow) return 'no-row'; const chip = Array.from(projectRow.querySelectorAll('span[title]')).find(s => (s.getAttribute('title') ?? '').includes('missing')); return chip ? chip.textContent?.trim() : 'no-chip'; })()`,
+      `(() => { const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(zuluDir)} + '"]'); const row = s?.closest('.group'); if (!row) return 'no-row'; const chip = Array.from(row.querySelectorAll('span[title]')).find(x => (x.getAttribute('title') ?? '').includes('missing')); return chip ? chip.textContent?.trim() : 'no-chip'; })()`,
     );
     assert(String(missingChip).includes('missing'), `missing member renders the warning chip (got "${missingChip}")`);
     await browser(['screenshot', join(shotsDir, '09-missing-chip.png')], { allowFailure: true });
     // Cleanup: disband zulu so the registry is left tidy.
-    await probeA.send({ type: 'disband_project', projectPath: zuluDir });
+    await probeA.send({ type: 'disband_hub', folderPath: zuluDir });
 
     probeA.close();
     probeB.close();
@@ -958,22 +1170,29 @@ async function main() {
     await browser(['reload']);
     await browser(['wait', 2500]);
     const mobileText = String(await evalBrowser('document.body.innerText'));
-    assert(mobileText.includes('alpha'), 'mobile dashboard shows the projects list fullscreen');
-    // Redesign: the FAB became the spotlight affordance — an md:hidden button on
-    // the home column that opens the fullscreen manager sheet.
-    const managerSpotlight = await evalBrowser(
-      `(() => { const b = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Ask the manager') && getComputedStyle(b).display !== 'none'); return b ? 'spotlight' : 'none'; })()`,
+    assert(mobileText.includes('alpha'), 'mobile dashboard shows the folders list fullscreen');
+    const mobileToggle = await evalBrowser(
+      `(() => { const b = document.querySelector('button[aria-label="Switch to the manager"]'); return b && getComputedStyle(b).display !== 'none' ? 'toggle' : 'none'; })()`,
     );
-    assert(managerSpotlight === 'spotlight', 'mobile shows the Manager spotlight affordance');
-    await evalBrowser(
-      `(() => { const b = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Ask the manager') && getComputedStyle(b).display !== 'none'); b?.click(); return Boolean(b); })()`,
-    );
-    await browser(['wait', 600]);
-    const sheetComposer = await evalBrowser(
-      `(() => ({ count: document.querySelectorAll('textarea[aria-label="Message the manager"]').length, visible: Array.from(document.querySelectorAll('textarea[aria-label="Message the manager"]')).some(t => t.offsetParent !== null) }))()`,
-    );
-    assert(sheetComposer?.count >= 1 && sheetComposer?.visible === true, 'manager sheet opens fullscreen on mobile');
-    await browser(['screenshot', join(shotsDir, '10-mobile-manager.png')], { allowFailure: true });
+    assert(mobileToggle === 'toggle', 'mobile toolbar exposes the manager mode toggle');
+    if (jetsonUsable) {
+      await evalBrowser(`(() => { const b = document.querySelector('button[aria-label="Switch to the manager"]'); if (!b) return false; b.click(); return true; })()`);
+      await browser(['wait', 400]);
+      const composerVisible = await evalBrowser(
+        `(() => ({ count: document.querySelectorAll('textarea[aria-label="Message the manager"]').length, visible: Array.from(document.querySelectorAll('textarea[aria-label="Message the manager"]')).some(t => t.offsetParent !== null) }))()`,
+      );
+      assert(composerVisible?.count >= 1 && composerVisible?.visible === true, 'manager mode composer is visible on mobile');
+      await fillSelector('textarea[aria-label="Message the manager"]', 'Reply with exactly: MOBILE');
+      await evalBrowser(`(() => { const b = document.querySelector('button[title="Send"]'); if (!b) return false; b.click(); return true; })()`);
+      await browser(['wait', 1200]);
+      const sheetComposer = await evalBrowser(
+        `(() => { const b = document.querySelector('[aria-label="Dismiss manager conversation"]'); return Boolean(b && b.offsetParent !== null); })()`,
+      );
+      assert(sheetComposer === true, 'manager chat opens fullscreen on mobile once the conversation exists');
+      await browser(['screenshot', join(shotsDir, '10-mobile-manager.png')], { allowFailure: true });
+    } else {
+      soft(false, 'mobile manager sheet (conversation-driven)', 'no jetson provider — the sheet needs an admitted prompt');
+    }
 
     await browser(['close'], { allowFailure: true });
   } catch (error) {
