@@ -397,4 +397,4 @@ Following the decision-records skill, create `docs/decisions/DR-053-unified-fold
 Run the complete server/client regression suites and production checks after the coherent rename units converge. Inspect diffs for accidental physical registry/config directory moves, SDK/Android/extension edits outside the selected scope, scanner test changes, lifecycle changes, and unrelated concurrent edits. Exercise the running pimote-in-pimote workflow against the built slice without interrupting its current session; deployment/restart is not an implicit part of this step.
 
 **Verify:** `npm test --workspace server -- --run`, `npm test --workspace client -- --run`, `npm run build`, `npm run check`, `npm run lint`, and formatting checks pass; the folder-management smoke passes. All 43 scanner cases remain unchanged and green, DR-053 has both provenance lines, and existing registry/session artifacts survive the renamed surfaces.
-**Status:** not started
+**Status:** done

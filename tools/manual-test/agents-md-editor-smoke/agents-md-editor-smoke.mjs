@@ -350,10 +350,7 @@ async function main() {
   // Config doubles as the snippet palette the editor fetches via file_get.
   const configPath = join(configDir, 'config.json');
   const port = await freePort();
-  await writeFile(
-    configPath,
-    JSON.stringify({ roots: [projectsRoot], updateCheck: false, tagSnippets: ['note', 'todo'] }, null, 2),
-  );
+  await writeFile(configPath, JSON.stringify({ roots: [projectsRoot], updateCheck: false, tagSnippets: ['note', 'todo'] }, null, 2));
 
   const logPath = join(sandboxHome, 'pimote.log');
   const shotsDir = process.env.AM_SHOT ? pathResolve(process.env.AM_SHOT) : sandboxHome;
@@ -365,7 +362,7 @@ async function main() {
   log('port         =', port);
 
   let child;
-  let passed = false;
+  let passed;
   try {
     child = startPimote({ port, sandboxHome, logPath });
     await waitForListening(child, port, logPath);
@@ -428,8 +425,10 @@ async function main() {
     const expected2 = `${expected1.slice(0, wordStart)}<mytag>original</mytag>${expected1.slice(wordStart + 'original'.length)}`;
     assert((await cmText()) === expected2, 'Enter wraps the selection inline: <mytag>original</mytag>');
     const sel = await cmSelection();
-    assert(sel && sel.from === wordStart + '<mytag>'.length && sel.to === wordStart + '<mytag>'.length + 'original'.length,
-      `selection restored on the inner range (${sel ? `${sel.from}..${sel.to}` : 'none'})`);
+    assert(
+      sel && sel.from === wordStart + '<mytag>'.length && sel.to === wordStart + '<mytag>'.length + 'original'.length,
+      `selection restored on the inner range (${sel ? `${sel.from}..${sel.to}` : 'none'})`,
+    );
 
     // ============================================================
     section('5 — tag-wrap, snippet button (cursor → block insert)');
