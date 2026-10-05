@@ -883,6 +883,126 @@ describe('WsHandler', () => {
     });
   });
 
+  describe('open_session — folderless deep-link reopen', () => {
+    /** Slot stub rich enough for syncSessionToClient's disk_full_resync path. */
+    function stubDiskReopen(sessionManager: PimoteSessionManager, sessions: Map<string, ManagedSlot>, expectFolder: string, expectFile: string): void {
+      (sessionManager as any).openSession = async (folderPath: string, sessionFilePath?: string) => {
+        expect(folderPath).toBe(expectFolder);
+        expect(sessionFilePath).toBe(expectFile);
+        const reopened = createMockSlot({
+          id: 'session-deep',
+          folderPath: expectFolder,
+          session: {
+            subscribe: () => () => {},
+            dispose: () => {},
+            messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+            model: null,
+            thinkingLevel: 'off',
+            getAvailableThinkingLevels: () => [],
+            isStreaming: false,
+            isCompacting: false,
+            sessionFile: sessionFilePath,
+            sessionId: 'session-deep',
+            sessionName: undefined,
+            autoCompactionEnabled: false,
+            bindExtensions: async () => {},
+            modelRuntime: { getAvailable: async () => [] },
+            clearQueue: () => ({ steering: [], followUp: [] }),
+            sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
+          } as any,
+        });
+        sessions.set('session-deep', reopened);
+        return 'session-deep';
+      };
+    }
+
+    it('resolves the folder by searching known folders (archived included) and unarchives on open', async () => {
+      const sessions = new Map<string, ManagedSlot>();
+      const sessionManager = createMockSessionManager(sessions);
+      stubDiskReopen(sessionManager, sessions, '/home/user/beta', '/tmp/session-deep.jsonl');
+
+      const sessionRecords = {
+        ...createMockSessionRecords(),
+        resolveSessionPath: async (folderPath: string, sessionId: string) =>
+          folderPath === '/home/user/beta' && sessionId === 'session-deep' ? '/tmp/session-deep.jsonl' : undefined,
+      } as SessionRecords;
+      const folderRegistry = {
+        list: async () => [folderRow('/home/user/alpha'), folderRow('/home/user/beta', { archived: true })],
+      } as unknown as FolderRegistry;
+      const sessionMetadataStore = createMockSessionMetadataStore(['/tmp/session-deep.jsonl']);
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { ws, sent } = createMockWs();
+      const handler = new WsHandler(
+        sessionManager,
+        sessionRecords,
+        ws,
+        createMockPushService(),
+        sessionMetadataStore as any,
+        'client-1',
+        clientRegistry,
+        undefined,
+        undefined,
+        folderRegistry,
+      );
+      clientRegistry.set('client-1', handler);
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', sessionId: 'session-deep', id: 'req-folderless' }));
+
+      const resp = findResponse(sent, 'req-folderless');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).folderPath).toBe('/home/user/beta');
+
+      // Opened straight from the archived folder record → unarchived on the fly.
+      expect(sessionMetadataStore.isArchived('/tmp/session-deep.jsonl')).toBe(false);
+      const archivedEvents = findEvents(sent, 'session_archived');
+      expect(archivedEvents).toHaveLength(1);
+      expect((archivedEvents[0] as any).archived).toBe(false);
+    });
+
+    it('responds session_expired when no known folder holds the session', async () => {
+      const sessionManager = createMockSessionManager(new Map());
+      const folderRegistry = {
+        list: async () => [folderRow('/home/user/alpha'), folderRow('/home/user/beta')],
+      } as unknown as FolderRegistry;
+
+      const clientRegistry: ClientRegistry = new Map();
+      const { ws, sent } = createMockWs();
+      const handler = new WsHandler(
+        sessionManager,
+        createMockSessionRecords(),
+        ws,
+        createMockPushService(),
+        createMockSessionMetadataStore() as any,
+        'client-1',
+        clientRegistry,
+        undefined,
+        undefined,
+        folderRegistry,
+      );
+      clientRegistry.set('client-1', handler);
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', sessionId: 'ghost-session', id: 'req-folderless-miss' }));
+
+      const resp = findResponse(sent, 'req-folderless-miss');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toBe('session_expired');
+    });
+
+    it('rejects creating a new session without a folderPath', async () => {
+      const { handler, sent } = createTestHandler('client-1');
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', id: 'req-no-folder' }));
+
+      const resp = findResponse(sent, 'req-no-folder');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toBe('folder_required');
+    });
+  });
+
   describe('open_session — remote session conflict detection', () => {
     it('includes remoteSessions in session_conflict when other pimote sessions exist in same folder', async () => {
       const existingSession = createMockSlot({

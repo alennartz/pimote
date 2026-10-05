@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { PimoteEvent, PimoteAgentMessage } from '@pimote/shared';
-import { SessionRegistry, routeNotificationIntent, sessionRegistry } from './session-registry.svelte.js';
+import { SessionRegistry, routeNotificationIntent, sessionRegistry, openExistingSession } from './session-registry.svelte.js';
 import { connection } from './connection.svelte.js';
 
 function makeSessionEvent(type: string, sessionId: string, extra: Record<string, any> = {}): PimoteEvent {
@@ -149,6 +149,79 @@ describe('SessionRegistry', () => {
       registry.adoptHomeRoute();
       expect(registry.viewedSessionId).toBeNull();
       expect(toViewed).not.toHaveBeenCalled();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // View Navigation (registry→URL sync; see lib/nav.ts and session-route.ts)
+  // --------------------------------------------------------------------------
+  describe('View Navigation', () => {
+    it('switchTo() marks the URL navigation in flight until the route observes it', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.addSession('s2', '/path2', 'proj2');
+      registry.setViewNavigator({ toViewed: vi.fn() });
+
+      expect(registry.isViewNavigationPending()).toBe(false);
+      registry.switchTo('s2');
+      expect(registry.isViewNavigationPending()).toBe(true);
+
+      registry.clearViewNavigation();
+      expect(registry.isViewNavigationPending()).toBe(false);
+    });
+
+    it('replaceSession() of the viewed session marks the rekey navigation (New chip)', () => {
+      registry.addSession('pending-uuid', '/path', 'proj');
+      registry.setViewNavigator({ toViewed: vi.fn() });
+      registry.switchTo('pending-uuid');
+      registry.clearViewNavigation();
+
+      registry.replaceSession('pending-uuid', 's-real', '/path', 'proj');
+      expect(registry.viewedSessionId).toBe('s-real');
+      expect(registry.isViewNavigationPending()).toBe(true);
+    });
+
+    it('removeSession() of the viewed session marks the remap navigation', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.addSession('s2', '/path2', 'proj2');
+      registry.setViewNavigator({ toViewed: vi.fn() });
+      registry.switchTo('s1');
+      registry.clearViewNavigation();
+
+      registry.removeSession('s1');
+      expect(registry.viewedSessionId).toBe('s2');
+      expect(registry.isViewNavigationPending()).toBe(true);
+    });
+
+    it('goHome() marks a pending navigation to the dashboard (null target)', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.setViewNavigator({ toViewed: vi.fn() });
+      registry.switchTo('s1');
+      registry.clearViewNavigation();
+
+      registry.goHome();
+      expect(registry.viewedSessionId).toBeNull();
+      expect(registry.isViewNavigationPending()).toBe(true);
+    });
+
+    it('adoptRouteView()/adoptHomeRoute() clear the marker — the URL took the lead', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.addSession('s2', '/path2', 'proj2');
+      registry.setViewNavigator({ toViewed: vi.fn() });
+      registry.switchTo('s2');
+      expect(registry.isViewNavigationPending()).toBe(true);
+
+      registry.adoptRouteView('s1');
+      expect(registry.isViewNavigationPending()).toBe(false);
+
+      registry.switchTo('s2');
+      registry.adoptHomeRoute();
+      expect(registry.isViewNavigationPending()).toBe(false);
+    });
+
+    it('without a view navigator (SSR/tests) no navigation is ever claimed', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.switchTo('s1');
+      expect(registry.isViewNavigationPending()).toBe(false);
     });
   });
 
@@ -1513,6 +1586,45 @@ describe('SessionRegistry', () => {
 });
 
 // --- Notification intent routing -------------------------------------------
+// --- Folderless deep-link opens ------------------------------------------------
+//
+// openExistingSession on the module-level registry resolves a folderless
+// deep-link open: the server searches its folders and reports the folder back,
+// and the client records it on the session and the subscription map.
+
+describe('openExistingSession (folderless deep link)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    sessionRegistry.removeSession('s-deep');
+    connection.removeSubscribedSession('s-deep');
+    connection.removeSubscribedSession('s-folder-patch');
+  });
+
+  it('records the folder resolved by the server on the session and subscription', async () => {
+    vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => ({
+      id: cmd.id ?? 'test',
+      success: cmd.type === 'open_session',
+      data: cmd.type === 'open_session' ? { sessionId: 's-deep', folderPath: '/repos/proj' } : undefined,
+    }));
+
+    const opened = await openExistingSession('s-deep', undefined, { force: true, switchTo: false });
+
+    expect(opened).toBe(true);
+    expect(sessionRegistry.sessions['s-deep'].folderPath).toBe('/repos/proj');
+    expect(sessionRegistry.sessions['s-deep'].projectName).toBe('proj');
+    expect(connection.subscribedSessions.get('s-deep')).toBe('/repos/proj');
+  });
+
+  it('setSessionFolder() patches folder, project name, and nothing for unknown ids', () => {
+    sessionRegistry.addSession('s-folder-patch', '', 'Unknown');
+    sessionRegistry.setSessionFolder('s-folder-patch', '/repos/proj');
+    expect(sessionRegistry.sessions['s-folder-patch'].folderPath).toBe('/repos/proj');
+    expect(sessionRegistry.sessions['s-folder-patch'].projectName).toBe('proj');
+
+    expect(() => sessionRegistry.setSessionFolder('s-unknown', '/repos/proj')).not.toThrow();
+  });
+});
+
 // routeNotificationIntent uses the module-level connection singleton, so it
 // needs the same global stubs as connection.svelte.test.ts before connect()
 // can run.

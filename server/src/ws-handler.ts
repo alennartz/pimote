@@ -429,6 +429,10 @@ export class WsHandler {
         case 'open_session': {
           // New session creation
           if (!command.sessionId) {
+            if (!command.folderPath) {
+              this.sendResponse(id, false, undefined, 'folder_required');
+              break;
+            }
             // Folder-source open hooks run before the session does: a source
             // can materialize a listed-but-missing folder on first open.
             await this.repoIndex?.runOpenHooks(command.folderPath);
@@ -474,19 +478,24 @@ export class WsHandler {
             break;
           }
 
-          const sessionFilePath = await this.sessionRecords.resolveSessionPath(command.folderPath, requestedSessionId);
-          if (!sessionFilePath) {
+          // Reopen from disk. A folderless deep link carries no folder: resolve
+          // the session's record by searching known folders (archived included —
+          // opening unarchives on the fly). No record anywhere → the session is
+          // gone.
+          const record = await this.findSessionRecord(requestedSessionId, command.folderPath);
+          if (!record) {
             this.sendResponse(id, false, undefined, 'session_expired');
             break;
           }
+          const { folderPath, sessionFilePath } = record;
 
           if (this.sessionMetadataStore.isArchived(sessionFilePath)) {
             await this.sessionMetadataStore.setArchived(sessionFilePath, false);
-            this.broadcastSessionArchived(requestedSessionId, command.folderPath, false);
+            this.broadcastSessionArchived(requestedSessionId, folderPath, false);
           }
 
-          await this.repoIndex?.runOpenHooks(command.folderPath);
-          const sessionId = await this.sessionManager.openSession(command.folderPath, sessionFilePath);
+          await this.repoIndex?.runOpenHooks(folderPath);
+          const sessionId = await this.sessionManager.openSession(folderPath, sessionFilePath);
           const reopenedSlot = this.sessionManager.getSession(sessionId)!;
           await this.syncSessionToClient(sessionId, reopenedSlot, undefined, 'disk_full_resync');
           WsHandler.broadcastSidebarUpdate(sessionId, reopenedSlot.folderPath, this.sessionManager, this.clientRegistry);
@@ -1500,6 +1509,24 @@ export class WsHandler {
    *  classified on the fly and served as a synthetic row — opening a session
    *  there never lists or curates the folder. Live session counts come from the
    *  same enrichment every serve path uses. */
+  /**
+   * Locate a session's record on disk. With a folder, only that folder is
+   * searched. A folderless deep link searches every known folder — archived
+   * folders included: opening a session unarchives it on the fly. Returns
+   * undefined when no folder holds the session.
+   */
+  private async findSessionRecord(sessionId: string, folderPath?: string): Promise<{ folderPath: string; sessionFilePath: string } | undefined> {
+    if (folderPath) {
+      const sessionFilePath = await this.sessionRecords.resolveSessionPath(folderPath, sessionId);
+      return sessionFilePath ? { folderPath, sessionFilePath } : undefined;
+    }
+    for (const folder of (await this.folderRegistry?.list()) ?? []) {
+      const sessionFilePath = await this.sessionRecords.resolveSessionPath(folder.path, sessionId);
+      if (sessionFilePath) return { folderPath: folder.path, sessionFilePath };
+    }
+    return undefined;
+  }
+
   private async resolveFolderInfo(folderPath: string): Promise<FolderInfo> {
     const listed = this.folderRegistry ? (await this.folderRegistry.list()).find((folder) => folder.path === folderPath) : undefined;
     const folder: FolderInfo = listed ?? (await buildFallbackFolder(folderPath));

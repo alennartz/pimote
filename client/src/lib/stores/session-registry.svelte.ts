@@ -185,13 +185,36 @@ export class SessionRegistry {
   /** Client-only URL sync target (see lib/nav.ts). Null in tests/SSR — state changes stay local. */
   private viewNavigator: { toViewed(sessionId: string | null, opts: { replace: boolean }): void } | null = null;
 
+  /**
+   * In-flight registry→URL navigation: the view the registry chose and is
+   * navigating the browser toward. `goto()` commits a tick after the view
+   * change, so the URL is stale in between — the route effect defers while
+   * this is pending instead of "correcting" back to the stale URL (which would
+   * undo the user's click mid-flight). Object wrapper so "navigating home"
+   * (target null) is distinguishable from "no navigation". Cleared by the
+   * route once the URL catches up or takes the lead.
+   */
+  private viewNavigation: { target: string | null } | null = null;
+
   /** Called once from lib/nav.ts at app boot to mirror viewed-session changes into the URL. */
   setViewNavigator(nav: { toViewed(sessionId: string | null, opts: { replace: boolean }): void }): void {
     this.viewNavigator = nav;
   }
 
+  /** True while the registry has navigated the browser toward its chosen view and the URL has not caught up. */
+  isViewNavigationPending(): boolean {
+    return this.viewNavigation?.target === this.viewedSessionId;
+  }
+
+  /** The URL caught up to the registry's view, or took the lead — drop the in-flight marker. */
+  clearViewNavigation(): void {
+    this.viewNavigation = null;
+  }
+
   private navigateToViewed(replace: boolean): void {
-    this.viewNavigator?.toViewed(this.viewedSessionId, { replace });
+    if (!this.viewNavigator) return;
+    this.viewNavigation = { target: this.viewedSessionId };
+    this.viewNavigator.toViewed(this.viewedSessionId, { replace });
   }
 
   sessions: Record<string, PerSessionState> = $state({});
@@ -721,6 +744,15 @@ export class SessionRegistry {
     this.persistSessions();
   }
 
+  /** Patch a session's folder once it becomes known — a folderless deep-link open resolves it server-side. */
+  setSessionFolder(sessionId: string, folderPath: string): void {
+    const session = this.sessions[sessionId];
+    if (!session || session.folderPath === folderPath) return;
+    session.folderPath = folderPath;
+    session.projectName = folderPath.split('/').pop() || 'Unknown';
+    this.persistSessions();
+  }
+
   /** Remove a session from the registry */
   removeSession(sessionId: string): void {
     this.clearBashOutputBytes(sessionId);
@@ -798,6 +830,7 @@ export class SessionRegistry {
    */
   adoptRouteView(sessionId: string): boolean {
     if (!this.sessions[sessionId]) return false;
+    this.clearViewNavigation();
     if (this.viewedSessionId === sessionId) return true;
     this.viewedSessionId = sessionId;
     this.syncViewedPanelStore();
@@ -813,6 +846,7 @@ export class SessionRegistry {
    * visible on the home page.
    */
   adoptHomeRoute(): void {
+    this.clearViewNavigation();
     if (this.viewedSessionId === null) return;
     this.viewedSessionId = null;
     this.syncViewedPanelStore();
@@ -1193,15 +1227,17 @@ export async function routeNotificationIntent(intent: AppNotificationIntent): Pr
   // bounce the view the user is already on.
 }
 
-export async function openExistingSession(sessionId: string, folderPath: string, opts?: { force?: boolean; switchTo?: boolean }): Promise<boolean> {
-  const projectName = folderPath.split('/').pop() || 'Unknown';
+/** Open a session by id. `folderPath` may be unknown for a deep link — the
+ *  server then resolves the folder and reports it in the response. */
+export async function openExistingSession(sessionId: string, folderPath: string | undefined, opts?: { force?: boolean; switchTo?: boolean }): Promise<boolean> {
+  const projectName = folderPath ? folderPath.split('/').pop() || 'Unknown' : 'Unknown';
   const shouldSwitch = opts?.switchTo !== false;
   const alreadyTracked = !!sessionRegistry.sessions[sessionId];
 
   if (!alreadyTracked) {
-    sessionRegistry.addSession(sessionId, folderPath, projectName);
+    sessionRegistry.addSession(sessionId, folderPath ?? '', projectName);
   }
-  connection.addSubscribedSession(sessionId, folderPath);
+  connection.addSubscribedSession(sessionId, folderPath ?? '');
 
   if (shouldSwitch) {
     sessionRegistry.switchTo(sessionId);
@@ -1231,6 +1267,15 @@ export async function openExistingSession(sessionId: string, folderPath: string,
         commandStore.removeSession(sessionId);
       }
       return false;
+    }
+
+    // A folderless deep-link open: the server resolved the folder and reports
+    // it back — record it so later commands (rename, archive, share) carry the
+    // right folder.
+    const resolvedFolder = (response.data as { folderPath?: string } | undefined)?.folderPath ?? folderPath;
+    if (resolvedFolder) {
+      sessionRegistry.setSessionFolder(sessionId, resolvedFolder);
+      connection.addSubscribedSession(sessionId, resolvedFolder);
     }
 
     await refreshSessionMetaAndCommands(sessionId);

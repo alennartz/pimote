@@ -538,7 +538,12 @@ export interface ListSessionsCommand extends CommandBase {
 
 export interface OpenSessionCommand extends CommandBase {
   type: 'open_session';
-  folderPath: string;
+  /**
+   * Folder to open the session in. Required when creating a new session;
+   * optional when `sessionId` names an existing one — the server then resolves
+   * the folder by searching its known folders for the session record.
+   */
+  folderPath?: string;
   sessionId?: string;
   /** Last cursor seen by the client; when present the server may attempt incremental replay. */
   lastCursor?: number;

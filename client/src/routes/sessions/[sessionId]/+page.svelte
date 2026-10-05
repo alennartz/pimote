@@ -14,13 +14,21 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import { voiceCallStore } from '$lib/stores/voice-call-store.js';
 
-  // The URL is the source of truth for which conversation is open (back/forward,
-  // deep links, reloads). Adopt the route's session into the registry; when the
-  // registry doesn't know it yet, trigger the load and adopt it once it appears
-  // (the pending→real rekey can also land before this effect runs, leaving the
-  // URL one step behind). Only after a failed load — or when nothing can resolve
-  // the id — fall back to the first active session or the dashboard. Never bounce
-  // home while the session can still be loaded.
+  // The URL is the source of truth for which conversation is open on a real
+  // navigation (back/forward, deep links, reloads). Adopt the route's session
+  // into the registry; when the registry doesn't know it yet, trigger the load
+  // and adopt it once it appears (the pending→real rekey can also land before
+  // this effect runs, leaving the URL one step behind). Only after a failed
+  // load — or when nothing can resolve the id — fall back to the first active
+  // session or the dashboard. Never bounce home while the session can still be
+  // loaded.
+  //
+  // Direction: the registry leads when it switches views (switchTo, the
+  // pending→real rekey, close-and-remap) and navigates the URL one tick later.
+  // On registry-driven re-runs the URL is stale — correcting toward it would
+  // undo the user's click mid-flight (or fall back off a just-rekeyed
+  // optimistic id, bouncing the user back to the first session). Those runs
+  // wait for the URL to catch up.
   const routeSessionId = $derived(page.params.sessionId);
 
   // Loads triggered from this route that the registry still hasn't produced.
@@ -30,17 +38,35 @@
   // a one-shot trigger log, not state the effect should re-run on.
   const attemptedLoads: string[] = [];
 
+  // The URL param this effect last acted on — distinguishes a real navigation
+  // (the URL leads) from a re-run caused by registry changes (the registry
+  // leads). Plain like attemptedLoads: bookkeeping, not reactive state.
+  let lastSeenRouteId: string | undefined;
+
   $effect(() => {
     const id = routeSessionId;
     if (id === undefined) return; // required param — unreachable, satisfies types
-    if (sessionRegistry.viewedSessionId === id) return;
+
+    const urlChanged = id !== lastSeenRouteId;
+    lastSeenRouteId = id;
+
+    if (sessionRegistry.viewedSessionId === id) {
+      sessionRegistry.clearViewNavigation();
+      return;
+    }
+    if (urlChanged) sessionRegistry.clearViewNavigation();
 
     const decision = decideSessionRoute({
+      sessionId: id,
       inRegistry: sessionRegistry.isActiveSession(id),
       folderPath: connection.subscribedSessions.get(id),
       loadAttempted: attemptedLoads.includes(id),
       activeSessionIds: sessionRegistry.activeSessions.map((session) => session.sessionId),
+      urlChanged,
+      viewNavigationPending: sessionRegistry.isViewNavigationPending(),
     });
+
+    if (decision.action === 'wait') return;
 
     if (decision.action === 'load') {
       attemptedLoads.push(id);
