@@ -81,17 +81,18 @@ function parseLine(line: string): ParsedEntry | null {
 }
 
 function isMessageWithContent(message: unknown): boolean {
-  // Runtime-identical to pi's helper, including the `in` throw on non-objects —
-  // a throw rejects the file, which is what the SDK's full parse does too.
-  return typeof (message as { role?: unknown }).role === 'string' && 'content' in (message as object);
+  // pi's helper throws on non-object messages. Deliberately total here: one
+  // malformed entry must not reject a real session file (see `summarize`).
+  return typeof message === 'object' && message !== null && typeof (message as { role?: unknown }).role === 'string' && 'content' in message;
 }
 
 function extractTextContent(message: { content?: unknown }): string {
   const content = message.content;
   if (typeof content === 'string') return content;
-  return (content as Array<{ type?: unknown; text?: unknown }>)
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
+  if (!Array.isArray(content)) return '';
+  return (content as Array<{ type?: unknown; text?: unknown } | null>)
+    .filter((block) => block?.type === 'text')
+    .map((block) => (typeof block?.text === 'string' ? block.text : ''))
     .join(' ');
 }
 
@@ -109,60 +110,82 @@ function activityTime(entry: ParsedEntry): number | undefined {
 /**
  * Stream one session file and derive its summary — the SDK's `buildSessionInfo`
  * without `allMessagesText`, so one pass reads/parses each line once and keeps
- * only scalars. Whole body wrapped in try/catch: a malformed entry rejects the
- * file exactly as the SDK's parse does.
+ * only scalars.
+ *
+ * Three outcomes, deliberately not conflated: `null` means "not a session
+ * file" (no session header); a thrown error means the file could not be read
+ * and must surface to the caller — a session whose summary is unknown may
+ * never silently drop out of a strict listing (the boot GC allow-list runs on
+ * exactly that guarantee); everything else is a summary. Malformed entries are
+ * skipped rather than rejecting the file, diverging from the SDK's strict
+ * parse on purpose: one bad line must not make a real session vanish from
+ * listings and allow-lists.
  */
 async function summarize(filePath: string, stats: Stats): Promise<SessionSummary | null> {
-  try {
-    let header: ParsedEntry | null = null;
-    let name: string | undefined;
-    let messageCount = 0;
-    let firstMessage = '';
-    let lastActivity: number | undefined;
+  let header: ParsedEntry | null = null;
+  let name: string | undefined;
+  let messageCount = 0;
+  let firstMessage = '';
+  let lastActivity: number | undefined;
 
-    const rl = createInterface({ input: createReadStream(filePath, { encoding: 'utf8' }), crlfDelay: Infinity });
-    for await (const line of rl) {
-      const entry = parseLine(line);
-      if (!entry) continue;
-      if (!header) {
-        // First parseable line must be the session header; anything else means
-        // this file is not a pimote/pi session.
-        if (entry.type !== 'session') return null;
-        header = entry;
-        continue;
-      }
-      // Session name: latest session_info wins, including explicit clears.
-      if (entry.type === 'session_info') name = (entry.name as string | undefined)?.trim() || undefined;
-      if (entry.type !== 'message') continue;
-      messageCount++;
-      const activity = activityTime(entry);
-      if (activity !== undefined) lastActivity = Math.max(lastActivity ?? 0, activity);
-      const message = entry.message as { role?: unknown; content?: unknown };
-      if (!isMessageWithContent(message)) continue;
-      if (message.role !== 'user' && message.role !== 'assistant') continue;
-      const textContent = extractTextContent(message);
-      if (!textContent) continue;
-      if (!firstMessage && message.role === 'user') firstMessage = textContent;
+  const rl = createInterface({ input: createReadStream(filePath, { encoding: 'utf8' }), crlfDelay: Infinity });
+  for await (const line of rl) {
+    const entry = parseLine(line);
+    if (!entry) continue;
+    if (!header) {
+      // First parseable line must be the session header; anything else means
+      // this file is not a pimote/pi session.
+      if (entry.type !== 'session') return null;
+      header = entry;
+      continue;
     }
-    if (!header) return null;
-
-    const headerTime = typeof header.timestamp === 'string' ? new Date(header.timestamp).getTime() : NaN;
-    const modified = typeof lastActivity === 'number' && lastActivity > 0 ? new Date(lastActivity) : !Number.isNaN(headerTime) ? new Date(headerTime) : stats.mtime;
-
-    return {
-      path: filePath,
-      id: header.id as string,
-      cwd: typeof header.cwd === 'string' ? header.cwd : '',
-      name,
-      parentSessionPath: typeof header.parentSession === 'string' ? header.parentSession : undefined,
-      created: new Date(header.timestamp as string),
-      modified,
-      messageCount,
-      firstMessage: firstMessage || '(no messages)',
-    };
-  } catch {
-    return null;
+    // Session name: latest session_info wins, including explicit clears.
+    if (entry.type === 'session_info') name = typeof entry.name === 'string' ? entry.name.trim() || undefined : undefined;
+    if (entry.type !== 'message') continue;
+    messageCount++;
+    const activity = activityTime(entry);
+    if (activity !== undefined) lastActivity = Math.max(lastActivity ?? 0, activity);
+    const message = entry.message as { role?: unknown; content?: unknown };
+    if (!isMessageWithContent(message)) continue;
+    if (message.role !== 'user' && message.role !== 'assistant') continue;
+    const textContent = extractTextContent(message);
+    if (!textContent) continue;
+    if (!firstMessage && message.role === 'user') firstMessage = textContent;
   }
+  if (!header) return null;
+
+  const headerTime = typeof header.timestamp === 'string' ? new Date(header.timestamp).getTime() : NaN;
+  const modified = typeof lastActivity === 'number' && lastActivity > 0 ? new Date(lastActivity) : !Number.isNaN(headerTime) ? new Date(headerTime) : stats.mtime;
+  // Both dates are always valid: every consumer formats them with
+  // `toISOString()`, which throws on an Invalid Date. A garbage header
+  // timestamp falls back to the file mtime like `modified` does.
+  const created = !Number.isNaN(headerTime) ? new Date(headerTime) : stats.mtime;
+
+  return {
+    path: filePath,
+    id: header.id as string,
+    cwd: typeof header.cwd === 'string' ? header.cwd : '',
+    name,
+    parentSessionPath: typeof header.parentSession === 'string' ? header.parentSession : undefined,
+    created,
+    modified,
+    messageCount,
+    firstMessage: firstMessage || '(no messages)',
+  };
+}
+
+/** Options for `SessionSummaryIndex.list`. */
+export interface SessionSummaryListOptions {
+  /** Throw when any session file failed to read/parse instead of returning the
+   *  partial listing — callers whose completeness is safety-critical (the boot
+   *  GC allow-list) must never see a silently incomplete result. */
+  failOnError?: boolean;
+}
+
+interface FolderListing {
+  summaries: SessionSummary[];
+  /** Per-file read/parse failures, surfaced by `list` but never cached. */
+  errors: unknown[];
 }
 
 /**
@@ -176,25 +199,38 @@ async function summarize(filePath: string, stats: Stats): Promise<SessionSummary
  * of every session file (~700 MB here) on every dashboard load.
  *
  * No invalidation API: mtime+size is the invalidation, deletion is pruned by
- * each directory listing. Process-lifetime cache — the boot enumeration warms
- * it before the first client can connect.
+ * each directory listing. Read/parse failures are never cached — only proven
+ * outcomes ("summarized" or "not a session file") are — so a transient error
+ * can never pin a session's omission until the file is touched. Process-
+ * lifetime cache — the boot enumeration warms it before the first client can
+ * connect.
  */
 export class SessionSummaryIndex {
   private readonly folders = new Map<string, Map<string, CacheEntry>>();
-  private readonly inFlight = new Map<string, Promise<SessionSummary[]>>();
+  private readonly inFlight = new Map<string, Promise<FolderListing>>();
 
   constructor(private readonly agentDir?: string) {}
 
-  /** Summaries for every session file in the folder's session directory, newest first. */
-  async list(folderPath: string): Promise<SessionSummary[]> {
-    const existing = this.inFlight.get(folderPath);
-    if (existing) return existing;
-    const promise = this.listFolder(folderPath).finally(() => this.inFlight.delete(folderPath));
-    this.inFlight.set(folderPath, promise);
-    return promise;
+  /**
+   * Summaries for every session file in the folder's session directory, newest
+   * first. Files that failed to read/parse are omitted from the result and
+   * reported — thrown under `failOnError`, warned otherwise.
+   */
+  async list(folderPath: string, options: SessionSummaryListOptions = {}): Promise<SessionSummary[]> {
+    let promise = this.inFlight.get(folderPath);
+    if (!promise) {
+      promise = this.listFolder(folderPath).finally(() => this.inFlight.delete(folderPath));
+      this.inFlight.set(folderPath, promise);
+    }
+    const { summaries, errors } = await promise;
+    if (errors.length > 0) {
+      if (options.failOnError) throw new Error(`Failed to read ${errors.length} session file(s) in ${folderPath}`, { cause: errors[0] });
+      for (const error of errors) console.warn(`[SessionSummaryIndex] failed to read a session file in ${folderPath}:`, error);
+    }
+    return summaries;
   }
 
-  private async listFolder(folderPath: string): Promise<SessionSummary[]> {
+  private async listFolder(folderPath: string): Promise<FolderListing> {
     const dir = sessionDirFor(folderPath, this.agentDir);
     let names: string[];
     try {
@@ -202,7 +238,7 @@ export class SessionSummaryIndex {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         this.folders.delete(folderPath);
-        return [];
+        return { summaries: [], errors: [] };
       }
       throw error;
     }
@@ -211,6 +247,7 @@ export class SessionSummaryIndex {
     const live = new Set(files);
     const cache = this.folders.get(folderPath) ?? new Map<string, CacheEntry>();
 
+    const errors: unknown[] = [];
     const summaries = await mapWithConcurrency(files, 10, async (file) => {
       let stats: Stats;
       try {
@@ -220,7 +257,15 @@ export class SessionSummaryIndex {
       }
       const hit = cache.get(file);
       if (hit && hit.mtimeMs === stats.mtimeMs && hit.size === stats.size) return hit.summary;
-      const summary = await summarize(file, stats);
+      let summary: SessionSummary | null;
+      try {
+        summary = await summarize(file, stats);
+      } catch (error) {
+        // A read failure is not "not a session file": surface it and leave the
+        // cache untouched so the omission is retried instead of pinned.
+        errors.push(error);
+        return null;
+      }
       cache.set(file, { mtimeMs: stats.mtimeMs, size: stats.size, summary });
       return summary;
     });
@@ -230,6 +275,9 @@ export class SessionSummaryIndex {
     }
     this.folders.set(folderPath, cache);
 
-    return summaries.filter((summary): summary is SessionSummary => summary !== null).sort((a, b) => b.modified.getTime() - a.modified.getTime());
+    return {
+      summaries: summaries.filter((summary): summary is SessionSummary => summary !== null).sort((a, b) => b.modified.getTime() - a.modified.getTime()),
+      errors,
+    };
   }
 }

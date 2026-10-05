@@ -33,8 +33,8 @@
   let elapsedMs = $derived(startedAt ? now - startedAt : 0);
   let durationText = $derived(formatCallDuration(elapsedMs));
 
-  // Project label: basename of folderPath if available.
-  let projectLabel = $derived.by(() => {
+  // Folder label: basename of folderPath if available.
+  let folderLabel = $derived.by(() => {
     if (!folderPath) return 'session';
     const trimmed = folderPath.replace(/\/+$/, '');
     const idx = trimmed.lastIndexOf('/');
@@ -46,7 +46,7 @@
 
 <div class="flex flex-col gap-2 px-4 pt-6 pb-3">
   <div class="text-muted-foreground truncate text-xs">
-    {projectLabel} · {sessionLabel}
+    {folderLabel} · {sessionLabel}
   </div>
   <div class="text-foreground text-3xl tabular-nums">
     {durationText}

@@ -294,7 +294,7 @@ describe('main — file download bootstrap wiring', () => {
     expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: new Set(['session-1']) }));
   });
 
-  it('enumerates each canonical entry once despite duplicate occurrences', async () => {
+  it('enumerates canonical entry paths and reach paths exactly once each', async () => {
     const sharedEntry = { path: '/workspace/shared', name: 'shared', nature: 'code' };
     const sharedChildren = [{ path: '/workspace/shared/member', via: 'shortcut', entry: { path: '/external/member', name: 'member', nature: 'code' }, children: [] }];
     mocks.scanFolderModel.mockImplementationOnce(async () => ({
@@ -307,10 +307,40 @@ describe('main — file download bootstrap wiring', () => {
 
     await main();
 
-    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledTimes(2);
+    // Identity and reach paths alike: pi's session-directory encoding is
+    // lexical, so alias/reach paths hold their own session directories — the
+    // sweep must never drop registrations recorded there. Duplicate
+    // occurrences collapse to one enumeration per path.
+    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledTimes(4);
     expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/shared', { failOnError: true });
     expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/external/member', { failOnError: true });
+    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/shared/member', { failOnError: true });
+    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/other/shared-link', { failOnError: true });
     expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: new Set(['session-1']) }));
+  });
+
+  it('suppresses the sweep when the scan work budget was exceeded', async () => {
+    mocks.scanFolderModel.mockImplementationOnce(async (options: { onWarning: (warning: unknown) => void }) => {
+      options.onWarning({ path: '/workspace/huge', operation: 'budget', error: new Error('visit budget exceeded') });
+      return {
+        occurrences: [
+          {
+            path: '/workspace/project',
+            via: 'scan',
+            entry: { path: '/workspace/project', name: 'project', nature: 'code' },
+            children: [],
+          },
+        ],
+      };
+    });
+
+    await main();
+
+    // A truncated scan cannot prove its own completeness — never a partial
+    // allow-list.
+    expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: null }));
+    expect(mocks.gcStaticHostStore).not.toHaveBeenCalled();
+    expect(mocks.sessionRecords.listSessionRecords).not.toHaveBeenCalled();
   });
 });
 

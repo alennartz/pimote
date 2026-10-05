@@ -289,14 +289,15 @@ function isDirectRun(): boolean {
 
 /**
  * The static-host/download boot allow-list: every session recorded in any
- * folder the folder model discovers, deduplicated by canonical entry path
- * across the whole occurrence tree, shortcut descendants included.
+ * folder the folder model discovers — canonical entry paths and occurrence
+ * reach paths alike, deduplicated across the whole occurrence tree, shortcut
+ * descendants included.
  *
  * Returns null when the enumeration cannot be proven complete — a root-access
- * scan warning or a strict session-record failure. Critical: never substitute
- * an empty allow-list on failure; GC against one would delete every persisted
- * bundle on a transient I/O hiccup at boot. The sweep is skipped instead and
- * the next clean boot reclaims orphans.
+ * scan warning, an exhausted scan work budget, or a strict session-record
+ * failure. Critical: never substitute an empty allow-list on failure; GC
+ * against one would delete every persisted bundle on a transient I/O hiccup at
+ * boot. The sweep is skipped instead and the next clean boot reclaims orphans.
  */
 async function enumerateValidSessionIds(roots: string[], sessionRecords: SessionRecords): Promise<Set<string> | null> {
   try {
@@ -308,12 +309,12 @@ async function enumerateValidSessionIds(roots: string[], sessionRecords: Session
         console.warn(`[pimote] folder scan warning at ${warning.path}:`, warning.error);
       },
     });
-    if (warnings.some((warning) => isRootAccessWarning(roots, warning))) {
-      console.warn('[pimote] static-host GC: root not accessible, skipping sweep this boot');
+    if (warnings.some((warning) => warning.operation === 'budget' || isRootAccessWarning(roots, warning))) {
+      console.warn('[pimote] static-host GC: scan incomplete (root access or work budget), skipping sweep this boot');
       return null;
     }
     const validSessionIds = new Set<string>();
-    for (const folderPath of uniqueEntryPaths(tree)) {
+    for (const folderPath of sessionEnumerationPaths(tree)) {
       // Strict enumeration: one unlistable folder voids completeness too.
       const records = await sessionRecords.listSessionRecords(folderPath, { failOnError: true });
       for (const record of records) validSessionIds.add(record.id);
@@ -331,21 +332,37 @@ async function enumerateValidSessionIds(roots: string[], sessionRecords: Session
  * subtrees went unenumerated and the sweep is suppressed. Everything else is
  * local: warnings below a root (unreadable markers, dangling symlinks,
  * unreadable subdirectories) and AGENTS.md content warnings (readFile) only
- * drop local discoveries and leave the sweep permitted.
+ * drop local discoveries and leave the sweep permitted. The scan work budget
+ * (operation `'budget'`) is handled separately by the caller: an exhausted
+ * budget means the tree itself is incomplete.
  */
 function isRootAccessWarning(roots: readonly string[], warning: FolderScanWarning): boolean {
   return warning.operation !== 'readFile' && roots.includes(warning.path);
 }
 
-/** Unique canonical entry paths across the whole occurrence tree, first *  discovery order, shortcut descendants included, duplicate occurrences *  collapsed. */
-function uniqueEntryPaths(tree: SparseTree): string[] {
+/**
+ * Every folder path whose session directory may hold persisted sessions:
+ * canonical entry paths plus every occurrence reach path, deduplicated in
+ * first-discovery order across the whole occurrence tree, shortcut descendants
+ * included. Reach paths belong here because pi's session-directory encoding is
+ * lexical: a session opened through a symlink alias (or recorded under a
+ * pre-canonical path before the folder-model rename) lives in that alias's
+ * session directory, not the canonical one — enumerating only canonical paths
+ * lets the sweep delete those sessions' hosting/download registrations on
+ * every boot.
+ */
+function sessionEnumerationPaths(tree: SparseTree): string[] {
   const seen = new Set<string>();
   const paths: string[] = [];
-  const visit = (occurrence: FolderOccurrence): void => {
-    if (!seen.has(occurrence.entry.path)) {
-      seen.add(occurrence.entry.path);
-      paths.push(occurrence.entry.path);
+  const add = (path: string): void => {
+    if (!seen.has(path)) {
+      seen.add(path);
+      paths.push(path);
     }
+  };
+  const visit = (occurrence: FolderOccurrence): void => {
+    add(occurrence.entry.path);
+    add(occurrence.path);
     occurrence.children.forEach(visit);
   };
   tree.occurrences.forEach(visit);

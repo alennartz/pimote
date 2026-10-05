@@ -64,6 +64,10 @@ describe('FolderStore', () => {
   describe('module-scope event routing', () => {
     it('folders_changed replaces the folder list', () => {
       expect(eventListeners.size).toBeGreaterThan(0);
+      routeSends({
+        list_sessions: () => ({ success: true, data: { sessions: [] } }),
+        list_repos: () => ({ success: true, data: { repos: [] } }),
+      });
 
       const listener = [...eventListeners].at(-1)!;
       const next = [makeFolder({ path: '/r/new', name: 'new' })];
@@ -74,6 +78,10 @@ describe('FolderStore', () => {
 
     it('folders_changed replaces the list without wiping live session indicators', () => {
       const listener = [...eventListeners].at(-1)!;
+      routeSends({
+        list_sessions: () => ({ success: true, data: { sessions: [] } }),
+        list_repos: () => ({ success: true, data: { repos: [] } }),
+      });
       folderStore.sessions.delete('/r/live');
 
       // A live session seeds the sessions map while the user is away.
@@ -160,11 +168,108 @@ describe('FolderStore', () => {
     it('applyFoldersChanged() replaces the whole list', () => {
       const store = new FolderStore();
       store.folders = [makeFolder({ path: '/r/old', name: 'old' })];
+      routeSends({
+        list_sessions: () => ({ success: true, data: { sessions: [] } }),
+        list_repos: () => ({ success: true, data: { repos: [] } }),
+      });
 
       const next = [makeFolder({ path: '/r/a', name: 'a' }), makeFolder({ path: '/r/b', name: 'b' })];
       store.applyFoldersChanged({ type: 'folders_changed', folders: next });
 
       expect(store.folders).toEqual(next);
+    });
+
+    it('folders_changed hydrates newly introduced folders and refreshes repos', () => {
+      const store = new FolderStore();
+      const cached = makeFolder({ path: '/r/cached', name: 'cached' });
+      const fresh = makeFolder({ path: '/r/fresh', name: 'fresh' });
+      store.sessions.set('/r/cached', [makeSession('s1', '2024-01-01T00:00:00Z')]);
+      routeSends({
+        list_sessions: () => ({ success: true, data: { sessions: [] } }),
+        list_repos: () => ({ success: true, data: { repos: [] } }),
+      });
+
+      store.applyFoldersChanged({ type: 'folders_changed', folders: [cached, fresh] });
+
+      // The uncached folder gets its session history loaded; the warm one is
+      // not refetched. Repos refresh alongside so git chips appear too.
+      const sessionCmds = fakeConnection.send.mock.calls.filter(([c]: any[]) => c.type === 'list_sessions');
+      expect(sessionCmds.map(([c]: any[]) => c.folderPath)).toEqual(['/r/fresh']);
+      expect(fakeConnection.send).toHaveBeenCalledWith({ type: 'list_repos' });
+    });
+  });
+
+  describe('in-flight listings vs newer events', () => {
+    it('a folders_changed broadcast during an in-flight load wins over the older response', async () => {
+      const store = new FolderStore();
+      const eventRows = [makeFolder({ path: '/r/event', name: 'event' })];
+      const staleRows = [makeFolder({ path: '/r/stale', name: 'stale' })];
+      let resolveFolders!: (v: unknown) => void;
+      fakeConnection.send.mockImplementation((cmd: any) => {
+        if (cmd.type === 'list_folders') return new Promise((res) => (resolveFolders = res));
+        return Promise.resolve({ success: true, data: { sessions: [], repos: [] } });
+      });
+
+      const load = store.loadFolders();
+      // The event arrives while the response is still in flight.
+      store.applyFoldersChanged({ type: 'folders_changed', folders: eventRows });
+      resolveFolders(okListFolders(staleRows));
+      await load;
+
+      // The stale response is discarded: neither rows nor roots are overwritten.
+      expect(store.folders).toEqual(eventRows);
+      expect(store.roots).toEqual([]);
+    });
+
+    it('a pending listing does not wipe sessions seeded by session_state_changed', async () => {
+      const store = new FolderStore();
+      let resolveSessions!: (v: unknown) => void;
+      fakeConnection.send.mockImplementation(() => new Promise((res) => (resolveSessions = res)));
+
+      const load = store.loadSessions('/r/a');
+      // The event seeds a session while the listing is in flight.
+      store.applySessionStateChange(
+        {
+          type: 'session_state_changed',
+          folderPath: '/r/a',
+          sessionId: 'live1',
+          liveStatus: 'working',
+          connectedClientId: 'other-client',
+          folderActiveSessionCount: 1,
+        } as Parameters<typeof store.applySessionStateChange>[0],
+        'test-client',
+      );
+
+      // The listing snapshot predates the event and lacks live1.
+      resolveSessions({ success: true, data: { sessions: [makeSession('s1', '2024-01-02T00:00:00Z')] } });
+      await load;
+
+      const rows = store.sessions.get('/r/a')!;
+      expect(rows.map((s) => s.id).sort()).toEqual(['live1', 's1']);
+    });
+
+    it('session_archived during an in-flight listing refetches instead of restoring the archived session', async () => {
+      const store = new FolderStore();
+      const responses: Array<(v: unknown) => void> = [];
+      fakeConnection.send.mockImplementation(() => new Promise((res) => responses.push(res)));
+
+      const s1 = makeSession('s1', '2024-01-01T00:00:00Z');
+      store.sessions.set('/r/a', [s1]);
+
+      const load = store.loadSessions('/r/a'); // request taken before the archive
+      store.applySessionArchived({ type: 'session_archived', folderPath: '/r/a', sessionId: 's1', archived: true });
+
+      // The pre-archive result still lists s1 — it must not be applied.
+      responses[0]({ success: true, data: { sessions: [{ ...s1, name: 'pre-archive' }] } });
+      await load;
+      await flush();
+      expect(store.sessions.get('/r/a')![0].name).toBe('s1');
+
+      // A fresh request went out and its post-archive result applies.
+      expect(responses).toHaveLength(2);
+      responses[1]({ success: true, data: { sessions: [] } });
+      await flush();
+      expect(store.sessions.get('/r/a')).toEqual([]);
     });
   });
 

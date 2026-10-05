@@ -3,7 +3,7 @@ import { Value } from 'typebox/value';
 import type { FolderInfo } from '../../../shared/dist/index.js';
 import { createManagerExtension } from './extension.js';
 import type { DiskSessionRecord, ManagerToolContext, ManagerSessionSummary } from './types.js';
-import type { SparseTree } from '../folder-model/index.js';
+import type { FolderOccurrence, SparseTree } from '../folder-model/index.js';
 
 // Minimal fake ExtensionAPI: records registerTool defs and hands back
 // observable port-routing behavior when the tests drive `execute` directly.
@@ -272,6 +272,28 @@ describe('pimote_folder_tree', () => {
 
     const result = await def.execute('call-1', {}, undefined, undefined, {});
 
+    expect(Value.Check(def.outputSchema, result.structuredContent)).toBe(true);
+  });
+
+  it('bounds output on a shared-descendant DAG instead of unfolding it exponentially', async () => {
+    const ports = spyPorts();
+    // Each level carries two occurrences of the same shared child — in memory
+    // this is a small DAG, but JSON serialization unfolds it 2^depth times.
+    const leaf: FolderOccurrence = { path: '/leaf', via: 'shortcut', entry: { path: '/leaf', name: 'leaf', nature: 'code' }, children: [] };
+    let shared: FolderOccurrence = leaf;
+    for (let i = 0; i < 30; i++) {
+      const entry = { path: `/e${i}`, name: `e${i}`, nature: 'code' as const };
+      shared = { path: `/l${i}`, via: 'shortcut', entry, children: [shared, { ...shared, path: `${shared.path}-b` }] };
+    }
+    ports.tree.tree.mockResolvedValue({ occurrences: [shared] });
+    const def = treeTool(ports);
+
+    const result = (await def.execute('call-1', {}, undefined, undefined, {})) as { structuredContent: SparseTree & { truncated?: boolean } };
+
+    // Bounded serialization with an explicit truncation signal, and still
+    // schema-valid.
+    expect(result.structuredContent.truncated).toBe(true);
+    expect(JSON.stringify(result.structuredContent).length).toBeLessThan(2_000_000);
     expect(Value.Check(def.outputSchema, result.structuredContent)).toBe(true);
   });
 });

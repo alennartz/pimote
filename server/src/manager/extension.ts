@@ -1,6 +1,7 @@
 import type { ExtensionFactory, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { enrichActiveSessionCounts } from '../folder-registry.js';
+import type { FolderOccurrence, SparseTree } from '../folder-model/index.js';
 import { errorToolResult, jsonToolResult, type JsonToolResult } from '../tool-result.js';
 import type { FolderInfo } from '../../../shared/dist/index.js';
 import type { ManagerToolContext, ManagedSessionSummary } from './types.js';
@@ -102,7 +103,10 @@ function applyFolderDefaults(folder: FolderInfo): FolderInfo {
  * shape as one self-contained recursive JSON schema — occurrences reference
  * their entry and recurse through `children`. The tree types stay in
  * folder-model/manager (there is no tree wire command); this schema is the
- * tool's structured-output contract only.
+ * tool's structured-output contract only. The root object gains an optional
+ * `truncated` flag because the in-memory tree is a shared-entry DAG and JSON
+ * serialization unfolds shared shortcut subtrees once per reach (see
+ * `boundedTree`).
  */
 const SparseTreeSchema = Type.Cyclic(
   {
@@ -118,10 +122,48 @@ const SparseTreeSchema = Type.Cyclic(
       entry: Type.Ref('FolderEntry'),
       children: Type.Array(Type.Ref('FolderOccurrence')),
     }),
-    SparseTree: Type.Object({ occurrences: Type.Array(Type.Ref('FolderOccurrence')) }),
+    SparseTree: Type.Object({
+      occurrences: Type.Array(Type.Ref('FolderOccurrence')),
+      truncated: Type.Optional(
+        Type.Boolean({ description: 'True when the tree was too large to serialize in full: occurrences past the output budget were dropped from children.' }),
+      ),
+    }),
   },
   'SparseTree',
 );
+
+/** Serialized tree output budget, in occurrences. */
+const TREE_OUTPUT_BUDGET = 5_000;
+
+/**
+ * Bounded serialization of the sparse tree. In-memory, shared entries make the
+ * tree a DAG, but JSON.stringify unfolds a shared subtree once per reach — a
+ * symlink-dense shortcut DAG serializes exponentially (tens of MB from a few
+ * dozen folders), which would block the shared server event loop. Past the
+ * budget, children are dropped and the result carries `truncated: true`.
+ */
+function boundedTree(tree: SparseTree): SparseTree & { truncated?: boolean } {
+  let budget = TREE_OUTPUT_BUDGET;
+  let truncated = false;
+  const visit = (occurrence: FolderOccurrence): FolderOccurrence => {
+    if (budget <= 0) {
+      truncated = true;
+      return { path: occurrence.path, via: occurrence.via, entry: occurrence.entry, children: [] };
+    }
+    budget--;
+    const children: FolderOccurrence[] = [];
+    for (const child of occurrence.children) {
+      if (budget <= 0) {
+        truncated = true;
+        break;
+      }
+      children.push(visit(child));
+    }
+    return { path: occurrence.path, via: occurrence.via, entry: occurrence.entry, children };
+  };
+  const occurrences = tree.occurrences.map(visit);
+  return truncated ? { occurrences, truncated: true } : { occurrences };
+}
 
 const SessionSearchHitSchema = Type.Object({
   id: Type.String(),
@@ -187,11 +229,12 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         'the walked scan path or symlink shortcut path with skipped segments collapsed inline — plus the entry, ' +
         'whose canonical path is the folder identity; occurrences reached several ways share one entry. ' +
         'Shortcut occurrences nest their target discoveries in children. Computed on demand from the scan roots. ' +
-        'Takes no arguments.',
+        'Output is bounded: on very large trees, children past the output budget are dropped and the result ' +
+        'carries truncated: true. Takes no arguments.',
       parameters: Type.Object({}),
       annotations: { readOnlyHint: true },
       outputSchema: SparseTreeSchema,
-      execute: async (_callId, _params) => jsonToolResult(await context.tree.tree()),
+      execute: async (_callId, _params) => jsonToolResult(boundedTree(await context.tree.tree())),
     });
 
     pi.registerTool({

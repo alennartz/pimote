@@ -1,6 +1,5 @@
-import { unlink } from 'node:fs/promises';
+import { stat, unlink } from 'node:fs/promises';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
-import type { SessionInfo as PimoteSessionInfo } from '../../shared/dist/index.js';
 import { SessionSummaryIndex, type SessionSummary } from './session-summaries.js';
 
 /**
@@ -29,29 +28,12 @@ export class SessionRecords {
    */
   async listSessionRecords(folderPath: string, options: SessionRecordOptions = {}): Promise<SessionSummary[]> {
     try {
-      return await this.summaries.list(folderPath);
+      return await this.summaries.list(folderPath, { failOnError: options.failOnError });
     } catch (err) {
       if (options.failOnError) throw err;
       console.warn(`[SessionRecords] Failed to list sessions for ${folderPath}:`, err);
       return [];
     }
-  }
-
-  /**
-   * List sessions for a given folder path.
-   * Maps cached session records to the shared SessionInfo type.
-   */
-  async listSessions(folderPath: string): Promise<PimoteSessionInfo[]> {
-    const piSessions = await this.listSessionRecords(folderPath);
-
-    return piSessions.map((s) => ({
-      id: s.id,
-      name: s.name,
-      created: s.created.toISOString(),
-      modified: s.modified.toISOString(),
-      messageCount: s.messageCount,
-      firstMessage: s.firstMessage || undefined,
-    }));
   }
 
   /**
@@ -66,23 +48,38 @@ export class SessionRecords {
 
   /**
    * Persist a new display name for a session on disk.
-   * Returns true if renamed, false if the session was not found.
+   * Returns true if renamed, false if the session was not found or vanished
+   * mid-operation: pi's `open()` silently no-ops when the file is gone (its
+   * in-memory session never flushes without conversation), so the rename only
+   * happened if the file is still there afterwards.
    */
   async renameSession(folderPath: string, sessionId: string, name: string): Promise<boolean> {
     const sessionPath = await this.resolveSessionPath(folderPath, sessionId);
     if (!sessionPath) return false;
     SessionManager.open(sessionPath).appendSessionInfo(name);
+    try {
+      await stat(sessionPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
     return true;
   }
 
   /**
    * Delete a session file from disk.
-   * Returns true if deleted, false if the session was not found.
+   * Returns true if deleted (or already gone — deletion is idempotent), false
+   * if the session was not found.
    */
   async deleteSession(folderPath: string, sessionId: string): Promise<boolean> {
     const sessionPath = await this.resolveSessionPath(folderPath, sessionId);
     if (!sessionPath) return false;
-    await unlink(sessionPath);
+    try {
+      await unlink(sessionPath);
+    } catch (error) {
+      // Deleted between resolution and unlink — the goal state is reached.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
     return true;
   }
 }

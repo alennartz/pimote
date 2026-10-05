@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join, sep } from 'node:path';
 import type { FolderInfo, RepoInfo } from '../../shared/dist/index.js';
 import type { FolderEntry, FolderOccurrence, SparseTree } from './folder-model/index.js';
@@ -339,9 +339,15 @@ export class FolderRegistry implements FolderRegistryPort {
       const target = join(root, name);
       if (await pathExists(target)) throw new Error(`Directory already exists: ${target}`);
 
+      let canonicalTarget: string;
       try {
         await materializeHubFolder({ kind: 'hub', path: target, name, memberPaths });
-        doc.hubs.push({ path: target, name, memberPaths });
+        // Canonical identity (curation contract): a configured root may be a
+        // symlink alias, and discovery identifies folders by their real path —
+        // persisting the lexical path would split the hub into two rows and
+        // orphan its curation on one of them.
+        canonicalTarget = await realpath(target);
+        doc.hubs.push({ path: canonicalTarget, name, memberPaths });
         await this.persist(doc);
       } catch (error) {
         // Never leave a half-built hub folder behind: it would block retry
@@ -351,7 +357,7 @@ export class FolderRegistry implements FolderRegistryPort {
         throw error;
       }
       this.fireChange();
-      return this.hubRow(doc, repos, target);
+      return this.hubRow(doc, repos, canonicalTarget);
     });
   }
 

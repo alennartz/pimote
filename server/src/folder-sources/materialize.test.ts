@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, rm, readFile, readlink, realpath, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readFile, readlink, realpath, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { HubSourceEntry } from '@pimote/sdk/folders';
@@ -70,7 +70,52 @@ describe('materializeHubFolder()', () => {
     const { stdout } = await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: hub });
     expect(stdout.trim()).toBe('true');
     const ignore = await readFile(join(hub, '.gitignore'), 'utf8');
-    expect(ignore.split('\n').filter(Boolean)).toEqual(['member-a', 'member-b']);
+    expect(ignore.split('\n').filter(Boolean)).toEqual(['/member-a', '/member-b']);
+  });
+
+  it('escapes member names that contain gitignore syntax and root-anchors the rules', async () => {
+    const hash = join(externalDir, '#member');
+    const star = join(externalDir, 'mem*ber');
+    await codeFolder(hash);
+    await codeFolder(star);
+    const hub = join(tempDir, 'group');
+
+    await materializeHubFolder(hubEntry(hub, 'group', [hash, star]));
+
+    const ignore = await readFile(join(hub, '.gitignore'), 'utf8');
+    expect(ignore.split('\n').filter(Boolean)).toEqual(['/\\#member', '/mem\\*ber']);
+    // The rules are literal matches for the link names: `#member` is not a
+    // comment and the glob hides nothing else.
+    await expect(execFileAsync('git', ['check-ignore', '--', '#member'], { cwd: hub })).resolves.toMatchObject({ stdout: '#member\n' });
+    await expect(execFileAsync('git', ['check-ignore', '--', 'memXber'], { cwd: hub })).rejects.toThrow();
+  });
+
+  it('rolls back the hub directory when materialization fails, so a retry rebuilds fully', async () => {
+    const a = join(externalDir, 'dup', 'member');
+    const b = join(externalDir, 'other', 'member');
+    await codeFolder(a);
+    await codeFolder(b);
+    const hub = join(tempDir, 'group');
+
+    // Two members with the same basename collide on one symlink: the second
+    // link fails mid-layout.
+    await expect(materializeHubFolder(hubEntry(hub, 'group', [a, b]))).rejects.toThrow();
+    await expect(stat(hub)).rejects.toThrow();
+
+    // The retry is not poisoned by a half-built directory — the full layout
+    // (including git init) is built after the failure.
+    await materializeHubFolder(hubEntry(hub, 'group', [a]));
+    expect((await stat(join(hub, '.git'))).isDirectory()).toBe(true);
+    expect(await readlink(join(hub, 'member'))).toBe(a);
+  });
+
+  it('refuses to build into an existing directory instead of adopting it', async () => {
+    const hub = join(tempDir, 'group');
+    await mkdir(hub, { recursive: true });
+    await writeFile(join(hub, 'precious'), 'user data', 'utf8');
+
+    await expect(materializeHubFolder(hubEntry(hub, 'group', []))).rejects.toThrow(/already exists/);
+    await expect(stat(join(hub, 'precious'))).resolves.toBeTruthy();
   });
 
   it('writes an empty .gitignore for a hub without members', async () => {

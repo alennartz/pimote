@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, rm, readdir, lstat, readlink, readFile, writeFile, chmod } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readdir, lstat, readlink, readFile, symlink, writeFile, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -463,6 +463,22 @@ describe('FolderRegistry persistence', () => {
 });
 
 describe('FolderRegistry.createHub()', () => {
+  it('persists the canonical identity when the root is a symlink alias', async () => {
+    const aliasRoot = join(tempDir, 'alias-root');
+    await symlink(rootDir, aliasRoot);
+
+    const registry = makeRegistry();
+    const created = await registry.createHub({ name: 'multi', root: aliasRoot, memberPaths: [repoA] });
+
+    // Discovery identifies folders by their real path: a non-canonical
+    // persisted key would split the hub into two rows and orphan its curation.
+    expect(created.path).toBe(join(rootDir, 'multi'));
+    const rows = (await registry.list()).filter((folder) => folder.name === 'multi');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].path).toBe(join(rootDir, 'multi'));
+    expect(rows[0].repos?.map((r) => r.path)).toEqual([repoA]);
+  });
+
   it('returns the full FolderInfo row for the new hub', async () => {
     const registry = makeRegistry();
     const created = await registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA] });
@@ -492,7 +508,7 @@ describe('FolderRegistry.createHub()', () => {
     expect(await findSymlinkTo(hubPath, repoA)).toBeDefined();
     // The hub is self-describing: a git repo that ignores its member links.
     expect(existsSync(join(hubPath, '.git'))).toBe(true);
-    expect((await readFile(join(hubPath, '.gitignore'), 'utf8')).split('\n').filter(Boolean)).toEqual(['repo-a']);
+    expect((await readFile(join(hubPath, '.gitignore'), 'utf8')).split('\n').filter(Boolean)).toEqual(['/repo-a']);
 
     // The generated AGENTS.md names each member and the sub-project convention.
     const content = await readFile(join(hubPath, 'AGENTS.md'), 'utf8');

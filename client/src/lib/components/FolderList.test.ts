@@ -543,6 +543,30 @@ describe('hub dialogs', () => {
 
     await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith({ type: 'disband_hub', folderPath: '/w/stack' }));
   });
+
+  it('a rejected disband surfaces the server error instead of vanishing', async () => {
+    folderStore.folders = [hub];
+    vi.mocked(connection.send).mockImplementation(async (command: any) => {
+      if (command.type === 'disband_hub') return { id: '1', success: false, error: 'Not a hub folder: /w/stack' };
+      return { id: '1', success: true, data: {} };
+    });
+    destroy = render();
+    await tick();
+
+    openMenu(hub.path);
+    await tick();
+    const items = document.querySelectorAll('[data-slot="context-menu-item"]');
+    (items[1] as HTMLElement).click();
+    await tick();
+
+    const disbandButton = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Disband');
+    expect(disbandButton).toBeDefined();
+    disbandButton!.click();
+
+    // The dialog closes on send, but the rejection is displayed at the top of
+    // the list — the response's success flag may not be ignored.
+    await vi.waitFor(() => expect(shows('Not a hub folder: /w/stack')).toBe(true));
+  });
 });
 
 describe('hub menu eligibility', () => {

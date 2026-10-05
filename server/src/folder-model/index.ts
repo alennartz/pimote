@@ -4,6 +4,7 @@ import { nodeFolderFs } from './node-folder-fs.js';
 import { createScanContext, discoverRoots } from './traversal.js';
 
 export { nodeFolderFs } from './node-folder-fs.js';
+export { DEFAULT_VISIT_BUDGET } from './traversal.js';
 
 /**
  * Folder model — the deep module that owns folder discovery.
@@ -64,7 +65,9 @@ export interface FolderFs {
 
 export interface FolderScanWarning {
   path: string;
-  operation: 'readdir' | 'lstat' | 'realpath' | 'readFile';
+  /** The fs operation that failed — or `'budget'`, which is not an fs failure:
+   *  the scan visit budget was exceeded and traversal was truncated. */
+  operation: 'readdir' | 'lstat' | 'realpath' | 'readFile' | 'budget';
   error: unknown;
 }
 
@@ -73,6 +76,8 @@ export interface ScanFolderModelOptions {
   fs?: FolderFs;
   /** Local fs failures report here; defaults to console.warn. */
   onWarning?: (warning: FolderScanWarning) => void;
+  /** Upper bound on folder visits per scan; see `DEFAULT_VISIT_BUDGET`. */
+  visitBudget?: number;
 }
 
 /**
@@ -84,7 +89,7 @@ export interface ScanFolderModelOptions {
 export async function scanFolderModel(options: ScanFolderModelOptions): Promise<SparseTree> {
   const fs = options.fs ?? nodeFolderFs;
   const onWarning = options.onWarning ?? console.warn;
-  return discoverRoots(createScanContext(fs, onWarning), options.roots);
+  return discoverRoots(createScanContext(fs, onWarning, options.visitBudget), options.roots);
 }
 
 /**

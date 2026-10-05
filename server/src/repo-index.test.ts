@@ -227,6 +227,52 @@ describe('RepoIndex.list() — registered sources', () => {
     expect(listed?.tags).toEqual(['work']);
   });
 
+  it('carries source tags and lastActivity into a scanned path, not just external ones', async () => {
+    const repoA = join(tempDir, 'repo-a');
+    await initRepo(repoA);
+
+    const index = makeIndex();
+    index.registerSource({
+      id: 'test-source',
+      list: async () => [{ kind: 'repo', path: repoA, name: 'renamed', branch: null, dirty: false, ahead: 0, behind: 0, tags: ['work'], lastActivity: 123 }],
+    });
+
+    const listed = await repoAt(index, repoA);
+    expect(listed?.tags).toEqual(['work']);
+    expect(listed?.lastActivity).toBe(123);
+    // The scan row wins on identity fields.
+    expect(listed?.name).toBe('repo-a');
+  });
+
+  it('excludes a persona-natured source entry from the repo listing', async () => {
+    const personaHome = join(externalDir, 'ada');
+    await mkdir(personaHome, { recursive: true });
+    await writeFile(join(personaHome, 'AGENTS.md'), '---\nname: Ada\n---\nprompt body', 'utf8');
+
+    const index = makeIndex();
+    index.registerSource({
+      id: 'test-source',
+      list: async () => [{ kind: 'repo', path: personaHome, name: 'ada', branch: null, dirty: false, ahead: 0, behind: 0 }],
+    });
+
+    // A persona home is never a repo — even when a source lists it.
+    expect((await index.list()).map((r) => r.path)).not.toContain(personaHome);
+  });
+
+  it('excludes an in-tree persona path that only a source lists', async () => {
+    const personaHome = join(tempDir, 'ada');
+    await mkdir(personaHome, { recursive: true });
+    await writeFile(join(personaHome, 'AGENTS.md'), '---\nname: Ada\n---\nprompt body', 'utf8');
+
+    const index = makeIndex();
+    index.registerSource({
+      id: 'test-source',
+      list: async () => [{ kind: 'repo', path: personaHome, name: 'ada', branch: null, dirty: false, ahead: 0, behind: 0 }],
+    });
+
+    expect((await index.list()).map((r) => r.path)).not.toContain(personaHome);
+  });
+
   it('normalizes bare repo shapes without a kind as repo entries', async () => {
     const index = makeIndex();
     const bare = { path: join(externalDir, 'bare'), name: 'bare', branch: null, dirty: false, ahead: 0, behind: 0 };
@@ -264,7 +310,7 @@ describe('RepoIndex.runOpenHooks() — materialization', () => {
     expect(agents).toContain('virtual-member');
     // The member links are ignored by git.
     const ignore = await readFile(join(groupPath, '.gitignore'), 'utf8');
-    expect(ignore.split('\n').filter(Boolean)).toEqual(['member-a', 'virtual-member']);
+    expect(ignore.split('\n').filter(Boolean)).toEqual(['/member-a', '/virtual-member']);
     expect(order).toEqual([`hook:${groupPath}`]);
   });
 
@@ -374,6 +420,36 @@ describe('RepoIndex.list() — TTL cache', () => {
     const paths = (await index.list()).map((r) => r.path);
     expect(paths).toContain(repoA);
     expect(paths).toContain(repoB);
+  });
+
+  it('never serves a walk that was invalidated while it was in flight', async () => {
+    await initRepo(join(tempDir, 'repo-a'));
+
+    const index = makeIndex();
+    let sourceCalls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    index.registerSource({
+      id: 'gated',
+      list: async () => {
+        sourceCalls++;
+        if (sourceCalls === 1) {
+          await gate; // hold walk 1 mid-flight
+          return [];
+        }
+        return [{ kind: 'repo', path: join(externalDir, 'late'), name: 'late', branch: null, dirty: false, ahead: 0, behind: 0 }];
+      },
+    });
+
+    const pending = index.list(); // walk 1 in flight, stuck in its source
+    index.invalidate(); // a hub/create change lands mid-walk
+    release();
+    const rows = await pending;
+
+    // The invalidated walk's pre-invalidation entries are never served: the
+    // caller joined the walk but gets the post-invalidation state.
+    expect(sourceCalls).toBe(2);
+    expect(rows.map((r) => r.path)).toContain(join(externalDir, 'late'));
   });
 });
 

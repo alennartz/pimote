@@ -12,7 +12,10 @@ import type { PersonaInfo } from './index.js';
 export function parsePersonaFrontMatter(content: string): PersonaInfo | null {
   const lines = content.split(/\r?\n/);
   if (lines[0]?.trim() !== '---') return null;
-  const close = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
+  // The close delimiter must sit at column 0: a whitespace-trimmed match would
+  // also close on an indented `---` inside a YAML block scalar, silently
+  // truncating the document.
+  const close = lines.findIndex((line, index) => index > 0 && /^---[ \t]*$/.test(line));
   if (close === -1) return null;
 
   let document: unknown;

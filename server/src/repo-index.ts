@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { RepoInfo } from '../../shared/dist/index.js';
 import type { HubSourceEntry, FolderSource, RepoSourceEntry, SourceEntry } from './folder-sources/index.js';
-import { scanFolderModel, type FolderEntry, type FolderOccurrence, type SparseTree } from './folder-model/index.js';
+import { classifyFolder, nodeFolderFs, scanFolderModel, type FolderEntry, type FolderOccurrence, type SparseTree } from './folder-model/index.js';
 import { getGitBranch } from './git-branch.js';
 import { materializeHubFolder } from './folder-sources/materialize.js';
 
@@ -17,6 +17,12 @@ interface RepoStatus {
   dirty: boolean;
   ahead: number;
   behind: number;
+  at: number;
+}
+
+/** One completed walk's stamp; kept as the cached listing until invalidated. */
+interface ListingStamp {
+  entries: RepoInfo[];
   at: number;
 }
 
@@ -67,6 +73,12 @@ function collectCodeEntries(tree: SparseTree): FolderEntry[] {
   return [...byPath.values()];
 }
 
+/** Union of two tag lists; undefined when both are absent (keeps the wire clean). */
+function mergeTags(a?: string[], b?: string[]): string[] | undefined {
+  const merged = [...new Set([...(a ?? []), ...(b ?? [])])];
+  return merged.length > 0 ? merged : undefined;
+}
+
 /** Branch, dirty flag, and ahead/behind for one repo. Failed probes yield neutral values. */
 async function readGitStatus(cwd: string): Promise<Omit<RepoStatus, 'at'>> {
   const git = gitRunner(cwd);
@@ -89,21 +101,23 @@ async function readGitStatus(cwd: string): Promise<Omit<RepoStatus, 'at'>> {
  * Discovery consumes the folder-model sparse scan (`scanFolderModel`): every
  * unique canonical code folder across all occurrences becomes one repo entry
  * — scan reaches, shortcut targets outside the roots, and hub folders alike —
- * while persona folders are excluded even when they contain git. Descent
- * stops at included folders, so nested repos inside a repo are never crawled.
- * TTL-cached repo listing, and per-repo git status enrichment (branch, dirty,
- * ahead/behind) with its own TTL. Expired caches are served stale while a
- * background refresh runs (see `list()`). Derived state only — no persistence.
+ * while persona folders are excluded even when they contain git (for scanned
+ * and source-contributed paths alike: a persona home is never a repo).
+ * Descent stops at included folders, so nested repos inside a repo are never
+ * crawled. TTL-cached repo listing, and per-repo git status enrichment (branch,
+ * dirty, ahead/behind) with its own TTL. Expired caches are served stale while
+ * a background refresh runs (see `list()`). Derived state only — no
+ * persistence.
  */
 export class RepoIndex {
   private readonly ttlMs: number;
   private readonly statusTtlMs: number;
   private readonly now: () => number;
   private readonly sources: FolderSource[] = [];
-  private listing: { entries: RepoInfo[]; at: number } | null = null;
+  private listing: ListingStamp | null = null;
   private sourceHubs: { entries: HubSourceEntry[]; at: number } | null = null;
   private readonly statusCache = new Map<string, RepoStatus>();
-  private listingPromise: Promise<RepoInfo[]> | null = null;
+  private listingPromise: Promise<ListingStamp> | null = null;
   private refreshInFlight: Promise<void> | null = null;
   private onRefreshed: (() => void) | null = null;
   private walkGeneration = 0;
@@ -141,8 +155,16 @@ export class RepoIndex {
       if (this.now() - cached.at >= this.ttlMs || cached.entries.some((entry) => this.statusExpired(entry))) this.kickRefresh();
       return await Promise.all(cached.entries.map((entry) => this.resolveServed(entry)));
     }
-    const base = await this.discover();
-    return await Promise.all(base.map((entry) => this.resolveServed(entry)));
+    // Cold path: join or start the walk — but never serve a walk whose stamp
+    // was invalidated mid-flight. `invalidate()` nulls the stamp, and the
+    // contract is that the next `list()` re-walks, even when it joined the
+    // walk that was already running. Invalidations are user-action driven, so
+    // the loop converges on the fresh state.
+    for (;;) {
+      await this.discover();
+      const listing = this.listing;
+      if (listing) return await Promise.all(listing.entries.map((entry) => this.resolveServed(entry)));
+    }
   }
 
   /**
@@ -159,17 +181,18 @@ export class RepoIndex {
   }
 
   /** Single-flight full re-scan; shared by cold lists and background refreshes. */
-  private discover(): Promise<RepoInfo[]> {
+  private discover(): Promise<ListingStamp> {
     if (!this.listingPromise) {
       const generation = this.walkGeneration;
       this.listingPromise = this.discoverAndStamp()
-        .then((entries) => {
-          if (generation !== this.walkGeneration) {
-            // invalidate() ran while this walk was in flight - its stamp is
-            // stale, so the next list() must re-walk.
+        .then((stamp) => {
+          if (generation !== this.walkGeneration && this.listing === stamp) {
+            // invalidate() ran while this walk was in flight — its stamp is
+            // stale, so the next list() must re-walk. Only our own stamp is
+            // discarded; a newer walk's stamp survives.
             this.listing = null;
           }
-          return entries;
+          return stamp;
         })
         .finally(() => {
           this.listingPromise = null;
@@ -281,7 +304,7 @@ export class RepoIndex {
   }
 
   /** Fresh discovery: scan the folder model, merge source contributions, mark vanished paths. */
-  private async discoverAndStamp(): Promise<RepoInfo[]> {
+  private async discoverAndStamp(): Promise<ListingStamp> {
     const byPath = new Map<string, RepoInfo>();
     const tree = await scanFolderModel({
       roots: this._roots,
@@ -318,7 +341,25 @@ export class RepoIndex {
           }
           continue;
         }
-        if (!byPath.has(entry.path)) byPath.set(entry.path, entry);
+        const existing = byPath.get(entry.path);
+        if (existing) {
+          // A scanned path still surfaces the source's tags and lastActivity —
+          // exactly like the same source's out-of-tree paths do. The scan row
+          // wins on identity and git fields.
+          byPath.set(entry.path, {
+            ...existing,
+            tags: mergeTags(existing.tags, entry.tags),
+            lastActivity: existing.lastActivity ?? entry.lastActivity,
+          });
+          continue;
+        }
+        // Persona taxonomy: a persona home is never a repo, however it is
+        // listed. Scanned paths already dropped their personas; unscanned
+        // source paths are classified here. Missing paths classify as code and
+        // keep their placeholder row.
+        const classification = await classifyFolder(nodeFolderFs, entry.path);
+        if (classification.nature === 'persona') continue;
+        byPath.set(entry.path, entry);
       }
     }
     this.sourceHubs = { entries: sourceHubs, at: this.now() };
@@ -327,8 +368,9 @@ export class RepoIndex {
     for (const repo of byPath.values()) {
       entries.push(await this.markMissing(repo));
     }
-    this.listing = { entries, at: this.now() };
-    return entries;
+    const stamp: ListingStamp = { entries, at: this.now() };
+    this.listing = stamp;
+    return stamp;
   }
 
   /** A path that no longer stats is kept, marked `missing`, with its entry values untouched. */

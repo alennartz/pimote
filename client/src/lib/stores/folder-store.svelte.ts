@@ -50,6 +50,18 @@ export class FolderStore {
   private reposLoadInFlight: Promise<void> | null = null;
   private sessionLoadsInFlight: Map<string, InFlightSessionLoad> = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
   private nextSessionRequestId = 0;
+  /** Bumped by every folders_changed broadcast. A list_folders response taken
+   *  before the bump describes an obsolete world and must not overwrite the
+   *  rows the event already delivered. */
+  private foldersEpoch = 0;
+  /** Per-folder count of structural session changes (deletes, archive-filter
+   *  transitions). A listing taken before the bump is superseded by events and
+   *  must be discarded and refetched, never applied. */
+  private sessionStructuralEpoch: Map<string, number> = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- staleness bookkeeping, not reactive UI state
+  /** Per-folder ids whose local entries were mutated by session_state_changed /
+   *  session_renamed while a listing was in flight. A fresh listing must merge
+   *  these event updates in instead of replacing them wholesale. */
+  private touchedSessions: Map<string, Set<string>> = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- staleness bookkeeping, not reactive UI state
 
   /**
    * Folders with the archived filter applied, favorites first. Within each
@@ -84,8 +96,13 @@ export class FolderStore {
     this.foldersLoadInFlight = (async () => {
       const isInitialLoad = this.folders.length === 0;
       if (isInitialLoad) this.loading = true;
+      const foldersEpoch = this.foldersEpoch;
       try {
         const response = await connection.send({ type: 'list_folders' });
+        // A folders_changed broadcast while we were waiting already delivered
+        // the newer full list; applying this older response would restore
+        // obsolete rows or curation.
+        if (this.foldersEpoch !== foldersEpoch) return;
         if (response.success && response.data) {
           const data = response.data as ListFoldersResponseData;
           this.folders = data.folders;
@@ -130,9 +147,17 @@ export class FolderStore {
     return this.reposLoadInFlight;
   }
 
-  /** Whole-list replacement driven by the server's folders_changed broadcast. */
+  /** Whole-list replacement driven by the server's folders_changed broadcast.
+   *  Newly introduced folders may carry session history this cache has never
+   *  seen — hydrate them here (not via caller ordering) so their session rows
+   *  and git chips appear without a remount. */
   applyFoldersChanged(event: FoldersChangedEvent): void {
+    this.foldersEpoch++;
     this.folders = event.folders;
+    for (const folder of event.folders) {
+      if (!this.sessions.has(folder.path)) void this.loadSessions(folder.path);
+    }
+    void this.loadRepos();
   }
 
   applySessionStateChange(event: SessionStateChangedEvent, myClientId: string): void {
@@ -146,6 +171,7 @@ export class FolderStore {
     if (folderSessions) {
       const idx = folderSessions.findIndex((s) => s.id === event.sessionId);
       if (idx >= 0) {
+        this.touchSession(event.folderPath, event.sessionId);
         // Update in place — merge event metadata with existing entry
         this.sessions.set(
           event.folderPath,
@@ -164,6 +190,7 @@ export class FolderStore {
         );
       } else if (event.liveStatus !== null) {
         // New active session — add directly from event data
+        this.touchSession(event.folderPath, event.sessionId);
         const now = nowIso();
         const updated = [
           ...folderSessions,
@@ -183,6 +210,7 @@ export class FolderStore {
       }
     } else if (event.liveStatus !== null) {
       // Sessions for this folder not loaded yet — seed with this entry
+      this.touchSession(event.folderPath, event.sessionId);
       const now = nowIso();
       this.sessions.set(event.folderPath, [
         {
@@ -201,6 +229,7 @@ export class FolderStore {
   }
 
   applySessionDeleted(event: SessionDeletedEvent): void {
+    this.bumpStructuralEpoch(event.folderPath);
     const folderSessions = this.sessions.get(event.folderPath);
     if (folderSessions) {
       const filtered = folderSessions.filter((s) => s.id !== event.sessionId);
@@ -210,7 +239,8 @@ export class FolderStore {
 
   applySessionRenamed(event: SessionRenamedEvent): void {
     const folderSessions = this.sessions.get(event.folderPath);
-    if (!folderSessions) return;
+    if (!folderSessions || !folderSessions.some((s) => s.id === event.sessionId)) return;
+    this.touchSession(event.folderPath, event.sessionId);
     this.sessions.set(
       event.folderPath,
       folderSessions.map((s) => (s.id === event.sessionId ? { ...s, name: event.name } : s)),
@@ -218,9 +248,52 @@ export class FolderStore {
   }
 
   applySessionArchived(event: SessionArchivedEvent): void {
+    this.bumpStructuralEpoch(event.folderPath);
     if (this.sessions.has(event.folderPath)) {
+      // Any same-filter request already in flight predates the archive-filter
+      // transition; its structural epoch is stale, so its result gets discarded
+      // and a fresh request follows (single-flight reuse alone would serve the
+      // pre-archive listing here).
       void this.loadSessions(event.folderPath);
     }
+  }
+
+  /** Record an event-mutated session id so an in-flight listing merges it in. */
+  private touchSession(folderPath: string, sessionId: string): void {
+    let touched = this.touchedSessions.get(folderPath);
+    if (!touched) {
+      touched = new Set(); // eslint-disable-line svelte/prefer-svelte-reactivity -- staleness bookkeeping, not reactive UI state
+      this.touchedSessions.set(folderPath, touched);
+    }
+    touched.add(sessionId);
+  }
+
+  private bumpStructuralEpoch(folderPath: string): void {
+    this.sessionStructuralEpoch.set(folderPath, (this.sessionStructuralEpoch.get(folderPath) ?? 0) + 1);
+  }
+
+  /** Apply a listing response, reconciling event updates seen while it was in
+   *  flight: event-touched entries win over their listing rows (and survive
+   *  their absence from the listing while still live). With nothing touched
+   *  this is a plain replace + sort. */
+  private applySessionListing(folderPath: string, listing: SessionInfo[]): void {
+    const touched = this.touchedSessions.get(folderPath);
+    let rows = listing;
+    if (touched && touched.size > 0) {
+      const local = this.sessions.get(folderPath) ?? [];
+      rows = listing.map((row) => {
+        const localEntry = touched.has(row.id) ? local.find((s) => s.id === row.id) : undefined;
+        return localEntry ? { ...row, ...localEntry } : row;
+      });
+      for (const id of touched) {
+        if (rows.some((r) => r.id === id)) continue;
+        const localEntry = local.find((s) => s.id === id);
+        // Mirrors the reducer's add rule: only live entries get reinstated.
+        if (localEntry && localEntry.liveStatus !== null) rows = [...rows, localEntry];
+      }
+    }
+    this.sessions.set(folderPath, sortSessionsByRecency(rows));
+    this.touchedSessions.delete(folderPath);
   }
 
   setShowArchived(show: boolean): void {
@@ -237,15 +310,24 @@ export class FolderStore {
 
     const includeArchived = this.showArchived;
     const requestId = ++this.nextSessionRequestId;
+    const structuralEpoch = this.sessionStructuralEpoch.get(folderPath) ?? 0;
+    let stale = false;
 
     const promise = (async () => {
       try {
         const response = await connection.send({ type: 'list_sessions', folderPath, includeArchived });
         if (this.sessionLoadsInFlight.get(folderPath)?.requestId !== requestId) return;
+        // A delete or archive-filter transition landed while we were waiting;
+        // the listing is superseded by events. Discard and refetch — but only
+        // after the in-flight entry is cleared below.
+        if ((this.sessionStructuralEpoch.get(folderPath) ?? 0) !== structuralEpoch) {
+          stale = true;
+          return;
+        }
 
         if (response.success && response.data) {
           const data = response.data as { sessions: SessionInfo[] };
-          this.sessions.set(folderPath, sortSessionsByRecency(data.sessions));
+          this.applySessionListing(folderPath, data.sessions);
         }
       } catch (e) {
         console.error('[FolderStore] Failed to load sessions:', e);
@@ -253,6 +335,7 @@ export class FolderStore {
         if (this.sessionLoadsInFlight.get(folderPath)?.requestId === requestId) {
           this.sessionLoadsInFlight.delete(folderPath);
         }
+        if (stale) void this.loadSessions(folderPath);
       }
     })();
 

@@ -28,55 +28,6 @@ function sessionRecordsFor(agentDir: string): SessionRecords {
   return new SessionRecords(new SessionSummaryIndex(agentDir));
 }
 
-describe('SessionRecords.listSessions()', () => {
-  it('returns empty array when the session directory does not exist', async () => {
-    const records = sessionRecordsFor(join(tempDir, 'agent'));
-    const sessions = await records.listSessions(join(tempDir, 'nonexistent'));
-
-    expect(sessions).toEqual([]);
-  });
-
-  it('maps session records dates to ISO strings', async () => {
-    const agentDir = join(tempDir, 'agent');
-    const folderDir = join(tempDir, 'project');
-    await writeSession(folderDir, agentDir, 's-1.jsonl', [
-      `{"type":"session","id":"abc-123","timestamp":"2025-06-15T10:30:00.000Z","cwd":"${folderDir}"}`,
-      `{"type":"message","timestamp":"2025-06-15T10:31:00.000Z","message":{"role":"user","content":"Hello world"}}`,
-      `{"type":"session_info","name":"Test Session"}`,
-    ]);
-
-    const records = sessionRecordsFor(agentDir);
-    const sessions = await records.listSessions(folderDir);
-
-    expect(sessions).toEqual([
-      {
-        id: 'abc-123',
-        name: 'Test Session',
-        created: '2025-06-15T10:30:00.000Z',
-        modified: '2025-06-15T10:31:00.000Z',
-        messageCount: 1,
-        firstMessage: 'Hello world',
-      },
-    ]);
-  });
-
-  it('maps sessions without optional name', async () => {
-    const agentDir = join(tempDir, 'agent');
-    const folderDir = join(tempDir, 'project');
-    await writeSession(folderDir, agentDir, 's-2.jsonl', [
-      `{"type":"session","id":"def-456","timestamp":"2025-01-01T00:00:00.000Z","cwd":"${folderDir}"}`,
-      `{"type":"message","timestamp":"2025-01-01T00:01:00.000Z","message":{"role":"user","content":"hi"}}`,
-    ]);
-
-    const records = sessionRecordsFor(agentDir);
-    const sessions = await records.listSessions(folderDir);
-
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].name).toBeUndefined();
-    expect(sessions[0].firstMessage).toBe('hi');
-  });
-});
-
 describe('SessionRecords.listSessionRecords()', () => {
   it('returns raw session summaries served by the summary cache', async () => {
     const agentDir = join(tempDir, 'agent');
@@ -92,7 +43,7 @@ describe('SessionRecords.listSessionRecords()', () => {
 
     const result = await records.listSessionRecords(folderDir);
 
-    expect(listSpy).toHaveBeenCalledWith(folderDir);
+    expect(listSpy).toHaveBeenCalledWith(folderDir, { failOnError: undefined });
     expect(result).toEqual([
       {
         path: sessionPath,
@@ -165,14 +116,16 @@ describe('SessionRecords.renameSession()', () => {
       appendSessionInfo: vi.fn(),
     } as any);
 
+    const sessionPath = join(tempDir, 'session-1.jsonl');
+    await writeFile(sessionPath, 'placeholder', 'utf8');
     const records = sessionRecordsFor(join(tempDir, 'agent'));
-    const resolveSpy = vi.spyOn(records, 'resolveSessionPath').mockResolvedValue('/tmp/session-1.jsonl');
+    const resolveSpy = vi.spyOn(records, 'resolveSessionPath').mockResolvedValue(sessionPath);
 
     const renamed = await records.renameSession('/home/user/project', 'session-1', 'Renamed Session');
 
     expect(renamed).toBe(true);
     expect(resolveSpy).toHaveBeenCalledWith('/home/user/project', 'session-1');
-    expect(openSpy).toHaveBeenCalledWith('/tmp/session-1.jsonl');
+    expect(openSpy).toHaveBeenCalledWith(sessionPath);
     expect(openSpy.mock.results[0]?.value.appendSessionInfo).toHaveBeenCalledWith('Renamed Session');
 
     openSpy.mockRestore();
@@ -192,6 +145,25 @@ describe('SessionRecords.renameSession()', () => {
 
     openSpy.mockRestore();
   });
+
+  it('returns false when the session file vanishes mid-operation: pi silently writes nothing', async () => {
+    // pi's open() falls back to an in-memory new session whose appendSessionInfo
+    // never flushes without conversation — the rename must not report success.
+    const agentDir = join(tempDir, 'agent');
+    const folderDir = join(tempDir, 'project');
+    const sessionPath = await writeSession(folderDir, agentDir, 's-1.jsonl', [`{"type":"session","id":"abc-123","timestamp":"2025-06-15T10:30:00.000Z","cwd":"${folderDir}"}`]);
+
+    const summaries = new SessionSummaryIndex(agentDir);
+    const records = new SessionRecords(summaries);
+    const list = summaries.list.bind(summaries);
+    vi.spyOn(summaries, 'list').mockImplementation(async (...args) => {
+      const result = await list(...args);
+      await rm(sessionPath, { force: true }); // concurrent delete lands right after resolution
+      return result;
+    });
+
+    await expect(records.renameSession(folderDir, 'abc-123', 'Renamed Session')).resolves.toBe(false);
+  });
 });
 
 describe('SessionRecords.deleteSession()', () => {
@@ -208,5 +180,22 @@ describe('SessionRecords.deleteSession()', () => {
   it('returns false when the session cannot be found', async () => {
     const records = sessionRecordsFor(join(tempDir, 'agent'));
     await expect(records.deleteSession(join(tempDir, 'nonexistent'), 'ghost')).resolves.toBe(false);
+  });
+
+  it('is idempotent when the file vanishes between resolution and delete', async () => {
+    const agentDir = join(tempDir, 'agent');
+    const folderDir = join(tempDir, 'project');
+    const sessionPath = await writeSession(folderDir, agentDir, 's-1.jsonl', [`{"type":"session","id":"abc-123","timestamp":"2025-06-15T10:30:00.000Z","cwd":"${folderDir}"}`]);
+
+    const summaries = new SessionSummaryIndex(agentDir);
+    const records = new SessionRecords(summaries);
+    const list = summaries.list.bind(summaries);
+    vi.spyOn(summaries, 'list').mockImplementation(async (...args) => {
+      const result = await list(...args);
+      await rm(sessionPath, { force: true }); // concurrent delete lands right after resolution
+      return result;
+    });
+
+    await expect(records.deleteSession(folderDir, 'abc-123')).resolves.toBe(true);
   });
 });

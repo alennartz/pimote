@@ -6,6 +6,17 @@ import { classifyListing, type FolderClassification } from './classification.js'
 /** Basenames never entered while descending below a root. */
 const PRUNED_BASENAMES: ReadonlySet<string> = new Set(['node_modules', '.git', 'dist', 'build', 'target', '.venv']);
 
+/**
+ * Per-scan folder-visit budget. Skipped-descent DAGs multiply reach paths
+ * exponentially (a real folder plus a symlink to it, layered n deep re-reads
+ * 2ⁿ descent paths), and the discovery contract deliberately forbids the depth
+ * limits and global visit-once rules that would bound it structurally. The
+ * budget bounds the work instead: past it the scan stops, warns once through
+ * `onWarning` (operation `'budget'`), and serves a partial tree. Linear trees
+ * of any realistic size stay far inside it.
+ */
+export const DEFAULT_VISIT_BUDGET = 50_000;
+
 interface EntryState {
   entry: FolderEntry;
   /** First-discovery shortcut occurrences, shared by every occurrence of this entry. */
@@ -19,6 +30,10 @@ export interface ScanContext {
   warn: (warning: FolderScanWarning) => void;
   /** Identity map: canonical path -> first-discovery entry state. */
   entries: Map<string, EntryState>;
+  /** Folder visits consumed so far against `visitBudget` (budget guard). */
+  visits: number;
+  visitBudget: number;
+  budgetWarned: boolean;
 }
 
 /** One folder reached by the walk: reach path, canonical identity, and descent chain. */
@@ -32,8 +47,8 @@ interface Walk {
   ancestors: ReadonlySet<string>;
 }
 
-export function createScanContext(fs: FolderFs, warn: ScanContext['warn']): ScanContext {
-  return { fs, warn, entries: new Map() };
+export function createScanContext(fs: FolderFs, warn: ScanContext['warn'], visitBudget: number = DEFAULT_VISIT_BUDGET): ScanContext {
+  return { fs, warn, entries: new Map(), visits: 0, visitBudget, budgetWarned: false };
 }
 
 /** Discover the sparse tree from the configured roots. */
@@ -53,6 +68,23 @@ export async function discoverRoots(ctx: ScanContext, roots: string[]): Promise<
  * folders yield the occurrences found by descending through them.
  */
 async function discoverFolder(ctx: ScanContext, walk: Walk): Promise<FolderOccurrence[]> {
+  if (++ctx.visits > ctx.visitBudget) {
+    if (!ctx.budgetWarned) {
+      ctx.budgetWarned = true;
+      ctx.warn({ path: walk.reach, operation: 'budget', error: new Error(`folder scan exceeded its ${ctx.visitBudget}-visit work budget; traversal truncated`) });
+    }
+    return [];
+  }
+
+  // Identity first: a folder already discovered as included stays included —
+  // later encounters reference the shared entry without touching the
+  // filesystem, so a transient re-read failure at a later reach can neither
+  // hide the encounter nor restart descent through an already-included folder.
+  const known = ctx.entries.get(walk.canonical);
+  if (known) {
+    return [{ path: walk.reach, via: walk.via, entry: known.entry, children: known.done ? known.children : [] }];
+  }
+
   let listing: Dirent[];
   try {
     listing = await ctx.fs.readdir(walk.reach);
@@ -68,18 +100,11 @@ async function discoverFolder(ctx: ScanContext, walk: Walk): Promise<FolderOccur
   return await descendThroughSkippedFolder(ctx, walk, listing);
 }
 
-/** Build (or reference) the occurrence of an included folder. */
+/** Build the occurrence of a first-discovery included folder. */
 async function occurrenceForIncludedFolder(ctx: ScanContext, walk: Walk, listing: Dirent[], classification: NonNullable<FolderClassification>): Promise<FolderOccurrence> {
-  const known = ctx.entries.get(walk.canonical);
-  if (known) {
-    // Later encounter: same entry object; completed entries reuse their
-    // first-discovery children, in-progress entries are leaves.
-    return { path: walk.reach, via: walk.via, entry: known.entry, children: known.done ? known.children : [] };
-  }
-
   const entry: FolderEntry = {
     path: walk.canonical,
-    name: basename(walk.canonical),
+    name: basename(walk.canonical) || walk.canonical,
     nature: classification.nature,
     ...(classification.nature === 'persona' ? { persona: classification.persona } : {}),
   };
@@ -103,7 +128,7 @@ async function shortcutOccurrences(ctx: ScanContext, walk: Walk, listing: Dirent
     const linkPath = join(walk.reach, dirent.name);
     const target = await resolveCanonical(ctx, linkPath);
     if (target === null) continue;
-    if (target === walk.canonical || target.startsWith(`${walk.canonical}/`)) continue;
+    if (target === walk.canonical || isWithin(target, walk.canonical)) continue;
     if (!(await isDirectory(ctx, target))) continue;
 
     // Entering a shortcut restarts discovery at the target, in shortcut context.
@@ -125,6 +150,10 @@ async function descendThroughSkippedFolder(ctx: ScanContext, walk: Walk, listing
     const childCanonical = await resolveCanonical(ctx, childReach);
     if (childCanonical === null) continue;
     if (walk.ancestors.has(childCanonical)) continue;
+    // A symlink to a file is not a folder: skip it silently — descending would
+    // manufacture an ENOTDIR readdir warning for a healthy link (rule 9 warns
+    // dangling/looping symlinks, not file symlinks).
+    if (kind === 'symlink' && !(await isDirectory(ctx, childCanonical))) continue;
 
     occurrences.push(
       ...(await discoverFolder(ctx, {
@@ -145,6 +174,12 @@ async function resolveCanonical(ctx: ScanContext, path: string): Promise<string 
     ctx.warn({ path, operation: 'realpath', error });
     return null;
   }
+}
+
+/** Whether `target` lies inside directory `dir` — separator-safe at the root
+ *  (`/` has no name segment to extend with a separator). */
+function isWithin(target: string, dir: string): boolean {
+  return dir === '/' ? target.startsWith('/') : target.startsWith(`${dir}/`);
 }
 
 async function lstatKind(ctx: ScanContext, path: string): Promise<'dir' | 'symlink' | 'other' | null> {

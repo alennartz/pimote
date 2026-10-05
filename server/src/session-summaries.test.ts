@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { appendFile, mkdir, mkdtemp, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -131,7 +131,62 @@ describe('SessionSummaryIndex.list()', () => {
     const summaries = await index.list(folderPath);
     const stats = await stat(filePath);
     expect(summaries[0].modified.getTime()).toBe(stats.mtime.getTime());
-    expect(Number.isNaN(summaries[0].created.getTime())).toBe(true);
+    // created is always a valid Date — every consumer formats it with
+    // toISOString(), which throws on Invalid Date.
+    expect(summaries[0].created.getTime()).toBe(stats.mtime.getTime());
+  });
+
+  it('falls back to the file mtime when the header carries no timestamp at all', async () => {
+    const filePath = await writeSession('no-time.jsonl', [`{"type":"session","id":"t","cwd":"${folderPath}"}`]);
+
+    const summaries = await index.list(folderPath);
+    const stats = await stat(filePath);
+    expect(summaries[0].created.getTime()).toBe(stats.mtime.getTime());
+  });
+
+  it('skips a malformed message entry instead of rejecting the session file', async () => {
+    const lines = sessionLines();
+    lines.splice(1, 0, '{"type":"message","message":null}', '{"type":"message"}');
+    await writeSession('s-1.jsonl', lines);
+
+    const summaries = await index.list(folderPath);
+    expect(summaries.map((s) => s.id)).toEqual(['s-1']);
+    expect(summaries[0].firstMessage).toBe('Hello world');
+  });
+
+  it('surfaces a per-file read failure instead of silently dropping the session', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await writeSession('s-ok.jsonl', sessionLines({ id: 'ok' }));
+      // A directory with a .jsonl name: it passes the listing filter and its
+      // summary read fails, without touching the healthy sibling.
+      await mkdir(join(sessionDirFor(folderPath, agentDir), 'bad.jsonl'), { recursive: true });
+
+      await expect(index.list(folderPath, { failOnError: true })).rejects.toThrow(/session file/);
+      expect((await index.list(folderPath)).map((s) => s.id)).toEqual(['ok']);
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('never caches a failed summary: the omission is retried until the file is readable', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const badPath = join(sessionDirFor(folderPath, agentDir), 'bad.jsonl');
+      await mkdir(badPath, { recursive: true });
+      expect(await index.list(folderPath)).toEqual([]);
+
+      // The failure is not pinned: replacing the unreadable entry with a
+      // session file is seen on the very next listing (same path — the cache
+      // key — would hit if the failure had been cached).
+      await rm(badPath, { recursive: true, force: true });
+      await writeSession('bad.jsonl', sessionLines({ id: 'healed' }));
+
+      expect((await index.list(folderPath)).map((s) => s.id)).toEqual(['healed']);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('takes the latest session_info name, and an explicit clear drops it', async () => {

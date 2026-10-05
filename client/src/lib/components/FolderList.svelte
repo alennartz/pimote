@@ -277,14 +277,19 @@
     }
   }
 
+  /** Disband attempt — like attemptOpen, a server rejection must surface. The
+   *  dialog closes on send, but the response's failure is displayed, not
+   *  swallowed (e.g. a source hub without persisted registry ownership). */
   async function disbandHub() {
     const target = disbandTarget;
     disbandTarget = null;
     if (!target) return;
+    openError = '';
     try {
-      await connection.send({ type: 'disband_hub', folderPath: target.path });
+      const response = await connection.send({ type: 'disband_hub', folderPath: target.path });
+      if (!response.success) openError = response.error ?? 'Failed to disband hub';
     } catch (e) {
-      console.error('Failed to disband hub:', e);
+      openError = e instanceof Error ? e.message : 'Failed to disband hub';
     }
   }
 
