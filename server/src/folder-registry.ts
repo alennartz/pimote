@@ -6,7 +6,7 @@ import type { FolderEntry, FolderOccurrence, SparseTree } from './folder-model/i
 import type { FolderModelPort, FolderRegistryPort, FolderUpdatePatch } from './manager/types.js';
 import { materializeHubFolder } from './folder-sources/materialize.js';
 import type { HubSourceEntry } from './folder-sources/index.js';
-import type { RepoIndex } from './repo-index.js';
+import type { PersonaSourceEntry, RepoIndex } from './repo-index.js';
 
 export type { FolderUpdatePatch } from './manager/types.js';
 
@@ -173,15 +173,17 @@ interface FolderViewInputs {
   tree: SparseTree;
   repos: RepoInfo[];
   sourceHubs: HubSourceEntry[];
+  /** Source-listed persona homes (excluded from the repo view, surfaced here). */
+  personas: PersonaSourceEntry[];
   /** Paths verified absent on disk; every unlisted path counts as present. */
   absent: ReadonlySet<string>;
 }
 
 /**
  * The merged folder view: one row per canonical path across the scan's unique
- * entries (code and persona), source-listed repos/hubs, and registry hubs —
- * never derived from repos alone. Pure construction: classification and
- * metadata come from explicit inputs.
+ * entries (code and persona), source-listed repos/hubs, source-listed persona
+ * homes, and registry hubs — never derived from repos alone. Pure construction:
+ * classification and metadata come from explicit inputs.
  *
  * Collisions enrich rather than replace: a scanned row at a hub path keeps its
  * scanned nature/name/shortcut count and gains the hub's membership chips, so
@@ -193,15 +195,17 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
   const scanned = collectScanEntries(input.tree);
   const byPath = new Map(input.repos.map((repo) => [repo.path, repo]));
   const hubs = hubMetadata(input.sourceHubs, input.doc);
+  const sourcePersonas = new Map(input.personas.map((entry) => [entry.path, entry]));
 
   /** Effective tags at a repo path: source-contributed ∪ user. */
   const repoTags = (repoPath: string): string[] | undefined => unionTags(byPath.get(repoPath)?.tags, input.doc.overrides[repoPath]?.tags);
 
   const rows: FolderInfo[] = [];
-  for (const path of new Set([...scanned.keys(), ...byPath.keys(), ...hubs.keys()])) {
+  for (const path of new Set([...scanned.keys(), ...byPath.keys(), ...hubs.keys(), ...sourcePersonas.keys()])) {
     const scan = scanned.get(path);
     const repo = byPath.get(path);
     const hub = hubs.get(path);
+    const sourcePersona = sourcePersonas.get(path);
     const override = input.doc.overrides[path];
     const userTags = override?.tags;
     const members: RepoInfo[] | undefined = hub
@@ -212,14 +216,14 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
     rows.push({
       path,
       name: scan?.entry.name ?? hub?.name ?? repo?.name ?? basename(path),
-      nature: scan?.entry.nature ?? 'code',
-      ...(scan?.entry.persona ? { persona: scan.entry.persona } : {}),
+      nature: scan?.entry.nature ?? (sourcePersona ? 'persona' : 'code'),
+      ...(scan?.entry.persona ? { persona: scan.entry.persona } : sourcePersona ? { persona: sourcePersona.persona } : {}),
       shortcutCount: scan?.shortcutCount ?? hub?.memberPaths.length ?? 0,
       favorite: override?.favorite ?? false,
       archived: override?.archived ?? false,
       // Effective tags: own user ∪ source-contributed, plus inherited member
       // tags for hubs; userTags is only the removable own-path subset.
-      tags: (hub ? unionTags(userTags, hub.sourceTags, memberTagUnion) : unionTags(repo?.tags, userTags)) ?? [],
+      tags: (hub ? unionTags(userTags, hub.sourceTags, memberTagUnion) : unionTags(repo?.tags, sourcePersona?.tags, userTags)) ?? [],
       missing: !scan && input.absent.has(path),
       ...(members ? { repos: members } : {}),
       ...(userTags ? { userTags } : {}),
@@ -280,9 +284,9 @@ export class FolderRegistry implements FolderRegistryPort {
 
   /** The merged view over one folder tree; pure construction, edge probes first. */
   private async viewOver(tree: SparseTree): Promise<FolderInfo[]> {
-    const [doc, repos, sourceHubs] = await Promise.all([this.document(), this.repos.list(), this.repos.listSourceHubs()]);
+    const [doc, repos, sourceHubs, personas] = await Promise.all([this.document(), this.repos.list(), this.repos.listSourceHubs(), this.repos.listSourcePersonas()]);
     const absent = await resolveAbsentPaths(repos, hubMetadata(sourceHubs, doc).keys());
-    return mergedFolders({ doc, tree, repos, sourceHubs, absent });
+    return mergedFolders({ doc, tree, repos, sourceHubs, personas, absent });
   }
 
   /** Apply a curation patch. Unknown folder paths reject. */
@@ -369,7 +373,9 @@ export class FolderRegistry implements FolderRegistryPort {
    */
   private async hubRow(doc: RegistryDocument, repos: RepoInfo[], target: string): Promise<FolderInfo> {
     const sourceHubs = await this.repos.listSourceHubs();
-    const row = mergedFolders({ doc, tree: { occurrences: [] }, repos, sourceHubs, absent: new Set() }).find((folder) => folder.path === target);
+    const row = mergedFolders({ doc, tree: { occurrences: [] }, repos, sourceHubs, personas: await this.repos.listSourcePersonas(), absent: new Set() }).find(
+      (folder) => folder.path === target,
+    );
     if (!row) throw new Error(`Hub row missing after creation: ${target}`);
     return row;
   }

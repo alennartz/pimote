@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { RepoInfo } from '../../shared/dist/index.js';
 import type { HubSourceEntry, FolderSource, RepoSourceEntry, SourceEntry } from './folder-sources/index.js';
-import { classifyFolder, nodeFolderFs, scanFolderModel, type FolderEntry, type FolderOccurrence, type SparseTree } from './folder-model/index.js';
+import { classifyFolder, nodeFolderFs, scanFolderModel, type FolderEntry, type FolderOccurrence, type PersonaInfo, type SparseTree } from './folder-model/index.js';
 import { getGitBranch } from './git-branch.js';
 import { materializeHubFolder } from './folder-sources/materialize.js';
 
@@ -79,6 +79,18 @@ function mergeTags(a?: string[], b?: string[]): string[] | undefined {
   return merged.length > 0 ? merged : undefined;
 }
 
+/**
+ * A source-listed folder that is a persona home. Never a repo — persona
+ * folders are excluded from the repo view — but never invisible either: the
+ * folder view surfaces it as a persona row.
+ */
+export interface PersonaSourceEntry {
+  path: string;
+  persona: PersonaInfo;
+  /** Source-contributed tags, carried over to the folder row. */
+  tags?: string[];
+}
+
 /** Branch, dirty flag, and ahead/behind for one repo. Failed probes yield neutral values. */
 async function readGitStatus(cwd: string): Promise<Omit<RepoStatus, 'at'>> {
   const git = gitRunner(cwd);
@@ -116,6 +128,7 @@ export class RepoIndex {
   private readonly sources: FolderSource[] = [];
   private listing: ListingStamp | null = null;
   private sourceHubs: { entries: HubSourceEntry[]; at: number } | null = null;
+  private personaSources: PersonaSourceEntry[] = [];
   private readonly statusCache = new Map<string, RepoStatus>();
   private listingPromise: Promise<ListingStamp> | null = null;
   private refreshInFlight: Promise<void> | null = null;
@@ -248,6 +261,7 @@ export class RepoIndex {
     return JSON.stringify({
       listing: this.listing ? [...this.listing.entries].sort(byPath) : null,
       sourceHubs: this.sourceHubs ? [...this.sourceHubs.entries].sort(byPath) : null,
+      personaSources: [...this.personaSources].sort(byPath),
       statuses,
     });
   }
@@ -261,6 +275,16 @@ export class RepoIndex {
   async listSourceHubs(): Promise<HubSourceEntry[]> {
     await this.list();
     return this.sourceHubs?.entries ?? [];
+  }
+
+  /**
+   * Persona-natured source folders (kept out of the repo listing), cached with
+   * the listing. Derived, never persisted — the folder view uses them to
+   * surface persona homes as persona rows instead of dropping them.
+   */
+  async listSourcePersonas(): Promise<PersonaSourceEntry[]> {
+    await this.list();
+    return this.personaSources;
   }
 
   /**
@@ -315,6 +339,7 @@ export class RepoIndex {
     }
 
     const sourceHubs: HubSourceEntry[] = [];
+    const personaSources: PersonaSourceEntry[] = [];
     const seenHubPaths = new Set<string>();
     for (const source of this.sources) {
       let contributed: SourceEntry[];
@@ -358,11 +383,16 @@ export class RepoIndex {
         // source paths are classified here. Missing paths classify as code and
         // keep their placeholder row.
         const classification = await classifyFolder(nodeFolderFs, entry.path);
-        if (classification.nature === 'persona') continue;
+        if (classification.nature === 'persona') {
+          // Not a repo — but a folder of interest: keep it for the folder view.
+          personaSources.push({ path: entry.path, persona: classification.persona ?? { name: entry.name }, tags: entry.tags });
+          continue;
+        }
         byPath.set(entry.path, entry);
       }
     }
     this.sourceHubs = { entries: sourceHubs, at: this.now() };
+    this.personaSources = personaSources;
 
     const entries: RepoInfo[] = [];
     for (const repo of byPath.values()) {

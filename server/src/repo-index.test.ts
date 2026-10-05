@@ -273,6 +273,21 @@ describe('RepoIndex.list() — registered sources', () => {
     expect((await index.list()).map((r) => r.path)).not.toContain(personaHome);
   });
 
+  it('routes persona source entries to listSourcePersonas with their classification and tags', async () => {
+    const personaHome = join(externalDir, 'ada');
+    await mkdir(personaHome, { recursive: true });
+    await writeFile(join(personaHome, 'AGENTS.md'), '---\nname: Ada\n---\nprompt body', 'utf8');
+
+    const index = makeIndex();
+    index.registerSource({
+      id: 'test-source',
+      list: async () => [{ kind: 'repo', path: personaHome, name: 'ada', branch: null, dirty: false, ahead: 0, behind: 0, tags: ['voice'] }],
+    });
+
+    expect((await index.list()).map((r) => r.path)).not.toContain(personaHome);
+    expect(await index.listSourcePersonas()).toEqual([{ path: personaHome, persona: { name: 'Ada' }, tags: ['voice'] }]);
+  });
+
   it('normalizes bare repo shapes without a kind as repo entries', async () => {
     const index = makeIndex();
     const bare = { path: join(externalDir, 'bare'), name: 'bare', branch: null, dirty: false, ahead: 0, behind: 0 };

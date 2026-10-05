@@ -219,6 +219,33 @@ describe('FolderRegistry.update()', () => {
     expect(folder?.tags).toEqual(['from-source', 'mine']);
     expect(folder?.userTags).toEqual(['mine']);
   });
+
+  it('surfaces a source-listed persona folder outside the scan roots as a persona row', async () => {
+    const personaHome = join(tempDir, 'external-persona');
+    await mkdir(personaHome, { recursive: true });
+    await writeFile(join(personaHome, 'AGENTS.md'), '---\nname: Ada\ndescription: Builds bridges\n---\n\nBody.\n', 'utf8');
+
+    const index = makeIndex();
+    index.registerSource({
+      id: 'src',
+      list: async () => [{ kind: 'repo', path: personaHome, name: 'external-persona', branch: null, dirty: false, ahead: 0, behind: 0, tags: ['from-source'] }],
+    });
+    const registry = makeRegistry(index);
+
+    // A persona folder is a folder of interest wherever it comes from: it is
+    // never a repo, but it is never invisible either.
+    const row = await findRow(registry, personaHome);
+    expect(row).toMatchObject({
+      path: personaHome,
+      name: 'external-persona',
+      nature: 'persona',
+      persona: { name: 'Ada', description: 'Builds bridges' },
+      missing: false,
+    });
+    expect(row?.tags).toEqual(['from-source']);
+    // Excluded from the repo view only.
+    expect((await index.list()).map((r) => r.path)).not.toContain(personaHome);
+  });
 });
 
 describe('hub rows and path collisions', () => {
