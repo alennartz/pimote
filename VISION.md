@@ -4,14 +4,14 @@ A PWA + Node.js server for remote and local access to [pi](https://github.com/ma
 
 ## Why
 
-Using pi through SSH on a phone doesn't work well — you can't scroll while the agent is working, and taking over sessions between devices means hunting for PIDs. A dedicated UI solves these problems and enables multi-session management across projects.
+Using pi through SSH on a phone doesn't work well — you can't scroll while the agent is working, and taking over sessions between devices means hunting for PIDs. A dedicated UI solves these problems and enables multi-session management across folders.
 
 ## What
 
 **Pimote Server** — A Node.js process that:
 
-- Indexes your repos, projects, and pi sessions on your machine
-- Creates new project folders on demand (`mkdir` + `git init`) within configured roots
+- Discovers code and persona folders sparsely beneath configured scan roots, and curates them in a folder registry
+- Creates new code folders on demand (`mkdir` + `git init`) within configured roots
 - Embeds AgentSession instances directly via the pi SDK
 - Manages multiple concurrent sessions per client with status tracking
 - Brokers WebSocket connections between clients and sessions
@@ -27,8 +27,8 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Manages multiple concurrent sessions with fast switching (ActiveSessionBar)
 - Tracks session status (working / idle / needs-attention)
 - Streams conversations in real time with independent scrolling
-- Browses projects and their sessions from a dashboard, with a per-connection manager agent that can list projects, repos, and open sessions
-- Creates new project folders from the dashboard (choose root, name, `mkdir` + `git init`)
+- Browses folders and their sessions from a dashboard, with a per-connection manager agent that can list folders, repos, and open sessions
+- Creates new folders from the dashboard (choose root, name, `mkdir` + `git init`)
 - Sends prompts, runs native shell commands with `!`/`!!`, steers, aborts, and switches models
 - Slash command autocomplete — typing `/` shows a fuzzy-filtered dropdown of available commands (skills, extension commands, prompt templates) with argument completion for extension commands
 - Handles extension UI dialogs (select, confirm, input)
@@ -49,7 +49,7 @@ Phone/Browser ←→ Cloudflare Tunnel ←→ Pimote Server
                                      AgentSession (pi SDK)
                                      EventBus (panel cards)
                                      Event Buffer
-                                     Repo Index
+                                     Folder Model
 ```
 
 Internet access via Cloudflare tunnel. Auth via API key/token.

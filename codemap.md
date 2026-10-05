@@ -112,7 +112,7 @@ Native Kotlin voice-first peer that connects to Pimote through Android's calling
 
 Packages, boots, tests, and manually exercises the product surfaces.
 
-**Responsibilities:** npm executable and install helpers, patching and service setup, diagnostic scripts, end-to-end smoke suites, deterministic update-notification server/PWA smoke harness, dashboard/folders/hubs/manager smoke (real server in an isolated HOME against a fabricated multi-root tree with personas, shortcuts, and folder-source fixtures, driven via agent-browser plus a second WebSocket probe client), permanent manual-test plan and driver catalog (PLAN.md, README.md, sandboxed smoke drivers including the AGENTS.md editor journey), shared pi session-dir fixture helper, extension UI test fixture
+**Responsibilities:** npm executable and install helpers, patching and service setup, diagnostic scripts, end-to-end smoke suites, deterministic update-notification server/PWA smoke harness, dashboard/folders/hubs/manager smoke (real server in an isolated HOME against a fabricated multi-root tree with personas, shortcuts, and folder-source fixtures, driven via agent-browser plus a second WebSocket probe client; includes unscanned-cwd session fallback and legacy `multiRepo` registry compatibility probes), deterministic manager-toolset probe (registration and execution of `pimote_list_folders`/`pimote_folder_tree` against real folder-model and registry ports, no server/browser/LLM), permanent manual-test plan and driver catalog (PLAN.md, README.md, sandboxed smoke drivers including the AGENTS.md editor journey), shared pi session-dir fixture helper, extension UI test fixture
 
 **Dependencies:** Server, Web Client, Agent Extensions, and Android Client as applicable
 
@@ -123,6 +123,7 @@ Packages, boots, tests, and manually exercises the product surfaces.
 - `tools/**`
 - `tools/manual-test/update-notification-smoke/**`
 - `tools/manual-test/project-management-smoke/**`
+- `tools/manual-test/manager-tools-smoke/**`
 - `tools/manual-test/agents-md-editor-smoke/**`
 - `tools/manual-test/PLAN.md`
 - `tools/manual-test/README.md`
