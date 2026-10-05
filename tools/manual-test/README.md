@@ -369,14 +369,19 @@ skipped wrappers collapse into reach paths), FolderInfo defaults
 (nature/persona/shortcutCount/missing/repos?/userTags?) and the four row icon
 variants (code, code-hub, persona, persona-hub), `update_folder` /
 `folders_changed` two-client sync (both directions), hub create/disband
-round-trips with on-disk symlink + `git init` + `.gitignore` + `AGENTS.md`
-assertions, source-contributed tags and the `onFolderOpen` provisioning hook,
-favorites (favorites-first ordering), archive/show-archived, create-folder
-(mkdir + git init), resume of an existing session, the active-session dot,
-dashboard and picker search (persona display names included), the manager
-chat (streamed reply, `pimote_list_folders` tool use, abort, ephemeral reset
-on reconnect), the missing-member warning chip, and the mobile manager
-affordance.
+round-trips with on-disk symlink + `git init` + root-anchored `.gitignore` +
+`AGENTS.md` assertions, source-contributed tags and the `onFolderOpen`
+provisioning hook, favorites (favorites-first ordering), archive/show-
+archived, create-folder (mkdir + git init), resume of an existing session,
+the active-session dot, dashboard and picker search (persona display names
+included), the manager chat (streamed reply, `pimote_list_folders` +
+`pimote_folder_tree` tool use, abort, ephemeral reset on reconnect), the
+missing-member warning chip, the unscanned-cwd `classifyFolder` session
+fallback (list/open in cwds outside the scan roots never lists or curates
+them), legacy `multiRepo` registry read-compat (loads unchanged; the next
+write persists `hubs`), and the mobile manager affordance. Tool-call and
+assistant-reply detection is role-scoped (`.tool-block .tool-name`,
+`.assistant-message`) so user prompt text cannot false-positive it.
 
 **Location:** `tools/manual-test/project-management-smoke/project-management-smoke.mjs`
 
@@ -402,6 +407,45 @@ exit on hard failure. On failure the sandbox and server log are preserved.
 `PATH`, `git` on `PATH`, writable `os.tmpdir()`. Tracks and kills only the
 child PID it spawns. Requires network reachability to the model endpoint
 named in `models.json` for the manager phase only.
+
+### manager-tools-smoke
+
+**Purpose:** Deterministic probe for the manager's pimote toolset (the
+`folder-model-foundation` topic). Registers the shipped
+`createManagerExtension` toolset against a capture-only stub pi
+`ExtensionAPI`, then executes the folder-view tools through a real
+`ManagerToolContext`: real `scanFolderModel` over a fixture tree, real
+`FolderRegistry` over a temp store, and a hub built by the real `createHub`
+(mkdir + absolute member symlinks + `git init` + root-anchored `.gitignore`
+
+- generated `AGENTS.md`). Asserts, without any LLM: the registered names are
+  the renamed ones (`pimote_list_folders` / `pimote_folder_tree`, no
+  `*_projects`), `pimote_list_folders` returns complete FolderInfo rows with
+  schema defaults, and `pimote_folder_tree` reports the sparse tree shape
+  (occurrences with `path`/`via`/`entry`/`children`; hub member symlinks
+  surface as `via: 'shortcut'` occurrences referencing the member entries;
+  scan and shortcut occurrences share one entry object). Complements the
+  LLM-driven manager-chat phase of `project-management-smoke`, which cannot
+  force tool choice.
+
+**Location:** `tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs`
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs
+```
+
+**Inputs:** none by default (fresh `os.tmpdir()` sandbox; `MTMS_ROOT=<dir>`
+reuses an existing fixture tree containing `<root>/alpha`, `<root>/beta` git
+repos and an `<root>/omega` persona folder instead of fabricating one).
+
+**Outputs:** per-check ✓/✗ lines on stdout; non-zero exit on any failure.
+
+**Prerequisites:** workspaces built (`npm run build`), `git` on `PATH` (the
+real hub materializer runs `git init`). No server, browser, network, or LLM
+required.
 
 ### agents-md-editor-smoke
 

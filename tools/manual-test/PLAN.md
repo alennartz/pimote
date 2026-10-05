@@ -23,7 +23,10 @@ surface since the `project-management` topic removed the sidebar) lists
 discovered folders (`list_folders` — code and persona folders over the sparse
 folder model), the user starts a new session from a folder row (or
 creates/resumes one), session metadata appears in the active-session bar, and
-closing the viewed session returns to the dashboard.
+closing the viewed session returns to the dashboard. Sessions may also open
+and list in cwds outside the scanned folders: the server serves a synthetic
+classified folder row for them (the `classifyFolder` fallback) without
+listing or curating the cwd.
 
 **Why:** Entry point for every other journey. If this breaks, everything
 breaks.
@@ -264,7 +267,12 @@ transcript reset on reconnect.
 are the multi-repo model; the manager is the dashboard's second half.
 
 **Driver:** `tools/manual-test/project-management-smoke/` (real sandboxed
-server + `agent-browser` + a second WebSocket probe client).
+server + `agent-browser` + a second WebSocket probe client, including the
+unscanned-cwd session fallback and legacy `multiRepo` registry read-compat
+probes);
+`tools/manual-test/manager-tools-smoke/` drives the manager toolset
+deterministically (registration + execution against real ports, no LLM) to
+backstop the LLM-dependent tool-choice assertions in the chat phase.
 
 ## 13. AGENTS.md editor
 
