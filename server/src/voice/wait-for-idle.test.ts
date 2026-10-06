@@ -1,131 +1,88 @@
-import { describe, expect, it } from 'vitest';
-import { ensureIdleWithImplicitAbort, waitForAgentIdle, type AbortableIdleProbe, type IdleProbe } from './wait-for-idle.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ensureIdleWithImplicitAbort, waitUnlessCancelled, type VoiceSessionControl } from './wait-for-idle.js';
 
-function makeProbe(initiallyIdle: boolean, becomeIdleAfterCalls?: number): IdleProbe & { calls: number } {
-  let calls = 0;
-  return {
-    get calls() {
-      return calls;
+function probe(initiallyIdle: boolean) {
+  const state = { idle: initiallyIdle, resolveIdle: (): void => {} };
+  const idle = new Promise<void>((resolve) => {
+    state.resolveIdle = resolve;
+  });
+  const session: VoiceSessionControl = {
+    get isIdle() {
+      return state.idle;
     },
-    isIdle() {
-      calls += 1;
-      if (initiallyIdle) return true;
-      if (becomeIdleAfterCalls !== undefined && calls > becomeIdleAfterCalls) return true;
-      return false;
+    abort: vi.fn(() => idle),
+    waitForIdle: vi.fn(() => (state.idle ? Promise.resolve() : idle)),
+    sendUserMessage: vi.fn(async () => {}),
+  };
+  return {
+    session,
+    settle: () => {
+      state.idle = true;
+      state.resolveIdle();
     },
   };
 }
 
-function makeAbortableProbe(
-  initiallyIdle: boolean,
-  becomeIdleAfterAbortCalls?: number,
-): AbortableIdleProbe & { isIdleCalls: number; abortCalls: number; settleListeners: number; fireSettled: () => void } {
-  let isIdleCalls = 0;
-  let abortCalls = 0;
-  let aborted = false;
-  const listeners = new Set<() => void>();
-  return {
-    get isIdleCalls() {
-      return isIdleCalls;
-    },
-    get abortCalls() {
-      return abortCalls;
-    },
-    get settleListeners() {
-      return listeners.size;
-    },
-    fireSettled() {
-      const current = [...listeners];
-      listeners.clear();
-      for (const l of current) l();
-    },
-    isIdle() {
-      isIdleCalls += 1;
-      if (initiallyIdle) return true;
-      if (aborted && becomeIdleAfterAbortCalls !== undefined && isIdleCalls > becomeIdleAfterAbortCalls) {
-        return true;
-      }
-      return false;
-    },
-    abort() {
-      abortCalls += 1;
-      aborted = true;
-    },
-    onSettled(listener: () => void) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-  };
-}
+afterEach(() => vi.useRealTimers());
 
-describe('waitForAgentIdle', () => {
-  it('returns true immediately when already idle', async () => {
-    const probe = makeProbe(true);
-    const result = await waitForAgentIdle(probe);
-    expect(result).toBe(true);
-    expect(probe.calls).toBe(1);
+describe('ensureIdleWithImplicitAbort', () => {
+  it('waits through the session interface without aborting an already idle session', async () => {
+    const { session } = probe(true);
+    expect(await ensureIdleWithImplicitAbort(session, new AbortController().signal)).toBe(true);
+    expect(session.abort).not.toHaveBeenCalled();
+    expect(session.waitForIdle).toHaveBeenCalledTimes(1);
   });
 
-  it('polls until the agent becomes idle and then resolves true', async () => {
-    // Become idle on the 4th poll (i.e. after 3 sleep-and-retry cycles).
-    const probe = makeProbe(false, 3);
-    const result = await waitForAgentIdle(probe, 2000);
-    expect(result).toBe(true);
-    expect(probe.calls).toBeGreaterThanOrEqual(4);
+  it('retains pending work until abort settles, including slow teardown', async () => {
+    vi.useFakeTimers();
+    const { session, settle } = probe(false);
+    const state = { completed: false };
+    const pending = ensureIdleWithImplicitAbort(session, new AbortController().signal).then((result) => {
+      state.completed = true;
+      return result;
+    });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(state.completed).toBe(false);
+    expect(session.abort).toHaveBeenCalledTimes(1);
+    settle();
+    expect(await pending).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('returns false when the agent never becomes idle within the timeout', async () => {
-    const probe = makeProbe(false);
-    const start = Date.now();
-    const result = await waitForAgentIdle(probe, 60);
-    const elapsed = Date.now() - start;
-    expect(result).toBe(false);
-    // Should have honored the timeout, not run forever, but also waited long
-    // enough that we know it actually polled rather than returning instantly.
-    expect(elapsed).toBeGreaterThanOrEqual(60);
-    expect(elapsed).toBeLessThan(500);
-    expect(probe.calls).toBeGreaterThan(1);
+  it('releases cancelled voice work immediately even if abort has not settled', async () => {
+    const { session } = probe(false);
+    const controller = new AbortController();
+    const pending = ensureIdleWithImplicitAbort(session, controller.signal);
+    controller.abort();
+    expect(await pending).toBe(false);
+    expect(session.waitForIdle).not.toHaveBeenCalled();
+  });
+
+  it('does not start an operation for an already cancelled owner', async () => {
+    const { session } = probe(false);
+    const controller = new AbortController();
+    controller.abort();
+    expect(await ensureIdleWithImplicitAbort(session, controller.signal)).toBe(false);
+    expect(session.abort).not.toHaveBeenCalled();
   });
 });
 
-describe('ensureIdleWithImplicitAbort', () => {
-  it('does not abort when the agent is already idle', async () => {
-    const probe = makeAbortableProbe(true);
-    const result = await ensureIdleWithImplicitAbort(probe);
-    expect(result).toBe(true);
-    expect(probe.abortCalls).toBe(0);
-    expect(probe.isIdleCalls).toBe(1);
+describe('waitUnlessCancelled', () => {
+  it('propagates an operation failure', async () => {
+    const error = new Error('session failure');
+    await expect(waitUnlessCancelled(Promise.reject(error), new AbortController().signal)).rejects.toBe(error);
   });
 
-  it('aborts and waits when the agent is busy, then resolves true', async () => {
-    // Agent is busy on entry, then becomes idle two polls after abort.
-    const probe = makeAbortableProbe(false, 2);
-    const result = await ensureIdleWithImplicitAbort(probe, 2000);
-    expect(result).toBe(true);
-    expect(probe.abortCalls).toBe(1);
-  });
-
-  it('returns false on timeout (and still issued exactly one abort)', async () => {
-    const probe = makeAbortableProbe(false);
-    const result = await ensureIdleWithImplicitAbort(probe, 60);
-    expect(result).toBe(false);
-    expect(probe.abortCalls).toBe(1);
-  });
-
-  it('resolves true promptly when agent_settled fires (event path, no poll wait)', async () => {
-    // Agent stays busy on isIdle() forever; only the settle event can resolve it.
-    const probe = makeAbortableProbe(false);
-    const pending = ensureIdleWithImplicitAbort(probe, 5000);
-    // A real barge-in / abort teardown completes and the SDK emits agent_settled.
-    probe.fireSettled();
-    const result = await pending;
-    expect(result).toBe(true);
-    expect(probe.abortCalls).toBe(1);
-  });
-
-  it('unsubscribes the settle listener once resolved', async () => {
-    const probe = makeAbortableProbe(false, 1);
-    await ensureIdleWithImplicitAbort(probe, 2000);
-    expect(probe.settleListeners).toBe(0);
+  it('observes a later rejection after cancellation', async () => {
+    const state = { reject: (_error: unknown): void => {} };
+    const operation = new Promise<void>((_resolve, reject) => {
+      state.reject = reject;
+    });
+    const controller = new AbortController();
+    const pending = waitUnlessCancelled(operation, controller.signal);
+    controller.abort();
+    expect(await pending).toBe(false);
+    state.reject(new Error('late session failure'));
+    await Promise.resolve();
   });
 });

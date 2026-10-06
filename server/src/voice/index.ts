@@ -7,7 +7,7 @@
 //      messages, speechmux WS frames) into typed `Event` values.
 //   2. Calls `reduce(state, event)` and writes back the new state.
 //   3. Interprets the emitted `Action` values into actual side effects:
-//      pi.sendUserMessage, ctx.abort, WS open/close/send, EventBus emit.
+//      session-owned voice submission/abort, WS open/close/send, EventBus emit.
 //
 // **Why the redesign.** The previous monolithic implementation conflated
 // lifecycle, streaming, and walkback into a single record of orthogonal
@@ -24,7 +24,8 @@ import { Type } from 'typebox';
 import { renderInterpreterPrompt } from './interpreter-prompt.js';
 import { applyVoicePromptSection } from './prompt-section.js';
 import { createDefaultSpeechmuxClientFactory, type SpeechmuxClient, type SpeechmuxClientFactory } from './speechmux-client.js';
-import { ensureIdleWithImplicitAbort } from './wait-for-idle.js';
+import type { VoiceSessionControl } from './wait-for-idle.js';
+import { VoiceUtteranceQueue } from './utterance-queue.js';
 import type { VoiceActivateMessage, VoiceDeactivateMessage } from './state-machine.js';
 
 import { initialState, type BlockState, type MessageStreamState, type RuntimeState } from './fsm/state.js';
@@ -95,6 +96,8 @@ export { createDefaultSpeechmuxClientFactory } from './speechmux-client.js';
 export interface CreateVoiceExtensionOptions {
   defaultInterpreterModel: string;
   defaultWorkerModel: string;
+  /** Session-owned operations, bound before extensions receive session_start. */
+  getSession: () => VoiceSessionControl;
   /** Optional client factory override — tests inject a fake. */
   speechmuxClientFactory?: SpeechmuxClientFactory;
 }
@@ -109,14 +112,12 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     // ---- Per-extension-instance state (per pimote session) ---------------
     let state: RuntimeState = initialState();
     let lastCtx: ExtensionContext | null = null;
-    // Settle-signal seam. Consumed by `ensureIdleWithImplicitAbort` via the
-    // probe's `onSettled` to replace busy-polling with the SDK's idle boundary.
-    // pi 0.87+ `pi.on` returns an unsubscribe, so each waiter registers its own
-    // transient `agent_settled` listener and removes it when done (the waiter's
-    // resolve is idempotent, so a late extra settle between resolve and
-    // unsubscribe is harmless). Previously this needed a persistent multiplexer
-    // listener plus a waiter set because `pi.on` could not be unsubscribed.
-    const onSettled = (listener: () => void): (() => void) => pi.on('agent_settled', listener);
+    const utterances = new VoiceUtteranceQueue(opts.getSession, (error) => {
+      console.warn('[voice] user message submission failed', error);
+    });
+    // Invalidates an activation's remaining actions when teardown overtakes
+    // async model setup. Client generation below protects WS callbacks too.
+    let callGeneration = 0;
     let speechmuxClient: SpeechmuxClient | null = null;
     // Monotonic generation tag for the speechmux client. Bumped on every
     // open_ws and close_ws so a discarded client's late callbacks (frame /
@@ -139,6 +140,12 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         config: { defaultInterpreterModel: opts.defaultInterpreterModel },
       });
       state = next;
+      const wasDormant = lifecycleBefore === 'dormant';
+      const isDormant = state.lifecycle.kind === 'dormant';
+      if (wasDormant !== isDormant) {
+        callGeneration++;
+        utterances.cancelPending();
+      }
       if (evtTrace || lifecycleBefore !== state.lifecycle.kind || actions.length > 0) {
         console.log(
           '[voice_trace] dispatch',
@@ -155,7 +162,9 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
 
     const dispatch = async (event: FsmEvent): Promise<void> => {
       const actions = reduceAndApply(event);
+      const generation = callGeneration;
       for (const action of actions) {
+        if (generation !== callGeneration) return;
         try {
           await execute(action);
         } catch (err) {
@@ -182,36 +191,12 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         }
 
         case 'send_user_message': {
-          // Steer-on-activate (deliverAs:'steer'): preserve in-flight work
-          // rather than aborting it. When the agent is busy, inject the
-          // message into the running turn (no abort); when idle there's no
-          // turn to steer into, so send normally to trigger the turn. (M7)
-          if (action.deliverAs === 'steer') {
-            if (lastCtx && !lastCtx.isIdle()) {
-              pi.sendUserMessage(action.text, { deliverAs: 'steer' });
-            } else {
-              pi.sendUserMessage(action.text);
-            }
-            return;
-          }
-          // Ensure the agent is idle before sending. If it isn't, fire
-          // a synthesized barge-in (ctx.abort()) and wait for teardown
-          // — covers the case where the user spoke while the worker
-          // was silently reasoning, so speechmux didn't issue an abort
-          // (no TTS in flight to abort). See wait-for-idle.ts.
-          if (lastCtx) {
-            const ctx = lastCtx;
-            const ready = await ensureIdleWithImplicitAbort({
-              isIdle: () => ctx.isIdle(),
-              abort: () => ctx.abort(),
-              onSettled,
-            });
-            if (!ready) {
-              console.warn(`[voice] send_user_message: agent did not become idle within 2000ms after implicit abort, dropping: ${action.text.slice(0, 60)}`);
-              return;
-            }
-          }
-          pi.sendUserMessage(action.text, action.deliverAs ? { deliverAs: action.deliverAs } : undefined);
+          if (state.lifecycle.kind === 'dormant') return;
+          // Activation still steers existing work. Ordinary utterances own
+          // abort → settlement → submission, retaining text until accepted.
+          // Do not await a whole agent run here: WS/lifecycle events must
+          // remain responsive while the voice-owned queue waits.
+          utterances.submit(action.text, action.deliverAs);
           return;
         }
 
@@ -312,7 +297,10 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         }
 
         case 'abort_agent': {
-          lastCtx?.abort();
+          void opts
+            .getSession()
+            .abort()
+            .catch((error) => console.warn('[voice] abort failed', error));
           return;
         }
 
@@ -342,6 +330,9 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     pi.events.on('pimote:voice:deactivate', (data) => {
       void dispatch({ type: 'eb:deactivate', msg: data as VoiceDeactivateMessage });
     });
+    // Explicit server abort cancels voice-owned pending work without ending
+    // the call. Barge-in does not use this event: it retains the next utterance.
+    pi.events.on('pimote:voice:cancel-pending', () => utterances.cancelPending());
 
     // ---- speak() tool ---------------------------------------------------
     //
@@ -376,6 +367,20 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     });
 
     // ---- SDK hooks ------------------------------------------------------
+
+    pi.on('agent_start', () => utterances.agentStarted());
+    // Runtime replacement first aborts the outgoing session, then emits
+    // shutdown. Cancel before that abort can release a pending utterance.
+    pi.on('session_before_switch', () => utterances.cancelPending());
+    pi.on('session_before_fork', () => utterances.cancelPending());
+    pi.on('session_before_tree', () => utterances.cancelPending());
+    pi.on('session_shutdown', async () => {
+      utterances.cancelPending();
+      if (state.lifecycle.kind !== 'dormant') {
+        await dispatch({ type: 'eb:deactivate', msg: { type: 'pimote:voice:deactivate', sessionId: state.lifecycle.sessionId } });
+      }
+      lastCtx = null;
+    });
 
     pi.on('before_agent_start', (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
       lastCtx = ctx;

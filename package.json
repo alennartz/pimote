@@ -33,7 +33,8 @@
     "shared/dist/**/*.d.ts",
     "scripts/postinstall-patches.mjs",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "patches/*.patch"
   ],
   "engines": {
     "node": ">=22.19.0"

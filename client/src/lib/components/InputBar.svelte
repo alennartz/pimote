@@ -1,9 +1,9 @@
 <script lang="ts">
   import { untrack, tick } from 'svelte';
-  import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection, isConnectionLossError } from '$lib/stores/connection.svelte.js';
   import { commandStore } from '$lib/stores/command-store.svelte.js';
-  import { editorTextRequest, setEditorText, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
+  import { editorTextRequest, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
   import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
   import { loginStore } from '$lib/stores/login-store.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
@@ -428,38 +428,9 @@
     restoreTextareaFocus(focusSnapshot);
   }
 
-  async function handleAbort() {
-    const session = sessionRegistry.viewed;
-    if (!session?.sessionId) return;
-    try {
-      await connection.send({
-        type: 'abort',
-        sessionId: session.sessionId,
-      });
-    } catch (e) {
-      console.error('Failed to send abort:', e);
-    }
-
-    // Restore any queued steering/follow-up messages to the editor (matches TUI behavior).
-    // Without this, queued messages stay in the SDK and get silently sent with the next prompt.
-    if (session.pendingSteeringMessages.length > 0) {
-      try {
-        const res = await connection.send({
-          type: 'dequeue_steering',
-          sessionId: session.sessionId,
-        });
-        if (res.success && res.data) {
-          const { steering, followUp } = res.data as { steering: string[]; followUp: string[] };
-          const allQueued = [...steering, ...followUp];
-          if (allQueued.length > 0) {
-            setEditorText(session.sessionId, allQueued.join('\n'));
-          }
-        }
-      } catch (e) {
-        console.error('Failed to dequeue steering messages after abort:', e);
-      }
-      session.pendingSteeringMessages = [];
-    }
+  function handleAbort() {
+    const sessionId = sessionRegistry.viewedSessionId;
+    if (sessionId) void abortSession(sessionId);
   }
 
   function handleAutocompleteSelect(item: { name: string; value?: string; label?: string; description?: string }) {

@@ -10,6 +10,7 @@ import type { PimoteEvent } from '@pimote/shared';
 import { VoiceCallStore } from './voice-call.svelte.js';
 import { createBrowserVoiceCallSeams } from './voice-call-seams.js';
 import { connection } from './connection.svelte.js';
+import { abortSession } from './session-registry.svelte.js';
 
 // Forward-declared so the seams factory can nudge the store to `connected`
 // on WebRTC ICE-connected (Step 7 plan shortcut).
@@ -23,7 +24,7 @@ const voiceSeams = createBrowserVoiceCallSeams({
   },
 });
 
-export const voiceCallStore: VoiceCallStore = (storeRef = new VoiceCallStore(voiceSeams));
+export const voiceCallStore: VoiceCallStore = (storeRef = new VoiceCallStore({ ...voiceSeams, abortSession }));
 
 /** Inbound peer audio level (0..1) for the calling-mode pulse animation.
  *  Returns 0 when no analyser is attached. */

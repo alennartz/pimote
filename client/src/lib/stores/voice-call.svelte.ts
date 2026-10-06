@@ -45,6 +45,8 @@ export interface VoiceSignalingSocket {
 export interface VoiceCallSeams {
   /** Sends a command over the pimote WS. Returns the server response. */
   sendCommand: <T = unknown>(cmd: PimoteCommand) => Promise<PimoteResponse<T>>;
+  /** Explicit abort with queued-message draft recovery. Standalone adapters may omit it. */
+  abortSession?: (sessionId: string) => Promise<void>;
   /**
    * Opens a WebRTC peer. TURN credentials are delivered by speechmux in its
    * `/signal` `session` response — not here — so this seam takes no TURN
@@ -215,20 +217,17 @@ export class VoiceCallStore {
   }
 
   /**
-   * Send an interrupt custom message to abort the agent's current run. The
-   * call stays connected — this does not change phase. No-op when the store
-   * is idle.
-   *
-   * The wire mechanism is the existing `VOICE_INTERRUPT_CUSTOM_TYPE` already
-   * on the protocol; the implementation will route through `seams.sendCommand`
-   * with the existing protocol shape.
+   * Explicitly abort the agent and recover its queued messages through the
+   * shared session operation. The call stays connected. No-op while idle.
+   * Standalone adapters fall back to sending the abort command directly.
    */
   async abortAgent(): Promise<void> {
     const sessionId = this.state.sessionId;
     if (!sessionId || this.state.phase === 'idle') return;
     voiceTrace('voice_call', 'abortAgent', { data: { sessionId, phase: this.state.phase } });
     try {
-      await this.seams.sendCommand({ type: 'abort', id: crypto.randomUUID(), sessionId });
+      if (this.seams.abortSession) await this.seams.abortSession(sessionId);
+      else await this.seams.sendCommand({ type: 'abort', id: crypto.randomUUID(), sessionId });
     } catch (err) {
       voiceTrace('voice_call', 'abortAgent_failed', { level: 'warn', data: { err: String(err) } });
     }

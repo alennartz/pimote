@@ -99,6 +99,18 @@ describe('EventBuffer', () => {
   });
 
   describe('idle boundary events', () => {
+    it('forwards and replays authoritative queue snapshots in order', () => {
+      const buffer = new EventBuffer(10);
+      const live: PimoteSessionEvent[] = [];
+      buffer.onEvent(makeSdkEvent('queue_update', { steering: [], followUp: [] }), SESSION_ID, (event) => live.push(event));
+      buffer.onEvent(makeSdkEvent('queue_update', { steering: ['new'], followUp: ['later'] }), SESSION_ID, (event) => live.push(event));
+      expect(live).toMatchObject([
+        { type: 'queue_update', steering: [], followUp: [], cursor: 1 },
+        { type: 'queue_update', steering: ['new'], followUp: ['later'], cursor: 2 },
+      ]);
+      expect(buffer.replay(0)).toEqual(live);
+    });
+
     it('maps agent_settled to the wire event (the authoritative idle boundary)', () => {
       const buffer = new EventBuffer(10);
       const live: PimoteSessionEvent[] = [];

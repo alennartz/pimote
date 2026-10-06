@@ -328,6 +328,43 @@ describe('VoiceCallStore.startedAt', () => {
 });
 
 describe('VoiceCallStore.abortAgent', () => {
+  it('uses the shared explicit-abort seam to restore the session queues and keeps the call connected', async () => {
+    const abortSession = vi.fn(async () => {});
+    const { store, seams } = setupStore({ abortSession });
+    await store.startCall('s-1');
+    store.handleServerEvent({ type: 'call_ready', sessionId: 's-1' });
+    vi.mocked(seams.sendCommand).mockClear();
+
+    await store.abortAgent();
+
+    expect(abortSession).toHaveBeenCalledExactlyOnceWith('s-1');
+    expect(seams.sendCommand).not.toHaveBeenCalled();
+    expect(store.state.phase).toBe('connected');
+  });
+
+  it('does not call the shared explicit-abort seam while idle', async () => {
+    const abortSession = vi.fn(async () => {});
+    const { store } = setupStore({ abortSession });
+
+    await store.abortAgent();
+
+    expect(abortSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps the call connected when the shared explicit-abort seam rejects', async () => {
+    const abortSession = vi.fn(async () => {
+      throw new Error('ws-down');
+    });
+    const { store } = setupStore({ abortSession });
+    await store.startCall('s-1');
+    store.handleServerEvent({ type: 'call_ready', sessionId: 's-1' });
+
+    await expect(store.abortAgent()).resolves.toBeUndefined();
+
+    expect(abortSession).toHaveBeenCalledExactlyOnceWith('s-1');
+    expect(store.state.phase).toBe('connected');
+  });
+
   it('sends a command via sendCommand and does not change phase', async () => {
     const sendCommand = vi.fn(async (cmd: any) => {
       if (cmd.type === 'call_bind') return okResponse(bindResponseData());

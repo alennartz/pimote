@@ -1,0 +1,74 @@
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
+index 1da213f..a950517 100644
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
+@@ -669,28 +669,24 @@ export class AgentSession {
+         resolve();
+     }
+     async _emitAgentSettled() {
+-        this._cacheWarmer?.onAgentSettled();
+         this._isAgentRunActive = false;
+-        this._isEmittingAgentSettled = true;
+         try {
+-            await this._extensionRunner.emit({ type: "agent_settled" });
+-            this._emit({ type: "agent_settled" });
+-        }
+-        finally {
+-            this._isEmittingAgentSettled = false;
+-        }
+-        const deferred = this._deferredSettledActions.splice(0);
+-        if (deferred.length > 0) {
++            this._cacheWarmer?.onAgentSettled();
++            this._isEmittingAgentSettled = true;
+             try {
+-                for (const action of deferred)
+-                    await action();
++                await this._extensionRunner.emit({ type: "agent_settled" });
++                this._emit({ type: "agent_settled" });
+             }
+             finally {
+-                this._resolveIdleWaitIfIdle();
++                this._isEmittingAgentSettled = false;
+             }
+-            return;
++            const deferred = this._deferredSettledActions.splice(0);
++            for (const action of deferred)
++                await action();
++        }
++        finally {
++            this._resolveIdleWaitIfIdle();
+         }
+-        this._resolveIdleWaitIfIdle();
+     }
+     /** Internal handler for agent events - shared by subscribe and reconnect */
+     _handleAgentEvent = async (event) => {
+@@ -1367,12 +1363,23 @@ export class AgentSession {
+             }
+         }
+         finally {
+-            if (this._agentRunAbortRequested)
+-                this._finishCancelledRetry();
+-            this._failedResponse = undefined;
+-            this._runSystemPromptOptions = undefined;
+-            this._flushPendingBashMessages();
+-            this._flushPendingCustomMessages();
++            try {
++                if (this._agentRunAbortRequested)
++                    this._finishCancelledRetry();
++                this._failedResponse = undefined;
++                this._runSystemPromptOptions = undefined;
++                this._flushPendingBashMessages();
++                this._flushPendingCustomMessages();
++            }
++            catch (error) {
++                try {
++                    await this._emitAgentSettled();
++                }
++                catch {
++                    // Preserve the original cleanup error if settlement also fails.
++                }
++                throw error;
++            }
+             await this._emitAgentSettled();
+         }
+     }

@@ -256,8 +256,18 @@ export interface FollowUpCommand extends CommandBase {
   message: string;
 }
 
+/** Stop the active session operation and remove queued input before cancellation.
+ * The response data contains the removed steering/followUp strings so the client
+ * can restore them as an unsent draft, including on abort failure or timeout.
+ */
 export interface AbortCommand extends CommandBase {
   type: 'abort';
+}
+
+/** Queued input removed by explicit abort and returned for unsent draft recovery. */
+export interface AbortResponseData {
+  steering: string[];
+  followUp: string[];
 }
 
 /** Execute shell text through the live Pi session. A leading `!!` sets
@@ -843,6 +853,13 @@ export interface AgentSettledEvent extends SessionEventBase {
   type: 'agent_settled';
 }
 
+/** Authoritative pending input snapshot, including explicit abort queue removal. */
+export interface QueueUpdateEvent extends SessionEventBase {
+  type: 'queue_update';
+  steering: string[];
+  followUp: string[];
+}
+
 export interface TurnStartEvent extends SessionEventBase {
   type: 'turn_start';
 }
@@ -981,6 +998,7 @@ export type PimoteSessionEvent =
   | AgentStartEvent
   | AgentEndEvent
   | AgentSettledEvent
+  | QueueUpdateEvent
   | TurnStartEvent
   | TurnEndEvent
   | MessageStartEvent

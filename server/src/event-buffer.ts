@@ -307,6 +307,8 @@ export class EventBuffer {
         return { ...base, type: 'custom_entry', message: mapCustomEntry(sdkEvent.entry) };
 
       case 'queue_update':
+        return { ...base, type: 'queue_update', steering: [...sdkEvent.steering], followUp: [...sdkEvent.followUp] };
+
       case 'session_info_changed':
       case 'thinking_level_changed':
       case 'summarization_retry_scheduled':

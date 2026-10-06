@@ -3,7 +3,7 @@
   import { formatRelativeTime } from '$lib/format-relative-time.js';
   import type { PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
   import type { BashExecutionState, PerSessionState } from '$lib/stores/session-registry.svelte.js';
-  import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { setEditorText } from '$lib/stores/input-bar.svelte.js';
   import { needsDraftPrompt, applyDraftChoice, type DraftChoice } from '$lib/draft-policy.js';
@@ -95,38 +95,10 @@
     }
   }
 
-  async function handleAbort() {
-    // Session-only affordance: the manager composer owns abort for an explicit
-    // source. No-op unless a regular session is viewed.
-    const viewed = sessionRegistry.viewed;
-    if (!viewed?.sessionId) return;
-    try {
-      await connection.send({
-        type: 'abort',
-        sessionId: viewed.sessionId,
-      });
-    } catch (e) {
-      console.error('Failed to send abort:', e);
-    }
-
-    if (viewed.pendingSteeringMessages.length > 0) {
-      try {
-        const res = await connection.send({
-          type: 'dequeue_steering',
-          sessionId: viewed.sessionId,
-        });
-        if (res.success && res.data) {
-          const { steering, followUp } = res.data as { steering: string[]; followUp: string[] };
-          const allQueued = [...steering, ...followUp];
-          if (allQueued.length > 0) {
-            setEditorText(viewed.sessionId, allQueued.join('\n'));
-          }
-        }
-      } catch (e) {
-        console.error('Failed to dequeue steering messages after abort:', e);
-      }
-      viewed.pendingSteeringMessages = [];
-    }
+  function handleAbort() {
+    // The manager composer owns abort for an explicit source.
+    const sessionId = sessionRegistry.viewedSessionId;
+    if (!source && sessionId) void abortSession(sessionId);
   }
 
   let scrollContainer: HTMLDivElement | undefined = $state();

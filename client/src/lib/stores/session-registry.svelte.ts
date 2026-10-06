@@ -38,9 +38,12 @@ import type {
   RestoreMode,
   BashResult,
   BashExecutionUpdateEvent,
+  AbortResponseData,
+  QueueUpdateEvent,
 } from '@pimote/shared';
 import { connection } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
+import { setEditorText } from './input-bar.svelte.js';
 import { panelStore } from './panel-store.svelte.js';
 import { downloadUi } from './download-ui.svelte.js';
 import { coordinateDownloadUpdate } from '../download-coordinator.js';
@@ -361,6 +364,12 @@ export class SessionRegistry {
         session.isStreaming = true;
         break;
 
+      case 'queue_update':
+        // The SDK publishes this snapshot before consumed-message events and
+        // after clearQueue. Abort responses restore drafts, not live queues.
+        session.pendingSteeringMessages = [...(event as QueueUpdateEvent).steering];
+        break;
+
       case 'auto_retry_end': {
         // success:true is followed immediately by a fresh agent_start for the
         // retried attempt — no-op so the working state doesn't flicker.
@@ -544,17 +553,6 @@ export class SessionRegistry {
           const textContent = message.content.find((c: PimoteMessageContent) => c.type === 'text');
           if (textContent && textContent.text) {
             session.firstMessage = textContent.text;
-          }
-        }
-        // Reconcile pending steering messages: when a user message is consumed,
-        // find and remove the first text-matching entry from the optimistic list.
-        if (message.role === 'user' && session.pendingSteeringMessages.length > 0) {
-          const textContent = message.content.find((c: PimoteMessageContent) => c.type === 'text');
-          if (textContent?.text) {
-            const idx = session.pendingSteeringMessages.indexOf(textContent.text);
-            if (idx !== -1) {
-              session.pendingSteeringMessages.splice(idx, 1);
-            }
           }
         }
         // toolResult messages carry the canonical completion data — update toolExecutions
@@ -1405,6 +1403,45 @@ export function dismissTakeover(sessionId: string): void {
 export function switchToSession(sessionId: string): void {
   sessionRegistry.switchTo(sessionId);
   connection.send({ type: 'view_session', sessionId }).catch(() => {});
+}
+
+/** Abort a session and recover the queues acknowledged by the server into its draft. */
+export async function abortSession(sessionId: string): Promise<void> {
+  if (!sessionRegistry.sessions[sessionId]) return;
+
+  try {
+    const response = await connection.send({ type: 'abort', sessionId });
+    const data = response.data as Partial<AbortResponseData> | undefined;
+    // A failed abort can still have cleared the queues before cancellation timed
+    // out. Recover acknowledged text on either outcome, never from a guessed
+    // local pending list or a second request after the agent has stopped.
+    if (
+      Array.isArray(data?.steering) &&
+      data.steering.every((text) => typeof text === 'string') &&
+      Array.isArray(data.followUp) &&
+      data.followUp.every((text) => typeof text === 'string')
+    ) {
+      // A full resync can replace this object while the request is in flight.
+      // Read the current snapshot and draft only after the response arrives.
+      const session = sessionRegistry.sessions[sessionId];
+      if (session) {
+        const queued = [...data.steering, ...data.followUp];
+        if (queued.length > 0) {
+          const text = [...queued, ...(session.draftText ? [session.draftText] : [])].join('\n');
+          session.draftText = text;
+          setEditorText(sessionId, text);
+        }
+      }
+    }
+
+    // agent_settled owns the idle transition. A response (especially a timeout)
+    // must not manufacture a settled session or discard streaming content.
+    if (!response.success) {
+      console.error('[SessionRegistry] Failed to abort session:', response.error ?? 'unknown error');
+    }
+  } catch (error) {
+    console.error('[SessionRegistry] Failed to send abort:', error);
+  }
 }
 
 /** Close a session — sends close_session command; the session_closed event handler cleans up the registry */

@@ -4183,6 +4183,101 @@ describe('WsHandler', () => {
   });
 });
 
+describe('abort diagnostics', () => {
+  it('clears queued messages before abort and returns them only after settlement', async () => {
+    const slot = createMockSlot({ connectedClientId: 'client-1', status: 'working' });
+    const queued = { steering: ['first', 'second'], followUp: ['later'] };
+    const cancelVoice = vi.fn();
+    slot.eventBusRef.current = { emit: cancelVoice } as any;
+    const clearQueue = vi.fn(() => {
+      expect(cancelVoice).toHaveBeenCalledWith('pimote:voice:cancel-pending', undefined);
+      return queued;
+    });
+    (slot.session as any).clearQueue = clearQueue;
+    let finishAbort: () => void = () => {};
+    (slot.session as any).abort = vi.fn(() => {
+      expect(clearQueue).toHaveBeenCalledOnce();
+      return new Promise<void>((resolve) => {
+        finishAbort = resolve;
+      });
+    });
+    const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+    const pending = handler.handleMessage(JSON.stringify({ type: 'abort', id: 'abort-queue', sessionId: slot.sessionState.id }));
+    await vi.waitFor(() => expect((slot.session as any).abort).toHaveBeenCalledOnce());
+    expect(findResponse(sent, 'abort-queue')).toBeUndefined();
+    finishAbort();
+    await pending;
+    expect(findResponse(sent, 'abort-queue')).toMatchObject({ success: true, data: queued });
+  });
+
+  it('returns captured messages when abort rejects', async () => {
+    const slot = createMockSlot({ connectedClientId: 'client-1', status: 'working' });
+    const queued = { steering: ['unsent'], followUp: [] };
+    (slot.session as any).clearQueue = () => queued;
+    (slot.session as any).abort = async () => {
+      throw new Error('abort failed');
+    };
+    const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+    await handler.handleMessage(JSON.stringify({ type: 'abort', id: 'abort-error', sessionId: slot.sessionState.id }));
+    expect(findResponse(sent, 'abort-error')).toMatchObject({ success: false, data: queued, error: 'abort failed' });
+  });
+
+  it('logs timeout state and returns captured messages without reporting success', async () => {
+    vi.useFakeTimers();
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const slot = createMockSlot({ connectedClientId: 'client-1', status: 'working' });
+      const unsubscribe = vi.fn();
+      (slot.session as any).subscribe = () => unsubscribe;
+      (slot.session as any).abort = () => new Promise(() => {});
+      (slot.session as any).clearQueue = () => ({ steering: ['unsent'], followUp: [] });
+      (slot.session as any).isStreaming = true;
+      (slot.session as any).state = { isStreaming: false };
+      const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+      const pending = handler.handleMessage(JSON.stringify({ type: 'abort', id: 'abort-timeout', sessionId: slot.sessionState.id }));
+      await vi.advanceTimersByTimeAsync(30_000);
+      await pending;
+      const traces = log.mock.calls.filter(([prefix]) => prefix === '[abort_trace]').map(([, trace]) => JSON.parse(trace as string));
+      expect(traces.map((trace) => trace.phase)).toEqual(['requested', 'timeout']);
+      expect(traces[1]).toMatchObject({ elapsedMs: 30_000, sdkStreaming: true, coreStreaming: false, serverStatus: 'working' });
+      expect(unsubscribe).toHaveBeenCalledOnce();
+      expect(findResponse(sent, 'abort-timeout')).toMatchObject({ success: false, error: 'abort_timeout', data: { steering: ['unsent'], followUp: [] } });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('records run boundaries and removes the diagnostic listener after abort', async () => {
+    const slot = createMockSlot({ connectedClientId: 'client-1', status: 'working' });
+    const unsubscribe = vi.fn();
+    let listener: (event: { type: string }) => void = () => {};
+    (slot.session as any).subscribe = vi.fn((onEvent) => {
+      listener = onEvent;
+      return unsubscribe;
+    });
+    (slot.session as any).abort = async () => {
+      listener({ type: 'agent_end' });
+      listener({ type: 'agent_settled' });
+    };
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+      await handler.handleMessage(JSON.stringify({ type: 'abort', id: 'abort-trace', sessionId: slot.sessionState.id }));
+      const traces = log.mock.calls.filter(([prefix]) => prefix === '[abort_trace]').map(([, trace]) => JSON.parse(trace as string));
+      expect(traces.map((trace) => trace.phase)).toEqual(['requested', 'agent_end', 'agent_settled', 'resolved']);
+      expect(traces.every((trace) => trace.requestId === 'abort-trace' && trace.sessionId === slot.sessionState.id)).toBe(true);
+      expect(unsubscribe).toHaveBeenCalledOnce();
+      expect(findResponse(sent, 'abort-trace')).toMatchObject({ success: true });
+    } finally {
+      log.mockRestore();
+    }
+  });
+});
+
 describe('panel resync requests', () => {
   function createCapturingBus(): EventBusController & { emits: Array<{ channel: string; data: unknown }> } {
     const emits: Array<{ channel: string; data: unknown }> = [];

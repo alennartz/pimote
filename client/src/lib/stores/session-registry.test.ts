@@ -1192,26 +1192,53 @@ describe('SessionRegistry', () => {
       expect(registry.sessions['s1'].pendingSteeringMessages).toEqual([]);
     });
 
+    it('queue_update replaces optimistic pending messages with the authoritative steering snapshot', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions.s1;
+      session.pendingSteeringMessages = ['stale optimistic message'];
+      const steering = ['first pending', 'second pending'];
+
+      registry.handleEvent(makeSessionEvent('queue_update', 's1', { steering, followUp: ['follow-up only'] }));
+
+      expect(session.pendingSteeringMessages).toEqual(steering);
+      steering.push('mutated event payload');
+      expect(session.pendingSteeringMessages).toEqual(['first pending', 'second pending']);
+    });
+
+    it('queue_update clears pending steering without changing the draft or lifecycle', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions.s1;
+      session.pendingSteeringMessages = ['queued'];
+      session.draftText = 'keep draft';
+      session.isStreaming = true;
+      session.status = 'working';
+
+      registry.handleEvent(makeSessionEvent('queue_update', 's1', { steering: [], followUp: [] }));
+
+      expect(session.pendingSteeringMessages).toEqual([]);
+      expect(session.draftText).toBe('keep draft');
+      expect(session.isStreaming).toBe(true);
+      expect(session.status).toBe('working');
+    });
+
+    it('consumed message_end does not remove an identical message left in the authoritative queue', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions.s1;
+      session.pendingSteeringMessages = ['same text', 'same text'];
+      // The SDK emits the remaining queue before starting the consumed user message.
+      registry.handleEvent(makeSessionEvent('queue_update', 's1', { steering: ['same text'], followUp: [] }));
+
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'user' }));
+      registry.handleEvent(makeSessionEvent('message_end', 's1', { message: makeUserMessage('same text') }));
+
+      expect(session.pendingSteeringMessages).toEqual(['same text']);
+    });
+
     it('optimistic add: pushing to pendingSteeringMessages tracks the message', () => {
       registry.addSession('s1', '/path', 'proj');
       const session = registry.sessions['s1'];
       session.pendingSteeringMessages.push('fix the bug');
       expect(session.pendingSteeringMessages).toEqual(['fix the bug']);
-    });
-
-    it('reconciliation: message_end with role user removes the first matching pending message', () => {
-      registry.addSession('s1', '/path', 'proj');
-      const session = registry.sessions['s1'];
-      session.pendingSteeringMessages.push('fix the bug');
-      session.pendingSteeringMessages.push('also update tests');
-
-      registry.handleEvent(
-        makeSessionEvent('message_end', 's1', {
-          message: makeUserMessage('fix the bug'),
-        }),
-      );
-
-      expect(session.pendingSteeringMessages).toEqual(['also update tests']);
     });
 
     it('reconciliation: non-matching user message does not remove pending entries', () => {
@@ -1240,22 +1267,6 @@ describe('SessionRegistry', () => {
       );
 
       expect(session.pendingSteeringMessages).toEqual(['fix the bug']);
-    });
-
-    it('reconciliation: only the first matching entry is removed when duplicates exist', () => {
-      registry.addSession('s1', '/path', 'proj');
-      const session = registry.sessions['s1'];
-      session.pendingSteeringMessages.push('fix the bug');
-      session.pendingSteeringMessages.push('fix the bug');
-      session.pendingSteeringMessages.push('update tests');
-
-      registry.handleEvent(
-        makeSessionEvent('message_end', 's1', {
-          message: makeUserMessage('fix the bug'),
-        }),
-      );
-
-      expect(session.pendingSteeringMessages).toEqual(['fix the bug', 'update tests']);
     });
 
     it('reconciliation: empty pending list is unaffected by user message_end', () => {

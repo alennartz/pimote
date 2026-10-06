@@ -102,6 +102,8 @@ describe('session lifecycle idle boundary', () => {
       sessionId: 'settle-test',
       sessionName: 'Settle test',
       isStreaming: false,
+      pendingMessageCount: 1,
+      agent: { waitForIdle: vi.fn(async () => {}), continue: vi.fn(async () => {}) },
       messages: [],
       subscribe: vi.fn((fn: (event: any) => void) => {
         listener = fn;
@@ -136,12 +138,14 @@ describe('session lifecycle idle boundary', () => {
     listener!({
       type: 'agent_end',
       willRetry: false,
-      messages: [{ role: 'assistant', content: [], stopReason: 'stop' }],
+      messages: [{ role: 'assistant', content: [], stopReason: 'aborted' }],
     });
     expect(state.status).toBe('working');
     expect(state.idleSince).toBeNull();
     expect(state.needsAttention).toBe(false);
     expect(onSessionIdle).not.toHaveBeenCalled();
+    expect(session.agent.waitForIdle).not.toHaveBeenCalled();
+    expect(session.agent.continue).not.toHaveBeenCalled();
 
     listener!({ type: 'agent_settled' });
     expect(state.status).toBe('idle');

@@ -1010,20 +1010,59 @@ export class WsHandler {
       }
 
       case 'abort': {
-        // Resolve pending UI responses first so stuck dialogs unblock
-        resolveAllSlotPendingUi(slot);
+        // Capture only lifecycle/state metadata, never prompt or tool content.
+        const startedAt = Date.now();
+        const trace = (phase: string) =>
+          console.info(
+            '[abort_trace]',
+            JSON.stringify({
+              requestId: id,
+              sessionId,
+              phase,
+              elapsedMs: Date.now() - startedAt,
+              sdkStreaming: session.isStreaming,
+              sdkIdle: session.isIdle,
+              coreStreaming: session.state?.isStreaming,
+              compacting: session.isCompacting,
+              serverStatus: slot.sessionState.status,
+              pendingUi: slot.sessionState.pendingUiResponses.size,
+              pendingMessages: session.pendingMessageCount,
+              cursor: slot.sessionState.eventBuffer.currentCursor,
+            }),
+          );
+        const unsubscribe = session.subscribe((event) => {
+          if (['agent_start', 'agent_end', 'agent_settled', 'auto_retry_start', 'auto_retry_end', 'auto_compaction_start', 'auto_compaction_end'].includes(event.type)) {
+            trace(event.type);
+          }
+        });
         let abortWatchdog: ReturnType<typeof setTimeout> | undefined;
-        const abortResult = await Promise.race([
-          session.abort().then(() => 'ok' as const),
-          new Promise<'timeout'>((resolve) => {
-            abortWatchdog = setTimeout(() => resolve('timeout'), 30_000);
-          }),
-        ]);
-        if (abortWatchdog !== undefined) clearTimeout(abortWatchdog);
-        if (abortResult === 'timeout') {
-          console.error(`[WsHandler] session.abort() did not resolve within 30s (sessionId=${sessionId})`);
+        // Remove queued input synchronously before cancellation can emit agent_end.
+        // The client restores it as a draft only after receiving this response.
+        slot.eventBusRef.current?.emit('pimote:voice:cancel-pending', undefined);
+        const queued = session.clearQueue();
+        try {
+          trace('requested');
+          // Resolve pending UI responses first so stuck dialogs unblock.
+          resolveAllSlotPendingUi(slot);
+          const abortResult = await Promise.race([
+            session.abort().then(() => 'ok' as const),
+            new Promise<'timeout'>((resolve) => {
+              abortWatchdog = setTimeout(() => resolve('timeout'), 30_000);
+            }),
+          ]);
+          trace(abortResult === 'ok' ? 'resolved' : 'timeout');
+          if (abortResult === 'timeout') {
+            console.error(`[WsHandler] session.abort() did not resolve within 30s (sessionId=${sessionId})`);
+          }
+          this.sendResponse(id, abortResult === 'ok', queued, abortResult === 'timeout' ? 'abort_timeout' : undefined);
+        } catch (err) {
+          trace('rejected');
+          console.error('[WsHandler] abort failed:', err);
+          this.sendResponse(id, false, queued, err instanceof Error ? err.message : String(err));
+        } finally {
+          if (abortWatchdog !== undefined) clearTimeout(abortWatchdog);
+          unsubscribe();
         }
-        this.sendResponse(id, true);
         break;
       }
 

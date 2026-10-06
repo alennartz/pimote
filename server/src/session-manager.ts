@@ -21,7 +21,6 @@ import type { PanelMessage } from './panel-state.js';
 import { getGitBranch } from './git-branch.js';
 import { LoginOrchestrator } from './login-orchestrator.js';
 import { createVoiceExtension } from './voice/index.js';
-import { autoDrainOnAbort } from './auto-drain-on-abort.js';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import type { ManagerSession, ManagerSessionFactory } from './manager/service.js';
 import { createManagerResources, type ManagerResourceOptions } from './manager/resources.js';
@@ -278,18 +277,6 @@ export function createSessionState(
       // than a streamed conversation event. Broadcast that snapshot immediately
       // so the active title and folder session row both stay current.
       callbacks.onStatusChange?.(sessionId, folderPath);
-    } else if (event.type === 'agent_end' && !event.willRetry) {
-      // Content/attempt-boundary work that must run at `agent_end`, NOT at the
-      // later `agent_settled` idle boundary: if the run ended via abort and
-      // there are queued steering / follow-up messages, drain them —
-      // pi-agent-core's runLoop skips its trailing queue poll on the abort exit
-      // path, so without this queued messages would sit until the next prompt()
-      // call. Universal across pimote (not voice-specific) so typed-mode users
-      // also benefit. See `auto-drain-on-abort.ts` for rationale.
-      //
-      // `willRetry` agent_end is not a real end (a retry re-runs the prompt), so
-      // it is skipped here — matched by the guard above.
-      void autoDrainOnAbort(session, event.messages[event.messages.length - 1]);
     } else if (event.type === 'agent_settled' && state.status !== 'idle') {
       // Authoritative idle boundary: raised only when the session is genuinely
       // quiescent (no active run, retry, auto-compaction, or queued
@@ -442,7 +429,7 @@ export class PimoteSessionManager {
    * defaultModel are configured. Non-voice deployments continue to work
    * unchanged — sessions simply don't load `@pimote/voice` at all.
    */
-  private buildVoiceExtensionFactory(): ExtensionFactory | undefined {
+  private buildVoiceExtensionFactory(getSession: () => AgentSession): ExtensionFactory | undefined {
     if (!this.config.voice?.speechmuxSignalUrl || !this.config.voice?.speechmuxLlmWsUrl) {
       return undefined;
     }
@@ -457,6 +444,7 @@ export class PimoteSessionManager {
     return createVoiceExtension({
       defaultInterpreterModel: interpreter,
       defaultWorkerModel: worker,
+      getSession,
     });
   }
 
@@ -496,16 +484,23 @@ export class PimoteSessionManager {
     const sessionManager = sessionFilePath ? PiSessionManager.open(sessionFilePath) : PiSessionManager.create(folderPath);
     const effectiveFolderPath = sessionFilePath ? sessionManager.getCwd() : folderPath;
 
-    const voiceExtensionFactory = this.buildVoiceExtensionFactory();
     const staticHostFactory = this.staticHostFactory;
     const fileDownloadFactory = this.fileDownloadFactory;
-    const extensionFactories = [
-      ...(voiceExtensionFactory ? [voiceExtensionFactory] : []),
-      ...(staticHostFactory ? [staticHostFactory] : []),
-      ...(fileDownloadFactory ? [fileDownloadFactory] : []),
-    ];
 
     const factory: CreateAgentSessionRuntimeFactory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
+      // Services load extension factories before constructing AgentSession.
+      // Bind this explicit per-runtime holder before session_start is emitted
+      // by bindExtensions; replacement runtimes get a fresh holder/factory.
+      const voiceSessionRef: { current: AgentSession | null } = { current: null };
+      const voiceExtensionFactory = this.buildVoiceExtensionFactory(() => {
+        if (!voiceSessionRef.current) throw new Error('Voice session is not bound yet');
+        return voiceSessionRef.current;
+      });
+      const extensionFactories = [
+        ...(voiceExtensionFactory ? [voiceExtensionFactory] : []),
+        ...(staticHostFactory ? [staticHostFactory] : []),
+        ...(fileDownloadFactory ? [fileDownloadFactory] : []),
+      ];
       const eventBus = createEventBus();
       eventBusRef.current = eventBus;
 
@@ -519,8 +514,10 @@ export class PimoteSessionManager {
         },
       });
 
+      const result = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent });
+      voiceSessionRef.current = result.session;
       return {
-        ...(await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent })),
+        ...result,
         services,
         diagnostics: services.diagnostics,
       };
