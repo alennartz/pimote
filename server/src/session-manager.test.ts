@@ -323,6 +323,37 @@ describe('session lifecycle idle boundary', () => {
   });
 });
 
+describe('extension surface navigation', () => {
+  it('preserves the requested new-tab target when relaying navigation events', () => {
+    const listeners = new Map<string, (data: any) => void>();
+    const eventBus = {
+      on: (type: string, listener: (data: any) => void) => {
+        listeners.set(type, listener);
+        return vi.fn();
+      },
+    } as any;
+    const session = {
+      sessionId: 'navigation-test',
+      sessionName: undefined,
+      isStreaming: false,
+      messages: [],
+      subscribe: () => () => {},
+    } as any;
+    const sendEvent = vi.fn();
+    const state = createSessionState(session, eventBus, createTestConfig(), { sendEvent, notify: vi.fn(async () => {}) }, { slot: null }, '/home/user/project');
+
+    listeners.get('pimote:navigate')!({ url: '/s/report/', target: '_blank' });
+
+    expect(sendEvent).toHaveBeenCalledWith({
+      type: 'pimote_navigate',
+      sessionId: 'navigation-test',
+      url: '/s/report/',
+      target: '_blank',
+    });
+    state.panelListenerUnsubs.forEach((unsubscribe) => unsubscribe());
+  });
+});
+
 describe('PimoteSessionManager — idle reaper', () => {
   beforeEach(() => {
     vi.useFakeTimers();

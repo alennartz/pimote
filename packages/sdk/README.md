@@ -87,6 +87,7 @@ interface Card {
   body?: BodySection[];
   footer?: string[];
   href?: string;
+  target?: '_blank';
 }
 
 interface BodySection {
@@ -102,9 +103,11 @@ interface BodySection {
 - **`body`** — Optional content sections, each with a style (`text`, `code`, or `secondary`).
 - **`footer`** — Optional array of short strings displayed at the bottom.
 - **`href`** — Optional same-origin URL. When set, the client renders the
-  entire card as a clickable link (same-tab navigation). Use for cards
-  that point at a hosted resource — e.g. a bundle served by pimote's
-  static-host tool.
+  entire card as a clickable link. Use for cards that point at a hosted
+  resource — e.g. a bundle served by pimote's static-host tool.
+- **`target`** — Set to `'_blank'` to open the card's `href` in a new browsing
+  context. This also prevents navigation away from the Pimote app when opening
+  a static-hosted page.
 
 ### How it works
 

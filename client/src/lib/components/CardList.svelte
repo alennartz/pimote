@@ -15,6 +15,7 @@
 <div class="flex flex-col gap-2">
   {#each cards as card (card.id)}
     {@const baseClass = `rounded border p-2 ${card.color ? colorMap[card.color] + ' border-l-2' : ''}`}
+    {@const cardOpensInNewTab = openInNewTab || card.target === '_blank'}
     {#snippet cardBody()}
       <div class="flex items-center gap-1.5">
         <span class="truncate text-sm font-medium">{card.header.title}</span>
@@ -44,12 +45,12 @@
       <!-- eslint-disable svelte/no-navigation-without-resolve -->
       <a
         href={card.href}
-        target={openInNewTab ? '_blank' : undefined}
-        rel={openInNewTab ? 'noopener noreferrer' : undefined}
+        target={cardOpensInNewTab ? '_blank' : undefined}
+        rel={cardOpensInNewTab ? 'noopener noreferrer' : undefined}
         class="{baseClass} text-foreground hover:bg-accent/50 block no-underline transition-colors"
       >
         {@render cardBody()}
-        {#if openInNewTab}<span class="sr-only"> (opens in a new tab)</span>{/if}
+        {#if cardOpensInNewTab}<span class="sr-only"> (opens in a new tab)</span>{/if}
       </a>
       <!-- eslint-enable svelte/no-navigation-without-resolve -->
     {:else}

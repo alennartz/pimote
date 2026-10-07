@@ -814,9 +814,13 @@ export class SessionRegistry {
         // Only honor navigation for the currently viewed session — don't
         // yank the user away if a background session emits this.
         if (sessionId === this.viewedSessionId) {
-          const url = (event as NavigateEvent).url;
-          if (typeof url === 'string' && url.length > 0) {
-            location.href = url;
+          const navigate = event as NavigateEvent;
+          if (typeof navigate.url === 'string' && navigate.url.length > 0) {
+            if (navigate.target === '_blank') {
+              window.open(navigate.url, '_blank', 'noopener,noreferrer');
+            } else {
+              location.href = navigate.url;
+            }
           }
         }
         break;

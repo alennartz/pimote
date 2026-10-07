@@ -85,6 +85,8 @@ describe('createRenderer', () => {
       expect(link).not.toBeNull();
       expect(link!.textContent).toBe('click here');
       expect(link!.getAttribute('href')).toBe('https://example.com');
+      expect(link!.getAttribute('target')).toBe('_blank');
+      expect(link!.getAttribute('rel')).toBe('noopener noreferrer');
     });
 
     it('keeps the href on a root-relative link', () => {

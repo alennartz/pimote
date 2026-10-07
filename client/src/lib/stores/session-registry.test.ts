@@ -76,6 +76,26 @@ describe('SessionRegistry', () => {
   });
 
   // --------------------------------------------------------------------------
+  // Navigation
+  // --------------------------------------------------------------------------
+  describe('Navigation', () => {
+    it('opens requested new-tab navigation in a separate browsing context', () => {
+      const open = vi.fn();
+      vi.stubGlobal('window', { open });
+      try {
+        registry.addSession('s1', '/path', 'proj');
+        registry.switchTo('s1');
+
+        registry.handleEvent(makeSessionEvent('pimote_navigate', 's1', { url: '/s/report/', target: '_blank' }));
+
+        expect(open).toHaveBeenCalledWith('/s/report/', '_blank', 'noopener,noreferrer');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Viewed Session
   // --------------------------------------------------------------------------
   describe('Viewed Session', () => {

@@ -110,6 +110,11 @@ export function createRenderer(container: HTMLElement): smd.Default_Renderer & {
         }
       }
       smd.default_set_attr(data, type, value);
+      if (type === smd.Attr.Href) {
+        const link = data.nodes[data.index];
+        link.setAttribute('target', '_blank');
+        link.setAttribute('rel', 'noopener noreferrer');
+      }
     },
     add_text(data: smd.Default_Renderer_Data, text: string) {
       // Append the fresh text node first (smd holds element refs only).

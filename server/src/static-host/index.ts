@@ -56,6 +56,7 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
           ...(entry.cardMetadata.tag !== undefined ? { tag: entry.cardMetadata.tag } : {}),
         },
         href: `/s/${entry.slug}/`,
+        target: '_blank',
         ...(entry.cardMetadata.color !== undefined ? { color: entry.cardMetadata.color } : {}),
       };
       return card;
@@ -68,7 +69,7 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
   }
 
   function emitNavigate(pi: ExtensionAPI, url: string): void {
-    pi.events.emit('pimote:navigate', { url });
+    pi.events.emit('pimote:navigate', { url, target: '_blank' });
   }
 
   function toolDeps(pi: ExtensionAPI, sessionId: string): ToolDeps {

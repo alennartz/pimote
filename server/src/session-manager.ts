@@ -403,9 +403,15 @@ function setupSlotPanelListeners(eventBus: EventBusController, state: SessionSta
     scheduleSlotPanelPush(state, sessionId, sendEvent);
   });
   const unsub3 = eventBus.on('pimote:navigate', (data) => {
-    const url = (data as { url?: unknown } | null | undefined)?.url;
+    const payload = data as { url?: unknown; target?: unknown } | null | undefined;
+    const url = payload?.url;
     if (typeof url !== 'string' || url.length === 0) return;
-    sendEvent({ type: 'pimote_navigate', sessionId, url });
+    sendEvent({
+      type: 'pimote_navigate',
+      sessionId,
+      url,
+      ...(payload?.target === '_blank' ? { target: '_blank' } : {}),
+    });
   });
   return [unsub1, unsub2, unsub3];
 }
