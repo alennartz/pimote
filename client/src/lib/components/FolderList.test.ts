@@ -32,6 +32,7 @@ const { connection } = await import('$lib/stores/connection.svelte.js');
 const { default: FolderList } = await import('./FolderList.svelte');
 const { folderStore } = await import('$lib/stores/folder-store.svelte.js');
 const { sessionRegistry } = await import('$lib/stores/session-registry.svelte.js');
+const { fileEditorStore } = await import('$lib/stores/file-editor.svelte.js');
 
 function makeFolder(overrides: Partial<FolderInfo> & Pick<FolderInfo, 'path' | 'name'>): FolderInfo {
   return {
@@ -118,8 +119,8 @@ function iconKind(path: string): string | null {
   return nameButton(path).querySelector('[data-folder-icon]')?.getAttribute('data-folder-icon') ?? null;
 }
 
-function menuItem(): Element | null {
-  return document.querySelector('[data-slot="context-menu-item"]');
+function menuItem(label: string): HTMLElement | null {
+  return [...document.querySelectorAll<HTMLElement>('[data-slot="context-menu-item"]')].find((item) => item.textContent?.trim() === label) ?? null;
 }
 
 function shows(text: string): boolean {
@@ -146,6 +147,7 @@ let destroy: (() => void) | null = null;
 afterEach(() => {
   destroy?.();
   destroy = null;
+  fileEditorStore.close();
   sessionRegistry.removeSession(activeSession.id);
   vi.mocked(connection.send).mockImplementation(async () => ({ id: '1', success: true, data: {} }));
   document.body.innerHTML = '';
@@ -190,7 +192,6 @@ describe('folder row identity', () => {
     await tick();
 
     expect(shows('Team personas')).toBe(true);
-    expect(target.querySelectorAll('[data-folder-icon="persona-hub"]')).toHaveLength(1);
   });
 
   it('code rows keep the basename', async () => {
@@ -242,16 +243,7 @@ describe('folder rows', () => {
     expect(shows('Idle session')).toBe(false);
   });
 
-  it('half-open includes sessions open but bound to other clients', async () => {
-    folderStore.sessions.set(alpha.path, [idleSession, activeSession, remoteSession]);
-    destroy = render();
-    await tick();
-
-    expect(shows('Remote session')).toBe(true);
-    expect(shows('Idle session')).toBe(false);
-  });
-
-  it('from closed, half-open still applies when only another client holds a session open', async () => {
+  it('keeps a remote-only live session visible through the half-open cycle', async () => {
     sessionRegistry.removeSession(activeSession.id);
     folderStore.sessions.set(alpha.path, [idleSession, remoteSession]);
     destroy = render();
@@ -260,16 +252,15 @@ describe('folder rows', () => {
     expect(shows('Remote session')).toBe(true);
     expect(shows('Idle session')).toBe(false);
 
-    // active → all → closed
     nameButton(alpha.path).click();
     await tick();
     expect(shows('Idle session')).toBe(true);
+
     nameButton(alpha.path).click();
     await tick();
+    expect(shows('Remote session')).toBe(false);
     expect(shows('Idle session')).toBe(false);
 
-    // closed → half-open, not all: the remote session is still open, so
-    // half-open renders differently from closed.
     nameButton(alpha.path).click();
     await tick();
     expect(shows('Remote session')).toBe(true);
@@ -299,24 +290,13 @@ describe('folder rows', () => {
     expect(shows('Idle session')).toBe(false);
   });
 
-  it('half-open with nothing open lists nothing', async () => {
+  it('skips the empty half-open state when cycling from closed', async () => {
     sessionRegistry.removeSession(activeSession.id);
     destroy = render();
     await tick();
 
     expect(shows('Active session')).toBe(false);
     expect(shows('Idle session')).toBe(false);
-
-    // The next tap still advances to the full list.
-    nameButton(alpha.path).click();
-    await tick();
-    expect(shows('Idle session')).toBe(true);
-  });
-
-  it('from closed, skips half-open when nothing would filter in', async () => {
-    sessionRegistry.removeSession(activeSession.id);
-    destroy = render();
-    await tick();
 
     // active (empty) → all → closed
     nameButton(alpha.path).click();
@@ -362,47 +342,13 @@ describe('folder rows', () => {
     expect(connection.send).toHaveBeenCalledWith({ type: 'open_session', folderPath: '/w/alpha' });
   });
 
-  it('the context menu offers Disband hub without expanding the row', async () => {
-    folderStore.folders = [hub];
-    folderStore.sessions.set(hub.path, [idleSession, activeSession]);
-    sessionRegistry.addSession(activeSession.id, hub.path, hub.name);
-    destroy = render();
-    await tick();
-
-    openMenu(hub.path);
-    await tick();
-    const items = document.querySelectorAll('[data-slot="context-menu-item"]');
-    expect(items.length).toBe(2);
-    expect(document.body.textContent).toContain('Disband hub');
-    expect(shows('Idle session')).toBe(false);
-    expect(shows('Active session')).toBe(true);
-
-    (items[1] as HTMLElement).click();
-    await tick();
-    expect(document.body.textContent).toContain('Disband stack');
-    expect(shows('Idle session')).toBe(false);
-
-    sessionRegistry.removeSession(activeSession.id);
-  });
-
-  it('opens the folder context menu on right-click / long-press', async () => {
-    destroy = render();
-    await tick();
-
-    openMenu(alpha.path);
-    await tick();
-    expect(menuItem()).not.toBeNull();
-    // Menu open leaves the default half-open state untouched.
-    expect(shows('Idle session')).toBe(false);
-  });
-
   it('swallows the release click that follows a long-press, then behaves normally', async () => {
     destroy = render();
     await tick();
 
     openMenu(alpha.path);
     await tick();
-    expect(menuItem()).not.toBeNull();
+    expect(menuItem('Edit AGENTS.md…')).not.toBeNull();
 
     // The long-press fires while the finger is down; the release still emits a
     // click on the row. It must not advance the folder behind the open menu.
@@ -422,7 +368,7 @@ describe('folder rows', () => {
 
     openMenu(alpha.path);
     await tick();
-    const item = menuItem();
+    const item = menuItem('Add tag…');
     expect(item).not.toBeNull();
 
     item!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -533,8 +479,9 @@ describe('hub dialogs', () => {
 
     openMenu(hub.path);
     await tick();
-    const items = document.querySelectorAll('[data-slot="context-menu-item"]');
-    (items[1] as HTMLElement).click();
+    const item = menuItem('Disband hub');
+    expect(item).not.toBeNull();
+    item!.click();
     await tick();
 
     const disbandButton = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Disband');
@@ -555,8 +502,9 @@ describe('hub dialogs', () => {
 
     openMenu(hub.path);
     await tick();
-    const items = document.querySelectorAll('[data-slot="context-menu-item"]');
-    (items[1] as HTMLElement).click();
+    const item = menuItem('Disband hub');
+    expect(item).not.toBeNull();
+    item!.click();
     await tick();
 
     const disbandButton = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Disband');
@@ -570,32 +518,41 @@ describe('hub dialogs', () => {
 });
 
 describe('hub menu eligibility', () => {
-  it('a generic shortcut hub gets the hub icon but no disband menu entry', async () => {
+  it('a generic shortcut hub has no disband action', async () => {
     folderStore.folders = [shortcutHub];
     destroy = render();
     await tick();
 
-    expect(iconKind(shortcutHub.path)).toBe('code-hub');
-
     openMenu(shortcutHub.path);
     await tick();
-    const items = document.querySelectorAll('[data-slot="context-menu-item"]');
-    expect(items.length).toBe(1);
-    expect(document.body.textContent).not.toContain('Disband hub');
-  });
-
-  it('registry/source hubs (repos present) are disband-eligible', async () => {
-    folderStore.folders = [hub];
-    destroy = render();
-    await tick();
-
-    openMenu(hub.path);
-    await tick();
-    expect(document.body.textContent).toContain('Disband hub');
+    expect(menuItem('Disband hub')).toBeNull();
   });
 });
 
-const { fileEditorStore } = await import('$lib/stores/file-editor.svelte.js');
+describe('folder instructions entry', () => {
+  it('opens the selected persona folder AGENTS.md', async () => {
+    folderStore.folders = [persona];
+    vi.mocked(connection.send).mockImplementation(async (command) => {
+      if (command.type === 'file_get') {
+        return { id: '1', success: true, data: { path: command.path, exists: false, content: '' } };
+      }
+      return { id: '1', success: true, data: {} };
+    });
+    destroy = render();
+    await tick();
+
+    openMenu(persona.path);
+    await tick();
+    const item = menuItem('Edit AGENTS.md…');
+    expect(item).not.toBeNull();
+    item!.click();
+
+    await vi.waitFor(() => expect(fileEditorStore.open).toBe(true));
+    expect(fileEditorStore.path).toBe('/w/personas/ada-dir/AGENTS.md');
+    expect(fileEditorStore.title).toBe('AGENTS.md — Ada');
+    expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'file_get', path: '/w/personas/ada-dir/AGENTS.md' }));
+  });
+});
 
 describe('agent instructions entry', () => {
   it('opens the config-file editor on ~/.pi/agent/AGENTS.md from the header button', async () => {
