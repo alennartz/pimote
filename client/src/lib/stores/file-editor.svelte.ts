@@ -69,6 +69,14 @@ export class FileEditorStore {
     await this.loadFile(path, generation);
   }
 
+  /** Opens the instructions file belonging to this folder, never a relative server-cwd target. */
+  async openFolderInstructions(folderPath: string, folderName?: string): Promise<void> {
+    if (!folderPath) return;
+    const path = `${folderPath.replace(/\/+$/, '')}/AGENTS.md`;
+    const name = folderName ?? folderPath.split('/').filter(Boolean).at(-1) ?? folderPath;
+    await this.openFile(path, `AGENTS.md — ${name}`);
+  }
+
   /** Saves the full content via file_put and closes on success. Returns whether it saved. */
   async save(): Promise<boolean> {
     const path = this.path;

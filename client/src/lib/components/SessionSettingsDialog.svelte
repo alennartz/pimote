@@ -7,6 +7,9 @@
   import CallButton from './CallButton.svelte';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { fileEditorStore } from '$lib/stores/file-editor.svelte.js';
+  import { tick } from 'svelte';
+  import FilePen from '@lucide/svelte/icons/file-pen';
   import { updateStore } from '$lib/stores/update.svelte.js';
   import { getContextDisplay, getContextTone, formatCombinedCost } from '$lib/session-summary.js';
   import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
@@ -20,6 +23,14 @@
   let costDisplay = $derived(formatCombinedCost(session?.lifetimeCostUsd ?? 0, session?.nextRoundtripCostUsd));
 
   let connectionLabel = $derived(connection.phaseLabel);
+
+  async function openFolderInstructions(): Promise<void> {
+    const folderPath = session?.folderPath;
+    if (!folderPath) return;
+    open = false;
+    await tick();
+    await fileEditorStore.openFolderInstructions(folderPath);
+  }
 
   let connectionDotClass = $derived(
     connection.phase === 'ready'
@@ -83,6 +94,19 @@
         <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
           <span class="text-muted-foreground">Voice call</span>
           <CallButton sessionId={session?.sessionId} variant="dialog-row" onAction={() => (open = false)} />
+        </div>
+
+        <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
+          <span class="text-muted-foreground">Folder instructions</span>
+          <Button
+            variant="ghost"
+            class="gap-1.5"
+            disabled={connection.status !== 'connected' || !session?.folderPath || session.isRestoring || session.sessionId.startsWith('pending-')}
+            onclick={() => void openFolderInstructions()}
+          >
+            <FilePen class="size-4" />
+            Edit AGENTS.md
+          </Button>
         </div>
 
         {#if contextDisplay}

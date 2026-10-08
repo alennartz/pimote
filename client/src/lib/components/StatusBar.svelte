@@ -5,6 +5,9 @@
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { fileEditorStore } from '$lib/stores/file-editor.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import FilePen from '@lucide/svelte/icons/file-pen';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { updateStore } from '$lib/stores/update.svelte.js';
   import { getContextDisplay, getContextTone, getSessionDisplayName, formatCombinedCost } from '$lib/session-summary.js';
@@ -116,6 +119,22 @@
       <Separator orientation="vertical" class="mx-0.5 h-4" />
       <DownloadInbox />
     {/if}
+
+    <Button
+      variant="ghost"
+      size="xs"
+      class="text-muted-foreground hover:text-foreground gap-1"
+      title="Edit folder AGENTS.md"
+      aria-label="Edit folder AGENTS.md"
+      disabled={connection.status !== 'connected' ||
+        !sessionRegistry.viewed?.folderPath ||
+        sessionRegistry.viewed.isRestoring ||
+        sessionRegistry.viewed.sessionId.startsWith('pending-')}
+      onclick={() => void fileEditorStore.openFolderInstructions(sessionRegistry.viewed!.folderPath)}
+    >
+      <FilePen class="size-3" />
+      AGENTS.md
+    </Button>
 
     <!-- Voice call button -->
     <CallButton sessionId={sessionRegistry.viewed?.sessionId} />

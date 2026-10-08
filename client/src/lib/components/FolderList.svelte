@@ -6,7 +6,6 @@
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { AGENT_INSTRUCTIONS_PATH, fileEditorStore } from '$lib/stores/file-editor.svelte.js';
   import SessionItem from './SessionItem.svelte';
-  import ConfigFileEditor from './ConfigFileEditor.svelte';
   import Archive from '@lucide/svelte/icons/archive';
   import EllipsisVertical from '@lucide/svelte/icons/ellipsis-vertical';
   import FilePen from '@lucide/svelte/icons/file-pen';
@@ -656,6 +655,13 @@
                 {/if}
               </ContextMenuTrigger>
               <ContextMenuContent>
+                <ContextMenuItem
+                  disabled={connection.status !== 'connected' || folder.missing}
+                  onSelect={() => void fileEditorStore.openFolderInstructions(folder.path, displayName(folder))}
+                >
+                  <FilePen class="size-4" />
+                  Edit AGENTS.md…
+                </ContextMenuItem>
                 <ContextMenuItem onSelect={() => openTagDialog(folder)}>
                   <Tag class="size-4" />
                   Add tag…
@@ -872,5 +878,3 @@
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
-
-<ConfigFileEditor />

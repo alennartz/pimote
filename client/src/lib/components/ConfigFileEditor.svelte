@@ -7,6 +7,7 @@
   import { isValidTagName, wrapWithTag } from '$lib/tag-wrap.js';
   import type { EditorView } from '@codemirror/view';
   import TagIcon from '@lucide/svelte/icons/tag';
+  import X from '@lucide/svelte/icons/x';
 
   // Lazy-loaded editor deps (CodeMirror + highlight.js) — only fetched when the
   // dialog opens, same bundle posture as ExtensionDialog.
@@ -91,6 +92,7 @@
 
   /** Close request (Cancel button or a bits-ui close): unsaved edits must be confirmed first. */
   function requestClose(): void {
+    if (fileEditorStore.saving) return;
     if (fileEditorStore.dirty) {
       confirmDiscardOpen = true;
       return;
@@ -100,7 +102,7 @@
 
   /** Esc and overlay-click: veto the close while unsaved edits exist. */
   function onDismissAttempt(event: Event): void {
-    if (!fileEditorStore.dirty) return;
+    if (!fileEditorStore.dirty && !fileEditorStore.saving) return;
     event.preventDefault();
     requestClose();
   }
@@ -129,11 +131,29 @@
     class="top-0 left-0 flex h-dvh w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 sm:top-1/2 sm:left-1/2 sm:h-[min(92dvh,960px)] sm:w-[min(96vw,1280px)] sm:max-w-[min(96vw,1280px)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl"
   >
     <form onsubmit={onSubmit} class="flex h-full min-h-0 flex-col">
-      <header class="bg-background/95 z-10 flex shrink-0 flex-col gap-1 border-b px-4 py-3 backdrop-blur sm:px-5" style="padding-top: max(0.75rem, env(safe-area-inset-top));">
-        <div class="text-base font-semibold break-words">{fileEditorStore.title}</div>
-        <div class="text-muted-foreground truncate text-xs">{fileEditorStore.resolvedPath ?? fileEditorStore.path}</div>
-        {#if fileEditorStore.loaded && !fileEditorStore.exists}
-          <div class="text-muted-foreground text-xs">New file — it will be created on save.</div>
+      <header
+        class="bg-background/95 z-10 flex shrink-0 flex-col gap-1 border-b px-3 py-2 backdrop-blur sm:px-5 sm:py-3"
+        style="padding-top: max(0.5rem, env(safe-area-inset-top));"
+      >
+        <div class="flex items-center gap-2">
+          <Button variant="ghost" size="icon" type="button" class="size-11 sm:hidden" aria-label="Close editor" disabled={fileEditorStore.saving} onclick={requestClose}>
+            <X class="size-5" />
+          </Button>
+          <div class="min-w-0 flex-1 text-center sm:text-left">
+            <div class="truncate text-base font-semibold sm:overflow-visible sm:break-words sm:whitespace-normal">{fileEditorStore.title}</div>
+            <div class="text-muted-foreground truncate text-xs" title={fileEditorStore.resolvedPath ?? fileEditorStore.path ?? undefined}>
+              {fileEditorStore.resolvedPath ?? fileEditorStore.path}
+            </div>
+            {#if fileEditorStore.loaded && !fileEditorStore.exists}
+              <div class="text-muted-foreground text-xs">New file — it will be created on save.</div>
+            {/if}
+          </div>
+          <Button type="submit" class="h-11 sm:hidden" disabled={fileEditorStore.saving || !fileEditorStore.loaded}>
+            {fileEditorStore.saving ? 'Saving…' : 'Save'}
+          </Button>
+        </div>
+        {#if fileEditorStore.error}
+          <p class="text-destructive text-sm break-words sm:hidden" role="alert">{fileEditorStore.error}</p>
         {/if}
       </header>
 
@@ -153,7 +173,7 @@
         {/each}
       </div>
 
-      <div class="min-h-0 flex-1 overflow-hidden">
+      <div class="min-h-0 flex-1 overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
         {#if editorModule && fileEditorStore.loaded}
           <editorModule.default bind:value={fileEditorStore.content} bind:editorView language="markdown" />
         {:else}
@@ -170,14 +190,14 @@
       </div>
 
       <div
-        class="bg-background/95 z-10 flex shrink-0 flex-col gap-2 border-t px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-end sm:px-5"
+        class="bg-background/95 z-10 hidden shrink-0 gap-2 border-t px-5 py-3 backdrop-blur sm:flex sm:items-center sm:justify-end"
         style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));"
       >
         {#if fileEditorStore.error}
-          <p class="text-destructive w-full min-w-0 truncate text-sm sm:mr-auto">{fileEditorStore.error}</p>
+          <p class="text-destructive mr-auto min-w-0 truncate text-sm" role="alert">{fileEditorStore.error}</p>
         {/if}
-        <Button variant="outline" type="button" class="w-full sm:w-auto" onclick={requestClose}>Cancel</Button>
-        <Button type="submit" class="w-full sm:w-auto" disabled={fileEditorStore.saving || !fileEditorStore.loaded}>
+        <Button variant="outline" type="button" disabled={fileEditorStore.saving} onclick={requestClose}>Cancel</Button>
+        <Button type="submit" disabled={fileEditorStore.saving || !fileEditorStore.loaded}>
           {fileEditorStore.saving ? 'Saving…' : 'Save'}
         </Button>
       </div>

@@ -772,7 +772,14 @@ export class WsHandler {
         }
 
         case 'file_put': {
-          this.sendResponse(id, true, await writeEditableFile(command.path, command.content));
+          const data = await writeEditableFile(command.path, command.content);
+          if (basename(data.path) === 'AGENTS.md') {
+            this.repoIndex?.invalidate();
+            if (this.folderRegistry) {
+              WsHandler.broadcastFoldersChanged(this.folderRegistry, this.sessionManager, this.clientRegistry);
+            }
+          }
+          this.sendResponse(id, true, data);
           break;
         }
 

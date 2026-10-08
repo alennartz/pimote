@@ -8,6 +8,7 @@
   import '$lib/nav.js';
 
   import ExtensionDialog from '$lib/components/ExtensionDialog.svelte';
+  import ConfigFileEditor from '$lib/components/ConfigFileEditor.svelte';
   import ExtensionStatus from '$lib/components/ExtensionStatus.svelte';
   import InstallBanner from '$lib/components/InstallBanner.svelte';
   // Side-effect import: subscribes the voice-call store to server events at app boot.
@@ -325,6 +326,9 @@
 
   <!-- Download offer prompt (global overlay) -->
   <DownloadToast />
+
+  <!-- File editor shared by dashboard and session actions -->
+  <ConfigFileEditor />
 
   <!-- Extension UI dialogs (global overlay) -->
   <ExtensionDialog />
