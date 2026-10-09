@@ -237,6 +237,7 @@ The orchestrator approved these narrow exceptions to immutable tests. Write each
 - `client/src/lib/stores/folder-store.svelte.test.ts`: correct the legacy `setShowArchived` eager-enumeration expectation. Seed one loaded session list and one unloaded folder. Assert reload only for the loaded list, then assert explicit `loadSessions` loads the other. Preserve preference persistence.
 - `server/src/folder-registry.test.ts`: cover member-tag changes targeting the member and dependent hubs. Verify inherited hub tags against a fresh registry listing.
 - `server/src/folder-registry.test.ts` (authorized during implementation): the `lists every discovered code folder with required defaults` row fixture at ~line 93 pins the row with `toEqual` without `repo`, which the approved Step 2 additive `repo?: RepoInfo` enrichment supersedes. Add the expected `repo` facts to that one `toEqual` row; keep `toEqual` (exact row-shape pinning stays, the shape legitimately grew). Also assert persona/hub rows omit `repo` if not already covered.
+- `server/src/folder-listing.test.ts` (test-defect correction, authorized during implementation): the folder-tier query test's `/w/tagged` fixture tag `urgent-one` accidentally contains `gent`, leaking tag-tier matches into a test meant to isolate the name tier. Change that tag to `priority`; keep the query and the mandated substring semantics. If no separate test pins tag-tier substring matching, add one line of coverage (query `prior` matches `/w/tagged`).
 - `server/src/index.test.ts` (authorized during implementation): the `wires pimote_folder_tree through the on-demand scan port` test pins "fresh scan per execution / no scanner cache", which the approved Cached tree seam clarification supersedes. Rewrite that one test to pin the cached-tree seam instead: shared walk via `repoIndex.tree()`, exactly one walk for repeated tool executions (the cache serves the second call), TTL-stale acceptance. Keep the test's intent — the manager tree tool delegates to the folder-model seam, not its own scanner.
 
 These amendments cover decisions resolved during planning, not new product scope. Existing tests remain unchanged otherwise.
@@ -293,7 +294,7 @@ Scope tokens to their connection owner. Omitted-token connection requests reuse 
 Use pure private helpers for metadata projection and comparison. Keep cache and lifecycle mutation inside `FolderListing`.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/folder-listing.test.ts` passes order, ownership, release-during-pending-pin, and metadata tests as query implementation lands in Step 5. Hanging scans do not delay pins. Existing tokens retain their order after refresh.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Serve filtered windows and reconciled deltas
 
@@ -308,7 +309,7 @@ Implement `buildDelta(changedPaths, removedPaths)` against current registry rows
 Reuse `enrichActiveSessionCounts` from `server/src/folder-registry.ts` on copied response rows. Never mutate registry-owned rows or snapshot row objects.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/folder-listing.test.ts` passes all service tests, including normalization. Queries preserve pinned order while returning current curation. Deltas and full current listings agree for every touched path.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Emit exact mutation and discovery targets
 
@@ -321,7 +322,7 @@ In `server/src/repo-index.ts`, replace empty refresh callback targets with concr
 Include dependent hub paths when refreshed member facts or membership change their rows. Use known shortcut/source membership, not full registry-row diffing. Keep missing source rows in complete repo listings. Step 5 reconciles physical-removal notifications against retained registry rows.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/folder-registry.test.ts src/repo-index.test.ts` passes mutation payload and refresh tests. Member tag changes update inherited hub tags. Unchanged refreshes emit nothing, and notifications contain no placeholder paths.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Wire windows, deltas, and metadata invalidation
 
@@ -355,7 +356,7 @@ Implement `applyFoldersChanged` to merge changed rows and remove absent paths wi
 Remove `loadFolders` session fan-out and eager `loadRepos`. `loadRepos` remains explicit for creation/member flows. Keep existing session-list single-flight, event reconciliation, and structural epoch handling intact.
 
 **Verify:** `npm run test --workspace=client -- --run src/lib/stores/folder-store.svelte.test.ts` passes window, debounce, query-view, epoch, retry, and existing session tests except the authorized archive-toggle correction completed in Step 9. Folder fetches issue no `list_sessions` or dashboard `list_repos` enumeration.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Separate archive-filter reloads from window loading
 
@@ -364,7 +365,7 @@ Correct the authorized archive-toggle test red-first in `client/src/lib/stores/f
 In `client/src/lib/stores/folder-store.svelte.ts`, update `setShowArchived` to persist the flag and reload session-map paths whose displayed lists use it. Do not iterate all cached folders to discover sessions. If pagination exists, request an offset-0 folder window with the current query, pin, and new archive flag. Merge accepted rows and reset that filtered continuation state. Keep connection pins stable unless the user explicitly refreshes.
 
 **Verify:** The complete `folder-store.svelte.test.ts` suite passes. An archive toggle fetches no sessions for unloaded cached rows. Established folder pagination can include archived folders without discarding live session state.
-**Status:** not started
+**Status:** done
 
 ### Step 10: Virtualize rows and load rendered sessions
 

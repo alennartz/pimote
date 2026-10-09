@@ -3,7 +3,16 @@ import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { RepoInfo } from '../../shared/dist/index.js';
 import type { HubSourceEntry, FolderSource, RepoSourceEntry, SourceEntry } from './folder-sources/index.js';
-import { classifyFolder, nodeFolderFs, scanFolderModel, type FolderEntry, type FolderOccurrence, type PersonaInfo, type SparseTree } from './folder-model/index.js';
+import {
+  classifyFolder,
+  nodeFolderFs,
+  scanFolderModel,
+  type FolderEntry,
+  type FolderNature,
+  type FolderOccurrence,
+  type PersonaInfo,
+  type SparseTree,
+} from './folder-model/index.js';
 import { getGitBranch } from './git-branch.js';
 import { materializeHubFolder } from './folder-sources/materialize.js';
 
@@ -91,6 +100,120 @@ export interface PersonaSourceEntry {
   persona: PersonaInfo;
   /** Source-contributed tags, carried over to the folder row. */
   tags?: string[];
+}
+
+/** Discovery facts for one canonical entry: identity, classification, and the
+ *  first-discovery shortcut membership that shapes hub rows. */
+interface DiscoveryFacts {
+  name: string;
+  nature: FolderNature;
+  persona: PersonaInfo | null;
+  shortcuts: string[];
+}
+
+/** Discovery facts per canonical entry path (code and persona alike). */
+function discoveryFacts(tree: SparseTree): Map<string, DiscoveryFacts> {
+  const byPath = new Map<string, DiscoveryFacts>();
+  const visit = (occurrence: FolderOccurrence): void => {
+    if (!byPath.has(occurrence.entry.path)) {
+      byPath.set(occurrence.entry.path, {
+        name: occurrence.entry.name,
+        nature: occurrence.entry.nature,
+        persona: occurrence.entry.persona ?? null,
+        shortcuts: occurrence.children
+          .filter((child) => child.via === 'shortcut')
+          .map((child) => child.entry.path)
+          .sort(),
+      });
+    }
+    for (const child of occurrence.children) visit(child);
+  };
+  for (const occurrence of tree.occurrences) visit(occurrence);
+  return byPath;
+}
+
+/**
+ * Content fingerprints, keyed by canonical path, of everything the served
+ * folder rows derive from this index: discovery identity and shortcut
+ * membership, repo facts with the served git status folded in, source hub
+ * membership, and source personas. Timestamps are excluded — they move without
+ * moving any row — and status-cache entries for vanished paths never
+ * contribute. A refresh that reproduces these changed nothing.
+ */
+function factFingerprints(input: {
+  tree: SparseTree | null;
+  entries: readonly RepoInfo[];
+  sourceHubs: readonly HubSourceEntry[];
+  personas: readonly PersonaSourceEntry[];
+  statuses: ReadonlyMap<string, RepoStatus>;
+}): Map<string, string> {
+  const facts = new Map<string, Record<string, unknown>>();
+  const parts = (path: string): Record<string, unknown> => {
+    let fact = facts.get(path);
+    if (!fact) {
+      fact = {};
+      facts.set(path, fact);
+    }
+    return fact;
+  };
+  if (input.tree) {
+    for (const [path, discovery] of discoveryFacts(input.tree)) parts(path).discovery = discovery;
+  }
+  for (const entry of input.entries) {
+    const status = entry.missing ? undefined : input.statuses.get(entry.path);
+    parts(entry.path).repo = {
+      name: entry.name,
+      missing: entry.missing ?? false,
+      tags: entry.tags ?? null,
+      branch: status?.branch ?? entry.branch,
+      dirty: status?.dirty ?? entry.dirty,
+      ahead: status?.ahead ?? entry.ahead,
+      behind: status?.behind ?? entry.behind,
+    };
+  }
+  for (const hub of input.sourceHubs) {
+    parts(hub.path).hub = { name: hub.name, memberPaths: hub.memberPaths, tags: hub.tags ?? null };
+  }
+  for (const persona of input.personas) {
+    parts(persona.path).personaSource = { persona: persona.persona, tags: persona.tags ?? null };
+  }
+  return new Map([...facts].map(([path, fact]) => [path, JSON.stringify(fact)]));
+}
+
+/** Changed and removed paths between two fact snapshots. */
+function diffFacts(before: Map<string, string>, after: Map<string, string>): { changedPaths: string[]; removedPaths: string[] } {
+  const changedPaths: string[] = [];
+  const removedPaths: string[] = [];
+  for (const [path, facts] of after) {
+    if (before.get(path) !== facts) changedPaths.push(path);
+  }
+  for (const path of before.keys()) {
+    if (!after.has(path)) removedPaths.push(path);
+  }
+  changedPaths.sort();
+  removedPaths.sort();
+  return { changedPaths, removedPaths };
+}
+
+/**
+ * Hub paths whose rows move with the member's: discovery shortcut parents and
+ * source hubs listing the member. Known membership only — never full row
+ * diffing — so a member's changed git facts or existence reach the hubs whose
+ * member chips move with them.
+ */
+function dependentHubPaths(memberPath: string, tree: SparseTree | null, sourceHubs: readonly HubSourceEntry[]): string[] {
+  const hubs = new Set<string>();
+  if (tree) {
+    const visit = (occurrence: FolderOccurrence): void => {
+      if (occurrence.children.some((child) => child.via === 'shortcut' && child.entry.path === memberPath)) hubs.add(occurrence.entry.path);
+      for (const child of occurrence.children) visit(child);
+    };
+    for (const occurrence of tree.occurrences) visit(occurrence);
+  }
+  for (const hub of sourceHubs) {
+    if (hub.memberPaths.includes(memberPath)) hubs.add(hub.path);
+  }
+  return [...hubs].sort();
 }
 
 /** Branch, dirty flag, and ahead/behind for one repo. Failed probes yield neutral values. */
@@ -246,7 +369,7 @@ export class RepoIndex {
    */
   private kickRefresh(): void {
     if (this.refreshInFlight) return;
-    const before = this.snapshot();
+    const before = this.currentFacts();
     this.refreshInFlight = (async () => {
       try {
         if (!this.listing || this.now() - this.listing.at >= this.ttlMs) await this.discover();
@@ -257,8 +380,36 @@ export class RepoIndex {
       } finally {
         this.refreshInFlight = null;
       }
-      if (this.snapshot() !== before) this.onRefreshed?.({ changedPaths: [], removedPaths: [] }); // implementation phase: report refreshed path changes
+      this.notifyRefreshed(before);
     })();
+  }
+
+  /**
+   * Report the refresh's change targets when the served facts moved: added and
+   *  changed paths, physically removed paths, and hubs whose rows move with a
+   *  member. An unchanged refresh stays silent.
+   */
+  private notifyRefreshed(before: Map<string, string>): void {
+    const { changedPaths, removedPaths } = diffFacts(before, this.currentFacts());
+    if (changedPaths.length === 0 && removedPaths.length === 0) return;
+    for (const path of [...changedPaths, ...removedPaths]) {
+      for (const hub of dependentHubPaths(path, this.listing?.tree ?? null, this.sourceHubs?.entries ?? [])) {
+        if (!changedPaths.includes(hub) && !removedPaths.includes(hub)) changedPaths.push(hub);
+      }
+    }
+    changedPaths.sort();
+    this.onRefreshed?.({ changedPaths, removedPaths });
+  }
+
+  /** Content fingerprints of everything served rows derive from this index. */
+  private currentFacts(): Map<string, string> {
+    return factFingerprints({
+      tree: this.listing?.tree ?? null,
+      entries: this.listing?.entries ?? [],
+      sourceHubs: this.sourceHubs?.entries ?? [],
+      personas: this.personaSources,
+      statuses: this.statusCache,
+    });
   }
 
   /** Whether a served entry's status is due for a probe (missing or past its TTL). */
@@ -272,24 +423,6 @@ export class RepoIndex {
   private async refreshStatus(entry: RepoInfo): Promise<void> {
     if (!this.statusExpired(entry)) return;
     await this.probeStatus(entry.path);
-  }
-
-  /**
-   * Content-only fingerprint of everything this index serves (timestamps
-   * excluded) — a background refresh that reproduces it changed nothing and
-   * must not notify.
-   */
-  private snapshot(): string {
-    const byPath = (a: { path: string }, b: { path: string }) => a.path.localeCompare(b.path);
-    const statuses = [...this.statusCache.entries()]
-      .map(([path, status]) => ({ path, branch: status.branch, dirty: status.dirty, ahead: status.ahead, behind: status.behind }))
-      .sort(byPath);
-    return JSON.stringify({
-      listing: this.listing ? [...this.listing.entries].sort(byPath) : null,
-      sourceHubs: this.sourceHubs ? [...this.sourceHubs.entries].sort(byPath) : null,
-      personaSources: [...this.personaSources].sort(byPath),
-      statuses,
-    });
   }
 
   /**

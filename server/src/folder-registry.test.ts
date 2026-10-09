@@ -680,6 +680,33 @@ describe('FolderRegistry.onChange()', () => {
     await registry.update({ folderPath: repoA, favorite: false });
     expect(onChange).toHaveBeenCalledTimes(3);
   });
+
+  it('reports member-tag changes to the member and every dependent hub', async () => {
+    const member = join(rootDir, 'member');
+    await initRepo(member);
+    const sourceHubPath = join(rootDir, 'source-hub');
+    const index = makeIndex();
+    index.registerSource({ id: 'src', list: async () => [{ kind: 'hub', path: sourceHubPath, name: 'source-hub', memberPaths: [member] }] });
+    const registry = makeRegistry(index);
+    const { path: hubPath } = await registry.createHub({ name: 'group', root: rootDir, memberPaths: [member] });
+    const before = await registry.list();
+
+    const onChange = vi.fn();
+    registry.onChange(onChange);
+    await registry.update({ folderPath: member, addTags: ['legacy'] });
+
+    // The member plus every hub whose inherited tags move with it — no more.
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenLastCalledWith({ changedPaths: [member, hubPath, sourceHubPath], removedPaths: [] });
+
+    // The emitted targets are exactly the rows a fresh listing shows changed.
+    const after = await registry.list();
+    const changedRows = after.filter((row) => JSON.stringify(before.find((old) => old.path === row.path)) !== JSON.stringify(row));
+    expect(changedRows.map((row) => row.path).sort()).toEqual([member, hubPath, sourceHubPath].sort());
+    // Both hubs inherit the member's new tag.
+    expect(changedRows.find((row) => row.path === hubPath)?.tags).toContain('legacy');
+    expect(changedRows.find((row) => row.path === sourceHubPath)?.tags).toContain('legacy');
+  });
 });
 
 describe('serve-path helpers', () => {

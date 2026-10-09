@@ -167,6 +167,22 @@ function hubMetadata(sourceHubs: HubSourceEntry[], doc: RegistryDocument): Map<s
   return hubs;
 }
 
+/** Hub paths whose rows inherit the member's tags: every effective hub that
+ *  lists the member. Sorted for deterministic change payloads. */
+function dependentHubPaths(memberPath: string, hubs: Map<string, HubMetadata>): string[] {
+  return [...hubs.entries()]
+    .filter(([, hub]) => hub.memberPaths.includes(memberPath))
+    .map(([path]) => path)
+    .sort();
+}
+
+/** The change targets one accepted patch reports: the canonical primary path,
+ *  plus for tag edits every hub whose inherited tags move with the member. */
+function updateChangeTargets(patch: FolderUpdatePatch, hubs: Map<string, HubMetadata>): { changedPaths: string[]; removedPaths: string[] } {
+  const tagEdit = Boolean(patch.addTags?.length || patch.removeTags?.length);
+  return { changedPaths: [patch.folderPath, ...(tagEdit ? dependentHubPaths(patch.folderPath, hubs) : [])], removedPaths: [] };
+}
+
 /** Everything mergedFolders needs; persistence and fs probes stay at the edges. */
 interface FolderViewInputs {
   doc: RegistryDocument;
@@ -320,8 +336,9 @@ export class FolderRegistry implements FolderRegistryPort {
       }
       doc.overrides[patch.folderPath] = override;
 
+      const change = updateChangeTargets(patch, hubMetadata(await this.repos.listSourceHubs(), doc));
       await this.persist(doc);
-      this.fireChange();
+      this.fireChange(change);
     });
   }
 
@@ -370,7 +387,7 @@ export class FolderRegistry implements FolderRegistryPort {
         await rm(target, { recursive: true, force: true }).catch(() => {});
         throw error;
       }
-      this.fireChange();
+      this.fireChange({ changedPaths: [canonicalTarget], removedPaths: [] });
       return this.hubRow(doc, repos, canonicalTarget);
     });
   }
@@ -400,10 +417,10 @@ export class FolderRegistry implements FolderRegistryPort {
       if (index === -1) throw new Error(`Not a hub folder: ${folderPath}`);
 
       // rm on a directory unlinks symlinks inside it; the member repos survive.
-      await rm(doc.hubs[index].path, { recursive: true, force: true });
-      doc.hubs.splice(index, 1);
+      const [removed] = doc.hubs.splice(index, 1);
+      await rm(removed.path, { recursive: true, force: true });
       await this.persist(doc);
-      this.fireChange();
+      this.fireChange({ changedPaths: [], removedPaths: [removed.path] });
     });
   }
 
@@ -471,8 +488,8 @@ export class FolderRegistry implements FolderRegistryPort {
     }
   }
 
-  private fireChange(): void {
-    // Mutation-path emission is implemented in the implementation phase.
-    for (const cb of [...this.subscribers]) cb({ changedPaths: [], removedPaths: [] });
+  /** Emit one accepted mutation's change targets to every subscriber. */
+  private fireChange(change: { changedPaths: string[]; removedPaths: string[] }): void {
+    for (const cb of [...this.subscribers]) cb(change);
   }
 }

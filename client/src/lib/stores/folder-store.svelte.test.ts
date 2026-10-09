@@ -733,7 +733,7 @@ describe('FolderStore', () => {
       expect(fakeConnection.send).toHaveBeenCalledTimes(3);
     });
 
-    it('setShowArchived persists the preference and reloads sessions per folder', async () => {
+    it('setShowArchived persists the preference and reloads only loaded session lists', async () => {
       const storage = new Map<string, string>();
       vi.stubGlobal('localStorage', {
         getItem: (key: string) => storage.get(key) ?? null,
@@ -742,7 +742,8 @@ describe('FolderStore', () => {
       try {
         const store = new FolderStore();
         expect(store.showArchived).toBe(false);
-        store.folders = [makeFolder({ path: '/r/a', name: 'a' })];
+        store.folders = [makeFolder({ path: '/r/a', name: 'a' }), makeFolder({ path: '/r/b', name: 'b' })];
+        store.sessions.set('/r/a', []);
         routeSends({ list_sessions: (cmd) => ({ success: true, data: { sessions: cmd.includeArchived ? [makeSession('s1', '2024-01-01T00:00:00Z')] : [] } }) });
 
         store.setShowArchived(true);
@@ -751,6 +752,12 @@ describe('FolderStore', () => {
         const cmd = fakeConnection.send.mock.calls.find(([c]: any[]) => c.type === 'list_sessions')?.[0];
         expect(cmd).toMatchObject({ type: 'list_sessions', folderPath: '/r/a', includeArchived: true });
         expect(store.sessions.get('/r/a')).toHaveLength(1);
+        expect(fakeConnection.send).toHaveBeenCalledTimes(1);
+        expect(store.sessions.has('/r/b')).toBe(false);
+
+        await store.loadSessions('/r/b');
+        expect(fakeConnection.send).toHaveBeenLastCalledWith({ type: 'list_sessions', folderPath: '/r/b', includeArchived: true });
+        expect(store.sessions.get('/r/b')).toHaveLength(1);
 
         // The preference round-trips into a fresh store instance.
         expect(new FolderStore().showArchived).toBe(true);

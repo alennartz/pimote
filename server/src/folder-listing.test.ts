@@ -287,7 +287,7 @@ describe('FolderListing', () => {
           row('/w/agent', { name: 'agent', nature: 'persona', persona: { name: 'Helper' } }),
           row('/w/api-server', { name: 'api-server' }),
           row('/w/deep/nested', { name: 'nested' }),
-          row('/w/tagged', { name: 'plain', tags: ['urgent-one'] }),
+          row('/w/tagged', { name: 'plain', tags: ['priority'] }),
           row('/w/unrelated', { name: 'zzz' }),
         ],
       });
@@ -298,7 +298,7 @@ describe('FolderListing', () => {
         ['gent', '/w/agent'], // folder name
         ['api-SERV', '/w/api-server'], // name
         ['deep/nest', '/w/deep/nested'], // path
-        ['URGENT', '/w/tagged'], // tag
+        ['PRIOR', '/w/tagged'], // tag substring
       ] as const) {
         const result = await service.query({ query, offset: 0, limit: 10 });
         expect(paths(result), `query: ${query}`).toEqual([expected]);
@@ -542,6 +542,25 @@ describe('FolderListing', () => {
       expect(delta.type).toBe('folders_changed');
       expect(delta.changed).toHaveLength(1);
       expect(delta.changed[0]).toMatchObject({ path: '/w/a', name: 'a', activeSessionCount: 2 });
+      expect(delta.removedPaths).toEqual(['/w/gone']);
+    });
+
+    it('a removed source path still present as missing becomes a changed row', async () => {
+      const retained = row('/w/source', { missing: true });
+      const service = new FolderListing(fakeWorld({ rows: [retained] }).deps);
+
+      const delta = await service.buildDelta([], ['/w/source', '/w/source']);
+
+      expect(delta.changed).toEqual([retained]);
+      expect(delta.removedPaths).toEqual([]);
+    });
+
+    it('an unresolvable changed path becomes a removal', async () => {
+      const service = new FolderListing(fakeWorld().deps);
+
+      const delta = await service.buildDelta(['/w/gone', '/w/gone'], ['/w/gone']);
+
+      expect(delta.changed).toEqual([]);
       expect(delta.removedPaths).toEqual(['/w/gone']);
     });
 

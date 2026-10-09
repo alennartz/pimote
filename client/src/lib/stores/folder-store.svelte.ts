@@ -22,6 +22,25 @@ interface InFlightSessionLoad {
   promise: Promise<void>;
 }
 
+interface FolderWindowContext {
+  readonly generation: number;
+  readonly offset: number;
+  readonly query: string;
+  readonly includeArchived: boolean;
+  readonly orderToken?: string;
+  readonly repin: boolean;
+}
+
+function mergeFolderRows(current: readonly FolderInfo[], changed: readonly FolderInfo[], removedPaths: readonly string[] = []): FolderInfo[] {
+  const removed = new Set(removedPaths);
+  // Local projection only. The store owns the resulting reactive cache.
+  const rows = new Map(current.filter((row) => !removed.has(row.path)).map((row) => [row.path, row])); // eslint-disable-line svelte/prefer-svelte-reactivity -- local pure projection, not reactive state
+  for (const row of changed) {
+    if (!removed.has(row.path)) rows.set(row.path, row);
+  }
+  return [...rows.values()];
+}
+
 function toTimestamp(value: string): number {
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : 0;
@@ -42,17 +61,23 @@ export class FolderStore {
   sessions = $state(new SvelteMap<string, SessionInfo[]>());
   loading: boolean = $state(false);
   showArchived: boolean = $state(getShowArchived());
-  /** True once a full load has completed against the current connection. Server
-   *  broadcasts (routed at module scope below) keep the data fresh in the
-   *  meantime, so dashboard remounts need no refetch; any drop invalidates it. */
+  /** Server match count, independent of the accumulating cache size. */
+  total: number = $state(0);
+  more: boolean = $state(false);
   private loadedForCurrentConnection = false;
-  private foldersLoadInFlight: Promise<void> | null = null;
+  private orderToken: string | undefined;
+  private nextOffset = 0;
+  private activeQuery: string = $state('');
+  private queryMatchPaths: string[] = $state([]);
+  private querySessionMatches = new SvelteMap<string, string[] | undefined>();
+  private requestGeneration = 0;
+  private folderWindowInFlight: { context: FolderWindowContext; promise: Promise<void> } | null = null;
+  private searchTimer: ReturnType<typeof setTimeout> | null = null;
+  private searchWaiters: Array<() => void> = [];
   private reposLoadInFlight: Promise<void> | null = null;
   private sessionLoadsInFlight: Map<string, InFlightSessionLoad> = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
   private nextSessionRequestId = 0;
-  /** Bumped by every folders_changed broadcast. A list_folders response taken
-   *  before the bump describes an obsolete world and must not overwrite the
-   *  rows the event already delivered. */
+  /** Newest wire epoch seen. Older response computations cannot overwrite deltas. */
   private foldersEpoch = 0;
   /** Per-folder count of structural session changes (deletes, archive-filter
    *  transitions). A listing taken before the bump is superseded by events and
@@ -69,86 +94,142 @@ export class FolderStore {
    * tiebreak. Folders with no sessions sink to the bottom of their tier.
    */
   get visibleFolders(): FolderInfo[] {
-    const list = this.showArchived ? this.folders : this.folders.filter((f) => !f.archived);
+    const list = this.folders.filter((folder) => (this.showArchived || !folder.archived) && (!this.activeQuery || this.queryMatchPaths.includes(folder.path)));
     const recency = (folder: FolderInfo): number => Math.max(0, ...(this.sessions.get(folder.path) ?? []).map((s) => toTimestamp(s.modified)));
     return [...list].sort((a, b) => Number(b.favorite === true) - Number(a.favorite === true) || recency(b) - recency(a) || a.name.localeCompare(b.name));
   }
 
-  /**
-   * Full load once per connection. Navigating back to the dashboard serves the
-   * warm cache — server events keep it current while the user is elsewhere —
-   * and a reconnect (disconnect invalidation) refetches against the fresh
-   * connection. `loadFolders()` bypasses this for explicit refreshes.
-   */
+  /** Fetch one initial window per connection, then serve the warm cache. */
   async ensureLoaded(): Promise<void> {
     if (this.loadedForCurrentConnection) return;
-    await this.loadFolders();
+    await this.fetchFolderWindow(0);
   }
 
-  /** Next offset window when the view nears the end — merges rows by canonical
-   *  path under the adopted pin, so a mid-scroll re-pin cannot duplicate rows.
-   *  With a query active, fetches further match windows for that query. */
+  /** Continue the filtered pin. Offset tracks response rows, not unique cache rows. */
   async fetchNextWindow(): Promise<void> {
-    throw new Error('not implemented');
+    if (this.searchTimer !== null) return;
+    if (!this.loadedForCurrentConnection) return this.ensureLoaded();
+    if (!this.more) return;
+    await this.fetchFolderWindow(this.nextOffset);
   }
 
-  /** Debounced (250ms) server-side search: fetches the offset-0 window for the
-   *  query and merges matches in. Results are server-authoritative — with a
-   *  query active the view shows exactly the rows the server returned. */
-  async search(_query: string): Promise<void> {
-    throw new Error('not implemented');
+  /** Coalesce callers into one server query without discarding accumulated rows. */
+  search(query: string): Promise<void> {
+    this.activeQuery = query.trim();
+    this.requestGeneration++;
+    this.queryMatchPaths = [];
+    this.querySessionMatches.clear();
+    this.nextOffset = 0;
+    this.more = false;
+    if (this.searchTimer !== null) clearTimeout(this.searchTimer);
+    const promise = new Promise<void>((resolve) => this.searchWaiters.push(resolve));
+    const generation = this.requestGeneration;
+    this.searchTimer = setTimeout(() => void this.fetchSearchWindow(generation), 250);
+    return promise;
   }
 
-  /** Sessions visible under the active server query: session-only matches are
-   * narrowed by matchedSessionIds; folder-tier matches show all loaded sessions. */
+  private async fetchSearchWindow(generation: number): Promise<void> {
+    this.searchTimer = null;
+    const waiters = this.searchWaiters;
+    this.searchWaiters = [];
+    try {
+      if (generation === this.requestGeneration) await this.fetchFolderWindow(0);
+    } finally {
+      for (const resolve of waiters) resolve();
+    }
+  }
+
+  /** Folder-tier matches are unrestricted. Session-tier matches use server ids. */
   visibleSessions(folderPath: string): SessionInfo[] {
-    void folderPath;
-    throw new Error('not implemented');
+    const sessions = this.sessions.get(folderPath) ?? [];
+    const ids = this.activeQuery ? this.querySessionMatches.get(folderPath) : undefined;
+    return ids ? sessions.filter((session) => ids.includes(session.id)) : sessions;
   }
 
-  /** Drop the per-connection freshness marker; wired to socket loss below. */
+  /** Retain useful rows, but never adopt a response from the closed connection. */
   invalidateConnection(): void {
     this.loadedForCurrentConnection = false;
+    this.requestGeneration++;
+    this.orderToken = undefined;
+    this.nextOffset = 0;
+    this.more = false;
+    this.foldersEpoch = 0;
+    this.folderWindowInFlight = null;
+    this.loading = false;
+    if (this.searchTimer !== null) clearTimeout(this.searchTimer);
+    this.searchTimer = null;
+    for (const resolve of this.searchWaiters) resolve();
+    this.searchWaiters = [];
   }
 
+  /** Only an explicit refresh replaces an established connection pin. */
   async loadFolders(): Promise<void> {
-    if (this.foldersLoadInFlight) return this.foldersLoadInFlight;
+    const existing = this.folderWindowInFlight;
+    if (existing?.context.generation === this.requestGeneration && existing.context.offset === 0 && (existing.context.repin || !this.loadedForCurrentConnection)) {
+      return existing.promise;
+    }
+    this.requestGeneration++;
+    await this.fetchFolderWindow(0, this.loadedForCurrentConnection);
+  }
 
-    this.foldersLoadInFlight = (async () => {
-      const isInitialLoad = this.folders.length === 0;
-      if (isInitialLoad) this.loading = true;
-      const foldersEpoch = this.foldersEpoch;
-      try {
-        const response = await connection.send({ type: 'list_folders' });
-        // A folders_changed broadcast while we were waiting already delivered
-        // the newer full list; applying this older response would restore
-        // obsolete rows or curation.
-        if (this.foldersEpoch !== foldersEpoch) return;
-        if (response.success && response.data) {
-          const data = response.data as ListFoldersResponseData;
-          this.folders = data.folders;
-          this.roots = data.roots ?? [];
-          this.loadedForCurrentConnection = true;
-          // First paint needs only this response. Session metadata refines sort
-          // order and chips as it lands — holding the spinner until every
-          // per-folder list_sessions returns made the dashboard wait on the
-          // slowest folder's session history.
-          if (isInitialLoad) this.loading = false;
-          // Repo listing feeds branch chips and missing-detection; refresh it
-          // with the folders so they never disagree.
-          void this.loadRepos();
-          await Promise.all(data.folders.map((folder) => this.loadSessions(folder.path)));
-        }
-      } catch (e) {
-        console.error('[FolderStore] Failed to load folders:', e);
-      } finally {
-        if (isInitialLoad) this.loading = false;
+  private fetchFolderWindow(offset: number, repin = false): Promise<void> {
+    const existing = this.folderWindowInFlight;
+    if (existing?.context.generation === this.requestGeneration) return existing.promise;
+    const context: FolderWindowContext = {
+      generation: this.requestGeneration,
+      offset,
+      query: this.activeQuery,
+      includeArchived: this.showArchived,
+      orderToken: this.orderToken,
+      repin,
+    };
+    if (this.folders.length === 0) this.loading = true;
+    const promise = this.requestFolderWindow(context).finally(() => {
+      if (this.folderWindowInFlight?.context === context) {
+        this.folderWindowInFlight = null;
+        this.loading = false;
       }
-    })().finally(() => {
-      this.foldersLoadInFlight = null;
     });
+    this.folderWindowInFlight = { context, promise };
+    return promise;
+  }
 
-    return this.foldersLoadInFlight;
+  private async requestFolderWindow(context: FolderWindowContext): Promise<void> {
+    try {
+      const response = await connection.send({
+        type: 'list_folders',
+        offset: context.offset,
+        query: context.query,
+        includeArchived: context.includeArchived,
+        ...(context.orderToken ? { orderToken: context.orderToken } : {}),
+        ...(context.repin ? { repin: true } : {}),
+      });
+      if (context.generation !== this.requestGeneration || !response.success || !response.data) return;
+      const data = response.data as ListFoldersResponseData;
+      if (data.epoch < this.foldersEpoch) return;
+      this.applyFolderWindow(context, data);
+    } catch (error) {
+      console.error('[FolderStore] Failed to load folders:', error);
+    }
+  }
+
+  /** One mutation point adopts accepted window data and continuation state. */
+  private applyFolderWindow(context: FolderWindowContext, data: ListFoldersResponseData): void {
+    this.folders = mergeFolderRows(this.folders, data.folders);
+    this.roots = data.roots ?? [];
+    this.orderToken = data.orderToken;
+    this.nextOffset = context.offset + data.folders.length;
+    this.total = data.total;
+    this.more = data.more;
+    this.loadedForCurrentConnection = true;
+    if (context.offset === 0) {
+      this.queryMatchPaths = [];
+      this.querySessionMatches.clear();
+    }
+    if (context.query) {
+      this.queryMatchPaths = [...new Set([...this.queryMatchPaths, ...data.folders.map((row) => row.path)])]; // eslint-disable-line svelte/prefer-svelte-reactivity -- local deduplication, result stored as reactive array
+      for (const row of data.folders) this.querySessionMatches.set(row.path, row.matchedSessionIds);
+    }
   }
 
   /** Single-flight: branch chips and missing-detection read this listing. */
@@ -173,8 +254,12 @@ export class FolderStore {
    *  frontier sit in cache and appear when scrolled to) and drop
    *  `removedPaths` from the cache. Bumps the staleness guard so any list
    *  response taken before this event is discarded. */
-  applyFoldersChanged(_event: FoldersChangedEvent): void {
-    throw new Error('not implemented');
+  applyFoldersChanged(event: FoldersChangedEvent): void {
+    if (event.epoch < this.foldersEpoch) return;
+    this.foldersEpoch = event.epoch;
+    this.folders = mergeFolderRows(this.folders, event.changed, event.removedPaths);
+    this.queryMatchPaths = this.queryMatchPaths.filter((path) => !event.removedPaths.includes(path));
+    for (const path of event.removedPaths) this.querySessionMatches.delete(path);
   }
 
   applySessionStateChange(event: SessionStateChangedEvent, myClientId: string): void {
@@ -316,7 +401,15 @@ export class FolderStore {
   setShowArchived(show: boolean): void {
     this.showArchived = show;
     setShowArchived(show);
-    void Promise.all(this.folders.map((folder) => this.loadSessions(folder.path)));
+    void Promise.all([...this.sessions.keys()].map((path) => this.loadSessions(path)));
+    this.requestGeneration++;
+    if (this.searchTimer !== null) {
+      clearTimeout(this.searchTimer);
+      const generation = this.requestGeneration;
+      this.searchTimer = setTimeout(() => void this.fetchSearchWindow(generation), 250);
+    } else if (this.orderToken) {
+      void this.fetchFolderWindow(0);
+    }
   }
 
   async loadSessions(folderPath: string): Promise<void> {
