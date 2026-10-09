@@ -39,25 +39,43 @@ function parsePatchFilename(fileName) {
  * patch-package exits 0 when a patch file names a version that is not
  * installed, so the error stays silent. Check every patch file against the
  * installed package version and report mismatches before applying anything.
+ * A patch whose target package is not installed at all is skipped: a
+ * production install of the published package bundles client-only
+ * dependencies (streaming-markdown) into client/build, so their patches have
+ * nothing to act on there and patch-package skips them as well.
  */
 async function checkPatchTargets(patchFiles) {
   const mismatches = [];
   for (const fileName of patchFiles) {
     const { name, version } = parsePatchFilename(fileName);
-    let installed;
-    try {
-      const manifest = await readFile(join(installRoot, 'node_modules', name, 'package.json'), 'utf8');
-      installed = JSON.parse(manifest).version;
-    } catch {
-      installed = undefined;
+    const installed = await readInstalledVersion(name);
+    if (installed === undefined) {
+      console.log(`[pimote] ${fileName}: ${name} is not installed here; skipping`);
+      continue;
     }
     if (installed !== version) {
       mismatches.push(
-        `[pimote] ${fileName}: patch targets ${name}@${version}, but ${installed === undefined ? `${name} is not installed` : `installed version is ${installed}`}`,
+        `[pimote] ${fileName}: patch targets ${name}@${version}, but installed version is ${installed}`,
       );
     }
   }
   return mismatches;
+}
+
+async function readInstalledVersion(name) {
+  const candidates = [
+    join(installRoot, 'node_modules', name, 'package.json'),
+    join(packageRoot, 'node_modules', name, 'package.json'),
+  ];
+  for (const manifestPath of candidates) {
+    try {
+      const manifest = await readFile(manifestPath, 'utf8');
+      return JSON.parse(manifest).version;
+    } catch {
+      // Not at this location; try the next candidate.
+    }
+  }
+  return undefined;
 }
 
 async function exists(path) {
