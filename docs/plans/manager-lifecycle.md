@@ -178,6 +178,8 @@ Stub behavior tests remain red until implementation. Assembly injection and the 
 
 ## Steps
 
+**Pre-implementation commit:** `73dcbd555577df650a08407688b332f7012985ed`
+
 Implementation changes must preserve the Red Gate tests and their behavioral contracts. Do not change the new attachment, seed, persona-tool, pi-065, protocol-cutover, composer, or assembly/ownership assertions.
 
 **Investigation rulings:**
@@ -197,7 +199,7 @@ Implement `seedManagerRoot` in `server/src/manager/seed.ts`. Keep the shipped ma
 Seed each absent file independently. Preserve existing files byte-for-byte, including races with another writer. Do not swallow errors other than an existing destination. An unusable manager root must fail startup. Keep these operations behind the existing exported interfaces in `server/src/manager/index.ts`.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/manager/attachment.test.ts src/manager/seed.test.ts` passes, including symlink identity and filesystem propagation.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement persona creation
 
@@ -210,7 +212,7 @@ Create only the new `<parentPath>/<name>` folder. Refuse existing destinations w
 Return `jsonToolResult({ folderPath })` with the created folder's canonical path. After successful materialization, call the injected `context.repos.invalidateListing()`. Validation, collision, and filesystem failures return `errorToolResult`, never an execute rejection. Do not invalidate failed creations. Leave the other seven tools unchanged.
 
 **Verify:** The `pimote_create_persona` cases in `npm run test --workspace=@pimote/server -- --run src/manager/persona-tools.test.ts` pass. Invalid inputs leave no disk effects.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Implement persona listing
 
@@ -219,7 +221,7 @@ Replace the `pimote_list_personas` execute stub in `server/src/manager/extension
 Return `jsonToolResult({ personas })`. Return `errorToolResult` for dependency failures. Do not perform new discovery or filesystem canonicalization on already-canonical folder-model rows. Keep the registration and schemas unchanged.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/manager/persona-tools.test.ts src/manager/extension.test.ts` passes. The existing tool registration and behavior assertions remain intact.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Attach tools during ordinary session assembly
 

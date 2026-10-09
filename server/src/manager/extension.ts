@@ -1,10 +1,13 @@
 import type { ExtensionFactory, ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { join, sep } from 'node:path';
 import { Type } from 'typebox';
-import { enrichActiveSessionCounts } from '../folder-registry.js';
+import { enrichActiveSessionCounts, isValidFolderName } from '../folder-registry.js';
 import type { FolderOccurrence, SparseTree } from '../folder-model/index.js';
 import { errorToolResult, jsonToolResult, type JsonToolResult } from '../tool-result.js';
 import type { FolderInfo } from '../../../shared/dist/index.js';
-import type { ManagerToolContext, ManagedSessionSummary } from './types.js';
+import { MEMORY_MAINTENANCE_INSTRUCTION, MEMORY_STUB } from './seed.js';
+import type { CreatePersonaInput, ManagerToolContext, ManagedSessionSummary, PersonaRow } from './types.js';
 
 /**
  * Build the pi `ExtensionFactory` for the manager extension. Registers the
@@ -211,6 +214,72 @@ interface SessionSearchHit {
   messageCount: number;
 }
 
+/** Human-readable message for a caught failure. */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** The fixed persona prompt template: the shipped persona prompt with the
+ *  maintain-`memory.md` instruction, no tool listing. */
+const PERSONA_PROMPT_TEMPLATE = `You are a persona agent. This folder is your identity and home.
+
+${MEMORY_MAINTENANCE_INSTRUCTION}`;
+
+/** Compose the new persona's AGENTS.md: persona-marker front matter plus the
+ *  fixed template with the optional caller prompt folded in ahead of it.
+ *  Pure: input in, text out. Front-matter values are JSON-quoted (a valid YAML
+ *  double-quoted scalar), so `parsePersonaFrontMatter` round-trips them
+ *  exactly on one line each. */
+function composePersonaAgentsMd(input: CreatePersonaInput): string {
+  const frontMatter = `---\nname: ${JSON.stringify(input.name)}\ndescription: ${JSON.stringify(input.description)}\n---`;
+  const prompt = input.prompt?.trim();
+  const body = prompt ? `${prompt}\n\n${PERSONA_PROMPT_TEMPLATE}` : PERSONA_PROMPT_TEMPLATE;
+  return `${frontMatter}\n\n${body}\n`;
+}
+
+/** Canonical containment: `path` is `root` itself or a true descendant. A
+ *  sibling sharing only the root's string prefix is outside. */
+function isCanonicalWithin(path: string, root: string): boolean {
+  return path === root || path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
+}
+
+/** Materialize one persona folder on disk: create the folder, then write the
+ *  composed AGENTS.md and the memory stub. The deliberate disk effect behind
+ *  `pimote_create_persona`'s documented tool contract. Refuses existing
+ *  destinations without touching them; removes the folder again when a write
+ *  fails after creation. Returns the created folder's canonical path. */
+async function materializePersonaFolder(folderPath: string, agentsMd: string): Promise<string> {
+  let created = false;
+  try {
+    await mkdir(folderPath);
+    created = true;
+    await writeFile(join(folderPath, 'AGENTS.md'), agentsMd, 'utf8');
+    await writeFile(join(folderPath, 'memory.md'), MEMORY_STUB, 'utf8');
+    return await realpath(folderPath);
+  } catch (error) {
+    if (created) await rm(folderPath, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+/** The persona rows the tool reports: nature = persona, hubs excluded (a hub
+ *  row carries member repos and/or shortcut children). */
+function isListedPersonaRow(folder: FolderInfo): boolean {
+  return folder.nature === 'persona' && folder.repos === undefined && folder.shortcutCount === 0;
+}
+
+/** Shape one immutable PersonaRow: persona name, string description (empty
+ *  when absent), canonical identity path doing double duty as the working
+ *  directory. */
+function toPersonaRow(folder: FolderInfo): PersonaRow {
+  return {
+    name: folder.persona?.name ?? folder.name,
+    description: folder.persona?.description ?? '',
+    folderPath: folder.path,
+    workingDirectory: folder.path,
+  };
+}
+
 export function createManagerExtension(context: ManagerToolContext): ExtensionFactory {
   return (pi: ExtensionAPI) => {
     pi.registerTool({
@@ -409,8 +478,31 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         prompt: Type.Optional(Type.String({ description: "Optional caller persona prompt, folded into the template's fixed sections." })),
       }),
       outputSchema: CreatePersonaResultSchema,
-      execute: async () => {
-        throw new Error('not implemented');
+      execute: async (_callId, params): Promise<JsonToolResult<{ error: string } | { folderPath: string }>> => {
+        const input: CreatePersonaInput = params;
+        if (!isValidFolderName(input.name)) {
+          return errorToolResult(`invalid name ${JSON.stringify(input.name)} — use one nonempty basename segment (not "." or "..")`);
+        }
+        let parentPath: string;
+        let roots: string[];
+        try {
+          [parentPath, roots] = await Promise.all([realpath(input.parentPath), Promise.all(context.config.roots.map((root) => realpath(root)))]);
+        } catch (error) {
+          return errorToolResult(`cannot resolve paths: ${errorMessage(error)}`);
+        }
+        if (!roots.some((root) => isCanonicalWithin(parentPath, root))) {
+          return errorToolResult(`parentPath is not under any scan root: ${input.parentPath}`);
+        }
+        let folderPath: string;
+        try {
+          folderPath = await materializePersonaFolder(join(parentPath, input.name), composePersonaAgentsMd(input));
+        } catch (error) {
+          return errorToolResult(`failed to create persona folder: ${errorMessage(error)}`);
+        }
+        // Discovery invalidation only after successful materialization, so
+        // folders_changed reflects the new persona folder.
+        context.repos.invalidateListing();
+        return jsonToolResult({ folderPath });
       },
     });
 
@@ -426,8 +518,14 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       parameters: Type.Object({}),
       annotations: { readOnlyHint: true },
       outputSchema: Type.Object({ personas: Type.Array(PersonaRowSchema) }),
-      execute: async () => {
-        throw new Error('not implemented');
+      execute: async (): Promise<JsonToolResult<{ error: string } | { personas: PersonaRow[] }>> => {
+        let folders: FolderInfo[];
+        try {
+          folders = await context.folders.list();
+        } catch (error) {
+          return errorToolResult(`failed to list personas: ${errorMessage(error)}`);
+        }
+        return jsonToolResult({ personas: folders.filter(isListedPersonaRow).map(toPersonaRow) });
       },
     });
   };

@@ -1,3 +1,4 @@
+import { realpath } from 'node:fs/promises';
 import type { PimoteConfig } from '../config.js';
 
 /** A session's facts, as the attachment rule sees it. */
@@ -19,6 +20,7 @@ export interface ManagerAttachmentSession {
  * can satisfy the rule — exclusivity is by construction.
  * Filesystem canonicalization errors propagate to the caller.
  */
-export async function loadManagerExtension(_session: ManagerAttachmentSession, _config: Pick<PimoteConfig, 'managerRoot'>): Promise<boolean> {
-  throw new Error('not implemented');
+export async function loadManagerExtension(session: ManagerAttachmentSession, config: Pick<PimoteConfig, 'managerRoot'>): Promise<boolean> {
+  const [cwd, managerRoot] = await Promise.all([realpath(session.cwd), realpath(config.managerRoot)]);
+  return cwd === managerRoot;
 }
