@@ -20,6 +20,11 @@ const execFileAsync = promisify(execFile);
 
 const DEFAULT_TTL_MS = 30_000;
 
+/** No git-status facts: identity-only diffing. Status caches are cleared on
+ *  invalidate() and re-probed lazily, so folding them into a diff across an
+ *  invalidation reports every probed repo as changed. */
+const NO_STATUS_FACTS: ReadonlyMap<string, RepoStatus> = new Map();
+
 /** Per-repo git status, cached on its own TTL. */
 interface RepoStatus {
   branch: string | null;
@@ -387,10 +392,12 @@ export class RepoIndex {
   /**
    * Report the refresh's change targets when the served facts moved: added and
    *  changed paths, physically removed paths, and hubs whose rows move with a
-   *  member. An unchanged refresh stays silent.
+   *  member. An unchanged refresh stays silent. Status facts join the diff by
+   *  default (git movement is a real row change); callers whose snapshot spans
+   *  a status-cache clear pass NO_STATUS_FACTS on both sides.
    */
-  private notifyRefreshed(before: Map<string, string>): void {
-    const { changedPaths, removedPaths } = diffFacts(before, this.currentFacts());
+  private notifyRefreshed(before: Map<string, string>, statuses: ReadonlyMap<string, RepoStatus> = this.statusCache): void {
+    const { changedPaths, removedPaths } = diffFacts(before, this.currentFacts(statuses));
     if (changedPaths.length === 0 && removedPaths.length === 0) return;
     for (const path of [...changedPaths, ...removedPaths]) {
       for (const hub of dependentHubPaths(path, this.listing?.tree ?? null, this.sourceHubs?.entries ?? [])) {
@@ -402,13 +409,13 @@ export class RepoIndex {
   }
 
   /** Content fingerprints of everything served rows derive from this index. */
-  private currentFacts(): Map<string, string> {
+  private currentFacts(statuses: ReadonlyMap<string, RepoStatus> = this.statusCache): Map<string, string> {
     return factFingerprints({
       tree: this.listing?.tree ?? null,
       entries: this.listing?.entries ?? [],
       sourceHubs: this.sourceHubs?.entries ?? [],
       personas: this.personaSources,
-      statuses: this.statusCache,
+      statuses,
     });
   }
 
@@ -463,8 +470,10 @@ export class RepoIndex {
     const existedBefore = await this.exists(folderPath);
     // Facts before provisioning, so the materialized rows can be forwarded
     // with concrete targets below. Captured only when the folder is missing —
-    // an existing folder cannot be provisioned.
-    const before = existedBefore ? undefined : this.currentFacts();
+    // an existing folder cannot be provisioned. Identity facts only: the
+    // re-walk below runs against a cleared status cache (invalidate()), so a
+    // status-folded diff would report every probed repo as changed.
+    const before = existedBefore ? undefined : this.currentFacts(NO_STATUS_FACTS);
     if (entry && !existedBefore) {
       await materializeHubFolder(entry);
     }
@@ -482,7 +491,7 @@ export class RepoIndex {
     if (before === undefined || !(await this.exists(folderPath))) return;
     this.invalidate();
     await this.currentStamp(false);
-    this.notifyRefreshed(before);
+    this.notifyRefreshed(before, NO_STATUS_FACTS);
   }
 
   /** Drop cached listings so the next list() re-walks. */

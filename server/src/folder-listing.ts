@@ -228,8 +228,15 @@ export class FolderListing implements FolderListingService {
     // Capture before any asynchronous work. A later delta cannot make this
     // computation claim that it observed the delta's row changes.
     const epoch = this.epoch;
-    const pin = await this.selectPin(req);
-    const snapshot = this.pins.get(pin.token);
+    let pin = await this.selectPin(req);
+    let snapshot = this.pins.get(pin.token);
+    for (let attempt = 0; attempt < 2 && !snapshot; attempt += 1) {
+      // A pending pin superseded before its registration resolves to a dead
+      // token. The pin contract treats an unknown token as a transparent
+      // re-pin — never as an empty success window.
+      pin = await this.pin(req.connectionId);
+      snapshot = this.pins.get(pin.token);
+    }
     const metadata = this.metadata;
     const currentRows = await this.deps.listRows();
     this.scheduleRefresh(currentRows);

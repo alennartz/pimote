@@ -1905,6 +1905,12 @@ export class WsHandler {
     if (!folderListing) return;
     folderListing
       .buildDelta(changedPaths, removedPaths)
+      .catch(() => {
+        // One immediate retry: a transient registry failure must not drop
+        // the delta outright — dropped deltas leave phantom rows that only a
+        // purge (manual refresh, reconnect) can clear.
+        return folderListing.buildDelta(changedPaths, removedPaths);
+      })
       .then((event) => {
         for (const [, handler] of clientRegistry) {
           handler.sendToClient(event);

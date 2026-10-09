@@ -231,7 +231,12 @@ export class FolderStore {
           this.staleWindowRetry = null;
           const generation = context.generation;
           queueMicrotask(() => {
-            if (generation === this.requestGeneration) this.fetchFolderWindow(this.nextOffset, context.repin);
+            if (generation !== this.requestGeneration) return;
+            // Offset-0 windows (archive toggle, refresh, search) retry at
+            // their own offset — the replace/merge and filter semantics hang
+            // on it. Continuation windows follow the current scan position:
+            // a delta may have restarted the scan since the request went out.
+            this.fetchFolderWindow(context.offset === 0 ? 0 : this.nextOffset, context.repin);
           });
         }
       }
@@ -276,11 +281,12 @@ export class FolderStore {
     // can be skipped. (Named follow-up if refetch churn shows up: offset
     // correction instead of restart.)
     const orderReplaced = context.offset > 0 && context.orderToken !== undefined && data.orderToken !== context.orderToken;
-    // An explicit refresh is authoritative for the unfiltered view: replace
-    // the cache so rows deleted while a delta was lost cannot survive a
-    // manual refresh. Continuation windows, query windows, and filter toggles
-    // keep merging into the accumulated cache.
-    if (context.repin && context.offset === 0 && !context.query) {
+    // An explicit refresh or a fresh connection load is authoritative for the
+    // unfiltered view: replace the cache so rows deleted while deltas were
+    // lost cannot survive a manual refresh or a reconnect. Continuation
+    // windows, query windows, and filter toggles of an established cache keep
+    // merging into the accumulated rows.
+    if (context.offset === 0 && !context.query && (context.repin || !this.loadedForCurrentConnection)) {
       this.folders = [...data.folders];
     } else {
       this.folders = mergeFolderRows(this.folders, data.folders);

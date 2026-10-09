@@ -15,7 +15,7 @@ The fix commits resolve 10 of the 11 prior findings cleanly and one partially (p
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/stores/folder-store.svelte.ts:237,169` (with `server/src/ws-handler.ts:1908`)
-- **Status:** open
+- **Status:** resolved
 
 Partial resolution of prior finding 7. Explicit refresh now replaces the cache (repin + offset 0 + no query), but the reconnect path still merges: `invalidateConnection` retains `folders`, and `ensureLoaded` merges window 0 of the new connection's pin, so rows deleted while deltas were lost survive a reconnect for the rest of the session. `broadcastFoldersChanged` still drops a failed `buildDelta` with only a `console.warn`, so manual refresh remains the sole heal. Remaining gap: purge on the reconnect path, and/or a delta retry or periodic reconcile.
 
@@ -24,7 +24,7 @@ Partial resolution of prior finding 7. Explicit refresh now replaces the cache (
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/stores/folder-store.svelte.ts:233-235`
-- **Status:** open
+- **Status:** resolved
 
 The retry re-issues `fetchFolderWindow(this.nextOffset, context.repin)`. For a discarded continuation window that is right; for a discarded offset-0 window it is wrong. Scenario: the scan advanced (`nextOffset = 200`), the user toggles Show archived (offset 0, new filter, same token), and a delta epoch-discards its response. The retry fires at offset 200 under the new filter; `orderReplaced` is false (token unchanged), so `nextOffset` jumps to `200 + len` and `fetchedPrefix` is not cleared. The archived rows the toggle adds at new-filter positions 0–199 are never fetched, and `shrank` cannot repair holes outside `fetchedPrefix`. The same path drains the prior finding 7 refresh fix: a discarded `loadFolders` repin retried at the stale offset fails the cache-replace branch's `context.offset === 0` condition, so the authoritative replace degrades to a merge. The retry should honor `context.offset === 0 ? 0 : this.nextOffset`, or the toggle/refresh paths should reset `nextOffset` before issuing.
 
@@ -33,7 +33,7 @@ The retry re-issues `fetchFolderWindow(this.nextOffset, context.repin)`. For a d
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/repo-index.ts:467-485`
-- **Status:** open
+- **Status:** resolved
 
 `before = currentFacts()` fingerprints fold in warm git statuses (`status?.branch ?? entry.branch`). `invalidate()` clears `statusCache`, and `currentStamp(false)` re-walks without re-probing, so `notifyRefreshed(before)` diffs neutral stamp facts (`branch: null, dirty: false`) against the warm before-facts. Every repo whose status was probed — effectively all of them — lands in `changedPaths`. One first-open of a missing source folder therefore broadcasts a `folders_changed` delta carrying roughly the whole listing (~3500 rows, hubs with full `repos` arrays) to every client, bumps the epoch (discarding in-flight windows), and trips `shrank` restarts under an active query. The rows are correct but the fix's intent — concrete targets — is defeated and the event is O(all rows). Diff without status facts, or re-probe before diffing.
 
@@ -51,7 +51,7 @@ The filtered order also shrinks when session-derived metadata changes: a `sessio
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/folder-listing.ts:232,324`
-- **Status:** open
+- **Status:** resolved
 
 The pin-layer collapse made `selectPin`'s `connection.pending` branch load-bearing. If a concurrent `pin()` (repin or transparent re-pin) bumps the connection generation before an awaited pending `createPin` registers its snapshot, the write is skipped, `this.pins.get(pin.token)` is undefined, and `query` silently returns `rows: [], total: 0, more: false` with a dead `orderToken`. The current web client masks it (single-flight plus generation guards discard such responses), so this is latent — but the service contract now owns this path alone, and any caller without that guard sees an empty "successful" folder list.
 
