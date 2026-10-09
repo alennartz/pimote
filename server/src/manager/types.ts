@@ -112,10 +112,12 @@ export interface ManagerToolContext {
 
 /** Input for the `pimote_create_persona` tool (plan: manager-lifecycle). */
 export interface CreatePersonaInput {
-  /** New persona folder basename — the folder is created at `<parentPath>/<name>`. */
+  /** One nonempty basename path segment, excluding `.` and `..`.
+   * Invalid names return tool errors. Created at `<parentPath>/<name>`. */
   name: string;
   /** Existing folder the persona folder is created under. Must be inside a
-   *  scan root; the tool never invents a default location. */
+   *  canonical scan root or equal to it. Canonical containment rejects symlink
+   *  escapes. Validation failures return tool errors, never throws. */
   parentPath: string;
   /** Persona description; written to the AGENTS.md front matter. */
   description: string;

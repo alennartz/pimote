@@ -53,6 +53,15 @@ describe('loadManagerExtension()', () => {
     }
   });
 
+  it('propagates filesystem errors when the manager root does not exist', async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      await expect(loadManagerExtension({ cwd: root }, { managerRoot: join(root, 'missing') })).rejects.toThrow();
+    } finally {
+      await cleanup();
+    }
+  });
+
   it('attaches when the session cwd is a symlink alias of the manager root — canonical identity', async () => {
     const { root, cleanup } = await makeRoot();
     try {

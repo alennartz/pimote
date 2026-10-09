@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { seedManagerRoot } from './seed.js';
+import { classifyFolder, nodeFolderFs } from '../folder-model/index.js';
 
 // Boot seeding of the manager root (plan: manager-lifecycle):
 // AGENTS.md absent -> shipped template, present -> untouched (no merge, ever);
@@ -23,6 +24,11 @@ describe('seedManagerRoot()', () => {
 
       const agents = await readFile(join(root, 'AGENTS.md'), 'utf8');
       expect(agents.trim().length).toBeGreaterThan(0);
+      const classification = await classifyFolder(nodeFolderFs, root);
+      expect(classification.nature).toBe('persona');
+      expect(classification.persona?.name).toBe('manager');
+      expect(classification.persona?.description?.trim().length).toBeGreaterThan(0);
+      expect(classification.persona?.description).not.toContain('\n');
       // The maintain-memory.md indication.
       expect(agents).toContain('memory.md');
       // No tool listing — tools are injected.
@@ -62,6 +68,18 @@ describe('seedManagerRoot()', () => {
       // AGENTS.md was absent and is seeded.
       const agents = await readFile(join(root, 'AGENTS.md'), 'utf8');
       expect(agents.trim().length).toBeGreaterThan(0);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('propagates filesystem errors when the manager root is unusable', async () => {
+    const { root, cleanup } = await makeManagerRoot();
+    try {
+      const fileRoot = join(root, 'not-a-folder');
+      await writeFile(fileRoot, 'user-owned\n');
+      await expect(seedManagerRoot(fileRoot)).rejects.toThrow();
+      await expect(readFile(fileRoot, 'utf8')).resolves.toBe('user-owned\n');
     } finally {
       await cleanup();
     }

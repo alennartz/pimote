@@ -70,6 +70,7 @@ function makeManagerContext(): ManagerToolContext {
 
 interface Generation {
   streamCalls: number;
+  toolCalls: number;
 }
 
 /** Deterministic fake-model harness: every agent run is a controlled local
@@ -83,14 +84,23 @@ function makeHarness() {
     notifyRunStarted = resolve;
   });
 
-  const managerFactory = createManagerExtension(makeManagerContext());
   const captureFactory: ExtensionFactory = (api) => {
     capturedApis.push(api);
-    managerFactory(api);
+    const generation = generations[generations.length - 1];
+    const registerTool: ExtensionAPI['registerTool'] = (tool) => {
+      api.registerTool({
+        ...tool,
+        execute: (...args) => {
+          generation.toolCalls++;
+          return tool.execute(...args);
+        },
+      });
+    };
+    createManagerExtension(makeManagerContext())({ ...api, registerTool });
   };
 
   const factory: CreateAgentSessionRuntimeFactory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }): Promise<CreateAgentSessionRuntimeResult> => {
-    const generation: Generation = { streamCalls: 0 };
+    const generation: Generation = { streamCalls: 0, toolCalls: 0 };
     generations.push(generation);
     // Deterministic ModelRuntime stand-in: the known surface plus a generic
     // fallback so unused SDK queries stay inert.
@@ -166,8 +176,9 @@ describe('pi-065: pi.* after runtime.newSession()', () => {
   it('rejects stale ctx calls loudly, runs no ghost work on the disposed session, and prompts the new session normally', async () => {
     const harness = makeHarness();
     const root = await mkdtemp(join(tmpdir(), 'pi-065-'));
+    let runtime: Awaited<ReturnType<typeof createAgentSessionRuntime>> | undefined;
     try {
-      const runtime = await createAgentSessionRuntime(harness.factory, {
+      runtime = await createAgentSessionRuntime(harness.factory, {
         cwd: root,
         agentDir: root,
         sessionManager: SessionManager.inMemory(root),
@@ -189,6 +200,7 @@ describe('pi-065: pi.* after runtime.newSession()', () => {
 
       // (2) The disposed session receives zero events and executes zero tools.
       expect(harness.generations[0].streamCalls).toBe(0);
+      expect(harness.generations[0].toolCalls).toBe(0);
       expect(oldEvents.length).toBe(oldEventCountAfterReplacement);
 
       // (3) The replacement session still prompts normally through its own ctx.
@@ -206,8 +218,11 @@ describe('pi-065: pi.* after runtime.newSession()', () => {
       expect(JSON.stringify(newSession.messages)).toContain('after replacement');
       // Still no ghost work on the disposed session after the live run.
       expect(harness.generations[0].streamCalls).toBe(0);
+      expect(harness.generations[0].toolCalls).toBe(0);
       expect(oldEvents.length).toBe(oldEventCountAfterReplacement);
     } finally {
+      harness.finishAllStreams();
+      runtime?.session.dispose();
       await rm(root, { recursive: true, force: true });
       await harness.cleanup();
     }

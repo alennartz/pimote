@@ -35,6 +35,9 @@ export interface EventSocket {
 export interface SessionManagerOptions {
   staticHostFactory?: ExtensionFactory;
   fileDownloadFactory?: ExtensionFactory;
+  /** Included only when canonical session cwd equals canonical managerRoot.
+   * Manager sessions use the ordinary persisted session and slot lifecycle. */
+  managerExtensionFactory?: ExtensionFactory;
 }
 
 export interface PendingUiEntry {

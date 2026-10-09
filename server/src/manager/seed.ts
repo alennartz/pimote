@@ -10,7 +10,9 @@
  *
  * The seed template is a code constant in the server package: a mission
  * statement plus the maintain-`memory.md` indication; no tool listing (tools
- * are injected).
+ * are injected). YAML front matter has `name: manager` and a nonempty one-line
+ * description, so the folder model classifies the seed as a persona.
+ * Filesystem errors propagate to the boot caller.
  */
 export async function seedManagerRoot(_managerRoot: string): Promise<void> {
   throw new Error('not implemented');

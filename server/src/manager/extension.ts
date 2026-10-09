@@ -9,7 +9,7 @@ import type { ManagerToolContext, ManagedSessionSummary } from './types.js';
 /**
  * Build the pi `ExtensionFactory` for the manager extension. Registers the
  * manager's pimote toolset, acting only through the injected
- * `ManagerToolContext` — never raw fs.
+ * `ManagerToolContext`. Persona creation owns its documented disk effects.
  *
  * Toolset: the folder-view tools (`pimote_list_folders` → `folders.list()`,
  * `pimote_folder_tree` → `tree.tree()`, `pimote_list_repos` → `repos.list()`,
@@ -399,7 +399,9 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         'required and must be inside a scan root — the tool never invents a default location; the manager ' +
         'chooses (or asks) using the folder tree. After creation, folder-model discovery is invalidated so ' +
         'folders_changed fires and the dashboard list picks the persona up. Errors: parentPath not under any ' +
-        'scan root, name collision (folder exists), fs failure.',
+        'scan root, name collision (folder exists), fs failure. Canonicalize parentPath and scan roots; ' +
+        'a parent equal to a scan root is valid. Reject symlink escapes and names that are not a single ' +
+        'nonempty basename segment (including dot and dot-dot). Validation failures return tool errors.',
       parameters: Type.Object({
         name: Type.String({ description: 'New persona folder basename.' }),
         parentPath: Type.String({ description: 'Absolute path of the existing folder to create the persona folder under; must be inside a scan root.' }),
@@ -420,7 +422,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         'name, description, canonical folderPath (the identity path), and workingDirectory — personas run ' +
         'rooted in their folder, so workingDirectory is the folderPath. Rows come from the folder model over ' +
         'the injected ports; code folders and hubs are excluded. This is groundwork for spawn-and-confer. ' +
-        'Takes no arguments.',
+        'Takes no arguments. Dependency failures return tool errors.',
       parameters: Type.Object({}),
       annotations: { readOnlyHint: true },
       outputSchema: Type.Object({ personas: Type.Array(PersonaRowSchema) }),

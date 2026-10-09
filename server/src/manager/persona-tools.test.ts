@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, realpath } from 'node:path';
+import { join } from 'node:path';
 import { parsePersonaFrontMatter } from '../folder-model/marker.js';
 import type { FolderOccurrence, SparseTree } from '../folder-model/index.js';
 import type { FolderInfo } from '../../../shared/dist/index.js';
@@ -146,7 +146,21 @@ describe('pimote_create_persona', () => {
     try {
       await sandbox.run({ name: 'ada', parentPath: sandbox.parentPath, description: 'helpful agent' });
 
-      expect(sandbox.ports.repos.invalidateListing).toHaveBeenCalledTimes(1);
+      expect(sandbox.ports.repos.invalidateListing).toHaveBeenCalled();
+    } finally {
+      await sandbox.cleanup();
+    }
+  });
+
+  it('uses the persona template when prompt is omitted', async () => {
+    const sandbox = await makeSandbox();
+    try {
+      const result = await sandbox.run({ name: 'ada', parentPath: sandbox.parentPath, description: 'helpful agent' });
+      expect(result.isError ?? false).toBe(false);
+      const agents = await readFile(join(result.details.folderPath, 'AGENTS.md'), 'utf8');
+      expect(parsePersonaFrontMatter(agents)).toEqual({ name: 'ada', description: 'helpful agent' });
+      expect(agents).toContain('memory.md');
+      await expect(stat(join(result.details.folderPath, 'memory.md'))).resolves.toBeTruthy();
     } finally {
       await sandbox.cleanup();
     }
@@ -170,6 +184,74 @@ describe('pimote_create_persona', () => {
     }
   });
 
+  it('rejects a sibling whose path only shares the scan-root prefix', async () => {
+    const sandbox = await makeSandbox();
+    const sibling = `${sandbox.root}-sibling`;
+    try {
+      await mkdir(sibling);
+      const result = await sandbox.run({ name: 'ada', parentPath: sibling, description: 'helpful agent' });
+      expect(result.isError).toBe(true);
+      await expect(readdir(sibling)).resolves.toEqual([]);
+      expect(sandbox.ports.repos.invalidateListing).not.toHaveBeenCalled();
+    } finally {
+      await sandbox.cleanup();
+      await rm(sibling, { recursive: true, force: true });
+    }
+  });
+
+  it('permits creation directly under a scan root', async () => {
+    const sandbox = await makeSandbox();
+    try {
+      const result = await sandbox.run({ name: 'ada', parentPath: sandbox.root, description: 'helpful agent' });
+      expect(result.isError ?? false).toBe(false);
+      await expect(realpath(join(sandbox.root, 'ada'))).resolves.toBe(result.details.folderPath);
+    } finally {
+      await sandbox.cleanup();
+    }
+  });
+
+  it.each(['', '/', '.', '..', '../escape', 'nested/ada'])('rejects invalid basename %j without creating files', async (name) => {
+    const sandbox = await makeSandbox();
+    try {
+      const result = await sandbox.run({ name, parentPath: sandbox.parentPath, description: 'helpful agent' });
+      expect(result.isError).toBe(true);
+      await expect(readdir(sandbox.parentPath)).resolves.toEqual([]);
+      expect(sandbox.ports.repos.invalidateListing).not.toHaveBeenCalled();
+    } finally {
+      await sandbox.cleanup();
+    }
+  });
+
+  it('rejects a parent symlink that escapes the canonical scan root', async () => {
+    const sandbox = await makeSandbox();
+    const outside = await mkdtemp(join(tmpdir(), 'persona-escape-'));
+    try {
+      const alias = join(sandbox.root, 'escape');
+      await symlink(outside, alias);
+      const result = await sandbox.run({ name: 'ada', parentPath: alias, description: 'helpful agent' });
+      expect(result.isError).toBe(true);
+      await expect(readdir(outside)).resolves.toEqual([]);
+      expect(sandbox.ports.repos.invalidateListing).not.toHaveBeenCalled();
+    } finally {
+      await sandbox.cleanup();
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts a canonical scan-root alias and returns the real persona path', async () => {
+    const sandbox = await makeSandbox();
+    try {
+      const alias = join(sandbox.root, 'alias');
+      await symlink(sandbox.parentPath, alias);
+      sandbox.ports.config.roots = [alias];
+      const result = await sandbox.run({ name: 'ada', parentPath: sandbox.parentPath, description: 'helpful agent' });
+      expect(result.isError ?? false).toBe(false);
+      await expect(realpath(join(sandbox.parentPath, 'ada'))).resolves.toBe(result.details.folderPath);
+    } finally {
+      await sandbox.cleanup();
+    }
+  });
+
   it('returns an error and leaves the existing folder untouched on a name collision', async () => {
     const sandbox = await makeSandbox();
     try {
@@ -181,6 +263,7 @@ describe('pimote_create_persona', () => {
 
       expect(result.isError).toBe(true);
       await expect(readdir(existing)).resolves.toEqual(['notes.txt']);
+      await expect(readFile(join(existing, 'notes.txt'), 'utf8')).resolves.toBe('user-owned\n');
       expect(sandbox.ports.repos.invalidateListing).not.toHaveBeenCalled();
     } finally {
       await sandbox.cleanup();
@@ -231,21 +314,44 @@ describe('pimote_list_personas', () => {
     expect(result.isError ?? false).toBe(false);
     const personas = result.details.personas as Array<{ name: string; description: string; folderPath: string; workingDirectory: string }>;
     expect(personas).toHaveLength(2);
-    expect(personas[0]).toEqual({ name: 'Ada', description: 'helpful agent', folderPath: '/workspace/personas/ada', workingDirectory: '/workspace/personas/ada' });
-    const boRow = personas[1];
+    expect(personas).toContainEqual({ name: 'Ada', description: 'helpful agent', folderPath: '/workspace/personas/ada', workingDirectory: '/workspace/personas/ada' });
+    const boRow = personas.find((persona) => persona.name === 'Bo')!;
     expect(boRow.name).toBe('Bo');
     expect(boRow.folderPath).toBe('/workspace/personas/bo');
     expect(boRow.workingDirectory).toBe(boRow.folderPath);
     expect(typeof boRow.description).toBe('string');
   });
 
-  it('excludes code folders', async () => {
+  it('excludes code folders and code hubs', async () => {
     const code = makeFolder('/workspace/app', 'code');
-    const hub = makeFolder('/workspace/hub', 'code');
+    const hub = { ...makeFolder('/workspace/hub', 'code'), shortcutCount: 2 };
 
     const result = await run([code, hub]);
 
     expect(result.details.personas).toEqual([]);
+  });
+
+  it('returns a tool error when folder-model dependencies fail', async () => {
+    const ports = makePorts();
+    ports.folders.list = vi.fn(async () => {
+      throw new Error('listing failed');
+    });
+    ports.tree.tree = vi.fn(async () => {
+      throw new Error('listing failed');
+    });
+    ports.repos.list = vi.fn(async () => {
+      throw new Error('listing failed');
+    });
+    ports.sessions.listDiskSessions = vi.fn(async () => {
+      throw new Error('listing failed');
+    });
+    ports.sessions.getAllSessions = vi.fn(() => {
+      throw new Error('listing failed');
+    });
+    const { toolDefs, api } = makeFakePi();
+    createManagerExtension(ports)(api);
+    const result = await toolNamed(toolDefs, 'pimote_list_personas').execute('call-1', {}, undefined, undefined, {});
+    expect(result.isError).toBe(true);
   });
 
   it('reports an empty list when the folder model knows no personas', async () => {

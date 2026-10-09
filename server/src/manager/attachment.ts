@@ -17,6 +17,7 @@ export interface ManagerAttachmentSession {
  * session and never loads the manager extension. No config flag; no runtime
  * toggling. Because `managerRoot` is never a scan root, no folder-list session
  * can satisfy the rule — exclusivity is by construction.
+ * Filesystem canonicalization errors propagate to the caller.
  */
 export async function loadManagerExtension(_session: ManagerAttachmentSession, _config: Pick<PimoteConfig, 'managerRoot'>): Promise<boolean> {
   throw new Error('not implemented');

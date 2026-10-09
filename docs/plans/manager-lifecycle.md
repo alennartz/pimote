@@ -43,7 +43,11 @@ errors:  parentPath not under any scan root; name collision (folder exists);
          fs failure
 ```
 
-Creates `<parentPath>/<name>/` containing `AGENTS.md` (front matter: `name`, `description`; body: persona prompt template — pre-seeded persona prompt text including the instruction to maintain `memory.md`, with the caller's `prompt` prepended or appended to the template's fixed sections) and `memory.md` (stub). After creation, folder-model discovery is invalidated so `folders_changed` fires and the dashboard list picks the persona up. `parentPath` is required and validated as inside a scan root — the tool never invents a default location; the manager chooses (or asks) using the folder tree.
+Creates `<parentPath>/<name>/` containing `AGENTS.md` (front matter: `name`, `description`; body: persona prompt template — pre-seeded persona prompt text including the instruction to maintain `memory.md`, with the caller's `prompt` prepended or appended to the template's fixed sections) and `memory.md` (stub). After creation, folder-model discovery is invalidated so `folders_changed` fires and the dashboard list picks the persona up.
+
+Placement validation: `parentPath` and scan roots are canonicalized before comparison; the parent may be a scan root itself; containment is checked on canonical paths so a symlink escape is rejected; `name` must be a single basename path segment (empty, `/`, and traversal segments rejected). Violations return tool error results, never throws. The tool never invents a default location; the manager chooses (or asks) using the folder tree.
+
+Tool error semantics: dependency failures in `pimote_list_personas` (registry/index/records ports) return tool error results.
 
 **`pimote_list_personas` tool.**
 
@@ -66,6 +70,18 @@ on boot:  seedManagerRoot(config.managerRoot)
           - memory.md present -> untouched
 ```
 
+The shipped template parses as a persona marker: YAML front matter with `name: manager` and a one-line `description`, followed by the mission body (mission statement plus the maintain-`memory.md` indication; no tool listing — tools are injected). Seed and attachment filesystem errors propagate: boot fails loudly if `managerRoot` is unusable.
+
+**Manager composer decision (client, pure function).**
+
+```
+managerComposerAction(viewed: SessionView | undefined, viewedIsManager: boolean):
+  | { action: 'continue', sessionId: string }   // a manager session is on screen
+  | { action: 'open-new' }                      // manager landing, no manager session viewed
+```
+
+The dashboard manager composer consults this instead of session logic; submit either prompts the viewed manager session or opens a new session at `managerRoot` via the normal `open_session` flow. Component tests stay out of scope; the pure function carries the behavior.
+
 **pi-065 regression test contract.** A test that replaces a runtime session (`runtime.newSession()`) with a pimote extension loaded and asserts the SDK 1.1.0 fail-fast contract: (1) a stale `pi.*` call throws synchronously — never a silent no-op; (2) the disposed session receives zero events and executes zero tools; (3) the replacement session prompts normally. This test is **green on arrival**: it pins external SDK behavior, not our code — a documented Red Gate exception (nothing exists to accidentally implement).
 
 ### DR Supersessions
@@ -84,6 +100,8 @@ on boot:  seedManagerRoot(config.managerRoot)
 - `server/src/manager/seed.ts` — `seedManagerRoot(managerRoot)`: the boot seeding contract for `AGENTS.md`/`memory.md`, stub.
 - `server/src/manager/extension.ts` — `pimote_create_persona` and `pimote_list_personas` tool registrations (parameter and output schemas, contract descriptions, stub executes). The seven existing tools are unchanged.
 - `server/src/manager/index.ts` — exports for the new interfaces.
+- `server/src/session-manager.ts` — `SessionManagerOptions.managerExtensionFactory`, the injection seam for normal persisted manager sessions.
+- `client/src/lib/manager-composer.ts` — `SessionView`, `ManagerComposerAction`, and the pure `managerComposerAction` decision interface, stub.
 - `server/src/manager/extension.test.ts` — structural update: pinned toolset now includes the two new names; fake repos port gains `invalidateListing`.
 - `server/src/index.test.ts` — structural update: pinned manager toolset list.
 - `tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs` — structural update: expected registration list.
@@ -94,6 +112,9 @@ on boot:  seedManagerRoot(config.managerRoot)
 - `server/src/manager/seed.test.ts` — manager-root boot seeding: write-if-absent, never-merge, never-overwrite, template contract.
 - `server/src/manager/persona-tools.test.ts` — `pimote_create_persona` (disk effects, canonical result, error contract, discovery invalidation) and `pimote_list_personas` (persona rows from the folder model).
 - `server/src/pi-065-newsession.test.ts` — pi-065 regression: stale `pi.*` rejection after `runtime.newSession()`, no ghost work, replacement session prompts normally.
+- `server/src/session-manager-open-session.test.ts` — normal assembly injects the manager extension exclusively at `managerRoot`; persisted manager slots survive viewer loss and reopen through the normal slot map.
+- `server/src/manager/protocol-cutover.test.ts` — shared source contains no `manager_prompt`, `manager_abort`, or `manager_event` vocabulary.
+- `client/src/lib/manager-composer.test.ts` — continue the viewed manager session; open new from landing or a code session; handle a stale manager flag without a viewed session.
 
 ### Behaviors Covered
 
@@ -107,7 +128,9 @@ on boot:  seedManagerRoot(config.managerRoot)
 #### Boot seeding (`seedManagerRoot`)
 
 - Writes the shipped `AGENTS.md` template and a `memory.md` stub when both are absent.
+- The folder-model classifier recognizes the template as a persona named `manager` with a nonempty one-line description.
 - The template is non-empty, carries the maintain-`memory.md` indication, and lists no tools (tools are injected).
+- Unusable manager roots propagate filesystem errors without altering existing files.
 - Leaves an existing `AGENTS.md` byte-identical — never merges — and still seeds the absent `memory.md`.
 - Leaves an existing `memory.md` byte-identical and seeds the absent `AGENTS.md`.
 - Changes nothing when both files are present.
@@ -120,12 +143,17 @@ on boot:  seedManagerRoot(config.managerRoot)
 - Returns an error result and creates nothing when `parentPath` is not under any scan root; no invalidation.
 - Returns an error result and leaves the existing folder untouched on a name collision; no invalidation.
 - Returns an error result when creation fails on the filesystem; no invalidation.
+- Uses the fixed persona template and writes both files when `prompt` is omitted.
+- Accepts the scan root itself and canonical scan-root aliases.
+- Rejects invalid basenames, symlink escapes, and sibling paths sharing only the scan-root prefix; no disk effects or invalidation.
 
 #### `pimote_list_personas`
 
 - Reports one row per persona folder (`nature = persona`) from the folder model: `name`, `description`, canonical `folderPath`, and `workingDirectory` equal to `folderPath`.
 - Excludes code folders and hubs.
 - Reports an empty list when the folder model knows no personas.
+- Returns tool errors when folder-model dependencies fail.
+- Does not constrain persona row ordering.
 
 #### pi-065: `pi.*` after `runtime.newSession()` (external SDK contract)
 
@@ -135,6 +163,15 @@ Verification result (recorded in `docs/bugs/pi-065-extension-newsession-broken.m
 - The disposed session receives zero events and executes zero tools — no ghost work.
 - The replacement session still prompts normally through its own ctx: the run executes, events are delivered, the user message lands in its transcript.
 
+### Assembly, cutover, and composer boundaries
+
+- Normal assembly loads the manager extension only for manager-root sessions.
+- Manager sessions use persisted pi session creation and the ordinary slot map. Viewer loss does not remove the slot; reopening its session file returns the same runtime.
+- Shared source removes all three retired manager wire names, without replacement vocabulary.
+- The pure composer decision continues only a viewed manager session. Landing, a code session, or a missing view opens new.
+
 ### Red Gate
 
-All 16 new interface tests fail via `throw new Error("not implemented")` from the stubs. **One documented exception:** `pi-065-newsession.test.ts` is green. It pins external SDK behavior, not pimote implementation — there is no stub that could accidentally satisfy it — and its green result is the plan's pi-065 verification outcome (see above). Pre-existing tests stay green, including the structurally updated pinned-toolset tests.
+Stub behavior tests remain red until implementation. Assembly injection and the static protocol cutover assertion are red until cutover. Existing persisted slot ownership is green through the normal session boundary. Filesystem propagation tests are green on the throwing stubs and must remain green on implementation. **External SDK exception:** `pi-065-newsession.test.ts` is green. It pins SDK behavior, not pimote implementation, and verifies the accepted fail-fast contract. Pre-existing tests remain green, including the structurally updated pinned-toolset tests.
+
+**Review status:** approved

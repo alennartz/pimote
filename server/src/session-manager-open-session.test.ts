@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SessionManager as PiSessionManager } from '@earendil-works/pi-coding-agent';
 import type { PushNotificationService } from './push-notification.js';
 import type { PimoteConfig } from './config.js';
 
@@ -21,6 +25,7 @@ vi.mock('./git-branch.js', () => ({
 vi.mock('@earendil-works/pi-coding-agent', () => {
   const fakeSession = {
     sessionId: 'session-1',
+    sessionFile: '/tmp/session.jsonl',
     isStreaming: false,
     messages: [],
     model: undefined,
@@ -123,6 +128,57 @@ describe('PimoteSessionManager.openSession', () => {
     expect(gitBranchSpy).toHaveBeenCalledWith('/tmp/pi-repro-resume-cwd/demo');
     expect(slot?.sessionState.downloads).toEqual([]);
     expect(serviceArgs[0]?.modelRuntime).toBe(modelRuntime);
+  });
+
+  it('assembles manager sessions with the exclusive extension', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'manager-assembly-'));
+    runtimeArgs.length = 0;
+    serviceArgs.length = 0;
+    try {
+      const managerExtensionFactory = (() => undefined) as any;
+      const manager = await PimoteSessionManager.create(createTestConfig({ managerRoot: root }), createMockPushService(), { managerExtensionFactory });
+      const sessionId = await manager.openSession(root);
+      expect(PiSessionManager.create).toHaveBeenCalledWith(root);
+      expect(manager.getSession(sessionId)?.folderPath).toBe(root);
+      // `?? []` keeps the assertion non-vacuous: vitest's toContain passes on undefined.
+      expect(serviceArgs[0]?.resourceLoaderOptions?.extensionFactories ?? []).toContain(managerExtensionFactory);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps manager sessions in ordinary persisted slots across viewer loss and reconnect', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'manager-reconnect-'));
+    runtimeArgs.length = 0;
+    try {
+      const manager = await PimoteSessionManager.create(createTestConfig({ managerRoot: root }), createMockPushService());
+      const sessionId = await manager.openSession(root);
+      const slot = manager.getSession(sessionId)!;
+      expect(slot.folderPath).toBe(root);
+      expect(slot.session.sessionFile).toBe('/tmp/session.jsonl');
+      // The public slot carries viewer ownership, not session ownership.
+      slot.connection = { ws: { send: vi.fn(), readyState: 1 }, connectedClientId: 'viewer-1', onSessionReset: null };
+      slot.connection = null;
+      expect(manager.getAllSessions()).toContain(slot);
+      expect(await manager.openSession(root, slot.session.sessionFile)).toBe(sessionId);
+      expect(manager.getSession(sessionId)).toBe(slot);
+      expect(runtimeArgs).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not inject manager tools into ordinary folder sessions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'manager-exclusive-'));
+    serviceArgs.length = 0;
+    try {
+      const managerExtensionFactory = (() => undefined) as any;
+      const manager = await PimoteSessionManager.create(createTestConfig({ managerRoot: root }), createMockPushService(), { managerExtensionFactory });
+      await manager.openSession(tmpdir());
+      expect(serviceArgs[0]?.resourceLoaderOptions?.extensionFactories ?? []).not.toContain(managerExtensionFactory);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('threads the dedicated download extension factory alongside static hosting into every runtime', async () => {
