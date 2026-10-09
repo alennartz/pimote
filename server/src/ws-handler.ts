@@ -836,7 +836,11 @@ export class WsHandler {
               return undefined;
             });
             if (folderPath !== undefined) {
-              this.repoIndex?.invalidate();
+              // Discovery can reclassify the folder (persona marker), so the
+              // listing must re-walk — but warm git probes stay: an edit does
+              // not move git facts, and a full invalidate() would re-probe
+              // every repo before the delta can resolve its row.
+              this.repoIndex?.invalidateListing();
               WsHandler.broadcastFoldersChanged(this.folderListing, [folderPath], [], this.clientRegistry);
             }
           }

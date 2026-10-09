@@ -646,6 +646,25 @@ describe('RepoIndex background refresh — onRefreshed', () => {
 
     expect(onRefreshed).not.toHaveBeenCalled();
   });
+
+  it('does not report first-time git status probes as row changes', async () => {
+    const repoA = join(tempDir, 'repo-a');
+    await initRepo(repoA);
+
+    const index = makeIndex();
+    // Tree-only reads never probe git status, so the status cache is still
+    // empty when the refresh below is kicked — its probes fill empty slots,
+    // which is not row movement.
+    await index.tree();
+    const onRefreshed = vi.fn();
+    index.setOnRefreshed(onRefreshed);
+
+    clock = 5_000;
+    await index.list(); // statuses due → background refresh re-probes
+    await index.whenRefreshed();
+
+    expect(onRefreshed).not.toHaveBeenCalled();
+  });
 });
 
 describe('RepoIndex.list() — git status enrichment', () => {
@@ -713,6 +732,25 @@ describe('RepoIndex.list() — git status enrichment', () => {
     // request path); the background refresh re-probes.
     clock = 200;
     expect((await repoAt(index, repo))?.dirty).toBe(false);
+    await index.whenRefreshed();
+    expect((await repoAt(index, repo))?.dirty).toBe(true);
+  });
+
+  it('invalidateListing re-walks discovery while keeping warm git probes', async () => {
+    const repo = join(tempDir, 'repo');
+    await initRepo(repo);
+
+    const index = makeIndex();
+    expect((await repoAt(index, repo))?.dirty).toBe(false);
+
+    await writeFile(join(repo, 'notes.txt'), 'work in progress');
+    index.invalidateListing();
+
+    // The listing re-walks (discovery shape can change), but the warm status
+    // probe is served until its own TTL instead of re-probing every repo.
+    expect((await repoAt(index, repo))?.dirty).toBe(false);
+    clock = 5_000;
+    await index.list();
     await index.whenRefreshed();
     expect((await repoAt(index, repo))?.dirty).toBe(true);
   });

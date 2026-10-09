@@ -31,6 +31,13 @@ const GIT_PROBE_CONCURRENCY = 8;
  *  invalidation reports every probed repo as changed. */
 const NO_STATUS_FACTS: ReadonlyMap<string, RepoStatus> = new Map();
 
+/** Status view limited to entries already probed when a diff's `before`
+ *  snapshot was taken: first-time probes fill empty cache slots and must stay
+ *  silent, while git movement on previously probed entries still diffs. */
+function probedOnly(statuses: ReadonlyMap<string, RepoStatus>, probedBefore: ReadonlySet<string>): Map<string, RepoStatus> {
+  return new Map([...statuses].filter(([path]) => probedBefore.has(path)));
+}
+
 /** Per-repo git status, cached on its own TTL. */
 interface RepoStatus {
   branch: string | null;
@@ -377,10 +384,16 @@ export class RepoIndex {
   /**
    * Refresh the expired listing/status caches off the request path. Single-
    * flight: repeated stale list() calls share one walk + git-probe burst.
+   *
+   * The diff runs against a status view restricted to entries already probed
+   * when `before` was captured: filling empty status slots (first probes) is
+   * not row movement, while real git movement lands on previously probed
+   * entries and still diffs.
    */
   private kickRefresh(): void {
     if (this.refreshInFlight) return;
     const before = this.currentFacts();
+    const probedBefore = new Set(this.statusCache.keys());
     this.refreshInFlight = (async () => {
       try {
         if (!this.listing || this.now() - this.listing.at >= this.ttlMs) await this.discover();
@@ -391,7 +404,7 @@ export class RepoIndex {
       } finally {
         this.refreshInFlight = null;
       }
-      this.notifyRefreshed(before);
+      this.notifyRefreshed(before, probedOnly(this.statusCache, probedBefore));
     })();
   }
 
@@ -505,6 +518,18 @@ export class RepoIndex {
     this.listing = null;
     this.walkGeneration++;
     this.statusCache.clear();
+  }
+
+  /**
+   * Drop the cached listing but keep warm git-status probes (their own TTL
+   * still bounds staleness). For edits that can change discovery shape —
+   * e.g. an AGENTS.md gaining or losing a persona marker — without moving git
+   * facts: a full invalidate() would re-probe every repo before the next
+   * listing can serve.
+   */
+  invalidateListing(): void {
+    this.listing = null;
+    this.walkGeneration++;
   }
 
   /** Register an additional discovery source; its repos join future listings. */
