@@ -305,12 +305,41 @@ export class FolderRegistry implements FolderRegistryPort {
    * overrides applied.
    */
   async list(): Promise<FolderInfo[]> {
-    return sortFolders(await this.viewOver(await this.tree.tree()));
+    return sortFolders(await this.viewOver(await this.tree.tree(), await this.repos.list()));
+  }
+
+  /**
+   * The window path's view: rows with identity facts and any warm git
+   * status, never blocked on git probes. Git facts fill in per served row
+   * through `enrichRows`.
+   */
+  async listLazy(): Promise<FolderInfo[]> {
+    return sortFolders(await this.viewOver(await this.tree.tree(), await this.repos.listLazy()));
+  }
+
+  /**
+   * Git status for exactly these rows — their own repo facts and hub member
+   * facts — patched onto the rows in place. The one mutation point for
+   * enrichment; rows are fresh per view build. Probes are scoped to the given
+   * rows (bounded concurrency), so windows and deltas never pay a whole-set
+   * pass.
+   */
+  async enrichRows(rows: FolderInfo[]): Promise<void> {
+    const targets = rows.flatMap((row) => [...(row.repo ? [row.repo] : []), ...(row.repos ?? [])]);
+    const status = await this.repos.enrichStatus(targets.map((repo) => repo.path));
+    for (const target of targets) {
+      const facts = status.get(target.path);
+      if (!facts) continue;
+      target.branch = facts.branch;
+      target.dirty = facts.dirty;
+      target.ahead = facts.ahead;
+      target.behind = facts.behind;
+    }
   }
 
   /** The merged view over one folder tree; pure construction, edge probes first. */
-  private async viewOver(tree: SparseTree): Promise<FolderInfo[]> {
-    const [doc, repos, sourceHubs, personas] = await Promise.all([this.document(), this.repos.list(), this.repos.listSourceHubs(), this.repos.listSourcePersonas()]);
+  private async viewOver(tree: SparseTree, repos: RepoInfo[]): Promise<FolderInfo[]> {
+    const [doc, sourceHubs, personas] = await Promise.all([this.document(), this.repos.listSourceHubs(), this.repos.listSourcePersonas()]);
     const absent = await resolveAbsentPaths(repos, hubMetadata(sourceHubs, doc).keys());
     return mergedFolders({ doc, tree, repos, sourceHubs, personas, absent });
   }

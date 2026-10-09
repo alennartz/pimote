@@ -622,6 +622,27 @@ describe('FolderRegistry.createHub()', () => {
   });
 });
 
+describe('FolderRegistry lazy status enrichment (window path)', () => {
+  it('listLazy carries identity facts and enrichRows fills git status for the given rows', async () => {
+    const hubPath = join(rootDir, 'multi');
+    await mkdir(hubPath, { recursive: true });
+    await writeRegistryDocument({ hubs: [{ path: hubPath, name: 'multi', memberPaths: [repoA] }], overrides: {} });
+    await writeFile(join(repoA, 'notes.txt'), 'work in progress');
+
+    const registry = makeRegistry();
+    const rows = await registry.listLazy();
+    const hub = rows.find((folder) => folder.name === 'multi');
+    const member = rows.find((folder) => folder.path === repoA);
+    expect(hub?.repos?.[0]?.dirty).toBe(false);
+    expect(member?.repo?.dirty).toBe(false);
+
+    await registry.enrichRows([hub!, member!]);
+
+    expect(hub?.repos?.[0]?.dirty).toBe(true);
+    expect(member?.repo?.dirty).toBe(true);
+  });
+});
+
 describe('FolderRegistry.disbandHub()', () => {
   it('removes the hub and deletes the hub folder; member repos survive', async () => {
     const registry = makeRegistry();

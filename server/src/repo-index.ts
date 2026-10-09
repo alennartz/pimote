@@ -38,12 +38,16 @@ function probedOnly(statuses: ReadonlyMap<string, RepoStatus>, probedBefore: Rea
   return new Map([...statuses].filter(([path]) => probedBefore.has(path)));
 }
 
-/** Per-repo git status, cached on its own TTL. */
-interface RepoStatus {
+/** Branch, dirty flag, and ahead/behind for one repo. */
+export interface GitStatus {
   branch: string | null;
   dirty: boolean;
   ahead: number;
   behind: number;
+}
+
+/** Per-repo git status, cached on its own TTL. */
+interface RepoStatus extends GitStatus {
   at: number;
 }
 
@@ -311,6 +315,40 @@ export class RepoIndex {
   }
 
   /**
+   * The window path's listing: identity facts and any warm git status,
+   * served without probing. Unprobed rows keep neutral git facts until
+   * `enrichStatus` fills them for the rows actually served — a cold window
+   * must never wait on a whole-set git-probe pass. Discovery staleness only:
+   * git-status staleness is `enrichStatus`'s business, per served row.
+   */
+  async listLazy(): Promise<RepoInfo[]> {
+    const stamp = await this.currentStamp(false);
+    return stamp.entries.map((entry) => (entry.missing ? entry : this.withCachedStatus(entry)));
+  }
+
+  /**
+   * Git status for exactly these paths: entries whose status is missing or
+   * past its TTL are probed (bounded concurrency); fresh cache entries are
+   * served as-is. Window-scoped enrichment — never a whole-set pass. Missing
+   * entries and unknown paths are skipped, so their rows keep identity facts.
+   */
+  async enrichStatus(paths: Iterable<string>): Promise<ReadonlyMap<string, GitStatus>> {
+    const wanted = new Set(paths);
+    const stamp = await this.currentStamp(false);
+    await mapWithConcurrency(
+      stamp.entries.filter((entry) => wanted.has(entry.path) && this.statusExpired(entry)),
+      GIT_PROBE_CONCURRENCY,
+      (entry) => this.probeStatus(entry.path),
+    );
+    const resolved = new Map<string, GitStatus>();
+    for (const path of wanted) {
+      const status = this.statusCache.get(path);
+      if (status) resolved.set(path, { branch: status.branch, dirty: status.dirty, ahead: status.ahead, behind: status.behind });
+    }
+    return resolved;
+  }
+
+  /**
    * The retained discovery tree, cached with the listing and shared with
    * `list()` — one walk feeds both readers. Tree reads care about discovery
    * staleness only: an expired read serves the previous tree immediately
@@ -458,7 +496,7 @@ export class RepoIndex {
    * staleness policy (serve stale + background refresh), so this just awaits it.
    */
   async listSourceHubs(): Promise<HubSourceEntry[]> {
-    await this.list();
+    await this.currentStamp(false);
     return this.sourceHubs?.entries ?? [];
   }
 
@@ -468,7 +506,7 @@ export class RepoIndex {
    * surface persona homes as persona rows instead of dropping them.
    */
   async listSourcePersonas(): Promise<PersonaSourceEntry[]> {
-    await this.list();
+    await this.currentStamp(false);
     return this.personaSources;
   }
 
@@ -639,6 +677,12 @@ export class RepoIndex {
     return await this.withStatus(base);
   }
 
+  /** Serve whatever status is cached for this entry; neutral when unprobed. */
+  private withCachedStatus(base: RepoInfo): RepoInfo {
+    const status = this.statusCache.get(base.path);
+    return status ? { ...base, branch: status.branch, dirty: status.dirty, ahead: status.ahead, behind: status.behind } : base;
+  }
+
   /**
    * Serve git status from cache regardless of age — staleness is handled by
    * `kickRefresh` in `list()`, not on the request path. Only a missing entry
@@ -646,7 +690,8 @@ export class RepoIndex {
    */
   private async withStatus(base: RepoInfo): Promise<RepoInfo> {
     const cached = this.statusCache.get(base.path);
-    const status = cached ?? (await this.probeStatus(base.path));
+    if (cached) return this.withCachedStatus(base);
+    const status = await this.probeStatus(base.path);
     return { ...base, branch: status.branch, dirty: status.dirty, ahead: status.ahead, behind: status.behind };
   }
 

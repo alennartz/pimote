@@ -47,6 +47,7 @@ function fakeWorld(
     summaries?: Record<string, SessionSummary[]>;
     live?: LiveSessionRef[];
     listMany?: (folderPaths: string[]) => Promise<Map<string, SessionSummary[]>>;
+    enrichRows?: (rows: FolderInfo[]) => Promise<void>;
   } = {},
 ): FakeWorld {
   const state = {
@@ -56,6 +57,7 @@ function fakeWorld(
   };
   const deps: FolderListingDeps = {
     listRows: async () => state.rows,
+    enrichRows: init.enrichRows ?? (async () => {}),
     sessionSummaries: {
       listMany: init.listMany ?? (async (folderPaths: string[]) => new Map(folderPaths.map((p) => [p, state.summaries.get(p) ?? []]))),
     },
@@ -84,6 +86,33 @@ async function warm(service: FolderListing): Promise<void> {
   await service.pin();
   await flushMicrotasks();
 }
+
+describe('lazy git status enrichment (window path)', () => {
+  it('query enriches git status for exactly the served window rows', async () => {
+    const enrichRows = vi.fn(async () => {});
+    const rows = Array.from({ length: 30 }, (_, i) => row(`/w/r${String(i).padStart(2, '0')}`));
+    const service = new FolderListing(fakeWorld({ rows, enrichRows }).deps);
+    const pin = await service.pin();
+    // Pins hold order only; no git probes on the order path.
+    expect(enrichRows).not.toHaveBeenCalled();
+
+    const result = await service.query({ token: pin.token, offset: 10, limit: 10 });
+    expect(result.rows).toHaveLength(10);
+    expect(enrichRows).toHaveBeenCalledOnce();
+    expect(enrichRows).toHaveBeenCalledWith(result.rows);
+  });
+
+  it('buildDelta enriches only the touched changed rows', async () => {
+    const enrichRows = vi.fn(async () => {});
+    const service = new FolderListing(fakeWorld({ rows: [row('/w/a'), row('/w/b')], enrichRows }).deps);
+
+    const delta = await service.buildDelta(['/w/a'], []);
+
+    expect(delta.changed.map((r) => r.path)).toEqual(['/w/a']);
+    expect(enrichRows).toHaveBeenCalledOnce();
+    expect(enrichRows).toHaveBeenCalledWith(delta.changed);
+  });
+});
 
 describe('FolderListing', () => {
   describe('pin()', () => {

@@ -23,8 +23,12 @@ export interface LiveSessionRef {
 }
 
 export interface FolderListingDeps {
-  /** The folder registry's row listing (merged scan + curation). */
+  /** The folder registry's row listing (merged scan + curation): identity
+   *  facts and any warm git status — never blocked on git probes. */
   listRows(): Promise<FolderInfo[]>;
+  /** Git status for exactly these rows (bounded probes): served windows and
+   *  delta rows carry status facts; nothing else waits on probes. */
+  enrichRows(rows: FolderInfo[]): Promise<void>;
   /** Session-derived metadata source: the batched summary pass over known
    *  folder paths, reusing the per-file summary cache. */
   sessionSummaries: Pick<SessionSummaryIndex, 'listMany'>;
@@ -250,6 +254,9 @@ export class FolderListing implements FolderListingService {
     });
     const window = normalizeWindow(req.offset, req.limit);
     const rows = matches.slice(window.offset, window.offset + window.limit);
+    // Lazy status enrichment: the pin order never sorted on git facts, so
+    // only the served rows wait on probes — never the whole set.
+    await this.deps.enrichRows(rows);
     enrichActiveSessionCounts(rows, this.deps.listLiveSessions());
     return {
       rows,
@@ -269,6 +276,9 @@ export class FolderListing implements FolderListingService {
       return row ? [{ ...row }] : [];
     });
     const removed = touched.filter((path) => !byPath.has(path));
+    // Deltas re-resolve rows for immediate display: fill git facts for the
+    // touched rows only (bounded), like window serving does.
+    await this.deps.enrichRows(changed);
     // Additions append at the tail of every live pin. Tail is the only
     // position that cannot shift live window offsets — new rows arrive via
     // delta past the fetched frontier (the brainstorm's stated intent) and

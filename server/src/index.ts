@@ -95,9 +95,11 @@ export async function main(options: StartOptions = {}) {
 
   // The folder listing service: ordering, search, and windowing over the
   // registry's rows, fed by the shared per-file session-summary cache and the
-  // live in-memory sessions.
+  // live in-memory sessions. Rows carry identity facts immediately; git
+  // status is enriched for the served rows only (window/delta scoped).
   const folderListing = new FolderListing({
-    listRows: () => folderRegistry.list(),
+    listRows: () => folderRegistry.listLazy(),
+    enrichRows: (rows) => folderRegistry.enrichRows(rows),
     sessionSummaries,
     listLiveSessions: () => sessionManager.getAllSessions(),
   });

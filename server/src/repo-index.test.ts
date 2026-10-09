@@ -420,6 +420,38 @@ describe('RepoIndex.runOpenHooks()', () => {
   });
 });
 
+describe('RepoIndex lazy status enrichment (window path)', () => {
+  it('listLazy serves identity facts immediately and never probes git status', async () => {
+    const repo = join(tempDir, 'repo');
+    await initRepo(repo);
+    await writeFile(join(repo, 'notes.txt'), 'work in progress');
+
+    const info = (await makeIndex().listLazy()).find((r) => r.path === repo);
+    expect(info?.name).toBe('repo');
+    // Git facts stay neutral until a probe runs; identity facts land immediately.
+    expect(info?.branch).toBeNull();
+    expect(info?.dirty).toBe(false);
+  });
+
+  it('enrichStatus probes only the requested paths', async () => {
+    const a = join(tempDir, 'a');
+    const b = join(tempDir, 'b');
+    await initRepo(a);
+    await initRepo(b);
+    await writeFile(join(a, 'notes.txt'), 'dirty a');
+    await writeFile(join(b, 'notes.txt'), 'dirty b');
+
+    const index = makeIndex();
+    const status = await index.enrichStatus([a]);
+    expect(status.get(a)?.dirty).toBe(true);
+    expect(status.has(b)).toBe(false);
+
+    const rows = await index.listLazy();
+    expect(rows.find((r) => r.path === a)?.dirty).toBe(true);
+    expect(rows.find((r) => r.path === b)?.dirty).toBe(false);
+  });
+});
+
 describe('RepoIndex.list() — TTL cache', () => {
   it('serves the cached listing until the TTL expires, then serves it stale while refreshing in the background', async () => {
     const repoA = join(tempDir, 'repo-a');
