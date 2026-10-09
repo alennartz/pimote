@@ -15,10 +15,16 @@ import {
 } from './folder-model/index.js';
 import { getGitBranch } from './git-branch.js';
 import { materializeHubFolder } from './folder-sources/materialize.js';
+import { mapWithConcurrency } from './concurrency.js';
 
 const execFileAsync = promisify(execFile);
 
 const DEFAULT_TTL_MS = 30_000;
+
+/** Repos whose git status is probed in parallel. Each probe spawns several
+ *  git processes; an unbounded burst over thousands of repos floods the
+ *  process table and turns a cold listing into a multi-second stall. */
+const GIT_PROBE_CONCURRENCY = 8;
 
 /** No git-status facts: identity-only diffing. Status caches are cleared on
  *  invalidate() and re-probed lazily, so folding them into a diff across an
@@ -294,7 +300,7 @@ export class RepoIndex {
    */
   async list(): Promise<RepoInfo[]> {
     const stamp = await this.currentStamp(true);
-    return await Promise.all(stamp.entries.map((entry) => this.resolveServed(entry)));
+    return await mapWithConcurrency(stamp.entries, GIT_PROBE_CONCURRENCY, (entry) => this.resolveServed(entry));
   }
 
   /**
@@ -379,7 +385,7 @@ export class RepoIndex {
       try {
         if (!this.listing || this.now() - this.listing.at >= this.ttlMs) await this.discover();
         const listing = this.listing;
-        if (listing) await Promise.all(listing.entries.map((entry) => this.refreshStatus(entry)));
+        if (listing) await mapWithConcurrency(listing.entries, GIT_PROBE_CONCURRENCY, (entry) => this.refreshStatus(entry));
       } catch (error) {
         console.warn('[repo-index] background refresh failed', error);
       } finally {

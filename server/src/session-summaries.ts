@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
+import { mapWithConcurrency } from './concurrency.js';
 
 /**
  * One on-disk session's list metadata — exactly the fields `list_sessions`
@@ -56,19 +57,6 @@ interface ParsedEntry {
   parentSession?: unknown;
   name?: unknown;
   message?: unknown;
-}
-
-async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await fn(items[index]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
-  return results;
 }
 
 function parseLine(line: string): ParsedEntry | null {

@@ -48,7 +48,7 @@ export class WsProbe {
   send(payload) {
     const id = `probe-${++nextCmdId}`;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`probe timeout waiting for response to ${payload.type}`)), 15_000);
+      const timer = setTimeout(() => reject(new Error(`probe timeout waiting for response to ${payload.type}`)), 30_000);
       this.pending.set(id, (response) => {
         clearTimeout(timer);
         resolve(response);
