@@ -298,14 +298,14 @@
 
 ## TP-04: Folder & Session Browsing (Dashboard)
 
-The dashboard's folders column lists every discovered folder; expand a row to see its sessions. Curation (favorites, archive), hub folders, and the manager agent have dedicated coverage in journey 12 of the persistent manual-test plan ([tools/manual-test/PLAN.md](../tools/manual-test/PLAN.md)).
+The dashboard's folders column lists every discovered folder; the list loads in windows as you scroll and renders a virtualized range. Expand a row to see its sessions. Curation (favorites, archive), hub folders, the manager agent, and the windowed listing behavior (scroll windows, server-side search, delta sync) have dedicated coverage in journey 12 of the persistent manual-test plan ([tools/manual-test/PLAN.md](../tools/manual-test/PLAN.md)).
 
 ### TC-04.01 — Folder list loads on connection 🔴
 
 - **[P]** Roots contain git repos and persona folders
 - **[S]** Open client; observe the dashboard
 - **[E]** Folder list populates with folders from all configured roots (plus any folder sources)
-- **[E]** Each folder shows its display name (persona name for persona folders, directory basename otherwise) and one of four nature icons (code, code-hub, persona, persona-hub — selected by `nature` × `shortcutCount > 0`); hub folders also show member repo chips with branch and dirty dot
+- **[E]** Each folder shows its display name (persona name for persona folders, directory basename otherwise) and one of four nature icons (code, code-hub, persona, persona-hub — selected by `nature` × `shortcutCount > 0`); rows show repo status chips with branch and dirty dot (the row's own repo facts for plain code rows, member repos for hub folders)
 - **[E]** Each row carries FolderInfo defaults: `favorite: false`, `archived: false`, `tags: []`, `missing: false`, `shortcutCount`, `persona` iff `nature === 'persona'`
 
 ### TC-04.02 — Empty root directory 🟡

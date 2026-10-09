@@ -251,9 +251,9 @@ environment-bounded in headless Chromium.
 topic): the folders list accumulates pinned windows and renders a bounded
 virtualized range. Scroll fetches continuation windows under the adopted token.
 Search matches folders and session text server-side, including unfetched rows.
-Sparse discovery
-with no depth bound (nested entries under skipped wrappers surface at any
-depth; included folders stop descent) — with a code/persona nature icon in
+Discovery is sparse with no depth bound (nested entries under skipped wrappers
+surface at any depth; included folders stop descent). Rows carry a
+code/persona nature icon in
 four variants (code, code-hub, persona, persona-hub by nature ×
 shortcutCount), favorites, archive/show-archived, inline expansion of
 per-folder sessions loaded only for rendered rows, and repo status chips
@@ -261,7 +261,7 @@ per-folder sessions loaded only for rendered rows, and repo status chips
 creates the symlink hub + `git init` + `.gitignore` + generated `AGENTS.md`)
 and disband removes it; epoch-stamped `folders_changed` deltas merge `changed`
 rows and drop `removedPaths` in both clients. Archived-row probes explicitly
-set `includeArchived`. Fresh discovery comparisons explicitly repin; folder sources contribute repo/hub entries (missing ones
+set `includeArchived`. Fresh discovery comparisons explicitly repin. Folder sources contribute repo/hub entries (missing ones
 provision via `onFolderOpen` at open time); the manager chat prompts a
 per-connection ephemeral agent whose pimote toolset (`pimote_list_folders`,
 `pimote_folder_tree`, …) answers over real server APIs, with abort and
