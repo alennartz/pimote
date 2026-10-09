@@ -417,8 +417,11 @@ export class FolderRegistry implements FolderRegistryPort {
       if (index === -1) throw new Error(`Not a hub folder: ${folderPath}`);
 
       // rm on a directory unlinks symlinks inside it; the member repos survive.
-      const [removed] = doc.hubs.splice(index, 1);
+      // The entry leaves the document only after a successful rm: an rm
+      // failure (EPERM/EBUSY) must not silently disband the hub anyway.
+      const removed = doc.hubs[index];
       await rm(removed.path, { recursive: true, force: true });
+      doc.hubs.splice(index, 1);
       await this.persist(doc);
       // Delta subscribers re-resolve rows immediately. Discard discovery's
       // deleted hub before they can read its cached tree or repo facts.

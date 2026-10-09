@@ -80,6 +80,9 @@ export class FolderStore {
   private querySessionMatches = new SvelteMap<string, string[] | undefined>();
   private requestGeneration = 0;
   private folderWindowInFlight: { context: FolderWindowContext; promise: Promise<void> } | null = null;
+  /** A window the epoch guard discarded: re-issued once the in-flight slot
+   *  frees, so a delta that raced the response cannot stall the view. */
+  private staleWindowRetry: FolderWindowContext | null = null;
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
   private searchWaiters: Array<() => void> = [];
   private reposLoadInFlight: Promise<void> | null = null;
@@ -174,6 +177,7 @@ export class FolderStore {
     this.more = false;
     this.foldersEpoch = 0;
     this.folderWindowInFlight = null;
+    this.staleWindowRetry = null;
     this.loading = false;
     if (this.searchTimer !== null) clearTimeout(this.searchTimer);
     this.searchTimer = null;
@@ -207,6 +211,17 @@ export class FolderStore {
       if (this.folderWindowInFlight?.context === context) {
         this.folderWindowInFlight = null;
         this.loading = false;
+        if (this.staleWindowRetry === context) {
+          // Re-issue the discarded window right after the slot frees: its
+          // rows were out-aged by a delta, but the view must not stall on
+          // them. The generation guard drops the retry once newer requests
+          // (a new query, a refresh, a reconnect) supersede it.
+          this.staleWindowRetry = null;
+          const generation = context.generation;
+          queueMicrotask(() => {
+            if (generation === this.requestGeneration) this.fetchFolderWindow(context.offset, context.repin);
+          });
+        }
       }
     });
     this.folderWindowInFlight = { context, promise };
@@ -225,7 +240,12 @@ export class FolderStore {
       });
       if (context.generation !== this.requestGeneration || !response.success || !response.data) return;
       const data = response.data as ListFoldersResponseData;
-      if (data.epoch < this.foldersEpoch) return;
+      if (data.epoch < this.foldersEpoch) {
+        // The delta that out-aged this response moved rows; discard its data
+        // and re-request the same window for a current computation.
+        this.staleWindowRetry = context;
+        return;
+      }
       this.applyFolderWindow(context, data);
     } catch (error) {
       console.error('[FolderStore] Failed to load folders:', error);
@@ -234,7 +254,15 @@ export class FolderStore {
 
   /** One mutation point adopts accepted window data and continuation state. */
   private applyFolderWindow(context: FolderWindowContext, data: ListFoldersResponseData): void {
-    this.folders = mergeFolderRows(this.folders, data.folders);
+    // An explicit refresh is authoritative for the unfiltered view: replace
+    // the cache so rows deleted while a delta was lost cannot survive a
+    // manual refresh. Continuation windows, query windows, and filter toggles
+    // keep merging into the accumulated cache.
+    if (context.repin && context.offset === 0 && !context.query) {
+      this.folders = [...data.folders];
+    } else {
+      this.folders = mergeFolderRows(this.folders, data.folders);
+    }
     this.roots = data.roots ?? [];
     this.orderToken = data.orderToken;
     this.nextOffset = context.offset + data.folders.length;

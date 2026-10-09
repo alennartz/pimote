@@ -460,21 +460,29 @@ export class RepoIndex {
     // self-heal when a member materializes.
     const hubs = await this.listSourceHubs();
     const entry = hubs.find((hub) => hub.path === folderPath);
-    if (entry) {
-      try {
-        await stat(folderPath);
-      } catch {
-        await materializeHubFolder(entry);
-      }
+    const existedBefore = await this.exists(folderPath);
+    // Facts before provisioning, so the materialized rows can be forwarded
+    // with concrete targets below. Captured only when the folder is missing —
+    // an existing folder cannot be provisioned.
+    const before = existedBefore ? undefined : this.currentFacts();
+    if (entry && !existedBefore) {
+      await materializeHubFolder(entry);
     }
 
     for (const source of this.sources) {
       if (!source.onFolderOpen) continue;
       await source.onFolderOpen(folderPath);
     }
-    // Successful open hooks can materialize a missing source folder or hub.
-    // Drop the shared discovery tree before callers resolve its current row.
+    // Only a provisioned folder stales discovery: a hook that scaffolded the
+    // missing folder changed what the walk sees, so re-walk now — callers
+    // resolve the new row immediately — and forward the concrete targets
+    // through the refresh notification so clients get the folder delta. An
+    // open of an existing folder keeps warm caches: warm tree reads must not
+    // rescan.
+    if (before === undefined || !(await this.exists(folderPath))) return;
     this.invalidate();
+    await this.currentStamp(false);
+    this.notifyRefreshed(before);
   }
 
   /** Drop cached listings so the next list() re-walks. */
@@ -487,6 +495,16 @@ export class RepoIndex {
   /** Register an additional discovery source; its repos join future listings. */
   registerSource(source: FolderSource): void {
     this.sources.push(source);
+  }
+
+  /** Whether a path stats successfully. */
+  private async exists(path: string): Promise<boolean> {
+    try {
+      await stat(path);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Fresh discovery: scan the folder model, merge source contributions, mark vanished paths. */

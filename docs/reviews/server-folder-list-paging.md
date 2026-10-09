@@ -33,7 +33,7 @@ The client paginates with `nextOffset = context.offset + data.folders.length`, b
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `server/src/repo-index.ts:325-329,471-477`
-- **Status:** open
+- **Status:** resolved
 
 Step 6 and the delta-reconciliation clarification require discovery additions to forward concrete targets through `setOnRefreshed` so `folders_changed` carries them. `runOpenHooks` ends with an unconditional `this.invalidate()` (`repo-index.ts:477`), which nulls the listing. The next read takes the cold path (`currentStamp`, `repo-index.ts:328`), and only `kickRefresh` calls `notifyRefreshed` — cold walks never notify, so the fact diff is absorbed silently. A source folder or hub materialized by an open hook therefore never emits a delta; clients keep the stale `missing: true` row (the `session_opened` event's `folder` field feeds session naming only, `folder-store` does not handle it), and tapping the row loops through `attemptOpen` instead of expanding until an explicit refresh. Pre-change, the TTL background refresh diffed and broadcast such rows.
 
@@ -42,7 +42,7 @@ Step 6 and the delta-reconciliation clarification require discovery additions to
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `server/src/repo-index.ts:471-477` (with `server/src/ws-handler.ts:488,547`)
-- **Status:** open
+- **Status:** resolved
 
 Unplanned work: `runOpenHooks` runs on both `open_session` paths and calls `invalidate()` after every successful open, even when no hook materialized anything (hooks self-filter by path). `invalidate()` drops the listing stamp and `statusCache.clear()` re-probes git status for every repo, so the next `list_folders` window, pin, or registry listing blocks on a full discovery walk plus per-repo git probes. Step 1 pins "warm tree reads must not rescan"; this cache bust on a frequent user action reintroduces the latency class the slice removes. A narrower trigger — invalidate only when a hook actually provisioned, or a targeted refresh that still notifies — keeps the seam's contract.
 
@@ -51,7 +51,7 @@ Unplanned work: `runOpenHooks` runs on both `open_session` paths and calls `inva
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/stores/folder-store.svelte.ts:228`
-- **Status:** open
+- **Status:** resolved
 
 `requestFolderWindow` drops any response with `data.epoch < this.foldersEpoch` and returns; nothing reschedules. Any `folders_changed` broadcast between query start and response arrival discards the window, and deltas are frequent (every AGENTS.md save, git-status refresh with fact movement, any client's tag/favorite edit). If the discarded window was the initial load, `loadedForCurrentConnection` stays false and Dashboard's `$effect` re-runs `ensureLoaded()` only on a connection-status change or remount (`Dashboard.svelte:163-171`): the user sits on "No folders configured" though folders exist. Same for search — `search()` cleared `queryMatchPaths`, the response is discarded, and the user sees "No folders." until they type again. The discard itself is correct and tested; the missing retry is the bug.
 
@@ -69,7 +69,7 @@ Unplanned work: `runOpenHooks` runs on both `open_session` paths and calls `inva
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/stores/folder-store.svelte.ts:237,169` (with `server/src/ws-handler.ts:1908`)
-- **Status:** open
+- **Status:** resolved
 
 `applyFolderRows` merge-accumulates by path; the only row-removal mechanism is `folders_changed` `removedPaths`. `broadcastFoldersChanged` drops the whole delta on `buildDelta` failure (e.g., a transient `folderRegistry.list()` error) with just a `console.warn` and no retry, and a briefly disconnected client misses the broadcast outright. `invalidateConnection` deliberately retains `folders`, and `loadFolders()` (repin) also merges window 0 into the old cache. A folder deleted while a delta is lost stays in the client cache for the rest of the SPA session: it renders in `visibleFolders`, manual refresh does not remove it, and only a hard page reload clears it. There is no cache-replace path anywhere in the store.
 
@@ -78,7 +78,7 @@ Unplanned work: `runOpenHooks` runs on both `open_session` paths and calls `inva
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/ws-handler.ts:829-835` (with `server/src/folder-listing.ts:243`)
-- **Status:** open
+- **Status:** resolved
 
 `resolveContainingFolder` returns the file's immediate directory, but rows are keyed by folder roots. For nested `folder/sub/AGENTS.md` the containing folder is not a row; `buildDelta` classifies any unresolved touched path as `removed`, so the event broadcasts `removedPaths: [folder/sub]` (a no-op) while the intended row update for `folder` is never sent. The branch also runs for the global `~/.pi/agent/AGENTS.md` opened from the FolderList toolbar button: every save calls `repoIndex.invalidate()` (forcing a full cold re-walk on the next read) and bumps the listing epoch via a broadcast-global no-op delta, which discards in-flight `list_folders` responses (feeds finding 5). AGENTS.md front-matter is the persona marker, so the lost row change is real.
 
@@ -96,7 +96,7 @@ The same business operation — adopt and track this connection's order pin — 
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/folder-registry.ts:420-421`
-- **Status:** open
+- **Status:** resolved
 
 The new order splices `doc.hubs` before `await rm(removed.path, ...)`. `rm` with `force: true` still throws on EPERM/EBUSY; on throw the command returns an error to the user, but the in-memory document already lost the hub and the next `persist` writes it — the hub silently disbanded despite the error response, and no delta fires. The previous code removed from the doc only after a successful `rm`. Capturing `doc.hubs[index]` without splicing first keeps the failure atomic.
 
@@ -105,7 +105,7 @@ The new order splices `doc.hubs` before `await rm(removed.path, ...)`. `rm` with
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/folder-listing.ts:187-197,256-262,298-302`
-- **Status:** open
+- **Status:** resolved
 
 `releaseConnection` is the only cleanup for owned pins, and `sweepOrphans` deletes only snapshots with `owner === undefined`. If a folder command is in flight when the socket closes, `selectPin`/`pin(connectionId)` runs after `releaseConnection`, and `connectionPin()` re-creates the connection entry and registers a new owned pin that nothing will ever release. Each occurrence leaks one `OrderSnapshot` (up to 3500 paths) and one `ConnectionPin` for the process lifetime. The interface doc claims pins are garbage-collected on close plus a TTL sweep for orphaned tokens; the sweep does not cover this case.
 
@@ -114,7 +114,7 @@ The new order splices `doc.hubs` before `await rm(removed.path, ...)`. `rm` with
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/folder-listing.ts:314-332`
-- **Status:** open
+- **Status:** resolved
 
 Two issues in `refreshMetadata`. First, the `finally` clears `refreshAll`/`invalidatedPaths` whenever `version === this.invalidationVersion`, including after a failed refresh (the catch swallows). A failed targeted refresh therefore marks stale paths fresh; renamed/deleted-session search text and `lastActivity` stay wrong until the 30 s TTL full refresh. Second, partial (invalidation-driven) refreshes execute `rows ?? await this.deps.listRows()` — a full registry merge over ~3500 rows whose result is never read — and `onStatusChange` calls `invalidateSessionMetadata` on every session status transition (`server/src/server.ts:195-201`), so that wasted merge runs repeatedly during active agent use.
 

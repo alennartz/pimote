@@ -83,7 +83,9 @@ export interface FolderListingService {
    *  orphaned tokens). */
   pin(connectionId?: string): Promise<FolderPin>;
 
-  /** Release every pin owned by the closed connection, including pending pins. */
+  /** Release every pin owned by the closed connection, including pending
+   *  pins. Release is final: a folder command racing the close can no longer
+   *  attach owned pins to this connection. */
   releaseConnection(connectionId: string): void;
 
   /** Serve one window under a pin. `query` filters the full pinned order —
@@ -128,6 +130,11 @@ interface ConnectionPin {
   generation: number;
   token?: string;
   pending?: Promise<FolderPin>;
+  /** Set by releaseConnection as a tombstone: the entry survives the close so
+   *  a command racing it can never re-create owned state for the dead
+   *  connection. Swept with the orphan pins after the same TTL. */
+  released?: boolean;
+  releasedAt?: number;
 }
 
 const METADATA_TTL_MS = 30_000;
@@ -174,6 +181,7 @@ function normalizeWindow(offset: number | undefined, limit: number | undefined):
 export class FolderListing implements FolderListingService {
   private metadata: ReadonlyMap<string, SessionMetadata> = new Map();
   private lastRefreshAttempt = Number.NEGATIVE_INFINITY;
+  private lastRefreshVersion = -1;
   private refreshPending?: Promise<void>;
   private invalidationVersion = 0;
   private refreshAll = true;
@@ -187,17 +195,30 @@ export class FolderListing implements FolderListingService {
   pin(connectionId?: string): Promise<FolderPin> {
     this.sweepOrphans();
     const connection = connectionId === undefined ? undefined : this.connectionPin(connectionId);
-    const generation = connection ? ++connection.generation : 0;
-    const pending = this.createPin(connectionId, connection, generation).catch((error: unknown) => {
-      if (connection?.generation === generation) connection.pending = undefined;
+    // A released connection can never own pins again: a command that races
+    // cleanup() gets an orphan (TTL-swept) instead of a leaked owned pin.
+    const owner = connection?.released ? undefined : connectionId;
+    const track = connection?.released ? undefined : connection;
+    const generation = track ? ++track.generation : 0;
+    const pending = this.createPin(owner, track, generation).catch((error: unknown) => {
+      if (track?.generation === generation) track.pending = undefined;
       throw error;
     });
-    if (connection) connection.pending = pending;
+    if (track) track.pending = pending;
     return pending;
   }
 
   releaseConnection(connectionId: string): void {
-    this.connections.delete(connectionId);
+    // Tombstone instead of delete: a folder command in flight when the socket
+    // closes re-enters through connectionPin() afterwards and must not
+    // re-create owned state — one leaked OrderSnapshot can hold thousands of
+    // paths. The tombstone is swept with the orphan pins.
+    const connection = this.connections.get(connectionId) ?? { generation: 0 };
+    connection.released = true;
+    connection.releasedAt = Date.now();
+    connection.token = undefined;
+    connection.pending = undefined;
+    this.connections.set(connectionId, connection);
     for (const [token, snapshot] of this.pins) {
       if (snapshot.owner === connectionId) this.pins.delete(token);
     }
@@ -273,7 +294,7 @@ export class FolderListing implements FolderListingService {
       expiresAt: Date.now() + ORPHAN_PIN_TTL_MS,
     };
     // Deleting/replacing the owner state also invalidates pending pin writes.
-    if (!connection || (this.connections.get(connectionId!) === connection && connection.generation === generation)) {
+    if (!connection || (!connection.released && this.connections.get(connectionId!) === connection && connection.generation === generation)) {
       if (connection?.token) this.pins.delete(connection.token);
       this.pins.set(snapshot.token, snapshot);
       if (connection) {
@@ -300,34 +321,44 @@ export class FolderListing implements FolderListingService {
     for (const [token, snapshot] of this.pins) {
       if (snapshot.owner === undefined && snapshot.expiresAt <= now) this.pins.delete(token);
     }
+    for (const [connectionId, connection] of this.connections) {
+      if (connection.released && (connection.releasedAt ?? 0) + ORPHAN_PIN_TTL_MS <= now) this.connections.delete(connectionId);
+    }
   }
 
   private scheduleRefresh(rows?: readonly FolderInfo[]): void {
     if (this.refreshPending) return;
-    const expired = Date.now() - this.lastRefreshAttempt >= METADATA_TTL_MS;
-    if (!expired && !this.refreshAll && !this.invalidatedPaths.size) return;
-    const full = expired || this.refreshAll;
     const version = this.invalidationVersion;
+    const expired = Date.now() - this.lastRefreshAttempt >= METADATA_TTL_MS;
+    // A failed refresh keeps its bookkeeping (see refreshMetadata), so the
+    // version gate — not the bookkeeping — bounds retries: the next
+    // invalidation or TTL expiry retries, never every query.
+    if (!expired && version === this.lastRefreshVersion) return;
+    const full = expired || this.refreshAll;
     const paths = [...this.invalidatedPaths];
     this.lastRefreshAttempt = Date.now();
+    this.lastRefreshVersion = version;
     this.refreshPending = Promise.resolve().then(() => this.refreshMetadata(rows, full, paths, version));
   }
 
   private async refreshMetadata(rows: readonly FolderInfo[] | undefined, full: boolean, invalidatedPaths: readonly string[], version: number): Promise<void> {
     try {
-      const currentRows = rows ?? (await this.deps.listRows());
-      const paths = full ? currentRows.map((row) => row.path) : [...invalidatedPaths];
+      // Partial refreshes re-read only the invalidated folders; the full row
+      // listing is needed solely to enumerate the full-scan paths.
+      const paths = full ? (rows ?? (await this.deps.listRows())).map((row) => row.path) : [...invalidatedPaths];
       const summaries = await this.deps.sessionSummaries.listMany(paths);
       const projected = projectMetadata(summaries);
       this.metadata = full ? projected : new Map([...Array.from(this.metadata).filter(([path]) => !paths.includes(path)), ...projected]);
-    } catch {
-      // Discovery errors in the background and summary errors keep the last
-      // successful snapshot. Public registry reads still propagate errors.
-    } finally {
+      // Success only: a failed refresh keeps the bookkeeping so its paths stay
+      // stale-eligible and a later invalidation or TTL refresh re-reads them.
       if (version === this.invalidationVersion) {
         this.refreshAll = false;
         this.invalidatedPaths.clear();
       }
+    } catch {
+      // Discovery errors in the background and summary errors keep the last
+      // successful snapshot. Public registry reads still propagate errors.
+    } finally {
       this.refreshPending = undefined;
     }
   }

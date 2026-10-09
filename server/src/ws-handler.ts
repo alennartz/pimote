@@ -1,5 +1,5 @@
 import type { WebSocket } from 'ws';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, sep } from 'node:path';
 import type {
   PimoteCommand,
   PimoteResponse,
@@ -827,12 +827,19 @@ export class WsHandler {
         case 'file_put': {
           const data = await writeEditableFile(command.path, command.content);
           if (basename(data.path) === 'AGENTS.md') {
-            // Folder rows are keyed by canonical folder path: translate the
-            // edited file path to its containing folder before delta
-            // construction. A file path is not a folder key.
-            const folderPath = await resolveContainingFolder(data.path);
-            this.repoIndex?.invalidate();
-            WsHandler.broadcastFoldersChanged(this.folderListing, [folderPath], [], this.clientRegistry);
+            // Folder rows are keyed by folder roots: the edit maps to the row
+            // that owns it (the enclosing registered root), never to a bare
+            // directory. An AGENTS.md owned by no row — the global agent
+            // instructions — touches no folder state: no cache bust, no
+            // no-op delta, no epoch bump.
+            const folderPath = await this.resolveOwningFolderRow(data.path).catch((err: unknown) => {
+              console.warn('[WsHandler] AGENTS.md folder resolution failed:', err instanceof Error ? err.message : String(err));
+              return undefined;
+            });
+            if (folderPath !== undefined) {
+              this.repoIndex?.invalidate();
+              WsHandler.broadcastFoldersChanged(this.folderListing, [folderPath], [], this.clientRegistry);
+            }
           }
           this.sendResponse(id, true, data);
           break;
@@ -2011,6 +2018,22 @@ export class WsHandler {
     if (pendingToken !== undefined) return pendingToken;
     if (this.folderToken !== undefined) return this.folderToken;
     return (await this.trackPin(folderListing.pin(this.clientId))).token;
+  }
+
+  /** The folder row that owns an edited file. Rows are keyed by folder roots,
+   *  so a nested `folder/sub/AGENTS.md` resolves to its enclosing row
+   *  `folder`; a file under no registered row (the global agent instructions)
+   *  owns nothing. */
+  private async resolveOwningFolderRow(filePath: string): Promise<string | undefined> {
+    const folder = await resolveContainingFolder(filePath);
+    const rows = await this.folderRegistry?.list();
+    let owner: string | undefined;
+    for (const row of rows ?? []) {
+      const prefix = row.path.endsWith(sep) ? row.path : row.path + sep;
+      if (folder !== row.path && !folder.startsWith(prefix)) continue;
+      if (owner === undefined || row.path.length > owner.length) owner = row.path;
+    }
+    return owner;
   }
 
   cleanup(): void {
