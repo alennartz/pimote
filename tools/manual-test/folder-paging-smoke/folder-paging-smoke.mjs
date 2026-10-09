@@ -460,7 +460,7 @@ async function main() {
         const row = document.querySelector('[data-folder-path]');
         const scroller = row?.closest('.overflow-y-auto');
         const indices = Array.from(document.querySelectorAll('[data-index]')).map((r) => Number(r.getAttribute('data-index')));
-        return { scrollHeight: scroller?.scrollHeight ?? -1, client: scroller?.clientHeight ?? -1, rows: indices.length, maxIndex: indices.length ? Math.max(...indices) : -1 };
+        return { scrollHeight: scroller?.scrollHeight ?? -1, client: scroller?.clientHeight ?? -1, rows: indices.length, maxIndex: indices.length ? Math.max(...indices) : -1, scrollTop: scroller?.scrollTop ?? -1 };
       })()`);
       const reCleared = await fillSelector(SEARCH_INPUT, '');
       await wait(1200);

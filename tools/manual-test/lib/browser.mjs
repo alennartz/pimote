@@ -104,24 +104,33 @@ export function makeBrowserHelpers({ session, log = () => {} }) {
 
   // ------------------------------------------------------ folder-list helpers
 
-  /** Scroll the dashboard until a virtualized row enters the rendered range. */
+  /**
+   * Scroll the dashboard until a virtualized row enters the rendered range.
+   * Rows land asynchronously and the list re-sorts live (loaded session lists
+   * move rows), so a row can sit above the sweep frontier when its data lands
+   * or its recency resolves. Scan downward, then upward, then downward again
+   * before giving up.
+   */
   async function revealFolder(path) {
-    await evalBrowser(`(() => {
-      const row = document.querySelector('[data-folder-path]');
-      const scroller = row?.closest('.overflow-y-auto');
-      if (scroller) scroller.scrollTop = 0;
-    })()`);
-    await wait(150);
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const found = await evalBrowser(`(() => {
-        const target = Array.from(document.querySelectorAll('[data-folder-path]')).find(row => row.getAttribute('data-folder-path') === ${JSON.stringify(path)});
-        if (target) { target.scrollIntoView({ block: 'center' }); return true; }
-        const scroller = document.querySelector('[data-folder-path]')?.closest('.overflow-y-auto');
-        if (scroller) scroller.scrollTop += Math.max(100, scroller.clientHeight * 0.6);
-        return false;
+    const step = (dir) => `(() => {
+      const target = Array.from(document.querySelectorAll('[data-folder-path]')).find(row => row.getAttribute('data-folder-path') === ${JSON.stringify(path)});
+      if (target) { target.scrollIntoView({ block: 'center' }); return true; }
+      const scroller = document.querySelector('[data-folder-path]')?.closest('.overflow-y-auto');
+      if (scroller) scroller.scrollTop += ${dir} * Math.max(100, scroller.clientHeight * 0.6);
+      return false;
+    })()`;
+    for (const dir of [1, -1, 1]) {
+      await evalBrowser(`(() => {
+        const row = document.querySelector('[data-folder-path]');
+        const scroller = row?.closest('.overflow-y-auto');
+        if (scroller) scroller.scrollTop = ${dir > 0 ? '0' : 'scroller.scrollHeight'};
       })()`);
       await wait(150);
-      if (found === true) return true;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const found = await evalBrowser(step(dir));
+        await wait(150);
+        if (found === true) return true;
+      }
     }
     return false;
   }
