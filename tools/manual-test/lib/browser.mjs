@@ -38,7 +38,7 @@ export function makeBrowserHelpers({ session, log = () => {} }) {
       }, timeoutMs);
       await once(child, 'exit');
       clearTimeout(timer);
-      const transient = /Resource temporarily unavailable|daemon may be busy/i.test(stdout + stderr);
+      const transient = /Resource temporarily unavailable|daemon may be busy|Execution context was destroyed|Cannot find context|navigation/i.test(stdout + stderr);
       if ((child.exitCode === 0 && !timedOut) || allowFailure || (!transient && !timedOut) || attempt === retries) {
         if ((child.exitCode !== 0 || timedOut) && !allowFailure) {
           log('agent-browser failed:', args.join(' '), '\n' + stderr);

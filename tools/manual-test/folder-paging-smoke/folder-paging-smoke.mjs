@@ -134,9 +134,10 @@ async function closeSessionToDashboard() {
 /** Socket/page diagnostics for failed assertions. */
 async function pageDiag() {
   const sockets = await evalBrowser(`(window.__pmSockets ?? []).map((s) => s.readyState)`);
+  const rows = await evalBrowser(`document.querySelectorAll('[data-folder-path]').length`);
   const folderSends = await sentLog('m.type === "list_folders"');
   const sends = folderSends.map((m) => ({ offset: m.offset, query: m.query, repin: m.repin ?? false, arch: m.includeArchived ?? false }));
-  return `sockets=${JSON.stringify(sockets)} list_folders=${JSON.stringify(sends)} console=[${await pageConsole(8)}]`;
+  return `sockets=${JSON.stringify(sockets)} rows=${rows} list_folders=${JSON.stringify(sends)} console=[${await pageConsole(8)}]`;
 }
 
 // -------------------------------------------------------------------- main
@@ -450,7 +451,23 @@ async function main() {
     );
     assert(togglePaths.size <= everLoaded.size + 40, `toggle reloads only loaded/rendered lists (${togglePaths.size} reloads vs ${everLoaded.size} previously loaded)`);
     const badgeText = await rowText(archAnchor);
-    assert(badgeText.includes('Archived'), `show-archived reveals the archived row with its badge (row=${JSON.stringify(badgeText.slice(0, 80))}; ${await pageDiag()})`);
+    let retryNote = '';
+    if (!badgeText.includes('Archived')) {
+      // Recovery probe: a search-clear refetch re-lands the window data and
+      // re-measures rows. If the row renders only after that, the row data is
+      // present and the virtualizer failed to keep its slot renderable.
+      const geom = await evalBrowser(`(() => {
+        const row = document.querySelector('[data-folder-path]');
+        const scroller = row?.closest('.overflow-y-auto');
+        const indices = Array.from(document.querySelectorAll('[data-index]')).map((r) => Number(r.getAttribute('data-index')));
+        return { scrollHeight: scroller?.scrollHeight ?? -1, client: scroller?.clientHeight ?? -1, rows: indices.length, maxIndex: indices.length ? Math.max(...indices) : -1 };
+      })()`);
+      const reCleared = await fillSelector(SEARCH_INPUT, '');
+      await wait(1200);
+      const retryText = await rowText(archAnchor);
+      retryNote = ` retry-after-clear=${retryText.includes('Archived')}(reClear=${reCleared}) geom=${JSON.stringify(geom)}`;
+    }
+    assert(badgeText.includes('Archived'), `show-archived reveals the archived row with its badge (row=${JSON.stringify(badgeText.slice(0, 60))};${retryNote} ${await pageDiag()})`);
     await browser(['screenshot', join(shotsDir, '04-archived.png')], { allowFailure: true });
     await browser(['click', 'button[title="More folder actions"]']);
     await wait(400);
@@ -588,6 +605,13 @@ async function main() {
       () => false,
     );
     assert(epsilonGit, 'created folder exists on disk (mkdir + git init)');
+    // The create flow opens the session AFTER the refresh request; wait for
+    // the session view before closing it, or the close clicks into nothing.
+    for (let i = 0; i < 24; i++) {
+      const composer = await evalBrowser(`Boolean(document.querySelector('textarea:not([aria-label="Message the manager"])'))`);
+      if (composer === true) break;
+      await wait(500);
+    }
     const backToDashboard = await closeSessionToDashboard();
     assert(backToDashboard === true, 'closing the session returns to the dashboard');
     assert((await rowText(epsilonDir)).includes('epsilon-refresh'), `refreshed cache shows the created folder (${await pageDiag()})`);
@@ -599,6 +623,7 @@ async function main() {
     // ============================================================
     const hubPath = join(rootA, 'hub-phantom');
     await closeSessionToDashboard(); // in case a restored session reclaimed the view
+    await installSocketProbe(); // idempotent; fresh after any page reload
     await probeA.send({ type: 'create_hub', name: 'hub-phantom', root: rootA, memberPaths: [alphaAnchor] });
     await probeB.waitForEvent('folders_changed', (e) => e.changed?.some((r) => r.path === hubPath), 25_000);
     await probeA.send({ type: 'update_folder', folderPath: hubPath, favorite: true });
