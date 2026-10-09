@@ -109,6 +109,17 @@ describe('SessionRegistry', () => {
       expect(registry.sessions['s2'].needsAttention).toBe(false);
     });
 
+    it('agent_settled with aborted does not mark a background session as needing attention', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.addSession('s2', '/path2', 'proj2');
+      registry.switchTo('s1');
+      registry.handleEvent(makeSessionEvent('agent_start', 's2'));
+      // The user aborted s2 themselves: the settle needs no attention flag.
+      registry.handleEvent(makeSessionEvent('agent_settled', 's2', { aborted: true }));
+      expect(registry.sessions['s2'].needsAttention).toBe(false);
+      expect(registry.sessions['s2'].status).toBe('idle');
+    });
+
     it('switchTo() with unknown sessionId sets viewedSessionId (no error)', () => {
       expect(() => registry.switchTo('unknown')).not.toThrow();
       expect(registry.viewedSessionId).toBe('unknown');
@@ -692,6 +703,25 @@ describe('SessionRegistry', () => {
       expect(exec).toBeDefined();
       expect(exec.status).toBe('completed');
       expect(exec.result).toBe('done');
+    });
+
+    it('tool_execution_end stores durationMs for the status display', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_start', 's1', {
+          toolCallId: 'tc3',
+          toolName: 'bash',
+          args: {},
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_end', 's1', {
+          toolCallId: 'tc3',
+          result: 'done',
+          durationMs: 42,
+        }),
+      );
+      expect(registry.sessions['s1'].toolExecutions['tc3'].durationMs).toBe(42);
     });
 
     it('tool_execution_end reduces the SDK AgentToolResult wrapper to text plus data', () => {

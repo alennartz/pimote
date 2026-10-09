@@ -286,7 +286,9 @@ export function createSessionState(
       state.status = 'idle';
       state.idleSince = Date.now();
       state.needsAttention = true;
-      if (slotRef.slot) callbacks.onSessionIdle?.(sessionId, slotRef.slot);
+      // A user-aborted run does not warrant a completion push: whoever
+      // aborted it is already engaged with the session.
+      if (!event.aborted && slotRef.slot) callbacks.onSessionIdle?.(sessionId, slotRef.slot);
       callbacks.onStatusChange?.(sessionId, folderPath);
     }
     eventBuffer.onEvent(

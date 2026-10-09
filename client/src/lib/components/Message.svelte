@@ -216,6 +216,7 @@
               result={exec?.status === 'completed' ? exec.result : undefined}
               data={exec?.data}
               isError={exec?.isError}
+              durationMs={exec?.durationMs}
             />
           {:else if block.type === 'tool_result'}
             <ToolCall content={block} data={block.data} />

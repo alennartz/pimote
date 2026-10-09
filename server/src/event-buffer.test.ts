@@ -444,6 +444,31 @@ describe('EventBuffer', () => {
       expect((liveEvents[1] as any).willRetry).toBeUndefined();
     });
 
+    it('forwards durationMs on tool_execution_end and omits it when the SDK did not record one', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(makeSdkEvent('tool_execution_end', { toolCallId: 'tc-dur', result: 'done', durationMs: 250 }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('tool_execution_end', { toolCallId: 'tc-nodur', result: 'done' }), SESSION_ID, sendLive);
+
+      expect(liveEvents[0]).toEqual(expect.objectContaining({ type: 'tool_execution_end', durationMs: 250 }));
+      expect((liveEvents[1] as any).durationMs).toBeUndefined();
+    });
+
+    it('forwards aborted on agent_settled and omits it for a finished run', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const sendLive = (e: PimoteSessionEvent) => liveEvents.push(e);
+
+      buffer.onEvent(makeSdkEvent('agent_settled', { aborted: true }), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('agent_settled', { aborted: false }), SESSION_ID, sendLive);
+
+      expect(liveEvents[0]).toEqual(expect.objectContaining({ type: 'agent_settled', aborted: true }));
+      // A finished run omits the flag (no spurious aborted: false on the wire).
+      expect((liveEvents[1] as any).aborted).toBeUndefined();
+    });
+
     it('maps SDK compaction_start/end onto the wire auto_compaction_* events', () => {
       const buffer = new EventBuffer(10);
       const liveEvents: PimoteSessionEvent[] = [];

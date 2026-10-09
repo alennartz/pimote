@@ -236,6 +236,7 @@ export class EventBuffer {
           toolCallId: sdkEvent.toolCallId,
           result: sdkEvent.result,
           isError: sdkEvent.isError || undefined,
+          ...(sdkEvent.durationMs !== undefined ? { durationMs: sdkEvent.durationMs } : {}),
         };
 
       // The SDK emits `compaction_start` / `compaction_end`; pimote's wire
@@ -292,7 +293,7 @@ export class EventBuffer {
       // and only when no retry/compaction/queued-continuation is pending). It
       // drives the idle UI transition + completion notification.
       case 'agent_settled':
-        return { ...base, type: 'agent_settled' };
+        return { ...base, type: 'agent_settled', ...(sdkEvent.aborted ? { aborted: true } : {}) };
 
       // Custom entries with a registered renderer become display-only
       // custom messages (same visibility rule as mapContextEntries, so live

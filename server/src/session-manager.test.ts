@@ -157,6 +157,50 @@ describe('session lifecycle idle boundary', () => {
     expect(sendEvent.mock.calls.map(([event]) => event.type)).toEqual(['agent_start', 'agent_end', 'agent_settled']);
   });
 
+  it('does not fire the completion push when the settled run was aborted', () => {
+    let listener: ((event: any) => void) | undefined;
+    const session = {
+      sessionId: 'settle-abort-test',
+      sessionName: 'Settle abort test',
+      isStreaming: false,
+      pendingMessageCount: 0,
+      agent: { waitForIdle: vi.fn(async () => {}), continue: vi.fn(async () => {}) },
+      messages: [],
+      subscribe: vi.fn((fn: (event: any) => void) => {
+        listener = fn;
+        return vi.fn();
+      }),
+    } as any;
+    const eventBus = { on: vi.fn(() => vi.fn()) } as any;
+    const onStatusChange = vi.fn();
+    const onSessionIdle = vi.fn();
+    const slotRef = { slot: null as ManagedSlot | null };
+
+    const state = createSessionState(
+      session,
+      eventBus,
+      createTestConfig(),
+      {
+        onStatusChange,
+        onSessionIdle,
+        sendEvent: vi.fn(),
+        notify: vi.fn(async () => {}),
+      },
+      slotRef,
+      '/home/user/project',
+    );
+    slotRef.slot = createFakeSlot({ id: 'settle-abort-test' });
+
+    listener!({ type: 'agent_start' });
+    listener!({ type: 'agent_settled', aborted: true });
+    // The user aborted the run: idle state advances (reap clock runs) but
+    // no completion push fires — whoever aborted it is already engaged.
+    expect(state.status).toBe('idle');
+    expect(state.idleSince).toEqual(expect.any(Number));
+    expect(onSessionIdle).not.toHaveBeenCalled();
+    expect(onStatusChange).toHaveBeenCalledTimes(2);
+  });
+
   it('notifies sidebar listeners immediately when session info changes', () => {
     let listener: ((event: any) => void) | undefined;
     const session = {

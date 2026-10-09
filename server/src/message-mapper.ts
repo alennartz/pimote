@@ -217,6 +217,7 @@ export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
             // structuredContent/details) so the client can render it typed.
             ...(msg.details !== undefined && msg.details !== null ? { data: msg.details } : {}),
             isError: msg.isError || undefined,
+            ...(msg.durationMs !== undefined ? { durationMs: msg.durationMs } : {}),
           },
         ],
       };

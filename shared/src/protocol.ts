@@ -137,6 +137,10 @@ export interface PimoteMessageContent {
   result?: unknown;
   /** Structured result payload for tool_result blocks (the tool's details/structuredContent). */
   data?: unknown;
+  /** Monotonic-clock execution time of the tool call in milliseconds,
+   *  excluding hooks. Absent when the tool did not run and for results
+   *  recorded before pi 1.1.0. */
+  durationMs?: number;
   isError?: boolean;
   /** True while this content block is still receiving streaming deltas. Only set on StreamingMessage blocks. */
   streaming?: boolean;
@@ -883,6 +887,9 @@ export interface AgentEndEvent extends SessionEventBase {
  *  genuinely quiescent. Drives the idle UI transition + completion notification. */
 export interface AgentSettledEvent extends SessionEventBase {
   type: 'agent_settled';
+  /** True when the run ended via user abort rather than completing.
+   *  Absent on events from older servers. */
+  aborted?: boolean;
 }
 
 /** Authoritative pending input snapshot, including explicit abort queue removal. */
@@ -965,6 +972,9 @@ export interface ToolExecutionEndEvent extends SessionEventBase {
   toolCallId: string;
   result: unknown;
   isError?: boolean;
+  /** Monotonic-clock execution time of the call in milliseconds, excluding
+   *  hooks. Absent when the tool did not run. */
+  durationMs?: number;
 }
 
 /** Live output chunk emitted while a native user bash command is running. */

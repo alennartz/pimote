@@ -21,6 +21,7 @@ import type {
   ToolExecutionStartEvent,
   ToolExecutionUpdateEvent,
   ToolExecutionEndEvent,
+  AgentSettledEvent,
   FullResyncEvent,
   AgentEndEvent,
   AutoRetryEndEvent,
@@ -151,7 +152,10 @@ export interface PerSessionState {
   streamingMessage: StreamingMessage | null;
   streamingKey: string | null;
   messageKeys: string[];
-  toolExecutions: Record<string, { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown; data?: unknown; isError?: boolean }>;
+  toolExecutions: Record<
+    string,
+    { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown; data?: unknown; isError?: boolean; durationMs?: number }
+  >;
   /** Transient native bash executions keyed by caller-owned command ID. */
   bashExecutions: Record<string, BashExecutionState>;
   autoCompactionEnabled: boolean;
@@ -407,7 +411,10 @@ export class SessionRegistry {
         // streaming. Promote those completed transient entries only after the
         // SDK's settled boundary, preserving assistant/message ordering.
         this.flushCompletedBash(sessionId);
-        if (sessionId !== this.viewedSessionId) {
+        // A user-aborted settle needs no attention flag: the abort came from
+        // whoever was engaged with the session.
+        const settledAborted = (event as AgentSettledEvent).aborted === true;
+        if (sessionId !== this.viewedSessionId && !settledAborted) {
           session.needsAttention = true;
         }
         break;
@@ -599,6 +606,7 @@ export class SessionRegistry {
           call.result = reduced.text;
           if (reduced.data !== undefined) call.data = reduced.data;
           call.isError = end.isError;
+          if (end.durationMs !== undefined) call.durationMs = end.durationMs;
         }
         break;
       }

@@ -14,6 +14,14 @@
   import XCircle from '@lucide/svelte/icons/x-circle';
   import Loader2 from '@lucide/svelte/icons/loader-2';
 
+  /** Format a tool execution duration (monotonic-clock ms, excludes hooks). */
+  function formatToolDuration(ms: number): string {
+    if (ms < 1000) return `${(ms / 1000).toFixed(1)}s`;
+    const seconds = Math.round(ms / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+  }
+
   let {
     content,
     streaming = false,
@@ -22,6 +30,7 @@
     result = undefined,
     data = undefined,
     isError = false,
+    durationMs = undefined,
   }: {
     content: PimoteMessageContent;
     streaming?: boolean;
@@ -30,6 +39,7 @@
     result?: unknown;
     data?: unknown;
     isError?: boolean;
+    durationMs?: number;
   } = $props();
 
   let expanded = $state(false);
@@ -38,6 +48,10 @@
   let toolName = $derived(content.toolName ?? 'unknown');
   let isResult = $derived(content.type === 'tool_result');
   let isCompleted = $derived(isResult || result !== undefined);
+  // Live calls get the duration from the toolExecutions record (prop);
+  // replayed tool_result blocks carry it on the content block.
+  let effectiveDurationMs = $derived(content.durationMs ?? durationMs);
+  let durationSuffix = $derived(effectiveDurationMs !== undefined ? ` · ${formatToolDuration(effectiveDurationMs)}` : '');
   let isEdit = $derived(toolName === 'edit');
   let isWrite = $derived(toolName === 'write');
 
@@ -243,7 +257,7 @@
     {#if inProgress}
       <span class="tool-status">running…</span>
     {:else if isCompleted}
-      <span class="tool-status">completed</span>
+      <span class="tool-status">completed{durationSuffix}</span>
     {/if}
   </button>
 

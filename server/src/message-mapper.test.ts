@@ -58,6 +58,16 @@ describe('mapAgentMessage', () => {
       expect(result.content[0]).not.toHaveProperty('data');
     });
 
+    it('forwards durationMs on tool results recorded by pi 1.1.0+', () => {
+      const result = m({ role: 'toolResult', toolCallId: 'tc-4', toolName: 'bash', content: [{ type: 'text', text: 'output' }], durationMs: 1234 });
+      expect(result.content[0]).toMatchObject({ type: 'tool_result', durationMs: 1234 });
+    });
+
+    it('omits durationMs when the SDK did not record one', () => {
+      const result = m({ role: 'toolResult', toolCallId: 'tc-5', toolName: 'bash', content: [{ type: 'text', text: 'output' }] });
+      expect(result.content[0]).not.toHaveProperty('durationMs');
+    });
+
     it('preserves native bash result metadata for a context-visible execution', () => {
       const result = m({
         role: 'bashExecution',
