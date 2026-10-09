@@ -23,6 +23,8 @@ interface RepoStatus {
 /** One completed walk's stamp; kept as the cached listing until invalidated. */
 interface ListingStamp {
   entries: RepoInfo[];
+  /** The discovery walk this listing was derived from; tree readers reuse it. */
+  tree: SparseTree;
   at: number;
 }
 
@@ -163,20 +165,44 @@ export class RepoIndex {
    * list, or after `invalidate()`) blocks on the walk.
    */
   async list(): Promise<RepoInfo[]> {
+    const stamp = await this.currentStamp(true);
+    return await Promise.all(stamp.entries.map((entry) => this.resolveServed(entry)));
+  }
+
+  /**
+   * The retained discovery tree, cached with the listing and shared with
+   * `list()` — one walk feeds both readers. Tree reads care about discovery
+   * staleness only: an expired read serves the previous tree immediately
+   * while a background refresh re-walks (manager tree consumers accept trees
+   * up to one TTL old). Invalidations discard the tree with the listing.
+   */
+  async tree(): Promise<SparseTree> {
+    return (await this.currentStamp(false)).tree;
+  }
+
+  /**
+   * The current walk's stamp under the stale-while-revalidate policy: warm
+   * reads serve the retained stamp and kick a background refresh when stale;
+   * cold reads join or start one walk — never a walk invalidated mid-flight.
+   * `refreshWhenStatusesExpire` treats expired git statuses as staleness too
+   * (list readers want fresh status; tree readers care about discovery only).
+   */
+  private async currentStamp(refreshWhenStatusesExpire: boolean): Promise<ListingStamp> {
     const cached = this.listing;
     if (cached) {
-      if (this.now() - cached.at >= this.ttlMs || cached.entries.some((entry) => this.statusExpired(entry))) this.kickRefresh();
-      return await Promise.all(cached.entries.map((entry) => this.resolveServed(entry)));
+      const statusesDue = refreshWhenStatusesExpire && cached.entries.some((entry) => this.statusExpired(entry));
+      if (this.now() - cached.at >= this.ttlMs || statusesDue) this.kickRefresh();
+      return cached;
     }
     // Cold path: join or start the walk — but never serve a walk whose stamp
     // was invalidated mid-flight. `invalidate()` nulls the stamp, and the
-    // contract is that the next `list()` re-walks, even when it joined the
-    // walk that was already running. Invalidations are user-action driven, so
-    // the loop converges on the fresh state.
+    // contract is that the next read re-walks, even when it joined the walk
+    // that was already running. Invalidations are user-action driven, so the
+    // loop converges on the fresh state.
     for (;;) {
       await this.discover();
       const listing = this.listing;
-      if (listing) return await Promise.all(listing.entries.map((entry) => this.resolveServed(entry)));
+      if (listing) return listing;
     }
   }
 
@@ -398,7 +424,7 @@ export class RepoIndex {
     for (const repo of byPath.values()) {
       entries.push(await this.markMissing(repo));
     }
-    const stamp: ListingStamp = { entries, at: this.now() };
+    const stamp: ListingStamp = { entries, tree, at: this.now() };
     this.listing = stamp;
     return stamp;
   }

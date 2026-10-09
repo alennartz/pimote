@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RepoIndex, type RepoIndexOptions } from './repo-index.js';
 import type { RepoInfo } from '../../shared/dist/index.js';
+import type { FolderOccurrence, SparseTree } from './folder-model/index.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -48,6 +49,24 @@ function makeIndex(roots: string[] = [tempDir], options: RepoIndexOptions = {}):
 
 function repoAt(index: RepoIndex, repoPath: string): RepoInfo | undefined {
   return index.list().then((repos) => repos.find((r) => r.path === repoPath));
+}
+
+/** Every folder-entry path across the occurrence tree, in discovery order. */
+function treeEntryPaths(tree: SparseTree): string[] {
+  const paths: string[] = [];
+  const visit = (occurrence: FolderOccurrence): void => {
+    paths.push(occurrence.entry.path);
+    occurrence.children.forEach(visit);
+  };
+  tree.occurrences.forEach(visit);
+  return paths;
+}
+
+/** Poll until the condition holds (bounded; the assertion after it fails loudly on stall). */
+async function until(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200 && !condition(); attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 describe('RepoIndex.list() — folder-model discovery', () => {
@@ -465,6 +484,123 @@ describe('RepoIndex.list() — TTL cache', () => {
     // caller joined the walk but gets the post-invalidation state.
     expect(sourceCalls).toBe(2);
     expect(rows.map((r) => r.path)).toContain(join(externalDir, 'late'));
+  });
+});
+
+describe('RepoIndex.tree() — cached discovery', () => {
+  it('serves repeated tree and list reads from one shared discovery walk', async () => {
+    const repoA = join(tempDir, 'repo-a');
+    await initRepo(repoA);
+
+    const index = makeIndex();
+    let walks = 0;
+    index.registerSource({
+      id: 'probe',
+      list: async () => {
+        walks++;
+        return [];
+      },
+    });
+
+    const first = await index.tree();
+    expect(treeEntryPaths(first)).toContain(repoA);
+
+    // Warm reads reuse the retained walk — same tree object, no rescan — and
+    // the repo listing shares that discovery instead of re-walking.
+    const second = await index.tree();
+    expect(second).toBe(first);
+    expect((await index.list()).map((r) => r.path)).toContain(repoA);
+    expect(walks).toBe(1);
+  });
+
+  it('joins one single-flight walk when a cold tree and list read race', async () => {
+    const repoA = join(tempDir, 'repo-a');
+    await initRepo(repoA);
+
+    const index = makeIndex();
+    let walks = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    index.registerSource({
+      id: 'gated',
+      list: async () => {
+        walks++;
+        await gate; // hold the one shared walk mid-flight
+        return [];
+      },
+    });
+
+    const treePending = index.tree();
+    const listPending = index.list();
+    release();
+    const [tree, repos] = await Promise.all([treePending, listPending]);
+
+    expect(walks).toBe(1);
+    expect(treeEntryPaths(tree)).toContain(repoA);
+    expect(repos.map((r) => r.path)).toContain(repoA);
+  });
+
+  it('serves the previous tree on TTL-expired reads while the refresh replaces it in the background', async () => {
+    const repoA = join(tempDir, 'repo-a');
+    const repoB = join(tempDir, 'repo-b');
+    await initRepo(repoA);
+
+    const index = makeIndex([tempDir], { ttlMs: 100 });
+    let walks = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    index.registerSource({
+      id: 'gated',
+      list: async () => {
+        walks++;
+        if (walks > 1) await gate; // hold the background refresh mid-flight
+        return [];
+      },
+    });
+
+    const warm = await index.tree();
+    await initRepo(repoB);
+    clock = 500; // past the TTL
+
+    // The expired read serves the previous tree immediately — never the
+    // in-flight refresh (walk 2 is held at the gated source until released).
+    const stalePromise = index.tree();
+    await until(() => walks === 2);
+    const stale = await stalePromise;
+    expect(stale).toBe(warm);
+
+    release();
+    await index.whenRefreshed();
+    const refreshed = await index.tree();
+    expect(refreshed).not.toBe(warm);
+    expect(treeEntryPaths(refreshed)).toContain(repoB);
+  });
+
+  it('discards the retained tree with the listing on invalidate()', async () => {
+    const repoA = join(tempDir, 'repo-a');
+    const repoB = join(tempDir, 'repo-b');
+    await initRepo(repoA);
+
+    const index = makeIndex();
+    let walks = 0;
+    index.registerSource({
+      id: 'probe',
+      list: async () => {
+        walks++;
+        return [];
+      },
+    });
+
+    const before = await index.tree();
+    expect(walks).toBe(1);
+
+    await initRepo(repoB);
+    index.invalidate();
+    const after = await index.tree();
+
+    expect(walks).toBe(2); // cold again — the retained tree went with the listing
+    expect(after).not.toBe(before);
+    expect(treeEntryPaths(after)).toContain(repoB);
   });
 });
 

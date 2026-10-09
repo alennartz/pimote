@@ -99,6 +99,7 @@ describe('FolderRegistry.list() — scan rows', () => {
       archived: false,
       tags: [],
       missing: false,
+      repo: { path: repoA, name: 'repo-a', branch: 'main', dirty: false, ahead: 0, behind: 0 },
       activeSessionCount: 0,
       externalProcessCount: 0,
     });
@@ -115,6 +116,8 @@ describe('FolderRegistry.list() — scan rows', () => {
       persona: { name: 'Friendly', description: 'Greets everyone' },
       shortcutCount: 0,
     });
+    // Personas never carry own repo facts.
+    expect(folder?.repo).toBeUndefined();
   });
 
   it('sets shortcutCount from first-discovery immediate shortcut children', async () => {

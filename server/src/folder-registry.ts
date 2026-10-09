@@ -190,6 +190,10 @@ interface FolderViewInputs {
  * discovery seeing a hub first never loses membership. Persisted hub metadata
  * wins over source metadata. Rows get `missing` only when they are not scanned
  * and verified absent — orphaned curation overrides alone never make a row.
+ *
+ * Plain code rows known to the index carry their own repo facts in `repo`,
+ * copied from the index cache (no git probe here). Hub rows keep membership in
+ * `repos`; persona rows carry neither.
  */
 function mergedFolders(input: FolderViewInputs): FolderInfo[] {
   const scanned = collectScanEntries(input.tree);
@@ -213,10 +217,15 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
       : undefined;
     // Hub rows implicitly inherit their members' tags.
     const memberTagUnion = members ? unionTags(...members.map((member) => member.tags)) : undefined;
+    const nature = scan?.entry.nature ?? (sourcePersona ? 'persona' : 'code');
+    // Own repo facts for plain code rows: copied from the cached index facts
+    // (effective tags like every other RepoInfo on a row). Personas and hub
+    // rows omit `repo`.
+    const ownRepo: RepoInfo | undefined = nature === 'code' && !hub && repo ? { ...repo, tags: repoTags(path) } : undefined;
     rows.push({
       path,
       name: scan?.entry.name ?? hub?.name ?? repo?.name ?? basename(path),
-      nature: scan?.entry.nature ?? (sourcePersona ? 'persona' : 'code'),
+      nature,
       ...(scan?.entry.persona ? { persona: scan.entry.persona } : sourcePersona ? { persona: sourcePersona.persona } : {}),
       shortcutCount: scan?.shortcutCount ?? hub?.memberPaths.length ?? 0,
       favorite: override?.favorite ?? false,
@@ -225,6 +234,7 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
       // tags for hubs; userTags is only the removable own-path subset.
       tags: (hub ? unionTags(userTags, hub.sourceTags, memberTagUnion) : unionTags(repo?.tags, sourcePersona?.tags, userTags)) ?? [],
       missing: !scan && input.absent.has(path),
+      ...(ownRepo ? { repo: ownRepo } : {}),
       ...(members ? { repos: members } : {}),
       ...(userTags ? { userTags } : {}),
       activeSessionCount: 0,

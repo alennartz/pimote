@@ -236,12 +236,16 @@ The orchestrator approved these narrow exceptions to immutable tests. Write each
 - `server/src/repo-index.test.ts`: add cached-tree coverage. Repeated tree/window reads reuse discovery. TTL-expired reads serve the previous tree during background refresh. Preserve invalidation behavior.
 - `client/src/lib/stores/folder-store.svelte.test.ts`: correct the legacy `setShowArchived` eager-enumeration expectation. Seed one loaded session list and one unloaded folder. Assert reload only for the loaded list, then assert explicit `loadSessions` loads the other. Preserve preference persistence.
 - `server/src/folder-registry.test.ts`: cover member-tag changes targeting the member and dependent hubs. Verify inherited hub tags against a fresh registry listing.
+- `server/src/folder-registry.test.ts` (authorized during implementation): the `lists every discovered code folder with required defaults` row fixture at ~line 93 pins the row with `toEqual` without `repo`, which the approved Step 2 additive `repo?: RepoInfo` enrichment supersedes. Add the expected `repo` facts to that one `toEqual` row; keep `toEqual` (exact row-shape pinning stays, the shape legitimately grew). Also assert persona/hub rows omit `repo` if not already covered.
+- `server/src/index.test.ts` (authorized during implementation): the `wires pimote_folder_tree through the on-demand scan port` test pins "fresh scan per execution / no scanner cache", which the approved Cached tree seam clarification supersedes. Rewrite that one test to pin the cached-tree seam instead: shared walk via `repoIndex.tree()`, exactly one walk for repeated tool executions (the cache serves the second call), TTL-stale acceptance. Keep the test's intent — the manager tree tool delegates to the folder-model seam, not its own scanner.
 
 These amendments cover decisions resolved during planning, not new product scope. Existing tests remain unchanged otherwise.
 
 **Review status:** approved
 
 ## Steps
+
+**Pre-implementation commit:** `81b326aeff5b0994d78ed0135e660a751a2e5594`
 
 ### Step 1: Reuse the cached discovery tree
 
@@ -254,7 +258,7 @@ In `server/src/index.ts`, construct `repoIndex` before `folderTree`. Route `fold
 Do not add scanner caching or cache scan rows inside `FolderListing`.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/repo-index.test.ts` passes the cache tests. Existing discovery, missing-row, and invalidation tests remain green. Repeated registry listings share a walk through the wired tree port.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Put own repo facts on folder rows
 
@@ -265,7 +269,7 @@ In `server/src/folder-registry.ts`, update `mergedFolders` to populate `repo` fo
 Keep registry curation and full-list interfaces unchanged. This step changes row enrichment, not query ownership.
 
 **Verify:** `npm run build:shared` succeeds. Existing folder registry and SDK-twin tests pass. Plain code rows expose their git facts without a separate client repo listing. Persona rows expose no own repo facts.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Implement batched session summaries
 
@@ -274,7 +278,7 @@ In `server/src/session-summaries.ts`, implement `SessionSummaryIndex.listMany(fo
 Preserve the existing per-folder summary ordering, parse error behavior, and mtime-plus-size cache. Do not create a second file parser or cache.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/session-summaries.test.ts` passes batch, missing-directory, cache-identity, and existing parsing tests.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Implement metadata snapshots and owned pins
 

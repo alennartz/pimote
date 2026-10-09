@@ -418,7 +418,7 @@ describe('main — manager toolset port wiring', () => {
     expect(Object.keys(tree.parameters.properties ?? {})).toHaveLength(0);
   });
 
-  it('wires pimote_folder_tree through the on-demand scan port: finite recursive structured output, no scanner cache', async () => {
+  it('wires pimote_folder_tree through the shared cached discovery walk, not its own scanner', async () => {
     const tree = {
       occurrences: [
         {
@@ -431,17 +431,25 @@ describe('main — manager toolset port wiring', () => {
     };
     mocks.scanFolderModel.mockImplementation(async () => tree);
 
-    const def = toolNamed(await registeredManagerTools(), 'pimote_folder_tree');
+    const tools = await registeredManagerTools();
+    const def = toolNamed(tools, 'pimote_folder_tree');
     const result = await def.execute('call-1', {}, undefined, undefined, {});
 
     expect(result.details).toEqual(tree);
     // Finite and JSON-safe end to end.
     expect(JSON.parse(JSON.stringify(result.details))).toEqual(tree);
-    // On demand: every tree request rescans from config.roots — no shared scanner cache.
+    // Shared cached walk: repeated executions reuse the discovery retained by
+    // the repo index instead of rescanning, and the repo listing joins the
+    // same walk. Manager tree consumers accept trees up to one TTL old.
     const scansBefore = mocks.scanFolderModel.mock.calls.length;
-    await def.execute('call-2', {}, undefined, undefined, {});
-    expect(mocks.scanFolderModel.mock.calls.length).toBe(scansBefore + 1);
-    expect(mocks.scanFolderModel).toHaveBeenLastCalledWith({ roots: ['/workspace'] });
+    const changedTree = { occurrences: [{ path: '/workspace/changed', via: 'scan', entry: { path: '/workspace/changed', name: 'changed', nature: 'code' }, children: [] }] };
+    mocks.scanFolderModel.mockImplementation(async () => changedTree);
+    const second = await def.execute('call-2', {}, undefined, undefined, {});
+    expect(second.details).toEqual(tree); // stale-but-accepted within the TTL — no rescan
+    await toolNamed(tools, 'pimote_list_repos').execute('call-3', {}, undefined, undefined, {});
+    expect(mocks.scanFolderModel.mock.calls.length).toBe(scansBefore);
+    // The walk still goes through the folder-model seam from config.roots.
+    expect(mocks.scanFolderModel).toHaveBeenLastCalledWith({ roots: ['/workspace'], onWarning: expect.any(Function) });
   });
 
   it('wires pimote_list_folders: FolderInfo defaults materialized and live counts enriched through the session manager', async () => {

@@ -50,19 +50,20 @@ export async function main(options: StartOptions = {}) {
   const sessionSummaries = new SessionSummaryIndex();
   const sessionRecords = new SessionRecords(sessionSummaries);
 
-  // Folder management: the on-demand folder-tree port over the configured
-  // roots (a fresh scanFolderModel call per request — no shared scanner
-  // cache), the repo index over the same roots plus any user-registered
-  // sources, the persistent curation layer above them, and the built-in
-  // creator backing the dashboard's create-folder flow.
-  const folderTree: FolderModelPort = {
-    tree: () => scanFolderModel({ roots: config.roots }),
-  };
+  // Folder management: the repo index over the configured roots plus any
+  // user-registered sources, the folder-tree port sharing its cached
+  // discovery walk (one TTL stale-while-revalidate walk feeds tree and repo
+  // consumers; manager tree consumers accept trees up to one TTL old), the
+  // persistent curation layer above them, and the built-in creator backing
+  // the dashboard's create-folder flow.
   const repoIndex = new RepoIndex(config.roots);
   const loadedSources = await loadFolderSources(await resolveSourcesDir(config.folderSourcesDir));
   for (const source of loadedSources.sources) {
     repoIndex.registerSource(source);
   }
+  const folderTree: FolderModelPort = {
+    tree: () => repoIndex.tree(),
+  };
   const creators: FolderCreator[] = [createBuiltinCreator(), ...loadedSources.creators];
   const folderRegistry = new FolderRegistry(repoIndex, PIMOTE_REGISTRY_STORE_DIR, folderTree);
 

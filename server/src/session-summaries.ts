@@ -212,21 +212,21 @@ export class SessionSummaryIndex {
   constructor(private readonly agentDir?: string) {}
 
   /**
-   * Summaries for every session file in the folder's session directory, newest
-   * first. Files that failed to read/parse are omitted from the result and
-   * reported — thrown under `failOnError`, warned otherwise.
-   */
-  /**
    * Summaries for many folders in one pass, keyed by folder path — the batch
    * entry for cross-folder consumers (the folder-listing session-derived
    * metadata pass), reusing this index's per-file (mtime, size) cache exactly
    * like `list`. Folders without a session directory contribute an empty list.
    */
   async listMany(folderPaths: string[]): Promise<Map<string, SessionSummary[]>> {
-    void folderPaths;
-    throw new Error('not implemented');
+    const listings = await mapWithConcurrency(folderPaths, 10, (folderPath) => this.list(folderPath));
+    return new Map(folderPaths.map((folderPath, index) => [folderPath, listings[index]]));
   }
 
+  /**
+   * Summaries for every session file in the folder's session directory, newest
+   * first. Files that failed to read/parse are omitted from the result and
+   * reported — thrown under `failOnError`, warned otherwise.
+   */
   async list(folderPath: string, options: SessionSummaryListOptions = {}): Promise<SessionSummary[]> {
     let promise = this.inFlight.get(folderPath);
     if (!promise) {

@@ -68,6 +68,10 @@ export interface FolderInfo {
   missing: boolean;
   /** Member repos; only on registry/source hubs — these rows are disband-eligible. */
   repos?: RepoInfo[];
+  /** This row's own repo facts — copied from the repo index's cache for plain
+   *  code rows it knows. Distinct from hub `repos` (the membership list and
+   *  disband gate). Persona rows and hub rows omit it. */
+  repo?: RepoInfo;
   /** Own-path user tags — the subset of `tags` that is user-removable. */
   userTags?: string[];
   /** Session ids matched by a server-side search — present when the row matched
