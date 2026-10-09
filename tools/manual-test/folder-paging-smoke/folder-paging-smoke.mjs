@@ -47,6 +47,10 @@ const {
   folderScrollStep,
   installSocketProbe,
   sentLog,
+  markSent,
+  sentSince,
+  loadedSessionPaths,
+  pageConsole,
   closeLatestSocket,
 } = makeBrowserHelpers({ session: `folder-paging-${process.pid}`, log });
 
@@ -131,7 +135,8 @@ async function closeSessionToDashboard() {
 async function pageDiag() {
   const sockets = await evalBrowser(`(window.__pmSockets ?? []).map((s) => s.readyState)`);
   const folderSends = await sentLog('m.type === "list_folders"');
-  return `sockets=${JSON.stringify(sockets)} list_folders-sends=${JSON.stringify(folderSends.map((m) => ({ offset: m.offset, query: m.query, repin: m.repin ?? false })))}`;
+  const sends = folderSends.map((m) => ({ offset: m.offset, query: m.query, repin: m.repin ?? false, arch: m.includeArchived ?? false }));
+  return `sockets=${JSON.stringify(sockets)} list_folders=${JSON.stringify(sends)} console=[${await pageConsole(8)}]`;
 }
 
 // -------------------------------------------------------------------- main
@@ -191,13 +196,8 @@ async function main() {
   let probeA;
   let probeB;
   // Outbound-message bookkeeping: sentLog() sees every app request after
-  // installSocketProbe(); marks delimit counting windows.
-  let sentMark = 0;
-  const markSent = async () => {
-    sentMark = (await sentLog('true')).length;
-  };
-  const sinceMark = async (filterExpr) => (await sentLog(filterExpr)).slice(sentMark);
-  const loadedSessionPaths = async () => new Set((await sentLog('m.type === "list_sessions"')).map((m) => m.folderPath));
+  // installSocketProbe(); page-side marks delimit counting windows.
+  const sinceMark = sentSince;
 
   try {
     child = startPimote({ port, sandboxHome, agentDir, configPath, logPath });
@@ -421,7 +421,7 @@ async function main() {
     section('B — archive toggle × session lists (no fan-out)');
     // ============================================================
     await folderScrollTop();
-    const everLoaded = await loadedSessionPaths();
+    const everLoaded = new Set(await loadedSessionPaths());
     const coldCandidates = [pager(55), pager(60), pager(65), pager(70), pager(75), pager(80), pager(85), pager(90), pager(95), pager(98)];
     const win1 = await probeA.send({ type: 'list_folders', offset: 0, limit: 100 });
     const coldPath =
@@ -449,7 +449,8 @@ async function main() {
       'a re-sort can legitimately render (and load) an edge row during the toggle',
     );
     assert(togglePaths.size <= everLoaded.size + 40, `toggle reloads only loaded/rendered lists (${togglePaths.size} reloads vs ${everLoaded.size} previously loaded)`);
-    assert((await rowText(archAnchor)).includes('Archived'), 'show-archived reveals the archived row with its badge');
+    const badgeText = await rowText(archAnchor);
+    assert(badgeText.includes('Archived'), `show-archived reveals the archived row with its badge (row=${JSON.stringify(badgeText.slice(0, 80))}; ${await pageDiag()})`);
     await browser(['screenshot', join(shotsDir, '04-archived.png')], { allowFailure: true });
     await browser(['click', 'button[title="More folder actions"]']);
     await wait(400);
@@ -573,9 +574,14 @@ async function main() {
     await fillSelector('[role="dialog"] input[placeholder="Folder name"]', 'epsilon-refresh');
     await wait(200);
     await clickDialogButton('Create');
-    await wait(2500);
-    const repinReqs = await sinceMark('m.type === "list_folders" && m.repin === true');
-    assert(repinReqs.length === 1, `explicit refresh sends exactly one repin window request (saw ${repinReqs.length}; ${await pageDiag()})`);
+    // The create round-trip (mkdir + git init + delta) can take seconds on a
+    // large fixture; poll for the refresh request the flow fires afterwards.
+    let repinSeen = 0;
+    for (let i = 0; i < 40 && repinSeen === 0; i++) {
+      await wait(500);
+      repinSeen = (await sinceMark('m.type === "list_folders" && m.repin === true')).length;
+    }
+    assert(repinSeen === 1, `explicit refresh sends exactly one repin window request (saw ${repinSeen}; ${await pageDiag()})`);
     const epsilonDir = join(rootA, 'epsilon-refresh');
     const epsilonGit = await stat(join(epsilonDir, '.git')).then(
       () => true,
@@ -584,7 +590,7 @@ async function main() {
     assert(epsilonGit, 'created folder exists on disk (mkdir + git init)');
     const backToDashboard = await closeSessionToDashboard();
     assert(backToDashboard === true, 'closing the session returns to the dashboard');
-    assert((await rowText(epsilonDir)).includes('epsilon-refresh'), 'refreshed cache shows the created folder');
+    assert((await rowText(epsilonDir)).includes('epsilon-refresh'), `refreshed cache shows the created folder (${await pageDiag()})`);
     const dupState = await folderScrollStep(0);
     assert(new Set(dupState?.paths ?? []).size === (dupState?.paths ?? []).length, 'refreshed cache renders no duplicate rows');
 
@@ -592,6 +598,7 @@ async function main() {
     section('B — reconnect cache-replace (no phantom rows)');
     // ============================================================
     const hubPath = join(rootA, 'hub-phantom');
+    await closeSessionToDashboard(); // in case a restored session reclaimed the view
     await probeA.send({ type: 'create_hub', name: 'hub-phantom', root: rootA, memberPaths: [alphaAnchor] });
     await probeB.waitForEvent('folders_changed', (e) => e.changed?.some((r) => r.path === hubPath), 25_000);
     await probeA.send({ type: 'update_folder', folderPath: hubPath, favorite: true });
@@ -612,6 +619,7 @@ async function main() {
     }
     assert(reconnected === true, `client reconnects and refetches its folder window (${await pageDiag()})`);
     await wait(1500);
+    await closeSessionToDashboard(); // session restore can reclaim the view on reconnect
     await folderScrollTop();
     assert((await rowRenderedNow(hubPath)) === false, 'disbanded hub does not survive the reconnect (no phantom row)');
     assert((await starOnRow(pager(70))) === true, `a change made while disconnected heals on reconnect (cache-replace) (${await pageDiag()})`);
@@ -621,6 +629,7 @@ async function main() {
     section('B — delta-arrived rows appear and are findable');
     // ============================================================
     const newborn = join(rootA, 'newborn-repo');
+    await closeSessionToDashboard();
     await probeA.send({ type: 'create_folder', root: rootA, name: 'newborn-repo' });
     await probeB.waitForEvent('folders_changed', (e) => e.changed?.some((r) => r.path === newborn), 25_000);
     await wait(1200);

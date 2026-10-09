@@ -269,6 +269,28 @@ export function makeBrowserHelpers({ session, log = () => {} }) {
     return (await evalBrowser(`(window.__pmSent ?? []).filter((m) => (${filterExpr}))`)) ?? [];
   }
 
+  /** Mark the current send-log length as the counting baseline (page-side,
+   *  so later slices never race the growing log). */
+  async function markSent() {
+    return Number((await evalBrowser(`(() => { window.__pmSentMark = (window.__pmSent ?? []).length; return window.__pmSentMark; })()`)) ?? 0);
+  }
+
+  /** Outbound messages since the last markSent(), matching a JS filter. */
+  async function sentSince(filterExpr = 'true') {
+    return (await evalBrowser(`(window.__pmSent ?? []).slice(window.__pmSentMark ?? 0).filter((m) => (${filterExpr}))`)) ?? [];
+  }
+
+  /** Distinct folderPaths with any list_sessions send since page load. */
+  async function loadedSessionPaths() {
+    return (await evalBrowser(`[...new Set((window.__pmSent ?? []).filter((m) => m.type === 'list_sessions').map((m) => m.folderPath))]`)) ?? [];
+  }
+
+  /** Tail of the page console (diagnosis for failed assertions). */
+  async function pageConsole(lines = 12) {
+    const out = (await browser(['console'], { allowFailure: true })).stdout ?? '';
+    return out.split('\n').filter(Boolean).slice(-lines).join(' | ');
+  }
+
   async function resetSent() {
     return (await evalBrowser(`(() => { if (!window.__pmSent) return false; window.__pmSent.length = 0; return true; })()`)) === true;
   }
@@ -311,6 +333,10 @@ export function makeBrowserHelpers({ session, log = () => {} }) {
     folderScrollStep,
     installSocketProbe,
     sentLog,
+    markSent,
+    sentSince,
+    loadedSessionPaths,
+    pageConsole,
     resetSent,
     closeLatestSocket,
     socketCount,
