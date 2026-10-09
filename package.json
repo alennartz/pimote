@@ -74,7 +74,7 @@
     "typescript-eslint": "^8.58.0"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^1.0.0",
+    "@earendil-works/pi-coding-agent": "^1.1.0",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@streamparser/json": "^0.0.22",
     "jiti": "^2.7.0",
