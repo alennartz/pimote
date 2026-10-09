@@ -9,6 +9,47 @@ and which tool (if any) drives each.
 
 ## Shared helpers
 
+### lib/report.mjs
+
+Shared ✓/✗/⊝ reporter: `makeReporter(prefix)` returns `{ assert, soft,
+section, log, stats, softFailures }`. `assert` counts hard failures (they
+drive the exit code); `soft` records environment-bounded items that never
+fail a run. Every tool builds on this instead of its own counters.
+
+### lib/sandbox.mjs
+
+Shared sandbox/server boot for tools that run a real pimote: `freePort()`,
+`gitInit(dir, branch, { dirty, commit })`, `writePersona(dir, name,
+description)`, `seedSession(sessionsRoot, projectDir, userText,
+assistantText, { at })` (fabricated pi session jsonl under the SDK-exact
+session-dir encoding; `at` fixes entry timestamps for recency fixtures),
+`startPimote({ port, sandboxHome, agentDir, configPath, logPath })`,
+`stopPimote(child)`, `waitForListening(child, port, logPath)`. Each tool
+spawns its own child and kills only that PID.
+
+### lib/ws-probe.mjs
+
+Second protocol client for two-client assertions: `WsProbe(port,
+clientId)` with `open()`, `send(payload)`, `listFolders({ includeArchived,
+repin, query, limit })` (accumulates a complete listing while adopting each
+response's pin; returns `windowPaths`/`windowCount` for duplicate and stream
+checks), `eventsSince(since, type)`, `waitForEvent(type, predicate,
+timeoutMs)`, `close()`.
+
+### lib/browser.mjs
+
+agent-browser CLI wrapper factory: `makeBrowserHelpers({ session, log })`
+returns `browser()` (raw CLI passthrough with transient-failure retries),
+`evalBrowser`, `fillSelector` (Svelte-safe input filling), `typeBurst`
+(sub-debounce rapid typing), `wait`, virtualized-folder-list helpers
+(`revealFolder`, `rowText`, `rowBlockText`, `rowIcon`, `rowRenderedNow`,
+`starOnRow`, `openRowMenu`, `clickMenuItem`, `clickDialogButton`,
+`folderScrollTop`, `folderScrollStep`), and a page-side WebSocket
+instrumentation probe (`installSocketProbe`, `sentLog`, `resetSent`,
+`closeLatestSocket`, `socketCount`) for request-count assertions and forced
+reconnects. The probe wraps `WebSocket.prototype.send` after page load —
+count only request deltas taken after installation.
+
 ### lib/session-dir.mjs
 
 Single source of truth for the pi session-dir encoding used when smokes
@@ -20,7 +61,8 @@ first, then strip the leading slash and replace every `/` `\` `:` with
 (which reads only the one encoded dir) will not find the fixture.
 
 - `seedSessionDir(sessionsRoot, cwd)` — canonical dir for writing fixtures
-  (always SDK-exact). Use this in every `seedSession`-style helper.
+  (always SDK-exact). Use this in every `seedSession`-style helper
+  (`lib/sandbox.mjs` `seedSession` wraps it).
 - `sessionDirCandidates(sessionsRoot, cwd)` / `existingSessionDirs(…)` —
   both-era-aware lookups (SDK-exact first, then the pre-0.76 raw-string
   encoding) for reading or cleaning pre-existing fixtures seeded under
@@ -392,6 +434,7 @@ remain bounded, and session lists load only for rendered rows. Open/bound chat
 session restoration stays independent of window fetches.
 
 **Location:** `tools/manual-test/project-management-smoke/project-management-smoke.mjs`
+(shared boot/probe/browser helpers from `tools/manual-test/lib/`).
 
 **Invocation:**
 
@@ -415,6 +458,59 @@ exit on hard failure. On failure the sandbox and server log are preserved.
 `PATH`, `git` on `PATH`, writable `os.tmpdir()`. Tracks and kills only the
 child PID it spawns. Requires network reachability to the model endpoint
 named in `models.json` for the manager phase only.
+
+### folder-paging-smoke
+
+**Purpose:** Exercise server-side folder listing (the
+`server-folder-list-paging` topic) end-to-end against a real sandboxed
+pimote + real PWA over a ~250-row fixture (so the browser walks ≥3
+continuation windows at the default 100-row window). Wire tier (WS probes):
+window continuity over the full set through tiny windows (no duplicate or
+skipped rows), pin contract (token adoption, omitted-token reuse,
+cross-owner rejection, limit clamping, fresh-token repin, favorites-first),
+curation edits resolving at query time without pin reordering, two-tier
+search semantics (folder name/tag/persona-display-name tiers,
+session name/firstMessage tier with exact `matchedSessionIds`, full-set
+filtering, `includeArchived` × rows and totals), `file_put` → AGENTS.md
+delta targeting (nested → deepest owning row; global instructions → no
+delta), and discovery-added folders surfacing through `folders_changed`.
+Browser tier (virtualized `FolderList` + socket instrumentation): bounded
+rendered rows and lazy session loading (rendered rows only), deep-scroll
+window continuity, curation edits mid-scroll (favorite/tag/archive) with no
+silent skips, mid-scroll query-match shrink (archive + session delete),
+server-authoritative search incl. debounced typing bursts and
+`matchedSessionIds` session-list narrowing, explicit refresh (`repin`) and
+reconnect cache-replace (no phantom rows, lost deltas heal), delta-arrived
+rows findable by search, and the archive toggle reloading only
+loaded/rendered session lists.
+
+**Location:** `tools/manual-test/folder-paging-smoke/folder-paging-smoke.mjs`
+(shared boot/probe/browser helpers from `tools/manual-test/lib/`).
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/folder-paging-smoke/folder-paging-smoke.mjs
+# Coherence screenshots outside the sandbox + keep the sandbox:
+FP_SHOTS=/tmp/fp-shots FP_KEEP=1 node tools/manual-test/folder-paging-smoke/folder-paging-smoke.mjs
+# Smaller fixture for quick runs:
+FP_FOLDERS=60 node tools/manual-test/folder-paging-smoke/folder-paging-smoke.mjs
+```
+
+**Inputs:** none by default (fresh `os.tmpdir()` sandbox). `FP_FOLDERS`
+sets the filler folder count (clamped ≥ 30, default 245); `FP_SHOTS=<dir>`
+redirects coherence screenshots; `FP_KEEP=1` preserves the sandbox on a
+passing run.
+
+**Outputs:** per-check ✓/✗/⊝ lines + coherence screenshots
+(`01-dashboard.png`, `02-search.png`, `03-deep-scroll.png`,
+`04-archived.png`, `05-reconnect.png`); non-zero exit on hard failure. On
+failure the sandbox and server log are preserved.
+
+**Prerequisites:** workspaces built (`npm run build`), `agent-browser` on
+`PATH`, writable `os.tmpdir()`. Tracks and kills only the child PID it
+spawns. No real LLM, network, or push subscription required.
 
 ### manager-tools-smoke
 

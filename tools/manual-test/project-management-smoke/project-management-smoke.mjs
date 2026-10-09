@@ -14,132 +14,33 @@
 // out-of-tree symlinks of included folders, and FolderInfo defaults
 // (nature/persona/shortcutCount/missing/repos?/userTags?).
 //
+// Shared boot/probe/browser helpers live in tools/manual-test/lib/.
+//
 // Optional environment variables:
 //   PM_SHOTS=/tmp/dir  keep coherence screenshots outside the disposable sandbox
 //   PM_KEEP=1          keep the sandbox even on a passing run
 
-import { copyFile, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile, appendFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { copyFile, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { once } from 'node:events';
 import { tmpdir } from 'node:os';
-import { join, resolve as pathResolve, basename } from 'node:path';
-import { createServer as createNetServer } from 'node:net';
-import { execFile as execFileCb } from 'node:child_process';
-import { promisify } from 'node:util';
+import { join, resolve as pathResolve } from 'node:path';
 
-const execFile = promisify(execFileCb);
+import { makeReporter } from '../lib/report.mjs';
+import { freePort, gitInit, writePersona, seedSession, startPimote, stopPimote, waitForListening } from '../lib/sandbox.mjs';
+import { WsProbe } from '../lib/ws-probe.mjs';
+import { makeBrowserHelpers } from '../lib/browser.mjs';
 
-const REPO_ROOT = pathResolve(new URL('../../../', import.meta.url).pathname);
-const PIMOTE_BIN = join(REPO_ROOT, 'bin', 'pimote.js');
 const REAL_AGENT_DIR = join(process.env.HOME ?? '', '.pi', 'agent');
 const BROWSER_SESSION = `project-management-${process.pid}`;
 
-let failures = 0;
-const softFailures = [];
-function assert(condition, message) {
-  if (condition) console.log(`  ✓ ${message}`);
-  else {
-    console.error(`  ✗ ${message}`);
-    failures++;
-  }
-}
-function soft(condition, message, note) {
-  if (condition) {
-    console.log(`  ✓ ${message}`);
-  } else {
-    console.log(`  ⊝ ${message} — environment-bounded: ${note}`);
-    softFailures.push(message);
-  }
-}
-function section(message) {
-  console.log(`\n[pm-smoke] ${message}`);
-}
-function log(...args) {
-  console.log('[pm-smoke]', ...args);
-}
-
-async function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = createNetServer();
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      server.close(() => resolve(port));
-    });
-    server.on('error', reject);
-  });
-}
+const { assert, soft, section, log, stats, softFailures } = makeReporter('pm-smoke');
+const { browser, evalBrowser, fillSelector, wait, revealFolder, rowText, rowIcon, openRowMenu, clickMenuItem, clickDialogButton } = makeBrowserHelpers({
+  session: BROWSER_SESSION,
+  log,
+});
 
 // ---------------------------------------------------------------- fixtures
 
-async function gitInit(dir, branch, { dirty = false, commit = true } = {}) {
-  await mkdir(dir, { recursive: true });
-  const git = (...args) => execFile('git', ['-C', dir, ...args]);
-  await git('init', '-b', branch);
-  await writeFile(join(dir, 'README.md'), `# ${basename(dir)}\n`);
-  if (commit) {
-    await git('add', '.');
-    await git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'init');
-  }
-  if (dirty) await writeFile(join(dir, 'dirty.txt'), 'uncommitted\n');
-}
-
-/** Persona folder: AGENTS.md opening with YAML front matter (string `name:` key). */
-async function writePersona(dir, name, description) {
-  await mkdir(dir, { recursive: true });
-  const front = ['---', `name: ${name}`, `description: ${description}`, '---'].join('\n');
-  await writeFile(join(dir, 'AGENTS.md'), `${front}\nYou are ${name}, a fixture persona.\n`);
-}
-
-async function seedSession(sessionsRoot, projectDir, userText, assistantText) {
-  const sessionId = randomUUID();
-  const sessionsDir = sessionsRoot;
-  const encodedCwd = `--${projectDir.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
-  const sessionDir = join(sessionsDir, encodedCwd);
-  await mkdir(sessionDir, { recursive: true });
-  const isoNow = new Date().toISOString();
-  const filename = `${isoNow.replace(/:/g, '-')}_${sessionId}.jsonl`;
-  // Entries form a tree via parentId; the replay walks root → leaf, so the
-  // user → assistant chain must be linked or entries are orphaned.
-  const lines = [
-    { type: 'session', version: 3, id: sessionId, timestamp: isoNow, cwd: projectDir },
-    {
-      type: 'message',
-      id: 'user-0001',
-      parentId: sessionId,
-      timestamp: isoNow,
-      message: { role: 'user', content: [{ type: 'text', text: userText }], timestamp: Date.now() },
-    },
-    {
-      type: 'message',
-      id: 'asst-0001',
-      parentId: 'user-0001',
-      timestamp: isoNow,
-      message: {
-        role: 'assistant',
-        content: [{ type: 'text', text: assistantText }],
-        api: 'openai-completions',
-        provider: 'fabricated',
-        model: 'fixture',
-        usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 20, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-        stopReason: 'stop',
-        timestamp: Date.now(),
-        responseId: `resp_${sessionId}`,
-      },
-    },
-  ];
-  await writeFile(join(sessionDir, filename), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
-  return sessionId;
-}
-
-/**
- * Folder-source fixture module (folder vocabulary — the `@pimote/sdk/folders`
- * seam: FolderSource.list() contributes `{ kind: 'repo' }` / `{ kind: 'hub' }`
- * entries, `onFolderOpen(folderPath)` provisions before any open). Written as
- * plain .mjs with JSDoc type references so the loader needs no workspace
- * resolution from the sandbox.
- */
 function folderSourceModule({ repoDir, hubDir, memberPath, hookLog }) {
   return `// Smoke fixture folder source — @pimote/sdk/folders vocabulary.
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
@@ -174,291 +75,6 @@ const smokeSource = {
 };
 export const sources = [smokeSource];
 `;
-}
-
-// ------------------------------------------------------------------ server
-
-function startPimote({ port, sandboxHome, agentDir, configPath, logPath }) {
-  const env = {
-    ...process.env,
-    HOME: sandboxHome,
-    XDG_CONFIG_HOME: join(sandboxHome, '.config'),
-    XDG_STATE_HOME: join(sandboxHome, '.local', 'state'),
-    XDG_DATA_HOME: join(sandboxHome, '.local', 'share'),
-    XDG_CACHE_HOME: join(sandboxHome, '.cache'),
-    PI_CODING_AGENT_DIR: agentDir,
-    PIMOTE_CONFIG_PATH: configPath,
-    NODE_ENV: 'production',
-  };
-  const child = spawn(process.execPath, [PIMOTE_BIN, '--port', String(port)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-  const tee = (chunk) => {
-    void appendFile(logPath, chunk).catch(() => {});
-  };
-  child.stdout.on('data', tee);
-  child.stderr.on('data', tee);
-  return child;
-}
-
-async function stopPimote(child) {
-  if (!child || child.exitCode !== null) return;
-  child.kill('SIGTERM');
-  await Promise.race([once(child, 'exit'), new Promise((resolve) => setTimeout(resolve, 5000))]);
-  if (child.exitCode === null) child.kill('SIGKILL');
-  await new Promise((resolve) => setTimeout(resolve, 300));
-}
-
-async function waitForListening(child, port, logPath) {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`pimote exited early (${child.exitCode}); see ${logPath}`);
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) });
-      if (response.ok) return;
-    } catch {
-      // Retry while the process completes boot.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  throw new Error(`pimote did not listen on :${port} within 30s; see ${logPath}`);
-}
-
-// ------------------------------------------------------------- ws probe
-
-let nextCmdId = 0;
-class WsProbe {
-  constructor(port, clientId) {
-    this.url = `ws://127.0.0.1:${port}/ws?clientId=${clientId}`;
-    this.pending = new Map();
-    this.events = [];
-    this.ws = null;
-  }
-
-  async open() {
-    this.ws = new WebSocket(this.url);
-    await new Promise((resolve, reject) => {
-      this.ws.addEventListener('open', resolve, { once: true });
-      this.ws.addEventListener('error', (e) => reject(e.error ?? new Error('ws error')), { once: true });
-    });
-    this.ws.addEventListener('message', (event) => {
-      let message;
-      try {
-        message = JSON.parse(String(event.data));
-      } catch {
-        return;
-      }
-      if (message.type === 'response' || message.success !== undefined) {
-        const pending = this.pending.get(message.id);
-        if (pending) {
-          this.pending.delete(message.id);
-          pending(message);
-        }
-        return;
-      }
-      this.events.push({ at: Date.now(), event: message });
-    });
-  }
-
-  send(payload) {
-    const id = `probe-${++nextCmdId}`;
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`probe timeout waiting for response to ${payload.type}`)), 15_000);
-      this.pending.set(id, (response) => {
-        clearTimeout(timer);
-        resolve(response);
-      });
-      this.ws.send(JSON.stringify({ id, ...payload }));
-    });
-  }
-
-  /** Accumulate complete comparisons while adopting each response's pin. */
-  async listFolders({ includeArchived = false, repin = false, query } = {}) {
-    const rows = new Map();
-    let offset = 0;
-    let orderToken;
-    for (;;) {
-      const response = await this.send({ type: 'list_folders', offset, limit: 3, includeArchived, repin: offset === 0 && repin, orderToken, query });
-      if (!response.success) throw new Error(`list_folders failed: ${JSON.stringify(response)}`);
-      const data = response.data;
-      if (typeof data.orderToken !== 'string' || typeof data.epoch !== 'number' || typeof data.total !== 'number' || typeof data.more !== 'boolean') {
-        throw new Error(`invalid folder window: ${JSON.stringify(data)}`);
-      }
-      for (const row of data.folders) rows.set(row.path, row);
-      orderToken = data.orderToken;
-      offset += data.folders.length;
-      if (!data.more) return { ...response, data: { ...data, folders: [...rows.values()] } };
-      if (data.folders.length === 0) throw new Error('folder window made no progress');
-    }
-  }
-
-  /** Events received strictly after `since` (ms epoch). */
-  eventsSince(since, type) {
-    return this.events.filter((e) => e.at > since && (!type || e.event.type === type));
-  }
-
-  async waitForEvent(type, predicate, timeoutMs = 8000) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      // Scan the full history: the event may land while earlier awaits in the
-      // caller are still settling, before waitForEvent is entered.
-      const hits = this.events.filter((e) => e.event.type === type && (!predicate || predicate(e.event)));
-      if (hits.length > 0) return hits[0].event;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw new Error(`timed out waiting for ${type} event`);
-  }
-
-  close() {
-    try {
-      this.ws?.close();
-    } catch {
-      // Already closed.
-    }
-  }
-}
-
-// ------------------------------------------------------------ agent-browser
-
-async function browser(args, { allowFailure = false, timeoutMs = 30_000, retries = 2 } = {}) {
-  const fullArgs = ['--session', BROWSER_SESSION, ...args];
-  log('agent-browser', args.join(' '));
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    const child = spawn('agent-browser', fullArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => (stdout += chunk.toString()));
-    child.stderr.on('data', (chunk) => (stderr += chunk.toString()));
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGKILL');
-    }, timeoutMs);
-    await once(child, 'exit');
-    clearTimeout(timer);
-    const transient = /Resource temporarily unavailable|daemon may be busy/i.test(stdout + stderr);
-    if ((child.exitCode === 0 && !timedOut) || allowFailure || (!transient && !timedOut) || attempt === retries) {
-      if ((child.exitCode !== 0 || timedOut) && !allowFailure) {
-        console.error(`[pm-smoke] agent-browser failed: ${args.join(' ')}\n${stderr}`);
-        throw new Error(`agent-browser failed: ${args.join(' ')}`);
-      }
-      return { stdout, stderr, code: child.exitCode };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
-  }
-  throw new Error('unreachable');
-}
-
-function parseEval(stdout) {
-  const raw = stdout.trim();
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw.replace(/^"|"$/g, '');
-  }
-}
-
-async function evalBrowser(expression) {
-  return parseEval((await browser(['eval', expression])).stdout);
-}
-
-/** Set a Svelte-bound input's value and fire the input event. */
-async function fillSelector(selector, value) {
-  const expr = `(() => {
-    const el = document.querySelector(${JSON.stringify(selector)});
-    if (!el) return false;
-    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, ${JSON.stringify(value)});
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    return true;
-  })()`;
-  return (await evalBrowser(expr)) === true;
-}
-
-async function wait(ms) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// --------------------------------------------------------------- ui helpers
-
-/** Scroll the dashboard until a virtualized row enters the rendered range. */
-async function revealFolder(path) {
-  await evalBrowser(`(() => {
-    const row = document.querySelector('[data-folder-path]');
-    const scroller = row?.closest('.overflow-y-auto');
-    if (scroller) scroller.scrollTop = 0;
-  })()`);
-  await wait(150);
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const found = await evalBrowser(`(() => {
-      const target = Array.from(document.querySelectorAll('[data-folder-path]')).find(row => row.getAttribute('data-folder-path') === ${JSON.stringify(path)});
-      if (target) { target.scrollIntoView({ block: 'center' }); return true; }
-      const scroller = document.querySelector('[data-folder-path]')?.closest('.overflow-y-auto');
-      if (scroller) scroller.scrollTop += Math.max(100, scroller.clientHeight * 0.6);
-      return false;
-    })()`);
-    await wait(150);
-    if (found === true) return true;
-  }
-  return false;
-}
-
-/** Text content of a folder row (icon label, name/subtitle, chips, badges). */
-async function rowText(path) {
-  await revealFolder(path);
-  return String(
-    await evalBrowser(`(() => {
-      const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(path)} + '"]');
-      return s?.closest('.group')?.textContent ?? '';
-    })()`),
-  );
-}
-
-/** Row icon variant: code | code-hub | persona | persona-hub. */
-async function rowIcon(path) {
-  await revealFolder(path);
-  return await evalBrowser(`(() => {
-    const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(path)} + '"]');
-    return s?.closest('button')?.querySelector('svg[data-folder-icon]')?.getAttribute('data-folder-icon') ?? null;
-  })()`);
-}
-
-/** Open the row context menu (long-press / right-click surface). */
-async function openRowMenu(path) {
-  await revealFolder(path);
-  const opened = await evalBrowser(`(() => {
-    const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(path)} + '"]');
-    const trigger = s?.closest('.group');
-    if (!trigger) return false;
-    const rect = trigger.getBoundingClientRect();
-    trigger.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: rect.left + 24, clientY: rect.top + 12 }));
-    return true;
-  })()`);
-  await wait(400);
-  return opened === true;
-}
-
-/** Click a context/dropdown menu item by its text. */
-async function clickMenuItem(text) {
-  const clicked = await evalBrowser(`(() => {
-    const item = Array.from(document.querySelectorAll('[role="menuitem"], [data-slot="context-menu-item"], [data-slot="dropdown-menu-item"]')).find((i) => i.textContent?.trim().includes(${JSON.stringify(text)}));
-    if (!item) return false;
-    item.click();
-    return true;
-  })()`);
-  await wait(500);
-  return clicked === true;
-}
-
-/** Click a dialog button whose trimmed text matches exactly. */
-async function clickDialogButton(text) {
-  const clicked = await evalBrowser(`(() => {
-    const btns = Array.from(document.querySelectorAll('[role="dialog"] button')).filter((b) => b.textContent?.trim() === ${JSON.stringify(text)});
-    if (!btns.length) return false;
-    btns.at(-1).click();
-    return true;
-  })()`);
-  await wait(500);
-  return clicked === true;
 }
 
 /** Put the one-box toolbar into manager mode (its composer replaces search). */
@@ -1410,7 +1026,7 @@ async function main() {
 
     await browser(['close'], { allowFailure: true });
   } catch (error) {
-    failures++;
+    stats.failures++;
     console.error('[pm-smoke] FAILED:', error);
     try {
       const text = await readFile(logPath, 'utf8');
@@ -1422,7 +1038,7 @@ async function main() {
   } finally {
     await stopPimote(child).catch(() => {});
     log('server log path:', logPath);
-    if (failures === 0 && !process.env.PM_KEEP) await rm(sandboxHome, { recursive: true, force: true }).catch(() => {});
+    if (stats.failures === 0 && !process.env.PM_KEEP) await rm(sandboxHome, { recursive: true, force: true }).catch(() => {});
     else log('sandbox preserved for inspection:', sandboxHome);
   }
 
@@ -1430,8 +1046,8 @@ async function main() {
     console.log(`\n[pm-smoke] environment-bounded items: ${softFailures.length}`);
     for (const item of softFailures) console.log(`  ⊝ ${item}`);
   }
-  console.log(`\n[pm-smoke] complete: ${failures === 0 ? 'PASS' : `${failures} FAIL`}`);
-  process.exit(failures === 0 ? 0 : 1);
+  console.log(`\n[pm-smoke] complete: ${stats.failures === 0 ? 'PASS' : `${stats.failures} FAIL`}`);
+  process.exit(stats.failures === 0 ? 0 : 1);
 }
 
 main().catch((error) => {
