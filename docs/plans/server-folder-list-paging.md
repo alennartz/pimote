@@ -67,7 +67,7 @@ interface FolderListingService {
   }>;
   /** Build the folders_changed delta for touched paths and bump the epoch.
    *  Emission-side invariant: every returned event carries the bumped epoch. */
-  buildDelta(changedPaths: string[], removedPaths: string[]): FoldersChangedEvent;
+  buildDelta(changedPaths: string[], removedPaths: string[]): Promise<FoldersChangedEvent>; // async: rows re-resolve through the registry listing
   /** Drop cached session-derived metadata (all, or for the given folders). */
   invalidateSessionMetadata(folderPaths?: string[]): void;
 }
