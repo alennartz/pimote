@@ -91,6 +91,15 @@ async function scrollPass({ frac = 0.7, onStep, maxSteps = 220 } = {}) {
     const atBottom = state.top >= state.height - state.client - 8;
     bottomHits = atBottom ? bottomHits + 1 : 0;
     await wait(300);
+    // Also sample the settled DOM at the landed position: rows first-measure
+    // while the pass scrolls (estimates shrink to real heights), so a
+    // pre-scroll snapshot alone can miss rows whose index drifted across the
+    // seam between two samples.
+    const settled = await evalBrowser(`(() => Array.from(document.querySelectorAll('[data-folder-path]')).map((r) => r.getAttribute('data-folder-path')))()`);
+    for (const path of settled ?? []) {
+      seen.add(path);
+      onStep?.(path);
+    }
     if (bottomHits >= 3) break;
   }
   await wait(800);

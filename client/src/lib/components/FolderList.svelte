@@ -146,7 +146,11 @@
   const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
     count: 0,
     getScrollElement: () => null,
-    estimateSize: () => 76,
+    // Real rows measure ~32px collapsed and ~48px with chips/subtitles. A
+    // close estimate keeps the index mapping stable while rows first
+    // measure: a large over-estimate collapses the list under the viewport
+    // as rows measure, which drags rows past the rendered range on jumps.
+    estimateSize: () => 36,
     overscan: 5,
     gap: 4,
   });
