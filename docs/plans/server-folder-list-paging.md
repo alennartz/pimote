@@ -31,13 +31,15 @@ interface ListFoldersCommand extends CommandBase {
   limit?: number; // default 100, server-clamped to [1, 200]
   query?: string; // two-tier search over the full set, case-insensitive substring
   includeArchived?: boolean; // default false
-  orderToken?: string; // omitted → server pins a fresh order
+  orderToken?: string; // omitted → use the connection's pin; see repin
+  repin?: boolean; // explicit refresh: pin a fresh order and return its token
 }
 interface ListFoldersResponseData {
   folders: FolderInfo[]; // rows may carry matchedSessionIds?: string[]
   roots: string[];
   total: number; // matches under query + includeArchived, over the whole set
   orderToken: string; // token this window was served under (client adopts it)
+  epoch: number; // epoch observed at computation time (stale-response guard)
   more: boolean;
 }
 interface FoldersChangedEvent {
@@ -58,7 +60,7 @@ interface FolderListingService {
   pin(): Promise<{ token: string; epoch: number }>;
   /** Serve one window under a pin. Raw params; normalization is internal:
    *  offset defaults 0, limit defaults 100, clamped to [1, 200]. */
-  query(req: { token?: string; offset?: number; limit?: number; query?: string; includeArchived?: boolean }): Promise<{
+  query(req: { token?: string; offset?: number; limit?: number; query?: string; includeArchived?: boolean; repin?: boolean }): Promise<{
     rows: FolderInfo[];
     total: number;
     more: boolean;
@@ -76,11 +78,11 @@ interface FolderListingService {
 Behavioral contracts:
 
 - **Order snapshot.** A pin is an ordered array of canonical folder paths, snapshotted from the rows and session-derived metadata at `pin()` time: `favorite desc → lastActivity desc → name asc → path asc` (path is the deterministic tiebreak stable pagination needs; today's contract is favorite → recency → name). The pin holds _order only_ — row data is re-resolved from the registry at query time, so curation edits are never stale against an old pin.
-- **Pin lifecycle.** Pins live for the connection; garbage-collected when the connection closes (plus a TTL sweep for orphaned tokens). A query with an unknown/expired token transparently re-pins and serves the window under the new token (returned in `orderToken`; the client adopts it). Rows merge by canonical path client-side, so a mid-scroll re-pin cannot duplicate.
+- **Pin lifecycle.** Pins are per-connection and owner-scoped: pinned at WebSocket open when folder deps are available (async, nonblocking — a folder command arriving before pin completion awaits it), otherwise at first folder command; omitted-token commands reuse the connection's pin; `repin: true` (the client's explicit-refresh path) pins a fresh order and returns its token. A `releaseConnection` seam frees pins on close, plus a TTL sweep for orphans. Rows merge by canonical path client-side, so a mid-scroll re-pin cannot duplicate.
 - **Query semantics.** `query` filters the full pinned order — never loaded rows only. Two tiers, OR'd: folder tier matches display name (persona name if present, else folder name), name, path, tags; session tier matches session `name`/`firstMessage`. A folder-tier match returns the row without `matchedSessionIds` (all its sessions shown, matching today's behavior); session-tier-only matches return `matchedSessionIds` with just the matched session ids. Filter then slice: `total` is the post-filter count over the whole set; the window is `[offset, offset+limit)` of the filtered order.
-- **Session-derived metadata cache.** One server-wide cache (`folder → lastActivity` as `max(session.modified)`, `folder → session search text`) fed by a batched pass over `SessionSummaryIndex.list()` for all known folder paths, which itself caches per-file parses by mtime+size. `lastActivity` folds in live in-memory sessions at pin/query time, so actively-running folders rank as most-recent regardless of file-flush cadence. Cold starts serve the previous snapshot while refreshing in the background — `pin()` and `query()` never block on a full 3.5k-folder scan. Invalidated by session events (rename, delete, archive toggle, state change) and by a TTL (default 30s, aligned with the repo-index TTL).
+- **Session-derived metadata cache.** One server-wide cache (`folder → lastActivity` as `max(session.modified)`, `folder → session search text`) fed by a batched pass over `SessionSummaryIndex.list()` for all known folder paths, which itself caches per-file parses by mtime+size. `lastActivity` folds in live in-memory sessions at pin/query time, so actively-running folders rank as most-recent regardless of file-flush cadence. **Error contract:** a refresh failure never fails `pin()`/`query()` — serve the last good snapshot (empty-activity, name-only ordering on a truly cold cache) and recover on the next TTL/event refresh. Cold starts serve the previous snapshot while refreshing in the background — `pin()` and `query()` never block on a full 3.5k-folder scan. Invalidated by session events (rename, delete, archive toggle, state change) and by a TTL (default 30s, aligned with the repo-index TTL).
 - **Epoch.** One monotonic counter, bumped whenever a `FoldersChangedEvent` is emitted. `query()` stamps responses with the epoch observed at computation time; the client discards a response whose epoch is older than the newest event it has seen and applies fresh ones regardless of interleaving.
-- **Deltas.** Each mutation site reports the paths it touched; `buildDelta` re-resolves those rows (full `FolderInfo` + session-count enrichment) and returns the event with `changed`/`removedPaths` and the bumped epoch. ws-handler only sends it. No diffing machinery: mutations know their targets.
+- **Deltas.** Each mutation site reports the paths it touched; `buildDelta` re-resolves those rows (full `FolderInfo` + session-count enrichment) and returns the event with `changed`/`removedPaths` and the bumped epoch. ws-handler only sends it. Registry `onChange` and repo-index `setOnRefreshed` callbacks carry `{ changedPaths, removedPaths }` payloads so discovery additions/removals and registry edits forward their targets — no diffing machinery, no empty placeholder paths.
 - **`folders_changed` is registry/discovery-mutated only.** Session activity (status changes, renames, deletes, archive toggles) keeps flowing over the existing session events; the client updates row indicators and its local re-sort from those, without refetching windows or touching the pinned order.
 - **Complete-list consumers stay unwindowed.** The manager tool `pimote_list_folders` and hub-member management keep their own complete-list seams over the registry listing; the windowed contract applies only to the `list_folders` protocol command. Out of scope here.
 
