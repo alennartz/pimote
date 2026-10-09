@@ -8,7 +8,7 @@ A folder source (SDK extension) contributes ~3.5k folders and the dashboard lags
 
 ### Impacted Modules
 
-- **Protocol** (`shared/src/protocol.ts`) — `ListFoldersCommand` gains optional `offset`/`limit`/`query`/`includeArchived`/`orderToken`/`repin`; `ListFoldersResponseData` gains `total`/`orderToken`/`more`/`epoch`; `FoldersChangedEvent` changes from a full-list broadcast to a delta (`changed` rows, `removedPaths`, `epoch`); `FolderInfo` gains optional `matchedSessionIds`.
+- **Protocol** (`shared/src/protocol.ts`) — `ListFoldersCommand` gains optional `offset`/`limit`/`query`/`includeArchived`/`orderToken`/`repin`; `ListFoldersResponseData` gains `total`/`orderToken`/`more`/`epoch`; `FoldersChangedEvent` changes from a full-list broadcast to a delta (`changed` rows, `removedPaths`, `epoch`); `FolderInfo` gains optional `matchedSessionIds` and `repo?: RepoInfo` for its own git facts.
 - **Server** — new `folder-listing.ts` module (below) owns ordering, search, and windowing. `ws-handler.ts` `list_folders` case shrinks to parse → `folderListing.query(...)` → respond; `broadcastFoldersChanged` becomes a delta emitter where each mutation site (`update_folder`, `create_folder`, `disband_hub`, registry `onChange`) knows exactly which paths changed. `folder-registry.ts` stays the curation-persistence owner; it gains no query logic. `session-summaries.ts` gains a batch listing entry so a cross-folder pass reuses its per-file cache.
 - **Web Client** — `FolderStore` becomes a path-keyed accumulating cache over a pinned order (fetch-next-window, search-merge, epoch guard, live re-sort of the fetched subset); `FolderList.svelte` renders the accumulated set through a virtualizer. Per-folder session _lists_ load only for rows in the fetched set as they render (replacing today's fan-out over every folder); folder-row session/git indicators come from server enrichment in the row payload, never from client enumeration. Vocabulary: "chips" in this project means the chat view's open/bound-session buttons — a client-local concern (persisted in local storage, restored eagerly at startup) that is fully independent of folder listing; it feeds the live re-sort and never waits on window fetches.
 - **SDK** — unchanged. `FolderInfo` is wire-protocol only; `packages/sdk` carries source-entry types (`RepoInfo`/`SourceEntry`) because folder sources contribute those — no SDK consumer sees `FolderInfo`, so no twin is added (an earlier draft of this plan said otherwise; it was wrong). The folder-source seam (`FolderSource.list()`) is unchanged.
@@ -104,6 +104,15 @@ class FolderStore {
 - Search results are server-authoritative: with a query active, the view shows the rows the server returned for that query (folder-tier matches with all their sessions; session-tier matches with `matchedSessionIds` narrowing the lazy-loaded session list). Scroll under an active query fetches further match windows.
 - `folders_changed` merges `changed` rows and drops `removedPaths` from the cache; rows sorting past the fetched frontier sit in cache and appear when scrolled to.
 - Virtualizer supplies the visible range; `loadSessions` runs for rendered rows in the fetched set and never for the whole set. The open/bound-session restore path loads its sessions eagerly on startup, independent of window fetches.
+
+### Planning Clarifications (approved by orchestrator)
+
+- **Cached tree seam:** `RepoIndex.tree(): Promise<SparseTree>` exposes the discovery walk already cached by the repo-index adapter. `ListingStamp` retains that tree. `server/src/index.ts` routes `folderTree.tree` through it, replacing the raw scan per request. Tree and repo consumers share discovery, invalidation, and stale-while-revalidate TTL behavior. Manager tree consumers accept trees up to one TTL old. The scanner stays uncached.
+- **Delta reconciliation:** callbacks report primary paths and derived dependents. `buildDelta` reconciles every touched path against current registry rows. A removed path that still resolves becomes `changed`, including `missing: true` source or registry rows. A changed path that no longer resolves becomes `removedPaths`. Untouched rows remain unchanged. Discovery callbacks can report physical disappearance while complete listings retain missing source rows.
+- **Derived dependents:** member-tag changes also touch hubs whose inherited tags change. Discovery changes to member git facts, existence, or membership also touch dependent hubs. Registry membership supplies these targets without full folder-row diff machinery.
+- **Own git facts:** `FolderInfo.repo?: RepoInfo` carries the row's own repo facts for plain code rows known to the index. Personas omit it. Existing `repos?: RepoInfo[]` remains the hub membership list and disband gate. Registry construction copies cached repo facts, without new git probes. Dashboard rows no longer depend on `list_repos`. The hub picker still requests that complete listing explicitly.
+- **Archive filtering:** changing `showArchived` reloads session lists already present in the sessions map. Other rows load sessions only when rendered callers request them. Once folder pagination exists, the toggle also requests an offset-0 folder window with the new `includeArchived` value. Folder and session archive filters remain separate concerns. Do not add eager session enumeration for seeded caches without pins.
+- **Mutable infrastructure:** the architecture already authorizes class-owned metadata snapshots, pins, epochs, and client cache/request state. Keep these inside injected module instances. Pure helpers receive rows, metadata, and query values explicitly. Add no module-global business state.
 
 ### Technology Choices
 
@@ -219,4 +228,164 @@ Out of test scope: `FolderList` virtualization and the "loadSessions for rendere
 - Registry `onChange` and repo-index `setOnRefreshed` callbacks carry `{ changedPaths: string[]; removedPaths: string[] }`; server wiring forwards these to delta construction.
 - **Compatibility:** the user-approved hard cut supersedes the brainstorm's unwindowed-default compatibility proposal; Android breakage remains accepted.
 
+### Authorized planning-phase test amendments
+
+The orchestrator approved these narrow exceptions to immutable tests. Write each amendment red-first, then implement its behavior. Do not reopen test review or add unrelated coverage.
+
+- `server/src/folder-listing.test.ts`: add both delta normalization directions. Missing retained rows become changes. Unresolvable changed paths become removals.
+- `server/src/repo-index.test.ts`: add cached-tree coverage. Repeated tree/window reads reuse discovery. TTL-expired reads serve the previous tree during background refresh. Preserve invalidation behavior.
+- `client/src/lib/stores/folder-store.svelte.test.ts`: correct the legacy `setShowArchived` eager-enumeration expectation. Seed one loaded session list and one unloaded folder. Assert reload only for the loaded list, then assert explicit `loadSessions` loads the other. Preserve preference persistence.
+- `server/src/folder-registry.test.ts`: cover member-tag changes targeting the member and dependent hubs. Verify inherited hub tags against a fresh registry listing.
+
+These amendments cover decisions resolved during planning, not new product scope. Existing tests remain unchanged otherwise.
+
 **Review status:** approved
+
+## Steps
+
+### Step 1: Reuse the cached discovery tree
+
+In `server/src/repo-index.test.ts`, add the authorized cached-tree tests red-first. Cover repeated reads, cold single-flight, TTL-stale serving, background replacement, and invalidation.
+
+In `server/src/repo-index.ts`, retain `SparseTree` in `ListingStamp`. Add `tree(): Promise<SparseTree>` over the existing `discover()` lifecycle. `list()` and `tree()` must share the walk and generation guard. Warm tree reads must not rescan. Expired tree reads return the previous tree while refreshing. Invalidations discard the old tree with the listing.
+
+In `server/src/index.ts`, construct `repoIndex` before `folderTree`. Route `folderTree.tree` to `repoIndex.tree()`. Keep the separate strict boot enumeration unchanged. It still calls `scanFolderModel` for its safety-critical allow-list.
+
+Do not add scanner caching or cache scan rows inside `FolderListing`.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/repo-index.test.ts` passes the cache tests. Existing discovery, missing-row, and invalidation tests remain green. Repeated registry listings share a walk through the wired tree port.
+**Status:** not started
+
+### Step 2: Put own repo facts on folder rows
+
+In `shared/src/protocol.ts`, add `repo?: RepoInfo` to `FolderInfo`. Document own repo facts separately from hub `repos`. Preserve the already-materialized window, epoch, delta, refresh, and search interfaces. Do not add an SDK `FolderInfo` twin.
+
+In `server/src/folder-registry.ts`, update `mergedFolders` to populate `repo` for plain code rows with an indexed repo. Persona rows omit it. Hub `repos` retains its current membership and disband meaning. Copy current cached repo facts into the returned row. Add no git probes.
+
+Keep registry curation and full-list interfaces unchanged. This step changes row enrichment, not query ownership.
+
+**Verify:** `npm run build:shared` succeeds. Existing folder registry and SDK-twin tests pass. Plain code rows expose their git facts without a separate client repo listing. Persona rows expose no own repo facts.
+**Status:** not started
+
+### Step 3: Implement batched session summaries
+
+In `server/src/session-summaries.ts`, implement `SessionSummaryIndex.listMany(folderPaths)` with its existing `Map<string, SessionSummary[]>` result. Reuse `list()` and its per-file cache and folder single-flight. Bound cross-folder work using the existing concurrency helper. Empty inputs return an empty map. Missing directories contribute empty arrays.
+
+Preserve the existing per-folder summary ordering, parse error behavior, and mtime-plus-size cache. Do not create a second file parser or cache.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/session-summaries.test.ts` passes batch, missing-directory, cache-identity, and existing parsing tests.
+**Status:** not started
+
+### Step 4: Implement metadata snapshots and owned pins
+
+In `server/src/folder-listing.ts`, implement the class-owned session metadata snapshot and `pin`/`releaseConnection`. Refresh metadata through injected `listRows`, `sessionSummaries.listMany`, and `listLiveSessions` dependencies. Keep the last successful metadata snapshot during refresh. Use the default 30-second TTL and a single in-flight refresh. Invalidations during refresh must remain eligible for a later refresh.
+
+Implement `invalidateSessionMetadata(folderPaths?)` as nonblocking invalidation for named folders or all folders. Refresh failure retains the previous snapshot. Cold metadata failures retain empty activity and folder-only search. Registry failures from public operations propagate.
+
+Pins contain canonical paths only. Order fresh pins by favorite, activity, name, then path. Compute disk activity from maximum `SessionSummary.modified`. Fold live sessions into fresh ordering without waiting for disk writes. Do not await the batched scan from `pin()` or `query()`.
+
+Scope tokens to their connection owner. Omitted-token connection requests reuse the owner's pin. Standalone requests without tokens create fresh pins. Unknown, expired, or cross-owner tokens create a replacement. Explicit refresh replaces the connection pin. Release all owned pins on close, including pins whose registry read finishes after release. Sweep expired orphan tokens without adding a new public configuration interface.
+
+Use pure private helpers for metadata projection and comparison. Keep cache and lifecycle mutation inside `FolderListing`.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/folder-listing.test.ts` passes order, ownership, release-during-pending-pin, and metadata tests as query implementation lands in Step 5. Hanging scans do not delay pins. Existing tokens retain their order after refresh.
+**Status:** not started
+
+### Step 5: Serve filtered windows and reconciled deltas
+
+First add the authorized normalization tests in `server/src/folder-listing.test.ts`. Cover a removed source row still present with `missing: true`, and a changed path absent from current rows.
+
+In `server/src/folder-listing.ts`, implement `query(req)` over the selected pin. Resolve current rows from the registry for every request. Drop absent paths without changing the pin. Apply archive and two-tier query filters over the full pinned order, then slice. Normalize offset and limit internally, with defaults 0 and 100 and limit clamped to [1, 200]. Return post-filter `total`, `more`, adopted `orderToken`, and computation-time `epoch`.
+
+Folder-tier matching uses persona display name, name, path, and tags. Session-tier matching uses cached names and first messages. Folder matches omit `matchedSessionIds`, even when sessions also match. Session-only matches carry matched ids. Never persist query annotations into registry rows or shared metadata.
+
+Implement `buildDelta(changedPaths, removedPaths)` against current registry rows. Reconcile and deduplicate touched paths. Existing rows go into `changed`. Absent rows go into `removedPaths`. Return copied, fully populated rows enriched with live session counts. Preserve own and member repo facts. Bump the shared epoch once per successful delta. Stamp query epochs before asynchronous row computation can overlap a later delta, so old computations cannot claim a newer epoch.
+
+Reuse `enrichActiveSessionCounts` from `server/src/folder-registry.ts` on copied response rows. Never mutate registry-owned rows or snapshot row objects.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/folder-listing.test.ts` passes all service tests, including normalization. Queries preserve pinned order while returning current curation. Deltas and full current listings agree for every touched path.
+**Status:** not started
+
+### Step 6: Emit exact mutation and discovery targets
+
+First add the authorized dependent-hub tag tests in `server/src/folder-registry.test.ts`. Compare emitted member and hub rows with a fresh listing.
+
+In `server/src/folder-registry.ts`, change private `fireChange` to accept changed and removed paths. `update` reports its canonical primary path. Tag updates also report registry and source hubs whose inherited tags depend on that member. `createHub` reports `canonicalTarget`. `disbandHub` reports its removed hub path. Emit after successful persistence, never for rejected mutations.
+
+In `server/src/repo-index.ts`, replace empty refresh callback targets with concrete paths. Use the retained discovery tree and source entries to identify discovery additions, changes, and removals. Include persona paths, source hubs, and changed git facts, not only code-repo additions. Exclude timestamps and stale status-cache entries from change targets. Preserve the existing unchanged-refresh silence and physical-disappearance callback expectation.
+
+Include dependent hub paths when refreshed member facts or membership change their rows. Use known shortcut/source membership, not full registry-row diffing. Keep missing source rows in complete repo listings. Step 5 reconciles physical-removal notifications against retained registry rows.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/folder-registry.test.ts src/repo-index.test.ts` passes mutation payload and refresh tests. Member tag changes update inherited hub tags. Unchanged refreshes emit nothing, and notifications contain no placeholder paths.
+**Status:** not started
+
+### Step 7: Wire windows, deltas, and metadata invalidation
+
+In `server/src/ws-handler.ts`, implement open-time nonblocking pin initialization when listing and folder dependencies exist. Early folder commands await the pending pin. Retry failed initialization through the command error path without unhandled rejections. Track the adopted token per handler. Explicit refresh requests call `pin(clientId)` once, then query under the replacement. `cleanup()` calls `releaseConnection(clientId)` without retaining a late pin.
+
+Replace `list_folders` registry listing with raw-param delegation to `FolderListingService.query`. Forward connection id, adopted or explicit token, offset, limit, query, archive flag, and refresh intent. Map `rows` to wire `folders`, and return roots plus every window field. Preserve error responses. Keep `list_repos` and manager complete-list consumers unwindowed.
+
+Implement static `broadcastFoldersChanged` as asynchronous service-built delta sending to each registered client. Handle construction failures without unhandled rejections. Do not rebuild or alter the returned event. `create_folder` already supplies its created path. Registry subscriptions own update/createHub/disbandHub emissions, so add no duplicate command broadcasts.
+
+For `file_put`, translate an edited `AGENTS.md` file path to the containing canonical folder path before delta construction. A file path is not a folder key. Preserve file-write response behavior.
+
+Invalidate targeted metadata after successful rename, delete, archive, and unarchive operations. Preserve existing session events without folder deltas. In `server/src/server.ts`, invalidate metadata from status and close callbacks. Forward registry and repo-index callback payloads unchanged to the delta emitter.
+
+In `server/src/index.ts`, retain the existing shared summary-index construction and listing injection. Add targeted metadata invalidation to the successful manager archive path, including archive operations without a live slot. Send no folder delta for session activity.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/ws-handler.test.ts src/server.test.ts` passes delegation, pin lifecycle, mutation wiring, and targeted invalidation tests. Each registry mutation emits one delta channel. Session-only changes emit existing session events only.
+**Status:** not started
+
+### Step 8: Accumulate client windows and authoritative search
+
+In `client/src/lib/stores/folder-store.svelte.ts`, implement path-keyed row accumulation while preserving public `folders` reads and assignments used by callers and tests. Add class-owned pagination state for token, response offset, total, more, active query, and query match paths. Track request context separately from row count. Overlapping replacement-token windows must not duplicate rows or corrupt the next offset.
+
+Make `ensureLoaded` request one initial window per connection without an `orderToken` or `repin`. Adopt its token after an accepted response. Keep `loadFolders` as explicit refresh with `repin: true` after a successful initial load. Implement single-flight `fetchNextWindow` with the current token and query. Stop when `more` is false. Failed or stale requests preserve cache and continuation position for retry.
+
+Implement `search` with a 250ms debounce. Coalesced callers must settle. Each new query starts at offset 0, adopts the response token, and merges rows without clearing accumulated nonmatches. Guard request context so a superseded query or closed connection cannot replace current search state. Empty query restores the accumulated unfiltered view. Scroll under a query continues its match windows.
+
+Use response wire epochs, not local request-start counters. Discard responses older than the newest delta. Accept equally new responses computed after interleaved events. Reset connection-specific token, pending request context, and epoch guard on disconnect while retaining useful cached rows.
+
+Implement `applyFoldersChanged` to merge changed rows and remove absent paths without wiping the sessions map. Implement `visibleFolders` using server-authoritative query match paths plus archive filtering and existing live favorite/recency/name sorting. Implement `visibleSessions` with active-query `matchedSessionIds`, unrestricted for folder-tier matches and cleared queries.
+
+Remove `loadFolders` session fan-out and eager `loadRepos`. `loadRepos` remains explicit for creation/member flows. Keep existing session-list single-flight, event reconciliation, and structural epoch handling intact.
+
+**Verify:** `npm run test --workspace=client -- --run src/lib/stores/folder-store.svelte.test.ts` passes window, debounce, query-view, epoch, retry, and existing session tests except the authorized archive-toggle correction completed in Step 9. Folder fetches issue no `list_sessions` or dashboard `list_repos` enumeration.
+**Status:** not started
+
+### Step 9: Separate archive-filter reloads from window loading
+
+Correct the authorized archive-toggle test red-first in `client/src/lib/stores/folder-store.svelte.test.ts`. Seed a loaded session-map path and an unloaded folder path. Require a reload only for the loaded path. Require explicit `loadSessions` for the other path. Preserve preference round-trip assertions.
+
+In `client/src/lib/stores/folder-store.svelte.ts`, update `setShowArchived` to persist the flag and reload session-map paths whose displayed lists use it. Do not iterate all cached folders to discover sessions. If pagination exists, request an offset-0 folder window with the current query, pin, and new archive flag. Merge accepted rows and reset that filtered continuation state. Keep connection pins stable unless the user explicitly refreshes.
+
+**Verify:** The complete `folder-store.svelte.test.ts` suite passes. An archive toggle fetches no sessions for unloaded cached rows. Established folder pagination can include archived folders without discarding live session state.
+**Status:** not started
+
+### Step 10: Virtualize rows and load rendered sessions
+
+Install the selected dependency with `npm install @tanstack/svelte-virtual --workspace=client`. Let npm update manifests and the lockfile. Do not edit dependency files manually.
+
+In `client/src/lib/components/Dashboard.svelte`, expose its existing scrolling element to `FolderList`. Preserve its swipe-card close listener and desktop/mobile layout. In `client/src/lib/components/FolderList.svelte`, use that scroll element and the list's offset within it for the TanStack virtualizer. Use canonical paths as item keys, measured variable row heights, and correct total-height spacing. Measure changes from session expansion, tags, and subtitles.
+
+Replace local `searchResults` folder/session scanning with `folderStore.search(search)`, `visibleFolders`, and `visibleSessions`. Render only virtual items. Trigger `fetchNextWindow` near the fetched view's end, including query results. Invoke `loadSessions` only for rendered rows needing a list, with bookkeeping that avoids a load loop when responses change measurements. Do not call it for every fetched row.
+
+Render plain-row git badges from `folder.repo`. Keep hub badges and disband checks based on `folder.repos`. Preserve row icons, half-open session filtering, menus, tag editing, and expanded-session controls. Use response `total` for the folder count rather than accumulated cache size.
+
+Preserve startup session hydration in `client/src/lib/stores/session-registry.svelte.ts`. Its persisted open/bound sessions restore without awaiting folder windows. Feed those restored session facts into the fetched subset's live recency view without triggering folder-wide session enumeration. Keep full repo requests explicit in the hub picker.
+
+**Verify:** `npm run check --workspace=client` and `npm run build --workspace=client` succeed. With approximately 3,500 folders, DOM row count remains bounded. Scrolling fetches more windows. Expanding rows does not overlap following rows. Search finds unfetched folders and narrows session-only matches. Restored chat sessions remain usable before folder fetching completes.
+**Status:** not started
+
+### Step 11: Align smoke journeys and verify the full slice
+
+In `tools/manual-test/project-management-smoke/project-management-smoke.mjs`, adapt probes to accumulate protocol windows under adopted tokens where a complete comparison is necessary. Pass `includeArchived` explicitly for archived-row checks. Explicitly repin after discovery mutations when testing a fresh order. Replace `event.folders` predicates with `changed` and `removedPaths` assertions. Preserve manager complete-list expectations.
+
+Adapt browser row lookup to scroll virtualized content before selecting offscreen folders. Preserve existing structural, curation, hub, fallback-session, and reconnect journeys. Update `tools/manual-test/PLAN.md` and `tools/manual-test/README.md` to describe window adoption, delta sync, server-authoritative search, and bounded rendering.
+
+Update `codemap.md` for the new listing module, cached-tree accessor, row repo enrichment, accumulating store, and virtualization. Note the accepted Android protocol break. Do not implement an Android compatibility layer or SDK row twin.
+
+Run targeted suites, then all server and client tests. Run shared build, project checks, lint, and production build. Exercise the existing dashboard/folder smoke driver from its documented command. If checks fail, fix implementation or report a concrete blocker. Do not bypass hooks or broaden the authorized test amendments.
+
+**Verify:** `npm run build:shared`, `npm run test --workspace=@pimote/server -- --run`, `npm run test --workspace=client -- --run`, `npm run check`, `npm run lint`, and `npm run build` pass. Updated smoke journeys validate both clients against deltas and fresh windows. No per-folder fan-out occurs before rendered-row requests.
+**Status:** not started
