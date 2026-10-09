@@ -147,6 +147,27 @@ export class FolderStore {
     await this.fetchFolderWindow(this.nextOffset);
   }
 
+  /**
+   * The view nears the fetched frontier — the display position where the next
+   * window's rows insert — so the scan must continue. The display tail is not
+   * the trigger: rows merged from search or deltas can sit below unfetched
+   * territory, and continuation rows land at their sorted positions, which can
+   * lie behind the view. Triggering at the frontier keeps merged rows ahead of
+   * a scrolling view, so no row silently skips between two frames.
+   */
+  shouldFetchNextWindow(lastVisibleIndex: number): boolean {
+    return this.more && lastVisibleIndex >= this.frontierIndex - 10;
+  }
+
+  /** Display rows belonging to the fetched prefix — where unfetched rows insert. */
+  private get frontierIndex(): number {
+    let count = 0;
+    for (const row of this.folders) {
+      if ((this.showArchived || !row.archived) && (!this.activeQuery || this.queryMatchPaths.includes(row.path)) && this.fetchedPrefix.has(row.path)) count++;
+    }
+    return count;
+  }
+
   /** Coalesce callers into one server query without discarding accumulated rows. */
   search(query: string): Promise<void> {
     this.activeQuery = query.trim();

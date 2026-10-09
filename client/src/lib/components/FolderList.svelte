@@ -235,7 +235,10 @@
 
   $effect(() => {
     const lastItem = virtualItems.at(-1);
-    if (connection.status === 'connected' && folderStore.more && lastItem && lastItem.index >= displayFolders.length - 10) {
+    // The fetched frontier — not the display tail — is where the next
+    // window's rows will insert; nearing it keeps merged rows ahead of the
+    // scrolling view (see FolderStore.shouldFetchNextWindow).
+    if (connection.status === 'connected' && lastItem && folderStore.shouldFetchNextWindow(lastItem.index)) {
       untrack(() => void folderStore.fetchNextWindow());
     }
   });

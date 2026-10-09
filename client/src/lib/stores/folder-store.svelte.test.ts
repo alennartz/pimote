@@ -541,6 +541,58 @@ describe('FolderStore', () => {
       expect(fakeConnection.send).not.toHaveBeenCalled();
     });
 
+    it('continuation windows key off the fetched frontier, not the display tail', async () => {
+      vi.useFakeTimers();
+      try {
+        const store = new FolderStore();
+        // 100 prefix rows (fetched window 0) sort above 47 cached extras whose
+        // pin positions sit in unfetched territory — the shape a query merge
+        // or a delta leaves behind: a hole between the fetched prefix and the
+        // extras at the display tail.
+        const prefix = Array.from({ length: 100 }, (_, i) => makeFolder({ path: `/p/pad${i}`, name: `pad${i}`, lastActivity: 2_000 - i }));
+        const extras = Array.from({ length: 47 }, (_, i) => makeFolder({ path: `/p/low${i}`, name: `low${i}`, lastActivity: 100 - i }));
+        fakeConnection.send.mockImplementation((cmd: any) => {
+          if (cmd.type !== 'list_folders') return Promise.resolve({ success: true, data: { sessions: [], repos: [] } });
+          if (cmd.query === 'low') return Promise.resolve(okListFolders(extras, ['/roots'], { total: 47, orderToken: 'tok-1', more: false }));
+          return Promise.resolve(okListFolders(prefix, ['/roots'], { total: 147, orderToken: 'tok-1', more: true }));
+        });
+
+        await store.ensureLoaded();
+        const searching = store.search('low');
+        await vi.advanceTimersByTimeAsync(250);
+        await searching;
+        const clearing = store.search('');
+        await vi.advanceTimersByTimeAsync(250);
+        await clearing;
+
+        // Display order mirrors the pin: fetched prefix first, then the extras.
+        expect(store.visibleFolders.slice(0, 100).map((f) => f.name)).toEqual(prefix.map((f) => f.name));
+        expect(store.visibleFolders.slice(100).map((f) => f.name)).toEqual(extras.map((f) => f.name));
+        // The next window's rows insert at the frontier (index 100). The view
+        // past that point must fetch — its rendered rows face the insertion —
+        // even though the display tail (147) is still far away.
+        expect(store.shouldFetchNextWindow(130)).toBe(true);
+        // A view short of the frontier lets the rows above it settle first.
+        expect(store.shouldFetchNextWindow(85)).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('with a contiguous fetched prefix the trigger sits at the display tail', async () => {
+      const store = new FolderStore();
+      const prefix = Array.from({ length: 100 }, (_, i) => makeFolder({ path: `/p/pad${i}`, name: `pad${i}`, lastActivity: 2_000 - i }));
+      fakeConnection.send.mockImplementation((cmd: any) => {
+        if (cmd.type !== 'list_folders') return Promise.resolve({ success: true, data: { sessions: [], repos: [] } });
+        return Promise.resolve(okListFolders(prefix, ['/roots'], { total: 300, orderToken: 'tok-1', more: true }));
+      });
+
+      await store.ensureLoaded();
+
+      expect(store.shouldFetchNextWindow(90)).toBe(true);
+      expect(store.shouldFetchNextWindow(85)).toBe(false);
+    });
+
     it('search is debounced (250ms) and fetches the offset-0 window for the query, merging matches in', async () => {
       vi.useFakeTimers();
       try {
