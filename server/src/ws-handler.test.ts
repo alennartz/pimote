@@ -3873,10 +3873,11 @@ describe('WsHandler', () => {
       expect(invalidate).not.toHaveBeenCalled();
     });
 
-    it('creates the hub with memberPaths, responds with folderPath, and invalidates the repo index', async () => {
+    it('creates the hub with memberPaths, responds with folderPath, and re-walks the listing without clearing warm git probes', async () => {
       const invalidate = vi.fn();
+      const invalidateListing = vi.fn();
       const createHub = vi.fn(async () => folderRow('/home/user/projects/hub', { repos: [] }));
-      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate } as unknown as RepoIndex;
+      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate, invalidateListing } as unknown as RepoIndex;
       const folderRegistry = { list: async () => [], createHub } as unknown as FolderRegistry;
       const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry });
 
@@ -3886,7 +3887,8 @@ describe('WsHandler', () => {
 
       expect(createHub).toHaveBeenCalledWith({ name: 'hub', root: '/home/user/projects', memberPaths: ['/home/user/projects/a', '/home/user/projects/b'] });
       expect(findResponse(sent, 'req-ch-2')).toMatchObject({ success: true, data: { folderPath: '/home/user/projects/hub' } });
-      expect(invalidate).toHaveBeenCalledOnce();
+      expect(invalidateListing).toHaveBeenCalledOnce();
+      expect(invalidate).not.toHaveBeenCalled();
     });
 
     it('surfaces hub validation errors without invalidating the index', async () => {
@@ -3908,10 +3910,11 @@ describe('WsHandler', () => {
   });
 
   describe('disband_hub', () => {
-    it('disbands by folderPath and invalidates the repo index', async () => {
+    it('disbands by folderPath and re-walks the listing without clearing warm git probes', async () => {
       const invalidate = vi.fn();
+      const invalidateListing = vi.fn();
       const disbandHub = vi.fn(async () => {});
-      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate } as unknown as RepoIndex;
+      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate, invalidateListing } as unknown as RepoIndex;
       const folderRegistry = { list: async () => [], disbandHub } as unknown as FolderRegistry;
       const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry });
 
@@ -3919,7 +3922,8 @@ describe('WsHandler', () => {
 
       expect(disbandHub).toHaveBeenCalledWith('/home/user/projects/hub');
       expect(findResponse(sent, 'req-dh-1')).toMatchObject({ success: true });
-      expect(invalidate).toHaveBeenCalledOnce();
+      expect(invalidateListing).toHaveBeenCalledOnce();
+      expect(invalidate).not.toHaveBeenCalled();
     });
 
     it('surfaces disband errors without invalidating the index', async () => {
@@ -4009,11 +4013,12 @@ describe('WsHandler', () => {
       expect(resp!.error).toBe('Root is not a configured scan root');
     });
 
-    it('broadcasts a folders_changed delta naming the created folder and invalidates the repo index', async () => {
+    it('broadcasts a folders_changed delta naming the created folder and re-walks the listing without clearing warm git probes', async () => {
       const invalidate = vi.fn();
+      const invalidateListing = vi.fn();
       const buildDelta = vi.fn(async () => ({ type: 'folders_changed' as const, changed: [folderRow('/home/user/projects/new')], removedPaths: [], epoch: 1 }));
       const folderListing = { buildDelta } as unknown as FolderListingService;
-      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate } as unknown as RepoIndex;
+      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate, invalidateListing } as unknown as RepoIndex;
       const folderRegistry = { list: async () => [folderRow('/home/user/projects/new')] } as unknown as FolderRegistry;
       const creators = [
         {
@@ -4030,7 +4035,8 @@ describe('WsHandler', () => {
       await a.handler.handleMessage(JSON.stringify({ type: 'create_folder', root: '/home/user/projects', name: 'new', id: 'req-cp-5' }));
 
       expect(findResponse(a.sent, 'req-cp-5')).toMatchObject({ success: true, data: { folderPath: '/home/user/projects/new' } });
-      expect(invalidate).toHaveBeenCalledOnce();
+      expect(invalidateListing).toHaveBeenCalledOnce();
+      expect(invalidate).not.toHaveBeenCalled();
       await flushPromises();
       // The mutation site reports exactly the path it created.
       expect(buildDelta).toHaveBeenCalledWith(['/home/user/projects/new'], []);

@@ -425,7 +425,9 @@ export class FolderRegistry implements FolderRegistryPort {
       await this.persist(doc);
       // Delta subscribers re-resolve rows immediately. Discard discovery's
       // deleted hub before they can read its cached tree or repo facts.
-      this.repos.invalidate();
+      // Listing-only: the deleted hub's status entry is keyed by a vanished
+      // path and can never serve a row again; member repos keep warm probes.
+      this.repos.invalidateListing();
       this.fireChange({ changedPaths: [], removedPaths: [removed.path] });
     });
   }

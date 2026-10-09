@@ -635,6 +635,23 @@ describe('FolderRegistry.disbandHub()', () => {
     expect(existsSync(repoA)).toBe(true);
   });
 
+  it('keeps warm git probes for untouched member repos on disband', async () => {
+    const registry = makeRegistry();
+    const { path: hubPath } = await registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA] });
+    // Warm the member's status probe (clean tree).
+    expect((await findRow(registry, repoA))?.repo?.dirty).toBe(false);
+
+    // Git facts of the surviving member move after the warm probe.
+    await writeFile(join(repoA, 'notes.txt'), 'work in progress');
+
+    await registry.disbandHub(hubPath);
+
+    // Discovery re-walks (the hub row is gone) but the member serves its
+    // warm status: a disband moves no git facts of untouched repos.
+    expect(await findRow(registry, hubPath)).toBeUndefined();
+    expect((await findRow(registry, repoA))?.repo?.dirty).toBe(false);
+  });
+
   it('refuses to disband a plain code folder and an unknown path', async () => {
     const registry = makeRegistry();
     const { path: hubPath } = await registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA] });

@@ -327,7 +327,9 @@ export class WsHandler {
           const created = await folderRegistry.createHub({ name: command.name, root: command.root, memberPaths: command.memberPaths });
           // The hub folder just changed on disk; drop the cached listing so a
           // subsequent member-picker request sees the new filesystem state.
-          repoIndex.invalidate();
+          // Listing-only: a new hub moves no git facts of existing repos (the
+          // hub's own first probe fills its slot lazily), so warm probes stay.
+          repoIndex.invalidateListing();
           this.sendResponse(id, true, { folderPath: created.path });
           break;
         }
@@ -337,7 +339,9 @@ export class WsHandler {
           await folderRegistry.disbandHub(command.folderPath);
           // The registry invalidates before notifying delta subscribers.
           // Retain this command-level invalidation for its existing contract.
-          repoIndex.invalidate();
+          // Listing-only: the deleted hub's status entry can never serve a
+          // row again, and members' git facts do not move.
+          repoIndex.invalidateListing();
           this.sendResponse(id, true);
           break;
         }
@@ -407,7 +411,9 @@ export class WsHandler {
           try {
             const created = await creator.create({ root, name });
             // Otherwise the 30s listing TTL hides the new repo from the index.
-            deps.repoIndex.invalidate();
+            // Listing-only: the new folder's first probe fills its own slot;
+            // untouched repos keep warm git probes.
+            deps.repoIndex.invalidateListing();
             WsHandler.broadcastFoldersChanged(deps.folderListing, [created.path], [], this.clientRegistry);
             this.sendResponse(id, true, { folderPath: created.path });
           } catch (err) {
