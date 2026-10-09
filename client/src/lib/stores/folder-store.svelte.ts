@@ -108,18 +108,23 @@ export class FolderStore {
 
   /**
    * Folders with the archived filter applied, favorites first. Within each
-   * tier, most recent session activity (old-sidebar behavior), name as
-   * tiebreak. Folders with no sessions sink to the bottom of their tier.
+   * tier, most recent activity — live sessions first, then the row's carried
+   * `lastActivity` (the ordering fact the pinned order sorts on), then loaded
+   * session lists — name as tiebreak. Mirrors the server's pinned order from
+   * row data alone, so rows rank correctly before lazy session lists load.
    */
   get visibleFolders(): FolderInfo[] {
     const list = this.folders.filter((folder) => (this.showArchived || !folder.archived) && (!this.activeQuery || this.queryMatchPaths.includes(folder.path)));
     const openActivity = this.readOpenSessionActivity();
-    const recency = (folder: FolderInfo): number =>
-      Math.max(
+    const recency = (folder: FolderInfo): number => {
+      if (folder.activeSessionCount > 0) return Number.MAX_SAFE_INTEGER;
+      return Math.max(
         0,
         ...(this.sessions.get(folder.path) ?? []).map((session) => toTimestamp(session.modified)),
         ...openActivity.filter((session) => session.folderPath === folder.path).map((session) => (session.modified ? toTimestamp(session.modified) : Number.MAX_SAFE_INTEGER)),
+        folder.lastActivity ?? 0,
       );
+    };
     return [...list].sort((a, b) => Number(b.favorite === true) - Number(a.favorite === true) || recency(b) - recency(a) || a.name.localeCompare(b.name));
   }
 

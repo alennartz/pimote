@@ -169,10 +169,13 @@ function orderedPaths(rows: readonly FolderInfo[], metadata: ReadonlyMap<string,
 
 function matchRow(row: FolderInfo, metadata: SessionMetadata | undefined, query: string): FolderInfo | undefined {
   const { matchedSessionIds: _annotation, ...copy } = row;
+  // Served rows carry the ordering fact so the client re-sort mirrors the
+  // pinned order before lazy session lists land; absent when no activity.
+  const annotated: FolderInfo = metadata?.lastActivity ? { ...copy, lastActivity: metadata.lastActivity } : copy;
   const folderText = [row.persona?.name ?? row.name, row.name, row.path, ...row.tags];
-  if (!query || folderText.some((text) => text.toLowerCase().includes(query))) return copy;
+  if (!query || folderText.some((text) => text.toLowerCase().includes(query))) return annotated;
   const ids = metadata?.sessions.filter((session) => session.text.includes(query)).map((session) => session.id) ?? [];
-  return ids.length ? { ...copy, matchedSessionIds: ids } : undefined;
+  return ids.length ? { ...annotated, matchedSessionIds: ids } : undefined;
 }
 
 function normalizeWindow(offset: number | undefined, limit: number | undefined): { offset: number; limit: number } {
@@ -273,7 +276,9 @@ export class FolderListing implements FolderListingService {
     const touched = [...new Set([...changedPaths, ...removedPaths])];
     const changed = touched.flatMap((path) => {
       const row = byPath.get(path);
-      return row ? [{ ...row }] : [];
+      if (!row) return [];
+      const activity = this.metadata.get(path)?.lastActivity;
+      return [{ ...row, ...(activity ? { lastActivity: activity } : {}) }];
     });
     const removed = touched.filter((path) => !byPath.has(path));
     // Deltas re-resolve rows for immediate display: fill git facts for the

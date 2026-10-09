@@ -74,6 +74,10 @@ export interface FolderInfo {
   repo?: RepoInfo;
   /** Own-path user tags — the subset of `tags` that is user-removable. */
   userTags?: string[];
+  /** Epoch ms of the row's most recent session activity — the ordering fact
+   *  the pinned order sorts on. Display-only: shipping it lets the client's
+   *  live re-sort mirror the server order before lazy session lists load. */
+  lastActivity?: number;
   /** Session ids matched by a server-side search — present when the row matched
    *  via the session tier (narrows the lazily-loaded session list to just these);
    *  absent on folder-tier matches (all sessions shown). */

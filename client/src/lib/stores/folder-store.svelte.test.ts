@@ -316,6 +316,28 @@ describe('FolderStore', () => {
 
       expect(store.visibleFolders).toEqual([starred, staleStarred, freshPlain]);
     });
+
+    it('ranks rows by the carried lastActivity fact before their session lists load', () => {
+      const store = new FolderStore();
+      const sink = makeFolder({ path: '/r/sink', name: 'a-sink' });
+      const loaded = makeFolder({ path: '/r/loaded', name: 'b-loaded' });
+      const carried = makeFolder({ path: '/r/carried', name: 'c-carried', lastActivity: Date.parse('2026-03-01T00:00:00Z') });
+      store.folders = [sink, loaded, carried];
+      store.sessions.set('/r/loaded', [makeSession('s1', '2026-01-01T00:00:00Z')]);
+
+      // The row's carried ordering fact outranks loaded-list activity — the
+      // client re-sort mirrors the server's pinned order from row data alone.
+      expect(store.visibleFolders).toEqual([carried, loaded, sink]);
+    });
+
+    it('rows with live sessions rank as most-recent regardless of file activity', () => {
+      const store = new FolderStore();
+      const active = makeFolder({ path: '/r/active', name: 'z-active', activeSessionCount: 1 });
+      const fresh = makeFolder({ path: '/r/fresh2', name: 'a-fresh2', lastActivity: Date.parse('2026-03-01T00:00:00Z') });
+      store.folders = [fresh, active];
+
+      expect(store.visibleFolders).toEqual([active, fresh]);
+    });
   });
 
   describe('loadFolders', () => {

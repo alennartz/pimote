@@ -114,6 +114,38 @@ describe('lazy git status enrichment (window path)', () => {
   });
 });
 
+describe('carried lastActivity (the ordering fact) on served rows', () => {
+  it('query rows carry lastActivity from the session-derived metadata', async () => {
+    const world = fakeWorld({
+      rows: [row('/w/a'), row('/w/b')],
+      summaries: { '/w/a': [summary('s1', '2026-03-01T00:00:00Z')], '/w/b': [] },
+    });
+    const service = new FolderListing(world.deps);
+    const pin = await service.pin();
+    await flushMicrotasks();
+
+    const result = await service.query({ token: pin.token });
+
+    // Rows rank by this fact server-side; shipping it lets the client re-sort
+    // match the pinned order before lazy session lists land.
+    expect(result.rows.find((r) => r.path === '/w/a')?.lastActivity).toBe(Date.parse('2026-03-01T00:00:00Z'));
+    expect(result.rows.find((r) => r.path === '/w/b')?.lastActivity).toBeUndefined();
+  });
+
+  it('delta rows carry lastActivity too', async () => {
+    const world = fakeWorld({
+      rows: [row('/w/a')],
+      summaries: { '/w/a': [summary('s1', '2026-03-01T00:00:00Z')] },
+    });
+    const service = new FolderListing(world.deps);
+    await warm(service);
+
+    const delta = await service.buildDelta(['/w/a'], []);
+
+    expect(delta.changed[0]?.lastActivity).toBe(Date.parse('2026-03-01T00:00:00Z'));
+  });
+});
+
 describe('FolderListing', () => {
   describe('pin()', () => {
     it('returns a pin token and the current epoch', async () => {
