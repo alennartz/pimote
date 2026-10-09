@@ -175,3 +175,141 @@ Verification result (recorded in `docs/bugs/pi-065-extension-newsession-broken.m
 Stub behavior tests remain red until implementation. Assembly injection and the static protocol cutover assertion are red until cutover. Existing persisted slot ownership is green through the normal session boundary. Filesystem propagation tests are green on the throwing stubs and must remain green on implementation. **External SDK exception:** `pi-065-newsession.test.ts` is green. It pins SDK behavior, not pimote implementation, and verifies the accepted fail-fast contract. Pre-existing tests remain green, including the structurally updated pinned-toolset tests.
 
 **Review status:** approved
+
+## Steps
+
+Implementation changes must preserve the Red Gate tests and their behavioral contracts. Do not change the new attachment, seed, persona-tool, pi-065, protocol-cutover, composer, or assembly/ownership assertions.
+
+**Investigation rulings:**
+
+- Delete obsolete module-owned tests only when their module or lifecycle is deleted below. Retarget existing wiring assertions without weakening their generic coverage.
+- The startup extension factory can use a stable, init-time context holder. Fill it exactly once before accepting session opens. It must not become a runtime service locator.
+- Expose the canonical manager root through `ListFoldersResponseData`, beside `roots`. The dashboard's ordinary folder request supplies this fact. Do not add a bootstrap event or read raw configuration through `file_get`.
+- Include manager-root records in persisted-resource enumeration and folderless session lookup, without adding the manager root to discovery.
+- Verify manager-root resource enumeration through retargeted existing startup GC coverage. If that coverage cannot express the invariant, record the gap for implementation-phase red-green TDD.
+
+### Step 1: Implement canonical attachment and boot seeds
+
+Implement `loadManagerExtension` in `server/src/manager/attachment.ts`. Canonicalize both input paths through filesystem real paths. Return exact equality, not containment. Propagate filesystem errors.
+
+Implement `seedManagerRoot` in `server/src/manager/seed.ts`. Keep the shipped manager mission and memory stub as immutable code constants. The `AGENTS.md` template must include persona-marker front matter, `name: manager`, a nonempty one-line description, and the maintain-`memory.md` instruction. Do not list tools.
+
+Seed each absent file independently. Preserve existing files byte-for-byte, including races with another writer. Do not swallow errors other than an existing destination. An unusable manager root must fail startup. Keep these operations behind the existing exported interfaces in `server/src/manager/index.ts`.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/manager/attachment.test.ts src/manager/seed.test.ts` passes, including symlink identity and filesystem propagation.
+**Status:** not started
+
+### Step 2: Implement persona creation
+
+Replace the `pimote_create_persona` execute stub in `server/src/manager/extension.ts`. Preserve its registered name, parameter schema, and output schema. Use `CreatePersonaInput` from `server/src/manager/types.ts`.
+
+Validate `name` as one nonempty basename, rejecting separators, `.` and `..`. Canonicalize `parentPath` and configured scan roots. Accept root equality or true descendant containment. Reject sibling prefix matches and symlink escapes before creating files. Do not choose a default parent.
+
+Create only the new `<parentPath>/<name>` folder. Refuse existing destinations without altering them. Write a parseable persona marker with the caller's name and description. Compose the optional caller prompt with the fixed persona prompt and maintain-`memory.md` instruction. Write the memory stub. Keep text composition pure and filesystem effects in the creation operation. Serialize front-matter values safely for `parsePersonaFrontMatter` in `server/src/folder-model/marker.ts`.
+
+Return `jsonToolResult({ folderPath })` with the created folder's canonical path. After successful materialization, call the injected `context.repos.invalidateListing()`. Validation, collision, and filesystem failures return `errorToolResult`, never an execute rejection. Do not invalidate failed creations. Leave the other seven tools unchanged.
+
+**Verify:** The `pimote_create_persona` cases in `npm run test --workspace=@pimote/server -- --run src/manager/persona-tools.test.ts` pass. Invalid inputs leave no disk effects.
+**Status:** not started
+
+### Step 3: Implement persona listing
+
+Replace the `pimote_list_personas` execute stub in `server/src/manager/extension.ts`. Read complete folder rows through the injected folder-registry port. Select persona rows, excluding hubs as required by the tool contract. Shape immutable `PersonaRow` values with persona name, string description, canonical `folderPath`, and matching `workingDirectory`. Use an empty string for an absent description.
+
+Return `jsonToolResult({ personas })`. Return `errorToolResult` for dependency failures. Do not perform new discovery or filesystem canonicalization on already-canonical folder-model rows. Keep the registration and schemas unchanged.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/manager/persona-tools.test.ts src/manager/extension.test.ts` passes. The existing tool registration and behavior assertions remain intact.
+**Status:** not started
+
+### Step 4: Attach tools during ordinary session assembly
+
+In `server/src/session-manager.ts`, retain `SessionManagerOptions.managerExtensionFactory` and store the injected factory as a readonly instance dependency. Add it to `resourceLoaderOptions.extensionFactories` only when `loadManagerExtension({ cwd }, config)` returns true.
+
+Evaluate attachment during the existing runtime assembly, using the runtime's effective cwd. Resumed session files use their persisted cwd, not the requested folder. Runtime replacement must receive the same assembly rule. Skip attachment work when no manager extension factory is configured. Preserve voice, static-host, and file-download factories and their existing ordering.
+
+Keep `PiSessionManager.create`/`open`, the ordinary slot map, replay buffers, reset flow, and server-owned session lifecycle. A disconnect must only clear viewer ownership. Do not add manager-specific reconnect or reset logic.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/session-manager-open-session.test.ts src/session-manager.test.ts src/pi-065-newsession.test.ts` passes. Manager sessions persist, reopen the same live slot, and load tools exclusively at the manager root. The external SDK regression remains green without a patch change.
+**Status:** not started
+
+### Step 5: Wire startup ports and persisted resources
+
+In `server/src/index.ts`, canonicalize `config.managerRoot` after configuration load and before session assembly. Await `seedManagerRoot` before accepting session opens. Do not add the manager root to `config.roots`, `RepoIndex`, folder sources, or folder-model discovery.
+
+Pass a manager extension factory into `PimoteSessionManager.create` beside the existing resource factories. Preserve the current `ManagerToolContext` ports for live sessions, disk records, opening, archiving, folder registry, repo index, and sparse tree.
+
+Resolve startup ordering with a stable forwarding factory and an explicit init-time context holder. Construct the session manager and `FolderListing`, then bind the context exactly once before `createServer` can serve session commands. Consult-unfilled must be impossible through startup ordering. Capture stable bindings, not a reassignable local variable. Retain the existing client-registry forwarding reference for archive broadcasts, filled at startup.
+
+Remove the `ManagerService` construction and manager-specific reaper. Keep the ordinary idle reaper and shutdown disposal.
+
+Extend `enumerateValidSessionIds` to enumerate manager-root records alongside discovered entry and reach paths. Deduplicate enumeration paths. Preserve strict listing and the `null` allow-list on incomplete enumeration. Static hosting and downloads must retain persisted manager resources without discovering the manager root.
+
+Retarget only `createManagerSessionFactory` wiring mocks/assertions in `server/src/index.test.ts` to the normal session-manager option. Preserve toolset, port behavior, configuration, bootstrap, and GC assertions. Update existing GC coverage to express the separate manager-root enumeration. If that requires additional behavioral coverage, record the implementation-phase TDD gap rather than weakening existing assertions.
+
+**Verify:** Startup initializes the context before serving opens. `npm run test --workspace=@pimote/server -- --run src/index.test.ts` passes. Its resource allow-list includes manager records, while discovery still receives only scan roots. Existing incomplete-enumeration cases still suppress GC.
+**Status:** not started
+
+### Step 6: Remove the ephemeral server lifecycle
+
+Delete `server/src/manager/service.ts` and its module-owned `service.test.ts`. Remove `ManagerSessionFactoryDeps`, `createManagerSessionFactory`, and `buildManagerSession` from `server/src/session-manager.ts`, including imports used only by that factory. Remove service exports from `server/src/manager/index.ts`.
+
+Delete `server/src/manager/resources.ts` and `resources.test.ts`. Their artifact snapshots, retention timers, restart reset, and 24-hour leases belong to the deleted lifecycle. Remove `resetManagerResourceRoot` startup wiring and the manager resource-path constant in `server/src/paths.ts` if no consumer remains. Use ordinary static-host and download extensions for manager sessions. Do not change their generic retention options for other callers.
+
+In `server/src/server.ts`, remove the manager-service parameter and forwarding argument. In `server/src/ws-handler.ts`, remove manager service/session imports, `managerListener`, prompt/abort routing, and manager-specific cleanup. Update `requireFolderDeps` to require only the remaining folder dependencies. Keep disconnect cleanup for ordinary slots and folder-order pins.
+
+Update affected positional constructor calls and test fixtures only to reflect removed parameters. Do not retain an optional compatibility slot or dead lifecycle export.
+
+**Verify:** `rg 'ManagerService|createManagerSessionFactory|buildManagerSession|createManagerResources|resetManagerResourceRoot' server/src` has no matches. Server type checking and the existing server/WS tests pass after the protocol cutover below. Disconnect leaves a working manager runtime in the ordinary slot map.
+**Status:** not started
+
+### Step 7: Cut over protocol and root metadata
+
+In `shared/src/protocol.ts`, delete `ManagerPromptCommand`, `ManagerAbortCommand`, and `ManagerStreamEvent`, plus their union members. Do not add replacement manager command/event names.
+
+Add `managerRoot: string` to `ListFoldersResponseData`, beside `roots`. This field is the server-canonical absolute manager path, never raw `~`. In `server/src/ws-handler.ts`, include it in every `list_folders` response. Thread the canonical startup fact from `server/src/server.ts` into the handler through an explicit dependency.
+
+Extend `findSessionRecord` in `server/src/ws-handler.ts` so folderless disk lookup searches manager-root records as well as known folder records. Keep folder-specific lookup unchanged. Do not insert a synthetic manager row into discovery or the registry.
+
+In `client/src/lib/stores/connection.svelte.ts`, store the server-provided manager-root fact with connection state. In `client/src/lib/stores/folder-store.svelte.ts`, adopt it from successful ordinary folder responses without creating a folder-list row. Manager controls must wait for a usable root fact and connected readiness.
+
+Inspect the hand-written Android mirror for retired names. Investigation found no `manager_prompt`, `manager_abort`, or `manager_event` consumers in `mobile/android`. Add no shim.
+
+**Verify:** `npm run build:shared` succeeds. `npm run test --workspace=@pimote/server -- --run src/manager/protocol-cutover.test.ts` passes. Root metadata remains separate from listed folders, and folderless manager-session reopening resolves disk records.
+**Status:** not started
+
+### Step 8: Implement composer and ordinary navigation
+
+Implement the pure `managerComposerAction` stub in `client/src/lib/manager-composer.ts`. Continue only when a viewed session exists and `viewedIsManager` is true. Otherwise return `open-new`, including stale flags.
+
+Rewrite `client/src/lib/components/ManagerChat.svelte` as a thin manager area with a composer and persisted session list. Consume the canonical root from connection state. Use `folderStore.loadSessions(managerRoot)` and its path-keyed session cache, which already supports arbitrary folder paths. Do not require a discovered folder row.
+
+Submit through one operation shared by the manager area's entry controls. Pass the current view and manager identity into `managerComposerAction`. For `continue`, send ordinary `prompt` to that session. For `open-new`, await ordinary `open_session` at `managerRoot`, confirm success, prompt the returned session id, and navigate through the existing session registry. Preserve the draft on rejection. Do not prompt a placeholder id or select a historical manager session implicitly.
+
+Open a listed session through `openExistingSession(id, managerRoot, { switchTo: true })`. Use normal session summary presentation and ownership handling. Reuse `switchToSession` and `session-route.ts` navigation. Do not add a manager URL, synthetic transcript, separate event reducer, or reconnect path.
+
+**Verify:** `npm run test --workspace=client -- --run src/lib/manager-composer.test.ts` passes. Manual submission from landing creates a persisted session. Selecting an old record resumes it. Submission with a viewed manager session continues that exact session.
+**Status:** not started
+
+### Step 9: Replace dashboard manager surfaces
+
+Update `client/src/lib/components/Dashboard.svelte` and `HomeToolbar.svelte` to remove `managerStore` dependencies. Drive desktop panel and mobile sheet presentation through local UI state, not transcript existence. Keep the manager area on the dashboard. Opening a session must navigate to the ordinary conversation surface.
+
+Give the toolbar explicit manager-area inputs/callbacks instead of a new global mutable store. Keep composer submission logic in the operation from Step 8. Closing a panel or sheet must only close UI, not abort, erase, or dispose a session.
+
+Delete `client/src/lib/stores/manager-store.svelte.ts` and its module-owned `manager-store.svelte.test.ts`. Remove manager reset comments from `connection.svelte.ts` and synthetic-manager comments from `session-registry.svelte.ts`. Preserve generic disconnect listeners used by other stores.
+
+Remove obsolete 24-hour manager-link copy from `client/src/lib/components/ManagerResources.svelte`. Ordinary session panels and downloads now own manager artifacts. Do not keep that presentation in the landing area as a second conversation. Preserve generic card/download coverage. Do not delete unrelated resource tests or change generic renderers.
+
+**Verify:** `rg 'manager-store|manager_prompt|manager_abort|manager_event' client/src --glob '!*.test.ts'` has no matches. `npm run check --workspace=client` succeeds. Desktop uses a dashboard manager panel, mobile uses a sheet, and both open ordinary session conversations.
+**Status:** not started
+
+### Step 10: Verify the complete replacement
+
+Run the server and client test suites, shared build, and repository checks. Resolve only failures caused by this cutover. Keep the Red Gate contracts intact and preserve generic tests when adjusting removed constructor slots or mocks.
+
+Run `tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs` using its documented driver command. Its nine-tool registration contract already includes the persona tools. Exercise dashboard submission, history reopening, disconnect during a run, reconnect replay, and ordinary report/download handling against an isolated manager root.
+
+Confirm no per-connection manager lifecycle remains. Confirm configured scan roots remain unchanged. Confirm manager-root seeding preserves user files across restart and manager-session resources survive normal boot enumeration. The pi-065 fail-fast contract must stay green without a patch-package change.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run`, `npm run test --workspace=client -- --run`, `npm run build:shared`, and `npm run check` pass. The manual manager-tool and lifecycle journeys pass. No manager-specific commands or stream wrappers remain in shared source.
+**Status:** not started
