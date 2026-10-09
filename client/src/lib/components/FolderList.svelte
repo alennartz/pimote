@@ -150,7 +150,7 @@
     overscan: 5,
     gap: 4,
   });
-  const virtualItems = $derived($virtualizer.getVirtualItems());
+  const virtualItems = $derived($virtualizer.getVirtualItems().filter((item) => displayFolders[item.index] !== undefined));
 
   $effect(() => {
     const query = search.trim();
@@ -193,12 +193,17 @@
   });
 
   /** TanStack's ResizeObserver measures expansion, tags, and subtitle changes. */
-  function measureRow(node: HTMLDivElement, measurement: { instance: SvelteVirtualizer<HTMLDivElement, HTMLDivElement>; index: number }) {
-    const instance = measurement.instance;
+  function measureRow(node: HTMLDivElement, measurement: { instance: SvelteVirtualizer<HTMLDivElement, HTMLDivElement>; path: string }) {
+    const { instance, path } = measurement;
     instance.measureElement(node);
     return {
       update: () => instance.measureElement(node),
-      destroy: () => instance.measureElement(null),
+      destroy: () => {
+        // A virtualized row can disappear without its menu's close callback.
+        // Its click suppression must not survive to consume another row's tap.
+        queueMicrotask(() => setRowMenu(path, false));
+        instance.measureElement(null);
+      },
     };
   }
 
@@ -500,7 +505,7 @@
       </div>
     {:else}
       <div class="relative w-full" style:height={`${$virtualizer.getTotalSize()}px`} bind:this={rowsEl}>
-        {#each virtualItems as item (item.key)}
+        {#each virtualItems as item (displayFolders[item.index].path)}
           {@const folder = displayFolders[item.index]}
           {@const expandState = searching ? 'all' : (expandStates.get(folder.path) ?? 'active')}
           {@const iconKind = folderIconKind(folder)}
@@ -518,7 +523,7 @@
             class="border-border/60 absolute top-0 left-0 w-full rounded-lg"
             data-index={item.index}
             style:transform={`translateY(${item.start - scrollMargin}px)`}
-            use:measureRow={{ instance: $virtualizer, index: item.index }}
+            use:measureRow={{ instance: $virtualizer, path: folder.path }}
           >
             <ContextMenu open={rowMenuPath === folder.path} onOpenChange={(open) => setRowMenu(folder.path, open)}>
               <!-- Whole-row expander: taps land here unless a control stops them.

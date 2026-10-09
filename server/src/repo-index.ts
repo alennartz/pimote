@@ -472,6 +472,9 @@ export class RepoIndex {
       if (!source.onFolderOpen) continue;
       await source.onFolderOpen(folderPath);
     }
+    // Successful open hooks can materialize a missing source folder or hub.
+    // Drop the shared discovery tree before callers resolve its current row.
+    this.invalidate();
   }
 
   /** Drop cached listings so the next list() re-walks. */

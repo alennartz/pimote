@@ -336,8 +336,8 @@ export class WsHandler {
         case 'disband_hub': {
           const { repoIndex, folderRegistry } = this.requireFolderDeps();
           await folderRegistry.disbandHub(command.folderPath);
-          // The hub folder just left the disk; drop the cached listing so a
-          // subsequent member-picker request sees the new filesystem state.
+          // The registry invalidates before notifying delta subscribers.
+          // Retain this command-level invalidation for its existing contract.
           repoIndex.invalidate();
           this.sendResponse(id, true);
           break;

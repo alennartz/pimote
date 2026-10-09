@@ -47,9 +47,6 @@ function assert(condition, message) {
 function section(message) {
   console.log(`\n[mt-smoke] ${message}`);
 }
-function log(...args) {
-  console.log('[mt-smoke]', ...args);
-}
 
 async function exists(path) {
   try {

@@ -270,6 +270,26 @@ class WsProbe {
     });
   }
 
+  /** Accumulate complete comparisons while adopting each response's pin. */
+  async listFolders({ includeArchived = false, repin = false, query } = {}) {
+    const rows = new Map();
+    let offset = 0;
+    let orderToken;
+    for (;;) {
+      const response = await this.send({ type: 'list_folders', offset, limit: 3, includeArchived, repin: offset === 0 && repin, orderToken, query });
+      if (!response.success) throw new Error(`list_folders failed: ${JSON.stringify(response)}`);
+      const data = response.data;
+      if (typeof data.orderToken !== 'string' || typeof data.epoch !== 'number' || typeof data.total !== 'number' || typeof data.more !== 'boolean') {
+        throw new Error(`invalid folder window: ${JSON.stringify(data)}`);
+      }
+      for (const row of data.folders) rows.set(row.path, row);
+      orderToken = data.orderToken;
+      offset += data.folders.length;
+      if (!data.more) return { ...response, data: { ...data, folders: [...rows.values()] } };
+      if (data.folders.length === 0) throw new Error('folder window made no progress');
+    }
+  }
+
   /** Events received strictly after `since` (ms epoch). */
   eventsSince(since, type) {
     return this.events.filter((e) => e.at > since && (!type || e.event.type === type));
@@ -360,8 +380,31 @@ async function wait(ms) {
 
 // --------------------------------------------------------------- ui helpers
 
+/** Scroll the dashboard until a virtualized row enters the rendered range. */
+async function revealFolder(path) {
+  await evalBrowser(`(() => {
+    const row = document.querySelector('[data-folder-path]');
+    const scroller = row?.closest('.overflow-y-auto');
+    if (scroller) scroller.scrollTop = 0;
+  })()`);
+  await wait(150);
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const found = await evalBrowser(`(() => {
+      const target = Array.from(document.querySelectorAll('[data-folder-path]')).find(row => row.getAttribute('data-folder-path') === ${JSON.stringify(path)});
+      if (target) { target.scrollIntoView({ block: 'center' }); return true; }
+      const scroller = document.querySelector('[data-folder-path]')?.closest('.overflow-y-auto');
+      if (scroller) scroller.scrollTop += Math.max(100, scroller.clientHeight * 0.6);
+      return false;
+    })()`);
+    await wait(150);
+    if (found === true) return true;
+  }
+  return false;
+}
+
 /** Text content of a folder row (icon label, name/subtitle, chips, badges). */
 async function rowText(path) {
+  await revealFolder(path);
   return String(
     await evalBrowser(`(() => {
       const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(path)} + '"]');
@@ -372,6 +415,7 @@ async function rowText(path) {
 
 /** Row icon variant: code | code-hub | persona | persona-hub. */
 async function rowIcon(path) {
+  await revealFolder(path);
   return await evalBrowser(`(() => {
     const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(path)} + '"]');
     return s?.closest('button')?.querySelector('svg[data-folder-icon]')?.getAttribute('data-folder-icon') ?? null;
@@ -380,6 +424,7 @@ async function rowIcon(path) {
 
 /** Open the row context menu (long-press / right-click surface). */
 async function openRowMenu(path) {
+  await revealFolder(path);
   const opened = await evalBrowser(`(() => {
     const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(path)} + '"]');
     const trigger = s?.closest('.group');
@@ -522,7 +567,7 @@ async function main() {
     await probeA.open();
     await probeB.open();
 
-    const list1 = await probeA.send({ type: 'list_folders' });
+    const list1 = await probeA.listFolders();
     const folders1 = list1.data?.folders ?? [];
     const byPath = new Map(folders1.map((f) => [f.path, f]));
     assert(list1.success === true, 'list_folders succeeds');
@@ -576,8 +621,14 @@ async function main() {
     assert(badDefaults.length === 0, `every FolderInfo row carries required defaults + basename names (${folders1.length} rows)`);
     const badPersona = folders1.filter((f) => (f.nature === 'persona') !== Boolean(f.persona));
     assert(badPersona.length === 0, 'persona metadata present iff nature === "persona"');
+    assert(list1.data.total === folders1.length && list1.data.more === false, 'small windows accumulate the complete pinned listing');
+    const personaMatches = await probeA.listFolders({ query: 'Sigma Persona' });
+    assert(personaMatches.data.total === 1 && personaMatches.data.folders[0]?.path === sigmaDir, 'server-authoritative search filters the full pinned order');
 
-    // branch/dirty live on RepoInfo (list_repos and member repos), not FolderInfo.
+    // Own repo facts feed dashboard rows. Complete list_repos remains a picker seam.
+    assert(byPath.get(join(rootB, 'delta'))?.repo?.branch === 'feature/zebra', 'plain folder row carries its own branch facts');
+    assert(byPath.get(join(rootA, 'beta'))?.repo?.dirty === true, 'plain folder row carries its own dirty facts');
+    assert(omega?.repo === undefined && sigma?.repo === undefined, 'persona rows omit own repo facts');
     const reposList = await probeA.send({ type: 'list_repos' });
     const repoByPath = new Map((reposList.data?.repos ?? []).map((r) => [r.path, r]));
     assert(repoByPath.get(join(rootB, 'delta'))?.branch === 'feature/zebra', 'delta reports branch feature/zebra (list_repos)');
@@ -590,9 +641,9 @@ async function main() {
     section('W — update_folder favorite + registry round-trip');
     const favResp = await probeA.send({ type: 'update_folder', folderPath: join(rootA, 'beta'), favorite: true });
     assert(favResp.success === true, 'update_folder favorite succeeds');
-    const list2 = await probeA.send({ type: 'list_folders' });
+    const list2 = await probeA.listFolders();
     assert(list2.data.folders.find((f) => f.path === join(rootA, 'beta'))?.favorite === true, 'favorite round-trips through the registry');
-    const bEvent = await probeB.waitForEvent('folders_changed', (e) => e.folders?.some((f) => f.path === join(rootA, 'beta') && f.favorite === true));
+    const bEvent = await probeB.waitForEvent('folders_changed', (e) => e.changed?.some((f) => f.path === join(rootA, 'beta') && f.favorite === true));
     assert(Boolean(bEvent), 'client B receives folders_changed with the favorite (two-client sync)');
 
     section('W — create_hub + disband_hub (server-level, disk effects)');
@@ -619,9 +670,9 @@ async function main() {
     );
     const agentsMd = await readFile(join(westDir, 'AGENTS.md'), 'utf8');
     assert(/alpha/i.test(agentsMd) && /beta/i.test(agentsMd) && /agents\.md/i.test(agentsMd), 'AGENTS.md names both members and the AGENTS convention');
-    const aGotHub = await probeA.waitForEvent('folders_changed', (e) => e.folders?.some((f) => f.path === westDir && (f.repos?.length ?? 0) === 2));
+    const aGotHub = await probeA.waitForEvent('folders_changed', (e) => e.changed?.some((f) => f.path === westDir && (f.repos?.length ?? 0) === 2));
     assert(Boolean(aGotHub), 'client A receives folders_changed with the new hub row (two-client sync)');
-    const list3 = await probeA.send({ type: 'list_folders' });
+    const list3 = await probeA.listFolders({ repin: true });
     const west = list3.data.folders.find((f) => f.path === westDir);
     assert(west?.repos?.length === 2 && west.repos.every((r) => r.branch), 'hub row lists both members with branch info (disband-eligible repos)');
     assert(west?.nature === 'code' && west?.shortcutCount === 2, 'hub classifies as code with shortcutCount = member count');
@@ -634,6 +685,8 @@ async function main() {
       () => true,
     );
     assert(westGone, 'hub folder deleted from disk after disband');
+    const hubRemoved = await probeA.waitForEvent('folders_changed', (event) => event.removedPaths?.includes(westDir));
+    assert(hubRemoved.epoch > aGotHub.epoch && hubRemoved.changed.every((row) => row.path !== westDir), 'disband delta removes the hub under a newer epoch');
     const alphaAlive = await stat(join(rootA, 'alpha', '.git')).then(
       () => true,
       () => false,
@@ -696,7 +749,7 @@ async function main() {
       'fallback classifies the marker cwd as persona with its front-matter metadata',
     );
 
-    const afterFallback = await probeA.send({ type: 'list_folders' });
+    const afterFallback = await probeA.listFolders({ repin: true });
     assert(
       !afterFallback.data.folders.some((f) => f.path === strayCode || f.path === strayPersona),
       'unscanned cwds are never listed merely because a session was opened there',
@@ -735,7 +788,7 @@ async function main() {
     await probeA.open();
     await probeB.open();
 
-    const legacyList = await probeA.send({ type: 'list_folders' });
+    const legacyList = await probeA.listFolders();
     const legacyWest = legacyList.data?.folders?.find((f) => f.path === westDir);
     assert(legacyWest?.nature === 'code' && legacyWest?.shortcutCount === 2 && legacyWest?.repos?.length === 2, 'legacy multiRepo hub loads: row, member repos, shortcut count');
     const legacyDelta = legacyList.data?.folders?.find((f) => f.path === join(rootB, 'delta'));
@@ -762,8 +815,9 @@ async function main() {
     const snap = (await browser(['snapshot', '-i'])).stdout;
     assert(snap.includes('New session'), 'dashboard exposes the New session button');
     const pageText = String(await evalBrowser('document.body.innerText'));
-    for (const name of ['alpha', 'beta', 'delta', 'lib', 'deep-repo', 'deepest', 'charlie', 'source-repo', 'kiwi', 'Omega', 'Sigma Persona', 'west']) {
-      assert(pageText.includes(name), `dashboard lists folder ${name}`);
+    for (const folder of legacyList.data.folders) {
+      const name = folder.persona?.name ?? folder.name;
+      assert((await rowText(folder.path)).includes(name), `dashboard lists folder ${name} after virtualized scrolling`);
     }
     assert(!pageText.includes('gamma'), 'skipped wrapper gamma absent from the dashboard');
     // Four icon variants by nature × shortcutCount.
@@ -787,13 +841,14 @@ async function main() {
     assert(managerAffordance === true, 'manager affordance is in the home toolbar');
 
     // west was created by client B before this browser loaded, so it is
-    // part of the initial list_folders payload.
+    // part of the connection's initial pinned order.
     const westText = await rowText(westDir);
     assert(westText.includes('alpha') && westText.includes('beta'), 'hub member chips render on the west row');
 
     // Live broadcast INTO the browser: client A (probe) favorites a folder;
     // the dashboard re-renders without a reload.
     await probeA.send({ type: 'update_folder', folderPath: join(rootA, 'gamma', 'lib'), favorite: true });
+    await revealFolder(join(rootA, 'gamma', 'lib'));
     let libStar = false;
     for (let i = 0; i < 20; i++) {
       await wait(300);
@@ -827,6 +882,7 @@ async function main() {
     // ============================================================
     section('B — new session from a folder (journey 1) + warm cache');
     // ============================================================
+    await revealFolder(join(rootA, 'alpha'));
     const newSessionOk = await evalBrowser(`(() => { const b = document.querySelector('button[title="New session in alpha"]'); if (!b) return false; b.click(); return true; })()`);
     assert(newSessionOk === true, 'per-folder new-session button clickable');
     // The session composer replaces the manager pane; placeholders are not in
@@ -856,6 +912,7 @@ async function main() {
     // Live-session indicator across clients: the probe opens a session in
     // beta; the dashboard (still open in the browser) lights beta's dot.
     await probeA.send({ type: 'open_session', folderPath: join(rootA, 'beta') });
+    await revealFolder(join(rootA, 'beta'));
     let betaDot = false;
     for (let i = 0; i < 20; i++) {
       await wait(500);
@@ -870,6 +927,7 @@ async function main() {
     section('B — resume fabricated session (journey 1/2 settled half)');
     // ============================================================
     // One row tap expands the folder to its full session history.
+    await revealFolder(join(rootA, 'alpha'));
     await evalBrowser(
       `(() => { const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(join(rootA, 'alpha'))} + '"]'); if (!s) return false; s.closest('button').click(); return true; })()`,
     );
@@ -890,12 +948,14 @@ async function main() {
     // ============================================================
     section('B — favorite + reload persistence (reconnect refetch)');
     // ============================================================
-    const favBefore = Number(await evalBrowser(`document.querySelectorAll('svg.fill-yellow-500').length`));
+    await revealFolder(join(rootA, 'alpha'));
+    const favBefore = await evalBrowser(`Boolean(document.querySelector('button[aria-label="Favorite alpha"]'))`);
     const favClick = await evalBrowser(`(() => { const b = document.querySelector('button[aria-label="Favorite alpha"]'); if (!b) return false; b.click(); return true; })()`);
     assert(favClick === true, 'alpha star button clickable');
     await browser(['wait', 800]);
-    const favAfter = Number(await evalBrowser(`document.querySelectorAll('svg.fill-yellow-500').length`));
-    assert(favAfter === favBefore + 1, `alpha star toggled to favorite (${favBefore} → ${favAfter})`);
+    await revealFolder(join(rootA, 'alpha'));
+    const favAfter = await evalBrowser(`Boolean(document.querySelector('button[aria-label="Unfavorite alpha"]'))`);
+    assert(favBefore === true && favAfter === true, 'alpha star toggled to favorite without relying on virtualized DOM counts');
     await browser(['reload']);
     await browser(['wait', 2500]);
     const alphaStarAfterReload = await evalBrowser(
@@ -915,6 +975,7 @@ async function main() {
     // ============================================================
     section('B — tags (add, search, persist, remove)');
     // ============================================================
+    await revealFolder(join(rootA, 'alpha'));
     await evalBrowser(`(() => { const b = document.querySelector('button[aria-label="Add tag to alpha"]'); if (!b) return false; b.click(); return true; })()`);
     await browser(['wait', 400]);
     await fillSelector('[role="dialog"] input[placeholder="Tag name"]', 'client-work');
@@ -933,6 +994,7 @@ async function main() {
     await browser(['wait', 2500]);
     assert((await rowText(join(rootA, 'alpha'))).includes('client-work'), 'tag survives reload');
     // Remove via chip ×
+    await revealFolder(join(rootA, 'alpha'));
     await evalBrowser(`(() => { const x = document.querySelector('button[aria-label="Remove tag client-work"]'); if (!x) return false; x.click(); return true; })()`);
     await browser(['wait', 800]);
     assert(!(await rowText(join(rootA, 'alpha'))).includes('client-work'), 'tag removal via chip x works');
@@ -945,7 +1007,12 @@ async function main() {
     // ============================================================
     section('B — archive / show-archived');
     // ============================================================
+    await revealFolder(deepRepoDir);
     await probeA.send({ type: 'update_folder', folderPath: deepRepoDir, archived: true });
+    const archivedRows = await probeA.listFolders({ includeArchived: true });
+    assert(archivedRows.data.folders.find(row => row.path === deepRepoDir)?.archived === true, 'explicit includeArchived window includes the archived row');
+    const activeRows = await probeA.listFolders({ includeArchived: false });
+    assert(!activeRows.data.folders.some(row => row.path === deepRepoDir), 'explicit active-only windows exclude the archived row');
     let deepHidden = false;
     for (let i = 0; i < 20; i++) {
       await wait(300);
@@ -996,8 +1063,7 @@ async function main() {
     assert(createOpened, 'create flow opens the new session');
     await evalBrowser(`document.querySelector('button.bg-primary span[title="Close session"]')?.click()`);
     await browser(['wait', 2000]);
-    const dashAfterCreate = String(await evalBrowser('document.body.innerText'));
-    assert(dashAfterCreate.includes('epsilon'), 'created folder appears in the dashboard');
+    assert((await rowText(epsilon)).includes('epsilon'), 'created folder appears in the dashboard');
     const epsilonGit = await stat(join(epsilon, '.git')).then(
       () => true,
       () => false,
@@ -1029,14 +1095,14 @@ async function main() {
     await browser(['screenshot', join(shotsDir, '05-hub-dialog.png')], { allowFailure: true });
     await clickDialogButton('Create hub');
     await browser(['wait', 1500]);
-    const afterCreate = String(await evalBrowser('document.body.innerText'));
-    assert(afterCreate.includes('lima'), 'lima appears in the dashboard after UI creation');
+    assert((await rowText(limaDir)).includes('lima'), 'lima appears in the dashboard after UI creation');
     const limaChips = await rowText(limaDir);
     assert(limaChips.includes('alpha') && /main/.test(limaChips), 'lima chip: alpha with branch main');
     assert(limaChips.includes('delta') && /feature\/zebra/.test(limaChips), 'lima chip: delta with branch feature/zebra');
     await browser(['screenshot', join(shotsDir, '06-hub-chips.png')], { allowFailure: true });
 
     // Dirty chip visual: west contains beta (dirty).
+    await revealFolder(westDir);
     const westDirty = await evalBrowser(
       `(() => { const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(westDir)} + '"]'); const row = s?.closest('.group'); const chip = Array.from(row?.querySelectorAll('span[title]') ?? []).find(x => (x.getAttribute('title') ?? '').includes('beta')); return chip?.querySelector('span[title="Uncommitted changes"]') ? 'dirty-dot' : 'no-dirty-dot'; })()`,
     );
@@ -1103,7 +1169,7 @@ async function main() {
       () => false,
     );
     assert(hookRan, 'onFolderOpen hook ran for the opened folder path');
-    const listAfterHook = await probeA.send({ type: 'list_folders' });
+    const listAfterHook = await probeA.listFolders({ repin: true });
     assert(listAfterHook.data.folders.find((f) => f.path === sourceRepoDir)?.missing === false, 'provisioned repo no longer reports missing');
     await evalBrowser(`document.querySelector('button.bg-primary span[title="Close session"]')?.click()`);
     await browser(['wait', 1500]);
@@ -1156,7 +1222,7 @@ async function main() {
     section('B — manager tool use (pimote_list_folders through the ports)');
     // ============================================================
     if (jetsonUsable) {
-      const listNow = await probeA.send({ type: 'list_folders' });
+      const listNow = await probeA.listFolders({ includeArchived: true, repin: true });
       const expectedCount = listNow.data.folders.length;
       await ensureManagerMode();
       await fillSelector(
@@ -1295,10 +1361,11 @@ async function main() {
     probeB = new WsProbe(port, `pm-probe-b2-${randomUUID().slice(0, 8)}`);
     await probeA.open();
     await probeB.open();
-    const reconnectList = await probeA.send({ type: 'list_folders' });
+    const reconnectList = await probeA.listFolders();
     assert(reconnectList.success === true && reconnectList.data.folders.some((f) => f.path === zuluDir), 'probes reconnect after restart; list_folders serves the warm registry');
     await browser(['reload']);
     await browser(['wait', 3500]);
+    await revealFolder(zuluDir);
     const missingChip = await evalBrowser(
       `(() => { const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(zuluDir)} + '"]'); const row = s?.closest('.group'); if (!row) return 'no-row'; const chip = Array.from(row.querySelectorAll('span[title]')).find(x => (x.getAttribute('title') ?? '').includes('missing')); return chip ? chip.textContent?.trim() : 'no-chip'; })()`,
     );

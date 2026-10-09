@@ -395,4 +395,4 @@ Update `codemap.md` for the new listing module, cached-tree accessor, row repo e
 Run targeted suites, then all server and client tests. Run shared build, project checks, lint, and production build. Exercise the existing dashboard/folder smoke driver from its documented command. If checks fail, fix implementation or report a concrete blocker. Do not bypass hooks or broaden the authorized test amendments.
 
 **Verify:** `npm run build:shared`, `npm run test --workspace=@pimote/server -- --run`, `npm run test --workspace=client -- --run`, `npm run check`, `npm run lint`, and `npm run build` pass. Updated smoke journeys validate both clients against deltas and fresh windows. No per-folder fan-out occurs before rendered-row requests.
-**Status:** not started
+**Status:** done

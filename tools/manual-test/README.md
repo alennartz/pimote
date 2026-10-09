@@ -366,14 +366,18 @@ an unopened hub entry). Seeds a local model via `PI_CODING_AGENT_DIR` for the
 manager LLM, and drives the real PWA via `agent-browser` plus a second
 WebSocket probe client. Covers: sparse discovery shape (no depth bound,
 skipped wrappers collapse into reach paths), FolderInfo defaults
-(nature/persona/shortcutCount/missing/repos?/userTags?) and the four row icon
+(nature/persona/shortcutCount/missing/repo?/repos?/userTags?) and the four row icon
 variants (code, code-hub, persona, persona-hub), `update_folder` /
-`folders_changed` two-client sync (both directions), hub create/disband
+epoch-stamped `folders_changed` delta sync (`changed` / `removedPaths`, both
+directions), complete comparisons accumulated from small protocol windows
+under each adopted token, explicit `includeArchived` probes and fresh-order
+repins after discovery mutations, hub create/disband
 round-trips with on-disk symlink + `git init` + root-anchored `.gitignore` +
 `AGENTS.md` assertions, source-contributed tags and the `onFolderOpen`
 provisioning hook, favorites (favorites-first ordering), archive/show-
 archived, create-folder (mkdir + git init), resume of an existing session,
-the active-session dot, dashboard and picker search (persona display names
+the active-session dot, virtualized row lookup through dashboard scrolling,
+server-authoritative dashboard search and picker search (persona display names
 included), the manager chat (streamed reply, `pimote_list_folders` +
 `pimote_folder_tree` tool use, abort, ephemeral reset on reconnect), the
 missing-member warning chip, the unscanned-cwd `classifyFolder` session
@@ -381,7 +385,11 @@ fallback (list/open in cwds outside the scan roots never lists or curates
 them), legacy `multiRepo` registry read-compat (loads unchanged; the next
 write persists `hubs`), and the mobile manager affordance. Tool-call and
 assistant-reply detection is role-scoped (`.tool-block .tool-name`,
-`.assistant-message`) so user prompt text cannot false-positive it.
+`.assistant-message`) so user prompt text cannot false-positive it. Manager
+folder-count comparisons include archived rows and accumulate all windows.
+The manager tool itself stays complete and unwindowed. Dashboard DOM rows
+remain bounded, and session lists load only for rendered rows. Open/bound chat
+session restoration stays independent of window fetches.
 
 **Location:** `tools/manual-test/project-management-smoke/project-management-smoke.mjs`
 

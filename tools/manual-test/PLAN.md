@@ -20,8 +20,8 @@ items that must be exercised each run even if only by a human.
 
 **What:** PWA connects to the pimote server; the **dashboard** (the landing
 surface since the `project-management` topic removed the sidebar) lists
-discovered folders (`list_folders` — code and persona folders over the sparse
-folder model), the user starts a new session from a folder row (or
+discovered folders (`list_folders` windows over a connection-owned pinned
+order, with code and persona rows over the sparse folder model), the user starts a new session from a folder row (or
 creates/resumes one), session metadata appears in the active-session bar, and
 closing the viewed session returns to the dashboard. Sessions may also open
 and list in cwds outside the scanned folders: the server serves a synthetic
@@ -248,20 +248,26 @@ environment-bounded in headless Chromium.
 ## 12. Dashboard: folders, hubs, and manager
 
 **What:** The dashboard is the product home (the `project-management`
-topic): the folders list renders every discovered folder — sparse discovery
+topic): the folders list accumulates pinned windows and renders a bounded
+virtualized range. Scroll fetches continuation windows under the adopted token.
+Search matches folders and session text server-side, including unfetched rows.
+Sparse discovery
 with no depth bound (nested entries under skipped wrappers surface at any
 depth; included folders stop descent) — with a code/persona nature icon in
 four variants (code, code-hub, persona, persona-hub by nature ×
 shortcutCount), favorites, archive/show-archived, inline expansion of
-per-folder sessions, and repo status chips (branch + dirty dot) on hub
-folders; the hub dialog composes a hub folder from indexed repos (server
+per-folder sessions loaded only for rendered rows, and repo status chips
+(branch + dirty dot) from plain-row `repo` facts and hub-member `repos`; the hub dialog composes a hub folder from indexed repos (server
 creates the symlink hub + `git init` + `.gitignore` + generated `AGENTS.md`)
-and disband removes it; `folders_changed` keeps two clients in sync in both
-directions; folder sources contribute repo/hub entries (missing ones
+and disband removes it; epoch-stamped `folders_changed` deltas merge `changed`
+rows and drop `removedPaths` in both clients. Archived-row probes explicitly
+set `includeArchived`. Fresh discovery comparisons explicitly repin; folder sources contribute repo/hub entries (missing ones
 provision via `onFolderOpen` at open time); the manager chat prompts a
 per-connection ephemeral agent whose pimote toolset (`pimote_list_folders`,
 `pimote_folder_tree`, …) answers over real server APIs, with abort and
-transcript reset on reconnect.
+transcript reset on reconnect. Manager folder listings remain complete,
+unwindowed registry reads. Manager tree reads share the repo-index discovery
+cache and accept one TTL of staleness.
 
 **Why:** This replaced the sidebar as the primary navigation surface; hubs
 are the multi-repo model; the manager is the dashboard's second half.

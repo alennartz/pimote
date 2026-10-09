@@ -420,6 +420,9 @@ export class FolderRegistry implements FolderRegistryPort {
       const [removed] = doc.hubs.splice(index, 1);
       await rm(removed.path, { recursive: true, force: true });
       await this.persist(doc);
+      // Delta subscribers re-resolve rows immediately. Discard discovery's
+      // deleted hub before they can read its cached tree or repo facts.
+      this.repos.invalidate();
       this.fireChange({ changedPaths: [], removedPaths: [removed.path] });
     });
   }
