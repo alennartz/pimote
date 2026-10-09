@@ -3688,7 +3688,11 @@ describe('WsHandler', () => {
         ['s1', createMockSlot({ id: 's1', folderPath: '/home/user/projects/agent' })],
         ['s2', createMockSlot({ id: 's2', folderPath: '/home/user/projects/agent' })],
       ]);
-      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry, sessions });
+      const folderListing = {
+        pin: async () => ({ token: 'tok', epoch: 0 }),
+        query: async () => ({ rows: [{ ...personaRow, activeSessionCount: 2 }, folderRow('/home/user/projects/api')], total: 2, more: false, orderToken: 'tok', epoch: 0 }),
+      } as unknown as FolderListingService;
+      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry, sessions, folderListing });
 
       await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'req-list' }));
 
@@ -3723,13 +3727,80 @@ describe('WsHandler', () => {
 
       await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'req-win', offset: 10, limit: 5, query: 'x', includeArchived: true, orderToken: 'tok-1' }));
 
-      expect(query).toHaveBeenCalledWith({ token: 'tok-1', offset: 10, limit: 5, query: 'x', includeArchived: true });
+      expect(query).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'client-1', token: 'tok-1', offset: 10, limit: 5, query: 'x', includeArchived: true }));
       const data = findResponse(sent, 'req-win')!.data as { folders: FolderInfo[]; roots: string[]; total: number; orderToken: string; more: boolean };
       expect(data.folders).toEqual([folderRow('/w/a')]);
       expect(data.roots).toEqual(['/w']);
       expect(data.total).toBe(3);
       expect(data.orderToken).toBe('tok-2');
       expect(data.more).toBe(true);
+      expect(findResponse(sent, 'req-win')!.data).toMatchObject({ epoch: 5 });
+    });
+
+    it('pins at connection open, awaits that pin for early commands, reuses it, repins on refresh, and releases on close', async () => {
+      let resolve!: (value: { token: string; epoch: number }) => void;
+      const initial = new Promise<{ token: string; epoch: number }>((res) => {
+        resolve = res;
+      });
+      const pin = vi.fn().mockReturnValueOnce(initial).mockResolvedValue({ token: 'refreshed', epoch: 2 });
+      const query = vi.fn(async (req: any) => ({ rows: [], total: 0, more: false, orderToken: req.token, epoch: 2 }));
+      const releaseConnection = vi.fn();
+      const folderListing = { pin, query, releaseConnection } as unknown as FolderListingService;
+      const repoIndex = { roots: ['/w'], list: async () => [] } as unknown as RepoIndex;
+      const folderRegistry = { list: async () => [] } as unknown as FolderRegistry;
+      const { handler, sent } = createTestHandler('client-open', { folderListing, repoIndex, folderRegistry });
+      expect(pin).toHaveBeenCalledWith('client-open');
+      const early = handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'early' }));
+      expect(query).not.toHaveBeenCalled();
+      resolve({ token: 'initial', epoch: 1 });
+      await early;
+      await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'again' }));
+      expect(query.mock.calls.map(([req]) => req.token)).toEqual(['initial', 'initial']);
+      expect(pin).toHaveBeenCalledTimes(1);
+      await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'refresh', repin: true }));
+      expect(findResponse(sent, 'refresh')!.data).toMatchObject({ orderToken: 'refreshed' });
+      handler.cleanup();
+      expect(releaseConnection).toHaveBeenCalledWith('client-open');
+    });
+
+    it('reports listing service failures as error responses', async () => {
+      const folderListing = {
+        pin: async () => ({ token: 'tok', epoch: 0 }),
+        query: async () => {
+          throw new Error('listing unavailable');
+        },
+      } as unknown as FolderListingService;
+      const repoIndex = { roots: ['/w'], list: async () => [] } as unknown as RepoIndex;
+      const folderRegistry = { list: async () => [] } as unknown as FolderRegistry;
+      const { handler, sent } = createTestHandler('client-1', { folderListing, repoIndex, folderRegistry });
+      await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'failed' }));
+      expect(findResponse(sent, 'failed')).toMatchObject({ success: false, error: 'listing unavailable' });
+    });
+  });
+
+  describe('session metadata invalidation', () => {
+    it.each([
+      { type: 'rename_session', sessionId: 's', name: 'new name', event: 'session_renamed' },
+      { type: 'delete_session', sessionId: 's', event: 'session_deleted' },
+      { type: 'archive_session', sessionIds: ['s'], archived: true, event: 'session_archived' },
+      { type: 'archive_session', sessionIds: ['s'], archived: false, event: 'session_archived' },
+    ])('$type invalidates targeted metadata without a folder delta', async ({ event, ...command }) => {
+      const invalidateSessionMetadata = vi.fn();
+      const buildDelta = vi.fn();
+      const folderListing = { invalidateSessionMetadata, buildDelta } as unknown as FolderListingService;
+      const sessionRecords = {
+        ...createMockSessionRecords(),
+        resolveSessionPath: async () => '/tmp/s.jsonl',
+        renameSession: async () => true,
+        deleteSession: async () => true,
+      } as unknown as SessionRecords;
+      const { handler, sent } = createTestHandler('session-client', { folderListing, sessionRecords });
+      await handler.handleMessage(JSON.stringify({ ...command, folderPath: '/w/a', id: 'change' }));
+      expect(findResponse(sent, 'change')).toMatchObject({ success: true });
+      expect(invalidateSessionMetadata).toHaveBeenCalledWith(['/w/a']);
+      expect(findEvents(sent, event)).toHaveLength(1);
+      expect(buildDelta).not.toHaveBeenCalled();
+      expect(findEvents(sent, 'folders_changed')).toEqual([]);
     });
   });
 

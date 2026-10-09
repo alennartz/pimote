@@ -8,7 +8,7 @@ A folder source (SDK extension) contributes ~3.5k folders and the dashboard lags
 
 ### Impacted Modules
 
-- **Protocol** (`shared/src/protocol.ts`) — `ListFoldersCommand` gains optional `offset`/`limit`/`query`/`includeArchived`/`orderToken`; `ListFoldersResponseData` gains `total`/`orderToken`/`more`; `FoldersChangedEvent` changes from a full-list broadcast to a delta (`changed` rows, `removedPaths`, `epoch`); `FolderInfo` gains optional `matchedSessionIds`.
+- **Protocol** (`shared/src/protocol.ts`) — `ListFoldersCommand` gains optional `offset`/`limit`/`query`/`includeArchived`/`orderToken`/`repin`; `ListFoldersResponseData` gains `total`/`orderToken`/`more`/`epoch`; `FoldersChangedEvent` changes from a full-list broadcast to a delta (`changed` rows, `removedPaths`, `epoch`); `FolderInfo` gains optional `matchedSessionIds`.
 - **Server** — new `folder-listing.ts` module (below) owns ordering, search, and windowing. `ws-handler.ts` `list_folders` case shrinks to parse → `folderListing.query(...)` → respond; `broadcastFoldersChanged` becomes a delta emitter where each mutation site (`update_folder`, `create_folder`, `disband_hub`, registry `onChange`) knows exactly which paths changed. `folder-registry.ts` stays the curation-persistence owner; it gains no query logic. `session-summaries.ts` gains a batch listing entry so a cross-folder pass reuses its per-file cache.
 - **Web Client** — `FolderStore` becomes a path-keyed accumulating cache over a pinned order (fetch-next-window, search-merge, epoch guard, live re-sort of the fetched subset); `FolderList.svelte` renders the accumulated set through a virtualizer. Per-folder session _lists_ load only for rows in the fetched set as they render (replacing today's fan-out over every folder); folder-row session/git indicators come from server enrichment in the row payload, never from client enumeration. Vocabulary: "chips" in this project means the chat view's open/bound-session buttons — a client-local concern (persisted in local storage, restored eagerly at startup) that is fully independent of folder listing; it feeds the live re-sort and never waits on window fetches.
 - **SDK** — unchanged. `FolderInfo` is wire-protocol only; `packages/sdk` carries source-entry types (`RepoInfo`/`SourceEntry`) because folder sources contribute those — no SDK consumer sees `FolderInfo`, so no twin is added (an earlier draft of this plan said otherwise; it was wrong). The folder-source seam (`FolderSource.list()`) is unchanged.
@@ -57,10 +57,11 @@ interface FoldersChangedEvent {
 ```ts
 interface FolderListingService {
   /** Pin the current order; returns a token referenced by window queries. */
-  pin(): Promise<{ token: string; epoch: number }>;
+  pin(connectionId?: string): Promise<{ token: string; epoch: number }>;
+  releaseConnection(connectionId: string): void;
   /** Serve one window under a pin. Raw params; normalization is internal:
    *  offset defaults 0, limit defaults 100, clamped to [1, 200]. */
-  query(req: { token?: string; offset?: number; limit?: number; query?: string; includeArchived?: boolean; repin?: boolean }): Promise<{
+  query(req: { connectionId?: string; token?: string; offset?: number; limit?: number; query?: string; includeArchived?: boolean; repin?: boolean }): Promise<{
     rows: FolderInfo[];
     total: number;
     more: boolean;
@@ -95,6 +96,7 @@ class FolderStore {
   fetchNextWindow(): Promise<void>; // next offset window when the view nears the end
   search(query: string): Promise<void>; // debounced (250ms); fetches offset-0 window for the query and merges matches in
   loadSessions(path: string): Promise<void>; // called for visible rows only
+  visibleSessions(path: string): SessionInfo[]; // narrows session-only query matches
 }
 ```
 
@@ -114,13 +116,14 @@ class FolderStore {
 
 ### Interface Files
 
-- `shared/src/protocol.ts` — wire additions: `ListFoldersCommand` gains `offset`/`limit`/`query`/`includeArchived`/`orderToken`; `ListFoldersResponseData` gains `total`/`orderToken`/`more`; `FoldersChangedEvent` becomes a delta (`changed`, `removedPaths`, `epoch`); `FolderInfo` gains `matchedSessionIds?`.
-- `server/src/folder-listing.ts` — `FolderListingService` (`pin`/`query`/`buildDelta`/`invalidateSessionMetadata`), `FolderListing` stub, `FolderListingDeps` (registry row listing, batched session summaries, live sessions), `FolderPin`/`FolderQueryRequest`/`FolderQueryResult`.
+- `shared/src/protocol.ts` — wire additions: `ListFoldersCommand` gains `offset`/`limit`/`query`/`includeArchived`/`orderToken`/`repin`; `ListFoldersResponseData` gains `total`/`orderToken`/`more`/`epoch`; `FoldersChangedEvent` becomes a delta (`changed`, `removedPaths`, `epoch`); `FolderInfo` gains `matchedSessionIds?`.
+- `server/src/folder-listing.ts` — `FolderListingService` (`pin`/`releaseConnection`/`query`/`buildDelta`/`invalidateSessionMetadata`), `FolderListing` stub, `FolderListingDeps` (registry row listing, batched session summaries, live sessions), `FolderPin`/`FolderQueryRequest`/`FolderQueryResult`.
 - `server/src/session-summaries.ts` — `SessionSummaryIndex.listMany()` batch entry stub (cross-folder pass reusing the per-file cache).
 - `server/src/ws-handler.ts` — `broadcastFoldersChanged` reshaped to the delta emitter (service-built delta, paths from mutation sites); `folderListing` added to the connection deps; `list_folders`/`create_folder`/`file_put` call sites rewired.
 - `server/src/server.ts` — `createServer` takes `folderListing`; registry `onChange` and repo-index `setOnRefreshed` route through the delta emitter.
 - `server/src/index.ts` — constructs `FolderListing` over the shared `SessionSummaryIndex`, the registry listing, and live sessions.
-- `client/src/lib/stores/folder-store.svelte.ts` — `FolderStore` gains `fetchNextWindow()`/`search()` stubs; `applyFoldersChanged` reshaped to the delta contract (stub).
+- `client/src/lib/stores/folder-store.svelte.ts` — `FolderStore` gains `fetchNextWindow()`/`search()`/`visibleSessions()` stubs; `applyFoldersChanged` reshaped to the delta contract (stub).
+- `server/src/folder-registry.ts` and `server/src/repo-index.ts` — mutation and discovery callback interfaces carry changed/removed path payloads.
 
 ### Test Files
 
@@ -129,6 +132,8 @@ class FolderStore {
 - `server/src/ws-handler.test.ts` — `list_folders` window delegation/mapping; `broadcastFoldersChanged` sends the service-built delta to every client; `create_folder` names its created path in the delta.
 - `server/src/server.test.ts` — registry-mutation and repo-index-refresh wiring delivers the service-built delta to every client.
 - `client/src/lib/stores/folder-store.svelte.test.ts` — windowed fetching (pin adoption, next-window merge, more=false halt), debounced search, delta merge/drop, stale-response guard.
+- `server/src/folder-registry.test.ts` — update/createHub/disbandHub mutation callback targets.
+- `server/src/repo-index.test.ts` — discovery addition/removal callback targets.
 
 ### Behaviors Covered
 
@@ -158,7 +163,9 @@ class FolderStore {
 
 - `pin()` and `query()` never block on a full session scan.
 - Stale-while-revalidate: once the TTL (30s) lapses, the previous snapshot is served while the refresh runs in the background; later calls see the refreshed metadata.
-- `invalidateSessionMetadata()` makes the next pin/query pick up fresh session metadata without waiting for the TTL.
+- Invalidation schedules nonblocking refresh; completion affects fresh pins only, never reorders existing pins.
+- Metadata refresh failures retain the last good snapshot (name-only order when cold) and recover on subsequent TTL/event refresh; registry failures propagate.
+- Connection-owned pins reject cross-owner adoption and are released on close.
 
 #### FolderListingService — epochs and deltas
 
@@ -173,16 +180,18 @@ class FolderStore {
 
 #### list_folders wire serving (ws-handler)
 
-- The `list_folders` case delegates to the listing service with the raw window params (`orderToken`/`offset`/`limit`/`query`/`includeArchived`) and maps rows → `folders`, plus `roots`, `total`, `orderToken`, `more`, onto the response.
+- The `list_folders` case delegates to the listing service with the raw window params (`orderToken`/`offset`/`limit`/`query`/`includeArchived`) and maps rows → `folders`, plus `roots`, `total`, `orderToken`, `more`, `epoch`, onto the response.
 
 #### folders_changed delta emission (ws-handler + createServer wiring)
 
 - `broadcastFoldersChanged` sends exactly the service-built delta to every connected client; the mutation site (`create_folder`) reports exactly the path it created.
 - Registry mutations and repo-index refreshes route through the same delta channel to every client.
+- WebSocket rename/delete/archive/unarchive commands and server status/close callbacks invalidate session metadata for the affected folder. Existing session events continue without folder deltas.
 
 #### FolderStore — windowed fetching
 
-- `ensureLoaded` fetches the first window under a fresh pin (no `orderToken` sent) and adopts the returned `orderToken` for continuation windows.
+- `ensureLoaded` fetches the first window under the connection's open-time pin (no `orderToken` sent) and adopts the returned `orderToken` for continuation windows.
+- The handler pins at connection open, awaits pending pins for early commands, reuses omitted-token queries, replaces pins on explicit refresh, and releases owned pins on close.
 - `fetchNextWindow` fetches the next offset window under the adopted pin and merges rows by canonical path — a mid-scroll re-pin cannot duplicate rows.
 - `fetchNextWindow` makes no request once the last window reported `more=false`.
 - `search` is debounced (250ms): rapid calls coalesce into one offset-0 query fetch; server-authoritative matches merge into the cache, including rows outside the fetched set.
@@ -192,14 +201,22 @@ class FolderStore {
 
 - Deltas merge `changed` rows by canonical path and drop `removedPaths` from the cache.
 - A delta does not wipe live session indicators (sessions map preserved; enriched row counts applied).
-- A delta arriving during an in-flight window load makes the older response stale: it is discarded and overwrites nothing.
+- A response whose wire epoch is older than the newest delta is discarded; a fresh response computed after an interleaved delta is accepted.
+- Folder/search fetches never enumerate session lists; visible-row callers explicitly invoke `loadSessions`.
+- Search filters `visibleFolders` using server-authoritative matches while preserving the accumulating cache; `visibleSessions` narrows session-tier-only matches and leaves folder-tier matches unrestricted.
+- Failed continuation/search requests preserve cached rows and allow retry; explicit refresh sends `repin: true`.
 
 Unchanged and already pinned by pre-existing tests: session-event row updates (state/rename/delete/archive), `visibleFolders` live re-sort (favorite → recency → name), per-folder `loadSessions` single-flight/reconciliation, and the unwindowed complete-list manager seam (`pimote_list_folders`).
 
-Out of test scope: `FolderList` virtualization and the "loadSessions for rendered rows only" call discipline are rendering-layer concerns (`@tanstack/svelte-virtual`) with no stable non-visual seam yet.
+Out of test scope: `FolderList` virtualization and the "loadSessions for rendered rows only" call discipline are rendering-layer concerns (`@tanstack/svelte-virtual`) with no stable non-visual seam yet. The manager-archive metadata-invalidation call in `server/src/index.ts` is an approved integration exclusion: bootstrap has no isolated stable seam. Implementation must still invalidate that folder's metadata without a folder delta.
 
 ### Notes on the plan
 
 - **SDK `FolderInfo` twin (plan/codebase mismatch):** `packages/sdk` has no `FolderInfo` type — only `RepoInfo`/source-entry twins guarded by `server/src/sdk-twins.ts` — because folder sources contribute source entries, never wire rows. Per orchestrator decision the SDK change is skipped and `matchedSessionIds?` lives only on `shared/src/protocol.ts`'s `FolderInfo`; the plan line should be corrected.
 - **`buildDelta` is typed async** (`Promise<FoldersChangedEvent>`): row re-resolution goes through the async registry listing, and the module contract forbids caching scan rows in the service.
-- **Delta path threading is partially placeholder:** `create_folder`/`file_put` pass the paths they touch, but `folderRegistry.onChange` and `repoIndex.setOnRefreshed` do not yet carry changed/removed paths (the registry must report its mutation targets), so `server.ts` currently passes empty path lists into `broadcastFoldersChanged`.
+- **Review-approved interface corrections:** wire `epoch`, connection-owned `pin`/`releaseConnection`, `repin`, registry/discovery callback path payloads, and the client `visibleSessions` selector are materialized. Their behavior remains stubbed for implementation; callback emitters currently send empty placeholder paths. Tests require correct paths and forwarding.
+- **Additional test files reviewed:** `server/src/folder-registry.test.ts` pins update/createHub/disbandHub mutation-path payloads; `server/src/repo-index.test.ts` pins discovery addition/removal payloads. Their interface files are `server/src/folder-registry.ts` and `server/src/repo-index.ts`.
+- Registry `onChange` and repo-index `setOnRefreshed` callbacks carry `{ changedPaths: string[]; removedPaths: string[] }`; server wiring forwards these to delta construction.
+- **Compatibility:** the user-approved hard cut supersedes the brainstorm's unwindowed-default compatibility proposal; Android breakage remains accepted.
+
+**Review status:** approved

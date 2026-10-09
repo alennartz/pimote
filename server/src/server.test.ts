@@ -96,24 +96,25 @@ describe('createServer — folders_changed broadcast wiring', () => {
       activeSessionCount: 0,
       externalProcessCount: 0,
     };
-    const registryListeners: Array<() => void> = [];
+    const registryListeners: Array<(change: { changedPaths: string[]; removedPaths: string[] }) => void> = [];
     const folderRegistry = {
-      onChange: (cb: () => void) => {
+      onChange: (cb: (change: { changedPaths: string[]; removedPaths: string[] }) => void) => {
         registryListeners.push(cb);
         return () => {};
       },
       list: async () => [{ ...folder }],
     } as unknown as FolderRegistry;
-    const refreshListeners: Array<() => void> = [];
+    const refreshListeners: Array<(change: { changedPaths: string[]; removedPaths: string[] }) => void> = [];
     const repoIndex = {
       roots: ['/w'],
       list: async () => [],
-      setOnRefreshed: (cb: () => void) => {
+      setOnRefreshed: (cb: (change: { changedPaths: string[]; removedPaths: string[] }) => void) => {
         refreshListeners.push(cb);
       },
     } as unknown as RepoIndex;
     const delta: PimoteEvent = { type: 'folders_changed', changed: [{ ...folder }], removedPaths: ['/w/gone'], epoch: 3 };
-    const folderListing = { buildDelta: async () => delta } as unknown as FolderListingService;
+    const buildDelta = vi.fn(async () => delta);
+    const folderListing = { buildDelta } as unknown as FolderListingService;
 
     server = await createServer(
       { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0 },
@@ -138,16 +139,59 @@ describe('createServer — folders_changed broadcast wiring', () => {
 
     // Curation and hub changes route through the registry subscription.
     expect(registryListeners).toHaveLength(1);
-    registryListeners[0]!();
+    registryListeners[0]!({ changedPaths: ['/w/a'], removedPaths: ['/w/gone'] });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(seen).toContainEqual(delta);
+    expect(buildDelta).toHaveBeenLastCalledWith(['/w/a'], ['/w/gone']);
 
     // Changed repo refreshes ride the same channel.
     seen.length = 0;
     expect(refreshListeners).toHaveLength(1);
-    refreshListeners[0]!();
+    refreshListeners[0]!({ changedPaths: ['/w/discovered'], removedPaths: ['/w/removed'] });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(seen).toContainEqual(delta);
+    expect(buildDelta).toHaveBeenLastCalledWith(['/w/discovered'], ['/w/removed']);
+  });
+});
+
+describe('createServer — session metadata invalidation', () => {
+  let server: PimoteServer;
+
+  afterEach(async () => {
+    await server?.close();
+  });
+
+  it.each(['onStatusChange', 'onSessionClosed'] as const)('%s invalidates targeted metadata without a folder delta', async (callback) => {
+    const invalidateSessionMetadata = vi.fn();
+    const buildDelta = vi.fn();
+    const folderListing = { invalidateSessionMetadata, buildDelta } as unknown as FolderListingService;
+    const sessionManager = {
+      getSession: () => undefined,
+      getAllSessions: () => [],
+    } as any;
+    server = await createServer(
+      { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0 },
+      sessionManager,
+      {} as any,
+      {} as any,
+      {} as any,
+      undefined,
+      new InMemoryStaticHostRegistry(),
+      makeDownloads(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      folderListing,
+    );
+    await server.start(0);
+    const seen: PimoteEvent[] = [];
+    server.clientRegistry.set('c1', { sendToClient: (event: PimoteEvent) => seen.push(event) } as any);
+    sessionManager[callback]('s', '/w/a');
+    expect(invalidateSessionMetadata).toHaveBeenCalledWith(['/w/a']);
+    expect(seen.map((event) => event.type)).toEqual(['session_state_changed']);
+    expect(buildDelta).not.toHaveBeenCalled();
   });
 });
 

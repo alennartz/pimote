@@ -132,7 +132,7 @@ export class RepoIndex {
   private readonly statusCache = new Map<string, RepoStatus>();
   private listingPromise: Promise<ListingStamp> | null = null;
   private refreshInFlight: Promise<void> | null = null;
-  private onRefreshed: (() => void) | null = null;
+  private onRefreshed: ((change: { changedPaths: string[]; removedPaths: string[] }) => void) | null = null;
   private walkGeneration = 0;
 
   constructor(
@@ -184,7 +184,7 @@ export class RepoIndex {
    * Register the stale-serve notification: fired after a background refresh
    * completes, and only when the refreshed view changed.
    */
-  setOnRefreshed(cb: () => void): void {
+  setOnRefreshed(cb: (change: { changedPaths: string[]; removedPaths: string[] }) => void): void {
     this.onRefreshed = cb;
   }
 
@@ -231,7 +231,7 @@ export class RepoIndex {
       } finally {
         this.refreshInFlight = null;
       }
-      if (this.snapshot() !== before) this.onRefreshed?.();
+      if (this.snapshot() !== before) this.onRefreshed?.({ changedPaths: [], removedPaths: [] }); // implementation phase: report refreshed path changes
     })();
   }
 

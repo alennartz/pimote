@@ -50,8 +50,8 @@ function routeSends(handlers: Record<string, (cmd: any) => any>) {
   });
 }
 
-function okListFolders(folders: FolderInfo[], roots: string[] = ['/roots'], extra: { total?: number; orderToken?: string; more?: boolean } = {}) {
-  return { success: true, data: { folders, roots, total: folders.length, orderToken: 'tok-1', more: false, ...extra } };
+function okListFolders(folders: FolderInfo[], roots: string[] = ['/roots'], extra: { total?: number; orderToken?: string; more?: boolean; epoch?: number } = {}) {
+  return { success: true, data: { folders, roots, total: folders.length, orderToken: 'tok-1', more: false, epoch: 0, ...extra } };
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -206,6 +206,24 @@ describe('FolderStore', () => {
       expect(store.roots).toEqual([]);
     });
 
+    it('accepts a fresh response computed after an interleaved delta', async () => {
+      const store = new FolderStore();
+      let resolve!: (v: unknown) => void;
+      fakeConnection.send.mockImplementation((cmd: any) =>
+        cmd.type === 'list_folders'
+          ? new Promise((res) => {
+              resolve = res;
+            })
+          : Promise.resolve({ success: true, data: { repos: [] } }),
+      );
+      const load = store.ensureLoaded();
+      store.applyFoldersChanged({ type: 'folders_changed', changed: [makeFolder({ path: '/r/event', name: 'event' })], removedPaths: [], epoch: 4 });
+      resolve(okListFolders([makeFolder({ path: '/r/fresh', name: 'fresh' })], ['/fresh-roots'], { epoch: 4 }));
+      await load;
+      expect(store.folders.map((f) => f.path)).toContain('/r/fresh');
+      expect(store.roots).toEqual(['/fresh-roots']);
+    });
+
     it('a pending listing does not wipe sessions seeded by session_state_changed', async () => {
       const store = new FolderStore();
       let resolveSessions!: (v: unknown) => void;
@@ -301,7 +319,7 @@ describe('FolderStore', () => {
   });
 
   describe('loadFolders', () => {
-    it('single-flights concurrent calls and seeds per-folder session loads', async () => {
+    it('single-flights concurrent calls without enumerating sessions', async () => {
       const store = new FolderStore();
       const folders = [makeFolder({ path: '/r/a', name: 'a' }), makeFolder({ path: '/r/b', name: 'b' })];
 
@@ -323,7 +341,7 @@ describe('FolderStore', () => {
 
       // One list_folders send for both callers.
       expect(fakeConnection.send).toHaveBeenCalledTimes(1);
-      expect(fakeConnection.send).toHaveBeenCalledWith({ type: 'list_folders' });
+      expect(fakeConnection.send.mock.calls[0][0]).toMatchObject({ type: 'list_folders' });
 
       resolveFolders(okListFolders(folders));
       await Promise.all([p1, p2]);
@@ -332,36 +350,24 @@ describe('FolderStore', () => {
       expect(store.roots).toEqual(['/roots']);
       expect(store.loading).toBe(false);
 
-      // Session loads seeded per folder path, keyed by path in the map.
       const sessionCommands = fakeConnection.send.mock.calls.filter(([c]: any[]) => c.type === 'list_sessions');
-      expect(sessionCommands.map(([c]: any[]) => c.folderPath)).toEqual(['/r/a', '/r/b']);
-      expect(store.sessions.get('/r/a')).toEqual([]);
-      expect(store.sessions.get('/r/b')).toEqual([]);
+      expect(sessionCommands).toEqual([]);
     });
 
-    it('shows the folder list before the per-folder session loads finish', async () => {
+    it('shows folders without loading any session lists until a visible row requests them', async () => {
       const store = new FolderStore();
       const folders = [makeFolder({ path: '/r/a', name: 'a' })];
-      let resolveSessions!: (v: unknown) => void;
-      fakeConnection.send.mockImplementation((cmd: any) => {
-        if (cmd.type === 'list_folders') return Promise.resolve(okListFolders(folders));
-        if (cmd.type === 'list_repos') return Promise.resolve({ success: true, data: { repos: [] } });
-        if (cmd.type === 'list_sessions') return new Promise((res) => (resolveSessions = res));
-        throw new Error(`Unexpected command: ${cmd.type}`);
+      routeSends({
+        list_folders: () => okListFolders(folders),
+        list_repos: () => ({ success: true, data: { repos: [] } }),
+        list_sessions: () => ({ success: true, data: { sessions: [] } }),
       });
-
-      const load = store.loadFolders();
-      await flush();
-
-      // Folders are assigned and the spinner is down while list_sessions is
-      // still in flight — the list must not wait on session metadata.
+      await store.loadFolders();
       expect(store.folders).toEqual(folders);
       expect(store.loading).toBe(false);
-      expect(store.sessions.has('/r/a')).toBe(false);
-
-      resolveSessions({ success: true, data: { sessions: [makeSession('s1', '2026-01-01T00:00:00Z')] } });
-      await load;
-      expect(store.sessions.get('/r/a')).toHaveLength(1);
+      expect(fakeConnection.send.mock.calls.filter(([c]: any[]) => c.type === 'list_sessions')).toEqual([]);
+      await store.loadSessions('/r/a');
+      expect(store.sessions.get('/r/a')).toEqual([]);
     });
 
     it('a failed load resets loading and leaves state intact', async () => {
@@ -451,6 +457,7 @@ describe('FolderStore', () => {
 
       await store.ensureLoaded();
       await store.loadFolders();
+      expect(fakeConnection.send.mock.calls.filter(([c]: any[]) => c.type === 'list_folders')[1][0]).toMatchObject({ repin: true });
 
       const listFoldersSends = fakeConnection.send.mock.calls.filter(([c]: any[]) => c.type === 'list_folders');
       expect(listFoldersSends).toHaveLength(2);
@@ -458,7 +465,7 @@ describe('FolderStore', () => {
   });
 
   describe('windowed folder fetching', () => {
-    it('ensureLoaded fetches the first window under a fresh pin and adopts the returned orderToken', async () => {
+    it('ensureLoaded fetches the first window under the connection pin and adopts the returned orderToken', async () => {
       const store = new FolderStore();
       const sends: any[] = [];
       fakeConnection.send.mockImplementation((cmd: any) => {
@@ -473,7 +480,7 @@ describe('FolderStore', () => {
       await store.fetchNextWindow();
 
       const windows = sends.filter((c) => c.type === 'list_folders');
-      expect(windows[0]).not.toHaveProperty('orderToken'); // omitted → the server pins a fresh order
+      expect(windows[0]).not.toHaveProperty('orderToken'); // omitted → reuse the connection's open-time pin
       expect(windows[1]).toMatchObject({ orderToken: 'tok-1', offset: 1 });
     });
 
@@ -483,7 +490,7 @@ describe('FolderStore', () => {
       const b = makeFolder({ path: '/r/b', name: 'b' });
       fakeConnection.send.mockImplementation((cmd: any) => {
         if (cmd.type === 'list_folders') {
-          if (cmd.offset === 0) return Promise.resolve(okListFolders([a], ['/roots'], { total: 2, orderToken: 'tok-1', more: true }));
+          if ((cmd.offset ?? 0) === 0) return Promise.resolve(okListFolders([a], ['/roots'], { total: 2, orderToken: 'tok-1', more: true }));
           // A mid-scroll re-pin: the window overlaps an already-cached row.
           return Promise.resolve(okListFolders([a, b], ['/roots'], { total: 2, orderToken: 'tok-2', more: false }));
         }
@@ -540,18 +547,117 @@ describe('FolderStore', () => {
     });
 
     it('with a query active, fetchNextWindow fetches further match windows for that query', async () => {
+      vi.useFakeTimers();
+      try {
+        const store = new FolderStore();
+        const sends: any[] = [];
+        fakeConnection.send.mockImplementation((cmd: any) => {
+          sends.push(cmd);
+          return Promise.resolve(okListFolders([makeFolder({ path: '/r/a', name: 'a' })], ['/roots'], { total: 5, orderToken: 'tok-1', more: true }));
+        });
+        const search = store.search('alp');
+        void search.catch(() => {});
+        await vi.advanceTimersByTimeAsync(250);
+        await search;
+        await store.fetchNextWindow();
+        const windows = sends.filter((c) => c.type === 'list_folders');
+        expect(windows[1]).toMatchObject({ query: 'alp', offset: 1 });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('query views and recoverable errors', () => {
+    it('server-authoritative search filters the view while preserving accumulated cache and narrowing session-only matches', async () => {
+      vi.useFakeTimers();
+      try {
+        const store = new FolderStore();
+        const cached = makeFolder({ path: '/r/local', name: 'needle-local' });
+        const match = makeFolder({ path: '/r/far', name: 'unrelated', matchedSessionIds: ['matched'] });
+        store.folders = [cached];
+        store.sessions.set(match.path, [makeSession('matched', '2024-01-01T00:00:00Z'), makeSession('other', '2024-01-01T00:00:00Z')]);
+        routeSends({ list_folders: () => okListFolders([match]), list_repos: () => ({ success: true, data: { repos: [] } }) });
+        const search = store.search('needle');
+        void search.catch(() => {}); // attach immediately while fake timers advance
+        await vi.advanceTimersByTimeAsync(250);
+        await search;
+        expect(store.folders.map((f) => f.path).sort()).toEqual(['/r/far', '/r/local']);
+        expect(store.visibleFolders.map((f) => f.path)).toEqual(['/r/far']);
+        expect(store.visibleSessions(match.path).map((s) => s.id)).toEqual(['matched']);
+        expect(fakeConnection.send.mock.calls.every(([c]: any[]) => c.type !== 'list_sessions')).toBe(true);
+        const clear = store.search('');
+        void clear.catch(() => {});
+        await vi.advanceTimersByTimeAsync(250);
+        await clear;
+        expect(store.visibleFolders.map((f) => f.path)).toContain('/r/local');
+        expect(
+          store
+            .visibleSessions(match.path)
+            .map((s) => s.id)
+            .sort(),
+        ).toEqual(['matched', 'other']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('folder-tier query matches show all loaded sessions under an active query', async () => {
+      vi.useFakeTimers();
+      try {
+        const store = new FolderStore();
+        const folder = makeFolder({ path: '/r/a', name: 'needle' });
+        store.sessions.set(folder.path, [makeSession('one', '2024-01-01T00:00:00Z'), makeSession('two', '2024-01-01T00:00:00Z')]);
+        routeSends({ list_folders: () => okListFolders([folder]) });
+        const search = store.search('needle');
+        void search.catch(() => {});
+        await vi.advanceTimersByTimeAsync(250);
+        await search;
+        expect(store.visibleSessions(folder.path).map((s) => s.id)).toEqual(['one', 'two']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('failed continuation preserves rows and can retry the same window', async () => {
       const store = new FolderStore();
-      const sends: any[] = [];
-      fakeConnection.send.mockImplementation((cmd: any) => {
-        sends.push(cmd);
-        return Promise.resolve(okListFolders([], ['/roots'], { total: 5, orderToken: 'tok-1', more: true }));
-      });
-
-      await store.search('alp');
+      const a = makeFolder({ path: '/r/a', name: 'a' });
+      routeSends({ list_folders: () => okListFolders([a], [], { more: true, total: 2 }), list_repos: () => ({ success: true, data: { repos: [] } }) });
+      await store.ensureLoaded();
+      fakeConnection.send.mockRejectedValueOnce(new Error('offline'));
       await store.fetchNextWindow();
+      expect(store.folders).toEqual([a]);
+      routeSends({
+        list_folders: (cmd) => {
+          expect(cmd.offset).toBe(1);
+          return okListFolders([makeFolder({ path: '/r/b', name: 'b' })]);
+        },
+      });
+      await store.fetchNextWindow();
+      expect(store.folders.map((f) => f.path).sort()).toEqual(['/r/a', '/r/b']);
+    });
 
-      const windows = sends.filter((c) => c.type === 'list_folders');
-      expect(windows[1]).toMatchObject({ query: 'alp' });
+    it('failed search preserves cache and can retry', async () => {
+      vi.useFakeTimers();
+      try {
+        const store = new FolderStore();
+        const cached = makeFolder({ path: '/r/a', name: 'a' });
+        store.folders = [cached];
+        fakeConnection.send.mockRejectedValueOnce(new Error('offline'));
+        const failed = store.search('needle');
+        void failed.catch(() => {});
+        await vi.advanceTimersByTimeAsync(250);
+        await failed;
+        expect(store.folders).toEqual([cached]);
+        routeSends({ list_folders: () => okListFolders([makeFolder({ path: '/r/b', name: 'b' })]) });
+        const retry = store.search('needle');
+        void retry.catch(() => {});
+        await vi.advanceTimersByTimeAsync(250);
+        await retry;
+        expect(store.folders.map((f) => f.path).sort()).toEqual(['/r/a', '/r/b']);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

@@ -485,7 +485,14 @@ describe('RepoIndex background refresh — onRefreshed', () => {
     await index.whenRefreshed();
 
     expect(onRefreshed).toHaveBeenCalledTimes(1);
+    expect(onRefreshed).toHaveBeenLastCalledWith({ changedPaths: [repoB], removedPaths: [] });
     expect((await index.list()).map((r) => r.path)).toContain(repoB);
+
+    await rm(repoA, { recursive: true, force: true });
+    clock = 10_000;
+    await index.list();
+    await index.whenRefreshed();
+    expect(onRefreshed).toHaveBeenLastCalledWith({ changedPaths: [], removedPaths: [repoA] });
   });
 
   it('does not notify when a refresh finds nothing changed', async () => {

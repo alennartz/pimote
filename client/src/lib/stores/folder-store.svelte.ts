@@ -99,6 +99,13 @@ export class FolderStore {
     throw new Error('not implemented');
   }
 
+  /** Sessions visible under the active server query: session-only matches are
+   * narrowed by matchedSessionIds; folder-tier matches show all loaded sessions. */
+  visibleSessions(folderPath: string): SessionInfo[] {
+    void folderPath;
+    throw new Error('not implemented');
+  }
+
   /** Drop the per-connection freshness marker; wired to socket loss below. */
   invalidateConnection(): void {
     this.loadedForCurrentConnection = false;

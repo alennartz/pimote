@@ -663,12 +663,15 @@ describe('FolderRegistry.onChange()', () => {
 
     await registry.update({ folderPath: repoA, favorite: true });
     expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenLastCalledWith({ changedPaths: [repoA], removedPaths: [] });
 
     const { path: hubPath } = await registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA] });
     expect(onChange).toHaveBeenCalledTimes(2);
+    expect(onChange).toHaveBeenLastCalledWith({ changedPaths: [hubPath], removedPaths: [] });
 
     await registry.disbandHub(hubPath);
     expect(onChange).toHaveBeenCalledTimes(3);
+    expect(onChange).toHaveBeenLastCalledWith({ changedPaths: [], removedPaths: [hubPath] });
 
     unsubscribe();
     await registry.update({ folderPath: repoA, favorite: false });

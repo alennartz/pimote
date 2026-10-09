@@ -264,7 +264,7 @@ async function resolveAbsentPaths(repos: RepoInfo[], hubPaths: Iterable<string>)
  */
 export class FolderRegistry implements FolderRegistryPort {
   private documentPromise: Promise<RegistryDocument> | null = null;
-  private readonly subscribers = new Set<() => void>();
+  private readonly subscribers = new Set<(change: { changedPaths: string[]; removedPaths: string[] }) => void>();
   private mutations: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -398,7 +398,7 @@ export class FolderRegistry implements FolderRegistryPort {
   }
 
   /** Subscribe to registry mutations; returns an unsubscribe function. */
-  onChange(cb: () => void): () => void {
+  onChange(cb: (change: { changedPaths: string[]; removedPaths: string[] }) => void): () => void {
     this.subscribers.add(cb);
     return () => {
       this.subscribers.delete(cb);
@@ -462,6 +462,7 @@ export class FolderRegistry implements FolderRegistryPort {
   }
 
   private fireChange(): void {
-    for (const cb of [...this.subscribers]) cb();
+    // Mutation-path emission is implemented in the implementation phase.
+    for (const cb of [...this.subscribers]) cb({ changedPaths: [], removedPaths: [] });
   }
 }

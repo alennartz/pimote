@@ -38,9 +38,13 @@ export interface FolderPin {
 }
 
 export interface FolderQueryRequest {
-  /** Omitted/unknown/expired → the service transparently re-pins and serves
-   *  the window under the new token. */
+  /** Unknown/expired/cross-owner tokens transparently re-pin. Omitted tokens
+   *  reuse the connection's pin, or create one for standalone callers. */
   token?: string;
+  /** Owner of the pin; standalone callers may omit it. */
+  connectionId?: string;
+  /** Force a fresh order for an explicit refresh. */
+  repin?: boolean;
   /** Window start into the pinned (optionally filtered) order; default 0. */
   offset?: number;
   /** Window size; default 100, clamped to [1, 200]. */
@@ -64,7 +68,10 @@ export interface FolderQueryResult {
 }
 
 export interface FolderListingService {
-  /** Pin the current order — an ordered snapshot of canonical folder paths from
+  /** Metadata scans are background-only. Cold calls use empty activity; refresh
+   * failures retain the last good snapshot and never fail pin/query. Completion
+   * affects fresh pins only; registry failures propagate.
+   * Pin the current order — an ordered snapshot of canonical folder paths from
    *  the rows and session-derived metadata at this moment:
    *  `favorite desc → lastActivity desc → name asc → path asc` (path is the
    *  deterministic tiebreak stable pagination needs). The pin holds _order
@@ -72,7 +79,10 @@ export interface FolderListingService {
    *  curation edits are never stale against an old pin. Pins live for the
    *  connection and are garbage-collected on close (plus a TTL sweep for
    *  orphaned tokens). */
-  pin(): Promise<FolderPin>;
+  pin(connectionId?: string): Promise<FolderPin>;
+
+  /** Release every pin owned by the closed connection, including pending pins. */
+  releaseConnection(connectionId: string): void;
 
   /** Serve one window under a pin. `query` filters the full pinned order —
    *  never loaded rows only — with two OR'd, case-insensitive substring tiers:
@@ -103,7 +113,11 @@ export interface FolderListingService {
 export class FolderListing implements FolderListingService {
   constructor(private readonly deps: FolderListingDeps) {}
 
-  pin(): Promise<FolderPin> {
+  pin(_connectionId?: string): Promise<FolderPin> {
+    throw new Error('not implemented');
+  }
+
+  releaseConnection(_connectionId: string): void {
     throw new Error('not implemented');
   }
 

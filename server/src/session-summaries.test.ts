@@ -56,6 +56,12 @@ describe('SessionSummaryIndex.listMany()', () => {
 
     expect(result.get(folderPath)!.map((s) => s.id)).toEqual(['s-1']);
     expect(result.get(otherFolder)!.map((s) => s.id)).toEqual(['s-2']);
+    expect(result.get(folderPath)).toEqual(await index.list(folderPath));
+    expect(result.get(otherFolder)).toEqual(await index.list(otherFolder));
+  });
+
+  it('an empty batch returns an empty map', async () => {
+    expect(await index.listMany([])).toEqual(new Map());
   });
 
   it('folders without a session directory contribute an empty list', async () => {

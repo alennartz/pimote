@@ -491,8 +491,10 @@ export interface ListFoldersCommand extends CommandBase {
   /** Two-tier search over the full set, case-insensitive substring. */
   query?: string;
   includeArchived?: boolean; // default false
-  /** Omitted → server pins a fresh order. */
+  /** Omitted → use this connection's pin (created at WebSocket open). */
   orderToken?: string;
+  /** Explicit refresh: replace this connection's pinned order. */
+  repin?: boolean;
 }
 
 /** List the discovery index (repos), used by multi-repo configuration and creation flows. resp: ListReposResponseData */
@@ -540,6 +542,8 @@ export interface ManagerAbortCommand extends CommandBase {
 }
 
 export interface ListFoldersResponseData {
+  /** Epoch observed while computing this window. */
+  epoch: number;
   /** Rows may carry matchedSessionIds?: string[] (session-tier search matches). */
   folders: FolderInfo[];
   roots: string[];

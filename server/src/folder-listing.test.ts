@@ -66,8 +66,23 @@ function fakeWorld(
 
 const paths = (result: FolderQueryResult): string[] => result.rows.map((r) => r.path);
 
-async function flushMicrotasks(times = 10): Promise<void> {
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function flushMicrotasks(times = 20): Promise<void> {
   for (let i = 0; i < times; i++) await Promise.resolve();
+}
+
+async function warm(service: FolderListing): Promise<void> {
+  await service.pin();
+  await flushMicrotasks();
 }
 
 describe('FolderListing', () => {
@@ -100,6 +115,7 @@ describe('FolderListing', () => {
         },
       });
       const service = new FolderListing(deps);
+      await warm(service);
       const { token } = await service.pin();
 
       const result = await service.query({ token, offset: 0, limit: 10 });
@@ -120,6 +136,7 @@ describe('FolderListing', () => {
         },
       });
       const service = new FolderListing(deps);
+      await warm(service);
       const { token } = await service.pin();
 
       const result = await service.query({ token, offset: 0, limit: 10 });
@@ -138,6 +155,7 @@ describe('FolderListing', () => {
         live: [{ folderPath: '/w/old' }],
       });
       const service = new FolderListing(deps);
+      await warm(service);
       const { token } = await service.pin();
 
       const result = await service.query({ token, offset: 0, limit: 10 });
@@ -168,6 +186,21 @@ describe('FolderListing', () => {
   });
 
   describe('pin lifecycle', () => {
+    it('omitted tokens reuse the connection pin until explicit refresh replaces its order', async () => {
+      const world = fakeWorld({ rows: [row('/w/a'), row('/w/b')] });
+      const service = new FolderListing(world.deps);
+      const pin = await service.pin('owner');
+      world.state.rows = [row('/w/a'), row('/w/b', { favorite: true })];
+      const reused = await service.query({ connectionId: 'owner' });
+      expect(reused.orderToken).toBe(pin.token);
+      expect(paths(reused)).toEqual(['/w/a', '/w/b']);
+      const refreshed = await service.query({ connectionId: 'owner', repin: true });
+      expect(refreshed.orderToken).not.toBe(pin.token);
+      expect(paths(refreshed)).toEqual(['/w/b', '/w/a']);
+      const continued = await service.query({ connectionId: 'owner' });
+      expect(continued.orderToken).toBe(refreshed.orderToken);
+    });
+
     it('a query under an unknown token transparently re-pins and serves the window under the new token', async () => {
       const { deps } = fakeWorld({ rows: [row('/w/a', { name: 'a' }), row('/w/b', { name: 'b' }), row('/w/c', { name: 'c' })] });
       const service = new FolderListing(deps);
@@ -279,13 +312,14 @@ describe('FolderListing', () => {
         rows: [row('/w/sess', { name: 'sess' })],
         summaries: {
           '/w/sess': [
-            summary('s1', '2025-01-01T00:00:00Z', { name: 'deploy pipeline' }),
+            summary('s1', '2025-01-01T00:00:00Z', { name: 'sess deploy pipeline' }),
             summary('s2', '2024-01-01T00:00:00Z', { firstMessage: 'talks about widgets' }),
             summary('s3', '2023-01-01T00:00:00Z', { name: 'unrelated' }),
           ],
         },
       });
       const service = new FolderListing(deps);
+      await warm(service);
 
       const byName = await service.query({ query: 'PIPELINE', offset: 0, limit: 10 });
       expect(paths(byName)).toEqual(['/w/sess']);
@@ -293,6 +327,9 @@ describe('FolderListing', () => {
 
       const byFirstMessage = await service.query({ query: 'widgets', offset: 0, limit: 10 });
       expect(byFirstMessage.rows[0].matchedSessionIds).toEqual(['s2']);
+
+      const folderMatch = await service.query({ query: 'sess' });
+      expect(folderMatch.rows[0].matchedSessionIds).toBeUndefined();
     });
 
     it('filter then slice: total is the post-filter count and the window is [offset, offset+limit) of the filtered order', async () => {
@@ -360,18 +397,21 @@ describe('FolderListing', () => {
           },
         });
         const service = new FolderListing(world.deps);
-        await service.pin(); // warm the metadata cache
+        await warm(service); // warm the metadata cache
 
         // On-disk activity moves on; the TTL lapses (default 30s).
         world.state.summaries = new Map([
           ['/w/x', [summary('s1', '2020-01-01T00:00:00Z')]],
           ['/w/y', [summary('s2', '2025-06-01T00:00:00Z')]],
         ]);
+        const scan = deferred<Map<string, SessionSummary[]>>();
+        world.deps.sessionSummaries.listMany = () => scan.promise;
         vi.advanceTimersByTime(30_001);
 
         const stale = await service.query({ offset: 0, limit: 10 });
         expect(paths(stale), 'stale-while-revalidate: the previous snapshot is served while refreshing').toEqual(['/w/x', '/w/y']);
 
+        scan.resolve(world.state.summaries);
         await flushMicrotasks();
         const fresh = await service.query({ offset: 0, limit: 10 });
         expect(paths(fresh)).toEqual(['/w/y', '/w/x']);
@@ -380,7 +420,7 @@ describe('FolderListing', () => {
       }
     });
 
-    it('invalidateSessionMetadata makes the next query pick up fresh session metadata without waiting for the TTL', async () => {
+    it('invalidation refreshes in the background and only fresh pins adopt refreshed metadata', async () => {
       const world = fakeWorld({
         rows: [row('/w/x', { name: 'x' }), row('/w/y', { name: 'y' })],
         summaries: {
@@ -389,7 +429,10 @@ describe('FolderListing', () => {
         },
       });
       const service = new FolderListing(world.deps);
-      await service.pin();
+      await warm(service);
+      const pinned = await service.pin();
+      const scan = deferred<Map<string, SessionSummary[]>>();
+      world.deps.sessionSummaries.listMany = () => scan.promise;
 
       world.state.summaries = new Map([
         ['/w/x', [summary('s1', '2020-01-01T00:00:00Z')]],
@@ -397,8 +440,92 @@ describe('FolderListing', () => {
       ]);
       service.invalidateSessionMetadata();
 
-      const result = await service.query({ offset: 0, limit: 10 });
-      expect(paths(result)).toEqual(['/w/y', '/w/x']);
+      const stale = await service.query({ offset: 0, limit: 10 });
+      expect(paths(stale)).toEqual(['/w/x', '/w/y']);
+      scan.resolve(world.state.summaries);
+      await flushMicrotasks();
+      expect(paths(await service.query({ token: pinned.token }))).toEqual(['/w/x', '/w/y']);
+      expect(paths(await service.query({}))).toEqual(['/w/y', '/w/x']);
+    });
+  });
+
+  describe('failures and connection ownership', () => {
+    it('cold scan completion affects fresh pins, never the existing pin', async () => {
+      const scan = deferred<Map<string, SessionSummary[]>>();
+      const world = fakeWorld({ rows: [row('/w/a'), row('/w/z')], listMany: () => scan.promise });
+      const service = new FolderListing(world.deps);
+      const pin = await service.pin();
+      expect(paths(await service.query({ token: pin.token }))).toEqual(['/w/a', '/w/z']);
+      scan.resolve(new Map([['/w/z', [summary('recent', '2025-01-01T00:00:00Z')]]]));
+      await flushMicrotasks();
+      expect(paths(await service.query({ token: pin.token }))).toEqual(['/w/a', '/w/z']);
+      expect(paths(await service.query({}))).toEqual(['/w/z', '/w/a']);
+    });
+
+    it('released connection pins cannot be reused and another owner cannot adopt them', async () => {
+      const service = new FolderListing(fakeWorld({ rows: [row('/w/a')] }).deps);
+      const pin = await service.pin('connection-a');
+      const other = await service.query({ connectionId: 'connection-b', token: pin.token });
+      expect(other.orderToken).not.toBe(pin.token);
+      service.releaseConnection('connection-a');
+      const renewed = await service.query({ connectionId: 'connection-a', token: pin.token });
+      expect(renewed.orderToken).not.toBe(pin.token);
+    });
+
+    it('closing a connection while a pin is pending prevents retaining that pin', async () => {
+      const gate = deferred<FolderInfo[]>();
+      const world = fakeWorld();
+      world.deps.listRows = () => gate.promise;
+      const service = new FolderListing(world.deps);
+      const pending = service.pin('closing');
+      service.releaseConnection('closing');
+      gate.resolve([row('/w/a')]);
+      const released = await pending;
+      const renewed = await service.query({ connectionId: 'closing', token: released.token });
+      expect(renewed.orderToken).not.toBe(released.token);
+    });
+
+    it('registry failures propagate from pin, query, and delta construction', async () => {
+      const world = fakeWorld();
+      const failure = new Error('registry unavailable');
+      world.deps.listRows = async () => {
+        throw failure;
+      };
+      const service = new FolderListing(world.deps);
+      await expect(service.pin()).rejects.toBe(failure);
+      await expect(service.query({})).rejects.toBe(failure);
+      await expect(service.buildDelta(['/w/a'], [])).rejects.toBe(failure);
+    });
+
+    it('metadata failures preserve the last good snapshot and a later invalidation recovers', async () => {
+      const world = fakeWorld({ rows: [row('/w/a'), row('/w/z')], summaries: { '/w/z': [summary('s', '2025-01-01T00:00:00Z')] } });
+      const service = new FolderListing(world.deps);
+      await warm(service);
+      const scan = deferred<Map<string, SessionSummary[]>>();
+      world.deps.sessionSummaries.listMany = () => scan.promise;
+      service.invalidateSessionMetadata();
+      expect(paths(await service.query({}))).toEqual(['/w/z', '/w/a']);
+      scan.reject(new Error('scan failed'));
+      await flushMicrotasks();
+      expect(paths(await service.query({}))).toEqual(['/w/z', '/w/a']);
+      world.deps.sessionSummaries.listMany = async () => new Map();
+      service.invalidateSessionMetadata();
+      await service.query({});
+      await flushMicrotasks();
+      expect(paths(await service.query({}))).toEqual(['/w/a', '/w/z']);
+    });
+
+    it('a failed cold metadata scan still serves name-only ordering', async () => {
+      const world = fakeWorld({
+        rows: [row('/w/z'), row('/w/a')],
+        listMany: async () => {
+          throw new Error('scan failed');
+        },
+      });
+      const service = new FolderListing(world.deps);
+      await service.pin();
+      await flushMicrotasks();
+      expect(paths(await service.query({}))).toEqual(['/w/a', '/w/z']);
     });
   });
 
