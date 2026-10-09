@@ -278,7 +278,14 @@ unscanned-cwd session fallback and legacy `multiRepo` registry read-compat
 probes);
 `tools/manual-test/manager-tools-smoke/` drives the manager toolset
 deterministically (registration + execution against real ports, no LLM) to
-backstop the LLM-dependent tool-choice assertions in the chat phase.
+backstop the LLM-dependent tool-choice assertions in the chat phase;
+`tools/manual-test/folder-paging-smoke/` drives the windowed-listing
+behaviors at scale over a ~250-row fixture — window continuity under deep
+scroll (including curation edits mid-scroll), two-tier server search with
+`matchedSessionIds` narrowing and debounced typing bursts, `folders_changed`
+delta delivery (curation, hub create/disband, file_put, discovery
+additions), refresh/reconnect cache-replace, the archive toggle × session
+lists interplay, and rendered-row-only session loading.
 
 ## 13. AGENTS.md editor
 

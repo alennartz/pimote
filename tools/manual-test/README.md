@@ -45,10 +45,12 @@ returns `browser()` (raw CLI passthrough with transient-failure retries),
 (`revealFolder`, `rowText`, `rowBlockText`, `rowIcon`, `rowRenderedNow`,
 `starOnRow`, `openRowMenu`, `clickMenuItem`, `clickDialogButton`,
 `folderScrollTop`, `folderScrollStep`), and a page-side WebSocket
-instrumentation probe (`installSocketProbe`, `sentLog`, `resetSent`,
-`closeLatestSocket`, `socketCount`) for request-count assertions and forced
+instrumentation probe (`installSocketProbe`, `sentLog`, `markSent`,
+`sentSince`, `loadedSessionPaths`, `resetSent`, `closeLatestSocket`,
+`socketCount`, `pageConsole`) for request-count assertions and forced
 reconnects. The probe wraps `WebSocket.prototype.send` after page load —
-count only request deltas taken after installation.
+count only request deltas taken after `markSent`. Transient agent-browser
+failures (daemon busy, page navigation) are retried.
 
 ### lib/session-dir.mjs
 
