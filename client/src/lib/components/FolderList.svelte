@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
+  import { createVirtualizer, type SvelteVirtualizer } from '@tanstack/svelte-virtual';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import type { FolderInfo, SessionInfo } from '@pimote/shared';
   import { folderStore } from '$lib/stores/folder-store.svelte.js';
@@ -27,10 +29,11 @@
   interface Props {
     /** Homepage search query — owned by the combined toolbar box at the top. */
     search?: string;
+    scrollElement?: HTMLDivElement | null;
     onSessionSelect?: () => void;
   }
 
-  let { search = '', onSessionSelect }: Props = $props();
+  let { search = '', scrollElement = null, onSessionSelect }: Props = $props();
 
   let openError = $state('');
   // Three-state folder expander: 'closed' (nothing), 'active' (half-open —
@@ -135,36 +138,101 @@
     await updateFolder(folder, { addTags: [tag] });
   }
 
-  // Two-tier search: a folder matching by display name/path/tags shows all its
-  // sessions; one matching only via session data shows just the matching
-  // sessions.
-  const searchResults = $derived.by(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) return null;
-    const folders: FolderInfo[] = [];
-    // Non-reactive derived output — recomputed wholesale on every query change.
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity
-    const sessionView = new Map<string, SessionInfo[]>();
-    for (const folder of folderStore.visibleFolders) {
-      const sessions = folderStore.sessions.get(folder.path) ?? [];
-      const tagMatch = (folder.tags ?? []).some((t) => t.toLowerCase().includes(query));
-      const folderMatch = tagMatch || displayName(folder).toLowerCase().includes(query) || folder.name.toLowerCase().includes(query) || folder.path.toLowerCase().includes(query);
-      const sessionMatches = sessions.filter((s) => (s.name ?? '').toLowerCase().includes(query) || (s.firstMessage ?? '').toLowerCase().includes(query));
-      if (folderMatch) {
-        folders.push(folder);
-        sessionView.set(folder.path, sessions);
-      } else if (sessionMatches.length > 0) {
-        folders.push(folder);
-        sessionView.set(folder.path, sessionMatches);
-      }
-    }
-    return { folders, sessionView };
+  const displayFolders = $derived(folderStore.visibleFolders);
+  const searching = $derived(search.trim().length > 0);
+  let scrollMargin = $state(0);
+  const requestedSessionLists = new SvelteSet<string>();
+  const searchState = { query: untrack(() => folderStore.query) };
+  const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: 0,
+    getScrollElement: () => null,
+    estimateSize: () => 76,
+    overscan: 5,
+    gap: 4,
+  });
+  const virtualItems = $derived($virtualizer.getVirtualItems());
+
+  $effect(() => {
+    const query = search.trim();
+    if (query === searchState.query) return;
+    searchState.query = query;
+    untrack(() => void folderStore.search(query));
   });
 
-  const displayFolders = $derived(searchResults ? searchResults.folders : folderStore.visibleFolders);
+  $effect(() => {
+    const element = scrollElement;
+    const folders = displayFolders;
+    const margin = scrollMargin;
+    untrack(() => {
+      $virtualizer.setOptions({
+        count: folders.length,
+        getScrollElement: () => element,
+        getItemKey: (index) => folders[index].path,
+        scrollMargin: margin,
+      });
+    });
+  });
+
+  /** Observe the content above the list as well as viewport layout changes. */
+  function observeListOffset(list: HTMLDivElement, scroller: HTMLDivElement) {
+    const updateOffset = () => {
+      scrollMargin = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientTop + scroller.scrollTop;
+    };
+    const observer = new ResizeObserver(updateOffset);
+    observer.observe(list);
+    observer.observe(scroller);
+    if (scroller.firstElementChild) observer.observe(scroller.firstElementChild);
+    updateOffset();
+    return () => observer.disconnect();
+  }
+
+  $effect(() => {
+    const list = rowsEl;
+    const scroller = scrollElement;
+    if (list && scroller) return observeListOffset(list, scroller);
+  });
+
+  /** TanStack's ResizeObserver measures expansion, tags, and subtitle changes. */
+  function measureRow(node: HTMLDivElement, measurement: { instance: SvelteVirtualizer<HTMLDivElement, HTMLDivElement>; index: number }) {
+    const instance = measurement.instance;
+    instance.measureElement(node);
+    return {
+      update: () => instance.measureElement(node),
+      destroy: () => instance.measureElement(null),
+    };
+  }
+
+  function requestRenderedSessions(paths: readonly string[], includeArchived: boolean) {
+    for (const path of paths) {
+      const key = `${includeArchived}:${path}`;
+      if (requestedSessionLists.has(key)) continue;
+      requestedSessionLists.add(key);
+      void folderStore.loadSessions(path);
+    }
+  }
+
+  $effect(() => {
+    if (connection.status !== 'connected') {
+      untrack(() => requestedSessionLists.clear());
+      return;
+    }
+    const paths = virtualItems
+      .map((item) => displayFolders[item.index])
+      .filter((folder) => folder && (searching || (expandStates.get(folder.path) ?? 'active') !== 'closed'))
+      .map((folder) => folder.path);
+    const includeArchived = folderStore.showArchived;
+    untrack(() => requestRenderedSessions(paths, includeArchived));
+  });
+
+  $effect(() => {
+    const lastItem = virtualItems.at(-1);
+    if (connection.status === 'connected' && folderStore.more && lastItem && lastItem.index >= displayFolders.length - 10) {
+      untrack(() => void folderStore.fetchNextWindow());
+    }
+  });
 
   function sessionsFor(folder: FolderInfo): SessionInfo[] {
-    return searchResults?.sessionView.get(folder.path) ?? folderStore.sessions.get(folder.path) ?? [];
+    return folderStore.visibleSessions(folder.path);
   }
   const archivableCount = $derived(
     folderStore.folders.reduce((total, folder) => {
@@ -203,7 +271,7 @@
   /** Row 2 (git status + tags) renders only when there's something to show. */
   function hasRepoInfo(folder: FolderInfo): boolean {
     if (folder.repos !== undefined) return folder.repos.length > 0;
-    const repo = folderStore.repos.find((r) => r.path === folder.path);
+    const repo = folder.repo;
     return !!repo && !repo.missing && !!repo.branch;
   }
 
@@ -359,8 +427,8 @@
        so the count and the ⋯ menu share one row. -->
   <div class="text-muted-foreground mb-1 -ml-2 flex items-center gap-2 max-md:ml-0">
     <h2 class="text-foreground text-xs font-semibold tracking-widest uppercase">Folders</h2>
-    {#if folderStore.folders.length > 0}
-      <span class="text-xs">{folderStore.folders.length}</span>
+    {#if folderStore.total > 0}
+      <span class="text-xs">{folderStore.total}</span>
     {/if}
     <div class="ml-auto flex items-center gap-2">
       <Button
@@ -431,9 +499,10 @@
         {/if}
       </div>
     {:else}
-      <div class="flex flex-col gap-1" bind:this={rowsEl}>
-        {#each displayFolders as folder (folder.path)}
-          {@const expandState = searchResults !== null ? 'all' : (expandStates.get(folder.path) ?? 'active')}
+      <div class="relative w-full" style:height={`${$virtualizer.getTotalSize()}px`} bind:this={rowsEl}>
+        {#each virtualItems as item (item.key)}
+          {@const folder = displayFolders[item.index]}
+          {@const expandState = searching ? 'all' : (expandStates.get(folder.path) ?? 'active')}
           {@const iconKind = folderIconKind(folder)}
           {@const hasTags = (folder.tags?.length ?? 0) > 0}
           {@const showAll = expandedSessionLists.has(folder.path)}
@@ -445,7 +514,12 @@
                its closed shape (bottom-rounded) instead of a dangling open corner. -->
           {@const showSessionBlock = expandState === 'all' || listedSessions.length > 0}
 
-          <div class="border-border/60 rounded-lg">
+          <div
+            class="border-border/60 absolute top-0 left-0 w-full rounded-lg"
+            data-index={item.index}
+            style:transform={`translateY(${item.start - scrollMargin}px)`}
+            use:measureRow={{ instance: $virtualizer, index: item.index }}
+          >
             <ContextMenu open={rowMenuPath === folder.path} onOpenChange={(open) => setRowMenu(folder.path, open)}>
               <!-- Whole-row expander: taps land here unless a control stops them.
                    Every control inside the trigger calls stopPropagation(). -->
@@ -605,7 +679,7 @@
                         </span>
                       {/each}
                     {:else}
-                      {@const repo = folderStore.repos.find((r) => r.path === folder.path)}
+                      {@const repo = folder.repo}
                       {#if repo && !repo.missing && repo.branch}
                         <span class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px]" title={repo.path}>
                           <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>

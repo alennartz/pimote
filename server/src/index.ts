@@ -166,6 +166,9 @@ export async function main(options: StartOptions = {}) {
             if (!resolved) return { sessionId, outcome: 'not_found' };
 
             await sessionMetadataStore.setArchived(resolved.sessionPath, true);
+            // Session activity: targeted metadata invalidation for the folder —
+            // covers archive runs without a live slot — and no folder delta.
+            folderListing.invalidateSessionMetadata([resolved.folderPath]);
             if (slot) await sessionManager.closeSession(sessionId);
             for (const [, handler] of managerClientRegistryRef.current) {
               handler.sendToClient({ type: 'session_archived', sessionId, folderPath: resolved.folderPath, archived: true });

@@ -15,6 +15,12 @@ import type {
 import { connection } from './connection.svelte.js';
 import { SvelteMap } from 'svelte/reactivity';
 import { getShowArchived, setShowArchived } from './persistence.js';
+import { sessionRegistry } from './session-registry.svelte.js';
+
+interface OpenSessionActivity {
+  readonly folderPath: string;
+  readonly modified: string | null;
+}
 
 interface InFlightSessionLoad {
   includeArchived: boolean;
@@ -55,6 +61,8 @@ function sortSessionsByRecency(sessions: SessionInfo[]): SessionInfo[] {
 }
 
 export class FolderStore {
+  constructor(private readonly readOpenSessionActivity: () => readonly OpenSessionActivity[] = () => []) {}
+
   folders: FolderInfo[] = $state([]);
   repos: RepoInfo[] = $state([]);
   roots: string[] = $state([]);
@@ -95,8 +103,19 @@ export class FolderStore {
    */
   get visibleFolders(): FolderInfo[] {
     const list = this.folders.filter((folder) => (this.showArchived || !folder.archived) && (!this.activeQuery || this.queryMatchPaths.includes(folder.path)));
-    const recency = (folder: FolderInfo): number => Math.max(0, ...(this.sessions.get(folder.path) ?? []).map((s) => toTimestamp(s.modified)));
+    const openActivity = this.readOpenSessionActivity();
+    const recency = (folder: FolderInfo): number =>
+      Math.max(
+        0,
+        ...(this.sessions.get(folder.path) ?? []).map((session) => toTimestamp(session.modified)),
+        ...openActivity.filter((session) => session.folderPath === folder.path).map((session) => (session.modified ? toTimestamp(session.modified) : Number.MAX_SAFE_INTEGER)),
+      );
     return [...list].sort((a, b) => Number(b.favorite === true) - Number(a.favorite === true) || recency(b) - recency(a) || a.name.localeCompare(b.name));
+  }
+
+  /** Active server query, for views that remount with a cleared toolbar. */
+  get query(): string {
+    return this.activeQuery;
   }
 
   /** Fetch one initial window per connection, then serve the warm cache. */
@@ -454,7 +473,7 @@ export class FolderStore {
   }
 }
 
-export const folderStore = new FolderStore();
+export const folderStore = new FolderStore(() => sessionRegistry.activeSessions.map((session) => ({ folderPath: session.folderPath, modified: session.lastBotActivityTimestamp })));
 
 // Route server-side folder/session events into the store for the lifetime of
 // the app. This lives here — not in FolderList's onMount — so the cache stays

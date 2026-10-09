@@ -104,9 +104,21 @@ let target: HTMLDivElement;
 
 function render(props: { search?: string } = {}) {
   target = document.createElement('div');
+  target.style.height = '800px';
+  target.style.overflowY = 'auto';
+  Object.defineProperties(target, {
+    offsetHeight: { value: 800 },
+    offsetWidth: { value: 600 },
+  });
   document.body.appendChild(target);
-  const component = mount(FolderList, { target, props });
+  const component = mount(FolderList, { target, props: { ...props, scrollElement: target } });
   return () => unmount(component);
+}
+
+async function settleSearch() {
+  await tick();
+  await new Promise((resolve) => setTimeout(resolve, 275));
+  await tick();
 }
 
 function nameButton(path: string): HTMLButtonElement {
@@ -216,16 +228,36 @@ describe('folder search', () => {
   it('persona display names are discoverable in the homepage search', async () => {
     folderStore.folders = [persona, alpha];
     folderStore.sessions.set(persona.path, [idleSession]);
+    vi.mocked(connection.send).mockImplementation(async (command) => ({
+      id: '1',
+      success: true,
+      data:
+        command.type === 'list_folders'
+          ? { folders: [persona], roots: [], total: 1, more: false, orderToken: 'search-ada', epoch: 0 }
+          : command.type === 'list_sessions'
+            ? { sessions: [idleSession] }
+            : {},
+    }));
     destroy = render({ search: 'ada' });
-    await tick();
+    await settleSearch();
 
     expect(shows('Ada')).toBe(true);
     expect(shows('alpha')).toBe(false);
   });
 
   it('session-level matches show only the matching sessions (semantics unchanged)', async () => {
+    vi.mocked(connection.send).mockImplementation(async (command) => ({
+      id: '1',
+      success: true,
+      data:
+        command.type === 'list_folders'
+          ? { folders: [{ ...alpha, matchedSessionIds: [idleSession.id] }], roots: [], total: 1, more: false, orderToken: 'search-idle', epoch: 0 }
+          : command.type === 'list_sessions'
+            ? { sessions: [idleSession, activeSession] }
+            : {},
+    }));
     destroy = render({ search: 'idle' });
-    await tick();
+    await settleSearch();
 
     expect(shows('alpha')).toBe(true);
     expect(shows('Idle session')).toBe(true);
@@ -411,7 +443,7 @@ describe('chips and tags', () => {
   });
 
   it('plain code rows render their git chip from the repo index', async () => {
-    folderStore.repos = [{ path: alpha.path, name: 'alpha', branch: 'main', dirty: true, ahead: 2, behind: 1 }];
+    folderStore.folders = [makeFolder({ ...alpha, repo: { path: alpha.path, name: 'alpha', branch: 'main', dirty: true, ahead: 2, behind: 1 } })];
     destroy = render();
     await tick();
 

@@ -238,6 +238,8 @@ The orchestrator approved these narrow exceptions to immutable tests. Write each
 - `server/src/folder-registry.test.ts`: cover member-tag changes targeting the member and dependent hubs. Verify inherited hub tags against a fresh registry listing.
 - `server/src/folder-registry.test.ts` (authorized during implementation): the `lists every discovered code folder with required defaults` row fixture at ~line 93 pins the row with `toEqual` without `repo`, which the approved Step 2 additive `repo?: RepoInfo` enrichment supersedes. Add the expected `repo` facts to that one `toEqual` row; keep `toEqual` (exact row-shape pinning stays, the shape legitimately grew). Also assert persona/hub rows omit `repo` if not already covered.
 - `server/src/folder-listing.test.ts` (test-defect correction, authorized during implementation): the folder-tier query test's `/w/tagged` fixture tag `urgent-one` accidentally contains `gent`, leaking tag-tier matches into a test meant to isolate the name tier. Change that tag to `priority`; keep the query and the mandated substring semantics. If no separate test pins tag-tier substring matching, add one line of coverage (query `prior` matches `/w/tagged`).
+- `client/src/lib/components/FolderList.test.ts` (test-infrastructure amendment, authorized during implementation): the mounts render `FolderList` without a scroll container and assume unvirtualized rows, which the approved Step 10 virtualization supersedes. Wrap the mounts in a sized scroll container, wire it as the virtualizer's scroll element, and add only the minimal settle/measurement await the virtualizer needs. Every existing assertion stays unchanged — the preserved behaviors remain pinned. A nonvirtualized fallback is explicitly rejected.
+- `client/src/lib/components/FolderList.test.ts` (fixture/harness corrections to approved seams, authorized during implementation): (1) the two search tests assume the old synchronous client-local search — add server `list_folders` query-response mocks over the same fixtures plus the debounce settle in the harness; display assertions untouched. (2) The plain-row git chip test seeds `folderStore.repos`; seed `repo` facts on the folder fixture instead (badges come from `folder.repo` per Step 10). Assertion untouched. If an assertion itself encodes client-local filtering internals beyond display outcomes, escalate rather than edit it.
 - `server/src/index.test.ts` (authorized during implementation): the `wires pimote_folder_tree through the on-demand scan port` test pins "fresh scan per execution / no scanner cache", which the approved Cached tree seam clarification supersedes. Rewrite that one test to pin the cached-tree seam instead: shared walk via `repoIndex.tree()`, exactly one walk for repeated tool executions (the cache serves the second call), TTL-stale acceptance. Keep the test's intent — the manager tree tool delegates to the folder-model seam, not its own scanner.
 
 These amendments cover decisions resolved during planning, not new product scope. Existing tests remain unchanged otherwise.
@@ -339,7 +341,7 @@ Invalidate targeted metadata after successful rename, delete, archive, and unarc
 In `server/src/index.ts`, retain the existing shared summary-index construction and listing injection. Add targeted metadata invalidation to the successful manager archive path, including archive operations without a live slot. Send no folder delta for session activity.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/ws-handler.test.ts src/server.test.ts` passes delegation, pin lifecycle, mutation wiring, and targeted invalidation tests. Each registry mutation emits one delta channel. Session-only changes emit existing session events only.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Accumulate client windows and authoritative search
 
@@ -380,7 +382,7 @@ Render plain-row git badges from `folder.repo`. Keep hub badges and disband chec
 Preserve startup session hydration in `client/src/lib/stores/session-registry.svelte.ts`. Its persisted open/bound sessions restore without awaiting folder windows. Feed those restored session facts into the fetched subset's live recency view without triggering folder-wide session enumeration. Keep full repo requests explicit in the hub picker.
 
 **Verify:** `npm run check --workspace=client` and `npm run build --workspace=client` succeed. With approximately 3,500 folders, DOM row count remains bounded. Scrolling fetches more windows. Expanding rows does not overlap following rows. Search finds unfetched folders and narrows session-only matches. Restored chat sessions remain usable before folder fetching completes.
-**Status:** not started
+**Status:** done
 
 ### Step 11: Align smoke journeys and verify the full slice
 

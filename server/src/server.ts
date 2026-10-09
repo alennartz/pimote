@@ -190,11 +190,15 @@ export async function createServer(
     res.end(JSON.stringify({ error: 'not found' }));
   });
 
-  // Wire up session manager callbacks for sidebar broadcasts
+  // Wire up session manager callbacks for sidebar broadcasts. Status and close
+  // callbacks also invalidate the folder listing's session-derived metadata for
+  // the affected folder — session activity, so no folder delta.
   sessionManager.onStatusChange = (sessionId, folderPath) => {
+    folderListing?.invalidateSessionMetadata([folderPath]);
     WsHandler.broadcastSidebarUpdate(sessionId, folderPath, sessionManager, clientRegistry);
   };
   sessionManager.onSessionClosed = (sessionId, folderPath) => {
+    folderListing?.invalidateSessionMetadata([folderPath]);
     WsHandler.broadcastSidebarUpdate(sessionId, folderPath, sessionManager, clientRegistry);
   };
   sessionManager.onGitBranchChange = (sessionId, folderPath) => {
@@ -207,19 +211,19 @@ export async function createServer(
     if (ownerClientId) clientRegistry.get(ownerClientId)?.sendDisplacedEvent(sessionId);
   };
 
-  // Folder registry mutations (update / createHub / disbandHub) broadcast the
-  // changed rows to every connected client. TODO(test-write): the registry's
-  // onChange must thread the exact changed/removed paths (it knows its targets);
-  // placeholders until that lands.
-  folderRegistry?.onChange(() => {
-    WsHandler.broadcastFoldersChanged(folderListing, [], [], clientRegistry);
+  // Folder registry mutations (update / createHub / disbandHub) report the
+  // exact changed/removed paths (their targets plus derived dependents) and
+  // broadcast through the same delta channel. The listing service builds the
+  // delta; the emitter only sends it.
+  folderRegistry?.onChange((change) => {
+    WsHandler.broadcastFoldersChanged(folderListing, change.changedPaths, change.removedPaths, clientRegistry);
   });
 
   // A stale-serve background refresh of the repo index (listing/status TTL
-  // expiry) rides the same channel, but only when the recomputed view differs
-  // from what the stale serve returned.
-  repoIndex?.setOnRefreshed(() => {
-    if (folderRegistry) WsHandler.broadcastFoldersChanged(folderListing, [], [], clientRegistry);
+  // expiry) rides the same channel with its concrete change targets, but only
+  // when the recomputed view differs from what the stale serve returned.
+  repoIndex?.setOnRefreshed((change) => {
+    if (folderRegistry) WsHandler.broadcastFoldersChanged(folderListing, change.changedPaths, change.removedPaths, clientRegistry);
   });
 
   const wss = new WebSocketServer({ noServer: true });

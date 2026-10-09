@@ -1,5 +1,5 @@
 import type { WebSocket } from 'ws';
-import { basename } from 'node:path';
+import { basename, dirname } from 'node:path';
 import type {
   PimoteCommand,
   PimoteResponse,
@@ -22,7 +22,7 @@ import { getMergedPanelCards } from './panel-state.js';
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import { enrichActiveSessionCounts, isValidFolderName, type FolderRegistry } from './folder-registry.js';
-import type { FolderListingService } from './folder-listing.js';
+import type { FolderListingService, FolderPin } from './folder-listing.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import type { ManagerService } from './manager/index.js';
 import type { FolderCreator } from './folder-sources/index.js';
@@ -119,6 +119,18 @@ async function buildFallbackFolder(folderPath: string): Promise<FolderInfo> {
   };
 }
 
+/** The canonical folder key containing an edited file — folder rows are keyed
+ *  by canonical path, and a file path is not a folder key. Falls back to the
+ *  lexical containing directory when canonicalization fails. */
+async function resolveContainingFolder(filePath: string): Promise<string> {
+  const folder = dirname(filePath);
+  try {
+    return await nodeFolderFs.realpath(folder);
+  } catch {
+    return folder;
+  }
+}
+
 /** Map pi SDK tree nodes to the wire transfer shape used by pimote clients. */
 export function mapTreeNodes(nodes: SessionTreeNode[]): PimoteTreeNode[] {
   return nodes.map((node) => {
@@ -198,6 +210,15 @@ export class WsHandler {
   private loginAbort: AbortController | null = null;
   /** This connection's manager stream subscription (one per live manager session). */
   private managerListener: { session: ManagerSession; unsubscribe: () => void } | null = null;
+  /** This connection's adopted folder-order token (open-time pin or a pin
+   *  replacement); omitted-token window queries are served under it. */
+  private folderToken: string | undefined;
+  /** The in-flight folder-order pin; early folder commands await it. The
+   *  tracked promise never rejects — a failed pin is contained and cleared. */
+  private pendingPin: Promise<string | undefined> | undefined;
+  /** Pin generation: bumped when a new pin supersedes an in-flight one and on
+   *  cleanup, so stale pin continuations never write handler state. */
+  private pinGeneration = 0;
   readonly clientId: string;
 
   constructor(
@@ -216,6 +237,17 @@ export class WsHandler {
     private readonly folderListing?: FolderListingService,
   ) {
     this.clientId = clientId;
+    // Open-time pin initialization, nonblocking: a folder command arriving
+    // before it completes awaits the pending pin. A start failure (including a
+    // service that fails synchronously) is contained here — no unhandled
+    // rejection — and retried through the next folder command's error path.
+    if (this.folderListing && this.repoIndex && this.folderRegistry) {
+      try {
+        this.trackPin(this.folderListing.pin(this.clientId));
+      } catch {
+        // No pending pin: the next folder command retries initialization.
+      }
+    }
   }
 
   getViewedSessionId(): string | null {
@@ -244,10 +276,27 @@ export class WsHandler {
       switch (command.type) {
         // ---- Server-level commands ----
         case 'list_folders': {
-          const { repoIndex, folderRegistry } = this.requireFolderDeps();
-          const folders = await folderRegistry.list();
-          enrichActiveSessionCounts(folders, this.sessionManager.getAllSessions());
-          this.sendResponse(id, true, { folders, roots: repoIndex.roots });
+          const { repoIndex, folderListing } = this.requireFolderDeps();
+          if (!folderListing) throw new Error('Folder management is not available on this connection');
+          // Raw-param delegation: the listing service owns ordering, search,
+          // windowing, and normalization. A refresh request pins a replacement
+          // once and is served under it — the request carries no repin flag.
+          const result = await folderListing.query({
+            connectionId: this.clientId,
+            token: await this.resolveOrderToken(folderListing, command.orderToken, command.repin),
+            offset: command.offset,
+            limit: command.limit,
+            query: command.query,
+            includeArchived: command.includeArchived,
+          });
+          this.sendResponse(id, true, {
+            folders: result.rows,
+            roots: repoIndex.roots,
+            total: result.total,
+            orderToken: result.orderToken,
+            more: result.more,
+            epoch: result.epoch,
+          });
           break;
         }
 
@@ -584,6 +633,7 @@ export class WsHandler {
             this.viewedSessionId = null;
           }
 
+          this.folderListing?.invalidateSessionMetadata([deleteFolderPath]);
           this.sendResponse(id, true);
           break;
         }
@@ -607,6 +657,7 @@ export class WsHandler {
             archivedCount++;
           }
 
+          this.folderListing?.invalidateSessionMetadata([archiveFolderPath]);
           this.sendResponse(id, true, { archived: command.archived, count: archivedCount });
           break;
         }
@@ -645,6 +696,7 @@ export class WsHandler {
             handler.sendToClient(renameEvent);
           }
 
+          this.folderListing?.invalidateSessionMetadata([renameFolderPath]);
           this.sendResponse(id, true, { name: renameName });
           break;
         }
@@ -775,8 +827,12 @@ export class WsHandler {
         case 'file_put': {
           const data = await writeEditableFile(command.path, command.content);
           if (basename(data.path) === 'AGENTS.md') {
+            // Folder rows are keyed by canonical folder path: translate the
+            // edited file path to its containing folder before delta
+            // construction. A file path is not a folder key.
+            const folderPath = await resolveContainingFolder(data.path);
             this.repoIndex?.invalidate();
-            WsHandler.broadcastFoldersChanged(this.folderListing, [data.path], [], this.clientRegistry);
+            WsHandler.broadcastFoldersChanged(this.folderListing, [folderPath], [], this.clientRegistry);
           }
           this.sendResponse(id, true, data);
           break;
@@ -1839,8 +1895,18 @@ export class WsHandler {
    *  bump) and this only sends it. Used after registry mutations (via the
    *  registry's onChange in server.ts), after create_folder (folder creation
    *  isn't a registry mutation), and after a repo-index refresh. */
-  static broadcastFoldersChanged(_folderListing: FolderListingService | undefined, _changedPaths: string[], _removedPaths: string[], _clientRegistry: ClientRegistry): void {
-    throw new Error('not implemented');
+  static broadcastFoldersChanged(folderListing: FolderListingService | undefined, changedPaths: string[], removedPaths: string[], clientRegistry: ClientRegistry): void {
+    if (!folderListing) return;
+    folderListing
+      .buildDelta(changedPaths, removedPaths)
+      .then((event) => {
+        for (const [, handler] of clientRegistry) {
+          handler.sendToClient(event);
+        }
+      })
+      .catch((err) => {
+        console.warn('[WsHandler] folders_changed delta failed:', err instanceof Error ? err.message : String(err));
+      });
   }
 
   /** The folder-management wiring; every folder/manager command requires it. */
@@ -1908,6 +1974,45 @@ export class WsHandler {
     }
   }
 
+  /** Track an in-flight folder-order pin: it supersedes any earlier one and is
+   *  adopted as this connection's order token on completion. The tracked
+   *  promise never rejects — a failed pin is contained here (no unhandled
+   *  rejection) and clears the slot so a folder command can retry. The raw
+   *  promise is returned so awaiting callers (refresh requests) surface the
+   *  failure as their error response. */
+  private trackPin(pending: Promise<FolderPin>): Promise<FolderPin> {
+    const run = ++this.pinGeneration;
+    this.folderToken = undefined;
+    this.pendingPin = pending.then(
+      (pin) => {
+        if (run === this.pinGeneration) {
+          this.folderToken = pin.token;
+          this.pendingPin = undefined;
+        }
+        return pin.token;
+      },
+      () => {
+        if (run === this.pinGeneration) this.pendingPin = undefined;
+        return undefined;
+      },
+    );
+    return pending;
+  }
+
+  /** The order token a folder window is served under: an explicit token passes
+   *  through (the service transparently re-pins unknown or foreign ones); a
+   *  refresh request pins a replacement once and is served under it; otherwise
+   *  the connection's pin is used — awaited while the open-time pin is still
+   *  pending, retried here when its start failed. */
+  private async resolveOrderToken(folderListing: FolderListingService, explicit: string | undefined, repin: boolean | undefined): Promise<string> {
+    if (repin) return (await this.trackPin(folderListing.pin(this.clientId))).token;
+    if (explicit !== undefined) return explicit;
+    const pendingToken = await this.pendingPin;
+    if (pendingToken !== undefined) return pendingToken;
+    if (this.folderToken !== undefined) return this.folderToken;
+    return (await this.trackPin(folderListing.pin(this.clientId))).token;
+  }
+
   cleanup(): void {
     // If this connection had a login flow in flight, abort it and settle any
     // dangling input promises (mirror of `login_cancel`). The LoginOrchestrator
@@ -1931,5 +2036,12 @@ export class WsHandler {
     this.managerListener?.unsubscribe();
     this.managerListener = null;
     this.managerService?.disposeClient(this.clientId);
+    // Release this connection's folder-order pins and drop the bookkeeping. The
+    // generation bump invalidates a still-pending pin's continuation, so a late
+    // pin is never retained here.
+    this.pinGeneration += 1;
+    this.pendingPin = undefined;
+    this.folderToken = undefined;
+    this.folderListing?.releaseConnection(this.clientId);
   }
 }

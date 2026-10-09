@@ -19,6 +19,7 @@
   import X from '@lucide/svelte/icons/x';
 
   let search = $state('');
+  let scrollElement = $state<HTMLDivElement | null>(null);
   // Once a conversation exists the manager gets its own view: full screen chat
   // on mobile, a right-hand transcript panel (homepage narrowed to a left rail)
   // on desktop. Closing it dismisses the conversation, which folds the layout
@@ -196,6 +197,7 @@
 <div class="flex min-h-0 flex-1">
   <div
     class="flex min-h-0 flex-1 flex-col overflow-y-auto {splitView ? 'md:border-border md:w-1/4 md:max-w-96 md:min-w-80 md:flex-none md:border-r' : ''}"
+    bind:this={scrollElement}
     onscroll={closeOpenSwipeCard}
   >
     <div class="mx-auto flex w-full max-w-2xl flex-col gap-10 px-5 pt-12 pb-28 md:max-w-4xl md:pt-16">
@@ -283,7 +285,7 @@
 
       <!-- Folders: header + list actions live with the list itself -->
       <section>
-        <FolderList {search} />
+        <FolderList {search} {scrollElement} />
       </section>
     </div>
   </div>
