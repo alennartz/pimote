@@ -412,6 +412,8 @@ describe('main — manager toolset port wiring', () => {
       'pimote_search_sessions',
       'pimote_start_session',
       'pimote_archive_sessions',
+      'pimote_create_persona',
+      'pimote_list_personas',
     ]);
     const tree = toolNamed(tools, 'pimote_folder_tree');
     expect(tree.annotations.readOnlyHint).toBe(true);

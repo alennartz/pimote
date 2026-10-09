@@ -64,6 +64,10 @@ export interface SessionManagerPort {
 /** Narrow RepoIndex seam for manager tools. */
 export interface RepoIndexPort {
   list(): Promise<RepoInfo[]>;
+  /** Invalidate the folder-model discovery listing so a background re-walk
+   *  picks up on-disk changes; the refresh feeds the `folders_changed`
+   *  broadcast. */
+  invalidateListing(): void;
 }
 
 /** Narrow folder-model seam for manager tools: the sparse tree report. */
@@ -94,6 +98,9 @@ export interface FolderRegistryPort {
 /**
  * Everything the manager extension's pimote toolset may act through. Tools
  * act only via these ports — never raw fs, never the real server internals.
+ * One deliberate exception: `pimote_create_persona` materializes its persona
+ * folder on disk (its documented tool contract owns those files) and signals
+ * discovery invalidation through `repos.invalidateListing()`.
  */
 export interface ManagerToolContext {
   sessions: SessionManagerPort;
@@ -101,4 +108,27 @@ export interface ManagerToolContext {
   repos: RepoIndexPort;
   tree: FolderModelPort;
   config: PimoteConfig;
+}
+
+/** Input for the `pimote_create_persona` tool (plan: manager-lifecycle). */
+export interface CreatePersonaInput {
+  /** New persona folder basename — the folder is created at `<parentPath>/<name>`. */
+  name: string;
+  /** Existing folder the persona folder is created under. Must be inside a
+   *  scan root; the tool never invents a default location. */
+  parentPath: string;
+  /** Persona description; written to the AGENTS.md front matter. */
+  description: string;
+  /** Optional caller persona prompt, folded into the persona prompt template. */
+  prompt?: string;
+}
+
+/** One `pimote_list_personas` row (plan: manager-lifecycle). */
+export interface PersonaRow {
+  name: string;
+  description: string;
+  /** Canonical identity path of the persona folder. */
+  folderPath: string;
+  /** Personas run rooted in their folder: the same path as `folderPath`. */
+  workingDirectory: string;
 }

@@ -17,7 +17,7 @@ The manager stops being an ephemeral per-connection special case and becomes a r
 - **Server, boot seeding (new step in `server/src/index.ts` startup)** — after config load, before (or independent of) first session: canonicalize `managerRoot`; if `<managerRoot>/AGENTS.md` is absent write the shipped seed template; if `<managerRoot>/memory.md` is absent write a stub. Never overwrite or merge existing files. Seed template is a code constant in the server package: mission statement plus the maintain-`memory.md` indication; no tool listing (tools are injected).
 - **Server, session records (`server/src/session-records.ts`)** — no changes; the manager session list is `listSessionRecords(managerRoot)`.
 - **Web client (`client/src/lib/**`)** — `manager-store.svelte.ts`(synthetic slot,`manager_event`reduction, reset-on-disconnect) is deleted.`ManagerChat.svelte`becomes a thin manager area on the dashboard: composer plus a click-to-open session list backed by the manager session records. Composer behavior: if a manager session is currently being viewed, submit prompts it; otherwise it opens a new session at`managerRoot`and navigates into it (normal`open_session`flow,`session-route.ts`). Old sessions resume through the existing open flow; ActiveSessionBar and reconnect restore pick manager sessions up for free. DR-048's two-surface rule holds: the manager area stays part of the dashboard (side-by-side desktop, sheet mobile); opening a manager session is ordinary conversation navigation.
-- **pi-065 (`docs/bugs/pi-065-extension-newsession-broken.md`)** — verify against SDK `^1.1.0` (bug doc covers 0.65.0–0.66.1 only). If the stale runtime binding persists after `runtime.newSession()`, extend the existing patch-package patch (DR-006 precedent). Regression test lands either way; the verification result is recorded in the bug doc.
+- **pi-065 (`docs/bugs/pi-065-extension-newsession-broken.md`)** — verified against SDK `^1.1.0`: the silent ghost-execution behavior is fixed upstream; a stale `pi.*` call now throws synchronously with guidance to use `withSession`. **No patch-package extension** — pimote's own code never captures extension ctx across a replacement (resets run through `slot.runtime.newSession()` + `applySessionReset` in `ws-handler.ts`), so a rebind patch would add upgrade-maintenance surface for an unused pattern. A regression test pins the 1.1.0 fail-fast contract; the verification result is recorded in the bug doc.
 
 ### New Modules
 
@@ -66,9 +66,75 @@ on boot:  seedManagerRoot(config.managerRoot)
           - memory.md present -> untouched
 ```
 
-**pi-065 regression test contract.** A test that replaces a runtime session (`runtime.newSession()`) with a pimote extension loaded and asserts post-replacement `pi.*` calls act on the new session (event delivery to the new session, no ghost execution on the old one). Fails against the bug, passes after fix/patch.
+**pi-065 regression test contract.** A test that replaces a runtime session (`runtime.newSession()`) with a pimote extension loaded and asserts the SDK 1.1.0 fail-fast contract: (1) a stale `pi.*` call throws synchronously — never a silent no-op; (2) the disposed session receives zero events and executes zero tools; (3) the replacement session prompts normally. This test is **green on arrival**: it pins external SDK behavior, not our code — a documented Red Gate exception (nothing exists to accidentally implement).
 
 ### DR Supersessions
 
 - **DR-047** (The manager agent is global and ephemeral) — superseded: the manager gains a real folder, persisted sessions, and cross-connection identity; the per-connection in-memory lifecycle, temp cwd, idle reaper, and ports-only tool restriction are deleted. Replacement: manager = persona folder at `managerRoot` per this plan and DR-053's folder model. (User rulings in `docs/brainstorms/manager-lifecycle.md`; cutover ruling 2026-10-04 stands: straight replacement, no flag, git-revert rollback.)
 - **DR-053** (Unified folder model) — partially amended, manager carve-out only: its persona-persistence model (folder-resident `memory.md`, folder = identity) is reinforced and extended to the manager; its "conversations are ephemeral" line no longer applies to the manager (manager sessions are ordinary persisted sessions). It still applies to persona conferrals (P0-3). Manager root remains excluded from discovery.
+
+## Tests
+
+**Pre-test-write commit:** `5bfe2c1ef968b90dca3dafbd9e3d08f409b9c596`
+
+### Interface Files
+
+- `server/src/manager/types.ts` — `CreatePersonaInput` and `PersonaRow` data shapes; `RepoIndexPort.invalidateListing()` (the folder-model discovery invalidation seam, matching the real `RepoIndex`); ManagerToolContext doc note for `pimote_create_persona`'s deliberate disk access.
+- `server/src/manager/attachment.ts` — `loadManagerExtension(session, config)`: the manager extension attachment rule (canonical cwd equals canonical `managerRoot`), stub.
+- `server/src/manager/seed.ts` — `seedManagerRoot(managerRoot)`: the boot seeding contract for `AGENTS.md`/`memory.md`, stub.
+- `server/src/manager/extension.ts` — `pimote_create_persona` and `pimote_list_personas` tool registrations (parameter and output schemas, contract descriptions, stub executes). The seven existing tools are unchanged.
+- `server/src/manager/index.ts` — exports for the new interfaces.
+- `server/src/manager/extension.test.ts` — structural update: pinned toolset now includes the two new names; fake repos port gains `invalidateListing`.
+- `server/src/index.test.ts` — structural update: pinned manager toolset list.
+- `tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs` — structural update: expected registration list.
+
+### Test Files
+
+- `server/src/manager/attachment.test.ts` — the manager extension attachment rule: equality, non-containment, canonical (symlink) identity.
+- `server/src/manager/seed.test.ts` — manager-root boot seeding: write-if-absent, never-merge, never-overwrite, template contract.
+- `server/src/manager/persona-tools.test.ts` — `pimote_create_persona` (disk effects, canonical result, error contract, discovery invalidation) and `pimote_list_personas` (persona rows from the folder model).
+- `server/src/pi-065-newsession.test.ts` — pi-065 regression: stale `pi.*` rejection after `runtime.newSession()`, no ghost work, replacement session prompts normally.
+
+### Behaviors Covered
+
+#### Manager extension attachment rule
+
+- Attaches the manager extension when the session's canonical cwd equals the canonical `managerRoot`.
+- Does not attach for a session in an unrelated folder.
+- Does not attach for a session inside the manager root — equality, not containment.
+- Attaches when the session cwd is a symlink alias of the manager root — canonical identity is the real path.
+
+#### Boot seeding (`seedManagerRoot`)
+
+- Writes the shipped `AGENTS.md` template and a `memory.md` stub when both are absent.
+- The template is non-empty, carries the maintain-`memory.md` indication, and lists no tools (tools are injected).
+- Leaves an existing `AGENTS.md` byte-identical — never merges — and still seeds the absent `memory.md`.
+- Leaves an existing `memory.md` byte-identical and seeds the absent `AGENTS.md`.
+- Changes nothing when both files are present.
+
+#### `pimote_create_persona`
+
+- Creates `<parentPath>/<name>/` with an `AGENTS.md` whose front matter carries `name` and `description` (parseable by the folder model's persona marker), whose body folds in the caller's `prompt` and keeps the maintain-`memory.md` instruction, and a `memory.md` stub.
+- Returns `{ folderPath }` — the canonical path of the new persona folder.
+- Invalidates folder-model discovery after creation, so `folders_changed` fires.
+- Returns an error result and creates nothing when `parentPath` is not under any scan root; no invalidation.
+- Returns an error result and leaves the existing folder untouched on a name collision; no invalidation.
+- Returns an error result when creation fails on the filesystem; no invalidation.
+
+#### `pimote_list_personas`
+
+- Reports one row per persona folder (`nature = persona`) from the folder model: `name`, `description`, canonical `folderPath`, and `workingDirectory` equal to `folderPath`.
+- Excludes code folders and hubs.
+- Reports an empty list when the folder model knows no personas.
+
+#### pi-065: `pi.*` after `runtime.newSession()` (external SDK contract)
+
+Verification result (recorded in `docs/bugs/pi-065-extension-newsession-broken.md`): SDK ^1.1.0 fixed the silent ghost-execution half of pi-065 upstream as fail-fast. A stale `pi.*` call throws synchronously instead of targeting the disposed session; it does not rebind to the replacement session. Ruling: fail-fast is the accepted contract; no patch-package extension (pimote never captures extension ctx across a replacement). The plan's "if the stale binding persists, extend patch" conditional does not fire.
+
+- A `pi.*` call on the ctx captured at load time throws synchronously after replacement — never silently no-ops.
+- The disposed session receives zero events and executes zero tools — no ghost work.
+- The replacement session still prompts normally through its own ctx: the run executes, events are delivered, the user message lands in its transcript.
+
+### Red Gate
+
+All 16 new interface tests fail via `throw new Error("not implemented")` from the stubs. **One documented exception:** `pi-065-newsession.test.ts` is green. It pins external SDK behavior, not pimote implementation — there is no stub that could accidentally satisfy it — and its green result is the plan's pi-065 verification outcome (see above). Pre-existing tests stay green, including the structurally updated pinned-toolset tests.

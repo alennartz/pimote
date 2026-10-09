@@ -27,6 +27,8 @@ const MANAGER_TOOL_NAMES = [
   'pimote_search_sessions',
   'pimote_start_session',
   'pimote_archive_sessions',
+  'pimote_create_persona',
+  'pimote_list_personas',
 ];
 
 function spyPorts() {
@@ -38,7 +40,7 @@ function spyPorts() {
       archiveSessions: vi.fn(async (_sessionIds: string[]) => []),
     },
     folders: { list: vi.fn(async () => [] as FolderInfo[]) },
-    repos: { list: vi.fn(async () => []) },
+    repos: { list: vi.fn(async () => []), invalidateListing: vi.fn() },
     tree: { tree: vi.fn(async () => ({ occurrences: [] })) },
   };
 }

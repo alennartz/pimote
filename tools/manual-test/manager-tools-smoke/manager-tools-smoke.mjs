@@ -165,6 +165,8 @@ async function main() {
     'pimote_search_sessions',
     'pimote_start_session',
     'pimote_archive_sessions',
+    'pimote_create_persona',
+    'pimote_list_personas',
   ];
   for (const name of expected) assert(tools.has(name), `tool registered: ${name}`);
   assert(!names.some((name) => name.includes('project')), `no registered tool name contains "project" (got: ${names.join(', ')})`);

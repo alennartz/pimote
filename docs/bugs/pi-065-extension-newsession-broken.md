@@ -3,6 +3,15 @@
 **pi version**: 0.65.0 (unchanged through 0.66.1)  
 **Severity**: Breaking — silent data loss and invisible side effects
 
+## Verification against SDK ^1.1.0 (2026-07, manager-lifecycle test-write)
+
+Verified with the regression test `server/src/pi-065-newsession.test.ts`:
+
+- **The dangerous half is fixed upstream.** After `runtime.newSession()`, a `pi.*` call on the ctx captured at load time no longer silently targets the disposed session. It **throws synchronously**: `This extension ctx is stale after session replacement or reload ... move post-replacement work into withSession and use the ctx passed to withSession.` No ghost execution, no silent data loss.
+- **No rebinding.** The stale ctx does not act on the replacement session; callers must move post-replacement work into `withSession`.
+- **Ruling:** fail-fast is the accepted contract. Pimote does not extend the patch-package patch (DR-006 precedent): pimote's own code never captures extension ctx across a replacement — resets go through `slot.runtime.newSession` + `applySessionReset` in `ws-handler.ts` — so a rebind patch would add upgrade-maintenance surface for a pattern we do not use. The manager-lifecycle plan's conditional ("if the stale binding persists, extend patch") does not fire.
+- The regression test pins the fail-fast contract: stale calls throw, the disposed session runs zero tools and emits zero events, and the replacement session prompts normally.
+
 ## Summary
 
 After a command handler calls `ctx.newSession()`, all `pi.*` actions still target the old, disposed session. The old agent processes prompts, executes tools, and writes to the filesystem—but emits no events. The new session sits empty.

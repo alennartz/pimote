@@ -16,7 +16,8 @@ import type { ManagerToolContext, ManagedSessionSummary } from './types.js';
  * `pimote_list_sessions` → `sessions.getAllSessions()`), plus the
  * session-space tools: search over on-disk history (`pimote_search_sessions`),
  * starting sessions (`pimote_start_session`), and archiving
- * (`pimote_archive_sessions`).
+ * (`pimote_archive_sessions`). The persona tools (`pimote_create_persona`,
+ * `pimote_list_personas`, plan: manager-lifecycle) round out the toolset.
  */
 
 /** Default/capped result count for pimote_search_sessions. */
@@ -180,6 +181,19 @@ const SessionSearchHitSchema = Type.Object({
 const SessionArchiveOutcomeSchema = Type.Object({
   sessionId: Type.String(),
   outcome: Type.Union([Type.Literal('archived'), Type.Literal('open_slot_evicted'), Type.Literal('not_found')]),
+});
+
+/** Output row for `pimote_list_personas` (see PersonaRow in ./types.js). */
+const PersonaRowSchema = Type.Object({
+  name: Type.String(),
+  description: Type.String(),
+  folderPath: Type.String({ description: 'Canonical identity path of the persona folder.' }),
+  workingDirectory: Type.String({ description: 'Personas run rooted in their folder: the same path as folderPath.' }),
+});
+
+/** Structured output for `pimote_create_persona` (plan: manager-lifecycle). */
+const CreatePersonaResultSchema = Type.Object({
+  folderPath: Type.String({ description: 'Canonical path of the new persona folder.' }),
 });
 
 /** One search hit, as returned by pimote_search_sessions. */
@@ -373,6 +387,46 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         results: Type.Array(SessionArchiveOutcomeSchema),
       }),
       execute: async (_callId, params) => jsonToolResult({ results: await context.sessions.archiveSessions(params.sessionIds) }),
+    });
+
+    pi.registerTool({
+      name: 'pimote_create_persona',
+      label: 'Create persona',
+      description:
+        'Create a new persona folder at <parentPath>/<name> containing AGENTS.md (front matter: name, ' +
+        'description; body: the persona prompt template with the instruction to maintain memory.md, plus the ' +
+        "caller's prompt folded into the template's fixed sections) and a memory.md stub. parentPath is " +
+        'required and must be inside a scan root — the tool never invents a default location; the manager ' +
+        'chooses (or asks) using the folder tree. After creation, folder-model discovery is invalidated so ' +
+        'folders_changed fires and the dashboard list picks the persona up. Errors: parentPath not under any ' +
+        'scan root, name collision (folder exists), fs failure.',
+      parameters: Type.Object({
+        name: Type.String({ description: 'New persona folder basename.' }),
+        parentPath: Type.String({ description: 'Absolute path of the existing folder to create the persona folder under; must be inside a scan root.' }),
+        description: Type.String({ description: 'Persona description; written to the AGENTS.md front matter.' }),
+        prompt: Type.Optional(Type.String({ description: "Optional caller persona prompt, folded into the template's fixed sections." })),
+      }),
+      outputSchema: CreatePersonaResultSchema,
+      execute: async () => {
+        throw new Error('not implemented');
+      },
+    });
+
+    pi.registerTool({
+      name: 'pimote_list_personas',
+      label: 'List personas',
+      description:
+        'List every persona folder known to the folder model (nature = persona), each row carrying the persona ' +
+        'name, description, canonical folderPath (the identity path), and workingDirectory — personas run ' +
+        'rooted in their folder, so workingDirectory is the folderPath. Rows come from the folder model over ' +
+        'the injected ports; code folders and hubs are excluded. This is groundwork for spawn-and-confer. ' +
+        'Takes no arguments.',
+      parameters: Type.Object({}),
+      annotations: { readOnlyHint: true },
+      outputSchema: Type.Object({ personas: Type.Array(PersonaRowSchema) }),
+      execute: async () => {
+        throw new Error('not implemented');
+      },
     });
   };
 }
