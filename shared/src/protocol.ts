@@ -70,6 +70,10 @@ export interface FolderInfo {
   repos?: RepoInfo[];
   /** Own-path user tags — the subset of `tags` that is user-removable. */
   userTags?: string[];
+  /** Session ids matched by a server-side search — present when the row matched
+   *  via the session tier (narrows the lazily-loaded session list to just these);
+   *  absent on folder-tier matches (all sessions shown). */
+  matchedSessionIds?: string[];
   // Session/git chip fields, unchanged from the pre-rename project row.
   activeSessionCount: number;
   externalProcessCount: number;
@@ -476,9 +480,19 @@ export interface CreateFolderCommand extends CommandBase {
   name: string;
 }
 
-/** List discovered folders (merged scan + registry curation). resp: ListFoldersResponseData */
+/** List discovered folders (merged scan + registry curation) — one window of a
+ *  pinned order. resp: ListFoldersResponseData */
 export interface ListFoldersCommand extends CommandBase {
   type: 'list_folders';
+  /** Window start into the pinned (optionally filtered) order. */
+  offset?: number; // default 0
+  /** Window size; server-clamped to [1, 200]. */
+  limit?: number; // default 100
+  /** Two-tier search over the full set, case-insensitive substring. */
+  query?: string;
+  includeArchived?: boolean; // default false
+  /** Omitted → server pins a fresh order. */
+  orderToken?: string;
 }
 
 /** List the discovery index (repos), used by multi-repo configuration and creation flows. resp: ListReposResponseData */
@@ -526,8 +540,14 @@ export interface ManagerAbortCommand extends CommandBase {
 }
 
 export interface ListFoldersResponseData {
+  /** Rows may carry matchedSessionIds?: string[] (session-tier search matches). */
   folders: FolderInfo[];
   roots: string[];
+  /** Matches under query + includeArchived, over the whole set. */
+  total: number;
+  /** Token this window was served under (client adopts it). */
+  orderToken: string;
+  more: boolean;
 }
 
 export interface ListReposResponseData {
@@ -1106,10 +1126,15 @@ export interface ConnectionRestoredEvent {
 
 // -- Folder management events --
 
-/** Broadcast after a folder registry mutation; carries the full merged folder list. */
+/** Broadcast after a folder registry/discovery mutation — a delta over the
+ *  windowed listing (created/updated rows, removed paths), never the full list. */
 export interface FoldersChangedEvent {
   type: 'folders_changed';
-  folders: FolderInfo[];
+  /** Created/updated rows, fully populated + session-count enrichment. */
+  changed: FolderInfo[];
+  removedPaths: string[];
+  /** Monotonic epoch, bumped on every emission. */
+  epoch: number;
 }
 
 /** Streams the connection's ephemeral manager session: the same session event

@@ -20,8 +20,8 @@ afterEach(async () => {
 });
 
 /** Write a session file into the folder's session directory under the test agent dir. */
-async function writeSession(fileName: string, lines: string[]): Promise<string> {
-  const dir = sessionDirFor(folderPath, agentDir);
+async function writeSession(fileName: string, lines: string[], forFolder = folderPath): Promise<string> {
+  const dir = sessionDirFor(forFolder, agentDir);
   await mkdir(dir, { recursive: true });
   const filePath = join(dir, fileName);
   await writeFile(filePath, `${lines.join('\n')}\n`, 'utf8');
@@ -43,6 +43,25 @@ describe('sessionDirFor', () => {
     expect(sessionDirFor('/home/user/proj/', '/agent')).toBe('/agent/sessions/--home-user-proj--');
     expect(sessionDirFor('/a/b c/d', '/agent')).toBe('/agent/sessions/--a-b c-d--');
     expect(sessionDirFor('/c:/x', '/agent')).toBe('/agent/sessions/--c--x--');
+  });
+});
+
+describe('SessionSummaryIndex.listMany()', () => {
+  it('returns summaries keyed by folder path across folders in one pass', async () => {
+    const otherFolder = '/home/user/other-project';
+    await writeSession('s-1.jsonl', sessionLines());
+    await writeSession('s-2.jsonl', sessionLines({ id: 's-2' }), otherFolder);
+
+    const result = await index.listMany([folderPath, otherFolder]);
+
+    expect(result.get(folderPath)!.map((s) => s.id)).toEqual(['s-1']);
+    expect(result.get(otherFolder)!.map((s) => s.id)).toEqual(['s-2']);
+  });
+
+  it('folders without a session directory contribute an empty list', async () => {
+    const result = await index.listMany(['/home/user/no-such-folder']);
+
+    expect(result.get('/home/user/no-such-folder')).toEqual([]);
   });
 });
 

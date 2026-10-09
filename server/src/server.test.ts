@@ -16,6 +16,7 @@ vi.mock('./file-download/index.js', () => ({
 
 import { createServer, type PimoteServer } from './server.js';
 import type { FolderRegistry } from './folder-registry.js';
+import type { FolderListingService } from './folder-listing.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderInfo, PimoteEvent } from '../../shared/dist/index.js';
 
@@ -82,7 +83,7 @@ describe('createServer — folders_changed broadcast wiring', () => {
     await server?.close();
   });
 
-  it('broadcasts the merged folder list on registry mutations and on repo-index refreshes', async () => {
+  it('broadcasts the listing service-built delta on registry mutations and on repo-index refreshes', async () => {
     const folder: FolderInfo = {
       path: '/w/a',
       name: 'a',
@@ -111,6 +112,8 @@ describe('createServer — folders_changed broadcast wiring', () => {
         refreshListeners.push(cb);
       },
     } as unknown as RepoIndex;
+    const delta: PimoteEvent = { type: 'folders_changed', changed: [{ ...folder }], removedPaths: ['/w/gone'], epoch: 3 };
+    const folderListing = { buildDelta: async () => delta } as unknown as FolderListingService;
 
     server = await createServer(
       { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0 },
@@ -124,6 +127,9 @@ describe('createServer — folders_changed broadcast wiring', () => {
       undefined,
       repoIndex,
       folderRegistry,
+      undefined,
+      undefined,
+      folderListing,
     );
     await server.start(0);
 
@@ -134,14 +140,14 @@ describe('createServer — folders_changed broadcast wiring', () => {
     expect(registryListeners).toHaveLength(1);
     registryListeners[0]!();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(seen).toContainEqual({ type: 'folders_changed', folders: [{ ...folder }] });
+    expect(seen).toContainEqual(delta);
 
     // Changed repo refreshes ride the same channel.
     seen.length = 0;
     expect(refreshListeners).toHaveLength(1);
     refreshListeners[0]!();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(seen).toContainEqual({ type: 'folders_changed', folders: [{ ...folder }] });
+    expect(seen).toContainEqual(delta);
   });
 });
 

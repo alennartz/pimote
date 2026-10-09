@@ -85,6 +85,20 @@ export class FolderStore {
     await this.loadFolders();
   }
 
+  /** Next offset window when the view nears the end — merges rows by canonical
+   *  path under the adopted pin, so a mid-scroll re-pin cannot duplicate rows.
+   *  With a query active, fetches further match windows for that query. */
+  async fetchNextWindow(): Promise<void> {
+    throw new Error('not implemented');
+  }
+
+  /** Debounced (250ms) server-side search: fetches the offset-0 window for the
+   *  query and merges matches in. Results are server-authoritative — with a
+   *  query active the view shows exactly the rows the server returned. */
+  async search(_query: string): Promise<void> {
+    throw new Error('not implemented');
+  }
+
   /** Drop the per-connection freshness marker; wired to socket loss below. */
   invalidateConnection(): void {
     this.loadedForCurrentConnection = false;
@@ -147,17 +161,13 @@ export class FolderStore {
     return this.reposLoadInFlight;
   }
 
-  /** Whole-list replacement driven by the server's folders_changed broadcast.
-   *  Newly introduced folders may carry session history this cache has never
-   *  seen — hydrate them here (not via caller ordering) so their session rows
-   *  and git chips appear without a remount. */
-  applyFoldersChanged(event: FoldersChangedEvent): void {
-    this.foldersEpoch++;
-    this.folders = event.folders;
-    for (const folder of event.folders) {
-      if (!this.sessions.has(folder.path)) void this.loadSessions(folder.path);
-    }
-    void this.loadRepos();
+  /** Delta application driven by the server's folders_changed broadcast:
+   *  merge `changed` rows by canonical path (rows sorting past the fetched
+   *  frontier sit in cache and appear when scrolled to) and drop
+   *  `removedPaths` from the cache. Bumps the staleness guard so any list
+   *  response taken before this event is discarded. */
+  applyFoldersChanged(_event: FoldersChangedEvent): void {
+    throw new Error('not implemented');
   }
 
   applySessionStateChange(event: SessionStateChangedEvent, myClientId: string): void {

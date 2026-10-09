@@ -216,6 +216,17 @@ export class SessionSummaryIndex {
    * first. Files that failed to read/parse are omitted from the result and
    * reported — thrown under `failOnError`, warned otherwise.
    */
+  /**
+   * Summaries for many folders in one pass, keyed by folder path — the batch
+   * entry for cross-folder consumers (the folder-listing session-derived
+   * metadata pass), reusing this index's per-file (mtime, size) cache exactly
+   * like `list`. Folders without a session directory contribute an empty list.
+   */
+  async listMany(folderPaths: string[]): Promise<Map<string, SessionSummary[]>> {
+    void folderPaths;
+    throw new Error('not implemented');
+  }
+
   async list(folderPath: string, options: SessionSummaryListOptions = {}): Promise<SessionSummary[]> {
     let promise = this.inFlight.get(folderPath);
     if (!promise) {

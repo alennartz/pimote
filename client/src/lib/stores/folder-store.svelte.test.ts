@@ -50,8 +50,8 @@ function routeSends(handlers: Record<string, (cmd: any) => any>) {
   });
 }
 
-function okListFolders(folders: FolderInfo[], roots: string[] = ['/roots']) {
-  return { success: true, data: { folders, roots } };
+function okListFolders(folders: FolderInfo[], roots: string[] = ['/roots'], extra: { total?: number; orderToken?: string; more?: boolean } = {}) {
+  return { success: true, data: { folders, roots, total: folders.length, orderToken: 'tok-1', more: false, ...extra } };
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -62,26 +62,25 @@ beforeEach(() => {
 
 describe('FolderStore', () => {
   describe('module-scope event routing', () => {
-    it('folders_changed replaces the folder list', () => {
+    it('folders_changed deltas merge changed rows by canonical path and drop removedPaths', () => {
       expect(eventListeners.size).toBeGreaterThan(0);
-      routeSends({
-        list_sessions: () => ({ success: true, data: { sessions: [] } }),
-        list_repos: () => ({ success: true, data: { repos: [] } }),
-      });
-
       const listener = [...eventListeners].at(-1)!;
-      const next = [makeFolder({ path: '/r/new', name: 'new' })];
-      listener({ type: 'folders_changed', folders: next } as PimoteEvent);
+      folderStore.folders = [makeFolder({ path: '/r/keep', name: 'keep' }), makeFolder({ path: '/r/gone', name: 'gone' })];
 
-      expect(folderStore.folders).toEqual(next);
+      listener({
+        type: 'folders_changed',
+        changed: [makeFolder({ path: '/r/keep', name: 'keep', tags: ['fresh'] }), makeFolder({ path: '/r/new', name: 'new' })],
+        removedPaths: ['/r/gone'],
+        epoch: 1,
+      } as PimoteEvent);
+
+      expect(folderStore.folders.map((f) => f.path).sort()).toEqual(['/r/keep', '/r/new']);
+      expect(folderStore.folders.find((f) => f.path === '/r/keep')!.tags).toEqual(['fresh']);
+      folderStore.folders = [];
     });
 
-    it('folders_changed replaces the list without wiping live session indicators', () => {
+    it('a folders_changed delta does not wipe live session indicators', () => {
       const listener = [...eventListeners].at(-1)!;
-      routeSends({
-        list_sessions: () => ({ success: true, data: { sessions: [] } }),
-        list_repos: () => ({ success: true, data: { repos: [] } }),
-      });
       folderStore.sessions.delete('/r/live');
 
       // A live session seeds the sessions map while the user is away.
@@ -94,17 +93,21 @@ describe('FolderStore', () => {
         folderActiveSessionCount: 1,
       } as PimoteEvent);
 
-      // A folder broadcast replaces the whole list; the new rows carry the
-      // live counts and the sessions map keeps its liveStatus entry.
-      const next = [makeFolder({ path: '/r/live', name: 'live', activeSessionCount: 1 })];
-      listener({ type: 'folders_changed', folders: next } as PimoteEvent);
+      // The delta carries the enriched row; the sessions map keeps its liveStatus entry.
+      listener({
+        type: 'folders_changed',
+        changed: [makeFolder({ path: '/r/live', name: 'live', activeSessionCount: 1 })],
+        removedPaths: [],
+        epoch: 1,
+      } as PimoteEvent);
 
-      expect(folderStore.folders).toEqual(next);
+      expect(folderStore.folders).toHaveLength(1);
       expect(folderStore.folders[0].activeSessionCount).toBe(1);
       const sessions = folderStore.sessions.get('/r/live');
       expect(sessions).toHaveLength(1);
       expect(sessions![0]).toMatchObject({ id: 's1', liveStatus: 'working' });
       folderStore.sessions.delete('/r/live');
+      folderStore.folders = [];
     });
 
     it('session_state_changed seeds the sessions map while away from the dashboard', () => {
@@ -165,42 +168,24 @@ describe('FolderStore', () => {
       expect(folderStore.folders).toBe(before);
     });
 
-    it('applyFoldersChanged() replaces the whole list', () => {
+    it('applyFoldersChanged() merges changed rows by canonical path without duplicating rows from earlier windows', () => {
       const store = new FolderStore();
-      store.folders = [makeFolder({ path: '/r/old', name: 'old' })];
-      routeSends({
-        list_sessions: () => ({ success: true, data: { sessions: [] } }),
-        list_repos: () => ({ success: true, data: { repos: [] } }),
+      store.folders = [makeFolder({ path: '/r/a', name: 'a' }), makeFolder({ path: '/r/b', name: 'b' })];
+
+      store.applyFoldersChanged({
+        type: 'folders_changed',
+        changed: [makeFolder({ path: '/r/a', name: 'a', tags: ['fresh'] }), makeFolder({ path: '/r/c', name: 'c' })],
+        removedPaths: ['/r/b'],
+        epoch: 1,
       });
 
-      const next = [makeFolder({ path: '/r/a', name: 'a' }), makeFolder({ path: '/r/b', name: 'b' })];
-      store.applyFoldersChanged({ type: 'folders_changed', folders: next });
-
-      expect(store.folders).toEqual(next);
-    });
-
-    it('folders_changed hydrates newly introduced folders and refreshes repos', () => {
-      const store = new FolderStore();
-      const cached = makeFolder({ path: '/r/cached', name: 'cached' });
-      const fresh = makeFolder({ path: '/r/fresh', name: 'fresh' });
-      store.sessions.set('/r/cached', [makeSession('s1', '2024-01-01T00:00:00Z')]);
-      routeSends({
-        list_sessions: () => ({ success: true, data: { sessions: [] } }),
-        list_repos: () => ({ success: true, data: { repos: [] } }),
-      });
-
-      store.applyFoldersChanged({ type: 'folders_changed', folders: [cached, fresh] });
-
-      // The uncached folder gets its session history loaded; the warm one is
-      // not refetched. Repos refresh alongside so git chips appear too.
-      const sessionCmds = fakeConnection.send.mock.calls.filter(([c]: any[]) => c.type === 'list_sessions');
-      expect(sessionCmds.map(([c]: any[]) => c.folderPath)).toEqual(['/r/fresh']);
-      expect(fakeConnection.send).toHaveBeenCalledWith({ type: 'list_repos' });
+      expect(store.folders.map((f) => f.path).sort()).toEqual(['/r/a', '/r/c']);
+      expect(store.folders.find((f) => f.path === '/r/a')!.tags).toEqual(['fresh']);
     });
   });
 
   describe('in-flight listings vs newer events', () => {
-    it('a folders_changed broadcast during an in-flight load wins over the older response', async () => {
+    it('a folders_changed delta during an in-flight window load wins over the older response', async () => {
       const store = new FolderStore();
       const eventRows = [makeFolder({ path: '/r/event', name: 'event' })];
       const staleRows = [makeFolder({ path: '/r/stale', name: 'stale' })];
@@ -210,9 +195,9 @@ describe('FolderStore', () => {
         return Promise.resolve({ success: true, data: { sessions: [], repos: [] } });
       });
 
-      const load = store.loadFolders();
-      // The event arrives while the response is still in flight.
-      store.applyFoldersChanged({ type: 'folders_changed', folders: eventRows });
+      const load = store.ensureLoaded();
+      // The delta arrives while the response is still in flight.
+      store.applyFoldersChanged({ type: 'folders_changed', changed: eventRows, removedPaths: [], epoch: 1 });
       resolveFolders(okListFolders(staleRows));
       await load;
 
@@ -469,6 +454,104 @@ describe('FolderStore', () => {
 
       const listFoldersSends = fakeConnection.send.mock.calls.filter(([c]: any[]) => c.type === 'list_folders');
       expect(listFoldersSends).toHaveLength(2);
+    });
+  });
+
+  describe('windowed folder fetching', () => {
+    it('ensureLoaded fetches the first window under a fresh pin and adopts the returned orderToken', async () => {
+      const store = new FolderStore();
+      const sends: any[] = [];
+      fakeConnection.send.mockImplementation((cmd: any) => {
+        sends.push(cmd);
+        if (cmd.type === 'list_folders') {
+          return Promise.resolve(okListFolders([makeFolder({ path: '/r/a', name: 'a' })], ['/roots'], { total: 40, orderToken: 'tok-1', more: true }));
+        }
+        return Promise.resolve({ success: true, data: { sessions: [], repos: [] } });
+      });
+
+      await store.ensureLoaded();
+      await store.fetchNextWindow();
+
+      const windows = sends.filter((c) => c.type === 'list_folders');
+      expect(windows[0]).not.toHaveProperty('orderToken'); // omitted → the server pins a fresh order
+      expect(windows[1]).toMatchObject({ orderToken: 'tok-1', offset: 1 });
+    });
+
+    it('fetchNextWindow merges the next window by canonical path without duplicating rows', async () => {
+      const store = new FolderStore();
+      const a = makeFolder({ path: '/r/a', name: 'a' });
+      const b = makeFolder({ path: '/r/b', name: 'b' });
+      fakeConnection.send.mockImplementation((cmd: any) => {
+        if (cmd.type === 'list_folders') {
+          if (cmd.offset === 0) return Promise.resolve(okListFolders([a], ['/roots'], { total: 2, orderToken: 'tok-1', more: true }));
+          // A mid-scroll re-pin: the window overlaps an already-cached row.
+          return Promise.resolve(okListFolders([a, b], ['/roots'], { total: 2, orderToken: 'tok-2', more: false }));
+        }
+        return Promise.resolve({ success: true, data: { sessions: [], repos: [] } });
+      });
+
+      await store.ensureLoaded();
+      await store.fetchNextWindow();
+
+      expect(store.folders.map((f) => f.path).sort()).toEqual(['/r/a', '/r/b']);
+    });
+
+    it('fetchNextWindow makes no request once the last window reported more=false', async () => {
+      const store = new FolderStore();
+      fakeConnection.send.mockImplementation((cmd: any) => {
+        if (cmd.type === 'list_folders') {
+          return Promise.resolve(okListFolders([makeFolder({ path: '/r/a', name: 'a' })], ['/roots'], { total: 1, orderToken: 'tok-1', more: false }));
+        }
+        return Promise.resolve({ success: true, data: { sessions: [], repos: [] } });
+      });
+
+      await store.ensureLoaded();
+      fakeConnection.send.mockClear();
+      await store.fetchNextWindow();
+
+      expect(fakeConnection.send).not.toHaveBeenCalled();
+    });
+
+    it('search is debounced (250ms) and fetches the offset-0 window for the query, merging matches in', async () => {
+      vi.useFakeTimers();
+      try {
+        const store = new FolderStore();
+        const sends: any[] = [];
+        fakeConnection.send.mockImplementation((cmd: any) => {
+          sends.push(cmd);
+          if (cmd.type === 'list_folders') {
+            return Promise.resolve(okListFolders([makeFolder({ path: '/r/far', name: 'far' })], ['/roots'], { total: 1, orderToken: 'tok-1', more: false }));
+          }
+          return Promise.resolve({ success: true, data: { sessions: [], repos: [] } });
+        });
+
+        const searches = [store.search('alp'), store.search('alph')].map((p) => p.catch(() => {}));
+        await vi.advanceTimersByTimeAsync(250);
+        await Promise.all(searches);
+
+        const windows = sends.filter((c) => c.type === 'list_folders');
+        expect(windows).toHaveLength(1); // rapid calls coalesce into one fetch
+        expect(windows[0]).toMatchObject({ query: 'alph', offset: 0 });
+        // Server-authoritative matches merge into the cache, fetched or not.
+        expect(store.folders.map((f) => f.path)).toEqual(['/r/far']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('with a query active, fetchNextWindow fetches further match windows for that query', async () => {
+      const store = new FolderStore();
+      const sends: any[] = [];
+      fakeConnection.send.mockImplementation((cmd: any) => {
+        sends.push(cmd);
+        return Promise.resolve(okListFolders([], ['/roots'], { total: 5, orderToken: 'tok-1', more: true }));
+      });
+
+      await store.search('alp');
+      await store.fetchNextWindow();
+
+      const windows = sends.filter((c) => c.type === 'list_folders');
+      expect(windows[1]).toMatchObject({ query: 'alp' });
     });
   });
 

@@ -11,6 +11,7 @@ import type { FileSessionMetadataStore } from './session-metadata.js';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderRegistry } from './folder-registry.js';
+import type { FolderListingService } from './folder-listing.js';
 import type { ManagerService } from './manager/index.js';
 import type { FolderCreator } from './folder-sources/index.js';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
@@ -135,6 +136,7 @@ export async function createServer(
   folderRegistry?: FolderRegistry,
   managerService?: ManagerService,
   creators?: FolderCreator[],
+  folderListing?: FolderListingService,
 ): Promise<PimoteServer> {
   const appName = resolveAppName(config);
   const clientVersion = await loadClientVersion();
@@ -206,16 +208,18 @@ export async function createServer(
   };
 
   // Folder registry mutations (update / createHub / disbandHub) broadcast the
-  // merged list to every connected client.
+  // changed rows to every connected client. TODO(test-write): the registry's
+  // onChange must thread the exact changed/removed paths (it knows its targets);
+  // placeholders until that lands.
   folderRegistry?.onChange(() => {
-    WsHandler.broadcastFoldersChanged(folderRegistry, sessionManager, clientRegistry);
+    WsHandler.broadcastFoldersChanged(folderListing, [], [], clientRegistry);
   });
 
   // A stale-serve background refresh of the repo index (listing/status TTL
   // expiry) rides the same channel, but only when the recomputed view differs
   // from what the stale serve returned.
   repoIndex?.setOnRefreshed(() => {
-    if (folderRegistry) WsHandler.broadcastFoldersChanged(folderRegistry, sessionManager, clientRegistry);
+    if (folderRegistry) WsHandler.broadcastFoldersChanged(folderListing, [], [], clientRegistry);
   });
 
   const wss = new WebSocketServer({ noServer: true });
@@ -281,6 +285,7 @@ export async function createServer(
       folderRegistry,
       managerService,
       creators,
+      folderListing,
     );
     clientRegistry.set(clientId, handler);
     if (existing) {

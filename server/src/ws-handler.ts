@@ -13,7 +13,6 @@ import type {
   SessionRestoreEvent,
   SessionStateChangedEvent,
   FolderInfo,
-  FoldersChangedEvent,
   PimoteTreeNode,
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome } from './session-manager.js';
@@ -23,6 +22,7 @@ import { getMergedPanelCards } from './panel-state.js';
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import { enrichActiveSessionCounts, isValidFolderName, type FolderRegistry } from './folder-registry.js';
+import type { FolderListingService } from './folder-listing.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import type { ManagerService } from './manager/index.js';
 import type { FolderCreator } from './folder-sources/index.js';
@@ -213,6 +213,7 @@ export class WsHandler {
     private readonly folderRegistry?: FolderRegistry,
     private readonly managerService?: ManagerService,
     private readonly creators?: FolderCreator[],
+    private readonly folderListing?: FolderListingService,
   ) {
     this.clientId = clientId;
   }
@@ -359,7 +360,7 @@ export class WsHandler {
             const created = await creator.create({ root, name });
             // Otherwise the 30s listing TTL hides the new repo from the index.
             deps.repoIndex.invalidate();
-            WsHandler.broadcastFoldersChanged(deps.folderRegistry, this.sessionManager, this.clientRegistry);
+            WsHandler.broadcastFoldersChanged(deps.folderListing, [created.path], [], this.clientRegistry);
             this.sendResponse(id, true, { folderPath: created.path });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -775,9 +776,7 @@ export class WsHandler {
           const data = await writeEditableFile(command.path, command.content);
           if (basename(data.path) === 'AGENTS.md') {
             this.repoIndex?.invalidate();
-            if (this.folderRegistry) {
-              WsHandler.broadcastFoldersChanged(this.folderRegistry, this.sessionManager, this.clientRegistry);
-            }
+            WsHandler.broadcastFoldersChanged(this.folderListing, [data.path], [], this.clientRegistry);
           }
           this.sendResponse(id, true, data);
           break;
@@ -1834,32 +1833,28 @@ export class WsHandler {
     this.sendEvent(event);
   }
 
-  /** Broadcast the merged folder list to ALL connected clients. Used after
-   *  registry mutations (via the registry's onChange in server.ts) and after
-   *  create_folder (folder creation isn't a registry mutation). */
-  static broadcastFoldersChanged(folderRegistry: FolderRegistry, sessionManager: PimoteSessionManager, clientRegistry: ClientRegistry): void {
-    void folderRegistry
-      .list()
-      .then((folders) => {
-        // Serve the same enriched view as list_folders — a broadcast with
-        // zeroed counts would wipe every live indicator client-side.
-        enrichActiveSessionCounts(folders, sessionManager.getAllSessions());
-        const event: FoldersChangedEvent = { type: 'folders_changed', folders };
-        for (const [, handler] of clientRegistry) {
-          handler.sendToClient(event);
-        }
-      })
-      .catch((err) => {
-        console.error('[WsHandler] Failed to broadcast folders_changed:', err);
-      });
+  /** Broadcast the `folders_changed` delta to ALL connected clients. Each
+   *  mutation site reports the paths it touched; the folder listing service
+   *  builds the delta (re-resolved rows + session-count enrichment + epoch
+   *  bump) and this only sends it. Used after registry mutations (via the
+   *  registry's onChange in server.ts), after create_folder (folder creation
+   *  isn't a registry mutation), and after a repo-index refresh. */
+  static broadcastFoldersChanged(_folderListing: FolderListingService | undefined, _changedPaths: string[], _removedPaths: string[], _clientRegistry: ClientRegistry): void {
+    throw new Error('not implemented');
   }
 
   /** The folder-management wiring; every folder/manager command requires it. */
-  private requireFolderDeps(): { repoIndex: RepoIndex; folderRegistry: FolderRegistry; managerService: ManagerService; creators: FolderCreator[] } {
+  private requireFolderDeps(): {
+    repoIndex: RepoIndex;
+    folderRegistry: FolderRegistry;
+    managerService: ManagerService;
+    creators: FolderCreator[];
+    folderListing?: FolderListingService;
+  } {
     if (!this.repoIndex || !this.folderRegistry || !this.managerService || !this.creators) {
       throw new Error('Folder management is not available on this connection');
     }
-    return { repoIndex: this.repoIndex, folderRegistry: this.folderRegistry, managerService: this.managerService, creators: this.creators };
+    return { repoIndex: this.repoIndex, folderRegistry: this.folderRegistry, managerService: this.managerService, creators: this.creators, folderListing: this.folderListing };
   }
 
   /** Broadcast a session_state_changed event to ALL connected clients. */

@@ -7,6 +7,7 @@ import type { PimoteSessionManager, ManagedSlot, SessionState, ClientConnection 
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderRegistry } from './folder-registry.js';
+import type { FolderListingService } from './folder-listing.js';
 import type { FolderCreator } from './folder-sources/index.js';
 import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer } from './event-buffer.js';
@@ -239,6 +240,7 @@ function createTestHandler(
     repoIndex?: RepoIndex;
     folderRegistry?: FolderRegistry;
     creators?: FolderCreator[];
+    folderListing?: FolderListingService;
   },
 ): TestContext {
   const sessions = opts?.sessions ?? new Map();
@@ -262,6 +264,7 @@ function createTestHandler(
     opts?.folderRegistry,
     { disposeClient: () => {} } as never, // managerService: only truthiness is required by requireFolderDeps; cleanup() no-op
     opts?.creators ?? [], // creators
+    opts?.folderListing, // folderListing
   );
 
   clientRegistry.set(clientId, handler);
@@ -3705,6 +3708,29 @@ describe('WsHandler', () => {
       });
       expect(data.folders[1]).toMatchObject({ path: '/home/user/projects/api', nature: 'code', activeSessionCount: 0 });
     });
+
+    it('serves one window through the folder listing service and maps the window fields onto the response', async () => {
+      const query = vi.fn(async () => ({ rows: [folderRow('/w/a')], total: 3, more: true, orderToken: 'tok-2', epoch: 5 }));
+      const folderListing = {
+        pin: async () => ({ token: 'tok-2', epoch: 5 }),
+        query,
+        buildDelta: async () => ({ type: 'folders_changed' as const, changed: [], removedPaths: [], epoch: 5 }),
+        invalidateSessionMetadata: () => {},
+      } as unknown as FolderListingService;
+      const repoIndex = { roots: ['/w'], list: async () => [] } as unknown as RepoIndex;
+      const folderRegistry = { list: async () => [] } as unknown as FolderRegistry;
+      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry, folderListing });
+
+      await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'req-win', offset: 10, limit: 5, query: 'x', includeArchived: true, orderToken: 'tok-1' }));
+
+      expect(query).toHaveBeenCalledWith({ token: 'tok-1', offset: 10, limit: 5, query: 'x', includeArchived: true });
+      const data = findResponse(sent, 'req-win')!.data as { folders: FolderInfo[]; roots: string[]; total: number; orderToken: string; more: boolean };
+      expect(data.folders).toEqual([folderRow('/w/a')]);
+      expect(data.roots).toEqual(['/w']);
+      expect(data.total).toBe(3);
+      expect(data.orderToken).toBe('tok-2');
+      expect(data.more).toBe(true);
+    });
   });
 
   describe('update_folder', () => {
@@ -3819,25 +3845,23 @@ describe('WsHandler', () => {
   });
 
   describe('folders_changed broadcast', () => {
-    it('sends the enriched merged list to every connected client', async () => {
-      const folderRegistry = { list: async () => [folderRow('/w/a'), folderRow('/w/b')] } as unknown as FolderRegistry;
-      const sessions = new Map<string, ManagedSlot>([['s1', createMockSlot({ id: 's1', folderPath: '/w/a' })]]);
+    it('sends the listing service-built delta to every connected client', async () => {
+      const delta = { type: 'folders_changed' as const, changed: [folderRow('/w/a')], removedPaths: ['/w/gone'], epoch: 7 };
+      const buildDelta = vi.fn(async () => delta);
+      const folderListing = { buildDelta } as unknown as FolderListingService;
       const clientRegistry: ClientRegistry = new Map();
-      const a = createTestHandler('A', { sessions, clientRegistry, folderRegistry });
-      const b = createTestHandler('B', { sessions, clientRegistry, folderRegistry });
+      const a = createTestHandler('A', { clientRegistry });
+      const b = createTestHandler('B', { clientRegistry });
       a.sent.length = 0;
       b.sent.length = 0;
 
-      WsHandler.broadcastFoldersChanged(folderRegistry, a.sessionManager, clientRegistry);
+      WsHandler.broadcastFoldersChanged(folderListing, ['/w/a'], ['/w/gone'], clientRegistry);
       await flushPromises();
 
+      // Each mutation site reports the paths it touched; only sending happens here.
+      expect(buildDelta).toHaveBeenCalledWith(['/w/a'], ['/w/gone']);
       for (const sent of [a.sent, b.sent]) {
-        const events = findEvents(sent, 'folders_changed');
-        expect(events).toHaveLength(1);
-        expect((events[0] as any).folders).toMatchObject([
-          { path: '/w/a', activeSessionCount: 1 },
-          { path: '/w/b', activeSessionCount: 0 },
-        ]);
+        expect(findEvents(sent, 'folders_changed')).toEqual([delta]);
       }
     });
   });
@@ -3889,8 +3913,10 @@ describe('WsHandler', () => {
       expect(resp!.error).toBe('Root is not a configured scan root');
     });
 
-    it('broadcasts folders_changed to every client and invalidates the repo index after creating a folder', async () => {
+    it('broadcasts a folders_changed delta naming the created folder and invalidates the repo index', async () => {
       const invalidate = vi.fn();
+      const buildDelta = vi.fn(async () => ({ type: 'folders_changed' as const, changed: [folderRow('/home/user/projects/new')], removedPaths: [], epoch: 1 }));
+      const folderListing = { buildDelta } as unknown as FolderListingService;
       const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate } as unknown as RepoIndex;
       const folderRegistry = { list: async () => [folderRow('/home/user/projects/new')] } as unknown as FolderRegistry;
       const creators = [
@@ -3900,8 +3926,8 @@ describe('WsHandler', () => {
         } as unknown as FolderCreator,
       ];
       const clientRegistry: ClientRegistry = new Map();
-      const a = createTestHandler('A', { repoIndex, folderRegistry, creators, clientRegistry });
-      const b = createTestHandler('B', { repoIndex, folderRegistry, creators, clientRegistry });
+      const a = createTestHandler('A', { repoIndex, folderRegistry, creators, clientRegistry, folderListing });
+      const b = createTestHandler('B', { repoIndex, folderRegistry, creators, clientRegistry, folderListing });
       a.sent.length = 0;
       b.sent.length = 0;
 
@@ -3910,6 +3936,8 @@ describe('WsHandler', () => {
       expect(findResponse(a.sent, 'req-cp-5')).toMatchObject({ success: true, data: { folderPath: '/home/user/projects/new' } });
       expect(invalidate).toHaveBeenCalledOnce();
       await flushPromises();
+      // The mutation site reports exactly the path it created.
+      expect(buildDelta).toHaveBeenCalledWith(['/home/user/projects/new'], []);
       expect(findEvents(a.sent, 'folders_changed')).toHaveLength(1);
       expect(findEvents(b.sent, 'folders_changed')).toHaveLength(1);
     });

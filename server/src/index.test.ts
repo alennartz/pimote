@@ -208,6 +208,7 @@ describe('main — file download bootstrap wiring', () => {
       expect.anything(),
       expect.anything(),
       expect.anything(),
+      expect.anything(), // folderListing
     );
   });
 
@@ -234,6 +235,7 @@ describe('main — file download bootstrap wiring', () => {
       expect.anything(),
       expect.anything(),
       expect.anything(),
+      expect.anything(), // folderListing
     );
   });
 

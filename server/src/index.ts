@@ -4,6 +4,8 @@ import { loadConfig, ensureVapidKeys } from './config.js';
 import { createServer } from './server.js';
 import { PimoteSessionManager, createManagerSessionFactory } from './session-manager.js';
 import { SessionRecords } from './session-records.js';
+import { SessionSummaryIndex } from './session-summaries.js';
+import { FolderListing } from './folder-listing.js';
 import { scanFolderModel, type FolderOccurrence, type FolderScanWarning, type SparseTree } from './folder-model/index.js';
 import { RepoIndex } from './repo-index.js';
 import { FolderRegistry } from './folder-registry.js';
@@ -45,7 +47,8 @@ export async function main(options: StartOptions = {}) {
   // Allow explicit CLI override first, then PORT env var, then config
   const port = options.portOverride ?? (process.env.PORT ? parseInt(process.env.PORT, 10) : config.port);
 
-  const sessionRecords = new SessionRecords();
+  const sessionSummaries = new SessionSummaryIndex();
+  const sessionRecords = new SessionRecords(sessionSummaries);
 
   // Folder management: the on-demand folder-tree port over the configured
   // roots (a fresh scanFolderModel call per request — no shared scanner
@@ -88,6 +91,15 @@ export async function main(options: StartOptions = {}) {
   await resetManagerResourceRoot(PIMOTE_MANAGER_RESOURCES_DIR);
 
   const sessionManager = await PimoteSessionManager.create(config, pushNotificationService, { staticHostFactory, fileDownloadFactory: fileDownloads.extensionFactory });
+
+  // The folder listing service: ordering, search, and windowing over the
+  // registry's rows, fed by the shared per-file session-summary cache and the
+  // live in-memory sessions.
+  const folderListing = new FolderListing({
+    listRows: () => folderRegistry.list(),
+    sessionSummaries,
+    listLiveSessions: () => sessionManager.getAllSessions(),
+  });
 
   // Global ephemeral manager: one session per client connection, built on the
   // shared model runtime with the manager extension as its only toolset. Tools
@@ -227,6 +239,7 @@ export async function main(options: StartOptions = {}) {
     folderRegistry,
     managerService,
     creators,
+    folderListing,
   );
   clientRegistryRef.current = server.clientRegistry;
   managerClientRegistryRef.current = server.clientRegistry;
