@@ -186,6 +186,29 @@ describe('FolderListing', () => {
   });
 
   describe('pin lifecycle', () => {
+    it("an omitted-token query awaits the connection's pending open-time pin", async () => {
+      // Authorized amendment (pin-layer collapse): the handler no longer
+      // resolves tokens, so awaiting the pending open-time pin — pinned at
+      // the ws-handler seam before — is load-bearing service behavior.
+      const gate = deferred<FolderInfo[]>();
+      const world = fakeWorld();
+      world.deps.listRows = () => gate.promise;
+      const service = new FolderListing(world.deps);
+      const openPin = service.pin('owner');
+      void openPin.catch(() => {});
+      let served = false;
+      const early = service.query({ connectionId: 'owner' }).then((result) => {
+        served = true;
+        return result;
+      });
+      await flushMicrotasks();
+      expect(served, 'early commands await the pending open-time pin').toBe(false);
+      gate.resolve([row('/w/a')]);
+      const result = await early;
+      expect(result.orderToken).toBe((await openPin).token);
+      expect(paths(result)).toEqual(['/w/a']);
+    });
+
     it('omitted tokens reuse the connection pin until explicit refresh replaces its order', async () => {
       const world = fakeWorld({ rows: [row('/w/a'), row('/w/b')] });
       const service = new FolderListing(world.deps);

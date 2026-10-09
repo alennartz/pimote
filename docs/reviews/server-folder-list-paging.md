@@ -15,7 +15,7 @@ The plan was implemented faithfully: all 11 steps landed with their intended arc
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `client/src/lib/stores/folder-store.svelte.ts:240` (with `server/src/folder-listing.ts:217-224`)
-- **Status:** open
+- **Status:** resolved
 
 The client paginates with `nextOffset = context.offset + data.folders.length`, but the server slices `[offset, offset+limit)` out of the current filtered pinned order. `matches` shrinks whenever a row stops resolving (external deletion, disband) or flips to `archived` with `includeArchived=false`. Scenario: 3500 folders, rows 0–99 fetched (nextOffset=100); a folder at position 12 is archived; the next window at offset 100 serves old rows 101–200 and old row 100 is never returned by any later window. One row is lost per above-frontier removal until a repin refetch from 0. The same skip occurs when `selectPin` transparently re-pins mid-pagination: the response serves a new ordering at the old offset, and `applyFolderWindow` adopts the new token while keeping the old offset. Silent folder omission is the failure mode this feature exists to prevent.
 
@@ -24,7 +24,8 @@ The client paginates with `nextOffset = context.offset + data.folders.length`, b
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `shared/src/protocol.ts:489-494` (with `mobile/android/app/src/main/kotlin/com/pimote/android/protocol/Protocol.kt:65-69`, `SessionRepository.kt:283-285`)
-- **Status:** open
+- **Status:** dismissed
+- **Resolution:** accepted plan debt (the plan's hard cut). The pending Android update must cover `list_folders` paging (default-limit truncation), not only `folders_changed` deltas.
 
 `list_folders` now windows with a default `limit` of 100. Android sends no `offset`/`limit`, treats `data.folders` as the complete list, and has no `more`/`total` handling; `ignoreUnknownKeys = true` hides the drift. On a ~3500-folder server the app shows 100 folders and bootstraps sessions only for those. The plan accepts the Android hard cut (`Notes on the plan`: Android breakage remains accepted), so this is not a plan deviation. It is recorded because the break is silent and the plan's Android section names `folders_changed` explicitly — the pending Android update must cover `list_folders` paging, not only the delta event.
 
@@ -60,7 +61,7 @@ Unplanned work: `runOpenHooks` runs on both `open_session` paths and calls `inva
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/folder-listing.ts:217`
-- **Status:** open
+- **Status:** resolved
 
 `query()` computes matches only over `snapshot.paths`, the order pinned at WebSocket open; pins are replaced only by explicit repin (only `NewSessionDialog` triggers one). A folder created afterwards — `create_folder`, `create_hub`, or an external mkdir picked up by a TTL refresh — reaches the plain list via delta merge but is absent from every window, from `total`, and from every server-side search. Scenario: user creates hub "network", types "net" in the toolbar search; the server searches the pinned order, the hub is not in it, `queryMatchPaths` never gets it, and `visibleFolders` filters the row out. Recovery only via reconnect or the New Session dialog.
 
@@ -87,7 +88,7 @@ Unplanned work: `runOpenHooks` runs on both `open_session` paths and calls `inva
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/ws-handler.ts:1983-2013` vs `server/src/folder-listing.ts:256-296`
-- **Status:** open
+- **Status:** resolved
 
 The same business operation — adopt and track this connection's order pin — has two implementations: `WsHandler.trackPin` (`folderToken`, `pendingPin`, `pinGeneration`) and `FolderListing.ConnectionPin` (`token`, `pending`, `generation`). They already disagree: a transparent re-pin inside `selectPin` (stale/foreign token) updates the service's `connection.token` but never `WsHandler.folderToken`, which then serves stale tokens on omitted-token queries and forces a fresh re-pin each time (order churn, feeding finding 1). The listing's `connection.pending` branch (`folder-listing.ts:292`) is unreachable in production because `resolveOrderToken` always passes an explicit token — dead state maintainers will keep honoring. Per the design doctrine, one business operation belongs in one layer.
 

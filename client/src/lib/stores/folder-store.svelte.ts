@@ -75,14 +75,21 @@ export class FolderStore {
   private loadedForCurrentConnection = false;
   private orderToken: string | undefined;
   private nextOffset = 0;
+  /** Paths served in the current window scan — the fetched prefix the next
+   *  offset continues into. */
+  private fetchedPrefix = new Set<string>(); // eslint-disable-line svelte/prefer-svelte-reactivity -- pagination bookkeeping, not reactive UI state
   private activeQuery: string = $state('');
   private queryMatchPaths: string[] = $state([]);
   private querySessionMatches = new SvelteMap<string, string[] | undefined>();
   private requestGeneration = 0;
   private folderWindowInFlight: { context: FolderWindowContext; promise: Promise<void> } | null = null;
   /** A window the epoch guard discarded: re-issued once the in-flight slot
-   *  frees, so a delta that raced the response cannot stall the view. */
+   *  frees, so a delta that raced the response cannot stall the view. A
+   *  sustained delta storm must not turn recovery into an unbounded request
+   *  loop, so consecutive retries are capped and reset on every accepted
+   *  window. */
   private staleWindowRetry: FolderWindowContext | null = null;
+  private staleRetryBudget = 5;
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
   private searchWaiters: Array<() => void> = [];
   private reposLoadInFlight: Promise<void> | null = null;
@@ -142,7 +149,9 @@ export class FolderStore {
     this.queryMatchPaths = [];
     this.querySessionMatches.clear();
     this.nextOffset = 0;
+    this.fetchedPrefix.clear();
     this.more = false;
+    this.staleRetryBudget = 5;
     if (this.searchTimer !== null) clearTimeout(this.searchTimer);
     const promise = new Promise<void>((resolve) => this.searchWaiters.push(resolve));
     const generation = this.requestGeneration;
@@ -174,6 +183,7 @@ export class FolderStore {
     this.requestGeneration++;
     this.orderToken = undefined;
     this.nextOffset = 0;
+    this.fetchedPrefix.clear();
     this.more = false;
     this.foldersEpoch = 0;
     this.folderWindowInFlight = null;
@@ -214,12 +224,14 @@ export class FolderStore {
         if (this.staleWindowRetry === context) {
           // Re-issue the discarded window right after the slot frees: its
           // rows were out-aged by a delta, but the view must not stall on
-          // them. The generation guard drops the retry once newer requests
-          // (a new query, a refresh, a reconnect) supersede it.
+          // them. The scan position is re-read at retry time — a delta that
+          // restarted the scan in the meantime is honored. The generation
+          // guard drops the retry once newer requests (a new query, a
+          // refresh, a reconnect) supersede it.
           this.staleWindowRetry = null;
           const generation = context.generation;
           queueMicrotask(() => {
-            if (generation === this.requestGeneration) this.fetchFolderWindow(context.offset, context.repin);
+            if (generation === this.requestGeneration) this.fetchFolderWindow(this.nextOffset, context.repin);
           });
         }
       }
@@ -243,9 +255,13 @@ export class FolderStore {
       if (data.epoch < this.foldersEpoch) {
         // The delta that out-aged this response moved rows; discard its data
         // and re-request the same window for a current computation.
-        this.staleWindowRetry = context;
+        if (this.staleRetryBudget > 0) {
+          this.staleRetryBudget -= 1;
+          this.staleWindowRetry = context;
+        }
         return;
       }
+      this.staleRetryBudget = 5;
       this.applyFolderWindow(context, data);
     } catch (error) {
       console.error('[FolderStore] Failed to load folders:', error);
@@ -254,6 +270,12 @@ export class FolderStore {
 
   /** One mutation point adopts accepted window data and continuation state. */
   private applyFolderWindow(context: FolderWindowContext, data: ListFoldersResponseData): void {
+    // A transparent re-pin serves this window under a different order than
+    // the one its offset counts into. Restart the scan at 0 under the adopted
+    // token: path-keyed merging makes re-sent rows duplicate-safe and no row
+    // can be skipped. (Named follow-up if refetch churn shows up: offset
+    // correction instead of restart.)
+    const orderReplaced = context.offset > 0 && context.orderToken !== undefined && data.orderToken !== context.orderToken;
     // An explicit refresh is authoritative for the unfiltered view: replace
     // the cache so rows deleted while a delta was lost cannot survive a
     // manual refresh. Continuation windows, query windows, and filter toggles
@@ -265,9 +287,11 @@ export class FolderStore {
     }
     this.roots = data.roots ?? [];
     this.orderToken = data.orderToken;
-    this.nextOffset = context.offset + data.folders.length;
+    this.nextOffset = orderReplaced ? 0 : context.offset + data.folders.length;
     this.total = data.total;
-    this.more = data.more;
+    this.more = orderReplaced ? true : data.more;
+    if (context.offset === 0 || orderReplaced) this.fetchedPrefix.clear();
+    for (const row of data.folders) this.fetchedPrefix.add(row.path);
     this.loadedForCurrentConnection = true;
     if (context.offset === 0) {
       this.queryMatchPaths = [];
@@ -304,6 +328,19 @@ export class FolderStore {
   applyFoldersChanged(event: FoldersChangedEvent): void {
     if (event.epoch < this.foldersEpoch) return;
     this.foldersEpoch = event.epoch;
+    // A delta that shrinks the filtered order inside the fetched prefix moves
+    // rows up across the scan frontier — continuing the offsets would skip
+    // them, so restart the scan at 0 (merging keeps the re-send duplicate-safe).
+    // Removals at or past the frontier skip nothing; additions arrive at the
+    // pin tail. Under an active query any touched fetched row may have left
+    // the match set. A completed scan has nothing left to skip.
+    const shrank =
+      event.removedPaths.some((path) => this.fetchedPrefix.has(path)) ||
+      event.changed.some((row) => this.fetchedPrefix.has(row.path) && ((row.archived && !this.showArchived) || this.activeQuery !== ''));
+    if (shrank && this.more) {
+      this.nextOffset = 0;
+      this.fetchedPrefix.clear();
+    }
     this.folders = mergeFolderRows(this.folders, event.changed, event.removedPaths);
     this.queryMatchPaths = this.queryMatchPaths.filter((path) => !event.removedPaths.includes(path));
     for (const path of event.removedPaths) this.querySessionMatches.delete(path);

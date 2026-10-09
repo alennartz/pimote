@@ -262,6 +262,15 @@ export class FolderListing implements FolderListingService {
       return row ? [{ ...row }] : [];
     });
     const removed = touched.filter((path) => !byPath.has(path));
+    // Additions append at the tail of every live pin. Tail is the only
+    // position that cannot shift live window offsets — new rows arrive via
+    // delta past the fetched frontier (the brainstorm's stated intent) and
+    // join windows, search, and totals without reordering anyone's pagination.
+    for (const [token, snapshot] of this.pins) {
+      const known = new Set(snapshot.paths);
+      const additions = changed.map((row) => row.path).filter((path) => !known.has(path));
+      if (additions.length > 0) this.pins.set(token, { ...snapshot, paths: [...snapshot.paths, ...additions] });
+    }
     enrichActiveSessionCounts(changed, this.deps.listLiveSessions());
     this.epoch += 1;
     return { type: 'folders_changed', changed, removedPaths: removed, epoch: this.epoch };

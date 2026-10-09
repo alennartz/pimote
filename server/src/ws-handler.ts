@@ -22,7 +22,7 @@ import { getMergedPanelCards } from './panel-state.js';
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import { enrichActiveSessionCounts, isValidFolderName, type FolderRegistry } from './folder-registry.js';
-import type { FolderListingService, FolderPin } from './folder-listing.js';
+import type { FolderListingService } from './folder-listing.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import type { ManagerService } from './manager/index.js';
 import type { FolderCreator } from './folder-sources/index.js';
@@ -210,15 +210,6 @@ export class WsHandler {
   private loginAbort: AbortController | null = null;
   /** This connection's manager stream subscription (one per live manager session). */
   private managerListener: { session: ManagerSession; unsubscribe: () => void } | null = null;
-  /** This connection's adopted folder-order token (open-time pin or a pin
-   *  replacement); omitted-token window queries are served under it. */
-  private folderToken: string | undefined;
-  /** The in-flight folder-order pin; early folder commands await it. The
-   *  tracked promise never rejects — a failed pin is contained and cleared. */
-  private pendingPin: Promise<string | undefined> | undefined;
-  /** Pin generation: bumped when a new pin supersedes an in-flight one and on
-   *  cleanup, so stale pin continuations never write handler state. */
-  private pinGeneration = 0;
   readonly clientId: string;
 
   constructor(
@@ -242,8 +233,13 @@ export class WsHandler {
     // service that fails synchronously) is contained here — no unhandled
     // rejection — and retried through the next folder command's error path.
     if (this.folderListing && this.repoIndex && this.folderRegistry) {
+      // Open-time pin initialization, nonblocking. The listing service owns
+      // the connection's pin (one business operation, one layer): early
+      // folder commands await its pending pin, omitted-token queries reuse
+      // it, and `repin` replaces it. A start failure is contained here — no
+      // unhandled rejection — and retried by the next folder command.
       try {
-        this.trackPin(this.folderListing.pin(this.clientId));
+        void this.folderListing.pin(this.clientId).catch(() => {});
       } catch {
         // No pending pin: the next folder command retries initialization.
       }
@@ -278,12 +274,15 @@ export class WsHandler {
         case 'list_folders': {
           const { repoIndex, folderListing } = this.requireFolderDeps();
           if (!folderListing) throw new Error('Folder management is not available on this connection');
-          // Raw-param delegation: the listing service owns ordering, search,
-          // windowing, and normalization. A refresh request pins a replacement
-          // once and is served under it — the request carries no repin flag.
+          // Raw-param delegation: the listing service owns pinning, ordering,
+          // search, windowing, and normalization — including the connection's
+          // pin. Omitted tokens reuse it (awaiting the open-time pin), an
+          // explicit token passes through, and `repin` replaces the pin and
+          // serves the window under its fresh token.
           const result = await folderListing.query({
             connectionId: this.clientId,
-            token: await this.resolveOrderToken(folderListing, command.orderToken, command.repin),
+            token: command.orderToken,
+            repin: command.repin,
             offset: command.offset,
             limit: command.limit,
             query: command.query,
@@ -1981,45 +1980,6 @@ export class WsHandler {
     }
   }
 
-  /** Track an in-flight folder-order pin: it supersedes any earlier one and is
-   *  adopted as this connection's order token on completion. The tracked
-   *  promise never rejects — a failed pin is contained here (no unhandled
-   *  rejection) and clears the slot so a folder command can retry. The raw
-   *  promise is returned so awaiting callers (refresh requests) surface the
-   *  failure as their error response. */
-  private trackPin(pending: Promise<FolderPin>): Promise<FolderPin> {
-    const run = ++this.pinGeneration;
-    this.folderToken = undefined;
-    this.pendingPin = pending.then(
-      (pin) => {
-        if (run === this.pinGeneration) {
-          this.folderToken = pin.token;
-          this.pendingPin = undefined;
-        }
-        return pin.token;
-      },
-      () => {
-        if (run === this.pinGeneration) this.pendingPin = undefined;
-        return undefined;
-      },
-    );
-    return pending;
-  }
-
-  /** The order token a folder window is served under: an explicit token passes
-   *  through (the service transparently re-pins unknown or foreign ones); a
-   *  refresh request pins a replacement once and is served under it; otherwise
-   *  the connection's pin is used — awaited while the open-time pin is still
-   *  pending, retried here when its start failed. */
-  private async resolveOrderToken(folderListing: FolderListingService, explicit: string | undefined, repin: boolean | undefined): Promise<string> {
-    if (repin) return (await this.trackPin(folderListing.pin(this.clientId))).token;
-    if (explicit !== undefined) return explicit;
-    const pendingToken = await this.pendingPin;
-    if (pendingToken !== undefined) return pendingToken;
-    if (this.folderToken !== undefined) return this.folderToken;
-    return (await this.trackPin(folderListing.pin(this.clientId))).token;
-  }
-
   /** The folder row that owns an edited file. Rows are keyed by folder roots,
    *  so a nested `folder/sub/AGENTS.md` resolves to its enclosing row
    *  `folder`; a file under no registered row (the global agent instructions)
@@ -2059,12 +2019,9 @@ export class WsHandler {
     this.managerListener?.unsubscribe();
     this.managerListener = null;
     this.managerService?.disposeClient(this.clientId);
-    // Release this connection's folder-order pins and drop the bookkeeping. The
-    // generation bump invalidates a still-pending pin's continuation, so a late
-    // pin is never retained here.
-    this.pinGeneration += 1;
-    this.pendingPin = undefined;
-    this.folderToken = undefined;
+    // Release this connection's folder-order pins. Release is final in the
+    // listing service: a folder command racing this close can no longer
+    // attach owned pins to the connection.
     this.folderListing?.releaseConnection(this.clientId);
   }
 }

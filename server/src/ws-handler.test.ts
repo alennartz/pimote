@@ -3742,8 +3742,31 @@ describe('WsHandler', () => {
       const initial = new Promise<{ token: string; epoch: number }>((res) => {
         resolve = res;
       });
-      const pin = vi.fn().mockReturnValueOnce(initial).mockResolvedValue({ token: 'refreshed', epoch: 2 });
-      const query = vi.fn(async (req: any) => ({ rows: [], total: 0, more: false, orderToken: req.token, epoch: 2 }));
+      // Authorized test-infrastructure amendment: pin ownership moved wholly
+      // into FolderListingService (one business operation, one layer), so
+      // this fake models the service's pin contract — pending open-time pin,
+      // omitted-token reuse, repin replacement — instead of echoing a token
+      // the handler resolved itself. Every pinned behavior keeps a behavioral
+      // assertion at the wire boundary.
+      let connectionToken: string | undefined;
+      const openPin = initial.then((value) => {
+        connectionToken = value.token;
+        return value;
+      });
+      let pending: Promise<unknown> | undefined = openPin;
+      const pin = vi
+        .fn()
+        .mockReturnValueOnce(openPin)
+        .mockImplementation(async () => {
+          connectionToken = 'refreshed';
+          pending = undefined;
+          return { token: 'refreshed', epoch: 2 };
+        });
+      const query = vi.fn(async (req: any) => {
+        if (req.repin) return { rows: [], total: 0, more: false, orderToken: (await pin()).token, epoch: 2 };
+        if (pending) await pending;
+        return { rows: [], total: 0, more: false, orderToken: req.token ?? connectionToken, epoch: 2 };
+      });
       const releaseConnection = vi.fn();
       const folderListing = { pin, query, releaseConnection } as unknown as FolderListingService;
       const repoIndex = { roots: ['/w'], list: async () => [] } as unknown as RepoIndex;
@@ -3751,11 +3774,13 @@ describe('WsHandler', () => {
       const { handler, sent } = createTestHandler('client-open', { folderListing, repoIndex, folderRegistry });
       expect(pin).toHaveBeenCalledWith('client-open');
       const early = handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'early' }));
-      expect(query).not.toHaveBeenCalled();
+      // Early commands await the pending open-time pin.
+      expect(findResponse(sent, 'early')).toBeUndefined();
       resolve({ token: 'initial', epoch: 1 });
       await early;
       await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'again' }));
-      expect(query.mock.calls.map(([req]) => req.token)).toEqual(['initial', 'initial']);
+      // Omitted-token commands are served under the connection's pin.
+      expect([findResponse(sent, 'early'), findResponse(sent, 'again')].map((resp) => (resp!.data as { orderToken: string }).orderToken)).toEqual(['initial', 'initial']);
       expect(pin).toHaveBeenCalledTimes(1);
       await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'refresh', repin: true }));
       expect(findResponse(sent, 'refresh')!.data).toMatchObject({ orderToken: 'refreshed' });
