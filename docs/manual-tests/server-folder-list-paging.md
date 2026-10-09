@@ -179,15 +179,16 @@ fixed inline:
   3.5k). Fix: new `RepoIndex.invalidateListing()` keeps warm probes (own TTL
   still bounds staleness); the `file_put` path uses it. Regression test added
   (`invalidateListing re-walks discovery while keeping warm git probes`).
-  The same full-`invalidate()` pattern remains at four other mutation sites —
-  see Open Issues.
+  The same full-`invalidate()` pattern remained at four other mutation sites —
+  resolved with them in `cb01a84` (Open Issues 2).
 
 Browser tier: items 7–13 and 15 **pass**. Item 14 partially:
 
 - **pass** — no-fan-out reload bound (86 reloads vs 60 previously loaded,
   never enumerating the ~100-row cached-but-unloaded set).
-- **open** — `show-archived reveals the archived row with its badge` failed in
-  four consecutive runs. See Open Issues for the diagnosed evidence.
+- **open** at campaign time — `show-archived reveals the archived row with its
+badge` failed in four consecutive runs. Diagnosed and fixed afterwards
+  (Open Issues 1); the post-fix re-runs pass it on first try.
 
 Coherence verdicts (UI-bearing journeys):
 
@@ -198,10 +199,12 @@ Coherence verdicts (UI-bearing journeys):
   session-tier match as one folder row with `FOLDERS 1` and exactly the
   matched session ("submarine repair log") in the expanded list — the
   narrowing reads exactly as designed.
-- Archive toggle — **looks off**: the `Archived`-badge row does not render
-  after Show archived until a search-clear refetch re-measures the list
-  (Open Issues 1). The rest of the toggle (rows/totals via `includeArchived`,
-  hide behaviour, session-list reload scope) is correct.
+- Archive toggle — **looks coherent** after the fix (Open Issues 1): the
+  `Archived`-badge row renders immediately after Show archived. The campaign
+  verdict was **looks off** — the row did not render until a search-clear
+  refetch re-measured the list. The rest of the toggle (rows/totals via
+  `includeArchived`, hide behaviour, session-list reload scope) was always
+  correct.
 - Explicit refresh + reconnect — **looks coherent**: one repin request,
   created folder visible after closing the session, phantom hub healed on
   reconnect.
@@ -215,43 +218,72 @@ Coherence verdicts (UI-bearing journeys):
   cache-replace, archive toggle × session lists, rendered-row-only session
   loading).
 
+### Post-Fix Re-runs
+
+With the Open Issues fixes in (`cb01a84`, `5275d72`, `ce7d40c`, `e5423c3`),
+the topic driver passes complete twice in a row: 88 checks pass, 0 open. Both
+runs pass `show-archived reveals the archived row with its badge` on first
+try (no search-clear recovery) and `deep scroll renders every listed row
+(missing 0)`. Cold-window probe (248 fabricated rows, 40 fabricated
+sessions): the first `list_folders` window (100 rows) answers in 840 ms —
+6.7 s before `5275d72` at 250 rows, 9.3 s originally — a continuation window
+in 659 ms, and a warm repin window in 3 ms.
+
 ## Open Issues
 
-1. **Archived row unrenderable after Show archived (virtualizer measurement
-   collapse).** Observation: after the archive toggle (offset-0
-   `includeArchived` window + bulk session-list reloads), the archived row
-   never renders; a full scroll of the list cannot reach it. Evidence from
-   the driver's geometry probe: `scrollHeight: 9577` px for a 251-row list
-   (~38 px/row vs ~82 px real row height) while `data-index` spans 0–249 —
-   the virtualizer's total size collapses to about half the real content, so
-   deep rows fall outside the scrollable range. Recovery: any search-clear
-   refetch re-lands window data and re-measures (`retry-after-clear=true` in
-   every failing run), so row data is present and the virtual slot is lost.
-   Suspected cause: measurement-cache drift in `FolderList`'s TanStack wiring
-   (`measureRow`'s destroy calls `instance.measureElement(null)`; rows
-   measured while the toggle's 80+ session-list loads reshuffle heights).
-   Not fixed inline: the plan made virtualization an explicit test exclusion
-   ("no stable non-visual seam"), the fix needs a real measurement-lifecycle
-   investigation, and the reproducer is the toggle's bulk-reload moment.
-   Suggested direction: re-measure (`virtualizer.measure()`) after
-   `setShowArchived` window adoption, and drop the `measureElement(null)`
-   destroy call pending its purpose.
-2. **Four remaining `repoIndex.invalidate()` mutation sites clear warm git
-   probes.** `create_folder`, `create_hub`, `disband_hub` (ws-handler) and
-   `FolderRegistry.disbandHub` invalidate discovery through the full reset,
-   so the delta's row re-resolution re-probes every repo (the same stall the
-   `file_put` fix removed: seconds at 250 rows, minutes at 3.5k). The
-   `invalidateListing()` seam exists and is the right call for all four
-   (they change discovery shape, not git facts). Not fixed inline because
-   `ws-handler.test.ts` pins the `invalidate` method name in the
-   create_hub/disband tests; switching needs those assertions re-expressed —
-   a test-contract change the review phase should bless.
-3. **Cold first-window latency at scale.** The first `list_folders` blocks on
-   the discovery walk plus a full git-status pass (6.7s at 250 fabricated
-   rows after the concurrency bound; previously 9.3s). The plan's nonblocking
-   contract covers the session-metadata scan; repo-index's documented "cold
-   cache blocks on the walk" is what this measures. At 3.5k rows first paint
-   will take tens of seconds — the motivating dashboard would still feel slow
-   on a cold server. Direction: lazy/on-demand git-status enrichment (serve
-   rows without status, probe rendered/expanded rows), or treat first-probe
-   status as non-blocking row patches via `folders_changed`.
+All three are resolved. Each item records the diagnosis, the fix, and the
+evidence.
+
+1. **Resolved (`ce7d40c`, `f7b28be`, `e5423c3`) — Archived row unrenderable
+   after Show archived.** The virtualizer theory was disproven: real geometry
+   from a failing run showed a healthy render (27 rows, sane range,
+   scrollHeight matching real row heights). Three defects overlapped.
+   (a) The client's live re-sort ranked rows by loaded session lists only, so
+   a row whose lazy list was not loaded sank below its pinned position: the
+   archived row landed mid-list after the toggle and jumped to the top only
+   when its own list loaded. Fix `ce7d40c`: served rows (query windows and
+   delta rows) carry `lastActivity` — the ordering fact the pin sorts on — and
+   the client re-sort folds it plus live-session counts, mirroring
+   favorite → lastActivity → name from row data alone. (b) The virtualizer's
+   `estimateSize` (76 px) was about twice a real collapsed row, so first
+   measurement collapsed the list under the viewport and dragged rows across
+   the rendered-range seam between two scroll samples. Fix `f7b28be`: the
+   estimate matches real row height (~36 px) and the driver samples the
+   settled DOM at each landed position. (c) A full downward scroll could
+   still skip rows at a window-merge seam: continuation rows insert at their
+   sorted positions, and when cached extras (search matches, delta rows) sit
+   below unfetched territory those positions lie behind the view. The fetch
+   trigger keyed off the display tail and fired ~37 rows past the insertion
+   point, so the merged rows landed beyond the swept range and the seam rows
+   (2–7 per run) never rendered. Fix `e5423c3`: the store owns the trigger
+   decision (`shouldFetchNextWindow`) over the fetched frontier — the display
+   position where the next window's rows insert — so merged rows land ahead of
+   a scrolling view and render before the sweep reaches them. Evidence: two
+   consecutive full driver runs pass `show-archived reveals the archived row
+with its badge` on first try and `deep scroll renders every listed row
+(missing 0)`; regression tests pin the carried ordering fact, the re-sort
+   fold, and the frontier trigger.
+2. **Resolved (`cb01a84`) — Four `repoIndex.invalidate()` mutation sites
+   cleared warm git probes.** `create_folder`, `create_hub`, `disband_hub`
+   (ws-handler) and `FolderRegistry.disbandHub` now call
+   `invalidateListing()`: they change discovery shape, not git facts. The
+   `ws-handler.test.ts` assertions that pinned the `invalidate` method name
+   were re-expressed for `invalidateListing()` (authorized amendment); a
+   behavioral regression test pins warm git probes through `disbandHub`.
+   Evidence: `cb01a84`, full server suite green, topic driver complete.
+3. **Resolved (`5275d72`, design D1) — Cold first-window latency at scale.**
+   The first `list_folders` no longer blocks on a whole-set git-status pass.
+   Windows compute from identity facts (the pinned order never sorted on git
+   facts) and await git status for just the served rows before responding:
+   `RepoIndex.listLazy()`/`enrichStatus()` serve identity facts and probe only
+   requested paths, `FolderRegistry.listLazy()`/`enrichRows()` patch served
+   rows in place, and `FolderListing` enriches window and delta rows only.
+   `list()` keeps its probed-status semantics; the response shape is
+   unchanged. Deep-scroll windows may re-probe past the status TTL (accepted).
+   Evidence: the Post-Fix Re-runs cold-window probe — first window 840 ms at
+   248 rows (6.7 s before the fix, 9.3 s originally), continuation 659 ms,
+   warm repin 3 ms — and `server/src/repo-index.test.ts`'s "git status
+   enrichment" block stays green as-is. **Named follow-up (D2-(b)):** if
+   window-scoped enrichment proves too slow in practice (cold servers at
+   ~3.5k rows), push async `folders_status` patch events after the response
+   instead of awaiting the window's probes.
