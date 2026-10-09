@@ -1,30 +1,33 @@
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
-index 1da213f..a950517 100644
+index c5ad719..3fdc71d 100644
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
-@@ -669,28 +669,24 @@ export class AgentSession {
+@@ -682,29 +682,25 @@ export class AgentSession {
          resolve();
      }
      async _emitAgentSettled() {
 -        this._cacheWarmer?.onAgentSettled();
-         this._isAgentRunActive = false;
+-        this._isAgentRunActive = false;
 -        this._isEmittingAgentSettled = true;
          try {
--            await this._extensionRunner.emit({ type: "agent_settled" });
--            this._emit({ type: "agent_settled" });
+-            const aborted = this._agentRunAbortRequested;
+-            await this._extensionRunner.emit({ type: "agent_settled", aborted });
+-            this._emit({ type: "agent_settled", aborted });
 -        }
 -        finally {
 -            this._isEmittingAgentSettled = false;
 -        }
 -        const deferred = this._deferredSettledActions.splice(0);
 -        if (deferred.length > 0) {
++            this._isAgentRunActive = false;
 +            this._cacheWarmer?.onAgentSettled();
 +            this._isEmittingAgentSettled = true;
              try {
 -                for (const action of deferred)
 -                    await action();
-+                await this._extensionRunner.emit({ type: "agent_settled" });
-+                this._emit({ type: "agent_settled" });
++                const aborted = this._agentRunAbortRequested;
++                await this._extensionRunner.emit({ type: "agent_settled", aborted });
++                this._emit({ type: "agent_settled", aborted });
              }
              finally {
 -                this._resolveIdleWaitIfIdle();
@@ -42,7 +45,7 @@ index 1da213f..a950517 100644
      }
      /** Internal handler for agent events - shared by subscribe and reconnect */
      _handleAgentEvent = async (event) => {
-@@ -1367,12 +1363,23 @@ export class AgentSession {
+@@ -1403,12 +1399,23 @@ export class AgentSession {
              }
          }
          finally {
