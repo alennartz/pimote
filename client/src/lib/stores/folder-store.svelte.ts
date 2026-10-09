@@ -281,6 +281,15 @@ export class FolderStore {
     // can be skipped. (Named follow-up if refetch churn shows up: offset
     // correction instead of restart.)
     const orderReplaced = context.offset > 0 && context.orderToken !== undefined && data.orderToken !== context.orderToken;
+    // A continuation window reporting a smaller match count than the previous
+    // response observes a filtered-order shrink the delta channel never
+    // reported (a session edit dropping a session-tier match). The window may
+    // already have skipped a shifted row; restarting at 0 refetches it.
+    // Accepted residual: a shrink and a growth netting zero between two
+    // windows stay masked — the keyset/offset-correction follow-up kills this
+    // bug class for good.
+    const orderShrunk = context.offset > 0 && data.total < this.total;
+    const restart = orderReplaced || orderShrunk;
     // An explicit refresh or a fresh connection load is authoritative for the
     // unfiltered view: replace the cache so rows deleted while deltas were
     // lost cannot survive a manual refresh or a reconnect. Continuation
@@ -293,10 +302,10 @@ export class FolderStore {
     }
     this.roots = data.roots ?? [];
     this.orderToken = data.orderToken;
-    this.nextOffset = orderReplaced ? 0 : context.offset + data.folders.length;
+    this.nextOffset = restart ? 0 : context.offset + data.folders.length;
     this.total = data.total;
-    this.more = orderReplaced ? true : data.more;
-    if (context.offset === 0 || orderReplaced) this.fetchedPrefix.clear();
+    this.more = restart ? true : data.more;
+    if (context.offset === 0 || restart) this.fetchedPrefix.clear();
     for (const row of data.folders) this.fetchedPrefix.add(row.path);
     this.loadedForCurrentConnection = true;
     if (context.offset === 0) {
@@ -343,10 +352,7 @@ export class FolderStore {
     const shrank =
       event.removedPaths.some((path) => this.fetchedPrefix.has(path)) ||
       event.changed.some((row) => this.fetchedPrefix.has(row.path) && ((row.archived && !this.showArchived) || this.activeQuery !== ''));
-    if (shrank && this.more) {
-      this.nextOffset = 0;
-      this.fetchedPrefix.clear();
-    }
+    if (shrank) this.restartScan();
     this.folders = mergeFolderRows(this.folders, event.changed, event.removedPaths);
     this.queryMatchPaths = this.queryMatchPaths.filter((path) => !event.removedPaths.includes(path));
     for (const path of event.removedPaths) this.querySessionMatches.delete(path);
@@ -422,6 +428,7 @@ export class FolderStore {
 
   applySessionDeleted(event: SessionDeletedEvent): void {
     this.bumpStructuralEpoch(event.folderPath);
+    this.restartScanOnMatchLoss(event.folderPath, event.sessionId);
     const folderSessions = this.sessions.get(event.folderPath);
     if (folderSessions) {
       const filtered = folderSessions.filter((s) => s.id !== event.sessionId);
@@ -430,6 +437,9 @@ export class FolderStore {
   }
 
   applySessionRenamed(event: SessionRenamedEvent): void {
+    // Before the loaded-list guard: a matched session can drive its row's
+    // search membership without its session list ever being loaded.
+    this.restartScanOnMatchLoss(event.folderPath, event.sessionId);
     const folderSessions = this.sessions.get(event.folderPath);
     if (!folderSessions || !folderSessions.some((s) => s.id === event.sessionId)) return;
     this.touchSession(event.folderPath, event.sessionId);
@@ -448,6 +458,32 @@ export class FolderStore {
       // pre-archive listing here).
       void this.loadSessions(event.folderPath);
     }
+  }
+
+  /** A delete/rename can strip the query text that made this session a
+   *  session-tier match, taking its row out of the server's filtered order —
+   *  without any folders_changed delta. Conservative: a rename restarts even
+   *  when the new text still matches (duplicate-safe), and only sole matched
+   *  sessions of fetched rows trigger — unrelated session churn never refetches
+   *  scans. Accepted residual: a match leaving and another entering between
+   *  two windows net to an unchanged total — the keyset/offset-correction
+   *  follow-up kills that class for good. */
+  private restartScanOnMatchLoss(folderPath: string, sessionId: string): void {
+    if (!this.activeQuery || !this.fetchedPrefix.has(folderPath)) return;
+    const matched = this.querySessionMatches.get(folderPath);
+    // Folder-tier matches are unrestricted; only a sole session-tier match
+    // can take its row out of the filtered order.
+    if (!matched || matched.length !== 1 || matched[0] !== sessionId) return;
+    this.restartScan();
+  }
+
+  /** Restart the window scan at 0 when a shrink moved rows across the scan
+   *  frontier mid-scan. Merging keeps the re-send duplicate-safe; a completed
+   *  scan has nothing left to skip. */
+  private restartScan(): void {
+    if (!this.more) return;
+    this.nextOffset = 0;
+    this.fetchedPrefix.clear();
   }
 
   /** Record an event-mutated session id so an in-flight listing merges it in. */

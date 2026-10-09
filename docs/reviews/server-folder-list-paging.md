@@ -42,7 +42,8 @@ The retry re-issues `fetchFolderWindow(this.nextOffset, context.repin)`. For a d
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/stores/folder-store.svelte.ts:337-341` (with `server/src/folder-listing.ts:217-224`)
-- **Status:** open
+- **Status:** resolved
+- **Resolution:** conservative session-event trigger plus a total-shrink backstop. A `session_deleted`/`session_renamed` touching the sole session-tier match of a fetched row restarts the scan at 0 (early recovery; renames restart even when the new text still matches — duplicate-safe). A continuation response reporting a smaller `total` than the previous response of the same scan restarts at 0 (correctness backstop — it observes the shrink exactly where it materializes, so the server's async metadata refresh cannot race it). Accepted residual: a match leaving and another entering between two windows net to an unchanged `total`, so the shift stays masked — covered by the already-named keyset/offset-correction follow-up, which kills this bug class permanently.
 
 The filtered order also shrinks when session-derived metadata changes: a `session_deleted`/`session_renamed` that strips the query text removes a session-tier match from `matches`, but session events call only `invalidateSessionMetadata` — no `folders_changed` delta fires. The client's `shrank` check watches folder deltas exclusively, so a match leaving the set inside the fetched prefix shifts rows up and the next window at the old `nextOffset` skips one row — the prior finding 1 bug class through a shrink source the fix does not observe. Narrow trigger (active session-tier search, scan past one window, concurrent session edit), but the skip is silent and permanent for that scan.
 
