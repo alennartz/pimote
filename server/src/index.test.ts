@@ -637,6 +637,34 @@ describe('main — manager toolset port wiring', () => {
     // The manager root is the persona's working directory — never a scan root.
     expect(mocks.scanFolderModel).toHaveBeenCalledWith({ roots: ['/workspace'], onWarning: expect.any(Function) });
   });
+
+  it('keeps the manager-root entry out of the assembled tree while discovery sees it', async () => {
+    // Discovery walks both entries (the manager root sits inside a scan root);
+    // the listing assembly must never surface the manager-root entry.
+    const discovered = {
+      occurrences: [
+        {
+          path: '/workspace/manager-home',
+          via: 'scan',
+          entry: { path: '/srv/manager-home', name: 'manager-home', nature: 'persona', persona: { name: 'manager' } },
+          children: [],
+        },
+        {
+          path: '/workspace/project',
+          via: 'scan',
+          entry: { path: '/workspace/project', name: 'project', nature: 'code' },
+          children: [],
+        },
+      ],
+    };
+    mocks.scanFolderModel.mockResolvedValue(discovered);
+
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_folder_tree').execute('call-1', {}, undefined, undefined, {});
+
+    const rendered = JSON.stringify(result.details);
+    expect(rendered).toContain('/workspace/project');
+    expect(rendered).not.toContain('/srv/manager-home');
+  });
 });
 
 describe('main — manager-root boot guard (review finding 1)', () => {
@@ -657,18 +685,27 @@ describe('main — manager-root boot guard (review finding 1)', () => {
     warn.mockRestore();
   });
 
-  it('refuses to boot when the manager root contains the home directory, and never seeds', async () => {
+  it('refuses to boot when the manager root is or contains the home directory, and never seeds', async () => {
     mocks.loadConfig.mockResolvedValueOnce({ ...mocks.config, managerRoot: homedir() });
 
-    await expect(main({ portOverride: 4321 })).rejects.toThrow(/must not contain the home directory/);
+    await expect(main({ portOverride: 4321 })).rejects.toThrow(/must not be or contain the home directory/);
     expect(mocks.seedManagerRoot).not.toHaveBeenCalled();
   });
 
-  it('refuses to boot when the manager root contains a scan root', async () => {
+  it('boots when the manager root is nested inside a scan root', async () => {
+    mocks.loadConfig.mockResolvedValueOnce({ ...mocks.config, managerRoot: '/workspace/manager' });
+
+    await main({ portOverride: 4321 });
+
+    expect(mocks.seedManagerRoot).toHaveBeenCalledWith('/workspace/manager');
+  });
+
+  it('boots when the manager root equals a scan root', async () => {
     mocks.loadConfig.mockResolvedValueOnce({ ...mocks.config, managerRoot: '/workspace' });
 
-    await expect(main({ portOverride: 4321 })).rejects.toThrow(/must not contain scan root/);
-    expect(mocks.seedManagerRoot).not.toHaveBeenCalled();
+    await main({ portOverride: 4321 });
+
+    expect(mocks.seedManagerRoot).toHaveBeenCalledWith('/workspace');
   });
 
   it('creates the manager root before canonicalizing and seeding it', async () => {

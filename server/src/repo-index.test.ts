@@ -787,3 +787,37 @@ describe('RepoIndex.list() — git status enrichment', () => {
     expect((await repoAt(index, repo))?.dirty).toBe(true);
   });
 });
+
+describe('RepoIndex — excluded entry paths (post-detection listing exclusion)', () => {
+  it('keeps an excluded entry out of list() and tree() while a control index surfaces it', async () => {
+    const managerDir = join(tempDir, 'nested', 'manager');
+    await mkdir(managerDir, { recursive: true });
+    await writeFile(join(managerDir, 'AGENTS.md'), '---\nkind: persona\nname: manager\ndescription: manager persona\n---\n\nYou are the manager.\n', 'utf8');
+    const repoDir = join(tempDir, 'repo');
+    await initRepo(repoDir);
+
+    // Discovery sees the excluded entry: an unfiltered index surfaces it.
+    const control = makeIndex();
+    expect(treeEntryPaths(await control.tree())).toContain(managerDir);
+
+    // The assembled listing/tree never does.
+    const index = makeIndex([tempDir], { excludeEntryPaths: [managerDir] });
+    expect(treeEntryPaths(await index.tree())).not.toContain(managerDir);
+    const paths = (await index.list()).map((entry) => entry.path);
+    expect(paths).toContain(repoDir);
+    expect(paths).not.toContain(managerDir);
+  });
+
+  it('keeps source-listed entries at an excluded path out of the listing', async () => {
+    const managerDir = join(tempDir, 'manager');
+    await mkdir(managerDir, { recursive: true });
+    const index = makeIndex([tempDir], { excludeEntryPaths: [managerDir] });
+    index.registerSource({
+      id: 'excluded-source',
+      list: async () => [{ kind: 'repo', path: managerDir, name: 'manager', branch: null, dirty: false, ahead: 0, behind: 0 }],
+    });
+
+    expect((await index.list()).map((entry) => entry.path)).not.toContain(managerDir);
+    expect((await index.listSourcePersonas()).map((entry) => entry.path)).not.toContain(managerDir);
+  });
+});

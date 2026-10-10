@@ -47,12 +47,13 @@ export async function main(options: StartOptions = {}) {
   config = await ensureVapidKeys(config);
   // Manager-root boot contract (plan: manager-lifecycle; review finding 1):
   // create the manager persona folder when absent, canonicalize it, guard its
-  // placement, then seed. The guard rejects a manager root that contains the
-  // home directory or a scan root — the seeded persona AGENTS.md would load
-  // there as ancestor context for every pi session below it.
+  // placement, then seed. The guard rejects a manager root that is or contains
+  // the home directory — the seeded persona AGENTS.md would load there as
+  // ancestor context for every pi session below it. A manager root inside a
+  // scan root is legal: the repo index keeps its entry out of listings.
   await mkdir(config.managerRoot, { recursive: true });
   config = { ...config, managerRoot: await realpath(config.managerRoot) };
-  const placementError = managerRootPlacementError(config.managerRoot, await Promise.all(config.roots.map(canonicalizeForPlacement)), await canonicalizeForPlacement(homedir()));
+  const placementError = managerRootPlacementError(config.managerRoot, await canonicalizeForPlacement(homedir()));
   if (placementError) throw new Error(placementError);
   await seedManagerRoot(config.managerRoot);
 
@@ -68,7 +69,10 @@ export async function main(options: StartOptions = {}) {
   // consumers; manager tree consumers accept trees up to one TTL old), the
   // persistent curation layer above them, and the built-in creator backing
   // the dashboard's create-folder flow.
-  const repoIndex = new RepoIndex(config.roots);
+  // The manager root is never a folder row (owner ruling, review finding 10):
+  // post-detection exclusion at listing assembly, not a discovery carve-out —
+  // discovery may see the entry; listings and trees never surface it.
+  const repoIndex = new RepoIndex(config.roots, { excludeEntryPaths: [config.managerRoot] });
   const loadedSources = await loadFolderSources(await resolveSourcesDir(config.folderSourcesDir));
   for (const source of loadedSources.sources) {
     repoIndex.registerSource(source);
@@ -305,9 +309,9 @@ export async function main(options: StartOptions = {}) {
   process.on('SIGTERM', shutdown);
 }
 
-/** Canonicalize one path for the manager-root placement guard. Unresolvable
- *  paths fall back to their tilde-expanded form: a missing root can hold no
- *  sessions, and the comparison stays best-effort. */
+/** Canonicalize one path for the manager-root placement guard. An unresolvable
+ *  path falls back to its tilde-expanded form, so the comparison stays
+ *  best-effort. */
 async function canonicalizeForPlacement(path: string): Promise<string> {
   const absolute = expandHomePath(path, homedir());
   try {

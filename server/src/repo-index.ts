@@ -66,6 +66,11 @@ export interface RepoIndexOptions {
   statusTtlMs?: number;
   /** Injectable monotonic clock in ms, for deterministic TTL behavior. */
   now?: () => number;
+  /** Canonical entry paths kept out of the assembled listing and tree — a
+   *  post-detection exclusion: discovery walks the entry, the listing never
+   *  surfaces it (owner ruling on review finding 10: the manager root renders
+   *  only as its pinned surface, never as a folder row). */
+  excludeEntryPaths?: string[];
 }
 
 /** Run git in a directory; resolve trimmed stdout, or null on any failure. */
@@ -268,6 +273,18 @@ async function readGitStatus(cwd: string): Promise<Omit<RepoStatus, 'at'>> {
  * a background refresh runs (see `list()`). Derived state only — no
  * persistence.
  */
+/** Listing-assembly exclusion: a shallow copy of the tree without occurrences
+ *  of the excluded entry identities (canonical paths). Discovery may see an
+ *  excluded entry; the assembled tree never surfaces it. */
+function pruneExcludedEntries(tree: SparseTree, excluded: ReadonlySet<string>): SparseTree {
+  if (excluded.size === 0) return tree;
+  const visit = (occurrences: FolderOccurrence[]): FolderOccurrence[] =>
+    occurrences
+      .filter((occurrence) => !excluded.has(occurrence.entry.path))
+      .map((occurrence) => (occurrence.children.length > 0 ? { ...occurrence, children: visit(occurrence.children) } : occurrence));
+  return { occurrences: visit(tree.occurrences) };
+}
+
 export class RepoIndex {
   private readonly ttlMs: number;
   private readonly statusTtlMs: number;
@@ -281,6 +298,7 @@ export class RepoIndex {
   private refreshInFlight: Promise<void> | null = null;
   private onRefreshed: ((change: { changedPaths: string[]; removedPaths: string[] }) => void) | null = null;
   private walkGeneration = 0;
+  private readonly excludedEntryPaths: ReadonlySet<string>;
 
   constructor(
     private readonly _roots: string[],
@@ -289,6 +307,7 @@ export class RepoIndex {
     this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
     this.statusTtlMs = options.statusTtlMs ?? DEFAULT_TTL_MS;
     this.now = options.now ?? Date.now;
+    this.excludedEntryPaths = new Set(options.excludeEntryPaths ?? []);
   }
 
   /** The configured root directories. */
@@ -588,10 +607,13 @@ export class RepoIndex {
   /** Fresh discovery: scan the folder model, merge source contributions, mark vanished paths. */
   private async discoverAndStamp(): Promise<ListingStamp> {
     const byPath = new Map<string, RepoInfo>();
-    const tree = await scanFolderModel({
+    const scanned = await scanFolderModel({
       roots: this._roots,
       onWarning: (warning) => console.warn(`[repo-index] scan warning at ${warning.path}`, warning.error),
     });
+    // Post-detection exclusion: the walk sees every entry; the assembled
+    // listing/tree drops the excluded identities (e.g. the manager root).
+    const tree = pruneExcludedEntries(scanned, this.excludedEntryPaths);
     for (const entry of collectCodeEntries(tree)) {
       byPath.set(entry.path, { path: entry.path, name: entry.name, branch: null, dirty: false, ahead: 0, behind: 0 });
     }
@@ -608,6 +630,9 @@ export class RepoIndex {
         continue;
       }
       for (const raw of contributed) {
+        // Post-detection exclusion holds for source contributions too: an
+        // excluded identity is never surfaced, however it is listed.
+        if (this.excludedEntryPaths.has(raw.path)) continue;
         // Tolerate ergonomic modules that return bare repo shapes without a kind.
         let entry: SourceEntry;
         if ('kind' in raw && raw.kind === 'hub') {

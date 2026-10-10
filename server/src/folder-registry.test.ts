@@ -769,3 +769,18 @@ describe('serve-path helpers', () => {
     expect(folders.map((folder) => folder.activeSessionCount)).toEqual([2, 0]);
   });
 });
+
+describe('folder rows — excluded manager-root entry (owner ruling on review finding 10)', () => {
+  it('never renders the excluded entry as a row over the production tree wiring', async () => {
+    const managerDir = await makePersona('manager-home');
+    await makePersona('other-persona');
+    const index = new RepoIndex([rootDir], { now: () => 0, ttlMs: 1_000_000, statusTtlMs: 1_000_000, excludeEntryPaths: [managerDir] });
+    // Production wiring: the registry's tree port is the index's retained tree.
+    const registry = new FolderRegistry(index, storeDir, { tree: () => index.tree() });
+
+    const paths = (await registry.list()).map((row) => row.path);
+
+    expect(paths).toContain(join(rootDir, 'other-persona'));
+    expect(paths).not.toContain(managerDir);
+  });
+});

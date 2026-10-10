@@ -19,10 +19,12 @@ export interface VoiceConfig {
 export interface PimoteConfig {
   roots: string[];
   /**
-   * The manager persona's working directory — deliberately distinct from the scan roots and never scanned.
-   * Default `~/.local/state/pimote/manager` (the state-local manager directory); a leading `~`/`~/`
-   * is expanded to the home directory at load. Never the home directory: pi loads an AGENTS.md into
-   * every session below it as ancestor context (review finding 1).
+   * The manager persona's working directory — distinct from the scan roots. Its entry is excluded
+   * from folder listings and trees, so it never renders as a folder row even when it sits inside a
+   * scan root. Default `~/.local/state/pimote/manager` (the state-local manager directory); a
+   * leading `~`/`~/` is expanded to the home directory at load. Never the home directory or one of
+   * its ancestors: pi loads an AGENTS.md into every session below it as ancestor context (review
+   * finding 1).
    */
   managerRoot: string;
   /** Directory scanned for user folder-source modules. Default: PIMOTE_FOLDER_SOURCES_DIR. */
@@ -77,33 +79,26 @@ function isWithin(path: string, dir: string): boolean {
 }
 
 /**
- * Placement guard for the manager root. The boot seeds a persona AGENTS.md there, and pi loads an
- * AGENTS.md into every session at or below its folder as ancestor context. A manager root that
- * contains the home directory or a scan root would silently steer every such session toward the
- * manager persona; a manager root equal to a scan root also puts the manager in folder discovery.
- * Both placements are rejected. Paths must already be canonical.
+ * Placement guard for the manager root (owner ruling on review findings 1 and
+ * 10, split by harm). The boot seeds a persona AGENTS.md there, and pi loads
+ * an AGENTS.md into every session at or below its folder as ancestor context.
+ * A manager root that is or contains the home directory would silently steer
+ * every pi session on the machine toward the manager persona — boot refuses
+ * it. Paths must already be canonical.
  *
- * Known residual: a manager root nested inside a scan root still surfaces as a discovered persona
- * row. Excluding it needs a folder-model discovery carve-out (DR-053), deferred to cleanup.
+ * A manager root inside or equal to a scan root is legal: its only consequence
+ * is a folder row beside the pinned manager surface, and the listing assembly
+ * (`RepoIndex` `excludeEntryPaths`) drops that row.
  *
  * Returns the error message, or null when the placement is safe.
  */
-export function managerRootPlacementError(managerRoot: string, scanRoots: string[], home: string): string | null {
+export function managerRootPlacementError(managerRoot: string, home: string): string | null {
   if (managerRoot === home || isWithin(home, managerRoot)) {
     return (
-      `Config "managerRoot" (${managerRoot}) must not contain the home directory (${home}). ` +
+      `Config "managerRoot" (${managerRoot}) must not be or contain the home directory (${home}). ` +
       'The boot-seeded manager persona AGENTS.md would load as ancestor context for every pi session below it. ' +
-      'Set managerRoot to a dedicated directory outside your working trees.'
+      'Set managerRoot to a dedicated directory outside your home tree.'
     );
-  }
-  for (const root of scanRoots) {
-    if (root === managerRoot || isWithin(root, managerRoot)) {
-      return (
-        `Config "managerRoot" (${managerRoot}) must not contain scan root (${root}). ` +
-        'The boot-seeded manager persona AGENTS.md would load as ancestor context for every session under that root. ' +
-        'Set managerRoot to a dedicated directory outside your scan roots.'
-      );
-    }
   }
   return null;
 }
