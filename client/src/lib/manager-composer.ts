@@ -14,7 +14,7 @@ export function managerComposerAction(viewed: SessionView | undefined, viewedIsM
 
 /** Optimistic placeholder ids (`pending-*`) are client-local fictions the
  *  server can never resolve — never address one as a prompt target. */
-function isPlaceholderSessionId(sessionId: string): boolean {
+export function isPlaceholderSessionId(sessionId: string): boolean {
   return sessionId.startsWith('pending-');
 }
 
@@ -35,29 +35,44 @@ export interface ManagerSubmitPorts {
   switchToSession(sessionId: string): void;
 }
 
+/** One submit at a time across all manager-area entry controls. */
+let submitInFlight = false;
+
 /** The manager area's one submit operation. Passes the current view and
  *  manager identity to `managerComposerAction`, then either prompts the viewed
  *  manager session or opens a new session at `managerRoot` and prompts that.
  *  Resolves true once the prompt is admitted so the caller may clear the draft;
- *  any rejection keeps it. Never prompts a placeholder id and never selects a
- *  historical manager session. */
+ *  any rejection keeps it. The opened session is brought on screen even when
+ *  its prompt is rejected, so a retry of the preserved draft continues that
+ *  session instead of opening a duplicate. Never prompts a placeholder id and
+ *  never selects a historical manager session. Re-entry while a submit is in
+ *  flight resolves false without side effects. */
 export async function submitManagerMessage(
   input: { viewed: SessionView | undefined; viewedIsManager: boolean; managerRoot: string; text: string },
   ports: ManagerSubmitPorts,
 ): Promise<boolean> {
   const message = input.text.trim();
   if (!message || !input.managerRoot) return false;
+  // Re-entry guard: a second Enter or Send inside the open/prompt window must
+  // be a no-op — otherwise it opens a duplicate session or double-prompts.
+  if (submitInFlight) return false;
+  submitInFlight = true;
+  try {
+    const action = managerComposerAction(input.viewed, input.viewedIsManager);
+    if (action.action === 'continue') {
+      if (isPlaceholderSessionId(action.sessionId)) return false;
+      return await ports.prompt(action.sessionId, message);
+    }
 
-  const action = managerComposerAction(input.viewed, input.viewedIsManager);
-  if (action.action === 'continue') {
-    if (isPlaceholderSessionId(action.sessionId)) return false;
-    return ports.prompt(action.sessionId, message);
+    const opened = await ports.openManagerSession(input.managerRoot);
+    // Only the id the server confirmed is real — no placeholder, no guess.
+    if (!opened.success || !opened.sessionId || isPlaceholderSessionId(opened.sessionId)) return false;
+    const sent = await ports.prompt(opened.sessionId, message);
+    // Navigate on the confirmed open, not on prompt admission (plan step 8:
+    // prompt the opened session, then navigate).
+    ports.switchToSession(opened.sessionId);
+    return sent;
+  } finally {
+    submitInFlight = false;
   }
-
-  const opened = await ports.openManagerSession(input.managerRoot);
-  // Only the id the server confirmed is real — no placeholder, no guess.
-  if (!opened.success || !opened.sessionId || isPlaceholderSessionId(opened.sessionId)) return false;
-  const sent = await ports.prompt(opened.sessionId, message);
-  if (sent) ports.switchToSession(opened.sessionId);
-  return sent;
 }

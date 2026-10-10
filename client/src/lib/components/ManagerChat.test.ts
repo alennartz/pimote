@@ -40,6 +40,8 @@ describe('manager chat presentation', () => {
   it('composers share one draft with the homepage box', () => {
     expect(managerChat).toContain('bind:value={managerDraft}');
     expect(toolbar).toContain('bind:value={managerDraft}');
+    // The shared draft is bound at the Dashboard, not two local copies.
+    expect(dashboard).toContain('bind:managerDraft');
     expect(toolbar).toContain('aria-label="Message the manager"');
   });
 });

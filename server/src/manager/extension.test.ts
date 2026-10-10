@@ -41,6 +41,7 @@ function spyPorts() {
     },
     folders: { list: vi.fn(async () => [] as FolderInfo[]) },
     repos: { list: vi.fn(async () => []), invalidateListing: vi.fn() },
+    notifyFoldersChanged: vi.fn(),
     tree: { tree: vi.fn(async () => ({ occurrences: [] })) },
   };
 }

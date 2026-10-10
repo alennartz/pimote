@@ -65,8 +65,8 @@ export interface SessionManagerPort {
 export interface RepoIndexPort {
   list(): Promise<RepoInfo[]>;
   /** Invalidate the folder-model discovery listing so a background re-walk
-   *  picks up on-disk changes; the refresh feeds the `folders_changed`
-   *  broadcast. */
+   *  picks up on-disk changes. Pair with `notifyFoldersChanged` when clients
+   *  must see the change: invalidation alone notifies nobody. */
   invalidateListing(): void;
 }
 
@@ -99,14 +99,20 @@ export interface FolderRegistryPort {
  * Everything the manager extension's pimote toolset may act through. Tools
  * act only via these ports — never raw fs, never the real server internals.
  * One deliberate exception: `pimote_create_persona` materializes its persona
- * folder on disk (its documented tool contract owns those files) and signals
- * discovery invalidation through `repos.invalidateListing()`.
+ * folder on disk (its documented tool contract owns those files), then signals
+ * discovery invalidation through `repos.invalidateListing()` and fans the
+ * `folders_changed` delta out through `notifyFoldersChanged()`.
  */
 export interface ManagerToolContext {
   sessions: SessionManagerPort;
   folders: FolderRegistryPort;
   repos: RepoIndexPort;
   tree: FolderModelPort;
+  /** Broadcast a `folders_changed` delta to every connected client — the same
+   *  channel the ws-handler `create_folder` flow uses. Paired with
+   *  `repos.invalidateListing()` after a creation: the invalidate re-walks
+   *  discovery, this broadcast delivers the new rows. */
+  notifyFoldersChanged(changedPaths: string[]): void;
   config: PimoteConfig;
 }
 

@@ -53,6 +53,7 @@ function makePorts(overrides: Partial<ManagerToolContext> = {}): ManagerToolCont
       disbandHub: vi.fn(async () => undefined),
     },
     repos: { list: vi.fn(async () => []), invalidateListing: vi.fn() },
+    notifyFoldersChanged: vi.fn(),
     tree: { tree: vi.fn(async () => ({ occurrences: [] })) },
     config: { roots: ['/tmp'], managerRoot: '/srv/manager-home', idleTimeout: 1_000, bufferSize: 10, port: 3000 },
     ...overrides,
@@ -147,6 +148,7 @@ describe('pimote_create_persona', () => {
       await sandbox.run({ name: 'ada', parentPath: sandbox.parentPath, description: 'helpful agent' });
 
       expect(sandbox.ports.repos.invalidateListing).toHaveBeenCalled();
+      expect(sandbox.ports.notifyFoldersChanged).toHaveBeenCalledWith([await realpath(join(sandbox.parentPath, 'ada'))]);
     } finally {
       await sandbox.cleanup();
     }
@@ -176,6 +178,7 @@ describe('pimote_create_persona', () => {
         expect(result.isError).toBe(true);
         await expect(stat(join(outside, 'ada'))).rejects.toThrow();
         expect(sandbox.ports.repos.invalidateListing).not.toHaveBeenCalled();
+        expect(sandbox.ports.notifyFoldersChanged).not.toHaveBeenCalled();
       } finally {
         await rm(outside, { recursive: true, force: true });
       }
@@ -193,6 +196,7 @@ describe('pimote_create_persona', () => {
       expect(result.isError).toBe(true);
       await expect(readdir(sibling)).resolves.toEqual([]);
       expect(sandbox.ports.repos.invalidateListing).not.toHaveBeenCalled();
+      expect(sandbox.ports.notifyFoldersChanged).not.toHaveBeenCalled();
     } finally {
       await sandbox.cleanup();
       await rm(sibling, { recursive: true, force: true });
@@ -217,6 +221,7 @@ describe('pimote_create_persona', () => {
       expect(result.isError).toBe(true);
       await expect(readdir(sandbox.parentPath)).resolves.toEqual([]);
       expect(sandbox.ports.repos.invalidateListing).not.toHaveBeenCalled();
+      expect(sandbox.ports.notifyFoldersChanged).not.toHaveBeenCalled();
     } finally {
       await sandbox.cleanup();
     }
@@ -232,6 +237,7 @@ describe('pimote_create_persona', () => {
       expect(result.isError).toBe(true);
       await expect(readdir(outside)).resolves.toEqual([]);
       expect(sandbox.ports.repos.invalidateListing).not.toHaveBeenCalled();
+      expect(sandbox.ports.notifyFoldersChanged).not.toHaveBeenCalled();
     } finally {
       await sandbox.cleanup();
       await rm(outside, { recursive: true, force: true });
@@ -265,6 +271,7 @@ describe('pimote_create_persona', () => {
       await expect(readdir(existing)).resolves.toEqual(['notes.txt']);
       await expect(readFile(join(existing, 'notes.txt'), 'utf8')).resolves.toBe('user-owned\n');
       expect(sandbox.ports.repos.invalidateListing).not.toHaveBeenCalled();
+      expect(sandbox.ports.notifyFoldersChanged).not.toHaveBeenCalled();
     } finally {
       await sandbox.cleanup();
     }
@@ -282,6 +289,7 @@ describe('pimote_create_persona', () => {
 
       expect(result.isError).toBe(true);
       expect(sandbox.ports.repos.invalidateListing).not.toHaveBeenCalled();
+      expect(sandbox.ports.notifyFoldersChanged).not.toHaveBeenCalled();
     } finally {
       await sandbox.cleanup();
     }

@@ -21,6 +21,7 @@
     managerOpen = $bindable(false),
     managerDraft = $bindable(''),
     managerReady = false,
+    busy = false,
     onSubmitManager,
   }: {
     search?: string;
@@ -31,12 +32,14 @@
     managerDraft?: string;
     /** True once a usable manager root fact and connected readiness exist. */
     managerReady?: boolean;
+    /** True while a manager submit is in flight; disables the send affordance. */
+    busy?: boolean;
     /** The manager area's one shared submit operation. */
     onSubmitManager?: (text: string) => void | Promise<void>;
   } = $props();
 
   const mode = $derived(managerOpen ? 'manager' : 'search');
-  const canSend = $derived(managerReady && managerDraft.trim().length > 0);
+  const canSend = $derived(managerReady && !busy && managerDraft.trim().length > 0);
   let newSessionOpen = $state(false);
 
   let searchEl = $state<HTMLInputElement | null>(null);

@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { PIMOTE_CONFIG_PATH } from './paths.js';
+import { dirname, isAbsolute, join, relative } from 'node:path';
+import { PIMOTE_CONFIG_PATH, PIMOTE_STATE_DIR } from './paths.js';
 import { DEFAULT_APP_NAME } from './branding.js';
 
 export interface ModelRef {
@@ -20,7 +20,9 @@ export interface PimoteConfig {
   roots: string[];
   /**
    * The manager persona's working directory — deliberately distinct from the scan roots and never scanned.
-   * Default `~` (the home directory); a leading `~`/`~/` is expanded to the home directory at load.
+   * Default `~/.local/state/pimote/manager` (the state-local manager directory); a leading `~`/`~/`
+   * is expanded to the home directory at load. Never the home directory: pi loads an AGENTS.md into
+   * every session below it as ancestor context (review finding 1).
    */
   managerRoot: string;
   /** Directory scanned for user folder-source modules. Default: PIMOTE_FOLDER_SOURCES_DIR. */
@@ -56,13 +58,54 @@ const DEFAULTS = {
   port: 3000,
 } as const;
 
-const DEFAULT_MANAGER_ROOT = '~';
+/** Default manager root: a dedicated directory inside pimote's state dir. Never `~` — seeding the
+ *  manager persona AGENTS.md into the home directory would load it as ancestor context for every
+ *  pi session under home (review finding 1). */
+const DEFAULT_MANAGER_ROOT = join(PIMOTE_STATE_DIR, 'manager');
 
 /** Expand a leading `~`/`~/` to the home directory; any other value passes through unchanged. */
-function expandHomePath(value: string, home: string): string {
+export function expandHomePath(value: string, home: string): string {
   if (value === '~') return home;
   if (value.startsWith('~/')) return join(home, value.slice(2));
   return value;
+}
+
+/** True when `path` is a strict descendant of `dir` (canonical containment). */
+function isWithin(path: string, dir: string): boolean {
+  const rel = relative(dir, path);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+/**
+ * Placement guard for the manager root. The boot seeds a persona AGENTS.md there, and pi loads an
+ * AGENTS.md into every session at or below its folder as ancestor context. A manager root that
+ * contains the home directory or a scan root would silently steer every such session toward the
+ * manager persona; a manager root equal to a scan root also puts the manager in folder discovery.
+ * Both placements are rejected. Paths must already be canonical.
+ *
+ * Known residual: a manager root nested inside a scan root still surfaces as a discovered persona
+ * row. Excluding it needs a folder-model discovery carve-out (DR-053), deferred to cleanup.
+ *
+ * Returns the error message, or null when the placement is safe.
+ */
+export function managerRootPlacementError(managerRoot: string, scanRoots: string[], home: string): string | null {
+  if (managerRoot === home || isWithin(home, managerRoot)) {
+    return (
+      `Config "managerRoot" (${managerRoot}) must not contain the home directory (${home}). ` +
+      'The boot-seeded manager persona AGENTS.md would load as ancestor context for every pi session below it. ' +
+      'Set managerRoot to a dedicated directory outside your working trees.'
+    );
+  }
+  for (const root of scanRoots) {
+    if (root === managerRoot || isWithin(root, managerRoot)) {
+      return (
+        `Config "managerRoot" (${managerRoot}) must not contain scan root (${root}). ` +
+        'The boot-seeded manager persona AGENTS.md would load as ancestor context for every session under that root. ' +
+        'Set managerRoot to a dedicated directory outside your scan roots.'
+      );
+    }
+  }
+  return null;
 }
 
 export async function loadConfig(): Promise<PimoteConfig> {

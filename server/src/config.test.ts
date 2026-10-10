@@ -11,7 +11,8 @@ const fs = vi.hoisted(() => ({
 
 vi.mock('node:fs/promises', () => fs);
 
-import { CONFIG_PATH, loadConfig } from './config.js';
+import { CONFIG_PATH, loadConfig, managerRootPlacementError } from './config.js';
+import { PIMOTE_STATE_DIR } from './paths.js';
 
 function configJson(fields: Record<string, unknown>): string {
   return JSON.stringify({ roots: ['/workspace'], ...fields });
@@ -22,10 +23,10 @@ describe('loadConfig — managerRoot', () => {
     fs.readFile.mockReset();
   });
 
-  it('defaults to the home directory when managerRoot is absent', async () => {
+  it('defaults to the state-local manager directory when managerRoot is absent', async () => {
     fs.readFile.mockResolvedValue(configJson({}));
 
-    await expect(loadConfig()).resolves.toMatchObject({ managerRoot: homedir() });
+    await expect(loadConfig()).resolves.toMatchObject({ managerRoot: join(PIMOTE_STATE_DIR, 'manager') });
   });
 
   it('expands a bare tilde to the home directory', async () => {
@@ -89,5 +90,40 @@ describe('loadConfig — roots behavior is unchanged', () => {
     fs.readFile.mockResolvedValue(JSON.stringify({ managerRoot: '~' }));
 
     await expect(loadConfig()).rejects.toThrow(`Config "roots" must be a non-empty array of strings in ${CONFIG_PATH}`);
+  });
+});
+
+// Placement guard for the manager root (review finding 1): a manager root that
+// contains the home directory or a scan root would leak the seeded manager
+// persona AGENTS.md into every pi session below it as ancestor context.
+describe('managerRootPlacementError', () => {
+  const home = '/home/user';
+
+  it('accepts a disjoint manager root', () => {
+    expect(managerRootPlacementError('/srv/pimote/manager', ['/home/user/work'], home)).toBeNull();
+  });
+
+  it('rejects the home directory as manager root', () => {
+    expect(managerRootPlacementError(home, ['/home/user/work'], home)).toMatch(/must not contain the home directory/);
+  });
+
+  it('rejects an ancestor of the home directory', () => {
+    expect(managerRootPlacementError('/home', ['/srv/work'], home)).toMatch(/must not contain the home directory/);
+  });
+
+  it('rejects a manager root equal to a scan root', () => {
+    expect(managerRootPlacementError('/srv/work', ['/srv/work'], home)).toMatch(/must not contain scan root/);
+  });
+
+  it('rejects a manager root containing a scan root', () => {
+    expect(managerRootPlacementError('/srv', ['/srv/work'], home)).toMatch(/must not contain scan root/);
+  });
+
+  it('does not mistake a sibling sharing only the prefix for containment', () => {
+    expect(managerRootPlacementError('/srv', ['/srv2/work'], home)).toBeNull();
+  });
+
+  it('accepts a manager root nested inside a scan root (discovery carve-out deferred)', () => {
+    expect(managerRootPlacementError('/srv/work/manager', ['/srv/work'], home)).toBeNull();
   });
 });

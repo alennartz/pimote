@@ -5,7 +5,7 @@
   import HomeToolbar from '$lib/components/HomeToolbar.svelte';
   import FolderList from '$lib/components/FolderList.svelte';
   import ManagerChat from '$lib/components/ManagerChat.svelte';
-  import { submitManagerMessage, type ManagerSubmitPorts } from '$lib/manager-composer.js';
+  import { isPlaceholderSessionId, submitManagerMessage, type ManagerSubmitPorts } from '$lib/manager-composer.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import SwipeableCard, { closeOpenSwipeCard } from '$lib/components/SwipeableCard.svelte';
   import type { SwipeActionOutcome } from '$lib/components/swipe-action.js';
@@ -26,6 +26,9 @@
   let managerOpen = $state(false);
   // One draft shared by the toolbar box and the manager area's composer.
   let managerDraft = $state('');
+  // Busy state while one submit is in flight: both composers disable their
+  // send affordances; the shared operation guards re-entry against doubles.
+  let managerBusy = $state(false);
   let mobile = $derived(isMobileViewport());
   let splitView = $derived(managerOpen && !mobile);
   let sheetView = $derived(managerOpen && mobile);
@@ -64,19 +67,24 @@
   async function submitManagerDraft(text: string): Promise<void> {
     const managerRoot = connection.managerRoot;
     if (!managerRoot || !managerReady) return;
-    const viewed = sessionRegistry.viewed;
-    const sent = await submitManagerMessage(
-      {
-        viewed: viewed ? { sessionId: viewed.sessionId } : undefined,
-        // A viewed manager session continues; placeholders and code sessions
-        // do not count as manager identity.
-        viewedIsManager: viewed != null && !viewed.sessionId.startsWith('pending-') && viewed.folderPath === managerRoot,
-        managerRoot,
-        text,
-      },
-      managerPorts,
-    );
-    if (sent) managerDraft = '';
+    managerBusy = true;
+    try {
+      const viewed = sessionRegistry.viewed;
+      const sent = await submitManagerMessage(
+        {
+          viewed: viewed ? { sessionId: viewed.sessionId } : undefined,
+          // A viewed manager session continues; placeholders and code sessions
+          // do not count as manager identity.
+          viewedIsManager: viewed != null && !isPlaceholderSessionId(viewed.sessionId) && viewed.folderPath === managerRoot,
+          managerRoot,
+          text,
+        },
+        managerPorts,
+      );
+      if (sent) managerDraft = '';
+    } finally {
+      managerBusy = false;
+    }
   }
 
   /** Closing the panel/sheet closes UI only — no abort, erase, or dispose. */
@@ -267,7 +275,7 @@
       <!-- One box: search by default; the leading button toggles it into the
          manager (AI) mode. Same structure on mobile and desktop — only the
          touch/typography sizing differs. -->
-      <HomeToolbar bind:search compact={splitView} bind:managerOpen {managerReady} onSubmitManager={submitManagerDraft} />
+      <HomeToolbar bind:search compact={splitView} bind:managerOpen bind:managerDraft {managerReady} busy={managerBusy} onSubmitManager={submitManagerDraft} />
 
       <!-- Continue: open sessions as cards. Desktop only — mobile drops the
          section completely rather than nesting an expander under the toolbar. -->
@@ -345,10 +353,10 @@
     </div>
   </div>
   {#if splitView}
-    <ManagerChat variant="panel" bind:managerDraft onSubmit={submitManagerDraft} onDismiss={closeManagerArea} />
+    <ManagerChat variant="panel" bind:managerDraft busy={managerBusy} onSubmit={submitManagerDraft} onDismiss={closeManagerArea} />
   {/if}
 </div>
 
 {#if sheetView}
-  <ManagerChat variant="sheet" bind:managerDraft onSubmit={submitManagerDraft} onDismiss={closeManagerArea} />
+  <ManagerChat variant="sheet" bind:managerDraft busy={managerBusy} onSubmit={submitManagerDraft} onDismiss={closeManagerArea} />
 {/if}

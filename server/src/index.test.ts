@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { homedir } from 'node:os';
 
 const mocks = vi.hoisted(() => {
   const config = { roots: ['/workspace'], managerRoot: '/srv/manager-home', idleTimeout: 60_000, bufferSize: 10, port: 3000, vapidPublicKey: 'public', vapidPrivateKey: 'private' };
@@ -41,6 +42,7 @@ const mocks = vi.hoisted(() => {
   };
   const sessionManagerCreate = vi.fn(async (_config: unknown, _pushNotificationService: unknown, _options: { managerExtensionFactory?: (pi: unknown) => void }) => sessionManager);
   const realpath = vi.fn(async (path: string) => path);
+  const mkdir = vi.fn(async () => undefined);
   const seedManagerRoot = vi.fn(async () => undefined);
   const staticHostRegistry = {};
   const staticHostFactory = (() => undefined) as any;
@@ -57,6 +59,7 @@ const mocks = vi.hoisted(() => {
     server,
     sessionManagerCreate,
     realpath,
+    mkdir,
     seedManagerRoot,
     staticHostRegistry,
     staticHostFactory,
@@ -76,7 +79,11 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock('./config.js', () => ({ loadConfig: mocks.loadConfig, ensureVapidKeys: mocks.ensureVapidKeys }));
+vi.mock('./config.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  loadConfig: mocks.loadConfig,
+  ensureVapidKeys: mocks.ensureVapidKeys,
+}));
 vi.mock('./server.js', () => ({ createServer: mocks.createServer }));
 vi.mock('./session-records.js', () => ({
   SessionRecords: vi.fn(function () {
@@ -84,7 +91,7 @@ vi.mock('./session-records.js', () => ({
   }),
 }));
 vi.mock('./folder-model/index.js', () => ({ scanFolderModel: mocks.scanFolderModel }));
-vi.mock('node:fs/promises', async (importOriginal) => ({ ...(await importOriginal()), realpath: mocks.realpath }));
+vi.mock('node:fs/promises', async (importOriginal) => ({ ...(await importOriginal()), realpath: mocks.realpath, mkdir: mocks.mkdir }));
 vi.mock('./manager/index.js', async (importOriginal) => ({ ...(await importOriginal()), seedManagerRoot: mocks.seedManagerRoot }));
 vi.mock('./session-manager.js', () => ({
   PimoteSessionManager: {
@@ -164,6 +171,7 @@ function resetMocks(): void {
   mocks.folderRegistry.list.mockReset().mockResolvedValue([]);
   mocks.sessionManagerCreate.mockReset().mockResolvedValue(mocks.sessionManager);
   mocks.realpath.mockReset().mockImplementation(async (path: string) => path);
+  mocks.mkdir.mockReset().mockResolvedValue(undefined);
   mocks.seedManagerRoot.mockReset().mockResolvedValue(undefined);
   mocks.server.clientRegistry.clear();
   mocks.server.start.mockReset().mockResolvedValue(undefined);
@@ -628,5 +636,46 @@ describe('main — manager toolset port wiring', () => {
     expect(config.managerRoot).toBe('/srv/manager-home');
     // The manager root is the persona's working directory — never a scan root.
     expect(mocks.scanFolderModel).toHaveBeenCalledWith({ roots: ['/workspace'], onWarning: expect.any(Function) });
+  });
+});
+
+describe('main — manager-root boot guard (review finding 1)', () => {
+  let processOn: ReturnType<typeof vi.spyOn>;
+  let log: ReturnType<typeof vi.spyOn>;
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    resetMocks();
+    processOn = vi.spyOn(process, 'on').mockImplementation(() => process);
+    log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    processOn.mockRestore();
+    log.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('refuses to boot when the manager root contains the home directory, and never seeds', async () => {
+    mocks.loadConfig.mockResolvedValueOnce({ ...mocks.config, managerRoot: homedir() });
+
+    await expect(main({ portOverride: 4321 })).rejects.toThrow(/must not contain the home directory/);
+    expect(mocks.seedManagerRoot).not.toHaveBeenCalled();
+  });
+
+  it('refuses to boot when the manager root contains a scan root', async () => {
+    mocks.loadConfig.mockResolvedValueOnce({ ...mocks.config, managerRoot: '/workspace' });
+
+    await expect(main({ portOverride: 4321 })).rejects.toThrow(/must not contain scan root/);
+    expect(mocks.seedManagerRoot).not.toHaveBeenCalled();
+  });
+
+  it('creates the manager root before canonicalizing and seeding it', async () => {
+    await main({ portOverride: 4321 });
+
+    expect(mocks.mkdir).toHaveBeenCalledWith('/srv/manager-home', { recursive: true });
+    expect(mocks.mkdir.mock.invocationCallOrder[0]).toBeLessThan(mocks.realpath.mock.invocationCallOrder[0]);
+    expect(mocks.seedManagerRoot).toHaveBeenCalledWith('/srv/manager-home');
   });
 });

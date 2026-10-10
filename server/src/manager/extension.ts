@@ -59,9 +59,11 @@ const RepoInfoSchema = Type.Object({
   tags: Type.Optional(Type.Array(Type.String())),
 });
 
-/** Persona metadata on a persona folder's entry. */
+/** Persona metadata on a persona folder's entry. `name` is optional: a
+ *  nameless marker parses to `{}` (see parsePersonaFrontMatter), matching the
+ *  `FolderInfo['persona']` wire shape. */
 const PersonaInfoSchema = Type.Object({
-  name: Type.String(),
+  name: Type.Optional(Type.String()),
   description: Type.Optional(Type.String()),
 });
 
@@ -467,8 +469,8 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         'description; body: the persona prompt template with the instruction to maintain memory.md, plus the ' +
         "caller's prompt folded into the template's fixed sections) and a memory.md stub. parentPath is " +
         'required and must be inside a scan root — the tool never invents a default location; the manager ' +
-        'chooses (or asks) using the folder tree. After creation, folder-model discovery is invalidated so ' +
-        'folders_changed fires and the dashboard list picks the persona up. Errors: parentPath not under any ' +
+        'chooses (or asks) using the folder tree. After creation, folder-model discovery is invalidated and a ' +
+        'folders_changed delta is broadcast so the dashboard list picks the persona up. Errors: parentPath not under any ' +
         'scan root, name collision (folder exists), fs failure. Canonicalize parentPath and scan roots; ' +
         'a parent equal to a scan root is valid. Reject symlink escapes and names that are not a single ' +
         'nonempty basename segment (including dot and dot-dot). Validation failures return tool errors.',
@@ -500,9 +502,11 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         } catch (error) {
           return errorToolResult(`failed to create persona folder: ${errorMessage(error)}`);
         }
-        // Discovery invalidation only after successful materialization, so
-        // folders_changed reflects the new persona folder.
+        // Publish only after successful materialization: discovery
+        // invalidation plus the folders_changed broadcast reflect the new
+        // persona folder together. Failed creations do neither.
         context.repos.invalidateListing();
+        context.notifyFoldersChanged([folderPath]);
         return jsonToolResult({ folderPath });
       },
     });

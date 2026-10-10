@@ -18,11 +18,14 @@
   let {
     variant,
     managerDraft = $bindable(''),
+    busy = false,
     onSubmit,
     onDismiss,
   }: {
     variant: 'panel' | 'sheet';
     managerDraft?: string;
+    /** True while a manager submit is in flight; disables the send affordance. */
+    busy?: boolean;
     onSubmit: (text: string) => void | Promise<void>;
     onDismiss: () => void;
   } = $props();
@@ -37,7 +40,7 @@
   /** Persisted manager sessions from the path-keyed session cache — no
    *  discovered folder row required. */
   const sessions = $derived(managerRoot ? (folderStore.sessions.get(managerRoot) ?? []) : []);
-  const canSend = $derived(managerReady && managerDraft.trim().length > 0);
+  const canSend = $derived(managerReady && !busy && managerDraft.trim().length > 0);
 
   /** Old manager sessions load on demand, when their click reveals them. */
   $effect(() => {

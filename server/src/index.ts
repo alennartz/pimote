@@ -1,8 +1,10 @@
 import { resolve } from 'node:path';
-import { realpath } from 'node:fs/promises';
+import { mkdir, realpath } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, ensureVapidKeys } from './config.js';
+import { loadConfig, ensureVapidKeys, expandHomePath, managerRootPlacementError } from './config.js';
+import { WsHandler } from './ws-handler.js';
 import { createServer } from './server.js';
 import { PimoteSessionManager } from './session-manager.js';
 import { SessionRecords } from './session-records.js';
@@ -43,7 +45,15 @@ export interface StartOptions {
 export async function main(options: StartOptions = {}) {
   let config = await loadConfig();
   config = await ensureVapidKeys(config);
+  // Manager-root boot contract (plan: manager-lifecycle; review finding 1):
+  // create the manager persona folder when absent, canonicalize it, guard its
+  // placement, then seed. The guard rejects a manager root that contains the
+  // home directory or a scan root — the seeded persona AGENTS.md would load
+  // there as ancestor context for every pi session below it.
+  await mkdir(config.managerRoot, { recursive: true });
   config = { ...config, managerRoot: await realpath(config.managerRoot) };
+  const placementError = managerRootPlacementError(config.managerRoot, await Promise.all(config.roots.map(canonicalizeForPlacement)), await canonicalizeForPlacement(homedir()));
+  if (placementError) throw new Error(placementError);
   await seedManagerRoot(config.managerRoot);
 
   // Allow explicit CLI override first, then PORT env var, then config
@@ -188,6 +198,12 @@ export async function main(options: StartOptions = {}) {
     folders: folderRegistry,
     repos: repoIndex,
     tree: folderTree,
+    // Folder-change fan-out for manager folder creations (`pimote_create_persona`):
+    // the same delta channel the ws-handler `create_folder` flow uses. The tool
+    // pairs it with `repos.invalidateListing()` so the delta carries the new row.
+    notifyFoldersChanged: (changedPaths) => {
+      WsHandler.broadcastFoldersChanged(folderListing, changedPaths, [], managerClientRegistryRef.current);
+    },
     config,
   };
   managerContextBinding.bind(managerContext);
@@ -287,6 +303,18 @@ export async function main(options: StartOptions = {}) {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+}
+
+/** Canonicalize one path for the manager-root placement guard. Unresolvable
+ *  paths fall back to their tilde-expanded form: a missing root can hold no
+ *  sessions, and the comparison stays best-effort. */
+async function canonicalizeForPlacement(path: string): Promise<string> {
+  const absolute = expandHomePath(path, homedir());
+  try {
+    return await realpath(absolute);
+  } catch {
+    return absolute;
+  }
 }
 
 /** Init-only indirection breaks the session-manager/context construction cycle.
