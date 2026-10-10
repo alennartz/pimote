@@ -4,7 +4,6 @@
   import { fade } from 'svelte/transition';
   import HomeToolbar from '$lib/components/HomeToolbar.svelte';
   import FolderList from '$lib/components/FolderList.svelte';
-  import ManagerChat from '$lib/components/ManagerChat.svelte';
   import { isPlaceholderSessionId, submitManagerMessage, type ManagerSubmitPorts } from '$lib/manager-composer.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import SwipeableCard, { closeOpenSwipeCard } from '$lib/components/SwipeableCard.svelte';
@@ -20,14 +19,9 @@
 
   let search = $state('');
   let scrollElement = $state<HTMLDivElement | null>(null);
-  // The manager area presents from local UI state, never from transcript
-  // existence: a right-hand manager panel (homepage narrowed to a left rail)
-  // on desktop, a sheet on mobile. Closing it closes UI only — sessions run on.
-  // The toolbar's manager toggle does NOT drive this state: toggling only
-  // points the box at the manager; the session opens on send (owner ruling:
-  // the toggle must not open anything before the first message is sent).
-  let managerOpen = $state(false);
-  // Toolbar box mode: search (default) or manager. Pure input routing.
+  // Toolbar box mode: search (default) or manager. Pure input routing — the
+  // toggle opens nothing; the session opens on send (owner ruling). Old
+  // manager sessions surface in the toolbar's dropdown while in manager mode.
   let managerMode = $state(false);
   // One draft shared by the toolbar box and the manager area's composer.
   let managerDraft = $state('');
@@ -35,8 +29,6 @@
   // send affordances; the shared operation guards re-entry against doubles.
   let managerBusy = $state(false);
   let mobile = $derived(isMobileViewport());
-  let splitView = $derived(managerOpen && !mobile);
-  let sheetView = $derived(managerOpen && mobile);
   /** Manager controls wait for a usable root fact and connected readiness. */
   let managerReady = $derived(connection.ready && connection.managerRoot !== null);
 
@@ -96,10 +88,6 @@
     }
   }
 
-  /** Closing the panel/sheet closes UI only — no abort, erase, or dispose. */
-  function closeManagerArea(): void {
-    managerOpen = false;
-  }
   // Continue starts expanded — the header keeps the open count visible and
   // lets the user fold it away. It is not rendered on mobile at all: there,
   // active sessions surface under their folder's half-open expander instead.
@@ -267,11 +255,7 @@
 </script>
 
 <div class="flex min-h-0 flex-1">
-  <div
-    class="flex min-h-0 flex-1 flex-col overflow-y-auto {splitView ? 'md:border-border md:w-1/4 md:max-w-96 md:min-w-80 md:flex-none md:border-r' : ''}"
-    bind:this={scrollElement}
-    onscroll={closeOpenSwipeCard}
-  >
+  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto" bind:this={scrollElement} onscroll={closeOpenSwipeCard}>
     <div class="mx-auto flex w-full max-w-2xl flex-col gap-10 px-5 pt-12 pb-28 md:max-w-4xl md:pt-16">
       <!-- Brand -->
       <div class="flex flex-col items-center gap-1.5">
@@ -284,7 +268,7 @@
       <!-- One box: search by default; the leading button toggles it into the
          manager (AI) mode. Same structure on mobile and desktop — only the
          touch/typography sizing differs. -->
-      <HomeToolbar bind:search compact={splitView} bind:managerMode bind:managerDraft {managerReady} busy={managerBusy} onSubmitManager={submitManagerDraft} />
+      <HomeToolbar bind:search bind:managerMode bind:managerDraft {managerReady} busy={managerBusy} onSubmitManager={submitManagerDraft} />
 
       <!-- Continue: open sessions as cards. Desktop only — mobile drops the
          section completely rather than nesting an expander under the toolbar. -->
@@ -305,7 +289,7 @@
             <span class="text-xs">{sessionRegistry.activeSessions.length} open</span>
           </div>
           {#if continueOpen}
-            <div class="grid grid-cols-1 gap-2.5 {splitView ? '' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}">
+            <div class="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {#each displayItems as item (item.kind === 'session' ? item.sessionId : item.ghost.id)}
                 {#if item.kind === 'session'}
                   {@const session = sessionRegistry.sessions[item.sessionId]}
@@ -361,11 +345,4 @@
       </section>
     </div>
   </div>
-  {#if splitView}
-    <ManagerChat variant="panel" bind:managerDraft busy={managerBusy} onSubmit={submitManagerDraft} onDismiss={closeManagerArea} />
-  {/if}
 </div>
-
-{#if sheetView}
-  <ManagerChat variant="sheet" bind:managerDraft busy={managerBusy} onSubmit={submitManagerDraft} onDismiss={closeManagerArea} />
-{/if}
