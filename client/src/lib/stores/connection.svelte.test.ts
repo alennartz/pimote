@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { ConnectionStore } from './connection.svelte.js';
+import { ConnectionStore, isSessionNotFoundError } from './connection.svelte.js';
 
 // --- Fake WebSocket ---------------------------------------------------------
 // connect() does `new WebSocket(...)` against the global and reads the
@@ -45,6 +45,75 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe('ConnectionStore — definitive restore rejections', () => {
+  /** Deliver the response to the first open_session the socket received. */
+  const respondTo = (ws: FakeWebSocket, error: string) => {
+    const openMsg = ws.sent.map((raw) => JSON.parse(raw) as { id: string; type: string }).find((m) => m.type === 'open_session')!;
+    ws.onmessage!({ data: JSON.stringify({ id: openMsg.id, success: false, error }) });
+  };
+
+  it('session_not_found drops the subscription, notifies, and labels the sync', async () => {
+    const c = new ConnectionStore();
+    const onSessionNotFound = vi.fn(function captureDetail(this: void, _sid: string) {
+      // Capture the label as the rejection lands, before the sync completes
+      // and clears it.
+      detailAtCallback = c.syncDetail;
+    });
+    let detailAtCallback: string | null | undefined;
+    const onSessionOwned = vi.fn();
+    c.onSessionNotFound = onSessionNotFound;
+    c.onSessionOwned = onSessionOwned;
+    c.addSubscribedSession('s-ghost', '/proj');
+
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    await flush();
+
+    respondTo(ws, 'session_not_found');
+    await flush();
+
+    expect(onSessionNotFound).toHaveBeenCalledWith('s-ghost');
+    expect(onSessionOwned).not.toHaveBeenCalled();
+    expect(detailAtCallback).toBe('Session not found');
+    expect(c.subscribedSessions.has('s-ghost')).toBe(false);
+    // The dropped session must not block the connection from becoming ready.
+    expect(c.phase).toBe('ready');
+    expect(c.ready).toBe(true);
+
+    c.disconnect();
+  });
+
+  it('other restore failures keep the session for the next reconnect cycle', async () => {
+    const c = new ConnectionStore();
+    const onSessionNotFound = vi.fn();
+    c.onSessionNotFound = onSessionNotFound;
+    c.addSubscribedSession('s-flaky', '/proj');
+
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    await flush();
+
+    respondTo(ws, 'internal_error');
+    await flush();
+
+    expect(onSessionNotFound).not.toHaveBeenCalled();
+    expect(c.subscribedSessions.has('s-flaky')).toBe(true);
+
+    c.disconnect();
+  });
+
+  it('isSessionNotFoundError accepts both the current and legacy error strings', () => {
+    expect(isSessionNotFoundError('session_not_found')).toBe(true);
+    expect(isSessionNotFoundError('session_expired')).toBe(true);
+    expect(isSessionNotFoundError('session_owned')).toBe(false);
+    expect(isSessionNotFoundError(undefined)).toBe(false);
+  });
 });
 
 describe('ConnectionStore — socket identity guards', () => {

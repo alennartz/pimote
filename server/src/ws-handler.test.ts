@@ -402,7 +402,7 @@ describe('WsHandler', () => {
   });
 
   describe('open_session — existing session missing', () => {
-    it('responds with session_expired when session does not exist in memory or on disk', async () => {
+    it('responds with session_not_found when session does not exist in memory or on disk', async () => {
       const { handler, sent } = createTestHandler('client-1');
 
       await handler.handleMessage(
@@ -417,7 +417,7 @@ describe('WsHandler', () => {
       const resp = findResponse(sent, 'req-1');
       expect(resp).toBeDefined();
       expect(resp!.success).toBe(false);
-      expect(resp!.error).toBe('session_expired');
+      expect(resp!.error).toBe('session_not_found');
     });
   });
 
@@ -965,7 +965,7 @@ describe('WsHandler', () => {
       expect((archivedEvents[0] as any).archived).toBe(false);
     });
 
-    it('responds session_expired when no known folder holds the session', async () => {
+    it('responds session_not_found when no known folder holds the session', async () => {
       const sessionManager = createMockSessionManager(new Map());
       const folderRegistry = {
         list: async () => [folderRow('/home/user/alpha'), folderRow('/home/user/beta')],
@@ -993,7 +993,7 @@ describe('WsHandler', () => {
       const resp = findResponse(sent, 'req-folderless-miss');
       expect(resp).toBeDefined();
       expect(resp!.success).toBe(false);
-      expect(resp!.error).toBe('session_expired');
+      expect(resp!.error).toBe('session_not_found');
     });
 
     it('rejects creating a new session without a folderPath', async () => {

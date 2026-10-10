@@ -13,6 +13,8 @@
   import { getSessionPillSwipeHintShown, setSessionPillSwipeHintShown } from '$lib/stores/persistence.js';
   import { getSessionChipLabel, getSessionDisplayName } from '$lib/session-summary.js';
   import { shouldOpenSessionPillActions } from './session-pill-gesture.js';
+  import FolderNatureIcon, { folderIconKind } from './FolderNatureIcon.svelte';
+  import type { PerSessionState } from '$lib/stores/session-registry.svelte.js';
 
   const uiQueue = getExtensionUiQueue();
 
@@ -117,6 +119,15 @@
     closeSession(sessionId);
   }
 
+  /** Folder glyph color by session state — the palette the old status dot used.
+   *  Idle returns '' so the glyph inherits the chip's text color and toggles
+   *  with selection like the label does. */
+  function sessionStatusColor(session: PerSessionState, hasPendingUi: boolean): string {
+    if (hasPendingUi || session.needsAttention) return 'text-orange-500';
+    if (session.status === 'working') return 'text-emerald-500';
+    return '';
+  }
+
   async function deleteActiveSession(sessionId: string) {
     const session = sessionRegistry.sessions[sessionId];
     deleteSessionId = null;
@@ -208,7 +219,7 @@
             <button
               class="group/chip {isViewed
                 ? 'bg-primary text-primary-foreground'
-                : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'} flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors select-none {hintSessionId ===
+                : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'} flex shrink-0 items-center gap-1.5 rounded-full py-1 pr-3 pl-1 text-xs font-medium transition-colors select-none {hintSessionId ===
               session.sessionId
                 ? 'session-pill-swipe-hint'
                 : ''}"
@@ -226,17 +237,20 @@
               ontouchcancel={resetTouchState}
               title={getSessionDisplayName(session) ?? session.projectName}
             >
-              <span class="relative flex size-2">
-                {#if hasPendingUi}
-                  <span class="relative inline-flex size-2 rounded-full bg-orange-500"></span>
-                {:else if session.status === 'working'}
-                  <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                  <span class="relative inline-flex size-2 rounded-full bg-emerald-500"></span>
-                {:else if session.needsAttention}
-                  <span class="relative inline-flex size-2 rounded-full bg-orange-500"></span>
-                {:else}
-                  <span class="relative inline-flex size-2 rounded-full bg-gray-400"></span>
+              <!-- Folder glyph as the state indicator, colored like the old
+                   status dot. The session points at its folder object; the
+                   glyph follows the folder's nature. 18px with -my-0.5 keeps
+                   the chip at 24px; pl-1 nestles the glyph into the cap
+                   curve. -->
+              <span class="relative -my-0.5 flex size-4.5 shrink-0">
+                {#if session.status === 'working' && !hasPendingUi}
+                  <span class="absolute top-1/2 left-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full bg-emerald-400/60"></span>
                 {/if}
+                <FolderNatureIcon
+                  kind={folderIconKind(session.folder ?? { nature: 'code', shortcutCount: 0 })}
+                  class="relative size-4.5 {sessionStatusColor(session, hasPendingUi)}"
+                  strokeWidth={2.75}
+                />
               </span>
               <span class="max-w-[80px] truncate">{chipLabel}</span>
               <span

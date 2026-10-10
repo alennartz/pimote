@@ -17,6 +17,15 @@ export function isConnectionLossError(error: unknown): boolean {
   return message.includes('websocket') && /closed|closing|not connected|not open|connecting|replaced/.test(message);
 }
 
+/** `open_session` rejections that are definitive: the session is neither live
+ *  on the server nor persisted on disk, so no retry can succeed. The client
+ *  must drop such sessions instead of restoring them forever. (The legacy
+ *  `session_expired` string is accepted so a rolled-back server still gets
+ *  the orphan cleanup.) */
+export function isSessionNotFoundError(error: string | undefined): boolean {
+  return error === 'session_not_found' || error === 'session_expired';
+}
+
 /** Notification-driven session adoption may also request its local download inbox. */
 export interface PendingSessionAdopt {
   sessionId: string;
@@ -67,6 +76,11 @@ export class ConnectionStore {
 
   /** Called when restoring/opening a session is rejected with session_owned (another client owns it). */
   onSessionOwned: ((sessionId: string) => void) | null = null;
+
+  /** Called when restoring/opening a session is rejected with session_not_found
+   *  (the session is gone server-side: never persisted and pruned). The
+   *  registry drops the orphan session in response. */
+  onSessionNotFound: ((sessionId: string) => void) | null = null;
 
   /** Called after connection restore when a notification-driven adopt should begin. */
   onPendingAdopt: ((sessionId: string, folderPath: string, options: { openDownloads?: boolean }) => void) | null = null;
@@ -166,6 +180,15 @@ export class ConnectionStore {
             if (!response.success) {
               if (response.error === 'session_owned') {
                 this.onSessionOwned?.(sessionId);
+              } else if (isSessionNotFoundError(response.error)) {
+                // Definitive rejection: the session is gone server-side (for
+                // example never persisted before an idle reap). Tell the user,
+                // drop the subscription, and let the registry delete the orphan.
+                if (this.phase === 'syncing') {
+                  this.syncDetail = 'Session not found';
+                }
+                this.removeSubscribedSession(sessionId);
+                this.onSessionNotFound?.(sessionId);
               } else {
                 // Don't fabricate session_closed — a failed restore is not a
                 // server-initiated close.  The session stays in the registry

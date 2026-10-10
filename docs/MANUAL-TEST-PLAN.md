@@ -275,14 +275,15 @@
 - **[S]** Switch viewed session
 - **[E]** localStorage updated with new viewed session ID
 
-### TC-03.11 — Expired sessions handled gracefully on restore 🟠
+### TC-03.11 — Sessions gone server-side handled gracefully on restore 🟠
 
 - **[P]** Client has sessions persisted in localStorage
 - **[S]** Stop the server, wait for idle reap timeout (or manually clear server state), restart server
 - **[S]** Reopen the app
 - **[E]** Client attempts to reconnect persisted sessions
-- **[E]** Server responds `session_expired` for each
-- **[E]** Expired sessions removed from UI and localStorage
+- **[E]** Server responds `session_not_found` for each session it no longer knows (never persisted, idle-reaped)
+- **[E]** Connection status shows "Session not found" during the restore sync
+- **[E]** Orphan sessions removed from UI and localStorage (view falls back to another session or the dashboard)
 - **[E]** No crash or stuck state
 
 ### TC-03.12 — Multi-tab not supported 🟡
@@ -958,12 +959,13 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[E]** Client sends 3 `reconnect` commands (one per subscribed session)
 - **[E]** Each session gets its own `buffered_events` or `full_resync`
 
-### TC-11.07 — Session expired during disconnect 🟡
+### TC-11.07 — Session gone server-side during disconnect 🟡
 
-- **[P]** Session was reaped by idle check while client was disconnected
-- **[S]** Client reconnects, sends `reconnect` for the expired session
-- **[E]** Server responds `success: false, error: "session_expired"`
-- **[E]** Client handles gracefully (session removed from UI)
+- **[P]** Session was reaped by idle check while client was disconnected (no session file on disk, e.g. never sent a message)
+- **[S]** Client reconnects, sends `open_session` for the missing session
+- **[E]** Server responds `success: false, error: "session_not_found"`
+- **[E]** Connection status shows "Session not found" during the restore sync
+- **[E]** Client handles gracefully (orphan session removed from UI and localStorage)
 
 ### TC-11.08 — Reconnect rejected when another client owns session 🟠
 

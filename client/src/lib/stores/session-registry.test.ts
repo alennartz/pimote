@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { PimoteEvent, PimoteAgentMessage } from '@pimote/shared';
+import type { PimoteEvent, PimoteAgentMessage, FolderInfo } from '@pimote/shared';
 import { SessionRegistry, routeNotificationIntent, sessionRegistry, openExistingSession } from './session-registry.svelte.js';
 import { connection } from './connection.svelte.js';
 
@@ -850,6 +850,19 @@ describe('SessionRegistry', () => {
       const before = registry.sessions['s1'];
       before.draftText = 'keep my unsent text';
       before.needsAttention = true;
+      const folderRow: FolderInfo = {
+        path: '/path',
+        name: 'proj',
+        nature: 'persona',
+        shortcutCount: 2,
+        favorite: false,
+        archived: false,
+        tags: [],
+        missing: false,
+        activeSessionCount: 0,
+        externalProcessCount: 0,
+      };
+      before.folder = folderRow;
       before.pendingTakeover = true;
       before.pendingSteeringMessages.push('pending');
       before.conflictingProcesses = [{ pid: 1234, command: 'pi' }];
@@ -893,6 +906,9 @@ describe('SessionRegistry', () => {
       expect(session.messages).toEqual(messages);
       expect(session.firstMessage).toBe('Hello');
       expect(session.draftText).toBe('keep my unsent text');
+      // The folder pointer is client-owned linkage — the server-authoritative
+      // rebuild must carry it, same class as the draft.
+      expect(session.folder).toBe(folderRow);
       expect(session.needsAttention).toBe(false);
       expect(session.pendingTakeover).toBe(false);
       expect(session.pendingSteeringMessages).toEqual([]);
@@ -1663,6 +1679,67 @@ describe('openExistingSession (folderless deep link)', () => {
     expect(sessionRegistry.sessions['s-folder-patch'].projectName).toBe('proj');
 
     expect(() => sessionRegistry.setSessionFolder('s-unknown', '/repos/proj')).not.toThrow();
+  });
+});
+
+// --- Restore rejected with session_not_found --------------------------------
+//
+// A session the server no longer knows (never persisted, pruned idle slot)
+// must be deleted locally on every path that surfaces the rejection: the
+// reconnect restore loop (connection.onSessionNotFound) and explicit
+// openExistingSession calls on an already-tracked session.
+
+describe('session_not_found cleanup', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    sessionRegistry.removeSession('s-orphan');
+    connection.removeSubscribedSession('s-orphan');
+  });
+
+  it('openExistingSession drops an already-tracked orphan instead of keeping it', async () => {
+    vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => ({
+      id: cmd.id ?? 'test',
+      success: false,
+      error: cmd.type === 'open_session' ? 'session_not_found' : 'other',
+    }));
+
+    sessionRegistry.addSession('s-orphan', '/repos/proj', 'proj');
+    connection.addSubscribedSession('s-orphan', '/repos/proj');
+    // Sanity: the orphan is tracked before the open attempt.
+    expect(sessionRegistry.sessions['s-orphan']).toBeDefined();
+
+    const opened = await openExistingSession('s-orphan', '/repos/proj', { switchTo: false });
+
+    expect(opened).toBe(false);
+    expect(sessionRegistry.sessions['s-orphan']).toBeUndefined();
+    expect(connection.subscribedSessions.has('s-orphan')).toBe(false);
+  });
+
+  it('a transient failure still keeps an already-tracked session', async () => {
+    vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => ({
+      id: cmd.id ?? 'test',
+      success: false,
+      error: cmd.type === 'open_session' ? 'session_owned' : 'other',
+    }));
+
+    sessionRegistry.addSession('s-orphan', '/repos/proj', 'proj');
+    connection.addSubscribedSession('s-orphan', '/repos/proj');
+
+    const opened = await openExistingSession('s-orphan', '/repos/proj', { switchTo: false });
+
+    expect(opened).toBe(false);
+    expect(sessionRegistry.sessions['s-orphan']).toBeDefined();
+    expect(connection.subscribedSessions.has('s-orphan')).toBe(true);
+  });
+
+  it('the reconnect-restore callback (connection.onSessionNotFound) deletes the orphan', () => {
+    sessionRegistry.addSession('s-orphan', '/repos/proj', 'proj');
+    connection.addSubscribedSession('s-orphan', '/repos/proj');
+
+    connection.onSessionNotFound?.('s-orphan');
+
+    expect(sessionRegistry.sessions['s-orphan']).toBeUndefined();
+    expect(connection.subscribedSessions.has('s-orphan')).toBe(false);
   });
 });
 

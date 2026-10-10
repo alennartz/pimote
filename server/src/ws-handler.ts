@@ -500,10 +500,12 @@ export class WsHandler {
           // Reopen from disk. A folderless deep link carries no folder: resolve
           // the session's record by searching known folders (archived included —
           // opening unarchives on the fly). No record anywhere → the session is
-          // gone.
+          // gone for good (never persisted, pruned idle slot): report it as a
+          // definitive not-found so the client drops its orphan instead of
+          // retrying forever.
           const record = await this.findSessionRecord(requestedSessionId, command.folderPath);
           if (!record) {
-            this.sendResponse(id, false, undefined, 'session_expired');
+            this.sendResponse(id, false, undefined, 'session_not_found');
             break;
           }
           const { folderPath, sessionFilePath } = record;

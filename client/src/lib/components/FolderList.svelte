@@ -8,6 +8,7 @@
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { AGENT_INSTRUCTIONS_PATH, fileEditorStore } from '$lib/stores/file-editor.svelte.js';
   import SessionItem from './SessionItem.svelte';
+  import FolderNatureIcon, { folderIconKind } from './FolderNatureIcon.svelte';
   import Archive from '@lucide/svelte/icons/archive';
   import EllipsisVertical from '@lucide/svelte/icons/ellipsis-vertical';
   import FilePen from '@lucide/svelte/icons/file-pen';
@@ -86,14 +87,6 @@
    *  hiding it under the expander would contradict the header. */
   function isOpenSession(session: SessionInfo): boolean {
     return activeSessionIds.has(session.id) || session.liveStatus != null;
-  }
-
-  /** Row icon: nature × shortcut presence only. Shortcut-bearing rows get the
-   *  hub variant even without hub registry membership — `repos` gates the
-   *  membership chips and disband rights, never the icon. */
-  function folderIconKind(folder: FolderInfo): 'code' | 'code-hub' | 'persona' | 'persona-hub' {
-    const hub = folder.shortcutCount > 0;
-    return folder.nature === 'persona' ? (hub ? 'persona-hub' : 'persona') : hub ? 'code-hub' : 'code';
   }
 
   /** Persona rows lead with the persona's display name; code rows keep the basename. */
@@ -545,77 +538,7 @@
                     title={folder.missing ? 'Open — its source will create this folder' : undefined}
                     aria-expanded={expandState !== 'closed'}
                   >
-                    <!-- Four row icons: code / code-hub / persona / persona-hub,
-                         selected only by nature × shortcutCount > 0. -->
-                    {#if iconKind === 'code'}
-                      <svg
-                        class="text-muted-foreground size-4 shrink-0 max-md:size-5"
-                        data-folder-icon="code"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="m8 6-5 6 5 6" />
-                        <path d="m16 6 5 6-5 6" />
-                        <path d="m13.5 4-3 16" />
-                      </svg>
-                    {:else if iconKind === 'code-hub'}
-                      <svg
-                        class="text-muted-foreground size-4 shrink-0 max-md:size-5"
-                        data-folder-icon="code-hub"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                      >
-                        <rect x="2.5" y="9" width="6" height="6" rx="1.5" />
-                        <rect x="15.5" y="2.5" width="6" height="6" rx="1.5" />
-                        <rect x="15.5" y="15.5" width="6" height="6" rx="1.5" />
-                        <path d="M8.5 12h3.5v-6h3.5" />
-                        <path d="M12 12v6h3.5" />
-                      </svg>
-                    {:else if iconKind === 'persona'}
-                      <svg
-                        class="text-muted-foreground size-4 shrink-0 max-md:size-5"
-                        data-folder-icon="persona"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                      >
-                        <circle cx="12" cy="8" r="3.5" />
-                        <path d="M5 20a7 7 0 0 1 14 0" />
-                      </svg>
-                    {:else}
-                      <svg
-                        class="text-muted-foreground size-4 shrink-0 max-md:size-5"
-                        data-folder-icon="persona-hub"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                      >
-                        <circle cx="8" cy="7" r="3" />
-                        <path d="M2 19.5a6 6 0 0 1 12 0" />
-                        <circle cx="19.5" cy="5.5" r="1.75" />
-                        <circle cx="19.5" cy="13.5" r="1.75" />
-                        <path d="M11.2 6.2 17.7 5.3" />
-                        <path d="M11.2 10.6 17.7 12.7" />
-                      </svg>
-                    {/if}
+                    <FolderNatureIcon kind={iconKind} class="text-muted-foreground size-4 shrink-0 max-md:size-5" />
                     <span class="min-w-0 flex-1">
                       <span class="text-foreground block truncate text-[13px] font-medium max-md:text-base {folder.archived ? 'opacity-70' : ''}" data-folder-path={folder.path}
                         >{displayName(folder)}</span

@@ -38,11 +38,12 @@ import type {
   Card,
   RestoreMode,
   BashResult,
+  FolderInfo,
   BashExecutionUpdateEvent,
   AbortResponseData,
   QueueUpdateEvent,
 } from '@pimote/shared';
-import { connection } from './connection.svelte.js';
+import { connection, isSessionNotFoundError } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
 import { setEditorText } from './input-bar.svelte.js';
 import { panelStore } from './panel-store.svelte.js';
@@ -139,6 +140,14 @@ export interface PerSessionState {
   sessionId: string;
   folderPath: string;
   projectName: string;
+  /** The folder object this session belongs to — canonicalized through the
+   *  folder model when one is bound, so folder metadata updates flow through
+   *  the shared object. Bound from the server's FolderInfo (session_opened,
+   *  session_replaced): `folderPath` is the folder's path, never the
+   *  session's cwd, and the two can differ — the event is the authoritative
+   *  link, and the folder need not appear in any list window. Null until
+   *  reported. */
+  folder: FolderInfo | null;
   firstMessage: string | undefined;
   messages: PimoteAgentMessage[];
   isStreaming: boolean;
@@ -208,6 +217,17 @@ export class SessionRegistry {
     this.viewNavigator = nav;
   }
 
+  /** Folder-model canonicalizer for bindSessionFolder — collapses wire
+   *  FolderInfo rows onto the client's shared folder objects. Late-bound
+   *  from the folder store (which already imports the registry) to avoid a
+   *  module cycle. */
+  private folderObjectResolver: ((row: FolderInfo) => FolderInfo) | null = null;
+
+  /** Called once from the folder store at module boot. */
+  setFolderObjectResolver(resolve: (row: FolderInfo) => FolderInfo): void {
+    this.folderObjectResolver = resolve;
+  }
+
   /** True while the registry has navigated the browser toward its chosen view and the URL has not caught up. */
   isViewNavigationPending(): boolean {
     return this.viewNavigation?.target === this.viewedSessionId;
@@ -265,6 +285,7 @@ export class SessionRegistry {
       sessionId,
       folderPath,
       projectName,
+      folder: null,
       firstMessage: undefined,
       messages: [],
       isStreaming: false,
@@ -631,6 +652,7 @@ export class SessionRegistry {
         rebuilt.extensionTitle = session.extensionTitle;
         rebuilt.restoreMode = session.restoreMode;
         rebuilt.isRestoring = session.isRestoring;
+        rebuilt.folder = session.folder;
         // Don't carry over panelCards — server will send panel_update if panels are active.
         // Carrying over stale cards causes ghost panels after agent teardown + reconnect.
         // widgetCards get the same treatment: unlike panel cards there is no server-side
@@ -750,6 +772,16 @@ export class SessionRegistry {
     session.folderPath = folderPath;
     session.projectName = folderPath.split('/').pop() || 'Unknown';
     this.persistSessions();
+  }
+
+  /** Point a session at its folder object — the folder model's canonical
+   *  row when a resolver is bound, else the wire row as-is. Called at every
+   *  wire moment a session identity is created (session_opened,
+   *  session_replaced). */
+  bindSessionFolder(sessionId: string, folder: FolderInfo): void {
+    const session = this.sessions[sessionId];
+    if (!session) return;
+    session.folder = this.folderObjectResolver ? this.folderObjectResolver(folder) : folder;
   }
 
   /** Remove a session from the registry */
@@ -1226,6 +1258,16 @@ export async function routeNotificationIntent(intent: AppNotificationIntent): Pr
   // bounce the view the user is already on.
 }
 
+/** Drop every client-side trace of a session: registry entry, wire
+ *  subscription, and cached commands. Used when the session is gone
+ *  server-side (`session_not_found`) so no orphan lingers, and by takeover
+ *  dismissal. */
+function dropSession(sessionId: string): void {
+  sessionRegistry.removeSession(sessionId);
+  connection.removeSubscribedSession(sessionId);
+  commandStore.removeSession(sessionId);
+}
+
 /** Open a session by id. `folderPath` may be unknown for a deep link — the
  *  server then resolves the folder and reports it in the response. */
 export async function openExistingSession(sessionId: string, folderPath: string | undefined, opts?: { force?: boolean; switchTo?: boolean }): Promise<boolean> {
@@ -1256,14 +1298,19 @@ export async function openExistingSession(sessionId: string, folderPath: string 
         if (session) session.pendingTakeover = true;
         return false;
       }
+      // The server has no trace of the session (never persisted, pruned idle
+      // slot). Definitive: drop the orphan even when it was already tracked,
+      // otherwise it lingers with no model list and a dead composer.
+      if (isSessionNotFoundError(response.error)) {
+        dropSession(sessionId);
+        return false;
+      }
       // Only tear down registry state for a session WE just added here. If the
       // session was already open (takeover/notification-adopt path), a transient
       // failure must not wipe the user's tab, draft, or pending steering — the
       // reconnect cycle retries restores.
       if (!alreadyTracked) {
-        sessionRegistry.removeSession(sessionId);
-        connection.removeSubscribedSession(sessionId);
-        commandStore.removeSession(sessionId);
+        dropSession(sessionId);
       }
       return false;
     }
@@ -1285,9 +1332,7 @@ export async function openExistingSession(sessionId: string, folderPath: string 
   } catch (err) {
     console.error('[SessionRegistry] Failed to open existing session:', err);
     if (!alreadyTracked) {
-      sessionRegistry.removeSession(sessionId);
-      connection.removeSubscribedSession(sessionId);
-      commandStore.removeSession(sessionId);
+      dropSession(sessionId);
     }
     return false;
   }
@@ -1310,6 +1355,7 @@ connection.onEvent((event) => {
         sessionRegistry.switchTo(event.sessionId);
       }
 
+      if (folder) sessionRegistry.bindSessionFolder(event.sessionId, folder);
       connection.addSubscribedSession(event.sessionId, folder?.path ?? '');
       fetchFullSessionData(event.sessionId);
       break;
@@ -1325,6 +1371,7 @@ connection.onEvent((event) => {
       const folder = replaced.folder;
       const projectName = folder?.name ?? 'Unknown';
       sessionRegistry.replaceSession(replaced.oldSessionId, replaced.newSessionId, folder?.path ?? '', projectName);
+      if (folder) sessionRegistry.bindSessionFolder(replaced.newSessionId, folder);
       connection.removeSubscribedSession(replaced.oldSessionId);
       connection.addSubscribedSession(replaced.newSessionId, folder?.path ?? '');
       commandStore.removeSession(replaced.oldSessionId);
@@ -1347,6 +1394,14 @@ connection.onSessionOwned = (sessionId) => {
   if (session) {
     session.pendingTakeover = true;
   }
+};
+
+// When restoring/opening is rejected because the session is gone server-side
+// (never persisted, pruned idle slot), delete the orphan locally. This fires
+// from the reconnect restore loop where no `openExistingSession` call frame
+// owns the cleanup.
+connection.onSessionNotFound = (sessionId) => {
+  dropSession(sessionId);
 };
 
 connection.onPendingAdopt = (sessionId, folderPath, { openDownloads }) => {
@@ -1396,8 +1451,7 @@ export function confirmTakeover(sessionId: string): void {
 
 /** Dismiss takeover — drop the session */
 export function dismissTakeover(sessionId: string): void {
-  sessionRegistry.removeSession(sessionId);
-  connection.removeSubscribedSession(sessionId);
+  dropSession(sessionId);
 }
 
 // Helper that also sends view_session to server

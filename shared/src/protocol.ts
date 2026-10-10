@@ -588,6 +588,12 @@ export interface OpenSessionCommand extends CommandBase {
   force?: boolean;
 }
 
+/** Rejection reasons for `open_session` on an existing session. Consumers must
+ *  treat `session_not_found` as definitive: the session is neither live on the
+ *  server nor persisted on disk (for example a new session never persisted
+ *  before an idle reap), so no retry can succeed. */
+export type OpenSessionErrorCode = 'session_owned' | 'session_not_found';
+
 export type RestoreMode = 'incremental_replay' | 'full_resync_no_cursor' | 'full_resync_cursor_stale' | 'disk_full_resync';
 
 export interface OpenSessionResponseData {

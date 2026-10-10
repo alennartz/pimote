@@ -64,6 +64,11 @@ export class FolderStore {
   constructor(private readonly readOpenSessionActivity: () => readonly OpenSessionActivity[] = () => []) {}
 
   folders: FolderInfo[] = $state([]);
+  /** Canonical folder objects by the folder's own path — the in-memory
+   *  folder model. Every wire row (list windows, folders_changed deltas,
+   *  session payloads) collapses onto one object per path, so holders such
+   *  as open sessions keep a stable pointer and see metadata updates. */
+  private folderByKey = $state(new SvelteMap<string, FolderInfo>());
   repos: RepoInfo[] = $state([]);
   roots: string[] = $state([]);
   sessions = $state(new SvelteMap<string, SessionInfo[]>());
@@ -316,32 +321,35 @@ export class FolderStore {
     // bug class for good.
     const orderShrunk = context.offset > 0 && data.total < this.total;
     const restart = orderReplaced || orderShrunk;
+    // Canonicalize before merging: window rows collapse onto the shared
+    // folder objects so list rows and session pointers stay one object.
+    const rows = data.folders.map((row) => this.upsertFolder(row));
     // An explicit refresh or a fresh connection load is authoritative for the
     // unfiltered view: replace the cache so rows deleted while deltas were
     // lost cannot survive a manual refresh or a reconnect. Continuation
     // windows, query windows, and filter toggles of an established cache keep
     // merging into the accumulated rows.
     if (context.offset === 0 && !context.query && (context.repin || !this.loadedForCurrentConnection)) {
-      this.folders = [...data.folders];
+      this.folders = [...rows];
     } else {
-      this.folders = mergeFolderRows(this.folders, data.folders);
+      this.folders = mergeFolderRows(this.folders, rows);
     }
     this.roots = data.roots ?? [];
     connection.managerRoot = data.managerRoot || null;
     this.orderToken = data.orderToken;
-    this.nextOffset = restart ? 0 : context.offset + data.folders.length;
+    this.nextOffset = restart ? 0 : context.offset + rows.length;
     this.total = data.total;
     this.more = restart ? true : data.more;
     if (context.offset === 0 || restart) this.fetchedPrefix.clear();
-    for (const row of data.folders) this.fetchedPrefix.add(row.path);
+    for (const row of rows) this.fetchedPrefix.add(row.path);
     this.loadedForCurrentConnection = true;
     if (context.offset === 0) {
       this.queryMatchPaths = [];
       this.querySessionMatches.clear();
     }
     if (context.query) {
-      this.queryMatchPaths = [...new Set([...this.queryMatchPaths, ...data.folders.map((row) => row.path)])]; // eslint-disable-line svelte/prefer-svelte-reactivity -- local deduplication, result stored as reactive array
-      for (const row of data.folders) this.querySessionMatches.set(row.path, row.matchedSessionIds);
+      this.queryMatchPaths = [...new Set([...this.queryMatchPaths, ...rows.map((row) => row.path)])]; // eslint-disable-line svelte/prefer-svelte-reactivity -- local deduplication, result stored as reactive array
+      for (const row of rows) this.querySessionMatches.set(row.path, row.matchedSessionIds);
     }
   }
 
@@ -362,6 +370,19 @@ export class FolderStore {
     return this.reposLoadInFlight;
   }
 
+  /** Collapse a wire folder row onto the canonical object for its path:
+   *  get-or-create, then field-merge so every view of the folder (list rows,
+   *  session pointers) observes the update through the same object. */
+  upsertFolder(row: FolderInfo): FolderInfo {
+    const existing = this.folderByKey.get(row.path);
+    if (existing) {
+      Object.assign(existing, row);
+      return existing;
+    }
+    this.folderByKey.set(row.path, row);
+    return row;
+  }
+
   /** Delta application driven by the server's folders_changed broadcast:
    *  merge `changed` rows by canonical path (rows sorting past the fetched
    *  frontier sit in cache and appear when scrolled to) and drop
@@ -380,9 +401,13 @@ export class FolderStore {
       event.removedPaths.some((path) => this.fetchedPrefix.has(path)) ||
       event.changed.some((row) => this.fetchedPrefix.has(row.path) && ((row.archived && !this.showArchived) || this.activeQuery !== ''));
     if (shrank) this.restartScan();
-    this.folders = mergeFolderRows(this.folders, event.changed, event.removedPaths);
+    const changed = event.changed.map((row) => this.upsertFolder(row));
+    this.folders = mergeFolderRows(this.folders, changed, event.removedPaths);
     this.queryMatchPaths = this.queryMatchPaths.filter((path) => !event.removedPaths.includes(path));
-    for (const path of event.removedPaths) this.querySessionMatches.delete(path);
+    for (const path of event.removedPaths) {
+      this.folderByKey.delete(path);
+      this.querySessionMatches.delete(path);
+    }
   }
 
   applySessionStateChange(event: SessionStateChangedEvent, myClientId: string): void {
@@ -608,6 +633,13 @@ export class FolderStore {
 }
 
 export const folderStore = new FolderStore(() => sessionRegistry.activeSessions.map((session) => ({ folderPath: session.folderPath, modified: session.lastBotActivityTimestamp })));
+
+// Sessions point at the folder model's canonical objects — wire FolderInfo
+// rows the registry receives (session_opened, session_replaced) collapse onto
+// the shared per-path objects, so folder metadata updates reach session
+// pointers. Bound here, not imported by the registry, to keep the module
+// graph acyclic (the folder store already imports the registry).
+sessionRegistry.setFolderObjectResolver((row) => folderStore.upsertFolder(row));
 
 // Route server-side folder/session events into the store for the lifetime of
 // the app. This lives here — not in FolderList's onMount — so the cache stays

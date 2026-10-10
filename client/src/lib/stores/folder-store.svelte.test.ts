@@ -182,6 +182,40 @@ describe('FolderStore', () => {
       expect(store.folders.map((f) => f.path).sort()).toEqual(['/r/a', '/r/c']);
       expect(store.folders.find((f) => f.path === '/r/a')!.tags).toEqual(['fresh']);
     });
+
+    it('upsertFolder() collapses wire rows onto one canonical object per path', () => {
+      const store = new FolderStore();
+      const first = store.upsertFolder(makeFolder({ path: '/r/a', name: 'a' }));
+      const second = store.upsertFolder(makeFolder({ path: '/r/a', name: 'a', nature: 'persona', shortcutCount: 2 }));
+
+      expect(second).toBe(first);
+      expect(first.nature).toBe('persona');
+      expect(first.shortcutCount).toBe(2);
+    });
+
+    it('folders_changed updates flow through the canonical object to holders', () => {
+      const store = new FolderStore();
+      const pointer = store.upsertFolder(makeFolder({ path: '/r/a', name: 'a' }));
+
+      store.applyFoldersChanged({
+        type: 'folders_changed',
+        changed: [makeFolder({ path: '/r/a', name: 'a', nature: 'persona' })],
+        removedPaths: [],
+        epoch: 1,
+      });
+
+      expect(pointer.nature).toBe('persona');
+    });
+
+    it('folders_changed removals prune the canonical folder objects', () => {
+      const store = new FolderStore();
+      const gone = store.upsertFolder(makeFolder({ path: '/r/a', name: 'a' }));
+
+      store.applyFoldersChanged({ type: 'folders_changed', changed: [], removedPaths: ['/r/a'], epoch: 1 });
+      const readded = store.upsertFolder(makeFolder({ path: '/r/a', name: 'a' }));
+
+      expect(readded).not.toBe(gone);
+    });
   });
 
   describe('in-flight listings vs newer events', () => {
