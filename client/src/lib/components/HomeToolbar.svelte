@@ -13,12 +13,12 @@
    *  both glyphs at once — 🔍 for search (default), ✨ for the manager (the
    *  icon conventionally read as "artificial intelligence"). The active glyph
    *  is pill-highlighted; clicking anywhere on the pair swaps modes. Manager
-   *  mode is the manager-area affordance: it drives the dashboard's manager
-   *  panel (desktop) / sheet (mobile) through the bound `managerOpen` state. */
+   *  mode is a box mode only: it points this box's input at the manager;
+   *  sending opens the session. It does not open the manager area. */
   let {
     search = $bindable(''),
     compact = false,
-    managerOpen = $bindable(false),
+    managerMode = $bindable(false),
     managerDraft = $bindable(''),
     managerReady = false,
     busy = false,
@@ -26,8 +26,8 @@
   }: {
     search?: string;
     compact?: boolean;
-    /** Local UI state: manager mode on the box and the manager area's presentation. */
-    managerOpen?: boolean;
+    /** Local UI state: manager mode on the box. */
+    managerMode?: boolean;
     /** Draft shared by this box and the manager area's composer. */
     managerDraft?: string;
     /** True once a usable manager root fact and connected readiness exist. */
@@ -38,7 +38,7 @@
     onSubmitManager?: (text: string) => void | Promise<void>;
   } = $props();
 
-  const mode = $derived(managerOpen ? 'manager' : 'search');
+  const mode = $derived(managerMode ? 'manager' : 'search');
   const canSend = $derived(managerReady && !busy && managerDraft.trim().length > 0);
   let newSessionOpen = $state(false);
 
@@ -46,11 +46,11 @@
   let managerEl = $state<HTMLTextAreaElement | null>(null);
 
   async function toggleMode(): Promise<void> {
-    managerOpen = !managerOpen;
+    managerMode = !managerMode;
     // The swapped-in field replaces the old one in the DOM — focus it so
     // typing continues without a second tap.
     await tick();
-    (managerOpen ? managerEl : searchEl)?.focus();
+    (managerMode ? managerEl : searchEl)?.focus();
   }
 
   /** Grow the field to its content so rows=1 never overflows — a fractional

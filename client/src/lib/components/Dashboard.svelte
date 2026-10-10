@@ -23,7 +23,12 @@
   // The manager area presents from local UI state, never from transcript
   // existence: a right-hand manager panel (homepage narrowed to a left rail)
   // on desktop, a sheet on mobile. Closing it closes UI only — sessions run on.
+  // The toolbar's manager toggle does NOT drive this state: toggling only
+  // points the box at the manager; the session opens on send (owner ruling:
+  // the toggle must not open anything before the first message is sent).
   let managerOpen = $state(false);
+  // Toolbar box mode: search (default) or manager. Pure input routing.
+  let managerMode = $state(false);
   // One draft shared by the toolbar box and the manager area's composer.
   let managerDraft = $state('');
   // Busy state while one submit is in flight: both composers disable their
@@ -279,7 +284,7 @@
       <!-- One box: search by default; the leading button toggles it into the
          manager (AI) mode. Same structure on mobile and desktop — only the
          touch/typography sizing differs. -->
-      <HomeToolbar bind:search compact={splitView} bind:managerOpen bind:managerDraft {managerReady} busy={managerBusy} onSubmitManager={submitManagerDraft} />
+      <HomeToolbar bind:search compact={splitView} bind:managerMode bind:managerDraft {managerReady} busy={managerBusy} onSubmitManager={submitManagerDraft} />
 
       <!-- Continue: open sessions as cards. Desktop only — mobile drops the
          section completely rather than nesting an expander under the toolbar. -->
