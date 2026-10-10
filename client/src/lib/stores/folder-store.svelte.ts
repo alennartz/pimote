@@ -376,13 +376,13 @@ export class FolderStore {
    * Reject unsuccessful responses with the server's user-presentable error.
    */
   async addHubMember(hubPath: string, memberPath: string): Promise<void> {
-    void [hubPath, memberPath];
-    throw new Error('not implemented');
+    const response = await connection.send({ type: 'add_hub_member', hubPath, memberPath });
+    if (!response.success) throw new Error(response.error ?? 'Failed to add hub member');
   }
 
   async removeHubMember(hubPath: string, memberPath: string): Promise<void> {
-    void [hubPath, memberPath];
-    throw new Error('not implemented');
+    const response = await connection.send({ type: 'remove_hub_member', hubPath, memberPath });
+    if (!response.success) throw new Error(response.error ?? 'Failed to remove hub member');
   }
 
   /** Collapse a wire folder row onto the canonical object for its path:

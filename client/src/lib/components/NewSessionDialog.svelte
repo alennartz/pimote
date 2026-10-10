@@ -5,27 +5,18 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import FolderIcon from '@lucide/svelte/icons/folder';
-  import Loader2 from '@lucide/svelte/icons/loader-2';
-  import Plus from '@lucide/svelte/icons/plus';
+  import FolderCreatorWizard from './FolderCreatorWizard.svelte';
 
   /** Controlled open state — the homepage toolbar owns the trigger. */
   let { open = $bindable(false) }: { open?: boolean } = $props();
 
-  type DialogMode = 'pick' | 'create-root' | 'create-name';
-  let mode: DialogMode = $state('pick');
   let query = $state('');
-  let createRoot: string = $state('');
-  let createName: string = $state('');
-  let createError: string = $state('');
-  let creating: boolean = $state(false);
+  /** The wizard took over the dialog body — the picker hides until the dialog reopens. */
+  let wizardActive = $state(false);
 
   function reset(): void {
-    mode = 'pick';
     query = '';
-    createRoot = '';
-    createName = '';
-    createError = '';
-    creating = false;
+    wizardActive = false;
   }
 
   // Every close path funnels through handleOpenChange and resets; this effect
@@ -59,80 +50,6 @@
     return folder.persona?.name ?? folder.name;
   }
 
-  function startCreateFolder(): void {
-    const roots = folderStore.roots;
-    if (roots.length === 1) {
-      createRoot = roots[0];
-      mode = 'create-name';
-    } else {
-      mode = 'create-root';
-    }
-    createName = '';
-    createError = '';
-  }
-
-  function selectRoot(root: string): void {
-    createRoot = root;
-    mode = 'create-name';
-    createName = '';
-    createError = '';
-  }
-
-  function backToPickMode(): void {
-    mode = 'pick';
-    createRoot = '';
-    createName = '';
-    createError = '';
-  }
-
-  function backToRootSelection(): void {
-    mode = 'create-root';
-    createName = '';
-    createError = '';
-  }
-
-  function validateFolderName(name: string): string | null {
-    if (!name.trim()) return 'Name is required';
-    if (name.includes('/') || name.includes('\\')) return 'Name cannot contain path separators';
-    if (name === '.' || name === '..') return 'Invalid name';
-    return null;
-  }
-
-  async function createFolder(): Promise<void> {
-    const name = createName.trim();
-    const validationError = validateFolderName(name);
-    if (validationError) {
-      createError = validationError;
-      return;
-    }
-
-    creating = true;
-    createError = '';
-
-    try {
-      const response = await connection.send({
-        type: 'create_folder',
-        root: createRoot,
-        name,
-      });
-
-      if (!response.success) {
-        createError = response.error ?? 'Failed to create folder';
-        creating = false;
-        return;
-      }
-
-      const folderPath = (response.data as { folderPath: string }).folderPath;
-      // Refresh folder list so the new folder appears
-      void folderStore.loadFolders();
-      await connection.send({ type: 'open_session', folderPath });
-      handleOpenChange(false);
-    } catch (e) {
-      createError = e instanceof Error ? e.message : 'Failed to create folder';
-      creating = false;
-    }
-  }
-
   async function newSession(folderPath: string): Promise<void> {
     handleOpenChange(false);
     try {
@@ -145,13 +62,15 @@
 
 <Dialog.Root {open} onOpenChange={handleOpenChange}>
   <Dialog.Content class="sm:max-w-lg">
-    {#if mode === 'pick'}
-      <Dialog.Header>
-        <Dialog.Title>Start a new session</Dialog.Title>
-        <Dialog.Description>Choose a folder to start from. Search is client-side over discovered folders.</Dialog.Description>
-      </Dialog.Header>
+    <Dialog.Header>
+      <Dialog.Title>Start a new session</Dialog.Title>
+      <Dialog.Description>Pick a folder, or create one above. Search is client-side over discovered folders.</Dialog.Description>
+    </Dialog.Header>
 
-      <div class="flex flex-col gap-4">
+    <div class="flex flex-col gap-4">
+      <FolderCreatorWizard onDone={() => handleOpenChange(false)} onActiveChange={(active) => (wizardActive = active)} />
+
+      {#if !wizardActive}
         <Input bind:value={query} placeholder="Search folders" autofocus />
 
         <div class="border-border max-h-80 overflow-y-auto rounded-md border">
@@ -175,76 +94,12 @@
             </div>
           {/if}
         </div>
+      {/if}
 
-        <Dialog.Footer class="flex gap-2">
-          {#if folderStore.roots.length > 0}
-            <Button variant="outline" onclick={startCreateFolder}>
-              <Plus class="size-4" />
-              Create new folder
-            </Button>
-          {/if}
-          <div class="flex-1"></div>
-          <Button variant="outline" type="button" onclick={() => handleOpenChange(false)}>Cancel</Button>
-        </Dialog.Footer>
-      </div>
-    {:else if mode === 'create-root'}
-      <Dialog.Header>
-        <Dialog.Title>Create new folder</Dialog.Title>
-        <Dialog.Description>Choose where to create the folder.</Dialog.Description>
-      </Dialog.Header>
-
-      <div class="flex flex-col gap-4">
-        <div class="border-border max-h-80 overflow-y-auto rounded-md border">
-          <div class="flex flex-col p-1">
-            {#each folderStore.roots as root (root)}
-              <button class="hover:bg-accent hover:text-accent-foreground flex items-start gap-2 rounded-md px-3 py-2 text-left transition-colors" onclick={() => selectRoot(root)}>
-                <FolderIcon class="text-muted-foreground mt-0.5 size-4 shrink-0" />
-                <div class="min-w-0 flex-1">
-                  <div class="truncate text-sm font-medium">{root}</div>
-                </div>
-              </button>
-            {/each}
-          </div>
-        </div>
-
-        <Dialog.Footer>
-          <Button variant="outline" onclick={backToPickMode}>Back</Button>
-        </Dialog.Footer>
-      </div>
-    {:else if mode === 'create-name'}
-      <Dialog.Header>
-        <Dialog.Title>Create new folder</Dialog.Title>
-        <Dialog.Description>New folder in <code class="bg-muted rounded px-1 py-0.5 text-xs">{createRoot}</code></Dialog.Description>
-      </Dialog.Header>
-
-      <div class="flex flex-col gap-4">
-        <div class="flex flex-col gap-1.5">
-          <Input
-            bind:value={createName}
-            placeholder="Folder name"
-            autofocus
-            disabled={creating}
-            onkeydown={(e) => {
-              if (e.key === 'Enter') void createFolder();
-            }}
-          />
-          {#if createError}
-            <p class="text-destructive text-sm">{createError}</p>
-          {/if}
-        </div>
-
-        <Dialog.Footer>
-          <Button variant="outline" onclick={folderStore.roots.length > 1 ? backToRootSelection : backToPickMode} disabled={creating}>Back</Button>
-          <Button onclick={() => void createFolder()} disabled={creating || !createName.trim()}>
-            {#if creating}
-              <Loader2 class="size-4 animate-spin" />
-              Creating…
-            {:else}
-              Create
-            {/if}
-          </Button>
-        </Dialog.Footer>
-      </div>
-    {/if}
+      <Dialog.Footer class="flex gap-2">
+        <div class="flex-1"></div>
+        <Button variant="outline" type="button" onclick={() => handleOpenChange(false)}>Cancel</Button>
+      </Dialog.Footer>
+    </div>
   </Dialog.Content>
 </Dialog.Root>

@@ -11,9 +11,10 @@ import { gitInitDir } from './git-init.js';
  * hub is a self-describing git repo whose members surface as shortcuts.
  * Both `FolderRegistry.createHub` and the open-time
  * materialization of source-listed hubs render this same layout through this
- * function — user sources never replicate it by hand.
+ * function — user sources never replicate it by hand. Callers that own a
+ * different AGENTS.md layout (registry `createHub`) pass it as `agentsMd`.
  */
-export async function materializeHubFolder(entry: HubSourceEntry): Promise<void> {
+export async function materializeHubFolder(entry: HubSourceEntry, agentsMd: string = agentsMarkdown(entry.name, entry.memberPaths)): Promise<void> {
   // Exclusive ownership of the hub directory: the layout is only ever built
   // into a directory this call created, and a failed build removes it again.
   // Both entry paths get the same guarantees this way — a retry (e.g. after a
@@ -32,7 +33,7 @@ export async function materializeHubFolder(entry: HubSourceEntry): Promise<void>
       // created. The link is by path and self-heals when the member materializes.
       await symlink(memberPath, join(entry.path, basename(memberPath)));
     }
-    await writeFile(join(entry.path, 'AGENTS.md'), agentsMarkdown(entry.name, entry.memberPaths), 'utf8');
+    await writeFile(join(entry.path, 'AGENTS.md'), agentsMd, 'utf8');
     await writeFile(join(entry.path, '.gitignore'), memberIgnore(entry.memberPaths), 'utf8');
     await gitInitDir(entry.path);
   } catch (error) {
@@ -51,10 +52,17 @@ function gitignoreEscape(name: string): string {
   return name.replace(/([\\*?[\]!#])/g, '\\$1').replace(/ +$/, (run) => run.replace(/ /g, '\\ '));
 }
 
+/** One root-anchored literal .gitignore pattern for a member symlink
+ *  basename — the single pattern rule shared by hub creation and member
+ *  add/remove. No trailing newline. */
+export function memberIgnoreLine(name: string): string {
+  return `/${gitignoreEscape(name)}`;
+}
+
 /** The hub's .gitignore: one root-anchored literal pattern per member symlink
  *  basename, so the links stay untracked. */
 function memberIgnore(memberPaths: string[]): string {
-  return memberPaths.map((memberPath) => `/${gitignoreEscape(basename(memberPath))}\n`).join('');
+  return memberPaths.map((memberPath) => `${memberIgnoreLine(basename(memberPath))}\n`).join('');
 }
 
 /** The generated hub AGENTS.md: members plus the sub-project convention. */

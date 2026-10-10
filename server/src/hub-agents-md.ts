@@ -1,3 +1,5 @@
+import { personaFrontMatter } from './manager/seed.js';
+
 /**
  * The hub AGENTS.md managed-content mutator (plan: 0.15-2 dashboard folder
  * UX).
@@ -18,20 +20,84 @@
  * - The mutator owns only the exact byte strings it seeded.
  */
 
+/** The managed-block markers this module owns. */
+const OPEN = '<!-- pimote:members (managed block) -->';
+const CLOSE = '<!-- /pimote:members -->';
+
 /** The member's exact seeded link line — byte-deterministic per (name, nature). */
 export function seededMemberLine(name: string, nature: 'code' | 'persona'): string {
-  void [name, nature];
-  throw new Error('not implemented');
+  return nature === 'code' ? `- ${name} (code): read nested AGENTS.md for context.` : `- ${name} (persona): always spin a sub-agent in this folder to interact with it.`;
+}
+
+/** The managed block's inner text and its absolute byte offset; null when
+ *  either marker is missing (unclosed blocks count as missing). */
+function managedBlock(markdown: string): { inner: string; innerStart: number } | null {
+  const openAt = markdown.indexOf(OPEN);
+  if (openAt === -1) return null;
+  const innerStart = openAt + OPEN.length;
+  const closeAt = markdown.indexOf(CLOSE, innerStart);
+  if (closeAt === -1) return null;
+  return { inner: markdown.slice(innerStart, closeAt), innerStart };
+}
+
+/** Offset of `<line>\n` when `line` occupies a whole line of `inner`, else
+ *  -1. "Whole line" means preceded by a newline. */
+function wholeLineOffset(inner: string, line: string): number {
+  const at = inner.indexOf(`\n${line}\n`);
+  return at === -1 ? -1 : at + 1;
+}
+
+/** The marker-gone fallback: the document verbatim plus a fresh managed
+ *  block, separated by a blank line. */
+function appendFreshBlock(markdown: string, line: string): string {
+  const head = markdown === '' ? '' : markdown.endsWith('\n') ? `${markdown}\n` : `${markdown}\n\n`;
+  return `${head}${OPEN}\n${line}\n${CLOSE}\n`;
 }
 
 /** Insert `line` into the managed block; append a fresh block when the markers are gone. */
 export function injectMemberLine(markdown: string, line: string): string {
-  void [markdown, line];
-  throw new Error('not implemented');
+  const block = managedBlock(markdown);
+  if (block === null) return appendFreshBlock(markdown, line);
+  if (wholeLineOffset(block.inner, line) !== -1) return markdown;
+  const closeAt = block.innerStart + block.inner.length;
+  const separator = closeAt > 0 && markdown.charAt(closeAt - 1) === '\n' ? '' : '\n';
+  return `${markdown.slice(0, closeAt)}${separator}${line}\n${markdown.slice(closeAt)}`;
 }
 
 /** Delete `line` byte-exact; no-op when the markers or the line are gone. */
 export function removeMemberLine(markdown: string, line: string): string {
-  void [markdown, line];
-  throw new Error('not implemented');
+  const block = managedBlock(markdown);
+  if (block === null) return markdown;
+  const at = wholeLineOffset(block.inner, line);
+  if (at === -1) return markdown;
+  const start = block.innerStart + at;
+  return markdown.slice(0, start) + markdown.slice(start + line.length + 1);
+}
+
+/** One optional body section: a blank line plus the trimmed text plus its
+ *  trailing newline; empty when the text is blank. */
+function bodySection(text: string): string {
+  const trimmed = text.trim();
+  return trimmed ? `\n${trimmed}\n` : '';
+}
+
+/**
+ * Render the registry-created hub `AGENTS.md` (plan: 0.15-2 dashboard folder
+ * UX). The code-hub variant leads with a `# <name>` heading and the optional
+ * body; the persona-hub variant leads with persona-marker front matter and the
+ * optional persona text. Both then declare the members managed block, seeded
+ * via `injectMemberLine` so creation and later removal use the same byte
+ * strings. Source-listed hubs keep `agentsMarkdown` (folder-sources).
+ */
+export function hubAgentsMarkdown(input: {
+  name: string;
+  members: { name: string; nature: 'code' | 'persona' }[];
+  body?: string;
+  persona?: { description: string; personaText: string };
+}): string {
+  const head = input.persona
+    ? `${personaFrontMatter(input.name, input.persona.description)}\n${bodySection(input.persona.personaText)}`
+    : `# ${input.name}\n${bodySection(input.body ?? '')}`;
+  const seeded = `${head}\nA hub is a folder composed of shortcuts to its members:\n\n${OPEN}\n${CLOSE}\n`;
+  return input.members.reduce((markdown, member) => injectMemberLine(markdown, seededMemberLine(member.name, member.nature)), seeded);
 }

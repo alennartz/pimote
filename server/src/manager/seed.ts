@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /**
@@ -61,6 +61,28 @@ export async function seedManagerRoot(managerRoot: string): Promise<void> {
   await seedFile(join(managerRoot, 'memory.md'), MEMORY_STUB);
 }
 
+/** The persona-marker front-matter block (`---` delimited, no trailing
+ *  newline). Values are JSON-quoted — JSON strings are valid YAML double-
+ *  quoted scalars — so `parsePersonaFrontMatter` round-trips them exactly on
+ *  one line each. */
+export function personaFrontMatter(name: string, description: string): string {
+  return ['---', 'kind: persona', `name: ${JSON.stringify(name)}`, `description: ${JSON.stringify(description)}`, '---'].join('\n');
+}
+
+/** Persona `AGENTS.md` text: marker front matter plus the verbatim (trimmed)
+ *  persona body. Pure: input in, text out. */
+function personaAgentsMd(name: string, description: string, personaText: string): string {
+  const body = personaText.trim();
+  return `${personaFrontMatter(name, description)}\n${body ? `\n${body}\n` : ''}`;
+}
+
+/** Code-folder `AGENTS.md` seed: a `# <name>` heading plus the (trimmed) body.
+ *  Write-if-absent — an existing `AGENTS.md` stays untouched. */
+export async function seedCodeFolderAgents(folderPath: string, name: string, body: string): Promise<void> {
+  const trimmed = body.trim();
+  await seedFile(join(folderPath, 'AGENTS.md'), `# ${name}\n${trimmed ? `\n${trimmed}\n` : ''}`);
+}
+
 /**
  * The persona-folder seeding seam (plan: 0.15-2 dashboard folder UX). Called
  * by the `create_persona_folder` handler and the manager's
@@ -73,9 +95,23 @@ export async function seedManagerRoot(managerRoot: string): Promise<void> {
  * - `personaText` may be empty — both files are ALWAYS written; skipping the
  *   text step never skips the files (the front matter is the persona marker,
  *   mandatory; the folder-scoped editor always has something to open).
- * - Returns the created folder's canonical path.
+ * - Refuses an existing destination (`mkdir` non-recursive, `EEXIST`
+ *   propagates) and leaves it untouched. When a write fails after creation,
+ *   the folder is removed again before the error rethrows.
+ * - Returns the created folder's canonical path. `name` is not validated
+ *   here; callers validate with `isValidFolderName`.
  */
 export async function seedPersonaFolder(root: string, name: string, description: string, personaText: string): Promise<string> {
-  void [root, name, description, personaText];
-  throw new Error('not implemented');
+  const folderPath = join(root, name);
+  let created = false;
+  try {
+    await mkdir(folderPath);
+    created = true;
+    await writeFile(join(folderPath, 'AGENTS.md'), personaAgentsMd(name, description, personaText), 'utf8');
+    await writeFile(join(folderPath, 'memory.md'), MEMORY_STUB, 'utf8');
+    return await realpath(folderPath);
+  } catch (error) {
+    if (created) await rm(folderPath, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
 }
