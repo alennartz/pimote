@@ -314,4 +314,4 @@ Run `tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs` using its do
 Confirm no per-connection manager lifecycle remains. Confirm configured scan roots remain unchanged. Confirm manager-root seeding preserves user files across restart and manager-session resources survive normal boot enumeration. The pi-065 fail-fast contract must stay green without a patch-package change.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run`, `npm run test --workspace=client -- --run`, `npm run build:shared`, and `npm run check` pass. The manual manager-tool and lifecycle journeys pass. No manager-specific commands or stream wrappers remain in shared source.
-**Status:** not started
+**Status:** done

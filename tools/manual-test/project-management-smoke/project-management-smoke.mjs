@@ -87,6 +87,21 @@ async function ensureManagerMode() {
   return (await evalBrowser(`Boolean(document.querySelector('textarea[aria-label="Message the manager"]'))`)) === true;
 }
 
+/** Prompt the viewed session through the ordinary conversation composer
+ *  (manager sessions are ordinary sessions on the conversation surface). */
+async function sendSessionPrompt(text) {
+  const filled = await fillSelector('textarea[aria-label="Message"]', text);
+  if (filled !== true) return false;
+  await evalBrowser(`(() => { const b = document.querySelector('button[title="Send"]'); if (!b) return false; b.click(); return true; })()`);
+  return true;
+}
+
+/** Close the viewed session — back to the dashboard, session untouched. */
+async function closeViewedSession() {
+  await evalBrowser(`(() => { const b = document.querySelector('button.bg-primary span[title="Close session"]'); if (!b) return false; b.click(); return true; })()`);
+  await wait(1000);
+}
+
 // -------------------------------------------------------------------- main
 
 async function main() {
@@ -796,6 +811,11 @@ async function main() {
     if (jetsonUsable) {
       const managerMode = await ensureManagerMode();
       assert(managerMode, 'manager composer reachable from the home toolbar');
+      // The manager area is a dashboard panel (side-by-side on desktop).
+      const panelSeen = await evalBrowser(
+        `(() => { const b = document.querySelector('[aria-label="Dismiss manager conversation"]'); return Boolean(b && b.offsetParent !== null); })()`,
+      );
+      assert(panelSeen === true, 'manager area opens as a dashboard panel beside the folders');
       const filled = await fillSelector('textarea[aria-label="Message the manager"]', 'Reply with exactly: PONG');
       assert(filled, 'manager composer accepts text');
       await evalBrowser(`(() => { const b = document.querySelector('button[title="Send"]'); if (!b) return false; b.click(); return true; })()`);
@@ -810,11 +830,12 @@ async function main() {
         }
       }
       soft(sawAbort, 'Send swaps to Abort while the manager is working', 'local model answered too fast to observe');
-      // First admitted prompt opens the manager panel side-by-side on desktop.
-      const panelSeen = await evalBrowser(
-        `(() => { const b = document.querySelector('[aria-label="Dismiss manager conversation"]'); return Boolean(b && b.offsetParent !== null); })()`,
+      // Submission is ordinary conversation navigation: the manager session
+      // opens on the conversation surface, not in a dashboard transcript pane.
+      const conversationOpen = await evalBrowser(
+        `(() => Boolean(document.querySelector('textarea[aria-label="Message"]') && document.querySelector('button.bg-primary span[title="Close session"]')))()`,
       );
-      assert(panelSeen === true, 'manager conversation opens side-by-side on desktop');
+      assert(conversationOpen === true, 'submission opens the manager session on the ordinary conversation surface');
       let replied = false;
       for (let i = 0; i < 90; i++) {
         await wait(1000);
@@ -840,12 +861,9 @@ async function main() {
     if (jetsonUsable) {
       const listNow = await probeA.listFolders({ includeArchived: true, repin: true });
       const expectedCount = listNow.data.folders.length;
-      await ensureManagerMode();
-      await fillSelector(
-        'textarea[aria-label="Message the manager"]',
+      await sendSessionPrompt(
         'Call the pimote_list_folders tool now. After it returns, reply with ONLY the number of folders, nothing else.',
       );
-      await evalBrowser(`(() => { const b = document.querySelector('button[title="Send"]'); if (!b) return false; b.click(); return true; })()`);
       let sawToolCall = false;
       let answer = null;
       for (let i = 0; i < 90; i++) {
@@ -873,12 +891,9 @@ async function main() {
     section('B — manager tool use (pimote_folder_tree)');
     // ============================================================
     if (jetsonUsable) {
-      await ensureManagerMode();
-      await fillSelector(
-        'textarea[aria-label="Message the manager"]',
+      await sendSessionPrompt(
         'Call the pimote_folder_tree tool now (it takes no arguments). After it returns, reply with ONLY the word TREEDONE, nothing else.',
       );
-      await evalBrowser(`(() => { const b = document.querySelector('button[title="Send"]'); if (!b) return false; b.click(); return true; })()`);
       let sawTreeCall = false;
       let treeDone = false;
       for (let i = 0; i < 90; i++) {
@@ -916,9 +931,7 @@ async function main() {
     section('B — manager abort');
     // ============================================================
     if (jetsonUsable) {
-      await ensureManagerMode();
-      await fillSelector('textarea[aria-label="Message the manager"]', 'Count from 1 to 300 slowly, writing every number on its own line. Do not stop early.');
-      await evalBrowser(`(() => { const b = document.querySelector('button[title="Send"]'); if (!b) return false; b.click(); return true; })()`);
+      await sendSessionPrompt('Count from 1 to 300 slowly, writing every number on its own line. Do not stop early.');
       let abortClicked = false;
       for (let i = 0; i < 40; i++) {
         await wait(500);
@@ -955,13 +968,57 @@ async function main() {
     }
 
     // ============================================================
-    section('B — manager transcript is ephemeral across connections');
+    section('B — manager session persists across connections (reload reattach)');
     // ============================================================
+    // Sessions are server-owned: reload drops only the viewer, and the
+    // reconnect restores the same persisted transcript.
     await browser(['reload']);
     await browser(['wait', 3000]);
-    const managerGone = await evalBrowser(`Boolean(document.querySelector('[aria-label="Dismiss manager conversation"]'))`);
-    const pageAfterReload = String(await evalBrowser('document.body.innerText'));
-    assert(managerGone === false && !pageAfterReload.includes('PONG'), 'fresh connection starts with an empty manager transcript');
+    const restoredText = String(
+      await evalBrowser(`Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ')`),
+    );
+    assert(/PONG/i.test(restoredText), 'reconnect restores the same manager transcript (persisted, not ephemeral)');
+
+    // ============================================================
+    section('B — disconnect during a run keeps processing (reconnect mid-run)');
+    // ============================================================
+    await sendSessionPrompt('Count from 1 to 30, one number per line, no other text. Do not stop early.');
+    await wait(2500);
+    await browser(['reload']);
+    await browser(['wait', 2000]);
+    let countCompleted = false;
+    for (let i = 0; i < 30; i++) {
+      await wait(1000);
+      const assistant = String(
+        await evalBrowser(`Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ')`),
+      );
+      if (/\b30\b/.test(assistant)) {
+        countCompleted = true;
+        break;
+      }
+    }
+    soft(countCompleted, 'run keeps processing while the viewer is gone; reconnect shows its output', 'local model slow or refused the count');
+
+    // ============================================================
+    section('B — manager history reopening (old record resumes)');
+    // ============================================================
+    await closeViewedSession();
+    assert((await ensureManagerMode()) === true, 'manager area reachable again from the dashboard');
+    await evalBrowser(
+      `(() => { const b = Array.from(document.querySelectorAll('button')).find((x) => /Previous sessions/.test(x.textContent ?? '')); if (!b) return false; b.click(); return true; })()`,
+    );
+    await wait(1500);
+    const recordClicked = await evalBrowser(
+      `(() => { const row = Array.from(document.querySelectorAll('button')).find((b) => /PONG|Count from 1/.test(b.textContent ?? '')); if (!row) return 'no-record'; row.click(); return 'clicked'; })()`,
+    );
+    assert(recordClicked === 'clicked', `manager session list offers the old record (${recordClicked})`);
+    await browser(['wait', 1500]);
+    const resumedText = String(
+      await evalBrowser(`Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ')`),
+    );
+    assert(/PONG/i.test(resumedText), 'selecting the old record resumes its transcript');
+    await browser(['screenshot', join(shotsDir, '07b-manager-history.png')], { allowFailure: true });
+    await closeViewedSession();
 
     // ============================================================
     section('B — missing member chip after disk deletion + restart');
@@ -1015,11 +1072,12 @@ async function main() {
       await fillSelector('textarea[aria-label="Message the manager"]', 'Reply with exactly: MOBILE');
       await evalBrowser(`(() => { const b = document.querySelector('button[title="Send"]'); if (!b) return false; b.click(); return true; })()`);
       await browser(['wait', 1200]);
-      const sheetComposer = await evalBrowser(
-        `(() => { const b = document.querySelector('[aria-label="Dismiss manager conversation"]'); return Boolean(b && b.offsetParent !== null); })()`,
+      const mobileConversation = await evalBrowser(
+        `(() => { const t = document.querySelector('textarea[aria-label="Message"]'); return Boolean(t && t.offsetParent !== null); })()`,
       );
-      assert(sheetComposer === true, 'manager chat opens fullscreen on mobile once the conversation exists');
+      assert(mobileConversation === true, 'mobile manager submission opens the ordinary conversation surface');
       await browser(['screenshot', join(shotsDir, '10-mobile-manager.png')], { allowFailure: true });
+      await closeViewedSession();
     } else {
       soft(false, 'mobile manager sheet (conversation-driven)', 'no jetson provider — the sheet needs an admitted prompt');
     }

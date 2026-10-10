@@ -66,10 +66,10 @@ async function gitInit(dir, branch = 'main') {
   await git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'init');
 }
 
-/** Persona folder: AGENTS.md opening with YAML front matter (string `name:`). */
+/** Persona folder: AGENTS.md opening with YAML front matter (`kind: persona`, string `name:`). */
 async function writePersona(dir, name, description) {
   await mkdir(dir, { recursive: true });
-  const front = ['---', `name: ${name}`, `description: ${description}`, '---'].join('\n');
+  const front = ['---', 'kind: persona', `name: ${name}`, `description: ${description}`, '---'].join('\n');
   await writeFile(join(dir, 'AGENTS.md'), `${front}\nYou are ${name}, a fixture persona.\n`);
 }
 

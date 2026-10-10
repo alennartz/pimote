@@ -53,10 +53,10 @@ export async function gitInit(dir, branch, { dirty = false, commit = true } = {}
   if (dirty) await writeFile(join(dir, 'dirty.txt'), 'uncommitted\n');
 }
 
-/** Persona folder: AGENTS.md opening with YAML front matter (string `name:` key). */
+/** Persona folder: AGENTS.md opening with YAML front matter (`kind: persona`, string `name:` key). */
 export async function writePersona(dir, name, description) {
   await mkdir(dir, { recursive: true });
-  const front = ['---', `name: ${name}`, `description: ${description}`, '---'].join('\n');
+  const front = ['---', 'kind: persona', `name: ${name}`, `description: ${description}`, '---'].join('\n');
   await writeFile(join(dir, 'AGENTS.md'), `${front}\nYou are ${name}, a fixture persona.\n`);
 }
 
