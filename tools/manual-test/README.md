@@ -423,7 +423,11 @@ archived, create-folder (mkdir + git init), resume of an existing session,
 the active-session dot, virtualized row lookup through dashboard scrolling,
 server-authoritative dashboard search and picker search (persona display names
 included), the manager chat (streamed reply, `pimote_list_folders` +
-`pimote_folder_tree` tool use, abort, ephemeral reset on reconnect), the
+`pimote_folder_tree` tool use, abort, persisted transcript across reload
+reconnect, disconnect-mid-run persistence, history reopening behind the
+`Previous sessions` click, a persisted manager session record on disk, and
+the persona tools `pimote_create_persona` → `folders_changed` → dashboard
+row plus `pimote_list_personas` working directories), the
 missing-member warning chip, the unscanned-cwd `classifyFolder` session
 fallback (list/open in cwds outside the scan roots never lists or curates
 them), legacy `multiRepo` registry read-compat (loads unchanged; the next
@@ -530,7 +534,13 @@ spawns. No real LLM, network, or push subscription required.
   schema defaults, and `pimote_folder_tree` reports the sparse tree shape
   (occurrences with `path`/`via`/`entry`/`children`; hub member symlinks
   surface as `via: 'shortcut'` occurrences referencing the member entries;
-  scan and shortcut occurrences share one entry object). Complements the
+  scan and shortcut occurrences share one entry object),
+  `pimote_list_personas` returns persona rows whose `workingDirectory` is
+  the canonical `folderPath` (code folders and hubs excluded), and
+  `pimote_create_persona` materializes the persona folder (parseable front
+  matter, caller prompt folded in, memory stub) and publishes it exactly on
+  success (discovery invalidation + `folders_changed` pairing — failed
+  creations publish nothing and leave no disk effects). Complements the
   LLM-driven manager-chat phase of `project-management-smoke`, which cannot
   force tool choice.
 
@@ -545,13 +555,51 @@ node tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs
 
 **Inputs:** none by default (fresh `os.tmpdir()` sandbox; `MTMS_ROOT=<dir>`
 reuses an existing fixture tree containing `<root>/alpha`, `<root>/beta` git
-repos and an `<root>/omega` persona folder instead of fabricating one).
+repos and an `<root>/omega` persona folder instead of fabricating one; the
+`pimote_create_persona` execution is then skipped — it would mutate the
+user-supplied tree).
 
 **Outputs:** per-check ✓/✗ lines on stdout; non-zero exit on any failure.
 
 **Prerequisites:** workspaces built (`npm run build`), `git` on `PATH` (the
 real hub materializer runs `git init`). No server, browser, network, or LLM
 required.
+
+### manager-lifecycle-smoke
+
+**Purpose:** Exercise the manager persona root's boot/lifecycle surfaces
+(the `manager-lifecycle` topic) against a real sandboxed pimote, driven
+over the wire (WsProbe) — no browser, no LLM: fresh-boot seeding of the
+default manager root (`~/.local/state/pimote/manager` with a persona-marker
+`AGENTS.md` and `memory.md`), seeding idempotency and user-file preservation
+across restarts (byte-identical, no merge/overwrite), the placement guard
+(a manager root that is or contains home fails boot with the guidance
+message), nested manager roots (boot OK; the entry is excluded from
+`list_folders` rows while the response carries the canonical `managerRoot`
+fact), and persisted manager sessions (list, folderless open with
+`disk_full_resync` transcript replay, a run in flight across a disconnect
+keeps processing server-side, reconnect replays from the client's cursor
+with `incremental_replay`, and records stay resumable after a full server
+restart).
+
+**Location:** `tools/manual-test/manager-lifecycle-smoke/manager-lifecycle-smoke.mjs`
+(shared helpers from `tools/manual-test/lib/`).
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/manager-lifecycle-smoke/manager-lifecycle-smoke.mjs
+```
+
+**Inputs:** none (fresh `os.tmpdir()` sandbox; `MLS_KEEP=1` preserves the
+sandbox on a passing run).
+
+**Outputs:** per-check ✓/✗/⊝ lines on stdout; non-zero exit on hard
+failure. On failure the sandbox and boot logs are preserved.
+
+**Prerequisites:** workspaces built (`npm run build`). No browser, network,
+or LLM required. Tracks and kills only the child PID it spawns.
 
 ### agents-md-editor-smoke
 

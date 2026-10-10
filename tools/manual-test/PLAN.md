@@ -262,12 +262,20 @@ creates the symlink hub + `git init` + `.gitignore` + generated `AGENTS.md`)
 and disband removes it; epoch-stamped `folders_changed` deltas merge `changed`
 rows and drop `removedPaths` in both clients. Archived-row probes explicitly
 set `includeArchived`. Fresh discovery comparisons explicitly repin. Folder sources contribute repo/hub entries (missing ones
-provision via `onFolderOpen` at open time); the manager chat prompts a
-per-connection ephemeral agent whose pimote toolset (`pimote_list_folders`,
-`pimote_folder_tree`, …) answers over real server APIs, with abort and
-transcript reset on reconnect. Manager folder listings remain complete,
-unwindowed registry reads. Manager tree reads share the repo-index discovery
-cache and accept one TTL of staleness.
+provision via `onFolderOpen` at open time); the manager is a persisted
+persona folder at `managerRoot` (default `~/.local/state/pimote/manager`,
+boot-seeded with a persona-marker `AGENTS.md` + `memory.md`, user files
+never overwritten; a manager root that is or contains home fails boot with
+guidance). The dashboard text box opens or continues ordinary persisted
+manager sessions: submission creates a session on the ordinary
+conversation surface, old sessions resume behind the `Previous sessions`
+click and across full server restarts, a disconnect keeps runs processing
+server-side, and reconnect replays from the client's cursor. The
+manager-exclusive pimote toolset (`pimote_list_folders`,
+`pimote_folder_tree`, `pimote_create_persona`, `pimote_list_personas`, …)
+answers over real server APIs; `pimote_create_persona` publishes new
+persona folders via `folders_changed`. Manager folder
+listings remain complete, unwindowed registry reads. Manager tree reads share the repo-index discovery cache and accept one TTL of staleness.
 
 **Why:** This replaced the sidebar as the primary navigation surface; hubs
 are the multi-repo model; the manager is the dashboard's second half.
@@ -279,7 +287,11 @@ probes);
 `tools/manual-test/manager-tools-smoke/` drives the manager toolset
 deterministically (registration + execution against real ports, no LLM) to
 backstop the LLM-dependent tool-choice assertions in the chat phase;
-`tools/manual-test/folder-paging-smoke/` drives the windowed-listing
+`tools/manual-test/manager-lifecycle-smoke/` drives the manager persona-root
+boot lifecycle at the wire level (seeding and user-file preservation,
+placement guard, nested-root listing exclusion, persisted manager sessions
+across a full server restart, disconnect-mid-run with cursor replay — no
+browser or LLM); `tools/manual-test/folder-paging-smoke/` drives the windowed-listing
 behaviors at scale over a ~250-row fixture — window continuity under deep
 scroll (including curation edits mid-scroll), two-tier server search with
 `matchedSessionIds` narrowing and debounced typing bursts, `folders_changed`
