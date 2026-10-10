@@ -311,6 +311,22 @@ describe('FolderRegistry.createHub — widened membership and persona variant', 
     expect(await readHubAgents(row.path)).toContain('We build the widget.');
   });
 
+  it('seeds exact nature-specific member links at creation', async () => {
+    const registry = makeRegistry();
+    const personaPath = await makePersona(join(rootDir, 'ada'));
+    const row = await registry.createHub({ name: 'mixed', root: rootDir, memberPaths: [repoA, personaPath] });
+    const content = await readHubAgents(row.path);
+    const inner = content.slice(content.indexOf(OPEN) + OPEN.length, content.indexOf(CLOSE));
+    expect(inner).toContain(seededMemberLine('repo-a', 'code'));
+    expect(inner).toContain(seededMemberLine('ada', 'persona'));
+  });
+
+  it('seeds the nonempty persona-hub text body', async () => {
+    const registry = makeRegistry();
+    const row = await registry.createHub({ name: 'team', root: rootDir, memberPaths: [repoA], description: 'Team', personaText: 'Coordinate the team.' });
+    expect(await readHubAgents(row.path)).toContain('Coordinate the team.');
+  });
+
   it('seeds a persona marker and memory.md for the persona-hub variant', async () => {
     const registry = makeRegistry();
 

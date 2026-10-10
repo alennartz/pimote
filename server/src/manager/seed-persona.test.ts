@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { seedPersonaFolder, MEMORY_STUB } from './seed.js';
@@ -22,7 +22,7 @@ describe('seedPersonaFolder', () => {
   it('creates the folder under root and returns its canonical path', async () => {
     const canonical = await seedPersonaFolder(rootDir, 'ada', 'Research assistant', 'You are Ada.');
 
-    // The returned path is the created folder: the seeded files live there.
+    expect(canonical).toBe(await realpath(join(rootDir, 'ada')));
     expect(await readFile(join(canonical, 'AGENTS.md'), 'utf8')).toContain('You are Ada.');
   });
 
@@ -37,7 +37,7 @@ describe('seedPersonaFolder', () => {
   it('round-trips persona marker values that need YAML quoting', async () => {
     const name = 'Ada: the "first"';
     const description = 'Research — plans, specs';
-    const canonical = await seedPersonaFolder(rootDir, 'ada-dir', name, 'Body.');
+    const canonical = await seedPersonaFolder(rootDir, name, description, 'Body.');
     const content = await readFile(join(canonical, 'AGENTS.md'), 'utf8');
 
     expect(parsePersonaFrontMatter(content)).toEqual({ name, description });

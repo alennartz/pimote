@@ -877,6 +877,13 @@ describe('FolderStore', () => {
 });
 
 describe('FolderStore hub membership wrappers', () => {
+  it.each(['addHubMember', 'removeHubMember'] as const)('%s rejects unsuccessful wire responses', async (method) => {
+    routeSends({
+      add_hub_member: () => ({ success: false, error: 'Membership refused' }),
+      remove_hub_member: () => ({ success: false, error: 'Membership refused' }),
+    });
+    await expect(folderStore[method]('/r/hub', '/r/ada')).rejects.toThrow('Membership refused');
+  });
   it('addHubMember sends add_hub_member with the hub and member paths', async () => {
     routeSends({ add_hub_member: () => ({ success: true }) });
 

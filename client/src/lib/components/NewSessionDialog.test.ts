@@ -67,6 +67,12 @@ function shows(text: string): boolean {
   return (document.body.textContent ?? '').includes(text);
 }
 
+function codeKindButton(): HTMLButtonElement {
+  const button = document.querySelector('[data-folder-icon="code"]')?.closest('button');
+  if (!(button instanceof HTMLButtonElement)) throw new Error('code kind button not found');
+  return button;
+}
+
 function button(text: string): HTMLButtonElement {
   const found = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === text);
   if (!(found instanceof HTMLButtonElement)) throw new Error(`button not found: ${text}`);
@@ -81,6 +87,7 @@ function rowButton(text: string): HTMLButtonElement {
 }
 
 beforeEach(() => {
+  vi.mocked(connection.send).mockClear();
   folderStore.folders = [alpha, persona];
   folderStore.roots = ['/roots'];
 });
@@ -129,18 +136,18 @@ describe('folder creation', () => {
     destroy = render();
     await tick();
 
-    button('Create new folder').click();
+    codeKindButton().click();
     await tick();
-    // Single configured root skips the root-selection step.
-    expect(shows('New folder in')).toBe(true);
 
     const input = document.body.querySelector('input[placeholder="Folder name"]') as HTMLInputElement;
     input.value = 'beta';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
 
+    button('Next').click();
+    await tick();
     button('Create').click();
-    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith({ type: 'create_folder', root: '/roots', name: 'beta' }));
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'create_folder', root: '/roots', name: 'beta' })));
     await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith({ type: 'open_session', folderPath: '/roots/beta' }));
   });
 
@@ -153,7 +160,7 @@ describe('folder creation', () => {
     destroy = render();
     await tick();
 
-    button('Create new folder').click();
+    codeKindButton().click();
     await tick();
 
     const input = document.body.querySelector('input[placeholder="Folder name"]') as HTMLInputElement;
@@ -161,8 +168,11 @@ describe('folder creation', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
 
+    button('Next').click();
+    await tick();
     button('Create').click();
     await vi.waitFor(() => expect(shows('boom')).toBe(true));
+    expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session' }));
   });
 });
 

@@ -47,6 +47,7 @@ function makeFolder(overrides: Partial<FolderInfo> & Pick<FolderInfo, 'path' | '
 }
 
 const alpha = makeFolder({ path: '/roots/alpha', name: 'alpha' });
+const ada = makeFolder({ path: '/roots/ada', name: 'ada', nature: 'persona' });
 
 function shows(text: string): boolean {
   return (document.body.textContent ?? '').includes(text);
@@ -98,7 +99,8 @@ function render() {
 let destroy: (() => void) | null = null;
 
 beforeEach(() => {
-  folderStore.folders = [alpha];
+  vi.mocked(connection.send).mockClear();
+  folderStore.folders = [alpha, ada];
   folderStore.roots = ['/roots'];
   vi.mocked(connection.send).mockImplementation(async (command: any) => {
     if (['create_folder', 'create_persona_folder', 'create_hub'].includes(command.type)) {
@@ -174,6 +176,81 @@ describe('FolderCreatorWizard — steps composed by kind', () => {
     await tick();
 
     expect(shows('Persona')).toBe(true);
+  });
+});
+
+describe('FolderCreatorWizard — boundaries and failures', () => {
+  it('offers persona members in the hub picker', async () => {
+    destroy = render();
+    kindButton('code-hub').click();
+    await tick();
+    fillName('beta');
+    button('Next').click();
+    await tick();
+    expect(checkboxRow('ada')).toBeTruthy();
+  });
+
+  it('uses the selected configured root when two roots exist', async () => {
+    folderStore.roots = ['/roots', '/other'];
+    destroy = render();
+    kindButton('code').click();
+    await tick();
+    const root = [...document.querySelectorAll('button, option')].find((el) => el.textContent?.trim() === '/other');
+    if (root instanceof HTMLOptionElement) {
+      const select = root.parentElement as HTMLSelectElement;
+      select.value = root.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+      expect(root).toBeTruthy();
+      (root as HTMLElement).click();
+    }
+    fillName('beta');
+    button('Next').click();
+    await tick();
+    button('Create').click();
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'create_folder', root: '/other' })));
+  });
+
+  it('prevents creation with an empty name', async () => {
+    destroy = render();
+    kindButton('code').click();
+    await tick();
+    button('Next').click();
+    await tick();
+    document.querySelectorAll('button').forEach((el) => {
+      if (el.textContent?.trim() === 'Create') el.click();
+    });
+    await tick();
+    expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'create_folder' }));
+  });
+
+  it.each([
+    ['code', 'create_folder'],
+    ['persona', 'create_persona_folder'],
+    ['code-hub', 'create_hub'],
+    ['persona-hub', 'create_hub'],
+    ['code', 'open_session'],
+  ])('shows a server rejection for %s from %s', async (kind, failureType) => {
+    vi.mocked(connection.send).mockImplementation(async (command: any) => {
+      if (command.type === failureType) return { id: '1', success: false, error: 'Server refused the operation' };
+      return { id: '1', success: true, data: { folderPath: '/roots/beta' } };
+    });
+    destroy = render();
+    kindButton(kind).click();
+    await tick();
+    fillName('beta');
+    button('Next').click();
+    await tick();
+    if (kind.endsWith('-hub')) {
+      checkboxRow('ada').click();
+      button('Next').click();
+      await tick();
+    }
+    button('Create').click();
+    await vi.waitFor(() => expect(shows('Server refused the operation')).toBe(true));
+    if (failureType !== 'open_session') {
+      expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session' }));
+    }
   });
 });
 
@@ -255,17 +332,25 @@ describe('FolderCreatorWizard — flows end in a session', () => {
     await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session', folderPath: '/roots/beta' })));
   });
 
-  it('the text step is skippable — the flow still creates and opens a session without text', async () => {
+  it.each(['code', 'persona', 'code-hub', 'persona-hub'])('the %s text step is skippable and still opens a session', async (kind) => {
     destroy = render();
     await tick();
 
-    kindButton('code').click();
+    kindButton(kind).click();
     await tick();
     fillName('beta');
     button('Next').click();
     await tick();
+    if (kind.endsWith('-hub')) {
+      checkboxRow('ada').click();
+      button('Next').click();
+      await tick();
+    }
     button('Create').click();
-    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'create_folder', name: 'beta' })));
+    const type = kind.endsWith('-hub') ? 'create_hub' : kind === 'persona' ? 'create_persona_folder' : 'create_folder';
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type, name: 'beta' })));
+    const command = vi.mocked(connection.send).mock.calls.find(([command]) => command.type === type)![0];
+    if (kind.startsWith('persona')) expect(command).toMatchObject({ personaText: '' });
     await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session', folderPath: '/roots/beta' })));
   });
 });

@@ -31,6 +31,7 @@ vi.mock('$lib/stores/connection.svelte.js', () => {
 const { connection } = await import('$lib/stores/connection.svelte.js');
 const { default: FolderList } = await import('./FolderList.svelte');
 const { folderStore } = await import('$lib/stores/folder-store.svelte.js');
+const { fileEditorStore } = await import('$lib/stores/file-editor.svelte.js');
 
 function makeFolder(overrides: Partial<FolderInfo> & Pick<FolderInfo, 'path' | 'name'>): FolderInfo {
   return {
@@ -50,8 +51,10 @@ const alpha = makeFolder({ path: '/w/alpha', name: 'alpha' });
 const archivedRow = makeFolder({ path: '/w/old', name: 'old', archived: true });
 
 const memberRepo = { path: '/w/one', name: 'one', branch: null, dirty: false, ahead: 0, behind: 0, missing: false };
-// Registry/source hub: `repos` marks hub membership.
-const hub = makeFolder({ path: '/w/stack', name: 'stack', shortcutCount: 1, repos: [memberRepo] });
+// Membership and disband eligibility are separate facts.
+const hub = makeFolder({ path: '/w/stack', name: 'stack', shortcutCount: 1, repos: [memberRepo], members: [{ path: '/w/one', name: 'one', nature: 'code' }] });
+const shortcutHub = makeFolder({ path: '/w/shortcuts', name: 'shortcuts', shortcutCount: 1 });
+const emptyHub = makeFolder({ path: '/w/empty', name: 'empty', members: [], repos: [] });
 
 let target: HTMLDivElement;
 
@@ -102,10 +105,20 @@ afterEach(() => {
   destroy?.();
   destroy = null;
   vi.mocked(connection.send).mockClear();
+  vi.restoreAllMocks();
   document.body.innerHTML = '';
 });
 
 describe('row context menu — hub membership', () => {
+  it.each([shortcutHub, emptyHub])('offers member management on $name without relying on repos', async (folder) => {
+    folderStore.folders = [folder];
+    destroy = render();
+    await tick();
+    openMenu(folder.path);
+    await tick();
+    expect(menuItem('Manage members…')).not.toBeNull();
+    expect(menuItem('Disband hub') !== null).toBe(folder.repos !== undefined);
+  });
   it('offers "Manage members…" on hub rows only', async () => {
     folderStore.folders = [hub, alpha];
     destroy = render();
@@ -134,8 +147,23 @@ describe('row context menu — hub membership', () => {
   });
 });
 
+describe('row context menu — folder editor', () => {
+  it('opens instructions for the selected folder, not global instructions', async () => {
+    const open = vi.spyOn(fileEditorStore, 'openFolderInstructions').mockResolvedValue();
+    destroy = render();
+    await tick();
+    openMenu(alpha.path);
+    await tick();
+    requireMenuItem('Edit AGENTS.md…').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await tick();
+    expect(open).toHaveBeenCalledWith(alpha.path, alpha.name);
+  });
+});
+
 describe('row context menu — archive and restore', () => {
   it('"Archive project" archives the folder through update_folder', async () => {
+    const sessions = [{ id: 's1', name: 'Session', created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z', messageCount: 1, archived: false }];
+    folderStore.sessions.set(alpha.path, sessions);
     destroy = render();
     await tick();
 
@@ -145,6 +173,9 @@ describe('row context menu — archive and restore', () => {
     await tick();
 
     expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'update_folder', folderPath: '/w/alpha', archived: true }));
+    expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'archive_session' }));
+    expect(folderStore.sessions.get(alpha.path)).toEqual(sessions);
+    expect(sessions[0].archived).toBe(false);
   });
 
   it('archived rows offer "Restore project" which restores through update_folder', async () => {
@@ -159,5 +190,6 @@ describe('row context menu — archive and restore', () => {
     await tick();
 
     expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'update_folder', folderPath: '/w/old', archived: false }));
+    expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'archive_session' }));
   });
 });

@@ -373,6 +373,7 @@ export class FolderStore {
   /**
    * Thin hub-membership wrappers (plan: 0.15-2 dashboard folder UX): one
    * wire command per mutation, keyed by hub path and member path.
+   * Reject unsuccessful responses with the server's user-presentable error.
    */
   async addHubMember(hubPath: string, memberPath: string): Promise<void> {
     void [hubPath, memberPath];

@@ -28,7 +28,7 @@ function makeFolder(overrides: Partial<FolderInfo> & Pick<FolderInfo, 'path' | '
 }
 
 const alpha = makeFolder({ path: '/w/alpha', name: 'alpha' });
-const beta = makeFolder({ path: '/w/beta', name: 'beta' });
+const beta = makeFolder({ path: '/w/beta', name: 'beta', nature: 'persona' });
 
 function row(name: string): HTMLElement {
   const found = [...document.querySelectorAll<HTMLElement>('button, label')].find((el) => el.textContent?.includes(name));
@@ -63,7 +63,7 @@ afterEach(() => {
 });
 
 describe('MemberPicker', () => {
-  it('renders one checkbox row per eligible candidate', () => {
+  it('renders code and persona candidates as checkbox rows', () => {
     ({ destroy } = render([alpha, beta]));
 
     expect(document.body.querySelectorAll('input[type="checkbox"]')).toHaveLength(2);

@@ -47,14 +47,13 @@ function makeFolder(overrides: Partial<FolderInfo> & Pick<FolderInfo, 'path' | '
 }
 
 const adaFolder = makeFolder({ path: '/w/ada', name: 'ada', nature: 'persona', persona: { name: 'Ada' } });
-const otherFolder = makeFolder({ path: '/w/other', name: 'other' });
+const otherFolder = makeFolder({ path: '/w/other', name: 'other', nature: 'persona' });
 
 // Registry hub with one persona member.
 const hub = makeFolder({
   path: '/w/stack',
   name: 'stack',
   shortcutCount: 1,
-  repos: [{ path: '/w/ada', name: 'ada', branch: null, dirty: false, ahead: 0, behind: 0, missing: false }],
   members: [{ path: '/w/ada', name: 'ada', nature: 'persona' }],
 });
 
@@ -89,7 +88,8 @@ let destroy: (() => void) | null = null;
 
 beforeEach(() => {
   folderStore.folders = [adaFolder, otherFolder];
-  vi.mocked(connection.send).mockClear();
+  vi.mocked(connection.send).mockReset();
+  vi.mocked(connection.send).mockResolvedValue({ id: '1', success: true, data: {} });
 });
 
 afterEach(() => {
@@ -123,7 +123,16 @@ describe('HubMembersDialog', () => {
     expect(checkboxRows().some((el) => el.textContent?.includes('ada'))).toBe(false);
   });
 
-  it('adds a picked candidate by path', async () => {
+  it.each(['add_hub_member', 'remove_hub_member'])('shows a server rejection from %s', async (type) => {
+    vi.mocked(connection.send).mockResolvedValue({ id: '1', success: false, error: 'Member change refused' });
+    destroy = render();
+    await tick();
+    if (type === 'add_hub_member') checkboxRow('other').click();
+    else removeButton('ada').click();
+    await vi.waitFor(() => expect(shows('Member change refused')).toBe(true));
+  });
+
+  it('adds a picked persona candidate by path', async () => {
     destroy = render();
     await tick();
 
