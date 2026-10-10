@@ -20,7 +20,7 @@
 //   PM_SHOTS=/tmp/dir  keep coherence screenshots outside the disposable sandbox
 //   PM_KEEP=1          keep the sandbox even on a passing run
 
-import { copyFile, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve as pathResolve } from 'node:path';
@@ -29,6 +29,7 @@ import { makeReporter } from '../lib/report.mjs';
 import { freePort, gitInit, writePersona, seedSession, startPimote, stopPimote, waitForListening } from '../lib/sandbox.mjs';
 import { WsProbe } from '../lib/ws-probe.mjs';
 import { makeBrowserHelpers } from '../lib/browser.mjs';
+import { existingSessionDirs } from '../lib/session-dir.mjs';
 
 const REAL_AGENT_DIR = join(process.env.HOME ?? '', '.pi', 'agent');
 const BROWSER_SESSION = `project-management-${process.pid}`;
@@ -100,6 +101,14 @@ async function sendSessionPrompt(text) {
 async function closeViewedSession() {
   await evalBrowser(`(() => { const b = document.querySelector('button.bg-primary span[title="Close session"]'); if (!b) return false; b.click(); return true; })()`);
   await wait(1000);
+}
+
+/** Reopen the manager record from the dashboard's "Previous sessions" list. */
+async function openManagerHistoryRecord(matcher = 'PONG') {
+  await ensureManagerMode();
+  await evalBrowser(`(() => { const b = Array.from(document.querySelectorAll('button')).find((x) => /Previous sessions/.test(x.textContent ?? '')); if (!b) return 'no-history'; b.click(); return 'clicked'; })()`);
+  await wait(1500);
+  return await evalBrowser(`(() => { const row = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.includes(${JSON.stringify(matcher)})); if (!row) return 'no-record'; row.click(); return 'clicked'; })()`);
 }
 
 // -------------------------------------------------------------------- main
@@ -850,6 +859,11 @@ async function main() {
       }
       soft(replied, 'manager streams a reply containing PONG', 'local model unreachable or slow — see server log');
       await browser(['screenshot', join(shotsDir, '07-manager-reply.png')], { allowFailure: true });
+      // Submission persists an ordinary pi session record under the manager root.
+      const managerRoot = join(sandboxHome, '.local', 'state', 'pimote', 'manager');
+      const mgrSessionDirs = await existingSessionDirs(join(agentDir, 'sessions'), managerRoot);
+      const mgrRecords = (await Promise.all(mgrSessionDirs.map((dir) => readdir(dir).catch(() => [])))).flat().filter((name) => name.endsWith('.jsonl'));
+      assert(mgrRecords.length > 0, 'manager submission persisted a session record on disk');
     } else {
       console.log('  ⊝ manager LLM journey skipped — no jetson provider in models.json');
       softFailures.push('manager LLM (no provider)');
@@ -1019,6 +1033,86 @@ async function main() {
     assert(/PONG/i.test(resumedText), 'selecting the old record resumes its transcript');
     await browser(['screenshot', join(shotsDir, '07b-manager-history.png')], { allowFailure: true });
     await closeViewedSession();
+
+    // ============================================================
+    section('B — manager persona tools (create_persona → folders_changed → dashboard row)');
+    // ============================================================
+    if (jetsonUsable) {
+      const personaName = 'zeta-guide';
+      const personaPathC = join(await realpath(rootA), personaName);
+      const reopenedForCreate = await openManagerHistoryRecord('PONG');
+      assert(reopenedForCreate === 'clicked', `manager history record reopens for the persona tool run (${reopenedForCreate})`);
+      await sendSessionPrompt(
+        `Call the pimote_create_persona tool now with name "${personaName}", parentPath ${JSON.stringify(rootA)}, description "Persona created through the manager chat". ` +
+          'Then reply with ONLY the word CREATED, nothing else.',
+      );
+      let sawCreateCall = false;
+      for (let i = 0; i < 90; i++) {
+        await wait(1000);
+        const state = await evalBrowser(
+          `(() => {
+            const assistant = Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ');
+            const toolNames = Array.from(document.querySelectorAll('.tool-block .tool-name')).map((e) => e.textContent.trim());
+            return { toolCall: toolNames.includes('pimote_create_persona'), done: /CREATED/.test(assistant), tail: document.body.innerText.slice(-400) };
+          })()`,
+        );
+        if (state?.toolCall) sawCreateCall = true;
+        if (state?.done) break;
+        if (state && !state.tail.includes('Abort') && i > 30) break;
+      }
+      soft(sawCreateCall, 'manager rendered a pimote_create_persona tool call', 'model chose not to call the tool');
+      if (sawCreateCall) {
+        const agentsMd = await readFile(join(personaPathC, 'AGENTS.md'), 'utf8').catch(() => '');
+        assert(agentsMd.includes('kind: persona'), 'create_persona materialized the persona folder (marker front matter on disk)');
+        assert(agentsMd.includes('memory.md'), 'created persona prompt keeps the maintain-memory.md instruction');
+        assert((await readFile(join(personaPathC, 'memory.md'), 'utf8').catch(() => '')).length > 0, 'created persona folder carries a memory.md stub');
+        const delta = await probeA
+          .waitForEvent('folders_changed', (e) => (e.changed ?? []).some((row) => row.path === personaPathC), 15_000)
+          .catch(() => null);
+        assert(Boolean(delta), 'folders_changed delta broadcasts the new persona folder');
+        await closeViewedSession();
+        const rowSeen = await rowText(personaPathC);
+        assert(rowSeen.includes(personaName), `dashboard folder list shows the new persona row without reload (${rowSeen.slice(0, 60).replaceAll('\n', ' ')})`);
+        assert((await rowIcon(personaPathC)) === 'persona', 'new dashboard row renders the persona icon');
+        await browser(['screenshot', join(shotsDir, '09-manager-persona.png')], { allowFailure: true });
+
+        // list_personas through the chat: rows carry working directories.
+        const reopened = await openManagerHistoryRecord('PONG');
+        assert(reopened === 'clicked', 'manager history record reopens for the follow-up tool run');
+        await sendSessionPrompt(
+          `Call the pimote_list_personas tool now. After it returns, reply with ONLY the workingDirectory value of the persona named "${personaName}", nothing else.`,
+        );
+        let sawListCall = false;
+        let directory = '';
+        for (let i = 0; i < 90; i++) {
+          await wait(1000);
+          const state = await evalBrowser(
+            `(() => {
+              const assistant = Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ');
+              const toolNames = Array.from(document.querySelectorAll('.tool-block .tool-name')).map((e) => e.textContent.trim());
+              return { toolCall: toolNames.includes('pimote_list_personas'), assistant, tail: document.body.innerText.slice(-400) };
+            })()`,
+          );
+          if (state?.toolCall) sawListCall = true;
+          if (state && String(state.assistant ?? '').includes(personaName)) {
+            directory = String(state.assistant);
+            break;
+          }
+          if (state && !state.tail.includes('Abort') && i > 30) break;
+        }
+        soft(sawListCall, 'manager rendered a pimote_list_personas tool call', 'model chose not to call the tool');
+        assert(
+          directory.includes(personaPathC),
+          `list_personas reply carries the persona working directory (${directory.slice(0, 80).replaceAll('\n', ' ')})`,
+        );
+        await closeViewedSession();
+      } else {
+        await closeViewedSession();
+      }
+    } else {
+      console.log('  ⊝ manager persona tools skipped — no jetson provider in models.json');
+      softFailures.push('manager persona tools (no provider)');
+    }
 
     // ============================================================
     section('B — missing member chip after disk deletion + restart');

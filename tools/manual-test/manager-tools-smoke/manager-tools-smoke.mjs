@@ -11,8 +11,12 @@
 // Covers, hard and without an LLM: the tool names are the renamed ones
 // (pimote_list_folders / pimote_folder_tree — no `*_projects` survives),
 // pimote_list_folders returns complete FolderInfo rows with schema defaults,
-// and pimote_folder_tree reports the sparse tree shape — hub member symlinks
-// surface as `via: 'shortcut'` occurrences referencing the member entries.
+// pimote_folder_tree reports the sparse tree shape — hub member symlinks
+// surface as `via: 'shortcut'` occurrences referencing the member entries —
+// pimote_list_personas returns persona rows whose workingDirectory is the
+// canonical folderPath, and pimote_create_persona materializes the persona
+// folder (front matter + memory stub) and publishes it exactly on success
+// (discovery invalidation + folders_changed pairing).
 //
 // Parameterized for reuse: MTMS_ROOT=<dir> uses an existing fixture tree
 // (containing at least two git repos `<root>/alpha`, `<root>/beta` and a
@@ -105,11 +109,14 @@ async function main() {
   const tree = { tree: () => scanFolderModel({ roots: [root], onWarning: () => {} }) };
   // Duck-typed RepoIndex seam: the probe fabricates the repo rows, the
   // registry and tools consume them through the same narrow port boot wires.
+  const invalidations = [];
+  const notifications = [];
   const repos = {
     list: async () => [await repoRow(alpha), await repoRow(beta)],
     listSourceHubs: async () => [],
     listSourcePersonas: async () => [],
     runOpenHooks: async () => {},
+    invalidateListing: () => invalidations.push(Date.now()),
   };
   const folders = new FolderRegistry(repos, storeDir, tree);
   const context = {
@@ -125,6 +132,7 @@ async function main() {
       archiveSessions: async () => [],
     },
     config: { roots: [root], managerRoot: sandbox },
+    notifyFoldersChanged: (changedPaths) => notifications.push(changedPaths),
   };
 
   // Identity is canonical: compare against real paths everywhere below.
@@ -237,6 +245,77 @@ async function main() {
   assert(reposResult.isError !== true && Array.isArray(reposResult.structuredContent), 'list_repos executes against the repos port');
   const sessionsResult = await tools.get('pimote_list_sessions').execute('call-4', {});
   assert(sessionsResult.isError !== true && Array.isArray(sessionsResult.structuredContent), 'list_sessions executes against the sessions port');
+
+  // --- pimote_list_personas: persona rows from the folder model ---
+  section('pimote_list_personas execution');
+  const personasResult = await tools.get('pimote_list_personas').execute('call-5', {});
+  assert(personasResult.isError !== true, 'list_personas executes without error');
+  const personaRows = personasResult.structuredContent?.personas;
+  assert(Array.isArray(personaRows), 'structured output carries a personas array');
+  const omegaPersona = personaRows?.find((row) => row.folderPath === omegaC);
+  assert(omegaPersona?.name === 'Omega Persona', 'persona row carries the marker name');
+  assert(omegaPersona?.description?.includes('Fixture persona'), 'persona row carries the marker description');
+  assert(
+    omegaPersona?.folderPath === omegaC && omegaPersona?.workingDirectory === omegaC,
+    'workingDirectory is the canonical folderPath (personas run rooted in their folder)',
+  );
+  assert(
+    !personaRows?.some((row) => row.folderPath === alphaC || row.folderPath === betaC || row.folderPath === westC),
+    'code folders and hubs are excluded from persona rows',
+  );
+
+  // --- pimote_create_persona: disk effects + publish pairing ---
+  if (!process.env.MTMS_ROOT) {
+    section('pimote_create_persona execution');
+    const invBefore = invalidations.length;
+    const notBefore = notifications.length;
+    const createResult = await tools.get('pimote_create_persona').execute('call-6', {
+      name: 'zeta',
+      parentPath: root,
+      description: 'Created persona',
+      prompt: 'CUSTOM PROMPT MARKER.',
+    });
+    assert(createResult.isError !== true, 'create_persona executes without error');
+    const zetaC = createResult.structuredContent?.folderPath;
+    assert(zetaC === (await realpath(join(root, 'zeta'))), 'result folderPath is the canonical new folder');
+    const zetaAgents = await readFile(join(root, 'zeta', 'AGENTS.md'), 'utf8');
+    assert(zetaAgents.includes('kind: persona') && zetaAgents.includes('name: "zeta"'), 'AGENTS.md carries parseable persona front matter');
+    assert(zetaAgents.includes('description: "Created persona"'), 'front matter carries the caller description');
+    assert(zetaAgents.includes('CUSTOM PROMPT MARKER.'), "the caller's prompt folds into the body");
+    assert(zetaAgents.includes('memory.md'), 'body keeps the maintain-memory.md instruction');
+    assert(await exists(join(root, 'zeta', 'memory.md')), 'memory.md stub is created');
+    assert(invalidations.length > invBefore, 'creation invalidates folder-model discovery');
+    assert(
+      notifications.length > notBefore && notifications[notifications.length - 1].includes(zetaC),
+      'creation broadcasts folders_changed with the new path',
+    );
+
+    // Collision: refuses, leaves the existing folder untouched, publishes nothing.
+    const zetaBefore = await readFile(join(root, 'zeta', 'AGENTS.md'), 'utf8');
+    const inv2 = invalidations.length;
+    const not2 = notifications.length;
+    const collision = await tools.get('pimote_create_persona').execute('call-7', {
+      name: 'zeta',
+      parentPath: root,
+      description: 'Overwrite attempt',
+    });
+    assert(collision.isError === true, 'name collision returns a tool error');
+    assert((await readFile(join(root, 'zeta', 'AGENTS.md'), 'utf8')) === zetaBefore, 'collision leaves the existing persona untouched');
+    assert(invalidations.length === inv2 && notifications.length === not2, 'failed creations publish nothing');
+
+    const badName = await tools.get('pimote_create_persona').execute('call-8', { name: '../evil', parentPath: root, description: 'x' });
+    assert(badName.isError === true && !(await exists(join(sandbox, 'evil'))), 'traversal names are rejected with no disk effect');
+    const outside = await tools.get('pimote_create_persona').execute('call-9', { name: 'stray', parentPath: sandbox, description: 'x' });
+    assert(outside.isError === true && !(await exists(join(sandbox, 'stray'))), 'parentPath outside the scan roots is rejected with no disk effect');
+
+    const personasAfter = (await tools.get('pimote_list_personas').execute('call-10', {})).structuredContent?.personas;
+    assert(
+      personasAfter?.some((row) => row.folderPath === zetaC && row.name === 'zeta' && row.workingDirectory === zetaC),
+      'list_personas picks up the created persona',
+    );
+  } else {
+    console.log('  ⊝ create_persona execution skipped — MTMS_ROOT fixture tree is user-supplied');
+  }
 
   await rm(sandbox, { recursive: true, force: true }).catch(() => {});
   console.log(`\n[mt-smoke] complete: ${failures === 0 ? 'PASS' : `${failures} FAIL`}`);
