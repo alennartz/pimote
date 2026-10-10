@@ -31,7 +31,7 @@ export const MEMORY_STUB = '# Memory\n\nDurable notes for this persona. Update t
 const MANAGER_AGENTS_TEMPLATE = `---
 kind: persona
 name: manager
-description: Mission statement for the manager persona of this Pimote installation.
+description: top level manager persona of this Pimote installation.
 ---
 
 # Manager
