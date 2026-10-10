@@ -1,11 +1,9 @@
 <script lang="ts">
-  import { managerStore } from '$lib/stores/manager-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import { tick } from 'svelte';
   import NewSessionDialog from './NewSessionDialog.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
-  import OctagonX from '@lucide/svelte/icons/octagon-x';
   import Plus from '@lucide/svelte/icons/plus';
   import Search from '@lucide/svelte/icons/search';
   import SendHorizontal from '@lucide/svelte/icons/send-horizontal';
@@ -14,21 +12,42 @@
   /** One box, two modes. The leading control is a single toggle button showing
    *  both glyphs at once — 🔍 for search (default), ✨ for the manager (the
    *  icon conventionally read as "artificial intelligence"). The active glyph
-   *  is pill-highlighted; clicking anywhere on the pair swaps modes. */
-  let { search = $bindable(''), compact = false }: { search?: string; compact?: boolean } = $props();
+   *  is pill-highlighted; clicking anywhere on the pair swaps modes. Manager
+   *  mode is the manager-area affordance: it drives the dashboard's manager
+   *  panel (desktop) / sheet (mobile) through the bound `managerOpen` state. */
+  let {
+    search = $bindable(''),
+    compact = false,
+    managerOpen = $bindable(false),
+    managerDraft = $bindable(''),
+    managerReady = false,
+    onSubmitManager,
+  }: {
+    search?: string;
+    compact?: boolean;
+    /** Local UI state: manager mode on the box and the manager area's presentation. */
+    managerOpen?: boolean;
+    /** Draft shared by this box and the manager area's composer. */
+    managerDraft?: string;
+    /** True once a usable manager root fact and connected readiness exist. */
+    managerReady?: boolean;
+    /** The manager area's one shared submit operation. */
+    onSubmitManager?: (text: string) => void | Promise<void>;
+  } = $props();
 
-  let mode = $state<'search' | 'manager'>('search');
+  const mode = $derived(managerOpen ? 'manager' : 'search');
+  const canSend = $derived(managerReady && managerDraft.trim().length > 0);
   let newSessionOpen = $state(false);
 
   let searchEl = $state<HTMLInputElement | null>(null);
   let managerEl = $state<HTMLTextAreaElement | null>(null);
 
   async function toggleMode(): Promise<void> {
-    mode = mode === 'search' ? 'manager' : 'search';
+    managerOpen = !managerOpen;
     // The swapped-in field replaces the old one in the DOM — focus it so
     // typing continues without a second tap.
     await tick();
-    (mode === 'search' ? searchEl : managerEl)?.focus();
+    (managerOpen ? managerEl : searchEl)?.focus();
   }
 
   /** Grow the field to its content so rows=1 never overflows — a fractional
@@ -36,7 +55,7 @@
    *  field keeps the rows=1 height: measuring scrollHeight there would pick up
    *  the wrapped placeholder and inflate the box. */
   function autosize(el: HTMLTextAreaElement): void {
-    if (!managerStore.draft) {
+    if (!managerDraft) {
       el.style.height = '';
       el.style.overflow = '';
       return;
@@ -48,14 +67,14 @@
   $effect(() => {
     const el = managerEl;
     if (!el) return;
-    void managerStore.draft; // re-run on every keystroke, not just when the field mounts
+    void managerDraft; // re-run on every keystroke, not just when the field mounts
     autosize(el);
   });
 
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      void managerStore.sendDraft();
+      void onSubmitManager?.(managerDraft);
     }
   }
 </script>
@@ -102,7 +121,7 @@
     {:else}
       <textarea
         bind:this={managerEl}
-        bind:value={managerStore.draft}
+        bind:value={managerDraft}
         onkeydown={handleKeydown}
         rows={1}
         placeholder="Ask the manager — start sessions, archive old ones, check status…"
@@ -110,22 +129,14 @@
         enterkeyhint="send"
         spellcheck={!isMobileViewport()}
         aria-label="Message the manager"
-        class="text-foreground placeholder:text-muted-foreground block max-h-40 w-full min-w-0 resize-none overflow-y-auto bg-transparent text-sm outline-none max-md:text-base"
+        disabled={!managerReady}
+        class="text-foreground placeholder:text-muted-foreground block max-h-40 w-full min-w-0 resize-none overflow-y-auto bg-transparent text-sm outline-none disabled:opacity-50 max-md:text-base"
       ></textarea>
-      {#if managerStore.status === 'working'}
-        <button
-          class="text-destructive hover:bg-destructive/10 flex shrink-0 items-center rounded-lg p-1.5 transition-colors max-md:p-2.5"
-          onpointerdown={(e) => e.preventDefault()}
-          onclick={() => void managerStore.abort()}
-          title="Abort"
-        >
-          <OctagonX class="size-4 max-md:size-5" />
-        </button>
-      {:else if managerStore.canSend}
+      {#if canSend}
         <button
           class="bg-primary text-primary-foreground hover:bg-primary/80 active:bg-primary/70 flex shrink-0 items-center rounded-lg p-1.5 transition-colors max-md:p-2.5"
           onpointerdown={(e) => e.preventDefault()}
-          onclick={() => void managerStore.sendDraft()}
+          onclick={() => void onSubmitManager?.(managerDraft)}
           title="Send"
         >
           <SendHorizontal class="size-4 max-md:size-5" />

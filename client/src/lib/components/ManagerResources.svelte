@@ -24,9 +24,6 @@
           <span class="text-muted-foreground shrink-0 text-xs">{formatDownloadSize(item.sizeBytes)}</span>
         </a>
       {/each}
-      <p class="text-muted-foreground text-xs">
-        Reports open in a new tab. Downloads are single-use. Links remain available for 24 hours after this chat disconnects, unless the server restarts.
-      </p>
     </div>
   </section>
 {/if}

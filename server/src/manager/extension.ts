@@ -231,7 +231,8 @@ ${MEMORY_MAINTENANCE_INSTRUCTION}`;
  *  double-quoted scalar), so `parsePersonaFrontMatter` round-trips them
  *  exactly on one line each. */
 function composePersonaAgentsMd(input: CreatePersonaInput): string {
-  const frontMatter = `---\nname: ${JSON.stringify(input.name)}\ndescription: ${JSON.stringify(input.description)}\n---`;
+  const frontMatter = `---
+kind: persona\nname: ${JSON.stringify(input.name)}\ndescription: ${JSON.stringify(input.description)}\n---`;
   const prompt = input.prompt?.trim();
   const body = prompt ? `${prompt}\n\n${PERSONA_PROMPT_TEMPLATE}` : PERSONA_PROMPT_TEMPLATE;
   return `${frontMatter}\n\n${body}\n`;
@@ -462,7 +463,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       name: 'pimote_create_persona',
       label: 'Create persona',
       description:
-        'Create a new persona folder at <parentPath>/<name> containing AGENTS.md (front matter: name, ' +
+        'Create a new persona folder at <parentPath>/<name> containing AGENTS.md (front matter: kind persona, name, ' +
         'description; body: the persona prompt template with the instruction to maintain memory.md, plus the ' +
         "caller's prompt folded into the template's fixed sections) and a memory.md stub. parentPath is " +
         'required and must be inside a scan root — the tool never invents a default location; the manager ' +

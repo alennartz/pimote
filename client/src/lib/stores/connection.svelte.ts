@@ -38,6 +38,8 @@ export class ConnectionStore {
   status: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' = $state('disconnected');
   /** True only after WebSocket is open AND all session reconnects have completed. */
   ready: boolean = $state(false);
+  /** Canonical manager persona path supplied by ordinary folder responses. */
+  managerRoot: string | null = $state(null);
   /** Detailed reconnection phase for status display. */
   phase: 'idle' | 'backoff' | 'connecting' | 'syncing' | 'ready' = $state('idle');
   /** Seconds until next reconnect attempt (ticks down during backoff). */
@@ -70,8 +72,8 @@ export class ConnectionStore {
   onPendingAdopt: ((sessionId: string, folderPath: string, options: { openDownloads?: boolean }) => void) | null = null;
 
   /** Disconnect listeners — a set, not a slot, so the next consumer can't
-   *  silently assign over an existing reset (the manager transcript reset
-   *  depends on this firing). Fires on close and on socket replacement. */
+   *  silently assign over an existing listener. Fires on close and on socket
+   *  replacement. */
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- listener set, not reactive UI state
   private disconnectListeners = new Set<() => void>();
 
@@ -118,8 +120,8 @@ export class ConnectionStore {
       this.ws.onerror = null;
     }
     this.rejectAllPending('WebSocket replaced');
-    // The replaced socket is closing or already closed; its connection-scoped
-    // state (the manager) is gone server-side.
+    // The replaced socket is closing or already closed; dependent stores reset
+    // before the replacement connects.
     this.notifyDisconnected();
     this.intentionalClose = false;
 
@@ -282,8 +284,7 @@ export class ConnectionStore {
       this.ws = null;
       this.ready = false;
       this.rejectAllPending('WebSocket closed');
-      // The server disposes this connection's manager with the socket;
-      // dependent stores reset before any reconnect bookkeeping runs.
+      // Dependent stores reset before any reconnect bookkeeping runs.
       this.notifyDisconnected();
 
       if (!this.intentionalClose) {

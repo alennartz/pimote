@@ -232,7 +232,7 @@ Evaluate attachment during the existing runtime assembly, using the runtime's ef
 Keep `PiSessionManager.create`/`open`, the ordinary slot map, replay buffers, reset flow, and server-owned session lifecycle. A disconnect must only clear viewer ownership. Do not add manager-specific reconnect or reset logic.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/session-manager-open-session.test.ts src/session-manager.test.ts src/pi-065-newsession.test.ts` passes. Manager sessions persist, reopen the same live slot, and load tools exclusively at the manager root. The external SDK regression remains green without a patch change.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Wire startup ports and persisted resources
 
@@ -249,7 +249,7 @@ Extend `enumerateValidSessionIds` to enumerate manager-root records alongside di
 Retarget only `createManagerSessionFactory` wiring mocks/assertions in `server/src/index.test.ts` to the normal session-manager option. Preserve toolset, port behavior, configuration, bootstrap, and GC assertions. Update existing GC coverage to express the separate manager-root enumeration. If that requires additional behavioral coverage, record the implementation-phase TDD gap rather than weakening existing assertions.
 
 **Verify:** Startup initializes the context before serving opens. `npm run test --workspace=@pimote/server -- --run src/index.test.ts` passes. Its resource allow-list includes manager records, while discovery still receives only scan roots. Existing incomplete-enumeration cases still suppress GC.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Remove the ephemeral server lifecycle
 
@@ -262,7 +262,7 @@ In `server/src/server.ts`, remove the manager-service parameter and forwarding a
 Update affected positional constructor calls and test fixtures only to reflect removed parameters. Do not retain an optional compatibility slot or dead lifecycle export.
 
 **Verify:** `rg 'ManagerService|createManagerSessionFactory|buildManagerSession|createManagerResources|resetManagerResourceRoot' server/src` has no matches. Server type checking and the existing server/WS tests pass after the protocol cutover below. Disconnect leaves a working manager runtime in the ordinary slot map.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Cut over protocol and root metadata
 
@@ -277,7 +277,7 @@ In `client/src/lib/stores/connection.svelte.ts`, store the server-provided manag
 Inspect the hand-written Android mirror for retired names. Investigation found no `manager_prompt`, `manager_abort`, or `manager_event` consumers in `mobile/android`. Add no shim.
 
 **Verify:** `npm run build:shared` succeeds. `npm run test --workspace=@pimote/server -- --run src/manager/protocol-cutover.test.ts` passes. Root metadata remains separate from listed folders, and folderless manager-session reopening resolves disk records.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Implement composer and ordinary navigation
 
@@ -290,7 +290,7 @@ Submit through one operation shared by the manager area's entry controls. Pass t
 Open a listed session through `openExistingSession(id, managerRoot, { switchTo: true })`. Use normal session summary presentation and ownership handling. Reuse `switchToSession` and `session-route.ts` navigation. Do not add a manager URL, synthetic transcript, separate event reducer, or reconnect path.
 
 **Verify:** `npm run test --workspace=client -- --run src/lib/manager-composer.test.ts` passes. Manual submission from landing creates a persisted session. Selecting an old record resumes it. Submission with a viewed manager session continues that exact session.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Replace dashboard manager surfaces
 
@@ -303,7 +303,7 @@ Delete `client/src/lib/stores/manager-store.svelte.ts` and its module-owned `man
 Remove obsolete 24-hour manager-link copy from `client/src/lib/components/ManagerResources.svelte`. Ordinary session panels and downloads now own manager artifacts. Do not keep that presentation in the landing area as a second conversation. Preserve generic card/download coverage. Do not delete unrelated resource tests or change generic renderers.
 
 **Verify:** `rg 'manager-store|manager_prompt|manager_abort|manager_event' client/src --glob '!*.test.ts'` has no matches. `npm run check --workspace=client` succeeds. Desktop uses a dashboard manager panel, mobile uses a sheet, and both open ordinary session conversations.
-**Status:** not started
+**Status:** done
 
 ### Step 10: Verify the complete replacement
 

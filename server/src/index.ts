@@ -1,8 +1,10 @@
 import { resolve } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, ensureVapidKeys } from './config.js';
 import { createServer } from './server.js';
-import { PimoteSessionManager, createManagerSessionFactory } from './session-manager.js';
+import { PimoteSessionManager } from './session-manager.js';
 import { SessionRecords } from './session-records.js';
 import { SessionSummaryIndex } from './session-summaries.js';
 import { FolderListing } from './folder-listing.js';
@@ -13,16 +15,14 @@ import type { FolderModelPort } from './manager/types.js';
 import { loadFolderSources, resolveSourcesDir } from './folder-sources/index.js';
 import { createBuiltinCreator } from './folder-sources/builtin.js';
 import type { FolderCreator } from './folder-sources/index.js';
-import { ManagerService } from './manager/index.js';
+import { seedManagerRoot } from './manager/index.js';
 import type { ManagerToolContext, SessionArchiveOutcome } from './manager/index.js';
 import { createManagerExtension } from './manager/index.js';
-import { resetManagerResourceRoot } from './manager/resources.js';
 import { PushNotificationService } from './push-notification.js';
 import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore } from './push-infrastructure.js';
 import {
   LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
   PIMOTE_FILE_DOWNLOAD_DIR,
-  PIMOTE_MANAGER_RESOURCES_DIR,
   PIMOTE_REGISTRY_STORE_DIR,
   PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
   PIMOTE_SESSION_METADATA_PATH,
@@ -43,6 +43,8 @@ export interface StartOptions {
 export async function main(options: StartOptions = {}) {
   let config = await loadConfig();
   config = await ensureVapidKeys(config);
+  config = { ...config, managerRoot: await realpath(config.managerRoot) };
+  await seedManagerRoot(config.managerRoot);
 
   // Allow explicit CLI override first, then PORT env var, then config
   const port = options.portOverride ?? (process.env.PORT ? parseInt(process.env.PORT, 10) : config.port);
@@ -81,7 +83,7 @@ export async function main(options: StartOptions = {}) {
   // registry/store/factory singletons shared by the session manager and the
   // HTTP route handler. The registry is process-lifetime; sessions register
   // and unregister against it as they load and shut down.
-  const validSessionIds = await enumerateValidSessionIds(config.roots, sessionRecords);
+  const validSessionIds = await enumerateValidSessionIds(config.roots, config.managerRoot, sessionRecords);
   if (validSessionIds) {
     await gcStaticHostStore({ storeDir: PIMOTE_STATIC_HOST_DIR, validSessionIds });
   }
@@ -89,9 +91,13 @@ export async function main(options: StartOptions = {}) {
   const staticHostStore = new FileStaticHostStore(PIMOTE_STATIC_HOST_DIR);
   const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore, skillsDir: PIMOTE_SKILLS_DIR });
   const fileDownloads = await bootstrapFileDownloads({ storeDir: PIMOTE_FILE_DOWNLOAD_DIR, validSessionIds });
-  await resetManagerResourceRoot(PIMOTE_MANAGER_RESOURCES_DIR);
-
-  const sessionManager = await PimoteSessionManager.create(config, pushNotificationService, { staticHostFactory, fileDownloadFactory: fileDownloads.extensionFactory });
+  const managerContextBinding = new ManagerContextBinding();
+  const managerExtensionFactory: ExtensionFactory = (pi) => createManagerExtension(managerContextBinding.get())(pi);
+  const sessionManager = await PimoteSessionManager.create(config, pushNotificationService, {
+    staticHostFactory,
+    fileDownloadFactory: fileDownloads.extensionFactory,
+    managerExtensionFactory,
+  });
 
   // The folder listing service: ordering, search, and windowing over the
   // registry's rows, fed by the shared per-file session-summary cache and the
@@ -104,10 +110,7 @@ export async function main(options: StartOptions = {}) {
     listLiveSessions: () => sessionManager.getAllSessions(),
   });
 
-  // Global ephemeral manager: one session per client connection, built on the
-  // shared model runtime with the manager extension as its only toolset. Tools
-  // act only through the narrow ports of the ManagerToolContext.
-  //
+  // Manager tools use startup-built ports through ordinary persisted sessions.
   // Manager-initiated session_archived events fan out to every connected
   // client exactly like the ws-handler archive_session flow; the client
   // registry is created inside createServer, so the archive port closes over
@@ -158,7 +161,9 @@ export async function main(options: StartOptions = {}) {
       // lingers as an open one. Broadcast mirrors the WS flow so connected
       // dashboards update immediately.
       archiveSessions: async (sessionIds: string[]): Promise<SessionArchiveOutcome[]> => {
-        const folderPaths = [...new Set((await folderRegistry.list()).map((folder) => folder.path))];
+        // Folderless lookup mirrors ws-handler findSessionRecord: known folder
+        // records first, manager-root records alongside, deduplicated.
+        const folderPaths = [...new Set([...(await folderRegistry.list()).map((folder) => folder.path), config.managerRoot])];
         return Promise.all(
           sessionIds.map(async (sessionId): Promise<SessionArchiveOutcome> => {
             const slot = sessionManager.getSession(sessionId);
@@ -185,20 +190,7 @@ export async function main(options: StartOptions = {}) {
     tree: folderTree,
     config,
   };
-  const managerService = new ManagerService({
-    factory: createManagerSessionFactory({
-      config,
-      modelRuntime: sessionManager.getModelRuntime(),
-      managerExtensionFactory: createManagerExtension(managerContext),
-      resources: {
-        root: PIMOTE_MANAGER_RESOURCES_DIR,
-        registry: staticHostRegistry,
-        store: staticHostStore,
-        downloads: fileDownloads.manager,
-        skillsDir: PIMOTE_SKILLS_DIR,
-      },
-    }),
-  });
+  managerContextBinding.bind(managerContext);
 
   // Build the voice orchestrator before createServer so each WsHandler can be
   // handed a reference. The orchestrator needs a client-registry lookup, but
@@ -243,7 +235,6 @@ export async function main(options: StartOptions = {}) {
     updateChecker,
     repoIndex,
     folderRegistry,
-    managerService,
     creators,
     folderListing,
   );
@@ -276,9 +267,6 @@ export async function main(options: StartOptions = {}) {
   // Start idle session reaping with client connectivity check
   sessionManager.startIdleCheck(config.idleTimeout, (clientId) => server.clientRegistry.has(clientId));
 
-  // Safety net for manager sessions whose disconnect event was missed.
-  const managerReaperHandle = setInterval(() => managerService.sweepIdle(), 60_000);
-
   await server.start(port);
 
   console.log(`[pimote] Server listening on http://localhost:${port}`);
@@ -291,7 +279,6 @@ export async function main(options: StartOptions = {}) {
   // Graceful shutdown
   const shutdown = async () => {
     console.log('\n[pimote] Shutting down...');
-    clearInterval(managerReaperHandle);
     await voiceBoot?.shutdown();
     await sessionManager.dispose();
     await server.close();
@@ -300,6 +287,22 @@ export async function main(options: StartOptions = {}) {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+}
+
+/** Init-only indirection breaks the session-manager/context construction cycle.
+ * Bound once before createServer exposes any session commands. */
+class ManagerContextBinding {
+  private context: ManagerToolContext | undefined;
+
+  bind(context: ManagerToolContext): void {
+    if (this.context) throw new Error('Manager context is already bound');
+    this.context = context;
+  }
+
+  get(): ManagerToolContext {
+    if (!this.context) throw new Error('Manager context is not bound');
+    return this.context;
+  }
 }
 
 function isDirectRun(): boolean {
@@ -318,7 +321,7 @@ function isDirectRun(): boolean {
  * against one would delete every persisted bundle on a transient I/O hiccup at
  * boot. The sweep is skipped instead and the next clean boot reclaims orphans.
  */
-async function enumerateValidSessionIds(roots: string[], sessionRecords: SessionRecords): Promise<Set<string> | null> {
+async function enumerateValidSessionIds(roots: string[], managerRoot: string, sessionRecords: SessionRecords): Promise<Set<string> | null> {
   try {
     const warnings: FolderScanWarning[] = [];
     const tree = await scanFolderModel({
@@ -333,7 +336,7 @@ async function enumerateValidSessionIds(roots: string[], sessionRecords: Session
       return null;
     }
     const validSessionIds = new Set<string>();
-    for (const folderPath of sessionEnumerationPaths(tree)) {
+    for (const folderPath of new Set([...sessionEnumerationPaths(tree), managerRoot])) {
       // Strict enumeration: one unlistable folder voids completeness too.
       const records = await sessionRecords.listSessionRecords(folderPath, { failOnError: true });
       for (const record of records) validSessionIds.add(record.id);

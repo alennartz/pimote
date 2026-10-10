@@ -252,6 +252,7 @@ function createTestHandler(
   const sessionMetadataStore = opts?.sessionMetadataStore ?? createMockSessionMetadataStore();
 
   const handler = new WsHandler(
+    '/srv/manager-home',
     sessionManager,
     sessionRecords,
     ws,
@@ -262,7 +263,6 @@ function createTestHandler(
     undefined,
     opts?.repoIndex,
     opts?.folderRegistry,
-    { disposeClient: () => {} } as never, // managerService: only truthiness is required by requireFolderDeps; cleanup() no-op
     opts?.creators ?? [], // creators
     opts?.folderListing, // folderListing
   );
@@ -863,7 +863,7 @@ describe('WsHandler', () => {
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
       const pushService = createMockPushService();
-      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      const handler = new WsHandler('/srv/manager-home', sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       await handler.handleMessage(
@@ -937,6 +937,7 @@ describe('WsHandler', () => {
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
       const handler = new WsHandler(
+        '/srv/manager-home',
         sessionManager,
         sessionRecords,
         ws,
@@ -973,6 +974,7 @@ describe('WsHandler', () => {
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
       const handler = new WsHandler(
+        '/srv/manager-home',
         sessionManager,
         createMockSessionRecords(),
         ws,
@@ -1032,7 +1034,7 @@ describe('WsHandler', () => {
       const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
+      const handler = new WsHandler('/srv/manager-home', sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       await handler.handleMessage(
@@ -1083,7 +1085,7 @@ describe('WsHandler', () => {
       const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
+      const handler = new WsHandler('/srv/manager-home', sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       await handler.handleMessage(
@@ -1577,7 +1579,7 @@ describe('WsHandler', () => {
       const { ws, sent } = createMockWs();
       const pushService = createMockPushService();
       const sessionMetadataStore = createMockSessionMetadataStore([sessionPath]);
-      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, sessionMetadataStore as any, 'client-1', clientRegistry);
+      const handler = new WsHandler('/srv/manager-home', sessionManager, sessionRecords, ws, pushService, sessionMetadataStore as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/project', sessionId: reopenedSessionId, id: 'req-open-archived' }));
@@ -1930,7 +1932,7 @@ describe('WsHandler', () => {
       const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
+      const handler = new WsHandler('/srv/manager-home', sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       await handler.handleMessage(
@@ -2102,7 +2104,16 @@ describe('WsHandler', () => {
 
       const clientRegistry: ClientRegistry = new Map();
       const { ws, sent } = createMockWs();
-      const handler = new WsHandler(sessionManager, createMockSessionRecords(), ws, createMockPushService(), createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
+      const handler = new WsHandler(
+        '/srv/manager-home',
+        sessionManager,
+        createMockSessionRecords(),
+        ws,
+        createMockPushService(),
+        createMockSessionMetadataStore() as any,
+        'my-client',
+        clientRegistry,
+      );
       clientRegistry.set('my-client', handler);
 
       // Eviction notify is wired at boot in server.ts; mirror it here.
@@ -2114,6 +2125,7 @@ describe('WsHandler', () => {
       // Register the occupant's owning handler so it receives the displaced event.
       const { ws: otherWs, sent: otherSent } = createMockWs();
       const otherHandler = new WsHandler(
+        '/srv/manager-home',
         sessionManager,
         createMockSessionRecords(),
         otherWs,
@@ -2182,7 +2194,7 @@ describe('WsHandler', () => {
       const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
+      const handler = new WsHandler('/srv/manager-home', sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
       clientRegistry.set('my-client', handler);
 
       await handler.handleMessage(
@@ -2712,6 +2724,7 @@ describe('WsHandler', () => {
 
       const { ws: wsA, sent: sentA } = createMockWs();
       const handlerA = new WsHandler(
+        '/srv/manager-home',
         sessionManager,
         createMockSessionRecords(),
         wsA,
@@ -2725,6 +2738,7 @@ describe('WsHandler', () => {
 
       const { ws: wsB, sent: sentB } = createMockWs();
       const handlerB = new WsHandler(
+        '/srv/manager-home',
         sessionManager,
         createMockSessionRecords(),
         wsB,
@@ -2923,7 +2937,7 @@ describe('WsHandler', () => {
       const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      const handler = new WsHandler('/srv/manager-home', sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       // First open the session to establish connection
@@ -2993,7 +3007,7 @@ describe('WsHandler', () => {
       const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      const handler = new WsHandler('/srv/manager-home', sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       await handler.handleMessage(
@@ -3070,7 +3084,7 @@ describe('WsHandler', () => {
       const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      const handler = new WsHandler('/srv/manager-home', sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       await handler.handleMessage(
@@ -3145,7 +3159,7 @@ describe('WsHandler', () => {
       const sessionRecords = createMockSessionRecords();
       const pushService = createMockPushService();
 
-      const handler = new WsHandler(sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
+      const handler = new WsHandler('/srv/manager-home', sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'client-1', clientRegistry);
       clientRegistry.set('client-1', handler);
 
       await handler.handleMessage(
@@ -4084,7 +4098,7 @@ describe('WsHandler', () => {
 
     it('classifies an unlisted cwd on the fly and never lists or curates it', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'pimote-folder-'));
-      writeFileSync(join(dir, 'AGENTS.md'), '---\nname: Sidekick\ndescription: runs errands\n---\n\n# Sidekick\n');
+      writeFileSync(join(dir, 'AGENTS.md'), '---\nkind: persona\nname: Sidekick\ndescription: runs errands\n---\n\n# Sidekick\n');
       try {
         const update = vi.fn(async () => {});
         const folderRegistry = { list: async () => [], update } as unknown as FolderRegistry;

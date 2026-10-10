@@ -13,9 +13,9 @@ import { join } from 'node:path';
  *
  * The seed template is a code constant in the server package: a mission
  * statement plus the maintain-`memory.md` indication; no tool listing (tools
- * are injected). YAML front matter has `name: manager` and a nonempty one-line
- * description, so the folder model classifies the seed as a persona.
- * Filesystem errors propagate to the boot caller.
+ * are injected). YAML front matter has `kind: persona`, `name: manager`, and
+ * a nonempty one-line description, so the folder model classifies the seed as
+ * a persona. Filesystem errors propagate to the boot caller.
  */
 
 /** The maintain-`memory.md` instruction shared by every shipped persona
@@ -29,6 +29,7 @@ export const MEMORY_STUB = '# Memory\n\nDurable notes for this persona. Update t
 /** The shipped manager `AGENTS.md` template: persona-marker front matter,
  *  mission statement, maintain-`memory.md` indication, no tool listing. */
 const MANAGER_AGENTS_TEMPLATE = `---
+kind: persona
 name: manager
 description: Mission statement for the manager persona of this Pimote installation.
 ---

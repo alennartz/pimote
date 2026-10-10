@@ -24,9 +24,7 @@ import type { RepoIndex } from './repo-index.js';
 import { enrichActiveSessionCounts, isValidFolderName, type FolderRegistry } from './folder-registry.js';
 import type { FolderListingService } from './folder-listing.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
-import type { ManagerService } from './manager/index.js';
 import type { FolderCreator } from './folder-sources/index.js';
-import type { ManagerSession } from './manager/index.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
@@ -208,11 +206,10 @@ export class WsHandler {
   private pendingLoginInputs = new Map<string, { resolve: (v: string) => void; reject: (e: unknown) => void }>();
   /** AbortController for the in-flight login flow this connection initiated, if any. */
   private loginAbort: AbortController | null = null;
-  /** This connection's manager stream subscription (one per live manager session). */
-  private managerListener: { session: ManagerSession; unsubscribe: () => void } | null = null;
   readonly clientId: string;
 
   constructor(
+    private readonly managerRoot: string,
     private readonly sessionManager: PimoteSessionManager,
     private readonly sessionRecords: SessionRecords,
     private readonly ws: WebSocket,
@@ -223,7 +220,6 @@ export class WsHandler {
     private readonly voiceOrchestrator?: VoiceOrchestrator,
     private readonly repoIndex?: RepoIndex,
     private readonly folderRegistry?: FolderRegistry,
-    private readonly managerService?: ManagerService,
     private readonly creators?: FolderCreator[],
     private readonly folderListing?: FolderListingService,
   ) {
@@ -291,6 +287,7 @@ export class WsHandler {
           this.sendResponse(id, true, {
             folders: result.rows,
             roots: repoIndex.roots,
+            managerRoot: this.managerRoot,
             total: result.total,
             orderToken: result.orderToken,
             more: result.more,
@@ -342,39 +339,6 @@ export class WsHandler {
           // Listing-only: the deleted hub's status entry can never serve a
           // row again, and members' git facts do not move.
           repoIndex.invalidateListing();
-          this.sendResponse(id, true);
-          break;
-        }
-
-        case 'manager_prompt': {
-          const { managerService } = this.requireFolderDeps();
-          const manager = await managerService.getOrCreate(this.clientId);
-          // One subscription per connection, bound to the live manager session
-          // (a reaped-and-recreated session needs a fresh listener).
-          if (this.managerListener?.session !== manager) {
-            this.managerListener?.unsubscribe();
-            const unsubscribe = manager.onEvent((event) => this.sendToClient({ type: 'manager_event', event }));
-            this.managerListener = { session: manager, unsubscribe };
-          }
-          // Fire-and-forget like `prompt`: output reaches the client as the
-          // manager_event stream; this response confirms admission only.
-          manager.session.prompt(command.text).catch((err) => {
-            console.error('[WsHandler] manager_prompt error:', err);
-          });
-          this.sendResponse(id, true);
-          break;
-        }
-
-        case 'manager_abort': {
-          const { managerService } = this.requireFolderDeps();
-          const manager = managerService.get(this.clientId);
-          if (!manager) {
-            // Nothing running — no manager session to abort, and none should
-            // be created just to abort it.
-            this.sendResponse(id, true);
-            break;
-          }
-          await manager.session.abort();
           this.sendResponse(id, true);
           break;
         }
@@ -1637,9 +1601,10 @@ export class WsHandler {
       const sessionFilePath = await this.sessionRecords.resolveSessionPath(folderPath, sessionId);
       return sessionFilePath ? { folderPath, sessionFilePath } : undefined;
     }
-    for (const folder of (await this.folderRegistry?.list()) ?? []) {
-      const sessionFilePath = await this.sessionRecords.resolveSessionPath(folder.path, sessionId);
-      if (sessionFilePath) return { folderPath: folder.path, sessionFilePath };
+    const folderPaths = new Set([...((await this.folderRegistry?.list()) ?? []).map((folder) => folder.path), this.managerRoot]);
+    for (const path of folderPaths) {
+      const sessionFilePath = await this.sessionRecords.resolveSessionPath(path, sessionId);
+      if (sessionFilePath) return { folderPath: path, sessionFilePath };
     }
     return undefined;
   }
@@ -1931,18 +1896,17 @@ export class WsHandler {
       });
   }
 
-  /** The folder-management wiring; every folder/manager command requires it. */
+  /** The folder-management wiring required by folder commands. */
   private requireFolderDeps(): {
     repoIndex: RepoIndex;
     folderRegistry: FolderRegistry;
-    managerService: ManagerService;
     creators: FolderCreator[];
     folderListing?: FolderListingService;
   } {
-    if (!this.repoIndex || !this.folderRegistry || !this.managerService || !this.creators) {
+    if (!this.repoIndex || !this.folderRegistry || !this.creators) {
       throw new Error('Folder management is not available on this connection');
     }
-    return { repoIndex: this.repoIndex, folderRegistry: this.folderRegistry, managerService: this.managerService, creators: this.creators, folderListing: this.folderListing };
+    return { repoIndex: this.repoIndex, folderRegistry: this.folderRegistry, creators: this.creators, folderListing: this.folderListing };
   }
 
   /** Broadcast a session_state_changed event to ALL connected clients. */
@@ -2031,10 +1995,6 @@ export class WsHandler {
     }
     this.subscribedSessions.clear();
     this.viewedSessionId = null;
-    // Tear down this connection's manager session (and its stream subscription).
-    this.managerListener?.unsubscribe();
-    this.managerListener = null;
-    this.managerService?.disposeClient(this.clientId);
     // Release this connection's folder-order pins. Release is final in the
     // listing service: a folder command racing this close can no longer
     // attach owned pins to the connection.

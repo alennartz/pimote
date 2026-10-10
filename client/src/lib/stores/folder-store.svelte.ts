@@ -327,6 +327,7 @@ export class FolderStore {
       this.folders = mergeFolderRows(this.folders, data.folders);
     }
     this.roots = data.roots ?? [];
+    connection.managerRoot = data.managerRoot || null;
     this.orderToken = data.orderToken;
     this.nextOffset = restart ? 0 : context.offset + data.folders.length;
     this.total = data.total;

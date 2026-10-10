@@ -6,7 +6,8 @@ import type { PersonaInfo } from './index.js';
  *
  * Pure: content in, value out. Returns null whenever the file carries no
  * usable marker — no front matter, an unclosed block, malformed YAML, a
- * non-object document, or a `name:` that is not a YAML string. Callers treat
+ * non-object document, or a `kind` that is not `persona`. `name` and
+ * `description` are captured when present as YAML strings. Callers treat
  * null as "no marker" and fall back to git classification.
  */
 export function parsePersonaFrontMatter(content: string): PersonaInfo | null {
@@ -26,7 +27,10 @@ export function parsePersonaFrontMatter(content: string): PersonaInfo | null {
   }
   if (typeof document !== 'object' || document === null || Array.isArray(document)) return null;
 
-  const { name, description } = document as Record<string, unknown>;
-  if (typeof name !== 'string') return null;
-  return typeof description === 'string' ? { name, description } : { name };
+  const { kind, name, description } = document as Record<string, unknown>;
+  if (kind !== 'persona') return null;
+  return {
+    ...(typeof name === 'string' ? { name } : {}),
+    ...(typeof description === 'string' ? { description } : {}),
+  };
 }

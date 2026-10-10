@@ -42,7 +42,7 @@ async function initRepo(repoPath: string): Promise<void> {
 }
 
 /** A persona folder: marker front matter in AGENTS.md. */
-async function makePersona(dirName: string, frontMatter = 'name: Friendly\ndescription: Greets everyone'): Promise<string> {
+async function makePersona(dirName: string, frontMatter = 'kind: persona\nname: Friendly\ndescription: Greets everyone'): Promise<string> {
   const path = join(rootDir, dirName);
   await mkdir(path, { recursive: true });
   await writeFile(join(path, 'AGENTS.md'), `---\n${frontMatter}\n---\n\nBody.\n`, 'utf8');
@@ -226,7 +226,7 @@ describe('FolderRegistry.update()', () => {
   it('surfaces a source-listed persona folder outside the scan roots as a persona row', async () => {
     const personaHome = join(tempDir, 'external-persona');
     await mkdir(personaHome, { recursive: true });
-    await writeFile(join(personaHome, 'AGENTS.md'), '---\nname: Ada\ndescription: Builds bridges\n---\n\nBody.\n', 'utf8');
+    await writeFile(join(personaHome, 'AGENTS.md'), '---\nkind: persona\nname: Ada\ndescription: Builds bridges\n---\n\nBody.\n', 'utf8');
 
     const index = makeIndex();
     index.registerSource({

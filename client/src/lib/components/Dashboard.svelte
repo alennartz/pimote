@@ -5,7 +5,7 @@
   import HomeToolbar from '$lib/components/HomeToolbar.svelte';
   import FolderList from '$lib/components/FolderList.svelte';
   import ManagerChat from '$lib/components/ManagerChat.svelte';
-  import { managerStore } from '$lib/stores/manager-store.svelte.js';
+  import { submitManagerMessage, type ManagerSubmitPorts } from '$lib/manager-composer.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import SwipeableCard, { closeOpenSwipeCard } from '$lib/components/SwipeableCard.svelte';
   import type { SwipeActionOutcome } from '$lib/components/swipe-action.js';
@@ -20,14 +20,69 @@
 
   let search = $state('');
   let scrollElement = $state<HTMLDivElement | null>(null);
-  // Once a conversation exists the manager gets its own view: full screen chat
-  // on mobile, a right-hand transcript panel (homepage narrowed to a left rail)
-  // on desktop. Closing it dismisses the conversation, which folds the layout
-  // back to the plain homepage.
-  let managerActive = $derived(managerStore.hasConversation);
+  // The manager area presents from local UI state, never from transcript
+  // existence: a right-hand manager panel (homepage narrowed to a left rail)
+  // on desktop, a sheet on mobile. Closing it closes UI only — sessions run on.
+  let managerOpen = $state(false);
+  // One draft shared by the toolbar box and the manager area's composer.
+  let managerDraft = $state('');
   let mobile = $derived(isMobileViewport());
-  let splitView = $derived(managerActive && !mobile);
-  let fullscreenView = $derived(managerActive && mobile);
+  let splitView = $derived(managerOpen && !mobile);
+  let sheetView = $derived(managerOpen && mobile);
+  /** Manager controls wait for a usable root fact and connected readiness. */
+  let managerReady = $derived(connection.ready && connection.managerRoot !== null);
+
+  // --- Manager area: one shared submit operation ----------------------------
+  //
+  // Every manager-area entry control routes through here. The continue-or-
+  // open-new decision and the prompt/open/navigate sequence live in
+  // `submitManagerMessage`; this wiring supplies the ordinary session seams.
+  // A rejected submit keeps the shared draft.
+
+  const managerPorts: ManagerSubmitPorts = {
+    openManagerSession: async (managerRoot) => {
+      try {
+        const response = await connection.send({ type: 'open_session', folderPath: managerRoot });
+        const sessionId = (response.data as { sessionId?: string } | undefined)?.sessionId;
+        return { success: response.success, ...(sessionId !== undefined ? { sessionId } : {}) };
+      } catch (e) {
+        console.error('Failed to open manager session:', e);
+        return { success: false };
+      }
+    },
+    prompt: async (sessionId, message) => {
+      try {
+        return (await connection.send({ type: 'prompt', sessionId, message })).success;
+      } catch (e) {
+        console.error('Failed to prompt manager session:', e);
+        return false;
+      }
+    },
+    switchToSession,
+  };
+
+  async function submitManagerDraft(text: string): Promise<void> {
+    const managerRoot = connection.managerRoot;
+    if (!managerRoot || !managerReady) return;
+    const viewed = sessionRegistry.viewed;
+    const sent = await submitManagerMessage(
+      {
+        viewed: viewed ? { sessionId: viewed.sessionId } : undefined,
+        // A viewed manager session continues; placeholders and code sessions
+        // do not count as manager identity.
+        viewedIsManager: viewed != null && !viewed.sessionId.startsWith('pending-') && viewed.folderPath === managerRoot,
+        managerRoot,
+        text,
+      },
+      managerPorts,
+    );
+    if (sent) managerDraft = '';
+  }
+
+  /** Closing the panel/sheet closes UI only — no abort, erase, or dispose. */
+  function closeManagerArea(): void {
+    managerOpen = false;
+  }
   // Continue starts expanded — the header keeps the open count visible and
   // lets the user fold it away. It is not rendered on mobile at all: there,
   // active sessions surface under their folder's half-open expander instead.
@@ -212,7 +267,7 @@
       <!-- One box: search by default; the leading button toggles it into the
          manager (AI) mode. Same structure on mobile and desktop — only the
          touch/typography sizing differs. -->
-      <HomeToolbar bind:search compact={splitView} />
+      <HomeToolbar bind:search compact={splitView} bind:managerOpen {managerReady} onSubmitManager={submitManagerDraft} />
 
       <!-- Continue: open sessions as cards. Desktop only — mobile drops the
          section completely rather than nesting an expander under the toolbar. -->
@@ -290,10 +345,10 @@
     </div>
   </div>
   {#if splitView}
-    <ManagerChat variant="panel" />
+    <ManagerChat variant="panel" bind:managerDraft onSubmit={submitManagerDraft} onDismiss={closeManagerArea} />
   {/if}
 </div>
 
-{#if fullscreenView}
-  <ManagerChat variant="fullscreen" />
+{#if sheetView}
+  <ManagerChat variant="sheet" bind:managerDraft onSubmit={submitManagerDraft} onDismiss={closeManagerArea} />
 {/if}

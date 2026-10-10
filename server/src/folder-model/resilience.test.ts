@@ -15,7 +15,7 @@ const dir = (children: Record<string, FsNode> = {}): FsNode => ({ kind: 'dir', c
 const file = (content = ''): FsNode => ({ kind: 'file', content });
 const link = (target: string): FsNode => ({ kind: 'symlink', target });
 const repo = (): FsNode => dir({ '.git': dir() });
-const persona = (name: string): FsNode => file(`---\nname: ${name}\n---\nprompt body`);
+const persona = (name: string): FsNode => file(`---\nkind: persona\nname: ${name}\n---\nprompt body`);
 
 function join(parent: string, name: string): string {
   return parent === '/' ? `/${name}` : `${parent}/${name}`;
@@ -209,7 +209,7 @@ describe('scanFolderModel — file symlinks below skipped folders', () => {
 
 describe('parsePersonaFrontMatter — block scalars', () => {
   it('does not close on an indented --- inside a YAML block scalar', () => {
-    const content = ['---', 'name: X', 'description: |', '  first', '  ---', '  second', '---', 'prompt body'].join('\n');
+    const content = ['---', 'kind: persona', 'name: X', 'description: |', '  first', '  ---', '  second', '---', 'prompt body'].join('\n');
 
     const parsed = parsePersonaFrontMatter(content);
     expect(parsed?.name).toBe('X');

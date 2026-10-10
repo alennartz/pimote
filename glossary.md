@@ -17,7 +17,7 @@ An included folder that is home to a persistent agent, identified by its persona
 _Avoid_: agent folder, persistent agent folder
 
 **Persona marker**:
-The YAML front matter at the start of a persona folder's `AGENTS.md` that includes its string `name`; the file body is the persona prompt.
+The YAML front matter at the start of a persona folder's `AGENTS.md` that carries `kind: persona`; optional string `name` and `description`; the file body is the persona prompt.
 _Avoid_: front matter indicator
 
 **Scan root**:

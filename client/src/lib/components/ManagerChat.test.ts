@@ -7,22 +7,23 @@ describe('manager chat presentation', () => {
   const dashboard = readFileSync(resolve(__dirname, 'Dashboard.svelte'), 'utf8');
   const toolbar = readFileSync(resolve(__dirname, 'HomeToolbar.svelte'), 'utf8');
 
-  it('appears only once a conversation exists, never inline under the box', () => {
+  it('presents from local UI state, never inline under the box', () => {
     expect(dashboard).not.toContain('<ManagerChat />');
-    expect(dashboard).toContain('managerStore.hasConversation');
+    expect(dashboard).not.toContain('managerStore');
+    expect(dashboard).toContain('managerOpen');
     expect(dashboard).toContain('variant="panel"');
-    expect(dashboard).toContain('variant="fullscreen"');
+    expect(dashboard).toContain('variant="sheet"');
   });
 
-  it('desktop: homepage narrows to a left rail, transcript panel takes the right', () => {
+  it('desktop: homepage narrows to a left rail, manager panel takes the right', () => {
     expect(dashboard).toContain('splitView');
     expect(dashboard).toContain('md:w-1/4');
     expect(dashboard).toContain('md:border-r');
     expect(managerChat).toContain('border-l');
   });
 
-  it('mobile: full screen chat mirroring the session page chrome', () => {
-    expect(dashboard).toContain('fullscreenView');
+  it('mobile: sheet mirroring the session page chrome', () => {
+    expect(dashboard).toContain('sheetView');
     expect(dashboard).toContain('isMobileViewport');
     expect(managerChat).toContain('fixed inset-0');
     expect(managerChat).toContain('md:hidden');
@@ -37,8 +38,8 @@ describe('manager chat presentation', () => {
   });
 
   it('composers share one draft with the homepage box', () => {
-    expect(managerChat).toContain('bind:value={managerStore.draft}');
-    expect(toolbar).toContain('bind:value={managerStore.draft}');
+    expect(managerChat).toContain('bind:value={managerDraft}');
+    expect(toolbar).toContain('bind:value={managerDraft}');
     expect(toolbar).toContain('aria-label="Message the manager"');
   });
 });

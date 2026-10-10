@@ -39,7 +39,9 @@ const mocks = vi.hoisted(() => {
     start: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
   };
-  const createManagerSessionFactory = vi.fn((_deps: { config: unknown; modelRuntime: unknown; managerExtensionFactory: (pi: unknown) => unknown }) => vi.fn());
+  const sessionManagerCreate = vi.fn(async (_config: unknown, _pushNotificationService: unknown, _options: { managerExtensionFactory?: (pi: unknown) => void }) => sessionManager);
+  const realpath = vi.fn(async (path: string) => path);
+  const seedManagerRoot = vi.fn(async () => undefined);
   const staticHostRegistry = {};
   const staticHostFactory = (() => undefined) as any;
   const downloadManager = {};
@@ -53,7 +55,9 @@ const mocks = vi.hoisted(() => {
     sessionMetadataStore,
     folderRegistry,
     server,
-    createManagerSessionFactory,
+    sessionManagerCreate,
+    realpath,
+    seedManagerRoot,
     staticHostRegistry,
     staticHostFactory,
     downloadManager,
@@ -80,11 +84,12 @@ vi.mock('./session-records.js', () => ({
   }),
 }));
 vi.mock('./folder-model/index.js', () => ({ scanFolderModel: mocks.scanFolderModel }));
+vi.mock('node:fs/promises', async (importOriginal) => ({ ...(await importOriginal()), realpath: mocks.realpath }));
+vi.mock('./manager/index.js', async (importOriginal) => ({ ...(await importOriginal()), seedManagerRoot: mocks.seedManagerRoot }));
 vi.mock('./session-manager.js', () => ({
   PimoteSessionManager: {
-    create: vi.fn(async () => mocks.sessionManager),
+    create: mocks.sessionManagerCreate,
   },
-  createManagerSessionFactory: mocks.createManagerSessionFactory,
 }));
 vi.mock('./folder-registry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./folder-registry.js')>();
@@ -157,7 +162,9 @@ function resetMocks(): void {
   mocks.sessionMetadataStore.getArchivedLookup.mockReset().mockReturnValue(new Map<string, boolean>());
   mocks.sessionMetadataStore.setArchived.mockReset().mockResolvedValue(undefined);
   mocks.folderRegistry.list.mockReset().mockResolvedValue([]);
-  mocks.createManagerSessionFactory.mockClear();
+  mocks.sessionManagerCreate.mockReset().mockResolvedValue(mocks.sessionManager);
+  mocks.realpath.mockReset().mockImplementation(async (path: string) => path);
+  mocks.seedManagerRoot.mockReset().mockResolvedValue(undefined);
   mocks.server.clientRegistry.clear();
   mocks.server.start.mockReset().mockResolvedValue(undefined);
   mocks.bootstrapFileDownloads.mockReset().mockResolvedValue({ manager: mocks.downloadManager, extensionFactory: mocks.downloadFactory });
@@ -193,7 +200,11 @@ describe('main — file download bootstrap wiring', () => {
 
     expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: new Set(['session-1']) }));
     expect(mocks.scanFolderModel).toHaveBeenCalledWith({ roots: ['/workspace'], onWarning: expect.any(Function) });
-    expect(PimoteSessionManager.create).toHaveBeenCalledWith(mocks.config, expect.anything(), expect.objectContaining({ fileDownloadFactory: mocks.downloadFactory }));
+    expect(PimoteSessionManager.create).toHaveBeenCalledWith(
+      mocks.config,
+      expect.anything(),
+      expect.objectContaining({ fileDownloadFactory: mocks.downloadFactory, managerExtensionFactory: expect.anything() }),
+    );
     expect(mocks.createServer).toHaveBeenCalledWith(
       mocks.config,
       mocks.sessionManager,
@@ -204,7 +215,6 @@ describe('main — file download bootstrap wiring', () => {
       mocks.staticHostRegistry,
       mocks.downloadManager,
       mocks.updateChecker,
-      expect.anything(),
       expect.anything(),
       expect.anything(),
       expect.anything(),
@@ -231,7 +241,6 @@ describe('main — file download bootstrap wiring', () => {
       mocks.staticHostRegistry,
       mocks.downloadManager,
       undefined,
-      expect.anything(),
       expect.anything(),
       expect.anything(),
       expect.anything(),
@@ -306,6 +315,11 @@ describe('main — file download bootstrap wiring', () => {
         { path: '/workspace/other/shared-link', via: 'shortcut', entry: sharedEntry, children: sharedChildren },
       ],
     }));
+    // The manager root is outside discovery: its records are enumerated
+    // separately, once.
+    mocks.sessionRecords.listSessionRecords.mockImplementation(async (folderPath: string) =>
+      folderPath === '/srv/manager-home' ? [{ id: 'manager-session' }] : [{ id: 'session-1' }],
+    );
 
     await main();
 
@@ -313,12 +327,13 @@ describe('main — file download bootstrap wiring', () => {
     // lexical, so alias/reach paths hold their own session directories — the
     // sweep must never drop registrations recorded there. Duplicate
     // occurrences collapse to one enumeration per path.
-    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledTimes(4);
+    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledTimes(5);
     expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/shared', { failOnError: true });
     expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/external/member', { failOnError: true });
     expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/shared/member', { failOnError: true });
     expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/other/shared-link', { failOnError: true });
-    expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: new Set(['session-1']) }));
+    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/srv/manager-home', { failOnError: true });
+    expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: new Set(['session-1', 'manager-session']) }));
   });
 
   it('suppresses the sweep when the scan work budget was exceeded', async () => {
@@ -348,7 +363,7 @@ describe('main — file download bootstrap wiring', () => {
 
 // The manager toolset's port wiring: drive the tools registered at the
 // single ManagerToolContext construction site through the real extension
-// factory main() hands to the manager session factory, against the mocked
+// factory main() hands to the normal session manager, against the mocked
 // server internals the construction site composes over.
 describe('main — manager toolset port wiring', () => {
   let processOn: ReturnType<typeof vi.spyOn>;
@@ -366,8 +381,8 @@ describe('main — manager toolset port wiring', () => {
    *  ExtensionAPI and return them for direct execution. */
   async function registeredManagerTools(): Promise<FakeToolDef[]> {
     await main({ portOverride: 4321 });
-    expect(mocks.createManagerSessionFactory).toHaveBeenCalledTimes(1);
-    const { managerExtensionFactory } = mocks.createManagerSessionFactory.mock.calls[0][0];
+    expect(mocks.sessionManagerCreate).toHaveBeenCalledTimes(1);
+    const { managerExtensionFactory } = mocks.sessionManagerCreate.mock.calls[0][2];
     const toolDefs: FakeToolDef[] = [];
     (managerExtensionFactory as (pi: unknown) => void)({
       registerTool(def: FakeToolDef) {
@@ -605,10 +620,11 @@ describe('main — manager toolset port wiring', () => {
     expect(result.details.results).toEqual([{ sessionId: 'ghost', outcome: 'not_found' }]);
   });
 
-  it('passes the loaded managerRoot through the manager factory config without scanning it', async () => {
+  it('passes the canonical managerRoot to the session manager without scanning it', async () => {
     await main({ portOverride: 4321 });
 
-    const { config } = mocks.createManagerSessionFactory.mock.calls[0][0];
+    const config = mocks.sessionManagerCreate.mock.calls[0][0];
+    expect(mocks.realpath).toHaveBeenCalledWith('/srv/manager-home');
     expect(config.managerRoot).toBe('/srv/manager-home');
     // The manager root is the persona's working directory — never a scan root.
     expect(mocks.scanFolderModel).toHaveBeenCalledWith({ roots: ['/workspace'], onWarning: expect.any(Function) });

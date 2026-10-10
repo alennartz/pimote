@@ -30,7 +30,6 @@ describe('ManagerResources', () => {
     const file = target.querySelector('a[href="/d/file"]')!;
     expect(file.hasAttribute('download')).toBe(true);
     expect(file.textContent).toContain('report.txt');
-    expect(target.textContent).toContain('24 hours');
   });
 
   it('does not render an empty resources area', () => {

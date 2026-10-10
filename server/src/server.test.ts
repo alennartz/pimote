@@ -129,7 +129,6 @@ describe('createServer — folders_changed broadcast wiring', () => {
       repoIndex,
       folderRegistry,
       undefined,
-      undefined,
       folderListing,
     );
     await server.start(0);
@@ -178,7 +177,6 @@ describe('createServer — session metadata invalidation', () => {
       undefined,
       new InMemoryStaticHostRegistry(),
       makeDownloads(),
-      undefined,
       undefined,
       undefined,
       undefined,

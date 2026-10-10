@@ -58,7 +58,7 @@ export interface FolderInfo {
   /** Basename. */
   name: string;
   nature: 'code' | 'persona';
-  persona?: { name: string; description?: string };
+  persona?: { name?: string; description?: string };
   /** > 0 → hub icon variant. */
   shortcutCount: number;
   favorite: boolean;
@@ -542,23 +542,14 @@ export interface DisbandHubCommand extends CommandBase {
   folderPath: string;
 }
 
-/** Prompt the connection's ephemeral manager agent. */
-export interface ManagerPromptCommand extends CommandBase {
-  type: 'manager_prompt';
-  text: string;
-}
-
-/** Abort the running manager prompt, if any. */
-export interface ManagerAbortCommand extends CommandBase {
-  type: 'manager_abort';
-}
-
 export interface ListFoldersResponseData {
   /** Epoch observed while computing this window. */
   epoch: number;
   /** Rows may carry matchedSessionIds?: string[] (session-tier search matches). */
   folders: FolderInfo[];
   roots: string[];
+  /** Server-canonical manager persona path, separate from scan roots. */
+  managerRoot: string;
   /** Matches under query + includeArchived, over the whole set. */
   total: number;
   /** Token this window was served under (client adopts it). */
@@ -814,8 +805,6 @@ export type PimoteCommand =
   | UpdateFolderCommand
   | CreateHubCommand
   | DisbandHubCommand
-  | ManagerPromptCommand
-  | ManagerAbortCommand
   // Server-level
   | RenameSessionCommand
   | ListSessionsCommand
@@ -1159,15 +1148,6 @@ export interface FoldersChangedEvent {
   epoch: number;
 }
 
-/** Streams the connection's ephemeral manager session: the same session event
- *  mapping used for regular sessions, wrapped so the client can render manager
- *  output with the same machinery. Manager sessions are per-connection and
- *  ephemeral (in-memory), so there is no replay cursor. */
-export interface ManagerStreamEvent {
-  type: 'manager_event';
-  event: PimoteEvent;
-}
-
 export interface SessionRestoreEvent {
   type: 'session_restore';
   sessionId: string;
@@ -1366,7 +1346,6 @@ export type PimoteEvent =
   | SessionStateChangedEvent
   | ConnectionRestoredEvent
   | FoldersChangedEvent
-  | ManagerStreamEvent
   | SessionRestoreEvent
   | BufferedEventsEvent
   | FullResyncEvent

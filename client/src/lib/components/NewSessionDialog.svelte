@@ -55,7 +55,7 @@
   );
 
   /** Persona folders lead with the persona's display name; code folders keep the basename. */
-  function pickerLabel(folder: { name: string; persona?: { name: string } }): string {
+  function pickerLabel(folder: { name: string; persona?: { name?: string } }): string {
     return folder.persona?.name ?? folder.name;
   }
 

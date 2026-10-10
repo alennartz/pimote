@@ -303,13 +303,6 @@ export class SessionRegistry {
     };
   }
 
-  /** Build a session state without registering or persisting it — for stores
-   *  that reuse this registry's event reduction over their own synthetic slot
-   *  (the manager store). The caller installs the result into `sessions`. */
-  createEphemeralState(sessionId: string, folderPath: string, projectName: string): PerSessionState {
-    return this.createSessionState(sessionId, folderPath, projectName);
-  }
-
   firstUserMessage(messages: PimoteAgentMessage[]): string | undefined {
     for (const message of messages) {
       if (message.role !== 'user') continue;

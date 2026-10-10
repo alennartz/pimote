@@ -15,7 +15,7 @@ const file = (content = ''): FsNode => ({ kind: 'file', content });
 const link = (target: string): FsNode => ({ kind: 'symlink', target });
 const repo = (): FsNode => dir({ '.git': dir() });
 const marker = (name: string, description?: string): FsNode =>
-  file(['---', `name: ${name}`, ...(description ? [`description: ${description}`] : []), '---', 'prompt body'].join('\n'));
+  file(['---', 'kind: persona', `name: ${name}`, ...(description ? [`description: ${description}`] : []), '---', 'prompt body'].join('\n'));
 
 function memFs(tree: Record<string, FsNode>): FolderFs {
   const nodes = new Map<string, FsNode>();
@@ -174,11 +174,11 @@ describe('scanFolderModel — classification', () => {
     expect(tree.occurrences[0].entry.nature).toBe('persona');
   });
 
-  it('treats front matter without a name key as no marker', async () => {
+  it('treats front matter without a kind: persona key as no marker', async () => {
     const tree = await scan(['/root1'], {
       '/root1': dir({
         w: dir({
-          'AGENTS.md': file('---\ndescription: no name key\n---\nprompt body'),
+          'AGENTS.md': file('---\nname: no-kind\n---\nprompt body'),
           inner: repo(),
         }),
       }),
@@ -215,19 +215,21 @@ describe('scanFolderModel — classification', () => {
 
   it('captures quoted YAML strings and ignores other agent-definition keys', async () => {
     const tree = await scan(['/root1'], {
-      '/root1': dir({ p: dir({ 'AGENTS.md': file('---\nname: "007"\ndescription: "A name: with punctuation"\ntools: [read, bash]\nmodel: example\n---\nprompt') }) }),
+      '/root1': dir({
+        p: dir({ 'AGENTS.md': file('---\nkind: persona\nname: "007"\ndescription: "A name: with punctuation"\ntools: [read, bash]\nmodel: example\n---\nprompt') }),
+      }),
     });
     expect(tree.occurrences[0].entry.persona).toEqual({ name: '007', description: 'A name: with punctuation' });
   });
 
-  it.each(['123', 'true', 'null', '[agent]', '{key: value}'])('rejects a non-string YAML name (%s)', async (name) => {
+  it.each(['123', 'true', 'null', '[agent]', '{key: value}'])('omits a non-string YAML name (%s)', async (name) => {
     const tree = await scan(['/root1'], {
-      '/root1': dir({ w: dir({ 'AGENTS.md': file(`---\nname: ${name}\n---\n`), inner: repo() }) }),
+      '/root1': dir({ w: dir({ 'AGENTS.md': file(`---\nkind: persona\nname: ${name}\n---\n`), inner: repo() }) }),
     });
-    expect(paths(tree.occurrences)).toEqual(['/root1/w/inner']);
+    expect(tree.occurrences[0].entry.persona).toEqual({});
   });
 
-  it.each(['---\nname: missing-close\n', '---\nname: [broken\n---\n'])('falls back to git for malformed front matter (%s)', async (content) => {
+  it.each(['---\nkind: persona\nname: missing-close\n', '---\nkind: persona\nname: [broken\n---\n'])('falls back to git for malformed front matter (%s)', async (content) => {
     const tree = await scan(['/root1'], {
       '/root1': dir({ w: dir({ '.git': dir(), 'AGENTS.md': file(content) }) }),
     });

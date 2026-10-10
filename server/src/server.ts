@@ -12,7 +12,6 @@ import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderRegistry } from './folder-registry.js';
 import type { FolderListingService } from './folder-listing.js';
-import type { ManagerService } from './manager/index.js';
 import type { FolderCreator } from './folder-sources/index.js';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { serveStaticHostRoute, type StaticHostRegistry } from './static-host/index.js';
@@ -134,7 +133,6 @@ export async function createServer(
   updateChecker?: UpdateChecker,
   repoIndex?: RepoIndex,
   folderRegistry?: FolderRegistry,
-  managerService?: ManagerService,
   creators?: FolderCreator[],
   folderListing?: FolderListingService,
 ): Promise<PimoteServer> {
@@ -277,6 +275,7 @@ export async function createServer(
     // different handler, so this is the only place it runs.
     const existing = clientRegistry.get(clientId);
     const handler = new WsHandler(
+      config.managerRoot,
       sessionManager,
       sessionRecords,
       ws,
@@ -287,7 +286,6 @@ export async function createServer(
       voiceOrchestrator,
       repoIndex,
       folderRegistry,
-      managerService,
       creators,
       folderListing,
     );

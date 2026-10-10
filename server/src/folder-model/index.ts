@@ -20,9 +20,10 @@ export { DEFAULT_VISIT_BUDGET } from './traversal.js';
 /** A folder of interest is exactly one of these two natures. */
 export type FolderNature = 'code' | 'persona';
 
-/** Agent-definition front matter captured from a persona folder's AGENTS.md. */
+/** Agent-definition front matter captured from a persona folder's AGENTS.md
+ *  (`kind: persona` plus optional string `name` and `description`). */
 export interface PersonaInfo {
-  name: string;
+  name?: string;
   description?: string;
 }
 

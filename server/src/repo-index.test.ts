@@ -131,7 +131,7 @@ describe('RepoIndex.list() — folder-model discovery', () => {
   it('excludes persona folders even when they contain git', async () => {
     const persona = join(tempDir, 'persona');
     await initRepo(persona);
-    await writeFile(join(persona, 'AGENTS.md'), '---\nname: Ada\ndescription: helper\n---\n\n# Ada\n');
+    await writeFile(join(persona, 'AGENTS.md'), '---\nkind: persona\nname: Ada\ndescription: helper\n---\n\n# Ada\n');
     const code = join(tempDir, 'code');
     await initRepo(code);
 
@@ -146,7 +146,7 @@ describe('RepoIndex.list() — folder-model discovery', () => {
     await initRepo(hub);
     const persona = join(externalDir, 'persona');
     await initRepo(persona);
-    await writeFile(join(persona, 'AGENTS.md'), '---\nname: Ada\n---\n');
+    await writeFile(join(persona, 'AGENTS.md'), '---\nkind: persona\nname: Ada\n---\n');
     await symlink(persona, join(hub, 'persona-link'));
 
     const index = makeIndex();
@@ -266,7 +266,7 @@ describe('RepoIndex.list() — registered sources', () => {
   it('excludes a persona-natured source entry from the repo listing', async () => {
     const personaHome = join(externalDir, 'ada');
     await mkdir(personaHome, { recursive: true });
-    await writeFile(join(personaHome, 'AGENTS.md'), '---\nname: Ada\n---\nprompt body', 'utf8');
+    await writeFile(join(personaHome, 'AGENTS.md'), '---\nkind: persona\nname: Ada\n---\nprompt body', 'utf8');
 
     const index = makeIndex();
     index.registerSource({
@@ -281,7 +281,7 @@ describe('RepoIndex.list() — registered sources', () => {
   it('excludes an in-tree persona path that only a source lists', async () => {
     const personaHome = join(tempDir, 'ada');
     await mkdir(personaHome, { recursive: true });
-    await writeFile(join(personaHome, 'AGENTS.md'), '---\nname: Ada\n---\nprompt body', 'utf8');
+    await writeFile(join(personaHome, 'AGENTS.md'), '---\nkind: persona\nname: Ada\n---\nprompt body', 'utf8');
 
     const index = makeIndex();
     index.registerSource({
@@ -295,7 +295,7 @@ describe('RepoIndex.list() — registered sources', () => {
   it('routes persona source entries to listSourcePersonas with their classification and tags', async () => {
     const personaHome = join(externalDir, 'ada');
     await mkdir(personaHome, { recursive: true });
-    await writeFile(join(personaHome, 'AGENTS.md'), '---\nname: Ada\n---\nprompt body', 'utf8');
+    await writeFile(join(personaHome, 'AGENTS.md'), '---\nkind: persona\nname: Ada\n---\nprompt body', 'utf8');
 
     const index = makeIndex();
     index.registerSource({
