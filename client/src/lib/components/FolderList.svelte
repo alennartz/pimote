@@ -8,6 +8,7 @@
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { AGENT_INSTRUCTIONS_PATH, fileEditorStore } from '$lib/stores/file-editor.svelte.js';
   import SessionItem from './SessionItem.svelte';
+  import HubMembersDialog from './HubMembersDialog.svelte';
   import FolderNatureIcon, { folderIconKind } from './FolderNatureIcon.svelte';
   import Archive from '@lucide/svelte/icons/archive';
   import EllipsisVertical from '@lucide/svelte/icons/ellipsis-vertical';
@@ -111,6 +112,11 @@
 
   // Disband confirmation state
   let disbandTarget = $state<FolderInfo | null>(null);
+
+  // Hub members dialog state. The row is re-derived from the store on every
+  // delta, so membership changes reach the open dialog.
+  let membersHubPath = $state<string | null>(null);
+  const membersHub = $derived(folderStore.folders.find((folder) => folder.path === membersHubPath) ?? null);
 
   // Add-tag dialog state
   let tagTarget = $state<FolderInfo | null>(null);
@@ -663,29 +669,49 @@
                   </div>
                 {/if}
               </ContextMenuTrigger>
-              <ContextMenuContent>
-                <ContextMenuItem
-                  disabled={connection.status !== 'connected' || folder.missing}
-                  onSelect={() => void fileEditorStore.openFolderInstructions(folder.path, displayName(folder))}
-                >
-                  <FilePen class="size-4" />
-                  Edit AGENTS.md…
-                </ContextMenuItem>
-                <ContextMenuItem onSelect={() => openTagDialog(folder)}>
-                  <Tag class="size-4" />
-                  Add tag…
-                </ContextMenuItem>
-                <!-- Registry/source hubs only: `repos` marks persisted hub
-                     membership. A generic shortcut-bearing folder shows the hub
-                     icon but gains no deletion rights. -->
-                {#if folder.repos !== undefined}
-                  <ContextMenuSeparator />
-                  <ContextMenuItem onSelect={() => (disbandTarget = folder)}>
-                    <Trash2 class="size-4" />
-                    Disband hub
+              {#if rowMenuPath === folder.path}
+                <ContextMenuContent>
+                  <ContextMenuItem
+                    disabled={connection.status !== 'connected' || folder.missing}
+                    onSelect={() => void fileEditorStore.openFolderInstructions(folder.path, displayName(folder))}
+                  >
+                    <FilePen class="size-4" />
+                    Edit AGENTS.md…
                   </ContextMenuItem>
-                {/if}
-              </ContextMenuContent>
+                  <ContextMenuItem onSelect={() => openTagDialog(folder)}>
+                    <Tag class="size-4" />
+                    Add tag…
+                  </ContextMenuItem>
+                  <!-- Membership and disband eligibility are separate facts:
+                       `members`/`shortcutCount` open member management (including
+                       empty registry hubs); `repos` marks persisted hub ownership
+                       and gates deletion rights only. -->
+                  {#if folder.members !== undefined || folder.shortcutCount > 0}
+                    <ContextMenuItem onSelect={() => (membersHubPath = folder.path)}>
+                      <Network class="size-4" />
+                      Manage members…
+                    </ContextMenuItem>
+                  {/if}
+                  <ContextMenuSeparator />
+                  {#if folder.archived}
+                    <ContextMenuItem onSelect={() => void updateFolder(folder, { archived: !folder.archived })}>
+                      <Undo2 class="size-4" />
+                      Restore project
+                    </ContextMenuItem>
+                  {:else}
+                    <ContextMenuItem onSelect={() => void updateFolder(folder, { archived: !folder.archived })}>
+                      <Archive class="size-4" />
+                      Archive project
+                    </ContextMenuItem>
+                  {/if}
+                  {#if folder.repos !== undefined}
+                    <ContextMenuItem onSelect={() => (disbandTarget = folder)}>
+                      <Trash2 class="size-4" />
+                      Disband hub
+                    </ContextMenuItem>
+                  {/if}
+                </ContextMenuContent>
+              {/if}
             </ContextMenu>
 
             {#if showSessionBlock}
@@ -867,6 +893,22 @@
         </Button>
       </Dialog.Footer>
     </div>
+  </Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root
+  open={membersHub !== null}
+  onOpenChange={(open) => {
+    if (!open) membersHubPath = null;
+  }}
+>
+  <Dialog.Content class="sm:max-w-lg">
+    <Dialog.Header>
+      <Dialog.Title>Manage members of {membersHub ? displayName(membersHub) : ''}</Dialog.Title>
+    </Dialog.Header>
+    {#if membersHub}
+      <HubMembersDialog hub={membersHub} />
+    {/if}
   </Dialog.Content>
 </Dialog.Root>
 

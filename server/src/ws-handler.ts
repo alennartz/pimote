@@ -22,6 +22,7 @@ import { getMergedPanelCards } from './panel-state.js';
 import { resolveSessionAcrossFolders, type SessionRecordLocation, type SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import { enrichActiveSessionCounts, isValidFolderName, type FolderRegistry } from './folder-registry.js';
+import { seedCodeFolderAgents, seedPersonaFolder } from './manager/seed.js';
 import type { FolderListingService } from './folder-listing.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import type { FolderCreator } from './folder-sources/index.js';
@@ -321,13 +322,59 @@ export class WsHandler {
             this.sendResponse(id, false, undefined, 'Root is not a configured scan root');
             break;
           }
-          const created = await folderRegistry.createHub({ name: command.name, root: command.root, memberPaths: command.memberPaths });
+          const created = await folderRegistry.createHub({
+            name: command.name,
+            root: command.root,
+            memberPaths: command.memberPaths,
+            ...(command.body !== undefined ? { body: command.body } : {}),
+            ...(command.description !== undefined ? { description: command.description } : {}),
+            ...(command.personaText !== undefined ? { personaText: command.personaText } : {}),
+          });
           // The hub folder just changed on disk; drop the cached listing so a
           // subsequent member-picker request sees the new filesystem state.
           // Listing-only: a new hub moves no git facts of existing repos (the
           // hub's own first probe fills its slot lazily), so warm probes stay.
           repoIndex.invalidateListing();
           this.sendResponse(id, true, { folderPath: created.path });
+          break;
+        }
+
+        case 'create_persona_folder': {
+          const { repoIndex, folderListing } = this.requireFolderDeps();
+          if (!isValidFolderName(command.name)) {
+            this.sendResponse(id, false, undefined, 'Invalid folder name');
+            break;
+          }
+          if (!repoIndex.roots.includes(command.root)) {
+            this.sendResponse(id, false, undefined, 'Root is not a configured scan root');
+            break;
+          }
+          try {
+            const folderPath = await seedPersonaFolder(command.root, command.name, command.description, command.personaText);
+            repoIndex.invalidateListing();
+            WsHandler.broadcastFoldersChanged(folderListing, [folderPath], [], this.clientRegistry);
+            this.sendResponse(id, true, { folderPath });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.sendResponse(id, false, undefined, `Failed to create persona folder: ${message}`);
+          }
+          break;
+        }
+
+        case 'add_hub_member': {
+          const { folderRegistry } = this.requireFolderDeps();
+          // Validation errors fall through to the outer catch, which responds
+          // with the user-presentable message. The registry's onChange (wired
+          // in server.ts) broadcasts the folders_changed delta.
+          await folderRegistry.addMember(command.hubPath, command.memberPath);
+          this.sendResponse(id, true);
+          break;
+        }
+
+        case 'remove_hub_member': {
+          const { folderRegistry } = this.requireFolderDeps();
+          await folderRegistry.removeMember(command.hubPath, command.memberPath);
+          this.sendResponse(id, true);
           break;
         }
 
@@ -374,6 +421,13 @@ export class WsHandler {
 
           try {
             const created = await creator.create({ root, name });
+            // Seed the new folder's AGENTS.md (stub even when the body is
+            // omitted). Best-effort after a successful creation: the creator
+            // owns folder existence and may write its own AGENTS.md — a seed
+            // failure must not report an already-created folder as failed.
+            await seedCodeFolderAgents(created.path, name, command.body ?? '').catch((err) => {
+              console.warn('[WsHandler] AGENTS.md seed skipped:', err instanceof Error ? err.message : String(err));
+            });
             // Otherwise the 30s listing TTL hides the new repo from the index.
             // Listing-only: the new folder's first probe fills its own slot;
             // untouched repos keep warm git probes.

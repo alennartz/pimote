@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, realpath, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, join, sep } from 'node:path';
-import type { FolderInfo, RepoInfo } from '../../shared/dist/index.js';
+import type { Dirent } from 'node:fs';
+import { lstat, mkdir, readFile, readdir, readlink, rename, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { basename, join, resolve, sep } from 'node:path';
+import type { FolderInfo, FolderMemberInfo, RepoInfo } from '../../shared/dist/index.js';
 import type { FolderEntry, FolderOccurrence, SparseTree } from './folder-model/index.js';
 import type { FolderModelPort, FolderRegistryPort, FolderUpdatePatch } from './manager/types.js';
-import { materializeHubFolder } from './folder-sources/materialize.js';
+import { hubAgentsMarkdown, injectMemberLine, removeMemberLine, seededMemberLine } from './hub-agents-md.js';
+import { MEMORY_STUB } from './manager/seed.js';
+import { materializeHubFolder, memberIgnoreLine } from './folder-sources/materialize.js';
 import type { HubSourceEntry } from './folder-sources/index.js';
 import type { PersonaSourceEntry, RepoIndex } from './repo-index.js';
 
@@ -101,6 +104,46 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+/** Whether anything exists at the path without following symlinks — dangling
+ *  symlinks count. */
+async function linkOrPathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+/** File contents, or null when the file is absent. */
+async function readTextIfPresent(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+/** Append one exact line to a text file's content; unchanged when the line is
+ *  already there whole. Adds the separating newline first when needed. */
+function appendExactLine(content: string, line: string): string {
+  if (content.split('\n').includes(line)) return content;
+  const separator = content !== '' && !content.endsWith('\n') ? '\n' : '';
+  return `${content}${separator}${line}\n`;
+}
+
+/** Delete the first whole occurrence of one exact line; unchanged when the
+ *  line is absent. */
+function deleteExactLine(content: string, line: string): string {
+  const lines = content.split('\n');
+  const at = lines.indexOf(line);
+  if (at === -1) return content;
+  lines.splice(at, 1);
+  return lines.join('\n');
+}
+
 /** Placeholder for a member repo the index no longer knows. */
 function missingRepo(path: string): RepoInfo {
   return { path, name: basename(path), branch: null, dirty: false, ahead: 0, behind: 0, missing: true };
@@ -148,6 +191,50 @@ function collectScanEntries(tree: SparseTree): Map<string, ScanRow> {
   return byPath;
 }
 
+/** One hub-side member symlink: its name in the hub and its resolved target. */
+interface HubLink {
+  name: string;
+  /** `realpath` when the target resolves, the resolved lexical target when it dangles. */
+  target: string;
+}
+
+/** Whether `target` lies inside directory `dir` — the scanner's shortcut rule. */
+function isInside(target: string, dir: string): boolean {
+  return dir === '/' ? target.startsWith('/') : target.startsWith(`${dir}/`);
+}
+
+/**
+ * The hub symlink inventory for each given path (plan: 0.15-2 dashboard
+ * folder UX). Paths that are absent or not directories are skipped (no map
+ * entry). Targets equal to or inside the hub are skipped, the same rule the
+ * scanner uses for shortcuts. Links sort by name.
+ */
+async function readHubLinks(paths: Iterable<string>): Promise<Map<string, HubLink[]>> {
+  const inventory = new Map<string, HubLink[]>();
+  for (const path of paths) {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(path, { withFileTypes: true });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      throw error;
+    }
+    const hubCanonical = await realpath(path).catch(() => path);
+    const links: HubLink[] = [];
+    for (const entry of entries) {
+      if (!entry.isSymbolicLink()) continue;
+      const lexical = resolve(path, await readlink(join(path, entry.name)));
+      const target = await realpath(lexical).catch(() => lexical);
+      if (target === hubCanonical || isInside(target, hubCanonical)) continue;
+      links.push({ name: entry.name, target });
+    }
+    links.sort((a, b) => a.name.localeCompare(b.name));
+    inventory.set(path, links);
+  }
+  return inventory;
+}
+
 /** Effective hub metadata for one path: source-listed shape with persisted
  *  entries overriding name/memberPaths when both layers list the path. */
 interface HubMetadata {
@@ -193,6 +280,8 @@ interface FolderViewInputs {
   personas: PersonaSourceEntry[];
   /** Paths verified absent on disk; every unlisted path counts as present. */
   absent: ReadonlySet<string>;
+  /** Hub symlink inventories from the edge probe; probed paths only. */
+  hubLinks: ReadonlyMap<string, HubLink[]>;
 }
 
 /**
@@ -209,7 +298,8 @@ interface FolderViewInputs {
  *
  * Plain code rows known to the index carry their own repo facts in `repo`,
  * copied from the index cache (no git probe here). Hub rows keep membership in
- * `repos`; persona rows carry neither.
+ * `members` (the symlink inventory) and the code members' git facts in `repos`;
+ * persona rows carry neither.
  */
 function mergedFolders(input: FolderViewInputs): FolderInfo[] {
   const scanned = collectScanEntries(input.tree);
@@ -228,11 +318,24 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
     const sourcePersona = sourcePersonas.get(path);
     const override = input.doc.overrides[path];
     const userTags = override?.tags;
-    const members: RepoInfo[] | undefined = hub
-      ? hub.memberPaths.map((memberPath) => ({ ...(byPath.get(memberPath) ?? missingRepo(memberPath)), tags: repoTags(memberPath) }))
+    // Hub membership in two shapes: `repos` carries git facts (and the
+    // disband gate) for the code members only — persona members have none —
+    // while `members` is the symlink-inventory membership fact. A code member
+    // absent from the index still gets the missing placeholder.
+    const memberRepos: RepoInfo[] | undefined = hub
+      ? hub.memberPaths
+          .filter((memberPath) => scanned.get(memberPath)?.entry.nature !== 'persona')
+          .map((memberPath) => ({ ...(byPath.get(memberPath) ?? missingRepo(memberPath)), tags: repoTags(memberPath) }))
       : undefined;
+    // Only probed paths carry `members`; the probe skipped absent paths.
+    const memberLinks = input.hubLinks.get(path);
+    const folderMembers: FolderMemberInfo[] | undefined = memberLinks?.map((link) => ({
+      path: link.target,
+      name: link.name,
+      nature: scanned.get(link.target)?.entry.nature ?? 'code',
+    }));
     // Hub rows implicitly inherit their members' tags.
-    const memberTagUnion = members ? unionTags(...members.map((member) => member.tags)) : undefined;
+    const memberTagUnion = memberRepos ? unionTags(...memberRepos.map((member) => member.tags)) : undefined;
     const nature = scan?.entry.nature ?? (sourcePersona ? 'persona' : 'code');
     // Own repo facts for plain code rows: copied from the cached index facts
     // (effective tags like every other RepoInfo on a row). Personas and hub
@@ -251,7 +354,8 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
       tags: (hub ? unionTags(userTags, hub.sourceTags, memberTagUnion) : unionTags(repo?.tags, sourcePersona?.tags, userTags)) ?? [],
       missing: !scan && input.absent.has(path),
       ...(ownRepo ? { repo: ownRepo } : {}),
-      ...(members ? { repos: members } : {}),
+      ...(memberRepos ? { repos: memberRepos } : {}),
+      ...(folderMembers ? { members: folderMembers } : {}),
       ...(userTags ? { userTags } : {}),
       activeSessionCount: 0,
       externalProcessCount: 0,
@@ -341,7 +445,14 @@ export class FolderRegistry implements FolderRegistryPort {
   private async viewOver(tree: SparseTree, repos: RepoInfo[]): Promise<FolderInfo[]> {
     const [doc, sourceHubs, personas] = await Promise.all([this.document(), this.repos.listSourceHubs(), this.repos.listSourcePersonas()]);
     const absent = await resolveAbsentPaths(repos, hubMetadata(sourceHubs, doc).keys());
-    return mergedFolders({ doc, tree, repos, sourceHubs, personas, absent });
+    // The hub-link probe runs over registry/source hubs and scanned rows with
+    // shortcuts — the rows whose symlink inventory can carry members.
+    const probePaths = new Set(hubMetadata(sourceHubs, doc).keys());
+    for (const [path, row] of collectScanEntries(tree)) {
+      if (row.shortcutCount > 0) probePaths.add(path);
+    }
+    const hubLinks = await readHubLinks(probePaths);
+    return mergedFolders({ doc, tree, repos, sourceHubs, personas, absent, hubLinks });
   }
 
   /** Apply a curation patch. Unknown folder paths reject. */
@@ -372,22 +483,24 @@ export class FolderRegistry implements FolderRegistryPort {
   }
 
   /**
-   * Create a hub folder: mkdir under `root`, symlink every member repo, and
-   * generate the hub AGENTS.md with the sub-project convention (plus git init
-   * and member .gitignore). Every memberPath must exist in the repo index;
-   * unknown members reject. Resolves to the hub's full FolderInfo row.
+   * Create a hub folder: mkdir under `root`, symlink every member, and
+   * generate the hub AGENTS.md with its managed member block (plus git init
+   * and member .gitignore). Members are any discovered folder-model entry
+   * (code or persona); unknown members reject. The persona variant
+   * (`personaText !== undefined`) seeds a persona marker and memory.md.
+   * Resolves to the hub's full FolderInfo row.
    */
   async createHub(input: { name: string; root: string; memberPaths: string[]; body?: string; description?: string; personaText?: string }): Promise<FolderInfo> {
     return this.serialized(async () => {
       const doc = await this.document();
-      const repos = await this.repos.list();
-      const byPath = new Map(repos.map((repo) => [repo.path, repo]));
 
       const { name, root } = input;
       if (!isValidFolderName(name)) throw new Error(`Invalid folder name: ${name}`);
-      const unknown = input.memberPaths.find((memberPath) => !byPath.has(memberPath));
-      if (unknown !== undefined) throw new Error(`Unknown repo: ${unknown}`);
-      const memberPaths = input.memberPaths.map((memberPath) => byPath.get(memberPath)!.path);
+      const natures = await this.discoveredNatures();
+      for (const memberPath of input.memberPaths) {
+        if (!natures.has(memberPath)) throw new Error(`Unknown folder: ${memberPath}`);
+      }
+      const memberPaths = [...input.memberPaths];
       // Two members with the same basename collide on one symlink target inside
       // the hub — reject up front so no partial hub is ever built.
       const seen = new Set<string>();
@@ -399,9 +512,18 @@ export class FolderRegistry implements FolderRegistryPort {
       const target = join(root, name);
       if (await pathExists(target)) throw new Error(`Directory already exists: ${target}`);
 
+      const members = memberPaths.map((memberPath) => ({ name: basename(memberPath), nature: natures.get(memberPath)! }));
+      const agentsMd =
+        input.personaText !== undefined
+          ? hubAgentsMarkdown({ name, members, persona: { description: input.description ?? '', personaText: input.personaText } })
+          : hubAgentsMarkdown({ name, members, body: input.body });
+
       let canonicalTarget: string;
       try {
-        await materializeHubFolder({ kind: 'hub', path: target, name, memberPaths });
+        await materializeHubFolder({ kind: 'hub', path: target, name, memberPaths }, agentsMd);
+        // The persona-hub variant is a persona folder: its marker AGENTS.md
+        // (rendered above) plus the memory stub, rolled back with the hub.
+        if (input.personaText !== undefined) await writeFile(join(target, 'memory.md'), MEMORY_STUB, 'utf8');
         // Canonical identity (curation contract): a configured root may be a
         // symlink alias, and discovery identifies folders by their real path —
         // persisting the lexical path would split the hub into two rows and
@@ -417,7 +539,7 @@ export class FolderRegistry implements FolderRegistryPort {
         throw error;
       }
       this.fireChange({ changedPaths: [canonicalTarget], removedPaths: [] });
-      return this.hubRow(doc, repos, canonicalTarget);
+      return this.hubRow(doc, await this.repos.list(), canonicalTarget);
     });
   }
 
@@ -429,7 +551,9 @@ export class FolderRegistry implements FolderRegistryPort {
    */
   private async hubRow(doc: RegistryDocument, repos: RepoInfo[], target: string): Promise<FolderInfo> {
     const sourceHubs = await this.repos.listSourceHubs();
-    const row = mergedFolders({ doc, tree: { occurrences: [] }, repos, sourceHubs, personas: await this.repos.listSourcePersonas(), absent: new Set() }).find(
+    // hubLinks stays empty: the returned row skips the hub-link probe (the
+    // existing toEqual contract pins it without a `members` key).
+    const row = mergedFolders({ doc, tree: { occurrences: [] }, repos, sourceHubs, personas: await this.repos.listSourcePersonas(), absent: new Set(), hubLinks: new Map() }).find(
       (folder) => folder.path === target,
     );
     if (!row) throw new Error(`Hub row missing after creation: ${target}`);
@@ -478,8 +602,42 @@ export class FolderRegistry implements FolderRegistryPort {
    * folders_changed delta like the other mutations.
    */
   async addMember(hubPath: string, memberPath: string): Promise<void> {
-    void [hubPath, memberPath];
-    throw new Error('not implemented');
+    return this.serialized(async () => {
+      const hub = (await this.listLazy()).find((folder) => folder.path === hubPath);
+      if (!hub || hub.missing) throw new Error(`Unknown hub folder: ${hubPath}`);
+      if (memberPath === hubPath) throw new Error(`A hub cannot be its own member: ${memberPath}`);
+      const nature = (await this.discoveredNatures()).get(memberPath);
+      if (nature === undefined) throw new Error(`Unknown folder: ${memberPath}`);
+      const name = basename(memberPath);
+      const linkPath = join(hubPath, name);
+      if (await linkOrPathExists(linkPath)) throw new Error(`Duplicate member name: ${name}`);
+
+      await symlink(memberPath, linkPath);
+      try {
+        const agentsPath = join(hubPath, 'AGENTS.md');
+        const content = (await readTextIfPresent(agentsPath)) ?? '';
+        const updated = injectMemberLine(content, seededMemberLine(name, nature));
+        if (updated !== content) await writeFile(agentsPath, updated, 'utf8');
+        const ignorePath = join(hubPath, '.gitignore');
+        const ignoreContent = await readTextIfPresent(ignorePath);
+        if (ignoreContent !== null) {
+          const updatedIgnore = appendExactLine(ignoreContent, memberIgnoreLine(name));
+          if (updatedIgnore !== ignoreContent) await writeFile(ignorePath, updatedIgnore, 'utf8');
+        }
+      } catch (error) {
+        await unlink(linkPath).catch(() => {});
+        throw error;
+      }
+
+      const doc = await this.document();
+      const entry = doc.hubs.find((candidate) => candidate.path === hubPath);
+      if (entry && !entry.memberPaths.includes(memberPath)) {
+        entry.memberPaths.push(memberPath);
+        await this.persist(doc);
+      }
+      this.repos.invalidateListing();
+      this.fireChange({ changedPaths: [hubPath], removedPaths: [] });
+    });
   }
 
   /**
@@ -490,13 +648,56 @@ export class FolderRegistry implements FolderRegistryPort {
    * byte-exact. Broadcasts a folders_changed delta like the other mutations.
    */
   async removeMember(hubPath: string, memberPath: string): Promise<void> {
-    void [hubPath, memberPath];
-    throw new Error('not implemented');
+    return this.serialized(async () => {
+      const doc = await this.document();
+      const link = (await readHubLinks([hubPath])).get(hubPath)?.find((candidate) => candidate.target === memberPath);
+      const entry = doc.hubs.find((candidate) => candidate.path === hubPath);
+      if (!link && !entry?.memberPaths.includes(memberPath)) throw new Error(`Not a member of ${basename(hubPath)}: ${memberPath}`);
+
+      // Unlink the hub-side symlink ONLY — the member folder is never touched.
+      if (link) await unlink(join(hubPath, link.name));
+      // A missing member has no nature on disk: try both seeded lines — both
+      // are exact strings this module's mutator seeded.
+      const name = link?.name ?? basename(memberPath);
+      const agentsPath = join(hubPath, 'AGENTS.md');
+      const content = await readTextIfPresent(agentsPath);
+      if (content !== null) {
+        const updated = removeMemberLine(removeMemberLine(content, seededMemberLine(name, 'code')), seededMemberLine(name, 'persona'));
+        if (updated !== content) await writeFile(agentsPath, updated, 'utf8');
+      }
+      const ignorePath = join(hubPath, '.gitignore');
+      const ignoreContent = await readTextIfPresent(ignorePath);
+      if (ignoreContent !== null) {
+        const updatedIgnore = deleteExactLine(ignoreContent, memberIgnoreLine(name));
+        if (updatedIgnore !== ignoreContent) await writeFile(ignorePath, updatedIgnore, 'utf8');
+      }
+      if (entry?.memberPaths.includes(memberPath)) {
+        entry.memberPaths = entry.memberPaths.filter((candidate) => candidate !== memberPath);
+        await this.persist(doc);
+      }
+      this.repos.invalidateListing();
+      this.fireChange({ changedPaths: [hubPath], removedPaths: [] });
+    });
   }
 
   /** Everything list() shows — every path update() accepts. */
   private async knownFolderPaths(): Promise<Set<string>> {
     return new Set((await this.list()).map((folder) => folder.path));
+  }
+
+  /** Canonical path → nature over every discovered folder-model entry, plus
+   *  every index path as `code` when the scan does not already hold it. The
+   *  widened membership rule: hub members are discovered entries (any
+   *  nature), never arbitrary filesystem paths. */
+  private async discoveredNatures(): Promise<Map<string, 'code' | 'persona'>> {
+    const natures = new Map<string, 'code' | 'persona'>();
+    for (const [path, row] of collectScanEntries(await this.tree.tree())) {
+      natures.set(path, row.entry.nature);
+    }
+    for (const repo of await this.repos.listLazy()) {
+      if (!natures.has(repo.path)) natures.set(repo.path, 'code');
+    }
+    return natures;
   }
 
   /** Lazy-loaded document; the promise is cached so the file is read once.
