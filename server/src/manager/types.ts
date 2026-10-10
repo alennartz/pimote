@@ -91,7 +91,7 @@ export interface FolderUpdatePatch {
 export interface FolderRegistryPort {
   list(): Promise<FolderInfo[]>;
   update(patch: FolderUpdatePatch): Promise<void>;
-  createHub(input: { name: string; root: string; memberPaths: string[] }): Promise<FolderInfo>;
+  createHub(input: { name: string; root: string; memberPaths: string[]; body?: string; description?: string; personaText?: string }): Promise<FolderInfo>;
   disbandHub(folderPath: string): Promise<void>;
 }
 

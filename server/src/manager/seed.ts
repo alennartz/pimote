@@ -60,3 +60,22 @@ export async function seedManagerRoot(managerRoot: string): Promise<void> {
   await seedFile(join(managerRoot, 'AGENTS.md'), MANAGER_AGENTS_TEMPLATE);
   await seedFile(join(managerRoot, 'memory.md'), MEMORY_STUB);
 }
+
+/**
+ * The persona-folder seeding seam (plan: 0.15-2 dashboard folder UX). Called
+ * by the `create_persona_folder` handler and the manager's
+ * `pimote_create_persona` tool.
+ *
+ * Contract:
+ * - Creates the folder under `root` named `name`, then writes `AGENTS.md`
+ *   (front matter: `kind: persona`, `name`, `description`; body:
+ *   `personaText`) and the `memory.md` stub.
+ * - `personaText` may be empty — both files are ALWAYS written; skipping the
+ *   text step never skips the files (the front matter is the persona marker,
+ *   mandatory; the folder-scoped editor always has something to open).
+ * - Returns the created folder's canonical path.
+ */
+export async function seedPersonaFolder(root: string, name: string, description: string, personaText: string): Promise<string> {
+  void [root, name, description, personaText];
+  throw new Error('not implemented');
+}

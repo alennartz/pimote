@@ -370,6 +370,20 @@ export class FolderStore {
     return this.reposLoadInFlight;
   }
 
+  /**
+   * Thin hub-membership wrappers (plan: 0.15-2 dashboard folder UX): one
+   * wire command per mutation, keyed by hub path and member path.
+   */
+  async addHubMember(hubPath: string, memberPath: string): Promise<void> {
+    void [hubPath, memberPath];
+    throw new Error('not implemented');
+  }
+
+  async removeHubMember(hubPath: string, memberPath: string): Promise<void> {
+    void [hubPath, memberPath];
+    throw new Error('not implemented');
+  }
+
   /** Collapse a wire folder row onto the canonical object for its path:
    *  get-or-create, then field-merge so every view of the folder (list rows,
    *  session pointers) observes the update through the same object. */

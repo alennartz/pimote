@@ -47,6 +47,15 @@ export interface RepoInfo {
   tags?: string[];
 }
 
+/** One hub member: a hub-side symlink inventory entry behind `FolderInfo.members`. */
+export interface FolderMemberInfo {
+  /** Canonical member path. */
+  path: string;
+  /** Basename — the hub-side symlink name. */
+  name: string;
+  nature: 'code' | 'persona';
+}
+
 /**
  * A discovered folder of interest plus its curation state (folder-model
  * foundation). The live wire folder row: list_folders, folders_changed, and
@@ -68,6 +77,9 @@ export interface FolderInfo {
   missing: boolean;
   /** Member repos; only on registry/source hubs — these rows are disband-eligible. */
   repos?: RepoInfo[];
+  /** Hub members from the hub's symlink inventory — the membership fact
+   *  (`repos` carries git facts and the disband gate, never membership). */
+  members?: FolderMemberInfo[];
   /** This row's own repo facts — copied from the repo index's cache for plain
    *  code rows it knows. Distinct from hub `repos` (the membership list and
    *  disband gate). Persona rows and hub rows omit it. */
@@ -490,6 +502,38 @@ export interface CreateFolderCommand extends CommandBase {
   root: string;
   /** Folder name — no slashes, non-empty */
   name: string;
+  /** Seeded as the new folder's AGENTS.md body; the stub is written even when empty. */
+  body?: string;
+}
+
+/** Create a persona folder: mkdir + seeded AGENTS.md (persona marker front
+ *  matter with the text body) + memory.md stub. resp: CreatePersonaFolderResponseData */
+export interface CreatePersonaFolderCommand extends CommandBase {
+  type: 'create_persona_folder';
+  /** Must be one of the configured roots */
+  root: string;
+  /** Folder name — no slashes, non-empty */
+  name: string;
+  /** Persona description; persona-marker front matter value. */
+  description: string;
+  /** Persona prompt body; may be empty — the seeded files are always written. */
+  personaText: string;
+}
+
+/** Add a hub member: hub-side symlink + the member's seeded AGENTS.md link line.
+ *  memberPath must be a discovered folder-model entry (any nature). */
+export interface AddHubMemberCommand extends CommandBase {
+  type: 'add_hub_member';
+  hubPath: string;
+  memberPath: string;
+}
+
+/** Remove a hub member: unlink the hub-side symlink and drop its seeded line.
+ *  Works by path even when the member folder is missing; never touches the member folder. */
+export interface RemoveHubMemberCommand extends CommandBase {
+  type: 'remove_hub_member';
+  hubPath: string;
+  memberPath: string;
 }
 
 /** List discovered folders (merged scan + registry curation) — one window of a
@@ -526,14 +570,20 @@ export interface UpdateFolderCommand extends CommandBase {
   removeTags?: string[];
 }
 
-/** Create a hub folder: mkdir + symlinks to member repos + generated AGENTS.md. resp: CreateHubResponseData */
+/** Create a hub folder: mkdir + symlinks to member folders + generated AGENTS.md. resp: CreateHubResponseData */
 export interface CreateHubCommand extends CommandBase {
   type: 'create_hub';
   name: string;
   /** Must be one of the configured roots */
   root: string;
-  /** Every memberPath must exist in the repo index. */
+  /** Every memberPath must be a discovered folder-model entry (any nature). */
   memberPaths: string[];
+  /** Seeded as the AGENTS.md body (code-hub variant); stub even when empty. */
+  body?: string;
+  /** Persona-hub variant fields; the variant is marked by `personaText !== undefined`
+   *  (present-but-empty = persona with skipped text step). */
+  description?: string;
+  personaText?: string;
 }
 
 /** Remove a hub folder: registry entry deleted, hub folder deleted. */
@@ -562,6 +612,10 @@ export interface ListReposResponseData {
 }
 
 export interface CreateHubResponseData {
+  folderPath: string;
+}
+
+export interface CreatePersonaFolderResponseData {
   folderPath: string;
 }
 
@@ -809,8 +863,11 @@ export type PimoteCommand =
   | ListFoldersCommand
   | ListReposCommand
   | UpdateFolderCommand
+  | CreatePersonaFolderCommand
   | CreateHubCommand
   | DisbandHubCommand
+  | AddHubMemberCommand
+  | RemoveHubMemberCommand
   // Server-level
   | RenameSessionCommand
   | ListSessionsCommand

@@ -875,3 +875,21 @@ describe('FolderStore', () => {
     });
   });
 });
+
+describe('FolderStore hub membership wrappers', () => {
+  it('addHubMember sends add_hub_member with the hub and member paths', async () => {
+    routeSends({ add_hub_member: () => ({ success: true }) });
+
+    await folderStore.addHubMember('/r/hub', '/r/ada');
+
+    expect(fakeConnection.send).toHaveBeenCalledWith({ type: 'add_hub_member', hubPath: '/r/hub', memberPath: '/r/ada' });
+  });
+
+  it('removeHubMember sends remove_hub_member with the hub and member paths', async () => {
+    routeSends({ remove_hub_member: () => ({ success: true }) });
+
+    await folderStore.removeHubMember('/r/hub', '/r/ada');
+
+    expect(fakeConnection.send).toHaveBeenCalledWith({ type: 'remove_hub_member', hubPath: '/r/hub', memberPath: '/r/ada' });
+  });
+});

@@ -165,3 +165,19 @@ describe('folder creation', () => {
     await vi.waitFor(() => expect(shows('boom')).toBe(true));
   });
 });
+
+describe('creation hosting', () => {
+  it('presents the four-kind creation icon row at the top of the pick mode', async () => {
+    destroy = render();
+    await tick();
+
+    const firstIcon = document.querySelector('[data-folder-icon="code"]');
+    expect(firstIcon).toBeTruthy();
+    for (const kind of ['code', 'persona', 'code-hub', 'persona-hub']) {
+      expect(document.querySelector(`[data-folder-icon="${kind}"]`)).toBeTruthy();
+    }
+    // Creation sits above the folder picker — no scrolling to reach it.
+    const search = document.body.querySelector('input[placeholder="Search folders"]');
+    expect(firstIcon!.compareDocumentPosition(search!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

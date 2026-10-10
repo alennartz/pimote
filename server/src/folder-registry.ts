@@ -377,7 +377,7 @@ export class FolderRegistry implements FolderRegistryPort {
    * and member .gitignore). Every memberPath must exist in the repo index;
    * unknown members reject. Resolves to the hub's full FolderInfo row.
    */
-  async createHub(input: { name: string; root: string; memberPaths: string[] }): Promise<FolderInfo> {
+  async createHub(input: { name: string; root: string; memberPaths: string[]; body?: string; description?: string; personaText?: string }): Promise<FolderInfo> {
     return this.serialized(async () => {
       const doc = await this.document();
       const repos = await this.repos.list();
@@ -467,6 +467,31 @@ export class FolderRegistry implements FolderRegistryPort {
     return () => {
       this.subscribers.delete(cb);
     };
+  }
+
+  /**
+   * Add a hub member (plan: 0.15-2 dashboard folder UX). `memberPath` must be
+   * a discovered folder-model entry (any nature); a duplicate basename is
+   * rejected. Adds the hub-side symlink and injects the member's exact seeded
+   * link line into the hub AGENTS.md managed block. Throws with a
+   * user-presentable message on validation failure. Broadcasts a
+   * folders_changed delta like the other mutations.
+   */
+  async addMember(hubPath: string, memberPath: string): Promise<void> {
+    void [hubPath, memberPath];
+    throw new Error('not implemented');
+  }
+
+  /**
+   * Remove a hub member (plan: 0.15-2 dashboard folder UX). Works by path
+   * even when the member folder is missing — the symlink and the seeded line
+   * are removed regardless. Unlinks the hub-side symlink ONLY, never touches
+   * the member folder, and removes the member's seeded line if present
+   * byte-exact. Broadcasts a folders_changed delta like the other mutations.
+   */
+  async removeMember(hubPath: string, memberPath: string): Promise<void> {
+    void [hubPath, memberPath];
+    throw new Error('not implemented');
   }
 
   /** Everything list() shows — every path update() accepts. */
