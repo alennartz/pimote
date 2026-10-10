@@ -399,6 +399,107 @@ describe('PimoteSessionManager — idle reaper', () => {
     manager.stopIdleCheck();
   });
 
+  // --- Background-activity poll (DR-054) ---
+
+  function createMockEventBus(): { on: (channel: string, handler: (data: unknown) => void) => () => void; emit: (channel: string, data: unknown) => void } {
+    const handlers = new Map<string, Set<(data: unknown) => void>>();
+    return {
+      on(channel, handler) {
+        let set = handlers.get(channel);
+        if (!set) {
+          set = new Set();
+          handlers.set(channel, set);
+        }
+        set.add(handler);
+        return () => set!.delete(handler);
+      },
+      emit(channel, data) {
+        const set = handlers.get(channel);
+        if (set) for (const handler of set) handler(data);
+      },
+    };
+  }
+
+  /** Raw responder on the mock bus, matching the SDK protocol without importing it. */
+  function installResponder(bus: ReturnType<typeof createMockEventBus>, active: boolean): void {
+    bus.on('pimote:activity:request', () => {
+      bus.emit('pimote:activity:response', { active });
+    });
+  }
+
+  it('does NOT reap when an extension answers the activity poll with active work', async () => {
+    const config = createTestConfig();
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
+    const closeSessionSpy = vi.spyOn(manager, 'closeSession');
+
+    const bus = createMockEventBus();
+    installResponder(bus, true);
+    const busySlot = createFakeSlot({
+      id: 'busy-agents-1',
+      connection: null,
+      idleSince: Date.now() - 400_000, // stale, but background agents are running
+    });
+    busySlot.eventBusRef.current = bus as any;
+
+    injectSession(manager, busySlot);
+
+    manager.startIdleCheck(300_000);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(closeSessionSpy).not.toHaveBeenCalled();
+
+    manager.stopIdleCheck();
+  });
+
+  it('reaps when an extension answers the activity poll with no active work', async () => {
+    const config = createTestConfig();
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
+    const closeSessionSpy = vi.spyOn(manager, 'closeSession');
+
+    const bus = createMockEventBus();
+    installResponder(bus, false);
+    const settledSlot = createFakeSlot({
+      id: 'settled-agents-1',
+      connection: null,
+      idleSince: Date.now() - 400_000,
+    });
+    settledSlot.eventBusRef.current = bus as any;
+
+    injectSession(manager, settledSlot);
+
+    manager.startIdleCheck(300_000);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(closeSessionSpy).toHaveBeenCalledWith('settled-agents-1');
+
+    manager.stopIdleCheck();
+  });
+
+  it('reaps when a bus is present but no extension answers the poll (fail-open)', async () => {
+    const config = createTestConfig();
+    const manager = await PimoteSessionManager.create(config, createMockPushService());
+    const closeSessionSpy = vi.spyOn(manager, 'closeSession');
+
+    const silentSlot = createFakeSlot({
+      id: 'silent-agents-1',
+      connection: null,
+      idleSince: Date.now() - 400_000,
+    });
+    silentSlot.eventBusRef.current = createMockEventBus() as any;
+
+    injectSession(manager, silentSlot);
+
+    manager.startIdleCheck(300_000);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(closeSessionSpy).toHaveBeenCalledWith('silent-agents-1');
+
+    manager.stopIdleCheck();
+  });
+
   it('uses isClientConnected callback only when connectedClientId is not null', async () => {
     const config = createTestConfig();
     const manager = await PimoteSessionManager.create(config, createMockPushService());

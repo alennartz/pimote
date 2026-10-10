@@ -4,8 +4,9 @@ Pimote's extensibility SDK — everything a [pi](https://github.com/mariozechner
 
 - **`@pimote/sdk/panels`** — push structured card data to the pimote web client
 - **`@pimote/sdk/folders`** — contribute folder discovery and creation to pimote's folder layer
+- **`@pimote/sdk/activity`** — answer pimote's idle-reap background-activity poll
 
-The root `@pimote/sdk` import re-exports both modules.
+The root `@pimote/sdk` import re-exports all modules.
 
 ## Install
 
@@ -13,7 +14,7 @@ The root `@pimote/sdk` import re-exports both modules.
 npm install @pimote/sdk
 ```
 
-Requires `@earendil-works/pi-coding-agent` as an optional peer dependency (already present in any pi extension; only the panels seam imports from it).
+Requires `@earendil-works/pi-coding-agent` as an optional peer dependency (already present in any pi extension; only the panels and activity seams import from it).
 
 ## Panels — `@pimote/sdk/panels`
 
@@ -187,6 +188,40 @@ interface HubSourceEntry {
 ### `RepoInfo`
 
 Repo facts as contributed by sources: `path`, `name`, `branch` (`string | null`), `dirty`, `ahead`, `behind`, and optional `lastActivity` (epoch ms), `missing` (repo path no longer exists on disk), and `tags`. It mirrors pimote's wire `RepoInfo` type — same name, same fields — so extension authors can write `interface MyEntry extends RepoInfo` against the SDK alone.
+
+## Activity — `@pimote/sdk/activity`
+
+Answer pimote's background-activity poll so the idle reaper does not close a session that holds live work (for example: background subagents still running while the root session is settled).
+
+Pimote reaps sessions that are idle past a timeout with no connected client. Before closing, it emits `pimote:activity:request` on the session's EventBus and reads the answer synchronously. Register a responder if your extension manages work the root session cannot see:
+
+```ts
+import { answerActivity } from '@pimote/sdk/activity';
+import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
+
+const extension: ExtensionFactory = (pi) => {
+  answerActivity(pi, () => myAgents.some((a) => a.state === 'running'));
+};
+
+export default extension;
+```
+
+The callback must be synchronous — the round-trip is a plain inline emit, so an async answer is indistinguishable from no answer. It is read at poll time, not registration time, so it may consult live state through a stable owner object. If it throws, the responder answers `active: true`: a broken predicate parks the session (recoverable by explicit close) instead of destroying work.
+
+What counts as "live work" is extension policy — pimote learns only the boolean. With no responder, pimote reaps as it always did.
+
+### API
+
+#### `answerActivity(pi, isActive)`
+
+Registers the responder on the session's EventBus. Returns an unsubscribe function (for symmetry and tests — the bus dies with the session).
+
+- **`pi`** — The `ExtensionAPI` object passed to your extension factory.
+- **`isActive`** — Synchronous `() => boolean`: true when closing the session now would destroy live work.
+
+#### `askActivity(bus)`
+
+The pimote-side twin, used by the server's idle reaper. Performs the synchronous poll on an `EventBus` and returns whether any responder asserted live work (multiple answers are OR-ed). Extensions do not need it; it ships in the SDK so the whole protocol lives in one module.
 
 ## Breaking changes
 

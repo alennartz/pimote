@@ -15,6 +15,7 @@ import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, Down
 import type { PushNotificationPayload, PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import type { PanelMessage } from './panel-state.js';
+import { askActivity } from '@pimote/sdk/activity';
 import { getGitBranch } from './git-branch.js';
 import { LoginOrchestrator } from './login-orchestrator.js';
 import { createVoiceExtension } from './voice/index.js';
@@ -794,10 +795,15 @@ export class PimoteSessionManager {
         // `agent_end` and cleared on `agent_start`, so a working session can never be reaped
         // here, regardless of how long it's been since a client was connected. A standalone
         // bash command does not change the agent-level status, so guard both native execution
-        // and the short extension-admission window explicitly as well.
+        // and the short extension-admission window explicitly as well. Finally, extensions
+        // holding live background work (e.g. non-awaited subagents) answer the synchronous
+        // activity poll (DR-054); asked only past the threshold, it fails open to reap when
+        // no responder is present.
         const idleSince = slot.sessionState.idleSince;
         const bashInProgress = slot.session.isBashRunning || slot.sessionState.bashDispatchInProgress === true;
         if (!hasConnectedClient && !bashInProgress && idleSince !== null && Date.now() - idleSince > idleTimeout) {
+          const activityBus = slot.eventBusRef.current;
+          if (activityBus && askActivity(activityBus)) continue;
           this.closeSession(sessionId).catch(() => {
             // Best-effort cleanup — swallow errors during idle reaping
           });

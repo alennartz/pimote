@@ -1,7 +1,7 @@
 {
   "name": "@pimote/sdk",
   "version": "0.15.0",
-  "description": "Pimote extensibility SDK: panel cards and folder discovery/creation seams for pi extensions",
+  "description": "Pimote extensibility SDK: panel cards, background-activity reap guard, and folder discovery/creation seams for pi extensions",
   "type": "module",
   "license": "MIT",
   "author": "Antoine Lennartz <alennartz@gmail.com>",
@@ -19,11 +19,13 @@
     "sdk",
     "folders",
     "panels",
-    "cards"
+    "cards",
+    "activity"
   ],
   "exports": {
     ".": "./dist/index.js",
     "./panels": "./dist/panels/index.js",
+    "./activity": "./dist/activity/index.js",
     "./folders": "./dist/folders/index.js"
   },
   "types": "./dist/index.d.ts",

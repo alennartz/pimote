@@ -96,7 +96,7 @@ Installable SvelteKit PWA for browsing, controlling, and rendering remote pi ses
 
 Published `@pimote/sdk` extensibility package that pi extensions import to talk to pimote.
 
-**Responsibilities:** card types, EventBus panel detection, namespace-scoped panel handles, folder discovery and creation seam types (`@pimote/sdk/folders`, awaited `onFolderOpen`), RepoInfo twin of the wire type
+**Responsibilities:** card types, EventBus panel detection, namespace-scoped panel handles, background-activity reap-guard seam (`@pimote/sdk/activity`: synchronous EventBus poll with `answerActivity`/`askActivity` twins, consumed by the server's idle reaper — DR-054), folder discovery and creation seam types (`@pimote/sdk/folders`, awaited `onFolderOpen`), RepoInfo twin of the wire type
 
 The server's `sdk-twins.ts` asserts compile-time equality between SDK and Protocol types.
 
