@@ -6,7 +6,12 @@ export interface SessionView {
 export type ManagerComposerAction = { action: 'continue'; sessionId: string } | { action: 'open-new' };
 
 /** Continue only the viewed manager session. Landing or a code session opens
- * a new manager session. Hidden, previously open sessions are not resumed. */
+ * a new manager session. Hidden, previously open sessions are not resumed.
+ * The `continue` branch is retry-path behavior, not landing behavior: the
+ * manager area lives on the dashboard route, where no session is viewed. It
+ * fires when a rejected prompt left the just-opened manager session on
+ * screen, so a retry of the preserved draft continues that session instead
+ * of opening a duplicate (review finding 6 disposition: keep the branch). */
 export function managerComposerAction(viewed: SessionView | undefined, viewedIsManager: boolean): ManagerComposerAction {
   if (viewed !== undefined && viewedIsManager) return { action: 'continue', sessionId: viewed.sessionId };
   return { action: 'open-new' };

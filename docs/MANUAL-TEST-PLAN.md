@@ -298,7 +298,7 @@
 
 ## TP-04: Folder & Session Browsing (Dashboard)
 
-The dashboard's folders column lists every discovered folder; the list loads in windows as you scroll and renders a virtualized range. Expand a row to see its sessions. Curation (favorites, archive), hub folders, the manager agent, and the windowed listing behavior (scroll windows, server-side search, delta sync) have dedicated coverage in journey 12 of the persistent manual-test plan ([tools/manual-test/PLAN.md](../tools/manual-test/PLAN.md)).
+The dashboard's folders column lists every discovered folder; the list loads in windows as you scroll and renders a virtualized range. Expand a row to see its sessions. Curation (favorites, archive), hub folders, the persisted manager persona and sessions, and the windowed listing behavior (scroll windows, server-side search, delta sync) have dedicated coverage in journey 12 of the persistent manual-test plan ([tools/manual-test/PLAN.md](../tools/manual-test/PLAN.md)).
 
 ### TC-04.01 — Folder list loads on connection 🔴
 
@@ -1276,16 +1276,16 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 ### TC-16.01 — Desktop layout 🟠
 
 - **[S]** Open on desktop browser (>768px width)
-- **[E]** Dashboard shows the folders column beside the manager chat, side by side
+- **[E]** Dashboard shows the folders column beside the manager composer and persisted session list, side by side
 - **[E]** No mobile manager button or sheet
 - **[E]** Conversation fills remaining width (unless an extension panel is active — see [TP-16a](#tp-16a-extension-panel-system))
 
 ### TC-16.02 — Mobile layout 🟠
 
 - **[S]** Open on phone or narrow browser (<768px)
-- **[E]** Folders list is fullscreen; the manager chat is hidden
+- **[E]** Folders list is fullscreen; the manager surface is hidden
 - **[S]** Tap the floating Manager button (bottom right)
-- **[E]** Manager chat opens as a fullscreen sheet with a dark backdrop
+- **[E]** Manager composer and persisted session list open as a fullscreen sheet with a dark backdrop
 - **[S]** Tap the backdrop or the X button
 - **[E]** Sheet closes
 

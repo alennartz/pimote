@@ -19,7 +19,7 @@ import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome } from './s
 import { makeDownloadSnapshot, resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests, requestSlotPanelResync } from './session-manager.js';
 import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
-import type { SessionRecords } from './session-records.js';
+import { resolveSessionAcrossFolders, type SessionRecordLocation, type SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import { enrichActiveSessionCounts, isValidFolderName, type FolderRegistry } from './folder-registry.js';
 import type { FolderListingService } from './folder-listing.js';
@@ -1593,20 +1593,21 @@ export class WsHandler {
   /**
    * Locate a session's record on disk. With a folder, only that folder is
    * searched. A folderless deep link searches every known folder — archived
-   * folders included: opening a session unarchives it on the fly. Returns
+   * folders included: opening a session unarchives it on the fly — plus the
+   * manager root (`resolveSessionAcrossFolders` owns that rule). Returns
    * undefined when no folder holds the session.
    */
-  private async findSessionRecord(sessionId: string, folderPath?: string): Promise<{ folderPath: string; sessionFilePath: string } | undefined> {
+  private async findSessionRecord(sessionId: string, folderPath?: string): Promise<SessionRecordLocation | undefined> {
     if (folderPath) {
       const sessionFilePath = await this.sessionRecords.resolveSessionPath(folderPath, sessionId);
       return sessionFilePath ? { folderPath, sessionFilePath } : undefined;
     }
-    const folderPaths = new Set([...((await this.folderRegistry?.list()) ?? []).map((folder) => folder.path), this.managerRoot]);
-    for (const path of folderPaths) {
-      const sessionFilePath = await this.sessionRecords.resolveSessionPath(path, sessionId);
-      if (sessionFilePath) return { folderPath: path, sessionFilePath };
-    }
-    return undefined;
+    return resolveSessionAcrossFolders(
+      this.sessionRecords,
+      ((await this.folderRegistry?.list()) ?? []).map((folder) => folder.path),
+      this.managerRoot,
+      sessionId,
+    );
   }
 
   private async resolveFolderInfo(folderPath: string): Promise<FolderInfo> {

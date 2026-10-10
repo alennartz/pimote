@@ -27,7 +27,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Manages multiple concurrent sessions with fast switching (ActiveSessionBar)
 - Tracks session status (working / idle / needs-attention)
 - Streams conversations in real time with independent scrolling
-- Browses folders and their sessions from a dashboard, with a per-connection manager agent that can list folders, repos, and open sessions
+- Browses folders and their sessions from a dashboard, with a persisted manager persona that can list folders, repos, and open sessions
 - Creates new folders from the dashboard (choose root, name, `mkdir` + `git init`)
 - Sends prompts, runs native shell commands with `!`/`!!`, steers, aborts, and switches models
 - Slash command autocomplete — typing `/` shows a fuzzy-filtered dropdown of available commands (skills, extension commands, prompt templates) with argument completion for extension commands

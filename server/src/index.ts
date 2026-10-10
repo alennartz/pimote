@@ -7,7 +7,7 @@ import { loadConfig, ensureVapidKeys, expandHomePath, managerRootPlacementError 
 import { WsHandler } from './ws-handler.js';
 import { createServer } from './server.js';
 import { PimoteSessionManager } from './session-manager.js';
-import { SessionRecords } from './session-records.js';
+import { SessionRecords, resolveSessionAcrossFolders } from './session-records.js';
 import { SessionSummaryIndex } from './session-summaries.js';
 import { FolderListing } from './folder-listing.js';
 import { scanFolderModel, type FolderOccurrence, type FolderScanWarning, type SparseTree } from './folder-model/index.js';
@@ -175,18 +175,18 @@ export async function main(options: StartOptions = {}) {
       // lingers as an open one. Broadcast mirrors the WS flow so connected
       // dashboards update immediately.
       archiveSessions: async (sessionIds: string[]): Promise<SessionArchiveOutcome[]> => {
-        // Folderless lookup mirrors ws-handler findSessionRecord: known folder
-        // records first, manager-root records alongside, deduplicated.
-        const folderPaths = [...new Set([...(await folderRegistry.list()).map((folder) => folder.path), config.managerRoot])];
+        const knownFolderPaths = (await folderRegistry.list()).map((folder) => folder.path);
         return Promise.all(
           sessionIds.map(async (sessionId): Promise<SessionArchiveOutcome> => {
             const slot = sessionManager.getSession(sessionId);
+            // Folderless lookup is the shared `resolveSessionAcrossFolders`
+            // rule: known folders plus the manager root, deduplicated.
             const resolved = slot?.session.sessionFile
-              ? { folderPath: slot.folderPath, sessionPath: slot.session.sessionFile }
-              : await resolveSessionAcrossFolders(sessionRecords, folderPaths, sessionId);
+              ? { folderPath: slot.folderPath, sessionFilePath: slot.session.sessionFile }
+              : await resolveSessionAcrossFolders(sessionRecords, knownFolderPaths, config.managerRoot, sessionId);
             if (!resolved) return { sessionId, outcome: 'not_found' };
 
-            await sessionMetadataStore.setArchived(resolved.sessionPath, true);
+            await sessionMetadataStore.setArchived(resolved.sessionFilePath, true);
             // Session activity: targeted metadata invalidation for the folder —
             // covers archive runs without a live slot — and no folder delta.
             folderListing.invalidateSessionMetadata([resolved.folderPath]);
@@ -421,21 +421,6 @@ function sessionEnumerationPaths(tree: SparseTree): string[] {
   };
   tree.occurrences.forEach(visit);
   return paths;
-}
-
-/** Resolve a session id to its on-disk file path and owning folder,
- *  scanning the given folders — the manager's archive path when no live slot
- *  holds the id. */
-async function resolveSessionAcrossFolders(
-  sessionRecords: SessionRecords,
-  folderPaths: string[],
-  sessionId: string,
-): Promise<{ folderPath: string; sessionPath: string } | undefined> {
-  for (const folderPath of folderPaths) {
-    const sessionPath = await sessionRecords.resolveSessionPath(folderPath, sessionId);
-    if (sessionPath) return { folderPath, sessionPath };
-  }
-  return undefined;
 }
 
 if (isDirectRun()) {

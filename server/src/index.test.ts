@@ -85,7 +85,8 @@ vi.mock('./config.js', async (importOriginal) => ({
   ensureVapidKeys: mocks.ensureVapidKeys,
 }));
 vi.mock('./server.js', () => ({ createServer: mocks.createServer }));
-vi.mock('./session-records.js', () => ({
+vi.mock('./session-records.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   SessionRecords: vi.fn(function () {
     return mocks.sessionRecords;
   }),

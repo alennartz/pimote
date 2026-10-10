@@ -74,7 +74,11 @@
         {
           viewed: viewed ? { sessionId: viewed.sessionId } : undefined,
           // A viewed manager session continues; placeholders and code sessions
-          // do not count as manager identity.
+          // do not count as manager identity. Lexical equality is deliberate:
+          // the canonical identity fact lives with the server (attachment
+          // rule), and no folder row ever points at the manager root, so a
+          // manager session opened through this UI always carries the
+          // canonical path (review finding 7 disposition; see DR-059).
           viewedIsManager: viewed != null && !isPlaceholderSessionId(viewed.sessionId) && viewed.folderPath === managerRoot,
           managerRoot,
           text,

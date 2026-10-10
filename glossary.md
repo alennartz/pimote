@@ -25,8 +25,12 @@ A folder configured in the pimote server config where sparse discovery starts; d
 _Avoid_: root (ambiguous)
 
 **Manager root**:
-The manager agent's working directory, configured by `managerRoot` (default `~`); it is never a scan root.
+The persona folder configured by `managerRoot` (default `~/.local/state/pimote/manager`). Boot seeds `AGENTS.md` and `memory.md` when absent, without overwriting user files. It can sit inside a scan root, but discovery excludes its entry from folder listings and trees. It must not be or contain the home directory.
 _Avoid_: manager working directory
+
+**Manager session**:
+An ordinary persisted Pimote session whose working directory is the manager root. It uses the manager toolset and follows normal conversation navigation and reconnect behavior.
+_Avoid_: ephemeral manager session
 
 **Sparse tree**:
 The discovered representation of the user's folders: included folders and shortcut occurrences over skipped path structure.
@@ -118,8 +122,9 @@ _Avoid_: tag template
 - A **shortcut** adds **occurrences** of an entry, never new entries; identity is the canonical path
 - A **hub** is an ordinary code folder the folder model discovers like any other; its shortcuts point at its members
 - The **folder registry** curates discovered folders; **folder sources** can contribute additional entries
-- A **persona folder** persists by leaving artifacts in its own folder; conversations are ephemeral
-- The **manager root** is distinct from scan roots and is never scanned as part of the sparse tree
+- A **persona folder** persists by leaving artifacts in its own folder; persona conferrals are ephemeral, **manager sessions** are not
+- The **manager root** is distinct from scan roots; when nested inside one, its entry is excluded from the sparse tree
+- A **manager session** is an ordinary persisted session rooted at the **manager root**
 - A connection owns one **pinned order**: **listing windows** slice it, and the **order token** names it on the wire
 - A **repin** replaces a pinned order. Rows merge by canonical path, so windows across pins never duplicate
 - **Two-tier search** filters the whole set. **Matched sessions** narrow only the session lists of session-tier rows

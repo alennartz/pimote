@@ -83,3 +83,29 @@ export class SessionRecords {
     return true;
   }
 }
+
+/** A session's on-disk record: the folder that owns it and its session file. */
+export interface SessionRecordLocation {
+  folderPath: string;
+  sessionFilePath: string;
+}
+
+/**
+ * Resolve a session id across known folders plus the manager root — the one
+ * folderless lookup rule. Known folder records are searched first, manager-root
+ * records alongside, deduplicated: the manager root is never a scan root, but
+ * its persisted manager sessions resolve like any folder's. Folder sets come
+ * from the caller; the manager root always participates.
+ */
+export async function resolveSessionAcrossFolders(
+  sessionRecords: SessionRecords,
+  knownFolderPaths: Iterable<string>,
+  managerRoot: string,
+  sessionId: string,
+): Promise<SessionRecordLocation | undefined> {
+  for (const folderPath of [...new Set([...knownFolderPaths, managerRoot])]) {
+    const sessionFilePath = await sessionRecords.resolveSessionPath(folderPath, sessionId);
+    if (sessionFilePath) return { folderPath, sessionFilePath };
+  }
+  return undefined;
+}
