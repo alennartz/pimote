@@ -8,6 +8,10 @@
 // manager LLM, and drives the real PWA with agent-browser plus a second
 // WebSocket probe client (two-client `folders_changed` sync).
 //
+// Folder-UX flows under test: the four-kind creation wizard (code, persona,
+// code-hub, persona-hub), hub member add/remove ("Manage members…"), and
+// folder archive/restore from the row context menu.
+//
 // Discovery semantics under test: sparse scan with no depth bound (nested
 // entries under SKIPPED wrappers are discovered, never inside included git
 // repos), personas via AGENTS.md marker front matter, shortcuts via top-level
@@ -35,7 +39,7 @@ const REAL_AGENT_DIR = join(process.env.HOME ?? '', '.pi', 'agent');
 const BROWSER_SESSION = `project-management-${process.pid}`;
 
 const { assert, soft, section, log, stats, softFailures } = makeReporter('pm-smoke');
-const { browser, evalBrowser, fillSelector, wait, revealFolder, rowText, rowIcon, openRowMenu, clickMenuItem, clickDialogButton } = makeBrowserHelpers({
+const { browser, evalBrowser, fillSelector, wait, revealFolder, rowText, rowIcon, rowRenderedNow, openRowMenu, clickMenuItem, clickDialogButton } = makeBrowserHelpers({
   session: BROWSER_SESSION,
   log,
 });
@@ -109,6 +113,63 @@ async function openManagerHistoryRecord(matcher = 'PONG') {
   await evalBrowser(`(() => { const b = Array.from(document.querySelectorAll('button')).find((x) => /Previous sessions/.test(x.textContent ?? '')); if (!b) return 'no-history'; b.click(); return 'clicked'; })()`);
   await wait(1500);
   return await evalBrowser(`(() => { const row = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.includes(${JSON.stringify(matcher)})); if (!row) return 'no-record'; row.click(); return 'clicked'; })()`);
+}
+
+// ------------------------------------------------------- flow primitives
+
+/** Poll `fact` until it holds; false on timeout. */
+async function waitUntil(fact, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await fact()) return true;
+    if (Date.now() >= deadline) return false;
+    await wait(250);
+  }
+}
+
+/** Wait until the viewed session surface mounts: its composer and the
+ *  viewed-session close chip — the markers the session assertions pin. The
+ *  wizard's own textarea carries no aria-label, so it never matches. */
+async function waitForSessionSurface(timeoutMs = 15_000) {
+  return waitUntil(
+    async () =>
+      (await evalBrowser(`(() => Boolean(document.querySelector('textarea[aria-label="Message"]') && document.querySelector('button.bg-primary span[title="Close session"]')))`)) === true,
+    timeoutMs,
+  );
+}
+
+/** Open the New session dialog — the creation wizard sits above the picker. */
+async function openNewSessionDialog() {
+  const opened = await evalBrowser(`(() => { const b = document.querySelector('button[aria-label="New session"]'); if (!b) return false; b.click(); return true; })()`);
+  await wait(400);
+  return opened === true;
+}
+
+/** Click one wizard kind button by its FolderNatureIcon glyph inside the dialog. */
+async function clickWizardKind(kind) {
+  const clicked = await evalBrowser(`(() => { const icon = document.querySelector('[role="dialog"] [data-folder-icon=${JSON.stringify(kind)}]'); if (!icon) return false; icon.closest('button')?.click(); return true; })()`);
+  await wait(200);
+  return clicked === true;
+}
+
+/** Click the root button whose label is exactly the root path; returns matches. */
+async function pickWizardRoot(rootPath) {
+  const count = await evalBrowser(`(() => { const btns = Array.from(document.querySelectorAll('[role="dialog"] button')).filter((b) => b.textContent?.trim() === ${JSON.stringify(rootPath)}); btns[0]?.click(); return btns.length; })()`);
+  await wait(200);
+  return Number(count);
+}
+
+/** Click the dialog folder row whose text carries the path (MemberPicker rows);
+ *  returns the match count so callers pin selector uniqueness. */
+async function clickDialogFolderRow(path) {
+  const count = await evalBrowser(`(() => { const rows = Array.from(document.querySelectorAll('[role="dialog"] button')).filter((b) => b.textContent?.includes(${JSON.stringify(path)})); rows[0]?.click(); return rows.length; })()`);
+  await wait(200);
+  return Number(count);
+}
+
+/** The wizard text-step title above its textarea ("Vision" | "Persona"). */
+async function textStepTitle() {
+  return await evalBrowser(`(() => { const ta = document.querySelector('[role="dialog"] textarea'); return ta?.parentElement?.querySelector('div')?.textContent?.trim() ?? ''; })()`);
 }
 
 // -------------------------------------------------------------------- main
@@ -190,6 +251,10 @@ async function main() {
   const limaDir = join(rootA, 'lima');
   const zuluDir = join(rootA, 'zulu');
   const epsilon = join(rootA, 'epsilon');
+  const rhoDir = join(rootA, 'rho');
+  const novaDir = join(rootA, 'nova');
+  const kappaDir = join(rootA, 'kappa');
+  const tauDir = join(rootA, 'tau');
   const omegaDir = join(rootA, 'omega');
   const sigmaDir = join(rootA, 'sigma');
   const charlieDir = join(externalDir, 'charlie');
@@ -344,6 +409,62 @@ async function main() {
     // Re-create west over WS so the browser phase can observe it appearing
     // live via folders_changed (two-client sync in the browser direction).
     await probeB.send({ type: 'create_hub', name: 'west', root: rootA, memberPaths: [join(rootA, 'alpha'), join(rootA, 'beta')] });
+
+    // ============================================================
+    section('W — add_hub_member / remove_hub_member + create_persona_folder');
+    // ============================================================
+    // Wire probes for the membership and persona commands: success paths,
+    // duplicate-name rejection, and folders_changed deltas carrying members.
+    const personaMark = Date.now();
+    const personaResp = await probeB.send({ type: 'create_persona_folder', root: rootA, name: 'rho', description: 'Wire-probed persona', personaText: 'You are Rho, a wire-probed persona.' });
+    assert(personaResp.success === true && personaResp.data?.folderPath === rhoDir, 'create_persona_folder returns the created folder path');
+    const rhoAgents = await readFile(join(rhoDir, 'AGENTS.md'), 'utf8').catch(() => '');
+    assert(
+      rhoAgents.startsWith('---\nkind: persona\n') && rhoAgents.includes('name: "rho"') && rhoAgents.includes('description: "Wire-probed persona"'),
+      'persona AGENTS.md carries marker front matter (kind, name, description)',
+    );
+    assert(rhoAgents.includes('You are Rho, a wire-probed persona.'), 'persona text lands as the AGENTS.md body');
+    assert((await readFile(join(rhoDir, 'memory.md'), 'utf8').catch(() => '')).length > 0, 'persona folder carries a memory.md stub');
+    assert(
+      await waitUntil(async () => probeA.eventsSince(personaMark, 'folders_changed').some((entry) => (entry.event.changed ?? []).some((row) => row.path === rhoDir && row.nature === 'persona'))),
+      'folders_changed broadcasts the new persona folder row',
+    );
+
+    const addMark = Date.now();
+    const addResp = await probeB.send({ type: 'add_hub_member', hubPath: westDir, memberPath: rhoDir });
+    assert(addResp.success === true, 'add_hub_member accepts a discovered persona folder');
+    assert((await readlink(join(westDir, 'rho')).catch(() => null)) === rhoDir, 'add_hub_member links the member into the hub folder');
+    const westAfterAdd = await readFile(join(westDir, 'AGENTS.md'), 'utf8');
+    assert(westAfterAdd.includes('- rho (persona): always spin a sub-agent in this folder to interact with it.'), 'hub AGENTS.md gains the exact seeded persona line');
+    assert(
+      await waitUntil(async () =>
+        probeA.eventsSince(addMark, 'folders_changed').some((entry) =>
+          (entry.event.changed ?? []).some((row) => row.path === westDir && (row.members ?? []).some((m) => m.path === rhoDir && m.name === 'rho' && m.nature === 'persona')),
+        ),
+      ),
+      'folders_changed carries FolderInfo.members with the new member',
+    );
+
+    const dupResp = await probeB.send({ type: 'add_hub_member', hubPath: westDir, memberPath: join(rootA, 'alpha') });
+    assert(dupResp.success === false && String(dupResp.error ?? '').includes('Duplicate member name'), 'add_hub_member rejects a duplicate member name (user-presentable)');
+
+    const removeMark = Date.now();
+    const removeResp = await probeB.send({ type: 'remove_hub_member', hubPath: westDir, memberPath: rhoDir });
+    assert(removeResp.success === true, 'remove_hub_member succeeds');
+    assert((await readlink(join(westDir, 'rho')).catch(() => null)) === null, 'remove_hub_member unlinks the hub-side symlink');
+    assert(!(await readFile(join(westDir, 'AGENTS.md'), 'utf8').catch(() => '')).includes('- rho (persona)'), 'remove_hub_member drops the seeded line');
+    assert((await stat(join(rhoDir, 'AGENTS.md')).then(
+      () => true,
+      () => false,
+    )) === true, 'member folder survives removal');
+    assert(
+      await waitUntil(async () =>
+        probeA.eventsSince(removeMark, 'folders_changed').some((entry) =>
+          (entry.event.changed ?? []).some((row) => row.path === westDir && Array.isArray(row.members) && !row.members.some((m) => m.path === rhoDir)),
+        ),
+      ),
+      'folders_changed carries the members drop',
+    );
 
     // ============================================================
     section('W — unscanned-cwd session fallback (classifyFolder)');
@@ -677,38 +798,187 @@ async function main() {
     await browser(['wait', 600]);
 
     // ============================================================
-    section('B — create folder (mkdir + git init)');
+    section('B — create folder wizard: code flow (mkdir + git init + AGENTS.md stub)');
     // ============================================================
-    await evalBrowser(`(() => { const b = document.querySelector('button[aria-label="New session"]'); if (!b) return false; b.click(); return true; })()`);
-    await browser(['wait', 400]);
-    await browser(['find', 'role', 'button', 'click', '--name', 'Create new folder']);
-    await browser(['wait', 400]);
-    // Two roots configured → root picker. Pick root A.
-    await evalBrowser(
-      `(() => { const btns = Array.from(document.querySelectorAll('[role="dialog"] button')).filter(b => b.textContent?.trim() === ${JSON.stringify(rootA)}); btns[0]?.click(); return btns.length; })()`,
-    );
-    await browser(['wait', 300]);
-    await fillSelector('[role="dialog"] input[placeholder="Folder name"]', 'epsilon');
-    await browser(['wait', 200]);
-    await clickDialogButton('Create');
-    let createOpened = false;
-    for (let i = 0; i < 30; i++) {
-      await wait(500);
-      const composer = await evalBrowser(`Boolean(document.querySelector('textarea:not([aria-label="Message the manager"])'))`);
-      if (composer === true) {
-        createOpened = true;
-        break;
-      }
-    }
-    assert(createOpened, 'create flow opens the new session');
-    await evalBrowser(`document.querySelector('button.bg-primary span[title="Close session"]')?.click()`);
-    await browser(['wait', 2000]);
+    assert((await openNewSessionDialog()) === true, 'New session dialog opens with the creation wizard');
+    assert((await clickWizardKind('code')) === true, 'wizard kind row exposes the code kind button');
+    assert((await pickWizardRoot(rootA)) >= 1, 'wizard lists the configured roots; root A picked');
+    assert((await fillSelector('[role="dialog"] input[placeholder="Folder name"]', 'epsilon')) === true, 'identity step accepts the folder name');
+    assert((await clickDialogButton('Next')) === true, 'identity step advances with Next');
+    assert((await textStepTitle()) === 'Vision', 'code kinds title the text step Vision');
+    assert((await clickDialogButton('Create')) === true, 'skippable text step: Create without a vision body');
+    assert((await waitForSessionSurface()) === true, 'code flow opens the new session');
+    await closeViewedSession();
     assert((await rowText(epsilon)).includes('epsilon'), 'created folder appears in the dashboard');
     const epsilonGit = await stat(join(epsilon, '.git')).then(
       () => true,
       () => false,
     );
     assert(epsilonGit, 'epsilon/.git exists on disk (mkdir + git init)');
+    const epsilonAgents = await readFile(join(epsilon, 'AGENTS.md'), 'utf8').catch(() => '');
+    assert(epsilonAgents.startsWith('# epsilon\n'), 'epsilon/AGENTS.md exists with its seeded heading stub');
+
+    // ============================================================
+    section('B — create folder wizard: persona flow (marker + memory.md)');
+    // ============================================================
+    assert((await openNewSessionDialog()) === true, 'New session dialog opens for the persona flow');
+    assert((await clickWizardKind('persona')) === true, 'wizard kind row exposes the persona kind button');
+    await pickWizardRoot(rootA);
+    await fillSelector('[role="dialog"] input[placeholder="Folder name"]', 'nova');
+    assert((await fillSelector('[role="dialog"] input[placeholder="Description (optional)"]', 'Wizard-seeded persona')) === true, 'persona identity step accepts an optional description');
+    assert((await clickDialogButton('Next')) === true, 'persona identity step advances with Next');
+    assert((await textStepTitle()) === 'Persona', 'persona kinds title the text step Persona');
+    await fillSelector('[role="dialog"] textarea', 'You are Nova, the wizard-seeded guide.');
+    assert((await clickDialogButton('Create')) === true, 'persona flow creates from the Persona text step');
+    assert((await waitForSessionSurface()) === true, 'persona flow opens the new session');
+    await closeViewedSession();
+    const novaAgents = await readFile(join(novaDir, 'AGENTS.md'), 'utf8').catch(() => '');
+    assert(
+      novaAgents.startsWith('---\nkind: persona\n') && novaAgents.includes('name: "nova"') && novaAgents.includes('description: "Wizard-seeded persona"'),
+      'persona AGENTS.md carries marker front matter (kind, name, description)',
+    );
+    assert(novaAgents.includes('You are Nova, the wizard-seeded guide.'), 'persona text lands as the AGENTS.md body');
+    assert((await readFile(join(novaDir, 'memory.md'), 'utf8').catch(() => '')).length > 0, 'persona flow seeds memory.md');
+
+    // ============================================================
+    section('B — create folder wizard: code-hub flow (symlinks + managed block)');
+    // ============================================================
+    assert((await openNewSessionDialog()) === true, 'New session dialog opens for the code-hub flow');
+    assert((await clickWizardKind('code-hub')) === true, 'wizard kind row exposes the code-hub kind button');
+    await pickWizardRoot(rootA);
+    await fillSelector('[role="dialog"] input[placeholder="Folder name"]', 'kappa');
+    assert((await clickDialogButton('Next')) === true, 'code-hub identity advances to the member step');
+    assert((await clickDialogFolderRow(join(rootA, 'alpha'))) === 1, 'member picker offers alpha');
+    assert((await clickDialogFolderRow(join(rootB, 'delta'))) === 1, 'member picker offers delta');
+    assert((await clickDialogButton('Next')) === true, 'member step advances with the chosen members');
+    await fillSelector('[role="dialog"] textarea', 'Shared hub for the kappa workstream.');
+    assert((await textStepTitle()) === 'Vision', 'code-hub text step is titled Vision');
+    assert((await clickDialogButton('Create')) === true, 'code-hub flow creates from the Vision text step');
+    assert((await waitForSessionSurface()) === true, 'code-hub flow opens the new session');
+    await closeViewedSession();
+    assert((await readlink(join(kappaDir, 'alpha')).catch(() => null)) === join(rootA, 'alpha'), 'code-hub symlink points at alpha');
+    assert((await readlink(join(kappaDir, 'delta')).catch(() => null)) === join(rootB, 'delta'), 'code-hub symlink points at delta');
+    const kappaAgents = await readFile(join(kappaDir, 'AGENTS.md'), 'utf8').catch(() => '');
+    assert(kappaAgents.includes('Shared hub for the kappa workstream.'), 'Vision text lands as the hub AGENTS.md body');
+    assert(kappaAgents.includes('<!-- pimote:members (managed block) -->') && kappaAgents.includes('<!-- /pimote:members -->'), 'hub AGENTS.md carries the managed block markers');
+    assert(
+      kappaAgents.includes('- alpha (code): read nested AGENTS.md for context.') && kappaAgents.includes('- delta (code): read nested AGENTS.md for context.'),
+      'managed block seeds the exact code link lines',
+    );
+
+    // ============================================================
+    section('B — create folder wizard: persona-hub flow (marker + symlinks + managed block + memory.md)');
+    // ============================================================
+    assert((await openNewSessionDialog()) === true, 'New session dialog opens for the persona-hub flow');
+    assert((await clickWizardKind('persona-hub')) === true, 'wizard kind row exposes the persona-hub kind button');
+    await pickWizardRoot(rootA);
+    await fillSelector('[role="dialog"] input[placeholder="Folder name"]', 'tau');
+    await fillSelector('[role="dialog"] input[placeholder="Description (optional)"]', 'Wizard-seeded persona hub');
+    assert((await clickDialogButton('Next')) === true, 'persona-hub identity advances to the member step');
+    assert((await clickDialogFolderRow(omegaDir)) === 1, 'member picker offers the persona folder omega');
+    assert((await clickDialogFolderRow(join(rootA, 'alpha'))) === 1, 'member picker offers the code folder alpha');
+    assert((await clickDialogButton('Next')) === true, 'persona-hub member step advances with the chosen members');
+    await fillSelector('[role="dialog"] textarea', 'You are Tau, the hub persona.');
+    assert((await textStepTitle()) === 'Persona', 'persona-hub text step is titled Persona');
+    assert((await clickDialogButton('Create')) === true, 'persona-hub flow creates from the Persona text step');
+    assert((await waitForSessionSurface()) === true, 'persona-hub flow opens the new session');
+    await closeViewedSession();
+    assert((await readlink(join(tauDir, 'omega')).catch(() => null)) === omegaDir, 'persona-hub symlink points at the persona member');
+    assert((await readlink(join(tauDir, 'alpha')).catch(() => null)) === join(rootA, 'alpha'), 'persona-hub symlink points at the code member');
+    const tauAgents = await readFile(join(tauDir, 'AGENTS.md'), 'utf8').catch(() => '');
+    assert(
+      tauAgents.startsWith('---\nkind: persona\n') && tauAgents.includes('name: "tau"') && tauAgents.includes('description: "Wizard-seeded persona hub"'),
+      'persona-hub AGENTS.md carries persona-marker front matter',
+    );
+    assert(tauAgents.includes('You are Tau, the hub persona.'), 'persona text lands as the hub AGENTS.md body');
+    assert(
+      tauAgents.includes('- omega (persona): always spin a sub-agent in this folder to interact with it.') && tauAgents.includes('- alpha (code): read nested AGENTS.md for context.'),
+      'managed block seeds the nature-worded link lines',
+    );
+    assert((await readFile(join(tauDir, 'memory.md'), 'utf8').catch(() => '')).length > 0, 'persona-hub seeds memory.md');
+
+    // ============================================================
+    section('B — Manage members… (add/remove: symlink + seeded line + member survives)');
+    // ============================================================
+    assert((await openRowMenu(kappaDir)) === true, 'row context menu opens on the kappa hub row');
+    assert((await clickMenuItem('Manage members…')) === true, 'hub row menu exposes Manage members…');
+    await browser(['wait', 400]);
+    const membersDialogText = String(await evalBrowser(`(() => { const d = document.querySelector('[role="dialog"]'); return d ? d.innerText : ''; })()`));
+    assert(membersDialogText.includes('a hub is a folder composed of shortcuts to its members'), 'members dialog carries the one comprehension header line');
+    assert((await evalBrowser(`Boolean(document.querySelector('[role="dialog"] button[aria-label="Remove alpha"]'))`)) === true, 'members dialog lists current members with remove buttons');
+    assert((await clickDialogFolderRow(omegaDir)) === 1, 'add picker offers the discovered persona folder omega');
+    assert(
+      await waitUntil(
+        async () =>
+          (await readlink(join(kappaDir, 'omega')).catch(() => null)) === omegaDir &&
+          (await readFile(join(kappaDir, 'AGENTS.md'), 'utf8').catch(() => '')).includes('- omega (persona): always spin a sub-agent in this folder to interact with it.'),
+      ),
+      'add seeds the hub symlink and the exact persona link line',
+    );
+    assert(
+      (await evalBrowser(`(() => { const b = document.querySelector('[role="dialog"] button[aria-label="Remove omega"]'); if (!b) return false; b.click(); return true; })()`)) === true,
+      'member row exposes the remove button',
+    );
+    assert(
+      await waitUntil(
+        async () =>
+          (await readlink(join(kappaDir, 'omega')).catch(() => null)) === null && !(await readFile(join(kappaDir, 'AGENTS.md'), 'utf8').catch(() => '')).includes('- omega (persona):'),
+      ),
+      'remove drops the hub symlink and the seeded line',
+    );
+    const omegaSurvives = await stat(join(omegaDir, 'AGENTS.md')).then(
+      () => true,
+      () => false,
+    );
+    assert(omegaSurvives, 'member folder survives removal');
+    await browser(['press', 'Escape']);
+    await browser(['wait', 300]);
+
+    // ============================================================
+    section('B — Archive project / Restore project (folder curation only)');
+    // ============================================================
+    // Exercise on alpha: its fabricated session record is a real persisted
+    // record (wizard-opened sessions stay empty and write no jsonl).
+    const alphaDir = join(rootA, 'alpha');
+    const sessionsBefore = await probeA.send({ type: 'list_sessions', folderPath: alphaDir });
+    const sessionIdsBefore = (sessionsBefore.data?.sessions ?? []).map((s) => s.id).sort();
+    assert(
+      sessionIdsBefore.length > 0 && (sessionsBefore.data?.sessions ?? []).every((s) => s.archived !== true),
+      'alpha session records start present and unarchived',
+    );
+    assert((await openRowMenu(alphaDir)) === true, 'row context menu opens on alpha');
+    assert((await clickMenuItem('Archive project')) === true, 'row menu exposes Archive project');
+    let alphaHidden = false;
+    for (let i = 0; i < 20; i++) {
+      await wait(300);
+      alphaHidden = (await rowRenderedNow(alphaDir)) === false;
+      if (alphaHidden) break;
+    }
+    assert(alphaHidden, 'archived row hides from the default dashboard');
+    const activeAfterArchive = await probeA.listFolders({ includeArchived: false });
+    assert(!activeAfterArchive.data.folders.some((row) => row.path === alphaDir), 'active windows exclude the archived row');
+    await browser(['click', 'button[title="More folder actions"]']);
+    await browser(['wait', 400]);
+    assert((await clickMenuItem('Show archived')) === true, 'toolbar exposes Show archived');
+    await browser(['wait', 800]);
+    assert((await rowText(alphaDir)).includes('Archived'), 'show-archived reveals alpha with an Archived badge');
+    assert((await openRowMenu(alphaDir)) === true, 'archived row menu opens');
+    assert((await clickMenuItem('Restore project')) === true, 'archived row menu exposes Restore project');
+    assert(
+      await waitUntil(async () => !(await rowText(alphaDir)).includes('Archived')),
+      'restore clears the Archived badge',
+    );
+    await browser(['click', 'button[title="More folder actions"]']);
+    await browser(['wait', 400]);
+    await clickMenuItem('Hide archived');
+    await browser(['wait', 600]);
+    assert((await rowText(alphaDir)).includes('alpha'), 'restored row stays visible without show-archived');
+    const sessionsAfter = await probeA.send({ type: 'list_sessions', folderPath: alphaDir });
+    const sessionIdsAfter = (sessionsAfter.data?.sessions ?? []).map((s) => s.id).sort();
+    assert(
+      JSON.stringify(sessionIdsAfter) === JSON.stringify(sessionIdsBefore) && (sessionsAfter.data?.sessions ?? []).every((s) => s.archived !== true),
+      'folder archive/restore leaves session records unarchived and unchanged',
+    );
 
     // ============================================================
     section('B — hub creation via UI dialog + member chips');
@@ -820,11 +1090,13 @@ async function main() {
     if (jetsonUsable) {
       const managerMode = await ensureManagerMode();
       assert(managerMode, 'manager composer reachable from the home toolbar');
-      // The manager area is a dashboard panel (side-by-side on desktop).
-      const panelSeen = await evalBrowser(
-        `(() => { const b = document.querySelector('[aria-label="Dismiss manager conversation"]'); return Boolean(b && b.offsetParent !== null); })()`,
+      // Manager mode lives in the one-box toolbar; its panel form is retired
+      // (741e2a3). The near-zero-height 'Previous sessions' strip offers the
+      // persisted manager sessions.
+      const historyStrip = await evalBrowser(
+        `(() => Array.from(document.querySelectorAll('button')).some((b) => /Previous sessions/.test(b.textContent ?? '')))()`,
       );
-      assert(panelSeen === true, 'manager area opens as a dashboard panel beside the folders');
+      assert(historyStrip === true, 'manager mode exposes the Previous sessions strip');
       const filled = await fillSelector('textarea[aria-label="Message the manager"]', 'Reply with exactly: PONG');
       assert(filled, 'manager composer accepts text');
       await evalBrowser(`(() => { const b = document.querySelector('button[title="Send"]'); if (!b) return false; b.click(); return true; })()`);

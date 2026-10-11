@@ -259,7 +259,16 @@ shortcutCount), favorites, archive/show-archived, inline expansion of
 per-folder sessions loaded only for rendered rows, and repo status chips
 (branch + dirty dot) from plain-row `repo` facts and hub-member `repos`; the hub dialog composes a hub folder from indexed repos (server
 creates the symlink hub + `git init` + `.gitignore` + generated `AGENTS.md`)
-and disband removes it; epoch-stamped `folders_changed` deltas merge `changed`
+and disband removes it; the New Session dialog hosts the four-kind creation
+wizard (kind icon row above the folder picker; identity → members? →
+skippable text step; every flow ends in `open_session` in the new folder; code
+kinds seed `AGENTS.md`, persona kinds seed persona-marker `AGENTS.md` +
+`memory.md`, hub kinds seed member symlinks and nature-worded link lines in
+the `AGENTS.md` managed block); hub rows manage members ("Manage members…":
+add/remove as hub-side symlinks plus exact seeded `AGENTS.md` lines; the
+member folder is never touched) and every row archives/restores ("Archive
+project" / "Restore project": folder curation only, session records never
+archive); epoch-stamped `folders_changed` deltas merge `changed`
 rows and drop `removedPaths` in both clients. Archived-row probes explicitly
 set `includeArchived`. Fresh discovery comparisons explicitly repin. Folder sources contribute repo/hub entries (missing ones
 provision via `onFolderOpen` at open time); the manager is a persisted
@@ -282,6 +291,8 @@ are the multi-repo model; the manager is the dashboard's second half.
 
 **Driver:** `tools/manual-test/project-management-smoke/` (real sandboxed
 server + `agent-browser` + a second WebSocket probe client, including the
+four-kind creation wizard, hub member add/remove with `FolderInfo.members`
+deltas, folder archive/restore, the
 unscanned-cwd session fallback and legacy `multiRepo` registry read-compat
 probes);
 `tools/manual-test/manager-tools-smoke/` drives the manager toolset
@@ -304,13 +315,22 @@ lists interplay, and rendered-row-only session loading.
 **What:** The home-page "Agent instructions" button opens the config-file
 editor dialog on `~/.pi/agent/AGENTS.md` — raw markdown editor with a tag-wrap
 toolbar (freeform tag input + `tagSnippets` snippet buttons), save
-(last-write-wins), and cancel with a discard confirmation.
+(last-write-wins), and cancel with a discard confirmation. The same editor is
+folder-scoped through three controls: FolderList's row-menu "Edit AGENTS.md…"
+opens the selected folder's instructions; StatusBar's "Edit folder AGENTS.md"
+and SessionSettingsDialog's "Edit AGENTS.md" open the viewed session folder's
+instructions. The session controls disable editing when disconnected, without
+a folder, restoring, or pending; the settings dialog closes before the editor
+opens. The global Folders-header pen stays on the user-level Agent
+instructions.
 
 **Why:** The first-class config-editing surface (first citizen of the future
 server-configuration workflow), added by the `agents-md-editor` topic.
 
 **Driver:** `tools/manual-test/agents-md-editor-smoke/` (sandboxed pimote +
-`agent-browser`).
+`agent-browser`). The three folder-scoped controls are pinned by the client
+unit suite (`FolderInstructionsControls.test.ts`); their journey-level clicks
+stay manual-browser.
 
 ## Automation gap (recorded, not an action item for this topic)
 

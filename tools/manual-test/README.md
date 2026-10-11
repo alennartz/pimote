@@ -417,9 +417,18 @@ directions), complete comparisons accumulated from small protocol windows
 under each adopted token, explicit `includeArchived` probes and fresh-order
 repins after discovery mutations, hub create/disband
 round-trips with on-disk symlink + `git init` + root-anchored `.gitignore` +
-`AGENTS.md` assertions, source-contributed tags and the `onFolderOpen`
+`AGENTS.md` assertions and hub member management ("Manage members…"
+add/remove round-trips: symlink and exact seeded `AGENTS.md` line appear and
+disappear, member folder untouched), source-contributed tags and the `onFolderOpen`
 provisioning hook, favorites (favorites-first ordering), archive/show-
-archived, create-folder (mkdir + git init), resume of an existing session,
+archived, the four-kind creation wizard (code / persona / code-hub /
+persona-hub flows: seeded `AGENTS.md` / `memory.md` / member symlinks and
+managed-block link lines, each ending in an opened session; the code flow
+skips the text step and still seeds the `AGENTS.md` stub), row-menu "Archive
+project" / "Restore project" (folder curation only — session records stay
+unarchived), wire probes for `create_persona_folder` / `add_hub_member` /
+`remove_hub_member` (duplicate-name rejection, `folders_changed` carrying
+`members`), resume of an existing session,
 the active-session dot, virtualized row lookup through dashboard scrolling,
 server-authoritative dashboard search and picker search (persona display names
 included), the manager chat (streamed reply, `pimote_list_folders` +
