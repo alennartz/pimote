@@ -52,7 +52,7 @@ Hosts pi `AgentSession` instances and exposes the HTTP and WebSocket API.
 
 Client auth is external (Cloudflare Access); the server implements no auth.
 
-**Dependencies:** Protocol for wire types; Agent Extensions for session tools and resources; `@pimote/sdk` (types-only) for the folder-sources seam
+**Dependencies:** Protocol for wire types; Agent Extensions for session tools and resources; `@pimote/sdk` for the folder-sources seam types and the activity reap-guard value import (`askActivity`)
 
 **Files:**
 
@@ -99,6 +99,8 @@ Published `@pimote/sdk` extensibility package that pi extensions import to talk 
 **Responsibilities:** card types, EventBus panel detection, namespace-scoped panel handles, background-activity reap-guard seam (`@pimote/sdk/activity`: synchronous EventBus poll with `answerActivity`/`askActivity` twins, consumed by the server's idle reaper — DR-054), folder discovery and creation seam types (`@pimote/sdk/folders`, awaited `onFolderOpen`), RepoInfo twin of the wire type
 
 The server's `sdk-twins.ts` asserts compile-time equality between SDK and Protocol types.
+
+The npm package is the authoring surface for extension developers. The app bundles its own copy (`bundleDependencies`), so the packed install never resolves the SDK from the registry, and the server's folder-source loader pins user-module `@pimote/sdk` imports to that bundled copy.
 
 **Dependencies:** pi SDK extension APIs
 
