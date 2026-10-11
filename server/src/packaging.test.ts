@@ -38,7 +38,9 @@ function runtimeBareImports(source: string): string[] {
   for (const match of runtime.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)) {
     specifiers.add(match[1]);
   }
-  return [...specifiers].filter((spec) => !spec.startsWith('node:') && !spec.startsWith('.') && !spec.startsWith('@pimote/') && spec !== 'vitest');
+  return [...specifiers]
+    .filter((spec) => !spec.startsWith('node:') && !spec.startsWith('.') && spec !== 'vitest')
+    .map((spec) => (spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0]));
 }
 
 describe('packed root package declares all server runtime dependencies', () => {

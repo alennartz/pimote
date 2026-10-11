@@ -1,4 +1,4 @@
-.PHONY: all install build build-shared build-server build-client package \
+.PHONY: all install build build-shared build-sdk build-server build-client package \
         dev dev-server dev-client \
         start start-installed restart test clean help \
         format format-check lint check \
@@ -41,14 +41,17 @@ install:
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
-## Build everything in dependency order: shared → server, then client
-build: build-shared build-server build-client
+## Build everything in dependency order: shared → SDK → server, then client
+build: build-shared build-sdk build-server build-client
 
 build-shared:
 	npm run build:shared
 
-## Server depends on shared; rebuild shared first if you've changed it
-build-server: build-shared
+build-sdk:
+	npm run build --workspace=@pimote/sdk
+
+## Server depends on shared and SDK; rebuild both first if you've changed them
+build-server: build-shared build-sdk
 	npm run build --workspace=@pimote/server
 
 build-client:

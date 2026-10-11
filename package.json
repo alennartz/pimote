@@ -45,7 +45,7 @@
     "packages/sdk"
   ],
   "scripts": {
-    "build": "npm run build:shared && npm run build --workspace=@pimote/server && npm run build --workspace=client",
+    "build": "npm run build:shared && npm run build --workspace=@pimote/sdk && npm run build --workspace=@pimote/server && npm run build --workspace=client",
     "build:shared": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('shared/dist', { recursive: true, force: true }); rmSync('shared/tsconfig.tsbuildinfo', { force: true });\" && tsc -b shared --force",
     "start": "node ./bin/pimote.js start",
     "format": "prettier --write .",
@@ -76,6 +76,7 @@
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^1.1.0",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@pimote/sdk": "^0.15.0",
     "@streamparser/json": "^0.0.22",
     "jiti": "^2.7.0",
     "patch-package": "^8.0.1",
