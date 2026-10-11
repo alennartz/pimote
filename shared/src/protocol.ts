@@ -654,6 +654,11 @@ export interface OpenSessionResponseData {
   sessionId: string;
   folderPath?: string;
   restoreMode?: RestoreMode;
+  /** The session's folder row. New sessions also receive it in the
+   *  session_opened event; existing-session restores (live reclaim, disk
+   *  reopen) emit no session_opened, so this is the only wire moment their
+   *  client gets the folder facts (nature, shortcutCount) from. */
+  folder?: FolderInfo;
 }
 
 export interface CloseSessionCommand extends CommandBase {

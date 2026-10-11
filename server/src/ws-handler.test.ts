@@ -551,6 +551,37 @@ describe('WsHandler', () => {
       expect(resp!.success).toBe(true);
     });
 
+    it('includes the session folder row in the response so restore keeps folder icon facts', async () => {
+      const session = createMockSlot({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+        folderPath: '/home/user/projects/agent',
+        eventBuffer: createMockEventBuffer({ replayResult: [] }),
+      });
+      const personaRow = folderRow('/home/user/projects/agent', { nature: 'persona', shortcutCount: 2, persona: { name: 'Helper' } });
+      const folderRegistry = { list: async () => [personaRow] } as unknown as FolderRegistry;
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions, folderRegistry });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/projects/agent',
+          sessionId: 'session-1',
+          id: 'req-folder-row',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-folder-row');
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).folder).toMatchObject({
+        path: '/home/user/projects/agent',
+        nature: 'persona',
+        shortcutCount: 2,
+      });
+    });
+
     it('sends full_resync when cursor is too old', async () => {
       const session = createMockSlot({
         id: 'session-1',
@@ -883,6 +914,66 @@ describe('WsHandler', () => {
       expect(resp).toBeDefined();
       expect(resp!.success).toBe(true);
       expect((resp!.data as any).sessionId).toBe(reopenedSessionId);
+    });
+
+    it('includes the reopened folder row in the response', async () => {
+      const sessions = new Map<string, ManagedSlot>();
+      const reopenedSessionId = 'session-1';
+
+      const { handler, sent, sessionManager } = createTestHandler('client-1', {
+        sessions,
+        sessionRecords: {
+          ...createMockSessionRecords(),
+          resolveSessionPath: async (_folderPath: string, sessionId: string) => (sessionId === reopenedSessionId ? '/tmp/session-1.jsonl' : undefined),
+        } as SessionRecords,
+        folderRegistry: { list: async () => [folderRow('/home/user/projects/hub', { shortcutCount: 3 })] } as unknown as FolderRegistry,
+      });
+      (sessionManager as any).openSession = async (folderPath: string, sessionFilePath?: string) => {
+        expect(folderPath).toBe('/home/user/projects/hub');
+        expect(sessionFilePath).toBe('/tmp/session-1.jsonl');
+        const reopened = createMockSlot({
+          id: reopenedSessionId,
+          folderPath: '/home/user/projects/hub',
+          session: {
+            subscribe: () => () => {},
+            dispose: () => {},
+            messages: [],
+            model: null,
+            thinkingLevel: 'off',
+            getAvailableThinkingLevels: () => [],
+            isStreaming: false,
+            isCompacting: false,
+            sessionFile: sessionFilePath,
+            sessionId: reopenedSessionId,
+            sessionName: undefined,
+            autoCompactionEnabled: false,
+            bindExtensions: async () => {},
+            modelRuntime: { getAvailable: async () => [] },
+            clearQueue: () => ({ steering: [], followUp: [] }),
+            sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
+          } as any,
+        });
+        sessions.set(reopenedSessionId, reopened);
+        return reopenedSessionId;
+      };
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/projects/hub',
+          sessionId: reopenedSessionId,
+          id: 'req-disk-folder-row',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-disk-folder-row');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).folder).toMatchObject({
+        path: '/home/user/projects/hub',
+        nature: 'code',
+        shortcutCount: 3,
+      });
     });
   });
 

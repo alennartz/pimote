@@ -1682,6 +1682,49 @@ describe('openExistingSession (folderless deep link)', () => {
   });
 });
 
+// --- Restored sessions keep their folder row --------------------------------
+//
+// open_session on an existing session answers with the session's folder row;
+// the client binds it so the chip glyph keeps the folder's nature and hub
+// facts across an app restart (no session_opened event fires on restore).
+
+describe('openExistingSession (folder binding)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    sessionRegistry.removeSession('s-bind');
+    connection.removeSubscribedSession('s-bind');
+  });
+
+  it('binds the folder row from the open_session response', async () => {
+    const folderRow: FolderInfo = {
+      path: '/repos/agent',
+      name: 'agent',
+      nature: 'persona',
+      shortcutCount: 2,
+      favorite: false,
+      archived: false,
+      tags: [],
+      missing: false,
+      activeSessionCount: 0,
+      externalProcessCount: 0,
+    };
+    vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => ({
+      id: cmd.id ?? 'test',
+      success: cmd.type === 'open_session',
+      data: cmd.type === 'open_session' ? { sessionId: 's-bind', folderPath: '/repos/agent', folder: folderRow } : undefined,
+    }));
+
+    const opened = await openExistingSession('s-bind', '/repos/agent', { switchTo: false });
+
+    expect(opened).toBe(true);
+    expect(sessionRegistry.sessions['s-bind'].folder).toMatchObject({
+      path: '/repos/agent',
+      nature: 'persona',
+      shortcutCount: 2,
+    });
+  });
+});
+
 // --- Restore rejected with session_not_found --------------------------------
 //
 // A session the server no longer knows (never persisted, pruned idle slot)

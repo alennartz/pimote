@@ -547,7 +547,12 @@ export class WsHandler {
 
             const restoreMode = await this.syncSessionToClient(requestedSessionId, existing, command.lastCursor);
             WsHandler.broadcastSidebarUpdate(requestedSessionId, existing.folderPath, this.sessionManager, this.clientRegistry);
-            this.sendResponse(id, true, { sessionId: requestedSessionId, folderPath: existing.folderPath, restoreMode });
+            this.sendResponse(id, true, {
+              sessionId: requestedSessionId,
+              folderPath: existing.folderPath,
+              restoreMode,
+              folder: await this.resolveFolderInfo(existing.folderPath),
+            });
             break;
           }
 
@@ -575,7 +580,12 @@ export class WsHandler {
           await this.syncSessionToClient(sessionId, reopenedSlot, undefined, 'disk_full_resync');
           WsHandler.broadcastSidebarUpdate(sessionId, reopenedSlot.folderPath, this.sessionManager, this.clientRegistry);
           await this.sendConflictEventIfNeeded(sessionId, reopenedSlot.folderPath);
-          this.sendResponse(id, true, { sessionId, folderPath: reopenedSlot.folderPath, restoreMode: 'disk_full_resync' });
+          this.sendResponse(id, true, {
+            sessionId,
+            folderPath: reopenedSlot.folderPath,
+            restoreMode: 'disk_full_resync',
+            folder: await this.resolveFolderInfo(reopenedSlot.folderPath),
+          });
           break;
         }
 

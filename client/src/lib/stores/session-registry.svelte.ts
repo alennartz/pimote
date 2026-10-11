@@ -1317,12 +1317,16 @@ export async function openExistingSession(sessionId: string, folderPath: string 
 
     // A folderless deep-link open: the server resolved the folder and reports
     // it back — record it so later commands (rename, archive, share) carry the
-    // right folder.
-    const resolvedFolder = (response.data as { folderPath?: string } | undefined)?.folderPath ?? folderPath;
+    // right folder. The folder row rides the same response: restores emit no
+    // session_opened, so this is the wire moment that rebinds the folder
+    // object (nature, hub facts) the chip glyph reads.
+    const data = response.data as { folderPath?: string; folder?: FolderInfo } | undefined;
+    const resolvedFolder = data?.folderPath ?? folderPath;
     if (resolvedFolder) {
       sessionRegistry.setSessionFolder(sessionId, resolvedFolder);
       connection.addSubscribedSession(sessionId, resolvedFolder);
     }
+    if (data?.folder) sessionRegistry.bindSessionFolder(sessionId, data.folder);
 
     await refreshSessionMetaAndCommands(sessionId);
     if (shouldSwitch) {
