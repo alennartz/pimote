@@ -129,13 +129,42 @@ async function waitUntil(fact, timeoutMs = 5_000) {
 
 /** Wait until the viewed session surface mounts: its composer and the
  *  viewed-session close chip — the markers the session assertions pin. The
- *  wizard's own textarea carries no aria-label, so it never matches. */
+ *  wizard's own textarea carries no aria-label, so it never matches. The
+ *  poll expression must be invoked (`(() => …)()`): an uninvoked arrow
+ *  function evaluates to a function object and never sees the DOM. Logs the
+ *  mount latency, and on timeout dumps the client state (URL, open dialog,
+ *  page head) so a failure names what the browser actually showed. */
 async function waitForSessionSurface(timeoutMs = 15_000) {
-  return waitUntil(
-    async () =>
-      (await evalBrowser(`(() => Boolean(document.querySelector('textarea[aria-label="Message"]') && document.querySelector('button.bg-primary span[title="Close session"]')))`)) === true,
+  const startedAt = Date.now();
+  let lastDetail = '';
+  const mounted = await waitUntil(
+    async () => {
+      const state = await evalBrowser(`(() => ({
+        ok: Boolean(document.querySelector('textarea[aria-label="Message"]') && document.querySelector('button.bg-primary span[title="Close session"]')),
+        ta: Boolean(document.querySelector('textarea[aria-label="Message"]')),
+        chip: Boolean(document.querySelector('button.bg-primary span[title="Close session"]')),
+        span: Boolean(document.querySelector('span[title="Close session"]')),
+        url: location.pathname,
+      }))()`);
+      const detail = `ta=${state?.ta} chip=${state?.chip} span=${state?.span} url=${state?.url}`;
+      if (detail !== lastDetail) {
+        log(`session-surface t=${Date.now() - startedAt}ms ${detail}`);
+        lastDetail = detail;
+      }
+      return state?.ok === true;
+    },
     timeoutMs,
   );
+  if (mounted !== true) {
+    const state = await evalBrowser(`(() => ({
+      url: location.pathname,
+      dialog: Boolean(document.querySelector('[role="dialog"]')),
+      dialogText: document.querySelector('[role="dialog"]')?.innerText?.slice(0, 400) ?? null,
+      pageHead: document.body.innerText.slice(0, 200),
+    }))()`);
+    log('session-surface timeout state:', JSON.stringify(state));
+  }
+  return mounted;
 }
 
 /** Open the New session dialog — the creation wizard sits above the picker. */
