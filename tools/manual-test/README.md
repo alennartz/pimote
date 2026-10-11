@@ -468,6 +468,8 @@ environment-bounded instead of failing.
 
 **Outputs:** per-check ✓/✗/⊝ lines, coherence screenshots, and a non-zero
 exit on hard failure. On failure the sandbox and server log are preserved.
+The wizard session-surface waits also log their mount latency and, on
+timeout, dump the client state (URL, open dialog, page head).
 
 **Prerequisites:** workspaces built (`npm run build`), `agent-browser` on
 `PATH`, `git` on `PATH`, writable `os.tmpdir()`. Tracks and kills only the
