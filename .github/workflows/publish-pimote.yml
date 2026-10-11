@@ -45,4 +45,10 @@ jobs:
           npx pimote help
 
       - name: Publish
-        run: npm publish
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ "$VERSION" == *-* ]]; then
+            npm publish --tag next
+          else
+            npm publish
+          fi
