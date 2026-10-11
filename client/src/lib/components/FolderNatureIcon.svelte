@@ -77,11 +77,10 @@
     stroke-linejoin="round"
     aria-hidden="true"
   >
-    <circle cx="8" cy="7" r="3" />
-    <path d="M2 19.5a6 6 0 0 1 12 0" />
-    <circle cx="19.5" cy="5.5" r="1.75" />
-    <circle cx="19.5" cy="13.5" r="1.75" />
-    <path d="M11.2 6.2 17.7 5.3" />
-    <path d="M11.2 10.6 17.7 12.7" />
+    <!-- lucide "users" (ISC) -->
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <path d="M16 3.128a4 4 0 0 1 0 7.744" />
+    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+    <circle cx="9" cy="7" r="4" />
   </svg>
 {/if}
