@@ -74,6 +74,12 @@ export class ConnectionStore {
   /** Called after all session restore/open commands complete. Set by session-registry to restore viewed session. */
   onReconnected: (() => void) | null = null;
 
+  /** Called when a per-session restore/open command succeeds. Set by
+   *  session-registry to rebind the session's folder row — restores emit no
+   *  session_opened event, so the open_session response is the only wire
+   *  moment carrying the folder facts (nature, shortcutCount). */
+  onSessionRestored: ((sessionId: string, data: OpenSessionResponseData) => void) | null = null;
+
   /** Called when restoring/opening a session is rejected with session_owned (another client owns it). */
   onSessionOwned: ((sessionId: string) => void) | null = null;
 
@@ -203,6 +209,7 @@ export class ConnectionStore {
             if (this.phase === 'syncing') {
               this.syncDetail = this.labelForRestoreMode(data?.restoreMode, sessionCount);
             }
+            if (data) this.onSessionRestored?.(sessionId, data);
           })
           .catch(() => {
             // WebSocket dropped before response — will retry on next reconnect

@@ -1392,6 +1392,15 @@ connection.onEvent((event) => {
   }
 });
 
+// When a restore/open succeeds during the reconnect sync, rebind the session's
+// folder row from the response. Restores (live reclaim, disk reopen) emit no
+// session_opened event, so without this a restarted client keeps the hydrated
+// folder-less state and the session chip falls back to the code-nature glyph.
+connection.onSessionRestored = (sessionId, data) => {
+  if (data.folderPath) sessionRegistry.setSessionFolder(sessionId, data.folderPath);
+  if (data.folder) sessionRegistry.bindSessionFolder(sessionId, data.folder);
+};
+
 // When restoring/opening is rejected because another client owns the session, prompt user
 connection.onSessionOwned = (sessionId) => {
   const session = sessionRegistry.sessions[sessionId];

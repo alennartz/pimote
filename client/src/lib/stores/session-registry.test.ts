@@ -1725,6 +1725,46 @@ describe('openExistingSession (folder binding)', () => {
   });
 });
 
+// --- Reconnect restore keeps its folder row --------------------------------
+//
+// After a restart the connection store's restore loop owns the open_session
+// calls; it delivers each response through connection.onSessionRestored. The
+// registry rebinds the folder row so the chip glyph keeps the folder's nature
+// and hub facts (restores emit no session_opened event).
+
+describe('reconnect restore (connection.onSessionRestored)', () => {
+  afterEach(() => {
+    sessionRegistry.removeSession('s-hydrate');
+    connection.removeSubscribedSession('s-hydrate');
+  });
+
+  it('binds the folder row delivered for a hydrated session', () => {
+    sessionRegistry.addSession('s-hydrate', '/repos/agent', 'agent');
+    connection.addSubscribedSession('s-hydrate', '/repos/agent');
+    expect(sessionRegistry.sessions['s-hydrate'].folder).toBeNull();
+
+    const folderRow: FolderInfo = {
+      path: '/repos/agent',
+      name: 'agent',
+      nature: 'persona',
+      shortcutCount: 2,
+      favorite: false,
+      archived: false,
+      tags: [],
+      missing: false,
+      activeSessionCount: 0,
+      externalProcessCount: 0,
+    };
+    connection.onSessionRestored!('s-hydrate', { sessionId: 's-hydrate', folderPath: '/repos/agent', folder: folderRow });
+
+    expect(sessionRegistry.sessions['s-hydrate'].folder).toMatchObject({
+      path: '/repos/agent',
+      nature: 'persona',
+      shortcutCount: 2,
+    });
+  });
+});
+
 // --- Restore rejected with session_not_found --------------------------------
 //
 // A session the server no longer knows (never persisted, pruned idle slot)

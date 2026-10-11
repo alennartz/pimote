@@ -116,6 +116,41 @@ describe('ConnectionStore — definitive restore rejections', () => {
   });
 });
 
+describe('ConnectionStore — restore success', () => {
+  /** Deliver a successful response to the first open_session the socket received. */
+  const respondSuccessTo = (ws: FakeWebSocket, data: unknown) => {
+    const openMsg = ws.sent.map((raw) => JSON.parse(raw) as { id: string; type: string }).find((m) => m.type === 'open_session')!;
+    ws.onmessage!({ data: JSON.stringify({ id: openMsg.id, success: true, data }) });
+  };
+
+  it('passes the restore response to onSessionRestored so the registry can bind the folder row', async () => {
+    const c = new ConnectionStore();
+    const onSessionRestored = vi.fn();
+    c.onSessionRestored = onSessionRestored;
+    c.addSubscribedSession('s-1', '/repos/agent');
+
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    await flush();
+
+    const payload = {
+      sessionId: 's-1',
+      folderPath: '/repos/agent',
+      restoreMode: 'disk_full_resync',
+      folder: { path: '/repos/agent', nature: 'persona', shortcutCount: 2 },
+    };
+    respondSuccessTo(ws, payload);
+    await flush();
+
+    expect(onSessionRestored).toHaveBeenCalledWith('s-1', payload);
+    expect(c.phase).toBe('ready');
+
+    c.disconnect();
+  });
+});
+
 describe('ConnectionStore — socket identity guards', () => {
   it('symptom 1: a drop mid-restore does not mark the dead connection ready', async () => {
     const c = new ConnectionStore();
