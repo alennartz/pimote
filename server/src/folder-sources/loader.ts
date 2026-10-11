@@ -1,7 +1,7 @@
 import { type Dirent } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createJiti } from 'jiti';
 import type { FolderCreator, FolderSource } from '@pimote/sdk/folders';
 import { LEGACY_PIMOTE_PROJECT_SOURCES_DIR, PIMOTE_FOLDER_SOURCES_DIR } from '../paths.js';
@@ -48,6 +48,27 @@ export async function resolveSourcesDir(
 }
 
 /**
+ * Map every `@pimote/sdk` specifier to pimote's own SDK copy, so user modules
+ * always run against the runtime's SDK and never one they bundled themselves.
+ * Keys must list each export subpath: jiti matches aliases per specifier.
+ * Aliases stay partial when a specifier does not resolve (for example a
+ * workspace checkout whose SDK dist is not built yet); those specifiers then
+ * fall back to ordinary Node resolution.
+ */
+export function sdkRuntimeAliases(): Record<string, string> {
+  const specifiers = ['@pimote/sdk', '@pimote/sdk/panels', '@pimote/sdk/activity', '@pimote/sdk/folders'];
+  const aliases: Record<string, string> = {};
+  for (const specifier of specifiers) {
+    try {
+      aliases[specifier] = fileURLToPath(import.meta.resolve(specifier));
+    } catch {
+      // Leave this specifier to ordinary Node resolution.
+    }
+  }
+  return aliases;
+}
+
+/**
  * Dynamic-import every JS/TS module in `dir` and collect its `sources` and
  * `creators` exports (arrays of FolderSource / FolderCreator). Failures are
  * isolated per module: a module that fails to load or evaluate is logged and
@@ -65,7 +86,8 @@ export async function loadFolderSources(dir: string): Promise<LoadedFolderSource
   }
 
   // Mirrors pi's jiti-loader.ts: user modules may be authored in TypeScript.
-  const jiti = createJiti(import.meta.url, { moduleCache: false });
+  // The alias pins @pimote/sdk imports to the runtime's own SDK copy.
+  const jiti = createJiti(import.meta.url, { moduleCache: false, alias: sdkRuntimeAliases() });
 
   const sources: FolderSource[] = [];
   const creators: FolderCreator[] = [];

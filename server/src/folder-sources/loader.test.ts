@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadFolderSources, resolveSourcesDir } from './loader.js';
+import { loadFolderSources, resolveSourcesDir, sdkRuntimeAliases } from './loader.js';
 
 let sourcesDir: string;
 
@@ -71,6 +72,22 @@ describe('loadFolderSources()', () => {
     expect(sources).toEqual([]);
     expect(creators).toEqual([]);
   });
+
+  it('resolves @pimote/sdk imports inside user modules to the runtime copy', async () => {
+    const aliases = sdkRuntimeAliases();
+    const probeCode = [`import { answerActivity } from '@pimote/sdk/activity';`, `export const sources = [{ id: typeof answerActivity, list: async () => [] }];`].join('\n');
+    await writeModule('sdk-probe.ts', probeCode);
+
+    const { sources } = await loadFolderSources(sourcesDir);
+
+    // In a checkout whose SDK dist is not built the alias target file is
+    // absent, jiti fails to load the probe, and the loader skips the module.
+    if (!aliases['@pimote/sdk/activity'] || !existsSync(aliases['@pimote/sdk/activity'])) {
+      expect(sources).toEqual([]);
+      return;
+    }
+    expect(sources.map((s) => s.id)).toEqual(['function']);
+  });
 });
 
 describe('resolveSourcesDir()', () => {
@@ -96,5 +113,16 @@ describe('resolveSourcesDir()', () => {
     await mkdir(legacy, { recursive: true });
 
     await expect(resolveSourcesDir(undefined, { preferred, legacy })).resolves.toBe(legacy);
+  });
+});
+
+describe('sdkRuntimeAliases()', () => {
+  it('maps every SDK specifier to a file of the runtime SDK package', () => {
+    const aliases = sdkRuntimeAliases();
+    expect(Object.keys(aliases).sort()).toEqual(['@pimote/sdk', '@pimote/sdk/activity', '@pimote/sdk/folders', '@pimote/sdk/panels'].sort());
+    for (const target of Object.values(aliases)) {
+      expect(target).toMatch(/(@pimote\/sdk|packages\/sdk)\//);
+      expect(target.endsWith('.js')).toBe(true);
+    }
   });
 });
