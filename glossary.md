@@ -56,7 +56,7 @@ An occurrence reached through a top-level symlink in an included folder that poi
 _Avoid_: reference, link
 
 **Hub**:
-A code folder composed of other code folders: one top-level symlink per member repo, its own `git init` + `.gitignore`, and a generated `AGENTS.md` naming the members.
+A folder composed of member folders through top-level symlinks, with its own `.gitignore` and an `AGENTS.md` that names its members. A hub can be code or persona; members can be any discovered folder-model entries.
 _Avoid_: multi-repo project
 
 **Folder registry**:
@@ -66,6 +66,14 @@ _Avoid_: project registry
 **Folder source**:
 A user module that contributes folder entries to Pimote's folder model.
 _Avoid_: project source
+
+**Hub member**:
+A discovered folder-model entry linked from a hub by a top-level symlink. Membership does not alter the member folder.
+_Avoid_: repo-only member
+
+**Managed member block**:
+The exact-string region in a hub's `AGENTS.md` that Pimote owns for member link lines. Pimote adds or removes only its seeded lines within the marked block.
+_Avoid_: generated AGENTS.md content
 
 **Pinned order**:
 The fixed folder order one connection's folder listing pages over: favorite first, then most recent activity, then name, then path. It holds order only. Each window resolves its rows fresh. A connection pins one.

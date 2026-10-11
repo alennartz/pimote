@@ -11,7 +11,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 **Pimote Server** — A Node.js process that:
 
 - Discovers code and persona folders sparsely beneath configured scan roots, and curates them in a folder registry
-- Creates new code folders on demand (`mkdir` + `git init`) within configured roots
+- Creates code, persona, code-hub, and persona-hub folders from the dashboard; each flow opens a session in the new folder
 - Embeds AgentSession instances directly via the pi SDK
 - Manages multiple concurrent sessions per client with status tracking
 - Brokers WebSocket connections between clients and sessions
@@ -28,7 +28,8 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Tracks session status (working / idle / needs-attention)
 - Streams conversations in real time with independent scrolling
 - Browses folders and their sessions from a dashboard, with a persisted manager persona that can list folders, repos, and open sessions
-- Creates new folders from the dashboard (choose root, name, `mkdir` + `git init`)
+- Creates code, persona, code-hub, and persona-hub folders from a dashboard wizard; persona folders seed `AGENTS.md` and `memory.md`
+- Manages hub members, archives and restores folders, and edits folder-scoped agent instructions
 - Sends prompts, runs native shell commands with `!`/`!!`, steers, aborts, and switches models
 - Slash command autocomplete — typing `/` shows a fuzzy-filtered dropdown of available commands (skills, extension commands, prompt templates) with argument completion for extension commands
 - Handles extension UI dialogs (select, confirm, input)
