@@ -84,9 +84,11 @@
 
   const effectiveRoot = $derived(selectedRoot || folderStore.roots[0] || '');
 
-  const memberCandidates = $derived(
-    [...folderStore.folders].filter((folder) => !folder.missing).sort((a, b) => displayName(a).localeCompare(displayName(b)) || a.path.localeCompare(b.path)),
-  );
+  const eligibleMember = (folder: FolderInfo) => !folder.missing;
+  const byDisplayName = (a: FolderInfo, b: FolderInfo) => displayName(a).localeCompare(displayName(b)) || a.path.localeCompare(b.path);
+  const memberCandidates = $derived([...folderStore.folders].filter(eligibleMember).sort(byDisplayName));
+  /** Server search results through the same eligibility and ordering as the rows. */
+  const searchMembers = (query: string) => folderStore.searchCandidates(query).then((rows) => rows.filter(eligibleMember).sort(byDisplayName));
 
   /** Selecting a kind resets the flow to its identity step. */
   function selectKind(next: WizardKind): void {
@@ -220,7 +222,7 @@
           {/if}
         </div>
       {:else if step === 'members'}
-        <MemberPicker candidates={memberCandidates} {selectedPaths} onToggle={toggleMember} />
+        <MemberPicker candidates={memberCandidates} {selectedPaths} onToggle={toggleMember} search={searchMembers} />
       {:else}
         <div class="flex flex-col gap-1.5">
           <div class="text-muted-foreground text-xs font-medium">{isPersonaKind(kind) ? 'Persona' : 'Vision'}</div>

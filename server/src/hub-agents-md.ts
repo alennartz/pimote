@@ -1,4 +1,4 @@
-import { personaFrontMatter } from './manager/seed.js';
+import { codeFolderAgentsMd, personaAgentsMd } from './folder-seeding.js';
 
 /**
  * The hub AGENTS.md managed-content mutator (plan: 0.15-2 dashboard folder
@@ -74,20 +74,14 @@ export function removeMemberLine(markdown: string, line: string): string {
   return markdown.slice(0, start) + markdown.slice(start + line.length + 1);
 }
 
-/** One optional body section: a blank line plus the trimmed text plus its
- *  trailing newline; empty when the text is blank. */
-function bodySection(text: string): string {
-  const trimmed = text.trim();
-  return trimmed ? `\n${trimmed}\n` : '';
-}
-
 /**
  * Render the registry-created hub `AGENTS.md` (plan: 0.15-2 dashboard folder
  * UX). The code-hub variant leads with a `# <name>` heading and the optional
  * body; the persona-hub variant leads with persona-marker front matter and the
- * optional persona text. Both then declare the members managed block, seeded
- * via `injectMemberLine` so creation and later removal use the same byte
- * strings. Source-listed hubs keep `agentsMarkdown` (folder-sources).
+ * optional persona text — both from the shared seed renderers, so the folder
+ * and hub paths cannot drift. Both then declare the members managed block,
+ * seeded via `injectMemberLine` so creation and later removal use the same
+ * byte strings. Source-listed hubs keep `agentsMarkdown` (folder-sources).
  */
 export function hubAgentsMarkdown(input: {
   name: string;
@@ -95,9 +89,7 @@ export function hubAgentsMarkdown(input: {
   body?: string;
   persona?: { description: string; personaText: string };
 }): string {
-  const head = input.persona
-    ? `${personaFrontMatter(input.name, input.persona.description)}\n${bodySection(input.persona.personaText)}`
-    : `# ${input.name}\n${bodySection(input.body ?? '')}`;
+  const head = input.persona ? personaAgentsMd(input.name, input.persona.description, input.persona.personaText) : codeFolderAgentsMd(input.name, input.body ?? '');
   const seeded = `${head}\nA hub is a folder composed of shortcuts to its members:\n\n${OPEN}\n${CLOSE}\n`;
   return input.members.reduce((markdown, member) => injectMemberLine(markdown, seededMemberLine(member.name, member.nature)), seeded);
 }

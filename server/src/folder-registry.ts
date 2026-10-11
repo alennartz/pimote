@@ -6,7 +6,7 @@ import type { FolderInfo, FolderMemberInfo, RepoInfo } from '../../shared/dist/i
 import type { FolderEntry, FolderOccurrence, SparseTree } from './folder-model/index.js';
 import type { FolderModelPort, FolderRegistryPort, FolderUpdatePatch } from './manager/types.js';
 import { hubAgentsMarkdown, injectMemberLine, removeMemberLine, seededMemberLine } from './hub-agents-md.js';
-import { MEMORY_STUB } from './manager/seed.js';
+import { MEMORY_STUB } from './folder-seeding.js';
 import { materializeHubFolder, memberIgnoreLine } from './folder-sources/materialize.js';
 import type { HubSourceEntry } from './folder-sources/index.js';
 import type { PersonaSourceEntry, RepoIndex } from './repo-index.js';
@@ -213,6 +213,14 @@ interface HubLink {
 /** Whether `target` lies inside directory `dir` — the scanner's shortcut rule. */
 function isInside(target: string, dir: string): boolean {
   return dir === '/' ? target.startsWith('/') : target.startsWith(`${dir}/`);
+}
+
+/** The hub-management gate the row menu shows ("Manage members…") as a
+ *  server invariant: a manageable hub carries the probe's `members` fact or
+ *  shortcuts. Registry and source hub rows satisfy it by construction; plain
+ *  code and persona folders never do. */
+function isManageableHub(row: FolderInfo): boolean {
+  return row.members !== undefined || row.shortcutCount > 0;
 }
 
 /**
@@ -626,6 +634,7 @@ export class FolderRegistry implements FolderRegistryPort {
     return this.serialized(async () => {
       const hub = (await this.listLazy()).find((folder) => folder.path === hubPath);
       if (!hub || hub.missing) throw new Error(`Unknown hub folder: ${hubPath}`);
+      if (!isManageableHub(hub)) throw new Error(`Not a hub folder: ${hubPath}`);
       if (memberPath === hubPath) throw new Error(`A hub cannot be its own member: ${memberPath}`);
       if (isInside(memberPath, hubPath) || isInside(hubPath, memberPath)) throw new Error(`A hub member cannot contain or live inside the hub: ${memberPath}`);
       const nature = (await this.discoveredNatures()).get(memberPath);
@@ -683,6 +692,11 @@ export class FolderRegistry implements FolderRegistryPort {
    */
   async removeMember(hubPath: string, memberPath: string): Promise<void> {
     return this.serialized(async () => {
+      // Same hub-eligibility gate as addMember: no symlink operations on a
+      // path that is not a manageable hub, whatever a wire client sends.
+      const hub = (await this.listLazy()).find((folder) => folder.path === hubPath);
+      if (!hub) throw new Error(`Unknown hub folder: ${hubPath}`);
+      if (!isManageableHub(hub)) throw new Error(`Not a hub folder: ${hubPath}`);
       const doc = await this.document();
       const link = (await readHubLinks([hubPath])).get(hubPath)?.find((candidate) => candidate.target === memberPath);
       const entry = doc.hubs.find((candidate) => candidate.path === hubPath);

@@ -97,6 +97,8 @@ export class FolderStore {
   private staleRetryBudget = 5;
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
   private searchWaiters: Array<() => void> = [];
+  private candidateSearchTimer: ReturnType<typeof setTimeout> | null = null;
+  private candidateSearchGeneration = 0;
   private reposLoadInFlight: Promise<void> | null = null;
   private sessionLoadsInFlight: Map<string, InFlightSessionLoad> = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
   private nextSessionRequestId = 0;
@@ -201,6 +203,42 @@ export class FolderStore {
     }
   }
 
+  /**
+   * Picker-scoped candidate search: the same server-authoritative two-tier
+   * `list_folders` query the homepage search runs, debounced and coalesced,
+   * but isolated from the window cache and the homepage filter state — a
+   * modal picker can never disturb the list behind it, and every discovered
+   * folder is reachable regardless of the fetched window. Superseded calls
+   * resolve empty.
+   */
+  searchCandidates(query: string): Promise<FolderInfo[]> {
+    const trimmed = query.trim();
+    const generation = ++this.candidateSearchGeneration;
+    if (this.candidateSearchTimer !== null) clearTimeout(this.candidateSearchTimer);
+    return new Promise((resolve) => {
+      this.candidateSearchTimer = setTimeout(() => {
+        this.candidateSearchTimer = null;
+        void this.fetchCandidates(trimmed, generation).then(resolve);
+      }, 250);
+    });
+  }
+
+  private async fetchCandidates(query: string, generation: number): Promise<FolderInfo[]> {
+    if (query === '') return [];
+    try {
+      // Archived rows count as discovered: a picker finds any folder, and
+      // the caller's eligibility filter keeps the final say.
+      const response = await connection.send({ type: 'list_folders', query, includeArchived: true });
+      if (generation !== this.candidateSearchGeneration || !response.success || !response.data) return [];
+      // Rows collapse onto the shared folder objects only — the window cache
+      // and the homepage filter state stay untouched.
+      return (response.data as ListFoldersResponseData).folders.map((row) => this.upsertFolder(row));
+    } catch (error) {
+      console.error('[FolderStore] Failed to search candidates:', error);
+      return [];
+    }
+  }
+
   /** Folder-tier matches are unrestricted. Session-tier matches use server ids. */
   visibleSessions(folderPath: string): SessionInfo[] {
     const sessions = this.sessions.get(folderPath) ?? [];
@@ -224,6 +262,9 @@ export class FolderStore {
     this.searchTimer = null;
     for (const resolve of this.searchWaiters) resolve();
     this.searchWaiters = [];
+    if (this.candidateSearchTimer !== null) clearTimeout(this.candidateSearchTimer);
+    this.candidateSearchTimer = null;
+    this.candidateSearchGeneration++;
   }
 
   /** Only an explicit refresh replaces an established connection pin. */

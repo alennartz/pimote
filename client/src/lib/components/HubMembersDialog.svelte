@@ -23,7 +23,11 @@
 
   const members = $derived(hub.members ?? []);
   const memberPaths = $derived(new Set(members.map((member) => member.path)));
-  const candidates = $derived(folderStore.folders.filter((folder) => folder.path !== hub.path && !memberPaths.has(folder.path) && !folder.missing));
+  /** Eligible as a member: not the hub, not already a member, present on disk. */
+  const eligible = (folder: FolderInfo) => folder.path !== hub.path && !memberPaths.has(folder.path) && !folder.missing;
+  const candidates = $derived(folderStore.folders.filter(eligible));
+  /** Server search results through the same eligibility filter as the rows. */
+  const searchCandidates = (query: string) => folderStore.searchCandidates(query).then((rows) => rows.filter(eligible));
 
   function errorMessage(reason: unknown, fallback: string): string {
     return reason instanceof Error ? reason.message : fallback;
@@ -93,7 +97,7 @@
 
   <div class="flex flex-col gap-1.5">
     <div class="text-muted-foreground text-xs font-medium">Add member</div>
-    <MemberPicker {candidates} selectedPaths={[...addingPaths]} onToggle={(path) => void addMember(path)} />
+    <MemberPicker {candidates} selectedPaths={[...addingPaths]} onToggle={(path) => void addMember(path)} search={searchCandidates} />
   </div>
 
   {#if error}

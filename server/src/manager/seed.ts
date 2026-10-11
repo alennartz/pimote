@@ -1,11 +1,13 @@
 import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { codeFolderAgentsMd, MEMORY_STUB, personaAgentsMd } from '../folder-seeding.js';
 
 /**
- * Boot seeding of the manager root (plan: manager-lifecycle).
+ * Boot seeding of the manager root and the persona/code seeding seams
+ * (plans: manager-lifecycle, 0.15-2 dashboard folder UX).
  *
- * Contract (`seedManagerRoot(config.managerRoot)`, run after config load,
- * before or independent of first session):
+ * The manager-root contract (`seedManagerRoot(config.managerRoot)`, run after
+ * config load, before or independent of first session):
  * - `AGENTS.md` absent  -> write the shipped seed template
  * - `AGENTS.md` present -> untouched (no merge, ever)
  * - `memory.md` absent  -> write a stub
@@ -16,15 +18,19 @@ import { join } from 'node:path';
  * are injected). YAML front matter has `kind: persona`, `name: manager`, and
  * a nonempty one-line description, so the folder model classifies the seed as
  * a persona. Filesystem errors propagate to the boot caller.
+ *
+ * The seeding seams below compose the shared renderers from
+ * `folder-seeding.ts` — the one owner of the seeded text — so the folder and
+ * hub paths cannot drift.
  */
+
+// Re-exported for callers pinned to this module (plan: 0.15-2 Interface
+// Files name `manager/seed.ts` as the seam's home).
+export { MEMORY_STUB } from '../folder-seeding.js';
 
 /** The maintain-`memory.md` instruction shared by every shipped persona
  *  prompt: the manager seed and persona creation fold it into their bodies. */
 export const MEMORY_MAINTENANCE_INSTRUCTION = 'Keep your long-term notes up to date in memory.md: record decisions, durable context, and anything worth remembering there.';
-
-/** Shipped `memory.md` stub, written beside a persona `AGENTS.md` when the
- *  file is absent. */
-export const MEMORY_STUB = '# Memory\n\nDurable notes for this persona. Update this file as you learn.\n';
 
 /** The shipped manager `AGENTS.md` template: persona-marker front matter,
  *  mission statement, maintain-`memory.md` indication, no tool listing. */
@@ -61,28 +67,6 @@ export async function seedManagerRoot(managerRoot: string): Promise<void> {
   await seedFile(join(managerRoot, 'memory.md'), MEMORY_STUB);
 }
 
-/** The persona-marker front-matter block (`---` delimited, no trailing
- *  newline). Values are JSON-quoted — JSON strings are valid YAML double-
- *  quoted scalars — so `parsePersonaFrontMatter` round-trips them exactly on
- *  one line each. */
-export function personaFrontMatter(name: string, description: string): string {
-  return ['---', 'kind: persona', `name: ${JSON.stringify(name)}`, `description: ${JSON.stringify(description)}`, '---'].join('\n');
-}
-
-/** Persona `AGENTS.md` text: marker front matter plus the verbatim (trimmed)
- *  persona body. Pure: input in, text out. */
-function personaAgentsMd(name: string, description: string, personaText: string): string {
-  const body = personaText.trim();
-  return `${personaFrontMatter(name, description)}\n${body ? `\n${body}\n` : ''}`;
-}
-
-/** Code-folder `AGENTS.md` seed: a `# <name>` heading plus the (trimmed) body.
- *  Write-if-absent — an existing `AGENTS.md` stays untouched. */
-export async function seedCodeFolderAgents(folderPath: string, name: string, body: string): Promise<void> {
-  const trimmed = body.trim();
-  await seedFile(join(folderPath, 'AGENTS.md'), `# ${name}\n${trimmed ? `\n${trimmed}\n` : ''}`);
-}
-
 /**
  * The persona-folder seeding seam (plan: 0.15-2 dashboard folder UX). Called
  * by the `create_persona_folder` handler and the manager's
@@ -114,4 +98,10 @@ export async function seedPersonaFolder(root: string, name: string, description:
     if (created) await rm(folderPath, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
+}
+
+/** Code-folder `AGENTS.md` seed: write-if-absent — an existing `AGENTS.md`
+ *  (for example one a user-authored creator wrote) stays untouched. */
+export async function seedCodeFolderAgents(folderPath: string, name: string, body: string): Promise<void> {
+  await seedFile(join(folderPath, 'AGENTS.md'), codeFolderAgentsMd(name, body));
 }
