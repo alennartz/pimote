@@ -18,6 +18,8 @@
   let error = $state('');
   /** Paths with an add in flight — the picker's selection view. */
   const addingPaths = new SvelteSet<string>();
+  /** Paths with a remove in flight — the row's button disables. */
+  const removingPaths = new SvelteSet<string>();
 
   const members = $derived(hub.members ?? []);
   const memberPaths = $derived(new Set(members.map((member) => member.path)));
@@ -28,6 +30,9 @@
   }
 
   async function addMember(path: string) {
+    // The add fires on toggle and the success delta arrives later: a second
+    // toggle mid-flight must not send a duplicate add.
+    if (addingPaths.has(path)) return;
     error = '';
     addingPaths.add(path);
     try {
@@ -40,11 +45,15 @@
   }
 
   async function removeMember(member: FolderMemberInfo) {
+    if (removingPaths.has(member.path)) return;
     error = '';
+    removingPaths.add(member.path);
     try {
       await folderStore.removeHubMember(hub.path, member.path);
     } catch (reason) {
       error = errorMessage(reason, 'Failed to remove hub member');
+    } finally {
+      removingPaths.delete(member.path);
     }
   }
 </script>
@@ -70,6 +79,7 @@
                 type="button"
                 class="hover:text-destructive text-muted-foreground shrink-0 rounded-md p-1 transition-colors"
                 aria-label="Remove {member.name}"
+                disabled={removingPaths.has(member.path)}
                 onclick={() => void removeMember(member)}
               >
                 <X class="size-4" />

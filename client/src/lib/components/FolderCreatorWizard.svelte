@@ -77,6 +77,10 @@
   let selectedRoot = $state('');
   let error = $state('');
   let creating = $state(false);
+  /** The created folder's path: kept across a failed `open_session`, so a
+   *  retry only re-opens the session (re-sending creation would answer
+   *  `Directory already exists`). */
+  let createdFolderPath = $state('');
 
   const effectiveRoot = $derived(selectedRoot || folderStore.roots[0] || '');
 
@@ -93,6 +97,7 @@
     text = '';
     selectedPaths = [];
     selectedRoot = '';
+    createdFolderPath = '';
     error = '';
     onActiveChange?.(true);
   }
@@ -133,20 +138,26 @@
   /** Create the folder, then open a session in it. Failures surface in the wizard. */
   async function createAndOpen(): Promise<void> {
     if (kind === null || creating) return;
-    const failure = validateFolderName(name.trim());
-    if (failure) {
-      error = failure;
-      return;
+    if (createdFolderPath === '') {
+      const failure = validateFolderName(name.trim());
+      if (failure) {
+        error = failure;
+        return;
+      }
     }
     creating = true;
     error = '';
     try {
-      const response = await connection.send(creationCommand({ kind, root: effectiveRoot, name: name.trim(), description, text, memberPaths: selectedPaths }));
-      if (!response.success) {
-        error = response.error ?? 'Failed to create folder';
-        return;
+      let folderPath = createdFolderPath;
+      if (folderPath === '') {
+        const response = await connection.send(creationCommand({ kind, root: effectiveRoot, name: name.trim(), description, text, memberPaths: selectedPaths }));
+        if (!response.success) {
+          error = response.error ?? 'Failed to create folder';
+          return;
+        }
+        folderPath = (response.data as { folderPath: string }).folderPath;
+        createdFolderPath = folderPath;
       }
-      const folderPath = (response.data as { folderPath: string }).folderPath;
       const openResponse = await connection.send({ type: 'open_session', folderPath });
       if (!openResponse.success) {
         error = openResponse.error ?? 'Failed to open session';

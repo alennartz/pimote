@@ -176,6 +176,18 @@ interface ScanRow {
  * pre-order walk meets each entry first at its discovery occurrence (leaf
  * back-references come later), so first-seen children are the discovery ones.
  */
+/**
+ * Nature per discovered folder-model entry — the one owner of the rule.
+ * Scan entries decide their own nature; source-listed persona homes outside
+ * the scan tree are personas; an undiscovered path has no entry (absent).
+ */
+function discoveredEntryNatures(scanned: Map<string, ScanRow>, sourcePersonas: Map<string, PersonaSourceEntry>): Map<string, 'code' | 'persona'> {
+  const natures = new Map<string, 'code' | 'persona'>();
+  for (const [path, row] of scanned) natures.set(path, row.entry.nature);
+  for (const path of sourcePersonas.keys()) if (!natures.has(path)) natures.set(path, 'persona');
+  return natures;
+}
+
 function collectScanEntries(tree: SparseTree): Map<string, ScanRow> {
   const byPath = new Map<string, ScanRow>();
   const visit = (occurrence: FolderOccurrence): void => {
@@ -215,19 +227,24 @@ async function readHubLinks(paths: Iterable<string>): Promise<Map<string, HubLin
     let entries: Dirent[];
     try {
       entries = await readdir(path, { withFileTypes: true });
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
-      throw error;
+    } catch {
+      // Absent, not a directory, or unreadable (EACCES): the probe is
+      // best-effort — one broken hub directory must never fail the listing.
+      continue;
     }
     const hubCanonical = await realpath(path).catch(() => path);
     const links: HubLink[] = [];
     for (const entry of entries) {
       if (!entry.isSymbolicLink()) continue;
-      const lexical = resolve(path, await readlink(join(path, entry.name)));
-      const target = await realpath(lexical).catch(() => lexical);
-      if (target === hubCanonical || isInside(target, hubCanonical)) continue;
-      links.push({ name: entry.name, target });
+      try {
+        const lexical = resolve(path, await readlink(join(path, entry.name)));
+        const target = await realpath(lexical).catch(() => lexical);
+        if (target === hubCanonical || isInside(target, hubCanonical)) continue;
+        links.push({ name: entry.name, target });
+      } catch {
+        // A link removed or replaced mid-probe (ENOENT, EINVAL): skip the
+        // link, never the view.
+      }
     }
     links.sort((a, b) => a.name.localeCompare(b.name));
     inventory.set(path, links);
@@ -306,6 +323,7 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
   const byPath = new Map(input.repos.map((repo) => [repo.path, repo]));
   const hubs = hubMetadata(input.sourceHubs, input.doc);
   const sourcePersonas = new Map(input.personas.map((entry) => [entry.path, entry]));
+  const natures = discoveredEntryNatures(scanned, sourcePersonas);
 
   /** Effective tags at a repo path: source-contributed ∪ user. */
   const repoTags = (repoPath: string): string[] | undefined => unionTags(byPath.get(repoPath)?.tags, input.doc.overrides[repoPath]?.tags);
@@ -332,11 +350,11 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
     const folderMembers: FolderMemberInfo[] | undefined = memberLinks?.map((link) => ({
       path: link.target,
       name: link.name,
-      nature: scanned.get(link.target)?.entry.nature ?? 'code',
+      nature: natures.get(link.target) ?? 'code',
     }));
     // Hub rows implicitly inherit their members' tags.
     const memberTagUnion = memberRepos ? unionTags(...memberRepos.map((member) => member.tags)) : undefined;
-    const nature = scan?.entry.nature ?? (sourcePersona ? 'persona' : 'code');
+    const nature = natures.get(path) ?? 'code';
     // Own repo facts for plain code rows: copied from the cached index facts
     // (effective tags like every other RepoInfo on a row). Personas and hub
     // rows omit `repo`.
@@ -510,6 +528,9 @@ export class FolderRegistry implements FolderRegistryPort {
         seen.add(base);
       }
       const target = join(root, name);
+      for (const memberPath of memberPaths) {
+        if (isInside(memberPath, target) || isInside(target, memberPath)) throw new Error(`A hub member cannot contain or live inside the hub: ${memberPath}`);
+      }
       if (await pathExists(target)) throw new Error(`Directory already exists: ${target}`);
 
       const members = memberPaths.map((memberPath) => ({ name: basename(memberPath), nature: natures.get(memberPath)! }));
@@ -606,35 +627,48 @@ export class FolderRegistry implements FolderRegistryPort {
       const hub = (await this.listLazy()).find((folder) => folder.path === hubPath);
       if (!hub || hub.missing) throw new Error(`Unknown hub folder: ${hubPath}`);
       if (memberPath === hubPath) throw new Error(`A hub cannot be its own member: ${memberPath}`);
+      if (isInside(memberPath, hubPath) || isInside(hubPath, memberPath)) throw new Error(`A hub member cannot contain or live inside the hub: ${memberPath}`);
       const nature = (await this.discoveredNatures()).get(memberPath);
       if (nature === undefined) throw new Error(`Unknown folder: ${memberPath}`);
       const name = basename(memberPath);
       const linkPath = join(hubPath, name);
       if (await linkOrPathExists(linkPath)) throw new Error(`Duplicate member name: ${name}`);
 
+      // Reads first: a read failure must leave disk untouched.
+      const agentsPath = join(hubPath, 'AGENTS.md');
+      const ignorePath = join(hubPath, '.gitignore');
+      const agentsBefore = await readTextIfPresent(agentsPath);
+      const ignoreBefore = await readTextIfPresent(ignorePath);
+
+      // Every mutation registers its inverse, so a later failure (a write or
+      // the registry persist) rolls the whole add back — a retry never meets
+      // `Duplicate member name` or a stale seeded line.
+      const undo: Array<() => Promise<void>> = [];
+      const writeBack = async (path: string, before: string | null, updated: string): Promise<void> => {
+        if (updated === (before ?? '')) return;
+        await writeFile(path, updated, 'utf8');
+        undo.push(before === null ? () => rm(path, { force: true }) : () => writeFile(path, before, 'utf8'));
+      };
+
       await symlink(memberPath, linkPath);
+      undo.push(() => unlink(linkPath));
+      const doc = await this.document();
+      const entry = doc.hubs.find((candidate) => candidate.path === hubPath);
       try {
-        const agentsPath = join(hubPath, 'AGENTS.md');
-        const content = (await readTextIfPresent(agentsPath)) ?? '';
-        const updated = injectMemberLine(content, seededMemberLine(name, nature));
-        if (updated !== content) await writeFile(agentsPath, updated, 'utf8');
-        const ignorePath = join(hubPath, '.gitignore');
-        const ignoreContent = await readTextIfPresent(ignorePath);
-        if (ignoreContent !== null) {
-          const updatedIgnore = appendExactLine(ignoreContent, memberIgnoreLine(name));
-          if (updatedIgnore !== ignoreContent) await writeFile(ignorePath, updatedIgnore, 'utf8');
+        await writeBack(agentsPath, agentsBefore, injectMemberLine(agentsBefore ?? '', seededMemberLine(name, nature)));
+        if (ignoreBefore !== null) await writeBack(ignorePath, ignoreBefore, appendExactLine(ignoreBefore, memberIgnoreLine(name)));
+        if (entry && !entry.memberPaths.includes(memberPath)) {
+          entry.memberPaths.push(memberPath);
+          undo.push(async () => {
+            entry.memberPaths = entry.memberPaths.filter((candidate) => candidate !== memberPath);
+          });
+          await this.persist(doc);
         }
       } catch (error) {
-        await unlink(linkPath).catch(() => {});
+        for (const step of undo.reverse()) await step().catch(() => {});
         throw error;
       }
 
-      const doc = await this.document();
-      const entry = doc.hubs.find((candidate) => candidate.path === hubPath);
-      if (entry && !entry.memberPaths.includes(memberPath)) {
-        entry.memberPaths.push(memberPath);
-        await this.persist(doc);
-      }
       this.repos.invalidateListing();
       this.fireChange({ changedPaths: [hubPath], removedPaths: [] });
     });
@@ -685,15 +719,14 @@ export class FolderRegistry implements FolderRegistryPort {
     return new Set((await this.list()).map((folder) => folder.path));
   }
 
-  /** Canonical path → nature over every discovered folder-model entry, plus
-   *  every index path as `code` when the scan does not already hold it. The
-   *  widened membership rule: hub members are discovered entries (any
-   *  nature), never arbitrary filesystem paths. */
+  /** Canonical path → nature over every discovered folder-model entry
+   *  (`discoveredEntryNatures`: scan entries plus source personas), plus
+   *  every index path as `code` when neither holds it. The widened membership
+   *  rule: hub members are discovered entries (any nature), never arbitrary
+   *  filesystem paths. */
   private async discoveredNatures(): Promise<Map<string, 'code' | 'persona'>> {
-    const natures = new Map<string, 'code' | 'persona'>();
-    for (const [path, row] of collectScanEntries(await this.tree.tree())) {
-      natures.set(path, row.entry.nature);
-    }
+    const sourcePersonas = new Map((await this.repos.listSourcePersonas()).map((entry) => [entry.path, entry]));
+    const natures = discoveredEntryNatures(collectScanEntries(await this.tree.tree()), sourcePersonas);
     for (const repo of await this.repos.listLazy()) {
       if (!natures.has(repo.path)) natures.set(repo.path, 'code');
     }

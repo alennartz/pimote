@@ -117,6 +117,12 @@
   // delta, so membership changes reach the open dialog.
   let membersHubPath = $state<string | null>(null);
   const membersHub = $derived(folderStore.folders.find((folder) => folder.path === membersHubPath) ?? null);
+  // A delta can drop the row while the dialog is open (disband elsewhere, a
+  // reconnect clearing the cache). Clear the path so a returning row cannot
+  // reopen the dialog unprompted.
+  $effect(() => {
+    if (membersHubPath !== null && membersHub === null) membersHubPath = null;
+  });
 
   // Add-tag dialog state
   let tagTarget = $state<FolderInfo | null>(null);
@@ -346,12 +352,16 @@
     }
   }
 
-  /** Apply a curation patch; the store updates via the folders_changed broadcast. */
+  /** Apply a curation patch; the store updates via the folders_changed
+   *  broadcast. Like disband, a server rejection must surface — the row menu
+   *  has closed, so a silent failure leaves the user with no feedback. */
   async function updateFolder(folder: FolderInfo, patch: { favorite?: boolean; archived?: boolean; addTags?: string[]; removeTags?: string[] }) {
+    openError = '';
     try {
-      await connection.send({ type: 'update_folder', folderPath: folder.path, ...patch });
+      const response = await connection.send({ type: 'update_folder', folderPath: folder.path, ...patch });
+      if (!response.success) openError = response.error ?? 'Failed to update folder';
     } catch (e) {
-      console.error('Failed to update folder:', e);
+      openError = e instanceof Error ? e.message : 'Failed to update folder';
     }
   }
 
