@@ -6,11 +6,11 @@
 [![publish app](https://github.com/alennartz/pimote/actions/workflows/publish-pimote.yml/badge.svg)](https://github.com/alennartz/pimote/actions/workflows/publish-pimote.yml)
 [![sdk](https://img.shields.io/npm/v/%40pimote%2Fsdk?style=flat-square&label=%40pimote%2Fsdk)](https://www.npmjs.com/package/@pimote/sdk)
 
-A full-featured web client for [pi](https://github.com/mariozechner/pi-coding-agent). Use your coding agent from your phone, tablet, or any browser — with multi-session management, real-time streaming, and push notifications.
+A full-featured web client for [Pi](https://github.com/earendil-works/pi). Use your coding agent from your phone, tablet, or any browser — with multi-session management, real-time streaming, and push notifications.
 
 Pimote implements all of pi's RPC-compatible UI extension mechanisms (select, confirm, input, editor, status, widgets, panels), so you can use your favorite pi extensions exactly as they work in the terminal — just through a browser.
 
-**Links:** [npm package](https://www.npmjs.com/package/@pimote/pimote) · [SDK package](https://www.npmjs.com/package/@pimote/sdk) · [issues](https://github.com/alennartz/pimote/issues) · [pi](https://github.com/mariozechner/pi-coding-agent)
+**Links:** [npm package](https://www.npmjs.com/package/@pimote/pimote) · [SDK package](https://www.npmjs.com/package/@pimote/sdk) · [issues](https://github.com/alennartz/pimote/issues) · [Pi source](https://github.com/earendil-works/pi) · [Pi docs](https://github.com/earendil-works/pi/tree/main/packages/coding-agent/docs)
 
 ## Quick start
 
@@ -74,11 +74,15 @@ Node.js process that embeds pi `AgentSession` instances directly via the SDK. Ma
 
 Installable PWA (Svelte 5, Tailwind CSS, shadcn-svelte) with real-time streaming, multi-session tabs, a folder dashboard with a manager composer and persisted session list, extension UI, push notifications, and a session StatusBar that surfaces model/thinking controls plus live context-window and lifetime-cost indicators. Works on phone and desktop.
 
+## Pi documentation
+
+Pimote embeds Pi's coding-agent SDK. For Pi-specific configuration, agent instructions, skills, extensions, and tools, see the [Pi documentation](https://github.com/earendil-works/pi/tree/main/packages/coding-agent/docs) or [Pi source repository](https://github.com/earendil-works/pi). This README covers Pimote-specific setup, configuration, folder behavior, and UI workflows.
+
 ## Usage
 
 ### Dashboard, Folders, and the Manager
 
-The landing page is the Dashboard: a folders column beside the manager composer and persisted session list on desktop; on mobile the folders list is fullscreen and the manager opens as a sheet. The list covers every discovered folder (expandable to its sessions) and loads in windows as you scroll. Its search box runs on the server against the whole list: it matches folder names, paths, tags, and persona names, plus session names and first messages. Folders come from a sparse scan of your configured roots plus any custom folder sources: a folder is **code** (git-initialized, plain `AGENTS.md` or none) or a **persona** (its `AGENTS.md` carries persona marker front matter), and each row renders one of four icons — code, code-hub, persona, persona-hub — depending on its nature and whether shortcut symlinks hang off it. You can favorite and archive folders, and combine existing repos into a **hub** — a folder with symlinks to each member, its own `git init` + `.gitignore`, and a generated `AGENTS.md` — which can be disbanded again later. Use the **New session** action to pick any discovered folder and start fresh, or create a folder from the dialog. Choose code, persona, code-hub, or persona-hub, then follow the wizard. Code folders receive `AGENTS.md`; persona folders receive persona-marker `AGENTS.md` and `memory.md`; hub folders include member shortcuts and a managed member block. Every flow opens a session in the new folder. Folder rows also let you manage hub members, archive or restore folders, and edit folder-scoped `AGENTS.md` files. The manager is a persona folder at `managerRoot`; its ordinary persisted sessions use a manager-specific pimote toolset, including `pimote_create_persona` and `pimote_list_personas`.
+The landing page is the Dashboard: a folders column beside the manager composer and persisted session list on desktop; on mobile the folders list is fullscreen and the manager opens as a sheet. The list covers every discovered folder (expandable to its sessions) and loads in windows as you scroll. Its search box runs on the server against the whole list: it matches folder names, paths, tags, and persona names, plus session names and first messages. Folders come from a sparse scan of your configured roots plus any custom folder sources: a folder is **code** (git-initialized, plain `AGENTS.md` or none) or a **persona** (its `AGENTS.md` carries persona marker front matter), and each row renders one of four icons — code, code-hub, persona, persona-hub — depending on its nature and whether shortcut symlinks hang off it. You can favorite and archive folders, and combine existing repos into a **hub** — a folder with symlinks to each member, its own `git init` + `.gitignore`, and a generated `AGENTS.md`. A hub is a working folder, not just a shell: code hubs can carry hub-level code; persona hubs are agents with their own prompt and memory. Use the **New session** action to pick any discovered folder and start fresh, or create a folder from the dialog. Choose code, persona, code-hub, or persona-hub, then follow the wizard. Code folders receive `AGENTS.md`; persona folders receive persona-marker `AGENTS.md` and `memory.md`; hub folders include member shortcuts and a managed member block. Every flow opens a session in the new folder. Folder rows also let you manage hub members, archive or restore folders, and edit folder-scoped `AGENTS.md` files. The manager is a persona folder at `managerRoot`; its ordinary persisted sessions use a manager-specific pimote toolset — seven tools covering the same folder mutations the dashboard offers (creation of all four folder kinds, curation, hub membership), a unified sessions view, and `fresh: true` reads that bypass the discovery cache — with a server-provided `pimote-folders` skill documenting the folder model, topology recipes, and tool behavior.
 
 ### Sessions
 
@@ -261,7 +265,7 @@ enable voice. `defaultInterpreterModel` and `defaultWorkerModel` fall back to
 
 When `updateCheck` is enabled (the default), the server checks npm for a newer `@pimote/pimote` release using a six-hour cache. Connected clients receive an update notification with the release link; dismissing it leaves a persistent ambient marker so the notice can be revisited. Set `"updateCheck": false` to disable registry checks and update indicators.
 
-VAPID keys for push notifications are auto-generated on first run and written back to the config file. Session metadata, push subscriptions, and the folder registry (favorites, archive, hubs) live under `~/.local/state/pimote` (or `$XDG_STATE_HOME/pimote`).
+VAPID keys for push notifications are auto-generated on first run and written back to the config file. Session metadata, push subscriptions, and folder curation (favorites, archive state, and tags) live under `~/.local/state/pimote` (or `$XDG_STATE_HOME/pimote`). Hubs are discovered from their on-disk symlink shape; they are not listed in the curation store.
 
 ## Running
 
