@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
+import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
 
 // bits-ui popper layers expect browser APIs jsdom doesn't ship.
 class TestResizeObserver {
@@ -44,10 +45,11 @@ function modeToggle(): HTMLButtonElement {
   return button;
 }
 
-afterEach(() => {
+afterEach(async () => {
   destroy?.();
   destroy = null;
   document.body.innerHTML = '';
+  await drainBodyScrollLockCleanup();
 });
 
 describe('combined search / manager box', () => {

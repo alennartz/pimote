@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
+import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
 import type { FolderInfo } from '@pimote/shared';
 
 // bits-ui popper layers expect browser APIs jsdom doesn't ship.
@@ -92,11 +93,12 @@ beforeEach(() => {
   folderStore.roots = ['/roots'];
 });
 
-afterEach(() => {
+afterEach(async () => {
   destroy?.();
   destroy = null;
   vi.mocked(connection.send).mockImplementation(async () => ({ id: '1', success: true, data: {} }));
   document.body.innerHTML = '';
+  await drainBodyScrollLockCleanup();
 });
 
 describe('folder picker', () => {
