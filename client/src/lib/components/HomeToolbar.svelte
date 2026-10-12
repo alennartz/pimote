@@ -77,11 +77,11 @@
     autosize(el);
   });
 
-  /** Old manager sessions, surfaced as a dropdown just below the box in
-   *  manager mode. Collapsed, the affordance is a near-zero-height strip;
-   *  expanding opens a dropdown overlay, so nothing below is pushed down.
-   *  The count is live because the path-keyed session cache loads while
-   *  manager mode is on. */
+  /** Old manager sessions, surfaced as a dropdown in manager mode. Collapsed,
+   *  the affordance is a chevron circle overlaying the box's bottom edge, so
+   *  toggling modes shifts nothing; expanding opens a full-width dropdown
+   *  overlay. The list is live because the path-keyed session cache loads
+   *  while manager mode is on. */
   let sessionsOpen = $state(false);
   const managerRoot = $derived(connection.managerRoot);
   const managerSessions = $derived(managerRoot ? (folderStore.sessions.get(managerRoot) ?? []) : []);
@@ -100,7 +100,7 @@
   }
 </script>
 
-<div class="flex items-center gap-2">
+<div class="relative flex items-center gap-2">
   <div class="relative min-w-0 flex-1">
     <div
       class="border-border focus-within:ring-ring flex min-h-11 w-full items-center gap-1 rounded-2xl border bg-[var(--surface-2,var(--secondary))] px-1.5 py-1 shadow-lg transition-colors focus-within:ring-1 focus-within:outline-none max-md:min-h-12 {mode ===
@@ -146,7 +146,7 @@
           bind:value={managerDraft}
           onkeydown={handleKeydown}
           rows={1}
-          placeholder="Ask the manager — start sessions, archive old ones, check status…"
+          placeholder="Ask the manager"
           autocapitalize="sentences"
           enterkeyhint="send"
           spellcheck={!isMobileViewport()}
@@ -168,25 +168,19 @@
     </div>
 
     {#if mode === 'manager' && managerRoot}
-      <!-- Old manager sessions: the collapsed strip takes near no vertical
-           space; expanding opens a dropdown overlay below the box. -->
+      <!-- Collapsed affordance: a chevron circle overlaying the box's bottom
+           edge. Absolute, so it claims no layout space and toggling modes
+           shifts nothing. -->
       <button
         type="button"
-        class="text-muted-foreground hover:text-foreground focus-visible:ring-ring mx-auto flex h-4 w-full items-center justify-center gap-1 text-[10px] tracking-widest uppercase transition-colors focus-visible:ring-1 focus-visible:outline-none"
+        class="border-border bg-card text-muted-foreground hover:text-foreground focus-visible:ring-ring absolute top-full left-1/2 z-20 flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border shadow-md transition-colors focus-visible:ring-1 focus-visible:outline-none"
         aria-expanded={sessionsOpen}
+        aria-label="Previous sessions"
+        title="Previous sessions"
         onclick={() => (sessionsOpen = !sessionsOpen)}
       >
-        <ChevronDown class="size-3 transition-transform {sessionsOpen ? 'rotate-180' : ''}" />
-        Previous sessions
-        <span class="normal-case tabular-nums">{managerSessions.length}</span>
+        <ChevronDown class="size-3.5 transition-transform {sessionsOpen ? 'rotate-180' : ''}" />
       </button>
-      {#if sessionsOpen}
-        <div class="border-border bg-card absolute top-full right-0 left-0 z-30 mt-1 flex max-h-64 flex-col gap-1 overflow-y-auto rounded-xl border p-1 shadow-lg">
-          {#each managerSessions as session (session.id)}
-            <SessionItem {session} folderPath={managerRoot} />
-          {/each}
-        </div>
-      {/if}
     {/if}
   </div>
 
@@ -201,6 +195,16 @@
     <Plus class={compact ? 'size-4' : 'size-3.5 max-md:size-5'} />
     <span class="max-md:hidden" class:hidden={compact}>New session</span>
   </Button>
+
+  {#if mode === 'manager' && managerRoot && sessionsOpen}
+    <!-- Full-width dropdown: anchored to the whole toolbar row, so it spans
+         the box and the New session button. -->
+    <div class="border-border bg-card absolute top-full right-0 left-0 z-30 mt-1 flex max-h-64 flex-col gap-1 overflow-y-auto rounded-xl border p-1 shadow-lg">
+      {#each managerSessions as session (session.id)}
+        <SessionItem {session} folderPath={managerRoot} />
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <NewSessionDialog bind:open={newSessionOpen} />
