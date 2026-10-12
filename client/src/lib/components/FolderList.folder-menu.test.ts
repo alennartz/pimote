@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
+import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
 import type { FolderInfo } from '@pimote/shared';
 
 // bits-ui popper layers expect browser APIs jsdom doesn't ship.
@@ -51,7 +52,6 @@ const alpha = makeFolder({ path: '/w/alpha', name: 'alpha' });
 const archivedRow = makeFolder({ path: '/w/old', name: 'old', archived: true });
 
 const memberRepo = { path: '/w/one', name: 'one', branch: null, dirty: false, ahead: 0, behind: 0, missing: false };
-// Membership and disband eligibility are separate facts.
 const hub = makeFolder({ path: '/w/stack', name: 'stack', shortcutCount: 1, repos: [memberRepo], members: [{ path: '/w/one', name: 'one', nature: 'code' }] });
 const shortcutHub = makeFolder({ path: '/w/shortcuts', name: 'shortcuts', shortcutCount: 1 });
 const emptyHub = makeFolder({ path: '/w/empty', name: 'empty', members: [], repos: [] });
@@ -101,12 +101,13 @@ beforeEach(() => {
   folderStore.sessions.clear();
 });
 
-afterEach(() => {
+afterEach(async () => {
   destroy?.();
   destroy = null;
   vi.mocked(connection.send).mockClear();
   vi.restoreAllMocks();
   document.body.innerHTML = '';
+  await drainBodyScrollLockCleanup();
 });
 
 describe('row context menu — hub membership', () => {
@@ -117,7 +118,7 @@ describe('row context menu — hub membership', () => {
     openMenu(folder.path);
     await tick();
     expect(menuItem('Manage members…')).not.toBeNull();
-    expect(menuItem('Disband hub') !== null).toBe(folder.repos !== undefined);
+    expect(menuItem('Disband hub')).toBeNull();
   });
   it('offers "Manage members…" on hub rows only', async () => {
     folderStore.folders = [hub, alpha];

@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hill Climb Retrospective: Building the Persona Hub</title>
+    <style>
+      :root {
+        --accent: #0f766e;
+        --accent-soft: rgba(15, 118, 110, 0.08);
+        --text: #1f2937;
+        --muted: #6b7280;
+        --border: #e5e7eb;
+        --bg: #ffffff;
+        --card: #f9fafb;
+        --warn-bg: #fef3c7;
+        --warn-border: #f59e0b;
+        --note-bg: #eff6ff;
+        --note-border: #3b82f6;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --accent: #2dd4bf;
+          --accent-soft: rgba(45, 212, 191, 0.09);
+          --text: #e5e7eb;
+          --muted: #9ca3af;
+          --border: #374151;
+          --bg: #111827;
+          --card: #1b2231;
+          --warn-bg: rgba(245, 158, 11, 0.12);
+          --warn-border: #f59e0b;
+          --note-bg: rgba(59, 130, 246, 0.12);
+          --note-border: #60a5fa;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        font-size: 17px;
+        line-height: 1.65;
+      }
+      .wrap {
+        max-width: 76ch;
+        margin: 0 auto;
+        padding: 24px 20px 80px;
+      }
+      header h1 {
+        font-size: 1.7rem;
+        line-height: 1.25;
+        margin: 12px 0 6px;
+      }
+      .dek {
+        color: var(--muted);
+        font-size: 1.02rem;
+        margin: 0 0 4px;
+      }
+      .date {
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+      h2 {
+        font-size: 1.25rem;
+        margin: 2.2rem 0 0.6rem;
+        scroll-margin-top: 16px;
+      }
+      h3 {
+        font-size: 1.05rem;
+        margin: 1.4rem 0 0.4rem;
+      }
+      p {
+        margin: 0.65rem 0;
+      }
+      .takeaways {
+        background: var(--accent-soft);
+        border-left: 4px solid var(--accent);
+        border-radius: 8px;
+        padding: 14px 18px;
+        margin: 22px 0 8px;
+      }
+      .takeaways ul {
+        margin: 6px 0 4px;
+        padding-left: 20px;
+      }
+      .takeaways li {
+        margin: 6px 0;
+      }
+      nav.toc {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 18px;
+        margin: 18px 0;
+        font-size: 0.95rem;
+      }
+      nav.toc summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+      nav.toc ol {
+        margin: 10px 0 4px;
+        padding-left: 22px;
+      }
+      nav.toc a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .callout {
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin: 14px 0;
+        font-size: 0.95rem;
+      }
+      .callout.warn {
+        background: var(--warn-bg);
+        border-left: 4px solid var(--warn-border);
+      }
+      .callout.note {
+        background: var(--note-bg);
+        border-left: 4px solid var(--note-border);
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 14px 0;
+        font-size: 0.93rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      th {
+        font-weight: 600;
+        background: var(--card);
+      }
+      tbody tr:nth-child(even) {
+        background: var(--card);
+      }
+      .tablewrap {
+        overflow-x: auto;
+      }
+      pre {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 14px;
+        overflow-x: auto;
+        font-size: 0.86rem;
+        line-height: 1.5;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.9em;
+      }
+      p code,
+      li code,
+      td code {
+        background: var(--accent-soft);
+        border-radius: 4px;
+        padding: 1px 5px;
+      }
+      .attempt {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px 18px 10px;
+        margin: 14px 0;
+        background: var(--card);
+      }
+      .attempt h3 {
+        margin-top: 0.2rem;
+      }
+      .badge {
+        display: inline-block;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        border-radius: 999px;
+        padding: 2px 10px;
+        margin-left: 8px;
+        vertical-align: middle;
+      }
+      .badge.rejected {
+        background: rgba(239, 68, 68, 0.15);
+        color: #dc2626;
+      }
+      .badge.undone {
+        background: var(--warn-bg);
+        color: var(--warn-border);
+      }
+      .badge.kept {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      @media (min-width: 1100px) {
+        .wrap {
+          max-width: 82ch;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <p class="date">2026-01-13 &middot; pimote manager session &ldquo;Movie Persona Hub&rdquo;</p>
+        <h1>Hill Climb Retrospective: Building the Persona Hub</h1>
+        <p class="dek">What it took to land the <code>danny-ocean</code> hub, and the documentation that would have made it a straight line.</p>
+      </header>
+
+      <div class="takeaways">
+        <strong>Key takeaways</strong>
+        <ul>
+          <li>Three attempts were needed: a git-repo hub, then nested real personas, then the correct shape (top-level personas symlinked into a persona folder).</li>
+          <li>
+            Both dead ends trace to undocumented pimote semantics, not to bad tooling: persona folders behave as leaves for real children, symlinks inside them are still walked,
+            and the scan registry lags manual filesystem changes by up to ~30 seconds in waves.
+          </li>
+          <li>
+            Two short documents (a folder-model concepts doc and a hub recipes doc) plus two small tools (<code>rescan</code> and <code>move persona</code>) would have collapsed
+            the whole climb to one attempt.
+          </li>
+        </ul>
+      </div>
+
+      <nav class="toc">
+        <details open>
+          <summary>Contents</summary>
+          <ol>
+            <li><a href="#result">The core result</a></li>
+            <li><a href="#climb">The hill climb, attempt by attempt</a></li>
+            <li><a href="#lessons">What each dead end taught</a></li>
+            <li><a href="#causes">Why hill climbing happened at all</a></li>
+            <li><a href="#docs">Documentation that would have prevented it</a></li>
+            <li><a href="#tools">Tooling gaps worth closing</a></li>
+          </ol>
+        </details>
+      </nav>
+
+      <h2 id="result">1. The core result</h2>
+
+      <p>The finished topology, as the folder model now reports it:</p>
+
+      <pre><code>/home/alenna/repos/
+├── danny-ocean/                 persona  ← the hub
+│   ├── AGENTS.md                Danny Ocean: crew lead, hub rules
+│   ├── memory.md
+│   ├── rusty-ryan      -&gt; ../rusty-ryan          (symlink)
+│   └── livingston-dell -&gt; ../livingston-dell     (symlink)
+├── rusty-ryan/                  persona  (canonical home)
+│   ├── AGENTS.md
+│   └── memory.md
+└── livingston-dell/             persona  (canonical home)
+    ├── AGENTS.md
+    └── memory.md</code></pre>
+
+      <p>
+        The folder tree shows <code>danny-ocean</code> as a persona with two shortcut children, and both members as personas at their canonical paths. Sessions can start at any of
+        the three folders.
+      </p>
+
+      <h2 id="climb">2. The hill climb, attempt by attempt</h2>
+
+      <div class="attempt">
+        <h3>Attempt 1: git-repo hub <span class="badge rejected">rejected</span></h3>
+        <p><strong>Shape.</strong> <code>oceans-eleven/</code> as a git repository with an <code>AGENTS.md</code>, two relative symlinks to the new personas, and a commit.</p>
+        <p>
+          <strong>Reasoning.</strong> The only hub example in the installation is &ldquo;Ide hub&rdquo;: a git repo whose members are symlinked in. I generalized from that one
+          precedent.
+        </p>
+        <p>
+          <strong>Outcome.</strong> Discovery worked perfectly on the first try &mdash; the model showed a code hub with two persona members. The failure was interpretive, not
+          mechanical: the user wanted the hub itself to be a persona. One plausible example was not enough to infer the intended taxonomy of hub shapes.
+        </p>
+      </div>
+
+      <div class="attempt">
+        <h3>Attempt 2: real personas nested inside the persona <span class="badge undone">undone</span></h3>
+        <p>
+          <strong>Shape.</strong> Deleted the git hub, created the <code>danny-ocean</code> persona, then <code>mv</code>ed the two real persona folders physically inside
+          <code>danny-ocean/</code>.
+        </p>
+        <p><strong>Outcome.</strong> Three distinct symptoms appeared:</p>
+        <ul>
+          <li><code>danny-ocean</code> was discovered, but with <code>children: []</code> &mdash; the walker does not descend into persona folders for real subfolders.</li>
+          <li>The persona registry kept listing the members at their old top-level paths that no longer existed.</li>
+          <li>After the paths went stale and were dropped, the new nested locations never registered at all.</li>
+        </ul>
+        <div class="callout warn">
+          <strong>Near-miss diagnosis.</strong> From the first stale read I almost concluded &ldquo;persona folders are leaves, full stop.&rdquo; That conclusion was too broad.
+          Attempt 3 proved symlinks inside a persona folder <em>are</em> walked. Inference from one polluted observation nearly wrote a wrong rule into my memory notes.
+        </div>
+      </div>
+
+      <div class="attempt">
+        <h3>Attempt 3: canonical homes + symlinks inside the persona <span class="badge kept">kept</span></h3>
+        <p>
+          <strong>Shape.</strong> <code>mv</code> both members back to <code>/home/alenna/repos/</code>, then create relative symlinks <code>../rusty-ryan</code> and
+          <code>../livingston-dell</code> inside <code>danny-ocean/</code>.
+        </p>
+        <p>
+          <strong>Outcome.</strong> The registry converged in waves: first the members reappeared at top level but Danny dropped off the list, then roughly twenty seconds later the
+          full correct topology settled. Final verification against the folder tree confirmed the shape in section 1.
+        </p>
+      </div>
+
+      <h2 id="lessons">3. What each dead end taught</h2>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Rule discovered</th>
+              <th>Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Persona folders are leaves for real subfolders. Nested personas are invisible: not walked, not registered, not startable via session tools.</td>
+              <td><code>danny-ocean</code> showed <code>children: []</code> while containing two persona folders on disk.</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Symlinks inside a persona folder <em>are</em> discovered, as shortcut children pointing at canonical entries.</td>
+              <td>Final tree shows <code>danny-ocean/rusty-ryan</code> via <code>shortcut</code> with the persona entry resolved.</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>
+                The scan registry is eventually consistent. Manual <code>mv</code>/<code>ln</code> converge in waves over up to ~30 seconds; tool calls broadcast
+                <code>folders_changed</code> immediately.
+              </td>
+              <td>Stale old paths shown, then dropped; new paths appeared late; Danny briefly vanished from the persona list.</td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td><code>pimote_create_persona</code> errors on an existing folder name. There is no move, rename, or adopt operation.</td>
+              <td>Tool spec; also why attempt 2 had to be raw <code>mv</code> instead of a supported operation.</td>
+            </tr>
+            <tr>
+              <td>5</td>
+              <td>One example is not a taxonomy. &ldquo;Ide hub&rdquo; demonstrates the code-hub shape only; a persona hub is a different, undocumented recipe.</td>
+              <td>Attempt 1 was rejected by the user despite matching the only visible precedent.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="causes">4. Why hill climbing happened at all</h2>
+
+      <ol>
+        <li>
+          <strong>No concepts document for the folder model.</strong> Scan roots, canonical paths versus occurrences, nature detection (persona front matter, git detection), leaf
+          behavior, and shortcut walking were all inferable only by experiment.
+        </li>
+        <li>
+          <strong>No recipes for hub shapes.</strong> The difference between a code hub (git repo + symlinks) and a persona hub (persona + symlinked member personas) was never
+          written down. I picked the wrong one and only the user&rsquo;s corrections revealed the distinction.
+        </li>
+        <li>
+          <strong>Terse tool docs.</strong> The <code>pimote_create_persona</code> description documents its errors and template, but says nothing about leaf semantics, symlink
+          members, or what happens to manually moved persona folders.
+        </li>
+        <li>
+          <strong>No force-rescan or move tooling.</strong> With no way to ask the model to re-discover, the only way to learn lag semantics was to mutate the tree and poll. Each
+          poll cycle cost a wait, and stale reads actively misled the diagnosis.
+        </li>
+        <li>
+          <strong>Cold-start knowledge.</strong> My <code>memory.md</code> was empty at session start. Every lesson in section 3 is knowledge this installation already exercised
+          somewhere &mdash; the watcher, the walker, the broadcast &mdash; but nothing had captured it in a form an agent reads before acting.
+        </li>
+      </ol>
+
+      <div class="callout note">
+        <strong>The pattern.</strong> Each wrong step was cheap (minutes), but the cost compounds: three restructurings, several verification waits, one near-wrong memory note, and
+        two user corrections. Documentation converts that recurring cost into a one-time writing cost.
+      </div>
+
+      <h2 id="docs">5. Documentation that would have prevented it</h2>
+
+      <h3>5.1 A folder-model concepts doc</h3>
+      <p>One page, roughly this outline:</p>
+      <ul>
+        <li>Scan roots and how discovery walks them.</li>
+        <li>Entries versus occurrences: canonical path is identity, occurrences are reach paths.</li>
+        <li>Nature detection: persona front matter in <code>AGENTS.md</code>, git repo detection, hub detection via members.</li>
+        <li>Walk rules per nature: code folders walk fully; persona folders walk <em>only for symlinks</em>; real children of personas are invisible.</li>
+        <li>
+          Consistency: tool calls broadcast <code>folders_changed</code>; manual edits converge via the watcher within ~30 seconds, in waves; expect stale reads immediately after
+          mutations.
+        </li>
+      </ul>
+
+      <h3>5.2 A recipes doc for topologies</h3>
+      <p>Short, copy-pasteable recipes with expected <code>folder_tree</code> output as a golden example:</p>
+      <ul>
+        <li>
+          <strong>Persona hub</strong> (what we built): member personas at top level via <code>pimote_create_persona</code>, relative symlinks inside the hub persona&rsquo;s
+          folder, hub rules in its AGENTS.md prompt.
+        </li>
+        <li>
+          <strong>Code hub</strong> (&ldquo;Ide hub&rdquo; shape): git-initialized folder, symlinked repos, repo members gitignored, persona members symlinked and committable.
+        </li>
+        <li><strong>Anti-patterns</strong> with symptoms: nesting real personas (invisible members), expecting instant registry updates after <code>mv</code>.</li>
+      </ul>
+
+      <h3>5.3 Per-tool behavioral notes</h3>
+      <ul>
+        <li>
+          <code>pimote_create_persona</code>: collision behavior, exact template written, the <code>folders_changed</code> broadcast, and that it only creates &mdash; moving is the
+          operator&rsquo;s problem.
+        </li>
+        <li><code>pimote_folder_tree</code>: reads a cached registry, not a fresh walk; freshness guidance (&ldquo;wait 30s after manual changes&rdquo;).</li>
+        <li><code>pimote_start_session</code>: requires a known folder path; nested-but-undiscovered personas cannot be targeted.</li>
+      </ul>
+
+      <h3>5.4 Where the docs should live so agents actually read them</h3>
+      <ul>
+        <li>
+          An <code>AGENTS.md</code> in the manager&rsquo;s cwd (or a <code>pimote-docs</code> skill) holding only a vision line and a lookup table pointing at the docs above. Per
+          this installation&rsquo;s own convention: maps, not containers.
+        </li>
+        <li>Distill my <code>memory.md</code> lessons into those docs. Memory is tribal and per-installation; docs are authoritative and portable.</li>
+        <li>
+          Embed one-line hints in tool outputs. A collision error could read: &ldquo;folder exists; delete it first, or pick another name. Persona folders are leaves &mdash;
+          symlink member personas instead.&rdquo; That single sentence would have prevented attempt 2 entirely.
+        </li>
+      </ul>
+
+      <h2 id="tools">6. Tooling gaps worth closing</h2>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Gap</th>
+              <th>Suggested tool</th>
+              <th>What it prevents</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>No way to force discovery</td>
+              <td><code>pimote_rescan</code> &mdash; trigger re-discovery, return the delta</td>
+              <td>Guess-and-wait polling cycles; near-miss diagnoses from stale reads</td>
+            </tr>
+            <tr>
+              <td>No supported move/rename</td>
+              <td><code>pimote_move_persona</code> &mdash; move with registry invalidation built in</td>
+              <td>Raw <code>mv</code> plus wave-lag confusion (attempt 2 and 3)</td>
+            </tr>
+            <tr>
+              <td>Hub membership is hand-rolled symlinks</td>
+              <td><code>pimote_add_member</code> / <code>pimote_remove_member</code> &mdash; create or drop the symlink and broadcast</td>
+              <td>Undiscovered members; wrong-link mistakes</td>
+            </tr>
+            <tr>
+              <td>Docs are far from the error site</td>
+              <td>Hint strings in tool errors and success outputs</td>
+              <td>Wrong-shape attempts that only user corrections catch</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The cheapest high-value step is the pair of docs (5.1 and 5.2) plus the hint strings (5.4). The new tools are nice-to-have; the concepts and recipes are what turn a
+        three-attempt climb into one attempt.
+      </p>
+    </div>
+  </body>
+</html>

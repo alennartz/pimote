@@ -425,57 +425,21 @@ describe('main — manager toolset port wiring', () => {
     warn.mockRestore();
   });
 
-  it('registers exactly the pinned manager toolset, with pimote_folder_tree read-only and zero-argument', async () => {
+  it('registers exactly the pinned manager toolset, with pimote_list_folders read-only', async () => {
     const tools = await registeredManagerTools();
 
     expect(tools.map((tool) => tool.name)).toEqual([
       'pimote_list_folders',
-      'pimote_folder_tree',
-      'pimote_list_repos',
       'pimote_list_sessions',
-      'pimote_search_sessions',
       'pimote_start_session',
       'pimote_archive_sessions',
-      'pimote_create_persona',
-      'pimote_list_personas',
+      'pimote_create_folder',
+      'pimote_update_folder',
+      'pimote_update_hub_members',
     ]);
-    const tree = toolNamed(tools, 'pimote_folder_tree');
-    expect(tree.annotations.readOnlyHint).toBe(true);
-    expect(Object.keys(tree.parameters.properties ?? {})).toHaveLength(0);
-  });
-
-  it('wires pimote_folder_tree through the shared cached discovery walk, not its own scanner', async () => {
-    const tree = {
-      occurrences: [
-        {
-          path: '/workspace/shared',
-          via: 'scan',
-          entry: { path: '/workspace/shared', name: 'shared', nature: 'code' },
-          children: [{ path: '/workspace/shared/link', via: 'shortcut', entry: { path: '/external/member', name: 'member', nature: 'code' }, children: [] }],
-        },
-      ],
-    };
-    mocks.scanFolderModel.mockImplementation(async () => tree);
-
-    const tools = await registeredManagerTools();
-    const def = toolNamed(tools, 'pimote_folder_tree');
-    const result = await def.execute('call-1', {}, undefined, undefined, {});
-
-    expect(result.details).toEqual(tree);
-    // Finite and JSON-safe end to end.
-    expect(JSON.parse(JSON.stringify(result.details))).toEqual(tree);
-    // Shared cached walk: repeated executions reuse the discovery retained by
-    // the repo index instead of rescanning, and the repo listing joins the
-    // same walk. Manager tree consumers accept trees up to one TTL old.
-    const scansBefore = mocks.scanFolderModel.mock.calls.length;
-    const changedTree = { occurrences: [{ path: '/workspace/changed', via: 'scan', entry: { path: '/workspace/changed', name: 'changed', nature: 'code' }, children: [] }] };
-    mocks.scanFolderModel.mockImplementation(async () => changedTree);
-    const second = await def.execute('call-2', {}, undefined, undefined, {});
-    expect(second.details).toEqual(tree); // stale-but-accepted within the TTL — no rescan
-    await toolNamed(tools, 'pimote_list_repos').execute('call-3', {}, undefined, undefined, {});
-    expect(mocks.scanFolderModel.mock.calls.length).toBe(scansBefore);
-    // The walk still goes through the folder-model seam from config.roots.
-    expect(mocks.scanFolderModel).toHaveBeenLastCalledWith({ roots: ['/workspace'], onWarning: expect.any(Function) });
+    const list = toolNamed(tools, 'pimote_list_folders');
+    expect(list.annotations.readOnlyHint).toBe(true);
+    expect(Object.keys(list.parameters.properties ?? {}).sort()).toEqual(['fresh', 'nature']);
   });
 
   it('wires pimote_list_folders: FolderInfo defaults materialized and live counts enriched through the session manager', async () => {
@@ -538,12 +502,12 @@ describe('main — manager toolset port wiring', () => {
     );
     mocks.sessionMetadataStore.getArchivedLookup.mockReturnValue(new Map([['/sessions/s1.jsonl', true]]));
 
-    const result = await toolNamed(await registeredManagerTools(), 'pimote_search_sessions').execute('call-1', { query: 'login' }, undefined, undefined, {});
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_list_sessions').execute('call-1', { query: 'login' }, undefined, undefined, {});
 
     expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/alpha');
     expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/beta');
     expect(mocks.sessionMetadataStore.getArchivedLookup).toHaveBeenCalledWith(['/sessions/s1.jsonl']);
-    expect(result.details.results).toEqual([
+    expect(result.details.sessions).toEqual([
       {
         id: 's1',
         name: 'Fix login',
@@ -637,34 +601,6 @@ describe('main — manager toolset port wiring', () => {
     expect(config.managerRoot).toBe('/srv/manager-home');
     // The manager root is the persona's working directory — never a scan root.
     expect(mocks.scanFolderModel).toHaveBeenCalledWith({ roots: ['/workspace'], onWarning: expect.any(Function) });
-  });
-
-  it('keeps the manager-root entry out of the assembled tree while discovery sees it', async () => {
-    // Discovery walks both entries (the manager root sits inside a scan root);
-    // the listing assembly must never surface the manager-root entry.
-    const discovered = {
-      occurrences: [
-        {
-          path: '/workspace/manager-home',
-          via: 'scan',
-          entry: { path: '/srv/manager-home', name: 'manager-home', nature: 'persona', persona: { name: 'manager' } },
-          children: [],
-        },
-        {
-          path: '/workspace/project',
-          via: 'scan',
-          entry: { path: '/workspace/project', name: 'project', nature: 'code' },
-          children: [],
-        },
-      ],
-    };
-    mocks.scanFolderModel.mockResolvedValue(discovered);
-
-    const result = await toolNamed(await registeredManagerTools(), 'pimote_folder_tree').execute('call-1', {}, undefined, undefined, {});
-
-    const rendered = JSON.stringify(result.details);
-    expect(rendered).toContain('/workspace/project');
-    expect(rendered).not.toContain('/srv/manager-home');
   });
 });
 

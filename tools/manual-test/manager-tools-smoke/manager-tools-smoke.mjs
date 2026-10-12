@@ -8,15 +8,14 @@
 // store, and a hub created by the real `createHub` (mkdir + absolute member
 // symlinks + `git init` + `.gitignore` + generated AGENTS.md).
 //
-// Covers, hard and without an LLM: the tool names are the renamed ones
-// (pimote_list_folders / pimote_folder_tree — no `*_projects` survives),
-// pimote_list_folders returns complete FolderInfo rows with schema defaults,
-// pimote_folder_tree reports the sparse tree shape — hub member symlinks
-// surface as `via: 'shortcut'` occurrences referencing the member entries —
-// pimote_list_personas returns persona rows whose workingDirectory is the
-// canonical folderPath, and pimote_create_persona materializes the persona
-// folder (front matter + memory stub) and publishes it exactly on success
-// (discovery invalidation + folders_changed pairing).
+// Covers, hard and without an LLM: the pinned DR-062 toolset registers by
+// name (seven tools; no `*_projects` or retired persona/search/repo/tree/disband names survive),
+// pimote_list_folders returns complete FolderInfo rows with schema defaults
+// (and the nature filter serves the team view; hub rows carry their member
+// lists), and pimote_create_folder
+// (kind persona) materializes the persona folder (front matter + memory stub)
+// and publishes it exactly on success (discovery invalidation +
+// folders_changed pairing).
 //
 // Parameterized for reuse: MTMS_ROOT=<dir> uses an existing fixture tree
 // (containing at least two git repos `<root>/alpha`, `<root>/beta` and a
@@ -113,6 +112,9 @@ async function main() {
   const notifications = [];
   const repos = {
     list: async () => [await repoRow(alpha), await repoRow(beta)],
+    // The registry's membership paths read the lazy view (never blocked on
+    // git probes); the stub serves the same fabricated rows.
+    listLazy: async () => [await repoRow(alpha), await repoRow(beta)],
     listSourceHubs: async () => [],
     listSourcePersonas: async () => [],
     runOpenHooks: async () => {},
@@ -131,6 +133,11 @@ async function main() {
       },
       archiveSessions: async () => [],
     },
+    creators: {
+      create: async () => {
+        throw new Error('not used by this probe');
+      },
+    },
     config: { roots: [root], managerRoot: sandbox },
     notifyFoldersChanged: (changedPaths) => notifications.push(changedPaths),
   };
@@ -147,7 +154,17 @@ async function main() {
     assert(false, `createHub succeeds (${error instanceof Error ? error.message : error})`);
     throw error;
   }
-  assert(created.path === (await realpath(west)) && created.repos?.length === 2, 'createHub returns the hub FolderInfo with both member repos');
+  assert(created.path === (await realpath(west)), 'createHub returns the canonical path');
+  const createdRow = (await folders.list()).find((row) => row.path === created.path);
+  assert(createdRow?.repos?.length === 2, 'the folder view derives both code-member repos from the hub symlinks');
+  assert(
+    createdRow?.members
+      ?.map((member) => member.path)
+      .sort()
+      .join(',') === [alphaC, betaC].sort().join(','),
+    'the folder view derives membership from the symlink inventory',
+  );
+  assert(!(await exists(join(storeDir, 'registry.json'))), 'hub creation writes no creator-ownership receipt');
   const westC = created.path; // canonical identity, from the real createHub
   assert(await exists(join(west, '.git')), 'hub is self-describing: git init ran in the hub folder');
   const ignore = await readFile(join(west, '.gitignore'), 'utf8').catch(() => '');
@@ -167,20 +184,27 @@ async function main() {
   const names = [...tools.keys()];
   const expected = [
     'pimote_list_folders',
-    'pimote_folder_tree',
-    'pimote_list_repos',
     'pimote_list_sessions',
-    'pimote_search_sessions',
     'pimote_start_session',
     'pimote_archive_sessions',
-    'pimote_create_persona',
-    'pimote_list_personas',
+    'pimote_create_folder',
+    'pimote_update_folder',
+    'pimote_update_hub_members',
   ];
   for (const name of expected) assert(tools.has(name), `tool registered: ${name}`);
   assert(!names.some((name) => name.includes('project')), `no registered tool name contains "project" (got: ${names.join(', ')})`);
   assert(
-    !['pimote_list_projects', 'pimote_project_tree'].some((name) => tools.has(name)),
-    'the pre-rename tool names are gone',
+    ![
+      'pimote_list_projects',
+      'pimote_project_tree',
+      'pimote_create_persona',
+      'pimote_list_personas',
+      'pimote_search_sessions',
+      'pimote_list_repos',
+      'pimote_folder_tree',
+      'pimote_disband_hub',
+    ].some((name) => tools.has(name)),
+    'the pre-redesign tool names are gone',
   );
 
   // --- pimote_list_folders: complete FolderInfo rows with schema defaults ---
@@ -206,76 +230,35 @@ async function main() {
   assert(westRow?.repos?.length === 2 && westRow?.repos?.every((r) => typeof r.branch === 'string'), 'west row lists both member repos with branch info');
   assert(!rows.some((row) => row.name === 'Omega Persona'), 'no row uses the persona name as its folder name');
 
-  // --- pimote_folder_tree: sparse tree shape incl. shortcut occurrences ---
-  section('pimote_folder_tree execution');
-  const treeResult = await tools.get('pimote_folder_tree').execute('call-2', {});
-  assert(treeResult.isError !== true, 'folder_tree executes without error');
-  const sparse = treeResult.structuredContent;
-  assert(Array.isArray(sparse?.occurrences), 'structured output carries an occurrences array');
-  assert(sparse?.truncated === undefined, 'small tree is not truncated');
-  const flat = [];
-  const walk = (occurrences, depth) => {
-    for (const occ of occurrences ?? []) {
-      flat.push({ ...occ, depth });
-      walk(occ.children, depth + 1);
-    }
-  };
-  walk(sparse?.occurrences, 0);
-  const westOcc = flat.find((occ) => occ.entry?.path === westC);
-  assert(westOcc?.via === 'scan', 'hub occurrence reached by scan');
-  const westShortcuts = (westOcc?.children ?? []).filter((occ) => occ.via === 'shortcut');
-  assert(westShortcuts.length === 2, `hub exposes both member symlinks as shortcut occurrences (got ${westShortcuts.length})`);
-  assert(
-    westShortcuts.some((occ) => occ.entry?.path === alphaC) && westShortcuts.some((occ) => occ.entry?.path === betaC),
-    'shortcut occurrences reference the member entries by canonical path',
-  );
-  const alphaScanOcc = flat.find((occ) => occ.entry?.path === alphaC && occ.via === 'scan');
-  const alphaShortcutOcc = westShortcuts.find((occ) => occ.entry?.path === alphaC);
-  assert(alphaScanOcc !== undefined && alphaScanOcc.entry === alphaShortcutOcc?.entry, 'scan and shortcut occurrences share one entry (identity is the canonical path)');
-  assert(westShortcuts.every((occ) => typeof occ.path === 'string' && occ.path.includes('west')), 'shortcut reach paths extend the hub path');
-  assert(
-    flat.some((occ) => occ.entry?.path === omegaC && occ.entry?.nature === 'persona' && occ.entry?.persona?.name === 'Omega Persona'),
-    'tree entries carry persona metadata',
-  );
-  assert(flat.every((occ) => typeof occ.path === 'string' && (occ.via === 'scan' || occ.via === 'shortcut') && Array.isArray(occ.children)), 'every occurrence has path/via/children');
-
-  // --- pimote_list_repos and the read-only tools still execute ---
+  // --- The unified sessions view still executes ---
   section('remaining folder-view tools execute');
-  const reposResult = await tools.get('pimote_list_repos').execute('call-3', {});
-  assert(reposResult.isError !== true && Array.isArray(reposResult.structuredContent), 'list_repos executes against the repos port');
   const sessionsResult = await tools.get('pimote_list_sessions').execute('call-4', {});
-  assert(sessionsResult.isError !== true && Array.isArray(sessionsResult.structuredContent), 'list_sessions executes against the sessions port');
+  assert(sessionsResult.isError !== true && Array.isArray(sessionsResult.structuredContent?.sessions), 'list_sessions executes against the sessions port');
 
-  // --- pimote_list_personas: persona rows from the folder model ---
-  section('pimote_list_personas execution');
-  const personasResult = await tools.get('pimote_list_personas').execute('call-5', {});
-  assert(personasResult.isError !== true, 'list_personas executes without error');
-  const personaRows = personasResult.structuredContent?.personas;
-  assert(Array.isArray(personaRows), 'structured output carries a personas array');
-  const omegaPersona = personaRows?.find((row) => row.folderPath === omegaC);
-  assert(omegaPersona?.name === 'Omega Persona', 'persona row carries the marker name');
-  assert(omegaPersona?.description?.includes('Fixture persona'), 'persona row carries the marker description');
-  assert(
-    omegaPersona?.folderPath === omegaC && omegaPersona?.workingDirectory === omegaC,
-    'workingDirectory is the canonical folderPath (personas run rooted in their folder)',
-  );
-  assert(
-    !personaRows?.some((row) => row.folderPath === alphaC || row.folderPath === betaC || row.folderPath === westC),
-    'code folders and hubs are excluded from persona rows',
-  );
+  // --- pimote_list_folders nature filter: the team view ---
+  section('pimote_list_folders nature filter');
+  const personasResult = await tools.get('pimote_list_folders').execute('call-5', { nature: 'persona' });
+  assert(personasResult.isError !== true, 'list_folders (nature: persona) executes without error');
+  const personaRows = personasResult.structuredContent;
+  assert(Array.isArray(personaRows) && personaRows.every((row) => row.nature === 'persona'), 'every filtered row is a persona');
+  const omegaPersona = personaRows?.find((row) => row.path === omegaC);
+  assert(omegaPersona?.persona?.name === 'Omega Persona', 'omega row carries the marker name');
+  assert(omegaPersona?.persona?.description?.includes('Fixture persona'), 'omega row carries the marker description');
+  assert(!personaRows?.some((row) => row.path === alphaC || row.path === betaC), 'code folders are excluded from the nature-filtered rows');
 
-  // --- pimote_create_persona: disk effects + publish pairing ---
+  // --- pimote_create_folder (kind persona): disk effects + publish pairing ---
   if (!process.env.MTMS_ROOT) {
-    section('pimote_create_persona execution');
+    section('pimote_create_folder (kind persona) execution');
     const invBefore = invalidations.length;
     const notBefore = notifications.length;
-    const createResult = await tools.get('pimote_create_persona').execute('call-6', {
+    const createResult = await tools.get('pimote_create_folder').execute('call-6', {
+      kind: 'persona',
       name: 'zeta',
       parentPath: root,
       description: 'Created persona',
       prompt: 'CUSTOM PROMPT MARKER.',
     });
-    assert(createResult.isError !== true, 'create_persona executes without error');
+    assert(createResult.isError !== true, 'create_folder (kind persona) executes without error');
     const zetaC = createResult.structuredContent?.folderPath;
     assert(zetaC === (await realpath(join(root, 'zeta'))), 'result folderPath is the canonical new folder');
     const zetaAgents = await readFile(join(root, 'zeta', 'AGENTS.md'), 'utf8');
@@ -285,36 +268,35 @@ async function main() {
     assert(zetaAgents.includes('memory.md'), 'body keeps the maintain-memory.md instruction');
     assert(await exists(join(root, 'zeta', 'memory.md')), 'memory.md stub is created');
     assert(invalidations.length > invBefore, 'creation invalidates folder-model discovery');
-    assert(
-      notifications.length > notBefore && notifications[notifications.length - 1].includes(zetaC),
-      'creation broadcasts folders_changed with the new path',
-    );
+    assert(notifications.length > notBefore && notifications[notifications.length - 1].includes(zetaC), 'creation broadcasts folders_changed with the new path');
 
     // Collision: refuses, leaves the existing folder untouched, publishes nothing.
     const zetaBefore = await readFile(join(root, 'zeta', 'AGENTS.md'), 'utf8');
     const inv2 = invalidations.length;
     const not2 = notifications.length;
-    const collision = await tools.get('pimote_create_persona').execute('call-7', {
+    const collision = await tools.get('pimote_create_folder').execute('call-7', {
+      kind: 'persona',
       name: 'zeta',
       parentPath: root,
       description: 'Overwrite attempt',
     });
     assert(collision.isError === true, 'name collision returns a tool error');
+    assert(String(collision.structuredContent?.error ?? '').includes('leaves'), 'collision error carries the leaf-rule hint');
     assert((await readFile(join(root, 'zeta', 'AGENTS.md'), 'utf8')) === zetaBefore, 'collision leaves the existing persona untouched');
     assert(invalidations.length === inv2 && notifications.length === not2, 'failed creations publish nothing');
 
-    const badName = await tools.get('pimote_create_persona').execute('call-8', { name: '../evil', parentPath: root, description: 'x' });
+    const badName = await tools.get('pimote_create_folder').execute('call-8', { kind: 'persona', name: '../evil', parentPath: root, description: 'x' });
     assert(badName.isError === true && !(await exists(join(sandbox, 'evil'))), 'traversal names are rejected with no disk effect');
-    const outside = await tools.get('pimote_create_persona').execute('call-9', { name: 'stray', parentPath: sandbox, description: 'x' });
+    const outside = await tools.get('pimote_create_folder').execute('call-9', { kind: 'persona', name: 'stray', parentPath: sandbox, description: 'x' });
     assert(outside.isError === true && !(await exists(join(sandbox, 'stray'))), 'parentPath outside the scan roots is rejected with no disk effect');
 
-    const personasAfter = (await tools.get('pimote_list_personas').execute('call-10', {})).structuredContent?.personas;
+    const personasAfter = (await tools.get('pimote_list_folders').execute('call-10', { nature: 'persona' })).structuredContent;
     assert(
-      personasAfter?.some((row) => row.folderPath === zetaC && row.name === 'zeta' && row.workingDirectory === zetaC),
-      'list_personas picks up the created persona',
+      personasAfter?.some((row) => row.path === zetaC && row.persona?.name === 'zeta'),
+      'the nature-filtered team view picks up the created persona',
     );
   } else {
-    console.log('  ⊝ create_persona execution skipped — MTMS_ROOT fixture tree is user-supplied');
+    console.log('  ⊝ create_folder execution skipped — MTMS_ROOT fixture tree is user-supplied');
   }
 
   await rm(sandbox, { recursive: true, force: true }).catch(() => {});

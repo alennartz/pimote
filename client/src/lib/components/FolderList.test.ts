@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
+import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
 import type { FolderInfo, RepoInfo, SessionInfo } from '@pimote/shared';
 
 // bits-ui popper layers expect browser APIs jsdom doesn't ship.
@@ -79,10 +80,10 @@ const remoteSession: SessionInfo = {
 
 const memberRepo: RepoInfo = { path: '/w/one', name: 'one', branch: 'main', dirty: false, ahead: 0, behind: 0, missing: false };
 
-// Registry/source hub: `repos` marks disband-eligible membership.
+// Registry/source hub: `repos` marks registry membership.
 const hub = makeFolder({ path: '/w/stack', name: 'stack', shortcutCount: 2, repos: [memberRepo] });
 
-// Generic shortcut-bearing folder: hub icon, no registry membership, no disband rights.
+// Generic shortcut-bearing folder: hub icon, no registry membership.
 const shortcutHub = makeFolder({ path: '/w/links', name: 'links', shortcutCount: 1 });
 
 const persona = makeFolder({
@@ -156,13 +157,14 @@ beforeEach(() => {
 });
 
 let destroy: (() => void) | null = null;
-afterEach(() => {
+afterEach(async () => {
   destroy?.();
   destroy = null;
   fileEditorStore.close();
   sessionRegistry.removeSession(activeSession.id);
   vi.mocked(connection.send).mockImplementation(async () => ({ id: '1', success: true, data: {} }));
   document.body.innerHTML = '';
+  await drainBodyScrollLockCleanup();
 });
 
 describe('folder row icons', () => {
@@ -502,50 +504,6 @@ describe('hub dialogs', () => {
     createButton!.click();
 
     await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith({ type: 'create_hub', name: 'stack2', root: '/roots', memberPaths: ['/w/one'] }));
-  });
-
-  it('the disband dialog sends disband_hub with the folder path', async () => {
-    folderStore.folders = [hub];
-    destroy = render();
-    await tick();
-
-    openMenu(hub.path);
-    await tick();
-    const item = menuItem('Disband hub');
-    expect(item).not.toBeNull();
-    item!.click();
-    await tick();
-
-    const disbandButton = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Disband');
-    expect(disbandButton).toBeDefined();
-    disbandButton!.click();
-
-    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith({ type: 'disband_hub', folderPath: '/w/stack' }));
-  });
-
-  it('a rejected disband surfaces the server error instead of vanishing', async () => {
-    folderStore.folders = [hub];
-    vi.mocked(connection.send).mockImplementation(async (command: any) => {
-      if (command.type === 'disband_hub') return { id: '1', success: false, error: 'Not a hub folder: /w/stack' };
-      return { id: '1', success: true, data: {} };
-    });
-    destroy = render();
-    await tick();
-
-    openMenu(hub.path);
-    await tick();
-    const item = menuItem('Disband hub');
-    expect(item).not.toBeNull();
-    item!.click();
-    await tick();
-
-    const disbandButton = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Disband');
-    expect(disbandButton).toBeDefined();
-    disbandButton!.click();
-
-    // The dialog closes on send, but the rejection is displayed at the top of
-    // the list — the response's success flag may not be ignored.
-    await vi.waitFor(() => expect(shows('Not a hub folder: /w/stack')).toBe(true));
   });
 });
 

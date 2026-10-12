@@ -1,6 +1,5 @@
-import type { FolderInfo, RepoInfo } from '../../../shared/dist/index.js';
+import type { FolderInfo } from '../../../shared/dist/index.js';
 import type { PimoteConfig } from '../config.js';
-import type { SparseTree } from '../folder-model/index.js';
 
 /** Live snapshot of one open session, as the manager tools see it. */
 export interface ManagedSessionSummary {
@@ -61,18 +60,14 @@ export interface SessionManagerPort {
   archiveSessions(sessionIds: string[]): Promise<SessionArchiveOutcome[]>;
 }
 
-/** Narrow RepoIndex seam for manager tools. */
+/** Narrow RepoIndex seam for manager tools: freshness only. Git facts reach
+ *  the toolset through FolderInfo rows (`repo`, hub `repos`) - no tool reads
+ *  the repo view directly (DR-062). */
 export interface RepoIndexPort {
-  list(): Promise<RepoInfo[]>;
   /** Invalidate the folder-model discovery listing so a background re-walk
    *  picks up on-disk changes. Pair with `notifyFoldersChanged` when clients
    *  must see the change: invalidation alone notifies nobody. */
   invalidateListing(): void;
-}
-
-/** Narrow folder-model seam for manager tools: the sparse tree report. */
-export interface FolderModelPort {
-  tree(): Promise<SparseTree>;
 }
 
 /** Curation patch for one folder entry; keyed by canonical entry path. */
@@ -86,57 +81,61 @@ export interface FolderUpdatePatch {
 
 /**
  * Folder-registry seam for manager tools (narrow DI port per DR-039):
- * overrides merged over all included entries, code and persona alike.
+ * curation over all included entries, code and persona alike, plus hub
+ * materialization and membership mutations. Structural mutations invalidate
+ * discovery before broadcasting; curation emits its delta through `onChange`.
  */
 export interface FolderRegistryPort {
   list(): Promise<FolderInfo[]>;
   update(patch: FolderUpdatePatch): Promise<void>;
-  createHub(input: { name: string; root: string; memberPaths: string[]; body?: string; description?: string; personaText?: string }): Promise<FolderInfo>;
-  disbandHub(folderPath: string): Promise<void>;
+  createHub(input: { name: string; root: string; memberPaths: string[]; body?: string; description?: string; personaText?: string }): Promise<{ path: string }>;
+  addMember(hubPath: string, memberPath: string): Promise<void>;
+  removeMember(hubPath: string, memberPath: string): Promise<void>;
+}
+
+/** Input for the creators seam (`pimote_create_folder`, kind `code`). */
+export interface CodeFolderCreateInput {
+  /** Existing folder the code folder is created under (validated by the
+   * caller against the scan roots before the seam is invoked). */
+  root: string;
+  name: string;
+  /** Seeded AGENTS.md body; the stub is written even when empty. */
+  body?: string;
+}
+
+/**
+ * Narrow creators seam for manager tools: one code-folder creation routed
+ * through the registered FolderCreator (the built-in creator, or a
+ * user-authored one taking its slot) plus the AGENTS.md seed — the same
+ * routing the ws-handler `create_folder` command uses.
+ */
+export interface FolderCreatorsPort {
+  create(input: CodeFolderCreateInput): Promise<{ folderPath: string }>;
 }
 
 /**
  * Everything the manager extension's pimote toolset may act through. Tools
  * act only via these ports — never raw fs, never the real server internals.
- * One deliberate exception: `pimote_create_persona` materializes its persona
- * folder on disk (its documented tool contract owns those files), then signals
- * discovery invalidation through `repos.invalidateListing()` and fans the
- * `folders_changed` delta out through `notifyFoldersChanged()`.
+ * One deliberate exception: `pimote_create_folder` (kinds `code` and
+ * `persona`) materializes its folder on disk (its documented tool contract
+ * owns those files), then signals discovery invalidation through
+ * `repos.invalidateListing()` and fans the `folders_changed` delta out
+ * through `notifyFoldersChanged()`.
  */
 export interface ManagerToolContext {
   sessions: SessionManagerPort;
   folders: FolderRegistryPort;
   repos: RepoIndexPort;
-  tree: FolderModelPort;
+  creators: FolderCreatorsPort;
   /** Broadcast a `folders_changed` delta to every connected client — the same
    *  channel the ws-handler `create_folder` flow uses. Paired with
-   *  `repos.invalidateListing()` after a creation: the invalidate re-walks
-   *  discovery, this broadcast delivers the new rows. */
+   *  `repos.invalidateListing()` after a creation that bypasses the registry
+   *  (code folders, plain personas): registry-routed mutations broadcast
+   *  through the registry's own onChange channel. */
   notifyFoldersChanged(changedPaths: string[]): void;
   config: PimoteConfig;
 }
 
-/** Input for the `pimote_create_persona` tool (plan: manager-lifecycle). */
-export interface CreatePersonaInput {
-  /** One nonempty basename path segment, excluding `.` and `..`.
-   * Invalid names return tool errors. Created at `<parentPath>/<name>`. */
-  name: string;
-  /** Existing folder the persona folder is created under. Must be inside a
-   *  canonical scan root or equal to it. Canonical containment rejects symlink
-   *  escapes. Validation failures return tool errors, never throws. */
-  parentPath: string;
-  /** Persona description; written to the AGENTS.md front matter. */
-  description: string;
-  /** Optional caller persona prompt, folded into the persona prompt template. */
-  prompt?: string;
-}
-
-/** One `pimote_list_personas` row (plan: manager-lifecycle). */
-export interface PersonaRow {
-  name: string;
-  description: string;
-  /** Canonical identity path of the persona folder. */
-  folderPath: string;
-  /** Personas run rooted in their folder: the same path as `folderPath`. */
-  workingDirectory: string;
-}
+/** Folder kinds `pimote_create_folder` creates (DR-062): the four wizard
+ *  shapes in one parameterized tool. */
+export type CreateFolderKind = 'code' | 'persona' | 'code-hub' | 'persona-hub';

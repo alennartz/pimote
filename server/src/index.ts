@@ -13,8 +13,9 @@ import { FolderListing } from './folder-listing.js';
 import { scanFolderModel, type FolderOccurrence, type FolderScanWarning, type SparseTree } from './folder-model/index.js';
 import { RepoIndex } from './repo-index.js';
 import { FolderRegistry } from './folder-registry.js';
-import type { FolderModelPort } from './manager/types.js';
+import type { FolderModelPort } from './folder-registry.js';
 import { loadFolderSources, resolveSourcesDir } from './folder-sources/index.js';
+import { createCodeFolderViaCreators } from './folder-create.js';
 import { createBuiltinCreator } from './folder-sources/builtin.js';
 import type { FolderCreator } from './folder-sources/index.js';
 import { seedManagerRoot } from './manager/index.js';
@@ -106,7 +107,7 @@ export async function main(options: StartOptions = {}) {
   const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore, skillsDir: PIMOTE_SKILLS_DIR });
   const fileDownloads = await bootstrapFileDownloads({ storeDir: PIMOTE_FILE_DOWNLOAD_DIR, validSessionIds });
   const managerContextBinding = new ManagerContextBinding();
-  const managerExtensionFactory: ExtensionFactory = (pi) => createManagerExtension(managerContextBinding.get())(pi);
+  const managerExtensionFactory: ExtensionFactory = (pi) => createManagerExtension(managerContextBinding.get(), { skillsDir: PIMOTE_SKILLS_DIR })(pi);
   const sessionManager = await PimoteSessionManager.create(config, pushNotificationService, {
     staticHostFactory,
     fileDownloadFactory: fileDownloads.extensionFactory,
@@ -201,7 +202,12 @@ export async function main(options: StartOptions = {}) {
     },
     folders: folderRegistry,
     repos: repoIndex,
-    tree: folderTree,
+    // The creators seam (DR-062): the same routing the ws-handler
+    // `create_folder` command uses — creator selection by { root, name }
+    // schema shape plus the best-effort AGENTS.md seed.
+    creators: {
+      create: (input) => createCodeFolderViaCreators(creators, input.root, input.name, input.body),
+    },
     // Folder-change fan-out for manager folder creations (`pimote_create_persona`):
     // the same delta channel the ws-handler `create_folder` flow uses. The tool
     // pairs it with `repos.invalidateListing()` so the delta carries the new row.

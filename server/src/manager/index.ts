@@ -3,13 +3,13 @@ export type {
   SessionManagerPort,
   FolderRegistryPort,
   FolderUpdatePatch,
-  FolderModelPort,
   RepoIndexPort,
+  FolderCreatorsPort,
+  CodeFolderCreateInput,
   ManagedSessionSummary,
   DiskSessionRecord,
   SessionArchiveOutcome,
-  CreatePersonaInput,
-  PersonaRow,
+  CreateFolderKind,
 } from './types.js';
 export { createManagerExtension } from './extension.js';
 export { loadManagerExtension } from './attachment.js';

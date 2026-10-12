@@ -17,3 +17,5 @@ The first `list_folders` window blocked on a whole-set git-status pass. Manual t
 - Deep-scroll windows may re-probe past the status TTL. Accepted trade-off for the cold-window win (first window 840 ms at 248 rows after the fix; warm repin 3 ms).
 - Named follow-up **D2-(b)** (recorded, not implemented): if window-scoped enrichment proves too slow in practice — cold servers at ~3.5k rows — push async `folders_status` patch events after the response instead of awaiting the window's probes.
 - Any new diff over repo facts must keep the `probedOnly` restriction, or first-time git status probes will again read as mass row changes.
+
+> **Amendment (2026-01-14, DR-063/064):** hub disband was removed. `createHub` owns discovery invalidation before its delta; there is no disband mutation.

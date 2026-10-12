@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, rm, readdir, lstat, readlink, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readdir, lstat, readlink, readFile, symlink, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { FolderInfo } from '../../shared/dist/index.js';
@@ -97,6 +97,31 @@ async function makeHub(registry: FolderRegistry): Promise<string> {
 }
 
 describe('FolderRegistry.addMember', () => {
+  it('treats a hand-built persona hub as first-class from its symlink shape', async () => {
+    const hubPath = join(rootDir, 'danny-ocean');
+    await mkdir(hubPath, { recursive: true });
+    await writeFile(join(hubPath, 'AGENTS.md'), "---\nkind: persona\nname: Danny\ndescription: crew lead\n---\n\n- repo-a: Danny's original note.\n", 'utf8');
+    await writeFile(join(hubPath, 'memory.md'), '# Danny memory\n', 'utf8');
+    await symlink(repoA, join(hubPath, 'repo-a'));
+
+    const registry = makeRegistry();
+    const hub = await findRow(registry, hubPath);
+    expect(hub).toMatchObject({ nature: 'persona', shortcutCount: 1 });
+    expect(hub?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code' }]);
+    expect(hub?.repos?.map((repo) => repo.path)).toEqual([repoA]);
+
+    await registry.addMember(hubPath, repoB);
+    expect(await findSymlinkTo(hubPath, repoB)).toBeDefined();
+    expect(await readHubAgents(hubPath)).toContain(seededMemberLine('repo-b', 'code'));
+
+    // Exact seeded text is removable; custom prose stays untouched.
+    await registry.removeMember(hubPath, repoB);
+    expect(await findSymlinkTo(hubPath, repoB)).toBeUndefined();
+    expect(await readHubAgents(hubPath)).toContain("- repo-a: Danny's original note.");
+    expect(await readHubAgents(hubPath)).not.toContain(seededMemberLine('repo-b', 'code'));
+    // Membership operations need no creator receipt in registry.json.
+    await expect(readFile(join(storeDir, 'registry.json'), 'utf8')).rejects.toThrow();
+  });
   it('adds a discovered code folder as a hub member via a hub-side symlink', async () => {
     const registry = makeRegistry();
     const hubPath = await makeHub(registry);

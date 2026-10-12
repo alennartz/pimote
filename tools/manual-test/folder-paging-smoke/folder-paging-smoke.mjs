@@ -241,10 +241,7 @@ async function main() {
     const stolen = await probeB.send({ type: 'list_folders', offset: 0, limit: 5, orderToken: tokenA });
     assert(stolen.data.orderToken !== tokenA, 'cross-owner token is not adopted (transparent re-pin)');
     const stolenCont = await probeB.send({ type: 'list_folders', offset: 5, limit: 5, orderToken: stolen.data.orderToken });
-    assert(
-      JSON.stringify(stolenCont.data.folders.map((r) => r.path)) === JSON.stringify(cont.data.folders.map((r) => r.path)),
-      'replacement pin serves the same order rows',
-    );
+    assert(JSON.stringify(stolenCont.data.folders.map((r) => r.path)) === JSON.stringify(cont.data.folders.map((r) => r.path)), 'replacement pin serves the same order rows');
     const clamped = await probeA.send({ type: 'list_folders', offset: 0, limit: 999 });
     assert(clamped.data.folders.length <= 200, `limit clamped to [1, 200] (got ${clamped.data.folders.length})`);
     await probeA.send({ type: 'update_folder', folderPath: pager(N_FILLERS), favorite: true });
@@ -297,10 +294,7 @@ async function main() {
     const qScuba = await probeA.listFolders({ limit: 25, query: 'scuba' });
     assert(qScuba.data.total === SCUBA_COUNT, `session tier matches across the full set (${qScuba.data.total})`);
     const qDeep = await probeA.listFolders({ limit: 3, query: `scuba drill ${pad3(SCUBA_COUNT)}` });
-    assert(
-      qDeep.data.total === 1 && qDeep.data.folders[0]?.path === pager(SCUBA_COUNT),
-      'rows outside every fetched window can match (full-set filtering)',
-    );
+    assert(qDeep.data.total === 1 && qDeep.data.folders[0]?.path === pager(SCUBA_COUNT), 'rows outside every fetched window can match (full-set filtering)');
     assert((qDeep.data.folders[0]?.matchedSessionIds ?? []).length === 1, 'deep match carries its matched session id');
 
     // ============================================================
@@ -309,10 +303,7 @@ async function main() {
     await probeA.send({ type: 'update_folder', folderPath: archAnchor, archived: true });
     await probeA.send({ type: 'update_folder', folderPath: pager(141), archived: true });
     const activeRows = await probeA.listFolders({ limit: 50 });
-    assert(
-      !activeRows.data.folders.some((r) => r.path === archAnchor || r.path === pager(141)),
-      'archived rows excluded by default',
-    );
+    assert(!activeRows.data.folders.some((r) => r.path === archAnchor || r.path === pager(141)), 'archived rows excluded by default');
     assert(activeRows.data.total === totalRows - 2, 'default total counts the unarchived set');
     const withArch = await probeA.listFolders({ limit: 50, includeArchived: true });
     const withArchPaths = new Set(withArch.data.folders.map((r) => r.path));
@@ -321,10 +312,7 @@ async function main() {
     const qArchOff = await probeA.listFolders({ limit: 3, query: 'archived drill' });
     assert(qArchOff.data.total === 0, 'archived rows match nothing without includeArchived');
     const qArchOn = await probeA.listFolders({ limit: 3, query: 'archived drill', includeArchived: true });
-    assert(
-      qArchOn.data.total === 1 && qArchOn.data.folders[0]?.path === archAnchor && qArchOn.data.folders[0]?.archived === true,
-      'includeArchived restores archived matches',
-    );
+    assert(qArchOn.data.total === 1 && qArchOn.data.folders[0]?.path === archAnchor && qArchOn.data.folders[0]?.archived === true, 'includeArchived restores archived matches');
     assert(JSON.stringify(qArchOn.data.folders[0]?.matchedSessionIds) === JSON.stringify([archId]), 'archived match carries its session id');
 
     // ============================================================
@@ -334,14 +322,10 @@ async function main() {
     // (classification can change), so deltas can take seconds on a large
     // fixture — the waits below are generous.
     await probeA.send({ type: 'file_put', path: join(pager(2), 'AGENTS.md'), content: '# pager-002 notes\n' });
-    const d1 = await probeB
-      .waitForEvent('folders_changed', (e) => e.changed?.some((r) => r.path === pager(2)), 25_000)
-      .catch(() => null);
+    const d1 = await probeB.waitForEvent('folders_changed', (e) => e.changed?.some((r) => r.path === pager(2)), 25_000).catch(() => null);
     assert(Boolean(d1), 'top-level AGENTS.md edit deltas its folder row');
     await probeA.send({ type: 'file_put', path: join(pager(3), 'nested', 'deep', 'AGENTS.md'), content: '# nested notes\n' });
-    const d2 = await probeB
-      .waitForEvent('folders_changed', (e) => e.changed?.some((r) => r.path === pager(3)), 25_000)
-      .catch(() => null);
+    const d2 = await probeB.waitForEvent('folders_changed', (e) => e.changed?.some((r) => r.path === pager(3)), 25_000).catch(() => null);
     assert(Boolean(d2), 'nested AGENTS.md edit deltas the deepest owning row');
     await wait(2_000); // let any late rebuild-driven delta drain before the global probe
     const tGlobal = Date.now();
@@ -355,9 +339,7 @@ async function main() {
     await mkdir(join(pagerNew, '.git'), { recursive: true });
     let discovered = null;
     for (let i = 0; i < 16 && !discovered; i++) {
-      discovered = await probeB
-        .waitForEvent('folders_changed', (e) => e.changed?.some((r) => r.path === pagerNew), 3000)
-        .catch(() => null);
+      discovered = await probeB.waitForEvent('folders_changed', (e) => e.changed?.some((r) => r.path === pagerNew), 3000).catch(() => null);
       if (!discovered) await probeA.send({ type: 'list_folders', offset: 0, limit: 1 }); // prod the TTL refresh
     }
     soft(Boolean(discovered), 'new on-disk repo surfaces through a folders_changed delta (TTL refresh)', 'discovery refresh did not fire within ~45s');
@@ -408,10 +390,7 @@ async function main() {
     await wait(1400);
     await folderScrollTop();
     const alphaText = await rowBlockText(alphaAnchor);
-    assert(
-      alphaText.includes('zebra migration checklist') && alphaText.includes('routine standup notes'),
-      'folder-tier match keeps all its sessions',
-    );
+    assert(alphaText.includes('zebra migration checklist') && alphaText.includes('routine standup notes'), 'folder-tier match keeps all its sessions');
     await fillSelector(SEARCH_INPUT, 'Solar Sage');
     await wait(1400);
     assert((await rowText(solarPersona)).includes('Solar Sage'), 'persona display name is searchable');
@@ -421,7 +400,10 @@ async function main() {
     await typeBurst(SEARCH_INPUT, ['s', 'su', 'sub', 'subm', 'submar', 'submarine'], 40);
     await wait(1400);
     const queryReqs = await sinceMark('m.type === "list_folders" && m.query !== ""');
-    assert(queryReqs.length >= 1 && queryReqs.length <= 2, `typing burst coalesces into 1–2 query fetches (saw ${queryReqs.length}: ${JSON.stringify(queryReqs.map((m) => m.query))})`);
+    assert(
+      queryReqs.length >= 1 && queryReqs.length <= 2,
+      `typing burst coalesces into 1–2 query fetches (saw ${queryReqs.length}: ${JSON.stringify(queryReqs.map((m) => m.query))})`,
+    );
     assert((await rowRenderedNow(alphaAnchor)) === false, 'final query of the burst wins the view');
     await browser(['screenshot', join(shotsDir, '02-search.png')], { allowFailure: true });
     await fillSelector(SEARCH_INPUT, '');
@@ -436,9 +418,7 @@ async function main() {
     const win1 = await probeA.send({ type: 'list_folders', offset: 0, limit: 100 });
     const coldPath =
       coldCandidates.find((p) => !everLoaded.has(p)) ??
-      win1.data.folders
-        .map((r) => r.path)
-        .find((p) => !everLoaded.has(p) && p !== archAnchor && p !== pager(141) && p !== pagerNew);
+      win1.data.folders.map((r) => r.path).find((p) => !everLoaded.has(p) && p !== archAnchor && p !== pager(141) && p !== pagerNew);
     assert(Boolean(coldPath), 'fixture has a cached-but-never-loaded row');
     await markSent();
     await browser(['click', 'button[title="More folder actions"]']);
@@ -476,7 +456,10 @@ async function main() {
       const retryText = await rowText(archAnchor);
       retryNote = ` retry-after-clear=${retryText.includes('Archived')}(reClear=${reCleared}) geom=${JSON.stringify(geom)}`;
     }
-    assert(badgeText.includes('Archived'), `show-archived reveals the archived row with its badge (row=${JSON.stringify(badgeText.slice(0, 60))};${retryNote} ${await pageDiag()})`);
+    assert(
+      badgeText.includes('Archived'),
+      `show-archived reveals the archived row with its badge (row=${JSON.stringify(badgeText.slice(0, 60))};${retryNote} ${await pageDiag()})`,
+    );
     await browser(['screenshot', join(shotsDir, '04-archived.png')], { allowFailure: true });
     await browser(['click', 'button[title="More folder actions"]']);
     await wait(400);
@@ -525,7 +508,10 @@ async function main() {
     assert(missing2.length === 0, `rows do not silently skip after mid-scroll edits (missing ${missing2.length}: ${missing2.slice(0, 4).join(', ')})`);
     assert(seenAfterEdit.has(pager(N_FILLERS)) || pass3.seen.has(pager(N_FILLERS)), 'tail row still reachable after mid-scroll edits');
     assert(pass2.dupes === 0 && pass3.dupes === 0, 'edits produce no duplicate rendered rows');
-    assert(belowFrontier.every((p) => union.has(p)), 'every below-frontier row renders across the continuation');
+    assert(
+      belowFrontier.every((p) => union.has(p)),
+      'every below-frontier row renders across the continuation',
+    );
     const pager50RenderedAfter = seenAfterEdit.has(pager(50)) || pass3.seen.has(pager(50));
     assert(pager50RenderedAfter === false, 'row archived mid-scroll leaves the view');
     await folderScrollTop();
@@ -574,7 +560,11 @@ async function main() {
     const sUnion = new Set([...sPass.seen, ...sFull.seen]);
     const sMissing = scubaBefore.filter((p) => !sUnion.has(p));
     assert(sMissing.length === 0, `deleting a matched session mid-scan skips no rows (missing ${sMissing.length}: ${sMissing.slice(0, 4).join(', ')})`);
-    soft(sSeenAfter.has(pager(5)) === false && !sFull.seen.has(pager(5)), 'deleted match leaves the active query view', 'stale server metadata can serve it until the next refresh');
+    soft(
+      sSeenAfter.has(pager(5)) === false && !sFull.seen.has(pager(5)),
+      'deleted match leaves the active query view',
+      'stale server metadata can serve it until the next refresh',
+    );
     await fillSelector(SEARCH_INPUT, '');
     await wait(800);
 
@@ -644,7 +634,10 @@ async function main() {
     const closed = await closeLatestSocket();
     assert(closed === true, 'browser socket closed (deltas now lost to the browser)');
     await wait(300);
-    await probeA.send({ type: 'disband_hub', folderPath: hubPath });
+    // Hub disband is gone from every surface (DR-063); archive the hub row
+    // instead — the default window hides archived rows, same phantom-row
+    // stakes on reconnect.
+    await probeA.send({ type: 'update_folder', folderPath: hubPath, archived: true });
     await probeA.send({ type: 'update_folder', folderPath: pager(70), favorite: true });
     let reconnected = false;
     for (let i = 0; i < 30 && !reconnected; i++) {
@@ -655,7 +648,7 @@ async function main() {
     await wait(1500);
     await closeSessionToDashboard(); // session restore can reclaim the view on reconnect
     await folderScrollTop();
-    assert((await rowRenderedNow(hubPath)) === false, 'disbanded hub does not survive the reconnect (no phantom row)');
+    assert((await rowRenderedNow(hubPath)) === false, 'archived hub does not survive the reconnect (no phantom row)');
     assert((await starOnRow(pager(70))) === true, `a change made while disconnected heals on reconnect (cache-replace) (${await pageDiag()})`);
     await browser(['screenshot', join(shotsDir, '05-reconnect.png')], { allowFailure: true });
 

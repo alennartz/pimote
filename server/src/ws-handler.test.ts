@@ -3978,7 +3978,7 @@ describe('WsHandler', () => {
       expect(invalidate).not.toHaveBeenCalled();
     });
 
-    it('creates the hub with memberPaths, responds with folderPath, and re-walks the listing without clearing warm git probes', async () => {
+    it('creates the hub through the registry and responds with folderPath', async () => {
       const invalidate = vi.fn();
       const invalidateListing = vi.fn();
       const createHub = vi.fn(async () => folderRow('/home/user/projects/hub', { repos: [] }));
@@ -3992,7 +3992,9 @@ describe('WsHandler', () => {
 
       expect(createHub).toHaveBeenCalledWith({ name: 'hub', root: '/home/user/projects', memberPaths: ['/home/user/projects/a', '/home/user/projects/b'] });
       expect(findResponse(sent, 'req-ch-2')).toMatchObject({ success: true, data: { folderPath: '/home/user/projects/hub' } });
-      expect(invalidateListing).toHaveBeenCalledOnce();
+      // The registry owns invalidation before its broadcast; the wire handler
+      // does not duplicate it.
+      expect(invalidateListing).not.toHaveBeenCalled();
       expect(invalidate).not.toHaveBeenCalled();
     });
 
@@ -4010,41 +4012,6 @@ describe('WsHandler', () => {
       await handler.handleMessage(JSON.stringify({ type: 'create_hub', id: 'req-ch-3', name: 'hub', root: '/home/user/projects', memberPaths: ['/home/user/projects/ghost'] }));
 
       expect(findResponse(sent, 'req-ch-3')).toMatchObject({ success: false, error: 'Unknown repo: /home/user/projects/ghost' });
-      expect(invalidate).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('disband_hub', () => {
-    it('disbands by folderPath and re-walks the listing without clearing warm git probes', async () => {
-      const invalidate = vi.fn();
-      const invalidateListing = vi.fn();
-      const disbandHub = vi.fn(async () => {});
-      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate, invalidateListing } as unknown as RepoIndex;
-      const folderRegistry = { list: async () => [], disbandHub } as unknown as FolderRegistry;
-      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry });
-
-      await handler.handleMessage(JSON.stringify({ type: 'disband_hub', id: 'req-dh-1', folderPath: '/home/user/projects/hub' }));
-
-      expect(disbandHub).toHaveBeenCalledWith('/home/user/projects/hub');
-      expect(findResponse(sent, 'req-dh-1')).toMatchObject({ success: true });
-      expect(invalidateListing).toHaveBeenCalledOnce();
-      expect(invalidate).not.toHaveBeenCalled();
-    });
-
-    it('surfaces disband errors without invalidating the index', async () => {
-      const invalidate = vi.fn();
-      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate } as unknown as RepoIndex;
-      const folderRegistry = {
-        list: async () => [],
-        disbandHub: async () => {
-          throw new Error('Not a hub folder: /home/user/projects/x');
-        },
-      } as unknown as FolderRegistry;
-      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry });
-
-      await handler.handleMessage(JSON.stringify({ type: 'disband_hub', id: 'req-dh-2', folderPath: '/home/user/projects/x' }));
-
-      expect(findResponse(sent, 'req-dh-2')).toMatchObject({ success: false, error: 'Not a hub folder: /home/user/projects/x' });
       expect(invalidate).not.toHaveBeenCalled();
     });
   });

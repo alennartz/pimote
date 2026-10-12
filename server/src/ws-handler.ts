@@ -22,7 +22,8 @@ import { getMergedPanelCards } from './panel-state.js';
 import { resolveSessionAcrossFolders, type SessionRecordLocation, type SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import { enrichActiveSessionCounts, isValidFolderName, type FolderRegistry } from './folder-registry.js';
-import { seedCodeFolderAgents, seedPersonaFolder } from './manager/seed.js';
+import { seedPersonaFolder } from './manager/seed.js';
+import { createCodeFolderViaCreators } from './folder-create.js';
 import type { FolderListingService } from './folder-listing.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import type { FolderCreator } from './folder-sources/index.js';
@@ -330,11 +331,8 @@ export class WsHandler {
             ...(command.description !== undefined ? { description: command.description } : {}),
             ...(command.personaText !== undefined ? { personaText: command.personaText } : {}),
           });
-          // The hub folder just changed on disk; drop the cached listing so a
-          // subsequent member-picker request sees the new filesystem state.
-          // Listing-only: a new hub moves no git facts of existing repos (the
-          // hub's own first probe fills its slot lazily), so warm probes stay.
-          repoIndex.invalidateListing();
+          // FolderRegistry.createHub invalidates discovery before it
+          // broadcasts; the next list is backed by the on-disk hub shape.
           this.sendResponse(id, true, { folderPath: created.path });
           break;
         }
@@ -378,18 +376,6 @@ export class WsHandler {
           break;
         }
 
-        case 'disband_hub': {
-          const { repoIndex, folderRegistry } = this.requireFolderDeps();
-          await folderRegistry.disbandHub(command.folderPath);
-          // The registry invalidates before notifying delta subscribers.
-          // Retain this command-level invalidation for its existing contract.
-          // Listing-only: the deleted hub's status entry can never serve a
-          // row again, and members' git facts do not move.
-          repoIndex.invalidateListing();
-          this.sendResponse(id, true);
-          break;
-        }
-
         case 'create_folder': {
           const name = command.name;
           const root = command.root;
@@ -408,32 +394,17 @@ export class WsHandler {
 
           const deps = this.requireFolderDeps();
 
-          // Route through the creator whose form matches { root, name } — the
-          // built-in folder creator, or a user-authored one taking its slot.
-          const creator = deps.creators.find((c) => {
-            const schema = c.describe().paramSchema;
-            return 'root' in schema && 'name' in schema;
-          });
-          if (!creator) {
-            this.sendResponse(id, false, undefined, 'No folder creator available');
-            break;
-          }
-
+          // Route through the shared creator routing (the creator whose form
+          // matches { root, name } — built-in or user-authored — plus the
+          // best-effort AGENTS.md seed); see folder-create.ts (DR-062).
           try {
-            const created = await creator.create({ root, name });
-            // Seed the new folder's AGENTS.md (stub even when the body is
-            // omitted). Best-effort after a successful creation: the creator
-            // owns folder existence and may write its own AGENTS.md — a seed
-            // failure must not report an already-created folder as failed.
-            await seedCodeFolderAgents(created.path, name, command.body ?? '').catch((err) => {
-              console.warn('[WsHandler] AGENTS.md seed skipped:', err instanceof Error ? err.message : String(err));
-            });
+            const created = await createCodeFolderViaCreators(deps.creators, root, name, command.body);
             // Otherwise the 30s listing TTL hides the new repo from the index.
             // Listing-only: the new folder's first probe fills its own slot;
             // untouched repos keep warm git probes.
             deps.repoIndex.invalidateListing();
-            WsHandler.broadcastFoldersChanged(deps.folderListing, [created.path], [], this.clientRegistry);
-            this.sendResponse(id, true, { folderPath: created.path });
+            WsHandler.broadcastFoldersChanged(deps.folderListing, [created.folderPath], [], this.clientRegistry);
+            this.sendResponse(id, true, { folderPath: created.folderPath });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             this.sendResponse(id, false, undefined, `Failed to create folder: ${message}`);

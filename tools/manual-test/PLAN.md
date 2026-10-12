@@ -259,7 +259,7 @@ shortcutCount), favorites, archive/show-archived, inline expansion of
 per-folder sessions loaded only for rendered rows, and repo status chips
 (branch + dirty dot) from plain-row `repo` facts and hub-member `repos`; the hub dialog composes a hub folder from indexed repos (server
 creates the symlink hub + `git init` + `.gitignore` + generated `AGENTS.md`)
-and disband removes it; the New Session dialog hosts the four-kind creation
+and membership edits reshape it; the New Session dialog hosts the four-kind creation
 wizard (kind icon row above the folder picker; identity → members? →
 skippable text step; every flow ends in `open_session` in the new folder; code
 kinds seed `AGENTS.md`, persona kinds seed persona-marker `AGENTS.md` +
@@ -281,10 +281,10 @@ conversation surface, old sessions resume behind the `Previous sessions`
 click and across full server restarts, a disconnect keeps runs processing
 server-side, and reconnect replays from the client's cursor. The
 manager-exclusive pimote toolset (`pimote_list_folders`,
-`pimote_folder_tree`, `pimote_create_persona`, `pimote_list_personas`, …)
-answers over real server APIs; `pimote_create_persona` publishes new
-persona folders via `folders_changed`. Manager folder
-listings remain complete, unwindowed registry reads. Manager tree reads share the repo-index discovery cache and accept one TTL of staleness.
+`pimote_create_folder`, `pimote_update_folder`, `pimote_update_hub_members`, …)
+answers over real server APIs; `pimote_create_folder` publishes new persona
+folders via `folders_changed`. Manager folder listings remain complete,
+unwindowed reads with curation, membership, and git facts on each row.
 
 **Why:** This replaced the sidebar as the primary navigation surface; hubs
 are the multi-repo model; the manager is the dashboard's second half.
@@ -306,7 +306,7 @@ browser or LLM); `tools/manual-test/folder-paging-smoke/` drives the windowed-li
 behaviors at scale over a ~250-row fixture — window continuity under deep
 scroll (including curation edits mid-scroll), two-tier server search with
 `matchedSessionIds` narrowing and debounced typing bursts, `folders_changed`
-delta delivery (curation, hub create/disband, file_put, discovery
+delta delivery (curation, hub create, file_put, discovery
 additions), refresh/reconnect cache-replace, the archive toggle × session
 lists interplay, and rendered-row-only session loading.
 

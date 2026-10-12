@@ -19,3 +19,5 @@ Accepted
 - Accepted debt: the Android protocol mirror breaks until its own update. That update must cover `list_folders` paging — Android reads `folders` and ignores `more`/`total`, so it silently truncates at the 100-row default limit — and not only the `folders_changed` delta change. No compat shim will be built.
 - No SDK `FolderInfo` twin is added: `FolderInfo` is wire-protocol only, and folder sources contribute source entries, never wire rows.
 - Dropped deltas leave phantom rows in client caches. Explicit refresh (`repin` cache-replace) and reconnect cache-replace are the heal paths; a delta retry or periodic reconcile is the revisit point if phantom rows ever matter in practice.
+
+> **Amendment (2026-01-14, DR-063/064):** hub disband was removed from every surface. `FolderRegistry.createHub` now invalidates discovery before it emits its creation delta; no `disband_hub` removal delta exists.

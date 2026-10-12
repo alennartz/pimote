@@ -60,7 +60,6 @@ function makeManagerContext(): ManagerToolContext {
       list: vi.fn(async () => [] as FolderInfo[]),
       update: vi.fn(async () => undefined),
       createHub: vi.fn(async () => ({}) as FolderInfo),
-      disbandHub: vi.fn(async () => undefined),
     },
     repos: { list: vi.fn(async () => []), invalidateListing: vi.fn() },
     tree: { tree: vi.fn(async () => ({ occurrences: [] })) },

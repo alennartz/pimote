@@ -289,7 +289,7 @@ describe('hub rows and path collisions', () => {
     expect(folder?.shortcutCount).toBe(1);
   });
 
-  it('persisted hub metadata wins over source metadata on a path collision', async () => {
+  it('scanned hub shape wins over source member promises on a path collision', async () => {
     const repoB = join(rootDir, 'repo-b');
     await initRepo(repoB);
     const hubPath = join(rootDir, 'from-user');
@@ -306,11 +306,11 @@ describe('hub rows and path collisions', () => {
     const shared = (await registry.list()).filter((folder) => folder.path === hubPath);
     expect(shared).toHaveLength(1);
     expect(shared[0].name).toBe('from-user');
-    // Persisted membership wins over the source's members.
+    // The on-disk symlink inventory wins over the source's member promise.
     expect(shared[0].repos?.map((r) => r.path)).toEqual([repoA]);
   });
 
-  it('source hubs are derived: disappearing from the source removes them, persisted hubs stay', async () => {
+  it('source hubs are derived; a materialized hub stays through its on-disk shape', async () => {
     let clock = 0;
     let hubs: { path: string; name: string; memberPaths: string[] }[] = [{ path: join(rootDir, 'ghost'), name: 'ghost', memberPaths: [] }];
     const index = new RepoIndex([rootDir], { now: () => clock, ttlMs: 1_000_000, statusTtlMs: 1_000_000 });
@@ -319,7 +319,7 @@ describe('hub rows and path collisions', () => {
       list: async () => hubs.map((h) => ({ kind: 'hub' as const, ...h })),
     });
     const registry = makeRegistry(index);
-    await registry.createHub({ name: 'persisted', root: rootDir, memberPaths: [] });
+    await registry.createHub({ name: 'materialized', root: rootDir, memberPaths: [repoA] });
 
     expect((await registry.list()).some((p) => p.name === 'ghost')).toBe(true);
 
@@ -329,7 +329,7 @@ describe('hub rows and path collisions', () => {
 
     await index.whenRefreshed();
     const names = (await registry.list()).map((p) => p.name);
-    expect(names).toContain('persisted');
+    expect(names).toContain('materialized');
     expect(names).not.toContain('ghost');
   });
 });
@@ -348,11 +348,11 @@ describe('missing rows', () => {
     expect((await findRow(registry, ghostRepo))?.favorite).toBe(true);
   });
 
-  it('registry hubs absent on disk get missing: true', async () => {
+  it('legacy hub records do not manufacture missing rows', async () => {
     await writeRegistryDocument({ version: 1, multiRepo: [{ path: join(rootDir, 'gone'), name: 'gone', memberPaths: [] }], overrides: {} });
 
     const folder = await findRow(makeRegistry(), join(rootDir, 'gone'));
-    expect(folder).toMatchObject({ name: 'gone', nature: 'code', missing: true });
+    expect(folder).toBeUndefined();
   });
 
   it('orphaned curation overrides alone produce no row', async () => {
@@ -363,19 +363,15 @@ describe('missing rows', () => {
   });
 });
 
-describe('git-less legacy hubs', () => {
-  it('stays listed as code with member-count shortcuts and no disk changes', async () => {
+describe('legacy hub records', () => {
+  it('do not turn an unshaped folder into a hub', async () => {
     const hubPath = join(rootDir, 'legacy-hub');
     await mkdir(hubPath, { recursive: true });
     await writeRegistryDocument({ version: 1, multiRepo: [{ path: hubPath, name: 'legacy-hub', memberPaths: [repoA] }], overrides: {} });
 
     const before = await readdir(hubPath);
     const registry = makeRegistry();
-    const folder = await findRow(registry, hubPath);
-
-    expect(folder).toMatchObject({ path: hubPath, name: 'legacy-hub', nature: 'code', shortcutCount: 1, missing: false });
-    expect(folder?.repos?.map((r) => r.path)).toEqual([repoA]);
-    // No backfill: listing and re-listing never write to the folder.
+    expect(await findRow(registry, hubPath)).toBeUndefined();
     await registry.list();
     expect(await readdir(hubPath)).toEqual(before);
     expect(existsSync(join(hubPath, '.git'))).toBe(false);
@@ -383,69 +379,23 @@ describe('git-less legacy hubs', () => {
 });
 
 describe('FolderRegistry persistence', () => {
-  it('reads legacy multiRepo documents and prefers hubs when both keys exist', async () => {
+  it('ignores legacy hub lists and drops them on the next curation write', async () => {
     const legacyOnly = join(rootDir, 'legacy-only');
-    const newKey = join(rootDir, 'new-key');
     await writeRegistryDocument({
       version: 1,
-      multiRepo: [{ path: legacyOnly, name: 'legacy-only', memberPaths: [] }],
-      hubs: [{ path: newKey, name: 'new-key', memberPaths: [] }],
-      overrides: {},
-    });
-
-    const rows = await makeRegistry().list();
-    expect(rows.map((folder) => folder.name)).toContain('new-key');
-    expect(rows.map((folder) => folder.name)).not.toContain('legacy-only');
-  });
-
-  it('lists legacy multiRepo documents when the hubs key is absent', async () => {
-    await writeRegistryDocument({ version: 1, multiRepo: [{ path: join(rootDir, 'legacy-only'), name: 'legacy-only', memberPaths: [repoA] }], overrides: {} });
-
-    const folder = await findRow(makeRegistry(), join(rootDir, 'legacy-only'));
-    expect(folder?.name).toBe('legacy-only');
-    expect(folder?.repos?.map((r) => r.path)).toEqual([repoA]);
-  });
-
-  it('isolates malformed hub entries', async () => {
-    const good = join(rootDir, 'good');
-    await writeRegistryDocument({
-      version: 1,
-      multiRepo: [
-        { path: good, name: 'good', memberPaths: [] },
-        { path: 42, name: 'bad' },
-        { name: 'no-path', memberPaths: [] },
-      ],
-      overrides: {},
-    });
-
-    const rows = await makeRegistry().list();
-    expect(rows.map((folder) => folder.name)).toContain('good');
-    expect(rows).toHaveLength(2); // repo-a plus the one valid hub entry
-  });
-
-  it('round-trips existing registry data without loss, persisting hubs and stripping legacy order', async () => {
-    const hubPath = join(rootDir, 'legacy-hub');
-    await writeRegistryDocument({
-      version: 1,
-      multiRepo: [
-        { path: hubPath, name: 'legacy-hub', memberPaths: [repoA] },
-        { path: 42, name: 'malformed' },
-      ],
-      overrides: { [repoA]: { favorite: true, archived: true, tags: ['keep'], order: 3 } },
+      multiRepo: [{ path: legacyOnly, name: 'legacy-only', memberPaths: [repoA] }],
+      hubs: [{ path: join(rootDir, 'hub-key'), name: 'hub-key', memberPaths: [repoA] }],
+      overrides: { [repoA]: { favorite: true, tags: ['keep'], order: 3 } },
     });
 
     const registry = makeRegistry();
+    expect(await findRow(registry, legacyOnly)).toBeUndefined();
     await registry.update({ folderPath: repoA, addTags: ['more'] });
 
     const document = await readRegistryDocument();
     expect(document.multiRepo).toBeUndefined();
-    expect(document.hubs).toEqual([{ path: hubPath, name: 'legacy-hub', memberPaths: [repoA] }]);
-    expect(document.overrides).toEqual({ [repoA]: { favorite: true, archived: true, tags: ['keep', 'more'] } });
-
-    // And the reloaded view still serves it all.
-    const rows = await makeRegistry().list();
-    expect(rows.map((folder) => folder.name)).toContain('legacy-hub');
-    expect(rows.find((folder) => folder.path === repoA)?.tags).toEqual(['keep', 'more']);
+    expect(document.hubs).toBeUndefined();
+    expect(document.overrides).toEqual({ [repoA]: { favorite: true, tags: ['keep', 'more'] } });
   });
 
   it('persists curation overrides across registry instances', async () => {
@@ -493,15 +443,15 @@ describe('FolderRegistry persistence', () => {
 });
 
 describe('FolderRegistry.createHub()', () => {
-  it('persists the canonical identity when the root is a symlink alias', async () => {
+  it('returns the canonical identity when the root is a symlink alias', async () => {
     const aliasRoot = join(tempDir, 'alias-root');
     await symlink(rootDir, aliasRoot);
 
     const registry = makeRegistry();
     const created = await registry.createHub({ name: 'multi', root: aliasRoot, memberPaths: [repoA] });
 
-    // Discovery identifies folders by their real path: a non-canonical
-    // persisted key would split the hub into two rows and orphan its curation.
+    // Discovery identifies folders by their real path: the created shape
+    // is the row identity even when the configured root is a symlink alias.
     expect(created.path).toBe(join(rootDir, 'multi'));
     const rows = (await registry.list()).filter((folder) => folder.name === 'multi');
     expect(rows).toHaveLength(1);
@@ -509,22 +459,19 @@ describe('FolderRegistry.createHub()', () => {
     expect(rows[0].repos?.map((r) => r.path)).toEqual([repoA]);
   });
 
-  it('returns the full FolderInfo row for the new hub', async () => {
+  it('returns its canonical path and discovers the complete row from disk', async () => {
     const registry = makeRegistry();
     const created = await registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA] });
 
-    expect(created).toEqual({
+    expect(created).toEqual({ path: join(rootDir, 'multi') });
+    const row = await findRow(registry, created.path);
+    expect(row).toMatchObject({
       path: join(rootDir, 'multi'),
       name: 'multi',
       nature: 'code',
       shortcutCount: 1,
-      favorite: false,
-      archived: false,
-      tags: [],
-      missing: false,
-      activeSessionCount: 0,
-      externalProcessCount: 0,
       repos: [{ path: repoA, name: 'repo-a', branch: 'main', dirty: false, ahead: 0, behind: 0 }],
+      members: [{ path: repoA, name: 'repo-a', nature: 'code' }],
     });
   });
 
@@ -573,7 +520,7 @@ describe('FolderRegistry.createHub()', () => {
 
     // Two members sharing a basename collide on one symlink target; a
     // duplicated path fails the same way. Either used to fail partway,
-    // leaving an un-disbandable half-built hub folder.
+    // leaving a half-built hub folder.
     await expect(registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA, repoB] })).rejects.toThrow(/Duplicate member name/);
     await expect(registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA, repoA] })).rejects.toThrow(/Duplicate member name/);
     expect(existsSync(join(rootDir, 'multi'))).toBe(false);
@@ -604,32 +551,25 @@ describe('FolderRegistry.createHub()', () => {
     expect(existsSync(join(rootDir, 'multi', '.git'))).toBe(true);
   });
 
-  it('cleans up the hub folder when persistence fails', async () => {
+  it('does not persist hub ownership; the disk shape is rediscovered', async () => {
     const registry = makeRegistry();
-    await mkdir(storeDir, { recursive: true });
-    await chmod(storeDir, 0o555); // registry.json cannot be written
-    try {
-      await expect(registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA] })).rejects.toThrow();
-    } finally {
-      await chmod(storeDir, 0o755);
-    }
+    const created = await registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA] });
 
-    // The fully materialized hub is rolled back together with the lost entry.
-    expect(existsSync(join(rootDir, 'multi'))).toBe(false);
-    expect((await registry.list()).filter((folder) => folder.name === 'multi')).toHaveLength(0);
-    await registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA] });
-    expect((await makeRegistry().list()).find((folder) => folder.name === 'multi')?.repos).toBeDefined();
+    expect(existsSync(join(storeDir, 'registry.json'))).toBe(false);
+    const discovered = await findRow(makeRegistry(), created.path);
+    expect(discovered?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code' }]);
+    expect(discovered?.repos?.map((repo) => repo.path)).toEqual([repoA]);
   });
 });
 
 describe('FolderRegistry lazy status enrichment (window path)', () => {
   it('listLazy carries identity facts and enrichRows fills git status for the given rows', async () => {
-    const hubPath = join(rootDir, 'multi');
-    await mkdir(hubPath, { recursive: true });
-    await writeRegistryDocument({ hubs: [{ path: hubPath, name: 'multi', memberPaths: [repoA] }], overrides: {} });
+    const index = makeIndex();
+    const registry = makeRegistry(index);
+    await registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA] });
     await writeFile(join(repoA, 'notes.txt'), 'work in progress');
+    index.invalidate(); // force a fresh status probe after the file changed
 
-    const registry = makeRegistry();
     const rows = await registry.listLazy();
     const hub = rows.find((folder) => folder.name === 'multi');
     const member = rows.find((folder) => folder.path === repoA);
@@ -643,61 +583,8 @@ describe('FolderRegistry lazy status enrichment (window path)', () => {
   });
 });
 
-describe('FolderRegistry.disbandHub()', () => {
-  it('removes the hub and deletes the hub folder; member repos survive', async () => {
-    const registry = makeRegistry();
-    const { path: hubPath } = await registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA] });
-
-    await registry.disbandHub(hubPath);
-
-    expect(await findRow(registry, hubPath)).toBeUndefined();
-    expect(existsSync(hubPath)).toBe(false);
-    // The member repo itself must survive.
-    expect(existsSync(repoA)).toBe(true);
-  });
-
-  it('keeps warm git probes for untouched member repos on disband', async () => {
-    const registry = makeRegistry();
-    const { path: hubPath } = await registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA] });
-    // Warm the member's status probe (clean tree).
-    expect((await findRow(registry, repoA))?.repo?.dirty).toBe(false);
-
-    // Git facts of the surviving member move after the warm probe.
-    await writeFile(join(repoA, 'notes.txt'), 'work in progress');
-
-    await registry.disbandHub(hubPath);
-
-    // Discovery re-walks (the hub row is gone) but the member serves its
-    // warm status: a disband moves no git facts of untouched repos.
-    expect(await findRow(registry, hubPath)).toBeUndefined();
-    expect((await findRow(registry, repoA))?.repo?.dirty).toBe(false);
-  });
-
-  it('refuses to disband a plain code folder and an unknown path', async () => {
-    const registry = makeRegistry();
-    const { path: hubPath } = await registry.createHub({ name: 'multi', root: rootDir, memberPaths: [repoA] });
-
-    await expect(registry.disbandHub(repoA)).rejects.toThrow();
-    await expect(registry.disbandHub(join(tempDir, 'ghost'))).rejects.toThrow();
-    expect(existsSync(repoA)).toBe(true);
-    expect(existsSync(hubPath)).toBe(true);
-  });
-
-  it('refuses to disband a source hub without a persisted registry entry', async () => {
-    const hubPath = join(rootDir, 'src-hub');
-    const index = makeIndex();
-    index.registerSource({ id: 'src', list: async () => [{ kind: 'hub' as const, path: hubPath, name: 'src-hub', memberPaths: [repoA] }] });
-    const registry = makeRegistry(index);
-    await index.runOpenHooks(hubPath); // open-time materialization
-    expect(existsSync(join(hubPath, '.git'))).toBe(true);
-
-    await expect(registry.disbandHub(hubPath)).rejects.toThrow();
-    expect(existsSync(hubPath)).toBe(true);
-  });
-});
-
 describe('FolderRegistry.onChange()', () => {
-  it('notifies subscribers on update, createHub, and disbandHub', async () => {
+  it('notifies subscribers on update and createHub', async () => {
     const registry = makeRegistry();
     const onChange = vi.fn();
     const unsubscribe = registry.onChange(onChange);
@@ -710,13 +597,9 @@ describe('FolderRegistry.onChange()', () => {
     expect(onChange).toHaveBeenCalledTimes(2);
     expect(onChange).toHaveBeenLastCalledWith({ changedPaths: [hubPath], removedPaths: [] });
 
-    await registry.disbandHub(hubPath);
-    expect(onChange).toHaveBeenCalledTimes(3);
-    expect(onChange).toHaveBeenLastCalledWith({ changedPaths: [], removedPaths: [hubPath] });
-
     unsubscribe();
     await registry.update({ folderPath: repoA, favorite: false });
-    expect(onChange).toHaveBeenCalledTimes(3);
+    expect(onChange).toHaveBeenCalledTimes(2);
   });
 
   it('reports member-tag changes to the member and every dependent hub', async () => {

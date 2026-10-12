@@ -3,8 +3,7 @@
 
   /** Icon kind from folder facts: nature × shortcut presence only.
    *  Shortcut-bearing folders get the hub variant even without hub registry
-   *  membership — `repos` gates the membership chips and disband rights,
-   *  never the icon. */
+   *  membership — `repos` gates the membership chips, never the icon. */
   export function folderIconKind(folder: { nature: 'code' | 'persona'; shortcutCount: number }): FolderIconKind {
     const hub = folder.shortcutCount > 0;
     return folder.nature === 'persona' ? (hub ? 'persona-hub' : 'persona') : hub ? 'code-hub' : 'code';

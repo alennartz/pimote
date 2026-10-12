@@ -415,7 +415,7 @@ variants (code, code-hub, persona, persona-hub), `update_folder` /
 epoch-stamped `folders_changed` delta sync (`changed` / `removedPaths`, both
 directions), complete comparisons accumulated from small protocol windows
 under each adopted token, explicit `includeArchived` probes and fresh-order
-repins after discovery mutations, hub create/disband
+repins after discovery mutations, hub create
 round-trips with on-disk symlink + `git init` + root-anchored `.gitignore` +
 `AGENTS.md` assertions and hub member management ("Manage members…"
 add/remove round-trips: symlink and exact seeded `AGENTS.md` line appear and
@@ -431,12 +431,12 @@ unarchived), wire probes for `create_persona_folder` / `add_hub_member` /
 `members`), resume of an existing session,
 the active-session dot, virtualized row lookup through dashboard scrolling,
 server-authoritative dashboard search and picker search (persona display names
-included), the manager chat (streamed reply, `pimote_list_folders` +
-`pimote_folder_tree` tool use, abort, persisted transcript across reload
+included), the manager chat (streamed reply, `pimote_list_folders` calls including the
+nature-filtered team view, abort, persisted transcript across reload
 reconnect, disconnect-mid-run persistence, history reopening behind the
 `Previous sessions` click, a persisted manager session record on disk, and
-the persona tools `pimote_create_persona` → `folders_changed` → dashboard
-row plus `pimote_list_personas` working directories), the
+the folder tools `pimote_create_folder` (kind persona) → `folders_changed` →
+dashboard row plus the `pimote_list_folders` nature-filtered team view), the
 missing-member warning chip, the unscanned-cwd `classifyFolder` session
 fallback (list/open in cwds outside the scan roots never lists or curates
 them), legacy `multiRepo` registry read-compat (loads unchanged; the next
@@ -540,18 +540,15 @@ spawns. No real LLM, network, or push subscription required.
 (mkdir + absolute member symlinks + `git init` + root-anchored `.gitignore`
 
 - generated `AGENTS.md`). Asserts, without any LLM: the registered names are
-  the renamed ones (`pimote_list_folders` / `pimote_folder_tree`, no
-  `*_projects`), `pimote_list_folders` returns complete FolderInfo rows with
-  schema defaults, and `pimote_folder_tree` reports the sparse tree shape
-  (occurrences with `path`/`via`/`entry`/`children`; hub member symlinks
-  surface as `via: 'shortcut'` occurrences referencing the member entries;
-  scan and shortcut occurrences share one entry object),
-  `pimote_list_personas` returns persona rows whose `workingDirectory` is
-  the canonical `folderPath` (code folders and hubs excluded), and
-  `pimote_create_persona` materializes the persona folder (parseable front
-  matter, caller prompt folded in, memory stub) and publishes it exactly on
-  success (discovery invalidation + `folders_changed` pairing — failed
-  creations publish nothing and leave no disk effects). Complements the
+  the pinned seven-tool set (no `*_projects`, no retired persona/search/repo/
+  tree/disband names), `pimote_list_folders` returns complete FolderInfo rows
+  with schema defaults (hub rows carry their member repos),
+  `pimote_list_folders` nature-filtered rows serve the persona team view, and
+  `pimote_create_folder` (kind persona) materializes the persona folder
+  (parseable front matter, caller prompt folded in, memory stub, leaf-rule
+  hint on collisions) and publishes it exactly on success (discovery
+  invalidation + `folders_changed` pairing — failed creations publish nothing
+  and leave no disk effects). Complements the
   LLM-driven manager-chat phase of `project-management-smoke`, which cannot
   force tool choice.
 
@@ -567,7 +564,7 @@ node tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs
 **Inputs:** none by default (fresh `os.tmpdir()` sandbox; `MTMS_ROOT=<dir>`
 reuses an existing fixture tree containing `<root>/alpha`, `<root>/beta` git
 repos and an `<root>/omega` persona folder instead of fabricating one; the
-`pimote_create_persona` execution is then skipped — it would mutate the
+`pimote_create_folder` execution is then skipped — it would mutate the
 user-supplied tree).
 
 **Outputs:** per-check ✓/✗ lines on stdout; non-zero exit on any failure.

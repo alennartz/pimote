@@ -73,16 +73,17 @@ export interface FolderInfo {
   favorite: boolean;
   archived: boolean;
   tags: string[];
-  /** True when a source-listed repo/hub or registry hub is absent on disk. */
+  /** True when a source-listed repo/hub is absent on disk. */
   missing: boolean;
-  /** Member repos; only on registry/source hubs — these rows are disband-eligible. */
+  /** Code member repos with git facts; present when a hub's symlink inventory
+   *  or a source promise identifies its members. */
   repos?: RepoInfo[];
-  /** Hub members from the hub's symlink inventory — the membership fact
-   *  (`repos` carries git facts and the disband gate, never membership). */
+  /** Hub members from the symlink inventory — the membership fact.
+   *  `repos` carries code-member git facts, not membership identity. */
   members?: FolderMemberInfo[];
   /** This row's own repo facts — copied from the repo index's cache for plain
-   *  code rows it knows. Distinct from hub `repos` (the membership list and
-   *  disband gate). Persona rows and hub rows omit it. */
+   *  code rows it knows. Distinct from hub `repos` (the member list with git
+   *  facts). Persona rows and hub rows omit it. */
   repo?: RepoInfo;
   /** Own-path user tags — the subset of `tags` that is user-removable. */
   userTags?: string[];
@@ -586,12 +587,6 @@ export interface CreateHubCommand extends CommandBase {
   personaText?: string;
 }
 
-/** Remove a hub folder: registry entry deleted, hub folder deleted. */
-export interface DisbandHubCommand extends CommandBase {
-  type: 'disband_hub';
-  folderPath: string;
-}
-
 export interface ListFoldersResponseData {
   /** Epoch observed while computing this window. */
   epoch: number;
@@ -870,7 +865,6 @@ export type PimoteCommand =
   | UpdateFolderCommand
   | CreatePersonaFolderCommand
   | CreateHubCommand
-  | DisbandHubCommand
   | AddHubMemberCommand
   | RemoveHubMemberCommand
   // Server-level

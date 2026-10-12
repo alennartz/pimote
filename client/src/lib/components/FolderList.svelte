@@ -21,7 +21,6 @@
   import Tag from '@lucide/svelte/icons/tag';
   import X from '@lucide/svelte/icons/x';
   import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '$lib/components/ui/context-menu/index.js';
-  import Trash2 from '@lucide/svelte/icons/trash-2';
   import Undo2 from '@lucide/svelte/icons/undo-2';
   import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuSeparator, DropdownMenuTrigger } from '$lib/components/ui/dropdown-menu/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -110,15 +109,12 @@
   let hubError = $state('');
   let hubCreating = $state(false);
 
-  // Disband confirmation state
-  let disbandTarget = $state<FolderInfo | null>(null);
-
   // Hub members dialog state. The row is re-derived from the store on every
   // delta, so membership changes reach the open dialog.
   let membersHubPath = $state<string | null>(null);
   const membersHub = $derived(folderStore.folders.find((folder) => folder.path === membersHubPath) ?? null);
-  // A delta can drop the row while the dialog is open (disband elsewhere, a
-  // reconnect clearing the cache). Clear the path so a returning row cannot
+  // A delta can drop the row while the dialog is open (a deletion elsewhere,
+  // a reconnect clearing the cache). Clear the path so a returning row cannot
   // reopen the dialog unprompted.
   $effect(() => {
     if (membersHubPath !== null && membersHub === null) membersHubPath = null;
@@ -353,8 +349,8 @@
   }
 
   /** Apply a curation patch; the store updates via the folders_changed
-   *  broadcast. Like disband, a server rejection must surface — the row menu
-   *  has closed, so a silent failure leaves the user with no feedback. */
+   *  broadcast. A server rejection must surface — the row menu has closed,
+   *  so a silent failure leaves the user with no feedback. */
   async function updateFolder(folder: FolderInfo, patch: { favorite?: boolean; archived?: boolean; addTags?: string[]; removeTags?: string[] }) {
     openError = '';
     try {
@@ -362,22 +358,6 @@
       if (!response.success) openError = response.error ?? 'Failed to update folder';
     } catch (e) {
       openError = e instanceof Error ? e.message : 'Failed to update folder';
-    }
-  }
-
-  /** Disband attempt — like attemptOpen, a server rejection must surface. The
-   *  dialog closes on send, but the response's failure is displayed, not
-   *  swallowed (e.g. a source hub without persisted registry ownership). */
-  async function disbandHub() {
-    const target = disbandTarget;
-    disbandTarget = null;
-    if (!target) return;
-    openError = '';
-    try {
-      const response = await connection.send({ type: 'disband_hub', folderPath: target.path });
-      if (!response.success) openError = response.error ?? 'Failed to disband hub';
-    } catch (e) {
-      openError = e instanceof Error ? e.message : 'Failed to disband hub';
     }
   }
 
@@ -692,10 +672,8 @@
                     <Tag class="size-4" />
                     Add tag…
                   </ContextMenuItem>
-                  <!-- Membership and disband eligibility are separate facts:
-                       `members`/`shortcutCount` open member management (including
-                       empty registry hubs); `repos` marks persisted hub ownership
-                       and gates deletion rights only. -->
+                  <!-- Membership management opens for any hub fact:
+                       `members` (symlink inventory) or `shortcutCount`. -->
                   {#if folder.members !== undefined || folder.shortcutCount > 0}
                     <ContextMenuItem onSelect={() => (membersHubPath = folder.path)}>
                       <Network class="size-4" />
@@ -712,12 +690,6 @@
                     <ContextMenuItem onSelect={() => void updateFolder(folder, { archived: !folder.archived })}>
                       <Archive class="size-4" />
                       Archive project
-                    </ContextMenuItem>
-                  {/if}
-                  {#if folder.repos !== undefined}
-                    <ContextMenuItem onSelect={() => (disbandTarget = folder)}>
-                      <Trash2 class="size-4" />
-                      Disband hub
                     </ContextMenuItem>
                   {/if}
                 </ContextMenuContent>
@@ -919,23 +891,5 @@
     {#if membersHub}
       <HubMembersDialog hub={membersHub} />
     {/if}
-  </Dialog.Content>
-</Dialog.Root>
-
-<Dialog.Root
-  open={disbandTarget !== null}
-  onOpenChange={(open) => {
-    if (!open) disbandTarget = null;
-  }}
->
-  <Dialog.Content showCloseButton={false}>
-    <Dialog.Header>
-      <Dialog.Title>Disband {disbandTarget ? displayName(disbandTarget) : ''}</Dialog.Title>
-      <Dialog.Description>This deletes the hub folder and removes the hub from the list. Member repositories are not touched.</Dialog.Description>
-    </Dialog.Header>
-    <Dialog.Footer>
-      <Button variant="outline" onclick={() => (disbandTarget = null)}>Cancel</Button>
-      <Button variant="destructive" onclick={disbandHub}>Disband</Button>
-    </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

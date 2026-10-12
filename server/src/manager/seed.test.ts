@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { seedManagerRoot } from './seed.js';
 import { classifyFolder, nodeFolderFs } from '../folder-model/index.js';
 
 // Boot seeding of the manager root (plan: manager-lifecycle):
-// AGENTS.md absent -> shipped template, present -> untouched (no merge, ever);
-// memory.md absent -> stub, present -> untouched. The seed template is a code
-// constant: mission statement plus the maintain-memory.md indication, no tool
-// listing (tools are injected).
+// AGENTS.md absent -> shipped vision/lookup map, present -> untouched (no
+// merge, ever); memory.md absent -> stub, present -> untouched. The map points
+// to the packaged README, the pimote-folders skill, and installation memory.
 
 async function makeManagerRoot(): Promise<{ root: string; cleanup: () => Promise<void> }> {
   const root = await mkdtemp(join(tmpdir(), 'manager-seed-'));
@@ -24,12 +24,19 @@ describe('seedManagerRoot()', () => {
 
       const agents = await readFile(join(root, 'AGENTS.md'), 'utf8');
       expect(agents.trim().length).toBeGreaterThan(0);
+      expect(agents).toContain('## Vision');
+      expect(agents).toContain('## Lookup');
+      expect(agents).toContain(fileURLToPath(new URL('../../../README.md', import.meta.url)));
+      expect(agents).toContain('pimote-folders/SKILL.md');
       const classification = await classifyFolder(nodeFolderFs, root);
       expect(classification.nature).toBe('persona');
       expect(classification.persona?.name).toBe('manager');
       expect(classification.persona?.description?.trim().length).toBeGreaterThan(0);
       expect(classification.persona?.description).not.toContain('\n');
-      // The maintain-memory.md indication.
+      expect(agents).toContain('## Vision');
+      expect(agents).toContain('## Lookup');
+      expect(agents).toContain(fileURLToPath(new URL('../../../README.md', import.meta.url)));
+      expect(agents).toContain('pimote-folders/SKILL.md');
       expect(agents).toContain('memory.md');
       // No tool listing — tools are injected.
       expect(agents).not.toMatch(/pimote_\w/);

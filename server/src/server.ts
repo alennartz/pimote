@@ -209,7 +209,7 @@ export async function createServer(
     if (ownerClientId) clientRegistry.get(ownerClientId)?.sendDisplacedEvent(sessionId);
   };
 
-  // Folder registry mutations (update / createHub / disbandHub) report the
+  // Folder registry mutations (update / createHub / membership) report the
   // exact changed/removed paths (their targets plus derived dependents) and
   // broadcast through the same delta channel. The listing service builds the
   // delta; the emitter only sends it.
