@@ -900,3 +900,33 @@ describe('FolderStore hub membership wrappers', () => {
     expect(fakeConnection.send).toHaveBeenCalledWith({ type: 'remove_hub_member', hubPath: '/r/hub', memberPath: '/r/ada' });
   });
 });
+
+describe('FolderStore.searchCandidates', () => {
+  it('pages until the server reports the filtered order exhausted', async () => {
+    const store = new FolderStore();
+    const first = makeFolder({ path: '/r/a', name: 'a' });
+    const second = makeFolder({ path: '/r/b', name: 'b' });
+    routeSends({
+      list_folders: (cmd: any) =>
+        cmd.offset === 0
+          ? { success: true, data: { folders: [first], total: 2, orderToken: 'tok-2', more: true, epoch: 0 } }
+          : { success: true, data: { folders: [second], total: 2, orderToken: 'tok-2', more: false, epoch: 0 } },
+    });
+
+    const rows = await store.searchCandidates('x');
+
+    expect(rows.map((row) => row.path)).toEqual(['/r/a', '/r/b']);
+    expect(fakeConnection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'list_folders', query: 'x', includeArchived: true, offset: 0 }));
+    expect(fakeConnection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'list_folders', offset: 1, orderToken: 'tok-2' }));
+  });
+
+  it('returns folders that do not exist on disk yet', async () => {
+    const store = new FolderStore();
+    const virtual = makeFolder({ path: '/r/virtual', name: 'virtual', missing: true });
+    routeSends({ list_folders: () => okListFolders([virtual]) });
+
+    const rows = await store.searchCandidates('virt');
+
+    expect(rows.map((row) => row.path)).toEqual(['/r/virtual']);
+  });
+});

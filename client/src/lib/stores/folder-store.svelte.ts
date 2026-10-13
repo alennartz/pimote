@@ -225,17 +225,29 @@ export class FolderStore {
 
   private async fetchCandidates(query: string, generation: number): Promise<FolderInfo[]> {
     if (query === '') return [];
+    const rows: FolderInfo[] = [];
+    let offset = 0;
+    let orderToken: string | undefined;
     try {
-      // Archived rows count as discovered: a picker finds any folder, and
-      // the caller's eligibility filter keeps the final say.
-      const response = await connection.send({ type: 'list_folders', query, includeArchived: true });
-      if (generation !== this.candidateSearchGeneration || !response.success || !response.data) return [];
-      // Rows collapse onto the shared folder objects only — the window cache
-      // and the homepage filter state stay untouched.
-      return (response.data as ListFoldersResponseData).folders.map((row) => this.upsertFolder(row));
+      for (;;) {
+        // Archived rows count as discovered: a picker finds any folder, and
+        // the caller's eligibility filter keeps the final say.
+        const response = await connection.send({ type: 'list_folders', query, includeArchived: true, limit: 200, offset, ...(orderToken ? { orderToken } : {}) });
+        if (generation !== this.candidateSearchGeneration || !response.success || !response.data) return [];
+        const data = response.data as ListFoldersResponseData;
+        // Rows collapse onto the shared folder objects only — the window cache
+        // and the homepage filter state stay untouched.
+        rows.push(...data.folders.map((row) => this.upsertFolder(row)));
+        // Every match, not just one window: a picker must offer any folder the
+        // server lists, so follow the order token until the filtered order is
+        // exhausted.
+        if (!data.more || data.folders.length === 0) return rows;
+        orderToken = data.orderToken;
+        offset += data.folders.length;
+      }
     } catch (error) {
       console.error('[FolderStore] Failed to search candidates:', error);
-      return [];
+      return rows;
     }
   }
 

@@ -346,6 +346,21 @@ describe('FolderListing', () => {
   });
 
   describe('query semantics', () => {
+    it('search covers rows the registry lists even when no delta ever pinned them', async () => {
+      const { deps, state } = fakeWorld({ rows: [row('/w/alpha', { name: 'alpha' })] });
+      const service = new FolderListing(deps);
+      await warm(service);
+      // A source contribution lands in the listing between the pin snapshot
+      // and its delta broadcast (or with no delta at all): search must still
+      // cover the full server-side set.
+      state.rows = [...state.rows, row('/w/gamma', { name: 'gamma' })];
+
+      const matches = await service.query({ query: 'gamma' });
+
+      expect(paths(matches)).toEqual(['/w/gamma']);
+      expect(matches.total).toBe(1);
+    });
+
     it('filters the full pinned order, not just rows already fetched', async () => {
       const { deps } = fakeWorld({
         rows: [

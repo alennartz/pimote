@@ -212,6 +212,29 @@ describe('FolderRegistry.addMember', () => {
 
     expect(changes.some((change) => change.changedPaths.includes(hubPath))).toBe(true);
   });
+
+  it('accepts source-listed folders that are not on disk yet as members', async () => {
+    const virtualRepo = join(tempDir, 'virtual-repo');
+    const virtualHub = join(tempDir, 'virtual-hub');
+    const index = makeIndex();
+    index.registerSource({
+      id: 'src',
+      list: async () => [
+        { kind: 'repo', path: virtualRepo, name: 'virtual-repo', branch: null, dirty: false, ahead: 0, behind: 0 },
+        { kind: 'hub', path: virtualHub, name: 'virtual-hub', memberPaths: [repoA] },
+      ],
+    });
+    const registry = new FolderRegistry(index, storeDir, makeTree());
+    const hubPath = await makeHub(registry);
+
+    await registry.addMember(hubPath, virtualRepo);
+    await registry.addMember(hubPath, virtualHub);
+
+    expect(await findSymlinkTo(hubPath, virtualRepo)).toBeDefined();
+    expect(await findSymlinkTo(hubPath, virtualHub)).toBeDefined();
+    expect(await readHubAgents(hubPath)).toContain(seededMemberLine('virtual-repo', 'code'));
+    expect(await readHubAgents(hubPath)).toContain(seededMemberLine('virtual-hub', 'code'));
+  });
 });
 
 describe('FolderRegistry.removeMember', () => {

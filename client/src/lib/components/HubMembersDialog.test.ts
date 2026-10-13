@@ -125,6 +125,35 @@ describe('HubMembersDialog', () => {
     expect(checkboxRows().some((el) => el.textContent?.includes('ada'))).toBe(false);
   });
 
+  it('offers folders that are not on disk yet — every discovered folder is a member candidate', async () => {
+    const virtual = makeFolder({ path: '/w/virtual', name: 'virtual', missing: true });
+    folderStore.folders = [adaFolder, otherFolder, virtual];
+    destroy = render();
+    await tick();
+
+    expect(checkboxRow('virtual')).toBeTruthy();
+
+    checkboxRow('virtual').click();
+    await tick();
+    expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'add_hub_member', hubPath: '/w/stack', memberPath: '/w/virtual' }));
+  });
+
+  it('search reaches server-listed folders that are not on disk yet', async () => {
+    const virtual = makeFolder({ path: '/w/virtual', name: 'virtual', missing: true });
+    vi.mocked(connection.send).mockImplementation(async (command: any) => {
+      if (command.type === 'list_folders') return { id: '1', success: true, data: { folders: [virtual], more: false, orderToken: 'tok' } };
+      return { id: '1', success: true, data: {} };
+    });
+    destroy = render();
+    await tick();
+
+    const input = document.body.querySelector('input[placeholder="Search folders"]') as HTMLInputElement;
+    input.value = 'virt';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    await vi.waitFor(() => expect(shows('virtual')).toBe(true));
+  });
+
   it.each(['add_hub_member', 'remove_hub_member'])('shows a server rejection from %s', async (type) => {
     vi.mocked(connection.send).mockResolvedValue({ id: '1', success: false, error: 'Member change refused' });
     destroy = render();

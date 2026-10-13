@@ -190,6 +190,27 @@ describe('FolderCreatorWizard — boundaries and failures', () => {
     expect(checkboxRow('ada')).toBeTruthy();
   });
 
+  it('offers folders that are not on disk yet as hub members and sends them on create', async () => {
+    const virtual = makeFolder({ path: '/roots/virtual', name: 'virtual', missing: true });
+    folderStore.folders = [alpha, ada, virtual];
+    destroy = render();
+    await tick();
+    kindButton('code-hub').click();
+    await tick();
+    fillName('beta');
+    button('Next').click();
+    await tick();
+    expect(checkboxRow('virtual')).toBeTruthy();
+
+    checkboxRow('virtual').click();
+    button('Next').click();
+    await tick();
+    button('Create').click();
+    await vi.waitFor(() =>
+      expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'create_hub', root: '/roots', name: 'beta', memberPaths: ['/roots/virtual'] })),
+    );
+  });
+
   it('uses the selected configured root when two roots exist', async () => {
     folderStore.roots = ['/roots', '/other'];
     destroy = render();

@@ -84,11 +84,11 @@
 
   const effectiveRoot = $derived(selectedRoot || folderStore.roots[0] || '');
 
-  const eligibleMember = (folder: FolderInfo) => !folder.missing;
   const byDisplayName = (a: FolderInfo, b: FolderInfo) => displayName(a).localeCompare(displayName(b)) || a.path.localeCompare(b.path);
-  const memberCandidates = $derived([...folderStore.folders].filter(eligibleMember).sort(byDisplayName));
-  /** Server search results through the same eligibility and ordering as the rows. */
-  const searchMembers = (query: string) => folderStore.searchCandidates(query).then((rows) => rows.filter(eligibleMember).sort(byDisplayName));
+  /** Any folder the server lists is a valid member, on disk or not. */
+  const memberCandidates = $derived([...folderStore.folders].sort(byDisplayName));
+  /** Server search results through the same ordering as the rows. */
+  const searchMembers = (query: string) => folderStore.searchCandidates(query).then((rows) => rows.sort(byDisplayName));
 
   /** Selecting a kind resets the flow to its identity step. */
   function selectKind(next: WizardKind): void {

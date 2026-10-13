@@ -1,6 +1,8 @@
 <script lang="ts">
   import { connection } from '$lib/stores/connection.svelte.js';
   import { folderStore } from '$lib/stores/folder-store.svelte.js';
+  import { untrack } from 'svelte';
+  import type { FolderInfo } from '@pimote/shared';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -32,18 +34,36 @@
     if (!value) reset();
   }
 
-  // Client-side picker over discovered folders — independent of the
-  // homepage search so opening it never disturbs the list behind it. Persona
-  // folders match on their display name too.
-  const pickerFolders = $derived(
-    [...folderStore.folders]
-      .filter((folder) => {
-        const needle = query.trim().toLowerCase();
-        if (!needle) return true;
-        return folder.name.toLowerCase().includes(needle) || (folder.persona?.name ?? '').toLowerCase().includes(needle) || folder.path.toLowerCase().includes(needle);
-      })
-      .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path)),
-  );
+  // Picker over discovered folders — independent of the homepage search so
+  // opening it never disturbs the list behind it. A query is server-side over
+  // the full set (scanned and source-listed, on disk or not), so every folder
+  // the server knows is pickable regardless of the fetched window.
+  let results = $state<FolderInfo[]>([]);
+  let searching = $state(false);
+  let searchToken = 0;
+
+  const active = $derived(query.trim() !== '');
+  const pickerFolders = $derived(active ? results : [...folderStore.folders].sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path)));
+
+  /** A query replaces the shown set with the server matches. */
+  async function runSearch(): Promise<void> {
+    const token = ++searchToken;
+    if (!active) {
+      results = [];
+      searching = false;
+      return;
+    }
+    searching = true;
+    const found = await folderStore.searchCandidates(query);
+    if (token !== searchToken) return;
+    results = found;
+    searching = false;
+  }
+
+  $effect(() => {
+    query;
+    untrack(() => void runSearch());
+  });
 
   /** Persona folders lead with the persona's display name; code folders keep the basename. */
   function pickerLabel(folder: { name: string; persona?: { name?: string } }): string {
@@ -64,7 +84,7 @@
   <Dialog.Content class="sm:max-w-lg">
     <Dialog.Header>
       <Dialog.Title>Start a new session</Dialog.Title>
-      <Dialog.Description>Pick a folder, or create one above. Search is client-side over discovered folders.</Dialog.Description>
+      <Dialog.Description>Pick a folder, or create one above. Search covers every folder the server knows, including ones not on disk yet.</Dialog.Description>
     </Dialog.Header>
 
     <div class="flex flex-col gap-4">
@@ -74,7 +94,9 @@
         <Input bind:value={query} placeholder="Search folders" autofocus />
 
         <div class="border-border max-h-80 overflow-y-auto rounded-md border">
-          {#if pickerFolders.length === 0}
+          {#if searching}
+            <div class="text-muted-foreground px-3 py-6 text-center text-sm">Searching…</div>
+          {:else if pickerFolders.length === 0}
             <div class="text-muted-foreground px-3 py-6 text-center text-sm">No matching folders.</div>
           {:else}
             <div class="flex flex-col p-1">

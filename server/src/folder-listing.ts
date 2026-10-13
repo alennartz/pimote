@@ -92,8 +92,11 @@ export interface FolderListingService {
    *  attach owned pins to this connection. */
   releaseConnection(connectionId: string): void;
 
-  /** Serve one window under a pin. `query` filters the full pinned order —
-   *  never loaded rows only — with two OR'd, case-insensitive substring tiers:
+  /** Serve one window under a pin. `query` filters the full server-side set —
+   *  the pinned order plus any row the registry lists that never rode a delta
+   *  into the pin (appended at the tail, the position `buildDelta` gives
+   *  additions) — never loaded rows only, with two OR'd, case-insensitive
+   *  substring tiers:
    *  the folder tier matches display name (persona name if present, else folder
    *  name), name, path, tags and returns the row without `matchedSessionIds`;
    *  the session tier matches session `name`/`firstMessage` and returns
@@ -249,7 +252,14 @@ export class FolderListing implements FolderListingService {
     this.scheduleRefresh(currentRows);
     const byPath = new Map(currentRows.map((row) => [row.path, row]));
     const query = (req.query ?? '').toLowerCase();
-    const matches = (snapshot?.paths ?? []).flatMap((path) => {
+    // The searched order is the pin plus everything `listRows()` knows but the
+    // pin never received: a row can appear in the registry between a pin's
+    // snapshot and its delta broadcast (or with no delta at all), and search
+    // must still cover it. Tail placement matches `buildDelta`'s addition rule.
+    const pinned = snapshot?.paths ?? [];
+    const seen = new Set(pinned);
+    const searched = [...pinned, ...currentRows.map((row) => row.path).filter((path) => !seen.has(path))];
+    const matches = searched.flatMap((path) => {
       const row = byPath.get(path);
       if (!row || (row.archived && !req.includeArchived)) return [];
       const match = matchRow(row, metadata.get(path), query);

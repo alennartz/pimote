@@ -23,8 +23,9 @@
 
   const members = $derived(hub.members ?? []);
   const memberPaths = $derived(new Set(members.map((member) => member.path)));
-  /** Eligible as a member: not the hub, not already a member, present on disk. */
-  const eligible = (folder: FolderInfo) => folder.path !== hub.path && !memberPaths.has(folder.path) && !folder.missing;
+  /** Eligible as a member: not the hub, not already a member. A folder the
+   *  server lists qualifies whether or not it exists on disk yet. */
+  const eligible = (folder: FolderInfo) => folder.path !== hub.path && !memberPaths.has(folder.path);
   const candidates = $derived(folderStore.folders.filter(eligible));
   /** Server search results through the same eligibility filter as the rows. */
   const searchCandidates = (query: string) => folderStore.searchCandidates(query).then((rows) => rows.filter(eligible));

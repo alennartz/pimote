@@ -114,6 +114,10 @@ describe('folder picker', () => {
   });
 
   it('persona display names are discoverable in the picker search', async () => {
+    vi.mocked(connection.send).mockImplementation(async (command: any) => {
+      if (command.type === 'list_folders') return { id: '1', success: true, data: { folders: [persona], more: false, orderToken: 'tok' } };
+      return { id: '1', success: true, data: {} };
+    });
     destroy = render();
     await tick();
 
@@ -122,9 +126,31 @@ describe('folder picker', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }));
     await tick();
 
-    expect(shows('Ada')).toBe(true);
+    await vi.waitFor(() => expect(shows('Ada')).toBe(true));
     expect(shows('alpha')).toBe(false);
     expect(shows('No matching folders.')).toBe(false);
+    expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'list_folders', query: 'ada', includeArchived: true }));
+  });
+
+  it('searches the server and offers folders that are not on disk yet', async () => {
+    // Not in folderStore.folders — reachable only through the server search.
+    const virtual = makeFolder({ path: '/w/virtual', name: 'virtual', missing: true });
+    vi.mocked(connection.send).mockImplementation(async (command: any) => {
+      if (command.type === 'list_folders') return { id: '1', success: true, data: { folders: [virtual], more: false, orderToken: 'tok' } };
+      return { id: '1', success: true, data: {} };
+    });
+    destroy = render();
+    await tick();
+
+    const input = document.body.querySelector('input[placeholder="Search folders"]') as HTMLInputElement;
+    input.value = 'virt';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    await vi.waitFor(() => expect(shows('virtual')).toBe(true));
+    expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'list_folders', query: 'virt', includeArchived: true }));
+
+    rowButton('virtual').click();
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith({ type: 'open_session', folderPath: '/w/virtual' }));
   });
 });
 

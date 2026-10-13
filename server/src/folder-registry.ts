@@ -674,14 +674,17 @@ export class FolderRegistry implements FolderRegistryPort {
 
   /** Canonical path → nature over every discovered folder-model entry
    *  (`discoveredEntryNatures`: scan entries plus source personas), plus
-   *  every index path as `code` when neither holds it. The widened membership
-   *  rule: hub members are discovered entries (any nature), never arbitrary
-   *  filesystem paths. */
+   *  every index and source-hub path as `code` when neither holds it. The
+   *  widened membership rule: hub members are discovered entries (any nature,
+   *  on disk or not), never arbitrary filesystem paths. */
   private async discoveredNatures(): Promise<Map<string, 'code' | 'persona'>> {
     const sourcePersonas = new Map((await this.repos.listSourcePersonas()).map((entry) => [entry.path, entry]));
     const natures = discoveredEntryNatures(collectScanEntries(await this.tree.tree()), sourcePersonas);
     for (const repo of await this.repos.listLazy()) {
       if (!natures.has(repo.path)) natures.set(repo.path, 'code');
+    }
+    for (const hub of await this.repos.listSourceHubs()) {
+      if (!natures.has(hub.path)) natures.set(hub.path, 'code');
     }
     return natures;
   }
