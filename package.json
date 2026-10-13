@@ -1,6 +1,6 @@
 {
   "name": "@pimote/pimote",
-  "version": "0.15.0-rc.1",
+  "version": "0.15.0-rc.2",
   "description": "Web client and embedded server for pi with multi-session browser access, streaming, and extension UI support",
   "type": "module",
   "license": "MIT",
@@ -76,7 +76,7 @@
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^1.2.0",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
-    "@pimote/sdk": "^0.15.0-rc.1",
+    "@pimote/sdk": "^0.15.0-rc.2",
     "@streamparser/json": "^0.0.22",
     "jiti": "^2.7.0",
     "patch-package": "^8.0.1",
