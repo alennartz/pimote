@@ -12,9 +12,9 @@
   import { getExtensionUiQueue } from '$lib/stores/extension-ui-queue.svelte.js';
   import { getSessionPillSwipeHintShown, setSessionPillSwipeHintShown } from '$lib/stores/persistence.js';
   import { getSessionChipLabel, getSessionDisplayName } from '$lib/session-summary.js';
+  import { getSessionPillIconColor } from '$lib/session-pill-status.js';
   import { shouldOpenSessionPillActions } from './session-pill-gesture.js';
   import FolderNatureIcon, { folderIconKind } from './FolderNatureIcon.svelte';
-  import type { PerSessionState } from '$lib/stores/session-registry.svelte.js';
 
   const uiQueue = getExtensionUiQueue();
 
@@ -117,15 +117,6 @@
   function closeFromTray(sessionId: string) {
     mobileActionsSessionId = null;
     closeSession(sessionId);
-  }
-
-  /** Folder glyph color by session state — the palette the old status dot used.
-   *  Idle returns '' so the glyph inherits the chip's text color and toggles
-   *  with selection like the label does. */
-  function sessionStatusColor(session: PerSessionState, hasPendingUi: boolean): string {
-    if (hasPendingUi || session.needsAttention) return 'text-orange-500';
-    if (session.status === 'working') return 'text-emerald-500';
-    return '';
   }
 
   async function deleteActiveSession(sessionId: string) {
@@ -248,7 +239,7 @@
                 {/if}
                 <FolderNatureIcon
                   kind={folderIconKind(session.folder ?? { nature: 'code', shortcutCount: 0 })}
-                  class="relative size-4.5 {sessionStatusColor(session, hasPendingUi)}"
+                  class="relative size-4.5 {getSessionPillIconColor(session, hasPendingUi)}"
                   strokeWidth={2.75}
                 />
               </span>
