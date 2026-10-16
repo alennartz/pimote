@@ -36,7 +36,7 @@ jobs:
 
       - name: Smoke test packed install
         run: |
-          TARBALL=$(node -e "const { execFileSync } = require('node:child_process'); const out = execFileSync('npm', ['pack', '--ignore-scripts', '--json'], { encoding: 'utf8' }); const info = JSON.parse(out); console.log(info[0].filename);")
+          TARBALL=$(npm pack --ignore-scripts --silent)
           TMPDIR=$(mktemp -d)
           cp "$TARBALL" "$TMPDIR/"
           cd "$TMPDIR"
