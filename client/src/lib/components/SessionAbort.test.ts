@@ -112,6 +112,25 @@ describe('explicit session abort restoration', () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it('aborts from Escape when focus is outside the composer', async () => {
+    setupSession();
+    const send = vi.spyOn(connection, 'send').mockResolvedValue({ id: 'abort-1', success: true });
+    render();
+    await tick();
+
+    const unrelatedButton = document.createElement('button');
+    unrelatedButton.type = 'button';
+    document.body.appendChild(unrelatedButton);
+    unrelatedButton.focus();
+    expect(document.activeElement).toBe(unrelatedButton);
+
+    unrelatedButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await tick();
+
+    expect(send).toHaveBeenCalledExactlyOnceWith({ type: 'abort', sessionId: 's1' });
+    expect(document.activeElement).toBe(unrelatedButton);
+  });
+
   it('restores follow-ups without relying on the local steering list and keeps the draft across remounts', async () => {
     const session = setupSession();
     const send = vi.spyOn(connection, 'send').mockResolvedValue({ id: 'abort-1', success: true, data: { steering: [], followUp: ['first follow-up', 'second follow-up'] } });

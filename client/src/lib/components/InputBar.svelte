@@ -522,6 +522,16 @@
     });
   }
 
+  function handleWindowKeydown(e: KeyboardEvent) {
+    // Textareas handle Escape themselves so autocomplete keeps precedence and
+    // the abort command is sent only once. A window listener covers keyboard
+    // focus on every other element in the desktop session view.
+    if (e.key !== 'Escape' || e.defaultPrevented || isMobileViewport() || treeDialogStore.state.open || loginStore.state.flow !== 'idle' || !sessionRegistry.viewed?.isStreaming)
+      return;
+    e.preventDefault();
+    handleAbort();
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     // Intercept keys when autocomplete is visible
     if (autocompleteVisible && autocompleteRef) {
@@ -542,6 +552,7 @@
       }
       if (e.key === 'Escape') {
         e.preventDefault();
+        e.stopPropagation();
         autocompleteRef.dismiss();
         return;
       }
@@ -549,6 +560,7 @@
 
     if (e.key === 'Escape' && sessionRegistry.viewed?.isStreaming) {
       e.preventDefault();
+      e.stopPropagation();
       handleAbort();
       return;
     }
@@ -559,6 +571,8 @@
     }
   }
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <div class="border-border bg-background relative shrink-0 border-t px-3 pt-2 pb-[max(env(safe-area-inset-bottom),8px)]">
   <div class="mx-auto flex max-w-3xl items-end gap-2">
