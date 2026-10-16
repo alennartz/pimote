@@ -148,7 +148,6 @@ beforeEach(() => {
   folderStore.folders = [alpha];
   folderStore.loading = false;
   folderStore.showArchived = false;
-  folderStore.repos = [];
   folderStore.roots = [];
   folderStore.sessions.clear();
   folderStore.sessions.set(alpha.path, [idleSession, activeSession]);
@@ -466,44 +465,15 @@ describe('chips and tags', () => {
   });
 });
 
-describe('hub dialogs', () => {
-  it('the create-hub dialog sends create_hub with root and memberPaths', async () => {
-    folderStore.roots = ['/roots'];
-    folderStore.repos = [memberRepo];
-    vi.mocked(connection.send).mockImplementation(async (command: any) => {
-      if (command.type === 'list_repos') return { id: '1', success: true, data: { repos: [memberRepo] } };
-      return { id: '1', success: true, data: {} };
-    });
+describe('folder actions menu', () => {
+  it('does not offer the legacy create-hub action', async () => {
     destroy = render();
     await tick();
 
     (target.querySelector('button[title="More folder actions"]') as HTMLElement).click();
     await tick();
-    const createItem = [...document.querySelectorAll('[data-slot="dropdown-menu-item"]')].find((el) => el.textContent?.includes('Create hub…'));
-    expect(createItem).toBeDefined();
-    createItem!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    await tick();
 
-    const input = document.body.querySelector('input[placeholder="Hub name"]') as HTMLInputElement;
-    input.value = 'stack2';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    await tick();
-
-    const rootButton = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.includes('/roots'));
-    expect(rootButton).toBeDefined();
-    rootButton!.click();
-    await tick();
-
-    const memberButton = [...document.body.querySelectorAll('button')].find((b) => b.querySelector('input[type="checkbox"]') && b.textContent?.includes('one'));
-    expect(memberButton).toBeDefined();
-    memberButton!.click();
-    await tick();
-
-    const createButton = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Create hub');
-    expect(createButton).toBeDefined();
-    createButton!.click();
-
-    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith({ type: 'create_hub', name: 'stack2', root: '/roots', memberPaths: ['/w/one'] }));
+    expect([...document.querySelectorAll('[data-slot="dropdown-menu-item"]')].some((item) => item.textContent?.includes('Create hub'))).toBe(false);
   });
 });
 

@@ -1,11 +1,9 @@
-// FolderStore — manages folder, repo, and session listing
+// FolderStore — manages folder and session listing
 import type {
   ListFoldersResponseData,
-  ListReposResponseData,
   FolderInfo,
   FoldersChangedEvent,
   PimoteEvent,
-  RepoInfo,
   SessionInfo,
   SessionStateChangedEvent,
   SessionDeletedEvent,
@@ -69,7 +67,6 @@ export class FolderStore {
    *  session payloads) collapses onto one object per path, so holders such
    *  as open sessions keep a stable pointer and see metadata updates. */
   private folderByKey = $state(new SvelteMap<string, FolderInfo>());
-  repos: RepoInfo[] = $state([]);
   roots: string[] = $state([]);
   sessions = $state(new SvelteMap<string, SessionInfo[]>());
   loading: boolean = $state(false);
@@ -99,7 +96,6 @@ export class FolderStore {
   private searchWaiters: Array<() => void> = [];
   private candidateSearchTimer: ReturnType<typeof setTimeout> | null = null;
   private candidateSearchGeneration = 0;
-  private reposLoadInFlight: Promise<void> | null = null;
   private sessionLoadsInFlight: Map<string, InFlightSessionLoad> = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
   private nextSessionRequestId = 0;
   /** Newest wire epoch seen. Older response computations cannot overwrite deltas. */
@@ -404,23 +400,6 @@ export class FolderStore {
       this.queryMatchPaths = [...new Set([...this.queryMatchPaths, ...rows.map((row) => row.path)])]; // eslint-disable-line svelte/prefer-svelte-reactivity -- local deduplication, result stored as reactive array
       for (const row of rows) this.querySessionMatches.set(row.path, row.matchedSessionIds);
     }
-  }
-
-  /** Single-flight: branch chips and missing-detection read this listing. */
-  loadRepos(): Promise<void> {
-    this.reposLoadInFlight ??= (async () => {
-      try {
-        const response = await connection.send({ type: 'list_repos' });
-        if (response.success && response.data) {
-          this.repos = (response.data as ListReposResponseData).repos;
-        }
-      } catch (e) {
-        console.error('[FolderStore] Failed to load repos:', e);
-      } finally {
-        this.reposLoadInFlight = null;
-      }
-    })();
-    return this.reposLoadInFlight;
   }
 
   /**

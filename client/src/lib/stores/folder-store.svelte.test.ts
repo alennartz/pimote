@@ -415,7 +415,6 @@ describe('FolderStore', () => {
       const folders = [makeFolder({ path: '/r/a', name: 'a' })];
       routeSends({
         list_folders: () => okListFolders(folders),
-        list_repos: () => ({ success: true, data: { repos: [] } }),
         list_sessions: () => ({ success: true, data: { sessions: [] } }),
       });
       await store.loadFolders();
@@ -454,7 +453,6 @@ describe('FolderStore', () => {
     it('reconnect loads list_folders exactly once per connection', async () => {
       routeSends({
         list_folders: () => okListFolders([makeFolder({ path: '/r/a', name: 'a' })]),
-        list_repos: () => ({ success: true, data: { repos: [] } }),
         list_sessions: () => ({ success: true, data: { sessions: [] } }),
       });
       // The disconnect listeners reach the module-scope singleton only.
@@ -473,7 +471,6 @@ describe('FolderStore', () => {
     it('refetches after a disconnect invalidates the connection', async () => {
       routeSends({
         list_folders: () => okListFolders([makeFolder({ path: '/r/a', name: 'a' })]),
-        list_repos: () => ({ success: true, data: { repos: [] } }),
         list_sessions: () => ({ success: true, data: { sessions: [] } }),
       });
       expect(disconnectListeners.size).toBeGreaterThan(0);
@@ -685,7 +682,7 @@ describe('FolderStore', () => {
         const match = makeFolder({ path: '/r/far', name: 'unrelated', matchedSessionIds: ['matched'] });
         store.folders = [cached];
         store.sessions.set(match.path, [makeSession('matched', '2024-01-01T00:00:00Z'), makeSession('other', '2024-01-01T00:00:00Z')]);
-        routeSends({ list_folders: () => okListFolders([match]), list_repos: () => ({ success: true, data: { repos: [] } }) });
+        routeSends({ list_folders: () => okListFolders([match]) });
         const search = store.search('needle');
         void search.catch(() => {}); // attach immediately while fake timers advance
         await vi.advanceTimersByTimeAsync(250);
@@ -730,7 +727,7 @@ describe('FolderStore', () => {
     it('failed continuation preserves rows and can retry the same window', async () => {
       const store = new FolderStore();
       const a = makeFolder({ path: '/r/a', name: 'a' });
-      routeSends({ list_folders: () => okListFolders([a], [], { more: true, total: 2 }), list_repos: () => ({ success: true, data: { repos: [] } }) });
+      routeSends({ list_folders: () => okListFolders([a], [], { more: true, total: 2 }) });
       await store.ensureLoaded();
       fakeConnection.send.mockRejectedValueOnce(new Error('offline'));
       await store.fetchNextWindow();
@@ -766,19 +763,6 @@ describe('FolderStore', () => {
       } finally {
         vi.useRealTimers();
       }
-    });
-  });
-
-  describe('loadRepos', () => {
-    it('populates the repo index for create/manage flows', async () => {
-      const store = new FolderStore();
-      const repos = [{ path: '/r/a', name: 'a', branch: 'main', dirty: false, ahead: 0, behind: 0 }];
-      routeSends({ list_repos: () => ({ success: true, data: { repos } }) });
-
-      await store.loadRepos();
-
-      expect(fakeConnection.send).toHaveBeenCalledWith({ type: 'list_repos' });
-      expect(store.repos).toEqual(repos);
     });
   });
 

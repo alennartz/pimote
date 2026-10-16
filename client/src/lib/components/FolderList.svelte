@@ -13,7 +13,6 @@
   import Archive from '@lucide/svelte/icons/archive';
   import EllipsisVertical from '@lucide/svelte/icons/ellipsis-vertical';
   import FilePen from '@lucide/svelte/icons/file-pen';
-  import FolderIcon from '@lucide/svelte/icons/folder';
   import Loader2 from '@lucide/svelte/icons/loader-2';
   import Network from '@lucide/svelte/icons/network';
   import Plus from '@lucide/svelte/icons/plus';
@@ -100,14 +99,6 @@
   }
 
   let showArchiveAllDialog = $state(false);
-
-  // Create hub flow state
-  let showHubDialog = $state(false);
-  let hubName = $state('');
-  let hubRoot = $state('');
-  let hubMembers = new SvelteSet<string>();
-  let hubError = $state('');
-  let hubCreating = $state(false);
 
   // Hub members dialog state. The row is re-derived from the store on every
   // delta, so membership changes reach the open dialog.
@@ -253,7 +244,6 @@
       return total + sessions.filter((s) => !s.archived && !s.liveStatus).length;
     }, 0),
   );
-  const hubCandidateRepos = $derived(folderStore.repos.filter((repo) => !repo.missing));
 
   // Session/folder events are routed into the store at module scope
   // (folder-store.svelte.ts) for the app's lifetime, not per-mount.
@@ -294,13 +284,6 @@
     } else {
       expandedSessionLists.add(path);
     }
-  }
-
-  function validateFolderName(name: string): string | null {
-    if (!name.trim()) return 'Name is required';
-    if (name.includes('/') || name.includes('\\')) return 'Name cannot contain path separators';
-    if (name === '.' || name === '..') return 'Invalid name';
-    return null;
   }
 
   /** Open attempt against a (possibly virtual) folder: the server awaits the
@@ -360,67 +343,6 @@
       openError = e instanceof Error ? e.message : 'Failed to update folder';
     }
   }
-
-  function openHubDialog() {
-    hubName = '';
-    hubRoot = '';
-    hubError = '';
-    hubCreating = false;
-    hubMembers.clear();
-    showHubDialog = true;
-    void folderStore.loadRepos();
-  }
-
-  function handleHubDialogOpenChange(open: boolean) {
-    showHubDialog = open;
-    if (!open) {
-      hubName = '';
-      hubRoot = '';
-      hubError = '';
-      hubCreating = false;
-      hubMembers.clear();
-    }
-  }
-
-  function toggleHubMember(path: string) {
-    if (hubMembers.has(path)) {
-      hubMembers.delete(path);
-    } else {
-      hubMembers.add(path);
-    }
-  }
-
-  async function createHub() {
-    const name = hubName.trim();
-    const validationError = validateFolderName(name) ?? (!hubRoot ? 'Choose a root folder' : null) ?? (hubMembers.size === 0 ? 'Select at least one member repository' : null);
-    if (validationError) {
-      hubError = validationError;
-      return;
-    }
-
-    hubCreating = true;
-    hubError = '';
-
-    try {
-      const response = await connection.send({
-        type: 'create_hub',
-        name,
-        root: hubRoot,
-        memberPaths: [...hubMembers],
-      });
-
-      if (!response.success) {
-        hubError = response.error ?? 'Failed to create hub';
-        hubCreating = false;
-        return;
-      }
-
-      handleHubDialogOpenChange(false);
-    } catch (e) {
-      hubError = e instanceof Error ? e.message : 'Failed to create hub';
-      hubCreating = false;
-    }
-  }
 </script>
 
 <div class="flex flex-col gap-2 p-2 max-md:p-0">
@@ -450,10 +372,6 @@
         </DropdownMenuTrigger>
         <DropdownMenuPortal>
           <DropdownMenuContent class="w-52" align="end">
-            <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || folderStore.roots.length === 0} onSelect={() => openHubDialog()}>
-              <Network class="size-4" />
-              Create hub…
-            </DropdownMenuItem>
             <DropdownMenuItem class="gap-2" disabled={connection.status !== 'connected' || archivableCount === 0} onSelect={() => (showArchiveAllDialog = true)}>
               <Archive class="size-4" />
               Archive all inactive…
@@ -773,108 +691,6 @@
       <Button variant="outline" onclick={() => (showArchiveAllDialog = false)}>Cancel</Button>
       <Button onclick={archiveAll}>Archive {archivableCount} session{archivableCount !== 1 ? 's' : ''}</Button>
     </Dialog.Footer>
-  </Dialog.Content>
-</Dialog.Root>
-
-<Dialog.Root open={showHubDialog} onOpenChange={handleHubDialogOpenChange}>
-  <Dialog.Content class="sm:max-w-lg">
-    <Dialog.Header>
-      <Dialog.Title>Create hub</Dialog.Title>
-      <Dialog.Description>Creates a hub folder with symlinks to each member repository and an AGENTS.md naming the members.</Dialog.Description>
-    </Dialog.Header>
-
-    <div class="flex flex-col gap-4">
-      <Input
-        bind:value={hubName}
-        placeholder="Hub name"
-        disabled={hubCreating}
-        onkeydown={(e) => {
-          if (e.key === 'Enter') void createHub();
-        }}
-      />
-
-      <div class="flex flex-col gap-1.5">
-        <div class="text-muted-foreground text-xs font-medium">Root folder</div>
-        {#if folderStore.roots.length === 0}
-          <div class="text-muted-foreground px-3 py-2 text-sm">No roots configured.</div>
-        {:else}
-          <div class="border-border max-h-36 overflow-y-auto rounded-md border">
-            <div class="flex flex-col p-1">
-              {#each folderStore.roots as root (root)}
-                <button
-                  class="hover:bg-accent hover:text-accent-foreground flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors {hubRoot === root
-                    ? 'bg-accent text-accent-foreground'
-                    : ''}"
-                  disabled={hubCreating}
-                  onclick={() => (hubRoot = root)}
-                >
-                  <FolderIcon class="text-muted-foreground size-4 shrink-0" />
-                  <span class="min-w-0 flex-1 truncate">{root}</span>
-                  {#if hubRoot === root}
-                    <span class="text-primary size-2 shrink-0 rounded-full"></span>
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          </div>
-        {/if}
-      </div>
-
-      <div class="flex flex-col gap-1.5">
-        <div class="text-muted-foreground text-xs font-medium">Member repositories</div>
-        {#if hubCandidateRepos.length === 0}
-          <div class="text-muted-foreground px-3 py-2 text-sm">
-            {#if folderStore.repos.length === 0}
-              No repositories discovered yet.
-            {:else}
-              No available repositories — all discovered repos are missing on disk.
-            {/if}
-          </div>
-        {:else}
-          <div class="border-border max-h-60 overflow-y-auto rounded-md border">
-            <div class="flex flex-col p-1">
-              {#each hubCandidateRepos as repo (repo.path)}
-                {@const selected = hubMembers.has(repo.path)}
-                <button
-                  class="hover:bg-accent hover:text-accent-foreground flex items-center gap-2 rounded-md px-3 py-2 text-left transition-colors {selected
-                    ? 'bg-accent text-accent-foreground'
-                    : ''}"
-                  disabled={hubCreating}
-                  onclick={() => toggleHubMember(repo.path)}
-                >
-                  <input type="checkbox" checked={selected} class="pointer-events-none" tabindex={-1} />
-                  <div class="min-w-0 flex-1">
-                    <div class="truncate text-sm font-medium">{repo.name}</div>
-                    <div class="text-muted-foreground truncate text-xs">{repo.path}</div>
-                  </div>
-                  {#if repo.branch}
-                    <span class="text-muted-foreground shrink-0 text-xs">{repo.branch}</span>
-                  {/if}
-                  <span class="size-1.5 shrink-0 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}
-                  ></span>
-                </button>
-              {/each}
-            </div>
-          </div>
-        {/if}
-      </div>
-
-      {#if hubError}
-        <p class="text-destructive text-sm">{hubError}</p>
-      {/if}
-
-      <Dialog.Footer>
-        <Button variant="outline" onclick={() => handleHubDialogOpenChange(false)} disabled={hubCreating}>Cancel</Button>
-        <Button onclick={() => void createHub()} disabled={hubCreating || !hubName.trim() || !hubRoot || hubMembers.size === 0}>
-          {#if hubCreating}
-            <Loader2 class="size-4 animate-spin" />
-            Creating…
-          {:else}
-            Create hub
-          {/if}
-        </Button>
-      </Dialog.Footer>
-    </div>
   </Dialog.Content>
 </Dialog.Root>
 

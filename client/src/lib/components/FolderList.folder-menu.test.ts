@@ -96,7 +96,6 @@ beforeEach(() => {
   folderStore.folders = [alpha];
   folderStore.loading = false;
   folderStore.showArchived = false;
-  folderStore.repos = [];
   folderStore.roots = [];
   folderStore.sessions.clear();
 });
