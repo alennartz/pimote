@@ -2,14 +2,14 @@
 
 import { copyFile, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pathParts = packageRoot.split('/node_modules/');
-const installRoot = pathParts.length > 1 ? pathParts[0] : packageRoot;
+const isInstalledPackage = pathParts.length > 1;
+const installRoot = isInstalledPackage ? pathParts[0] : packageRoot;
 const patchDir = join(packageRoot, 'patches');
-const patchPackageEntrypoint = join(installRoot, 'node_modules', 'patch-package', 'index.js');
 
 async function listPatchFiles(dir) {
   try {
@@ -35,31 +35,40 @@ function parsePatchFilename(fileName) {
   return { name: stem.slice(0, versionStart), version: stem.slice(versionStart + 1) };
 }
 
+async function readBundledDependencies() {
+  try {
+    const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
+    const bundled = manifest.bundleDependencies ?? manifest.bundledDependencies;
+    return new Set(Array.isArray(bundled) ? bundled : []);
+  } catch {
+    return new Set();
+  }
+}
+
 /**
- * patch-package exits 0 when a patch file names a version that is not
- * installed, so the error stays silent. Check every patch file against the
- * installed package version and report mismatches before applying anything.
- * A patch whose target package is not installed at all is excluded: a
- * production install of the published package bundles client-only
- * dependencies (streaming-markdown) into client/build, so they have nothing
- * to act on there. patch-package applies every file in the patch dir and
- * exits non-zero on such files when it detects CI, so only applicable
- * patches reach it (see main()).
+ * A published package must patch only dependencies it carries in its own
+ * bundle. A source checkout may patch its workspace dependencies for builds.
  */
-async function checkPatchTargets(patchFiles) {
+async function checkPatchTargets(
+  patchFiles,
+  { packageRoot: targetRoot = packageRoot, isInstalledPackage: targetIsInstalledPackage = isInstalledPackage, bundledDependencies = new Set() } = {},
+) {
   const mismatches = [];
   const applicable = [];
   for (const fileName of patchFiles) {
     const { name, version } = parsePatchFilename(fileName);
-    const installed = await readInstalledVersion(name);
+    if (targetIsInstalledPackage && !bundledDependencies.has(name)) {
+      console.log(`[pimote] ${fileName}: ${name} is not bundled with Pimote; skipping`);
+      continue;
+    }
+
+    const installed = await readInstalledVersion(name, targetRoot);
     if (installed === undefined) {
       console.log(`[pimote] ${fileName}: ${name} is not installed here; skipping`);
       continue;
     }
     if (installed !== version) {
-      mismatches.push(
-        `[pimote] ${fileName}: patch targets ${name}@${version}, but installed version is ${installed}`,
-      );
+      mismatches.push(`[pimote] ${fileName}: patch targets ${name}@${version}, but installed version is ${installed}`);
       continue;
     }
     applicable.push(fileName);
@@ -67,18 +76,22 @@ async function checkPatchTargets(patchFiles) {
   return { mismatches, applicable };
 }
 
-async function readInstalledVersion(name) {
-  const candidates = [
-    join(installRoot, 'node_modules', name, 'package.json'),
-    join(packageRoot, 'node_modules', name, 'package.json'),
-  ];
-  for (const manifestPath of candidates) {
-    try {
-      const manifest = await readFile(manifestPath, 'utf8');
-      return JSON.parse(manifest).version;
-    } catch {
-      // Not at this location; try the next candidate.
-    }
+async function readInstalledVersion(name, targetRoot = packageRoot) {
+  // Never fall back to the consumer's node_modules. That tree can contain a
+  // different package that Pimote does not own.
+  const manifestPath = join(targetRoot, 'node_modules', name, 'package.json');
+  try {
+    const manifest = await readFile(manifestPath, 'utf8');
+    return JSON.parse(manifest).version;
+  } catch {
+    return undefined;
+  }
+}
+
+async function findPatchPackageEntrypoint(targetRoot = packageRoot, targetInstallRoot = installRoot) {
+  const candidates = [join(targetRoot, 'node_modules', 'patch-package', 'index.js'), join(targetInstallRoot, 'node_modules', 'patch-package', 'index.js')];
+  for (const candidate of candidates) {
+    if (await exists(candidate)) return candidate;
   }
   return undefined;
 }
@@ -98,7 +111,12 @@ async function main() {
     return;
   }
 
-  const { mismatches, applicable } = await checkPatchTargets(patchFiles);
+  const bundledDependencies = await readBundledDependencies();
+  const { mismatches, applicable } = await checkPatchTargets(patchFiles, {
+    packageRoot,
+    isInstalledPackage,
+    bundledDependencies,
+  });
   if (mismatches.length > 0) {
     for (const mismatch of mismatches) {
       console.error(mismatch);
@@ -112,21 +130,21 @@ async function main() {
     return;
   }
 
-  if (!(await exists(patchPackageEntrypoint))) {
-    throw new Error(`[pimote] Could not find patch-package at ${patchPackageEntrypoint}`);
+  const patchPackageEntrypoint = await findPatchPackageEntrypoint(packageRoot, installRoot);
+  if (!patchPackageEntrypoint) {
+    throw new Error(`[pimote] Could not find patch-package for ${packageRoot}`);
   }
 
   // patch-package applies every file in --patch-dir and exits non-zero on CI
   // when a file names a missing package. Hand it only the applicable patches,
-  // copied into a temp dir beside the install root (--patch-dir must be a
-  // path relative to the working directory).
-  const filteredDir = await mkdtemp(join(installRoot, 'pimote-patches-'));
+  // copied into a temp dir inside Pimote's package root.
+  const filteredDir = await mkdtemp(join(packageRoot, '.pimote-patches-'));
   try {
     for (const fileName of applicable) {
       await copyFile(join(patchDir, fileName), join(filteredDir, fileName));
     }
     const result = spawnSync(process.execPath, [patchPackageEntrypoint, '--patch-dir', basename(filteredDir)], {
-      cwd: installRoot,
+      cwd: packageRoot,
       stdio: 'inherit',
     });
 
@@ -138,7 +156,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+export { checkPatchTargets, parsePatchFilename, readInstalledVersion };
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}

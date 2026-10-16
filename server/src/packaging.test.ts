@@ -44,8 +44,10 @@ function runtimeBareImports(source: string): string[] {
 }
 
 describe('packed root package declares all server runtime dependencies', () => {
+  const rootPackagePath = join(serverSrcDir, '..', '..', 'package.json');
+
   it('every bare import in server/src is in the root package.json dependencies', async () => {
-    const rootPackageJson = JSON.parse(await readFile(join(serverSrcDir, '..', '..', 'package.json'), 'utf-8')) as { dependencies: Record<string, string> };
+    const rootPackageJson = JSON.parse(await readFile(rootPackagePath, 'utf-8')) as { dependencies: Record<string, string> };
     const declared = new Set(Object.keys(rootPackageJson.dependencies));
 
     const files = await listSourceFiles(serverSrcDir);
@@ -65,5 +67,20 @@ describe('packed root package declares all server runtime dependencies', () => {
     }
 
     expect([...undeclared.entries()].map(([spec, files]) => `${spec} (${files.join(', ')})`)).toEqual([]);
+  });
+
+  it('bundles the exact pi runtime targeted by the settlement patch', async () => {
+    const rootPackageJson = JSON.parse(await readFile(rootPackagePath, 'utf-8')) as {
+      dependencies: Record<string, string>;
+      bundleDependencies: string[];
+    };
+    const piPackage = '@earendil-works/pi-coding-agent';
+    const piVersion = rootPackageJson.dependencies[piPackage];
+
+    expect(piVersion).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(rootPackageJson.bundleDependencies).toContain(piPackage);
+
+    const patchFiles = await readdir(join(serverSrcDir, '..', '..', 'patches'));
+    expect(patchFiles).toContain(`@earendil-works+pi-coding-agent+${piVersion}.patch`);
   });
 });

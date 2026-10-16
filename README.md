@@ -145,7 +145,7 @@ Network drops are handled transparently. The server buffers recent events per se
 
 - **Node.js** ≥ 22
 - **npm** ≥ 10
-- At least one LLM provider configured (pi is bundled as a dependency)
+- At least one LLM provider configured (Pimote bundles its pinned pi runtime)
 - **`fd`** (fd-find) — optional, enables `@` file-path autocomplete in the composer. If absent, autocomplete returns no suggestions and Pimote shows a one-time warning toast; everything else works normally.
 
 ## Install

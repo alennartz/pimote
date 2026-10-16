@@ -100,7 +100,7 @@ Published `@pimote/sdk` extensibility package that pi extensions import to talk 
 
 The server's `sdk-twins.ts` asserts compile-time equality between SDK and Protocol types.
 
-The npm package is the authoring surface for extension developers. The app bundles its own copy (`bundleDependencies`), so the packed install never resolves the SDK from the registry, and the server's folder-source loader pins user-module `@pimote/sdk` imports to that bundled copy.
+The npm package is the authoring surface for extension developers. The app bundles its own copies (`bundleDependencies`) of the SDK and pinned pi runtime, so the packed install never resolves them from the consumer's tree. The server's folder-source loader pins user-module `@pimote/sdk` imports to that bundled copy.
 
 **Dependencies:** pi SDK extension APIs
 

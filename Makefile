@@ -112,6 +112,7 @@ check:
 test:
 	npm run test --workspace=@pimote/server -- --run
 	npm run test --workspace=client -- --run
+	npm run test:patches
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
