@@ -264,7 +264,7 @@ File: `server/src/session-manager.ts`.
 - Update the `onSlotEvicted` doc comment: consumers notify every observer of the evicted slot.
 
 **Verify:** `server/src/session-observers.test.ts` passes all six tests. `server/src/session-manager.test.ts`, `server/src/session-manager-open-session.test.ts`, and `server/src/extension-ui-bridge.test.ts` pass.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Voice call holder
 

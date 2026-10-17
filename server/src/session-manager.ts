@@ -15,6 +15,7 @@ import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, Down
 import type { PushNotificationPayload, PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import type { PanelMessage } from './panel-state.js';
+import { askActivity } from '@pimote/sdk/activity';
 import { getGitBranch } from './git-branch.js';
 import { LoginOrchestrator } from './login-orchestrator.js';
 import { createVoiceExtension } from './voice/index.js';
@@ -96,8 +97,17 @@ export interface ManagedSlot {
 // ---- Slot-based helpers (operate on ManagedSlot) ----
 
 /** Send one session event to every live observer. */
-export function sendSlotEvent(_slot: ManagedSlot, _event: PimoteEvent): void {
-  throw new Error('not implemented');
+export function sendSlotEvent(slot: ManagedSlot, event: PimoteEvent, options?: { exceptClientId?: string }): void {
+  for (const observer of slot.observers.values()) {
+    if (observer.clientId === options?.exceptClientId) continue;
+    if (!observer.ws || observer.ws.readyState !== 1) continue;
+    try {
+      observer.ws.send(JSON.stringify(event));
+      if ('cursor' in event && typeof event.cursor === 'number') observer.cursor = event.cursor;
+    } catch {
+      // WebSocket send failed — ignore (client disconnecting)
+    }
+  }
 }
 
 /** Dependencies for routing one extension download update to its owning client. */
@@ -197,12 +207,12 @@ export function waitForSlotUiResponse(slot: ManagedSlot, requestId: string, requ
 }
 
 /** Resolve a specific pending UI response by requestId. */
-export function resolveSlotPendingUi(slot: ManagedSlot, requestId: string, value: unknown): void {
+export function resolveSlotPendingUi(slot: ManagedSlot, requestId: string, value: unknown): boolean {
   const pending = slot.sessionState.pendingUiResponses.get(requestId);
-  if (pending) {
-    slot.sessionState.pendingUiResponses.delete(requestId);
-    pending.resolve(value);
-  }
+  if (!pending) return false;
+  slot.sessionState.pendingUiResponses.delete(requestId);
+  pending.resolve(value);
+  return true;
 }
 
 /** Resolve all pending UI responses with undefined. Used on abort, session close, or session reset. */
@@ -214,9 +224,9 @@ export function resolveAllSlotPendingUi(slot: ManagedSlot): void {
 }
 
 /** Re-send all pending UI request events to the current client. Called on reconnect to recover lost dialogs. */
-export function replaySlotPendingUiRequests(slot: ManagedSlot): void {
+export function replaySlotPendingUiRequests(slot: ManagedSlot, send: (event: PimoteEvent) => void): void {
   for (const [, pending] of slot.sessionState.pendingUiResponses) {
-    sendSlotEvent(slot, pending.event);
+    send(pending.event);
   }
 }
 
@@ -392,9 +402,8 @@ export class PimoteSessionManager {
    *  (e.g. `VoiceOrchestrator.endCall`) while the session is still addressable. */
   onBeforeSessionClose?: (sessionId: string, folderPath: string) => Promise<void> | void;
   /** Fired when a re-key collision evicts the slot currently holding the target
-   *  session ID, BEFORE that slot is closed. Consumers notify the evicted slot's
-   *  owning client (e.g. a `session_closed`/displaced event) while it is still
-   *  addressable via getSlot. */
+   *  session ID, BEFORE that slot is closed. Consumers notify every observer of
+   *  the evicted slot while it is still addressable via getSlot. */
   onSlotEvicted?: (sessionId: string) => void;
 
   private readonly staticHostFactory?: ExtensionFactory;
@@ -690,17 +699,20 @@ export class PimoteSessionManager {
   }
 
   /** The single "session was replaced" business operation. Reconciles the session
-   *  map (rebuild state, evict any collision, re-key) ALWAYS — regardless of whether
-   *  a client owns the slot — so a reset triggered with no live owner can never leave
-   *  the map keyed under a stale ID. Then notifies whatever connection currently owns
-   *  the slot (never the issuer). All reset entry points (newSession/fork/navigateTree/
+   *  map (rebuild state, evict any collision, re-key) ALWAYS, so a reset triggered
+   *  with no live observer can never leave the map keyed under a stale ID. Then
+   *  notifies every observer. All reset entry points (newSession/fork/navigateTree/
    *  switchSession, via WS commands or extension command-context) funnel here. */
   async applySessionReset(slot: ManagedSlot): Promise<void> {
     const newId = slot.runtime.session.sessionId;
     const oldId = slot.sessionState.id;
+    const observers = [...slot.observers.values()];
 
     // navigateTree stays in the same file — same session ID, nothing to re-key.
     if (newId === oldId) {
+      for (const observer of observers) {
+        await observer.onSessionReset?.(slot, { kind: 'unchanged' });
+      }
       return;
     }
 
@@ -722,6 +734,10 @@ export class PimoteSessionManager {
     }
 
     this.reKeySession(slot, oldId, newId);
+
+    for (const observer of observers) {
+      await observer.onSessionReset?.(slot, { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath });
+    }
   }
 
   /** Rebuild a slot's SessionState after session replacement.
@@ -752,13 +768,15 @@ export class PimoteSessionManager {
   }
 
   /** Attach or replace one observer for a live session. */
-  async attachObserver(_sessionId: string, _observer: SessionObserver): Promise<void> {
-    throw new Error('not implemented');
+  async attachObserver(sessionId: string, observer: SessionObserver): Promise<void> {
+    const slot = this.sessions.get(sessionId);
+    if (!slot) throw new Error(`Session not found: ${sessionId}`);
+    slot.observers.set(observer.clientId, observer);
   }
 
   /** Detach one observer from a live session. */
-  detachObserver(_sessionId: string, _clientId: string): void {
-    throw new Error('not implemented');
+  detachObserver(sessionId: string, clientId: string): void {
+    this.sessions.get(sessionId)?.observers.delete(clientId);
   }
 
   /** Alias for getSession that returns null (not undefined) for consumers
@@ -785,8 +803,51 @@ export class PimoteSessionManager {
     return Array.from(this.sessions.values());
   }
 
-  startIdleCheck(_idleTimeout: number, _isClientConnected?: (clientId: string) => boolean): void {
-    throw new Error('not implemented');
+  startIdleCheck(idleTimeout: number, _isClientConnected?: (clientId: string) => boolean): void {
+    this.stopIdleCheck();
+
+    this.idleCheckHandle = setInterval(() => {
+      for (const [sessionId, slot] of this.sessions) {
+        if (slot.sessionState.treeNavigationInProgress) {
+          continue;
+        }
+
+        const hasObservers = slot.observers.size > 0;
+        // Only idle (non-streaming) sessions are eligible for reaping. `idleSince` is set on
+        // `agent_settled` and cleared on `agent_start`, so a working session can never be
+        // reaped here, regardless of how long a client has been connected. A standalone bash
+        // command does not change the agent-level status, so guard both native execution and
+        // the short extension-admission window explicitly as well. Finally, extensions holding
+        // live background work answer the synchronous activity poll (DR-054); asked only past
+        // the threshold, it fails open to reap when no responder is present.
+        const idleSince = slot.sessionState.idleSince;
+        const bashInProgress = slot.session.isBashRunning || slot.sessionState.bashDispatchInProgress === true;
+        if (!hasObservers && !bashInProgress && idleSince !== null && Date.now() - idleSince > idleTimeout) {
+          const activityBus = slot.eventBusRef.current;
+          if (activityBus && askActivity(activityBus)) continue;
+          this.closeSession(sessionId).catch(() => {
+            // Best-effort cleanup — swallow errors during idle reaping
+          });
+        }
+      }
+    }, 60_000);
+
+    this.gitBranchCheckHandle = setInterval(() => {
+      // Snapshot connected sessions and refresh their branches in parallel. The
+      // lookups are async (execFile) so the poll never blocks the event loop;
+      // hot-path readers consume the cache via getLastKnownGitBranch.
+      const connected = [...this.sessions].filter(([, slot]) => slot.observers.size > 0);
+      void Promise.all(
+        connected.map(async ([sessionId, slot]) => {
+          const next = await getGitBranch(slot.folderPath);
+          const prev = this.lastKnownGitBranchBySession.get(sessionId) ?? null;
+          if (next !== prev) {
+            this.lastKnownGitBranchBySession.set(sessionId, next);
+            this.onGitBranchChange?.(sessionId, slot.folderPath);
+          }
+        }),
+      );
+    }, 3000);
   }
 
   stopIdleCheck(): void {
