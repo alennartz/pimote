@@ -734,9 +734,10 @@ export class WsHandler {
         }
 
         case 'call_end': {
+          const holder = this.voiceOrchestrator?.callHolder.get(command.sessionId);
           await this.voiceOrchestrator?.endCall({ sessionId: command.sessionId, reason: 'user_hangup' });
           this.sendResponse(id, true);
-          this.sendCallEndedEvent(command.sessionId, 'user_hangup');
+          (holder ? (this.clientRegistry.get(holder) ?? this) : this).sendCallEndedEvent(command.sessionId, 'user_hangup');
           break;
         }
 
@@ -757,7 +758,8 @@ export class WsHandler {
 
         // ---- Extension UI ----
         case 'extension_ui_response': {
-          const uiSlot = command.sessionId ? this.sessionManager.getSession(command.sessionId) : undefined;
+          const uiSessionId = command.sessionId;
+          const uiSlot = uiSessionId ? this.sessionManager.getSession(uiSessionId) : undefined;
           if (uiSlot) {
             let value: unknown;
             if (command.cancelled) {
@@ -769,7 +771,10 @@ export class WsHandler {
             } else {
               value = undefined;
             }
-            resolveSlotPendingUi(uiSlot, command.requestId, value);
+            const resolved = resolveSlotPendingUi(uiSlot, command.requestId, value);
+            if (resolved) {
+              sendSlotEvent(uiSlot, { type: 'extension_ui_resolved', sessionId: uiSessionId!, requestId: command.requestId }, { exceptClientId: this.clientId });
+            }
           }
           this.sendResponse(id, true);
           break;

@@ -326,7 +326,7 @@ File: `server/src/ws-handler.ts`.
 - `call_end`: read `holder = this.voiceOrchestrator?.callHolder.get(sessionId)` before `endCall`. After the response, send `call_ended { reason: 'user_hangup' }` to `this.clientRegistry.get(holder)`, or to this handler when no holder handler exists.
 
 **Verify:** In `server/src/ws-handler.test.ts`, "broadcasts a dialog and accepts only its first answer" and "call_end" pass. The full `server/src/ws-handler.test.ts` passes.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Web connection store archived handling
 
