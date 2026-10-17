@@ -16,24 +16,31 @@ function slotWith(...observers: SessionObserver[]): ManagedSlot {
 }
 
 vi.mock('./git-branch.js', () => ({ getGitBranch: async () => null }));
-vi.mock('@earendil-works/pi-coding-agent', () => ({
-  ModelRuntime: { create: async () => ({ getAvailable: async () => [] }) },
-  getAgentDir: () => '/agent',
-  SessionManager: { create: () => ({ getCwd: () => '/project' }) },
-  createEventBus: () => ({ on: () => () => {}, emit: vi.fn(), clear: vi.fn() }),
-  createAgentSessionRuntime: async () => ({
-    session: {
-      sessionId: 'session-1',
-      messages: [],
-      isStreaming: false,
-      subscribe: () => () => {},
-      bindExtensions: vi.fn(async () => {}),
-      setSteeringMode: vi.fn(),
-      setFollowUpMode: vi.fn(),
+vi.mock('@earendil-works/pi-coding-agent', () => {
+  const session = {
+    sessionId: 'session-1',
+    messages: [],
+    isStreaming: false,
+    subscribe: () => () => {},
+    bindExtensions: vi.fn(async () => {}),
+    setSteeringMode: vi.fn(),
+    setFollowUpMode: vi.fn(),
+    sessionManager: { getCwd: () => '/project' },
+  };
+  const eventBus = { on: () => () => {}, emit: vi.fn(), clear: vi.fn() };
+  return {
+    ModelRuntime: { create: async () => ({ getAvailable: async () => [] }) },
+    getAgentDir: () => '/agent',
+    SessionManager: { create: () => ({ getCwd: () => '/project' }) },
+    createEventBus: () => eventBus,
+    createAgentSessionServices: async () => ({ eventBus }),
+    createAgentSessionFromServices: async () => ({ session }),
+    createAgentSessionRuntime: async (factory: any, options: any) => {
+      await factory({ cwd: options.cwd, agentDir: '/agent', sessionManager: options.sessionManager, sessionStartEvent: undefined });
+      return { session, dispose: vi.fn(async () => {}) };
     },
-    dispose: vi.fn(async () => {}),
-  }),
-}));
+  };
+});
 
 async function managedSession() {
   const manager = await PimoteSessionManager.create({ bufferSize: 100 } as any, { notify: async () => {} } as any);

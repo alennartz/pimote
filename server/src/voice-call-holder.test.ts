@@ -2,13 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { VoiceOrchestrator, type VoiceOrchestratorOptions } from './voice-orchestrator.js';
 
 function createOrchestrator(notifyClientCallEnded = vi.fn()): VoiceOrchestrator {
+  const bus = { on: vi.fn(() => () => {}), emit: vi.fn(), clear: vi.fn() };
   const options: VoiceOrchestratorOptions = {
     config: { voice: { speechmuxSignalUrl: 'https://speechmux.test/signal', speechmuxLlmWsUrl: 'wss://speechmux.test/llm' } } as any,
     sessionManager: {} as any,
     notifyClientCallEnded,
     busResolver: {
       getSlot: () => ({}) as any,
-      getEventBus: () => ({}) as any,
+      getEventBus: () => bus,
     },
   };
   return new VoiceOrchestrator(options);

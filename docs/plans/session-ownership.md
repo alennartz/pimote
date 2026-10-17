@@ -233,6 +233,8 @@ Each reason below comes from the discussion. Where none was given, the entry say
 
 ## Steps
 
+**Pre-implementation commit:** `e162a2e6f4140f1aecd88f3b3d6ccc1c6991f892`
+
 ### Step 1: Repair blocking test fixtures
 
 The parent approved fixture-only repairs. Do not change any assertion. Each fixture below blocks its tests whatever the implementation does. Code reading established each cause. Nobody ran the tests.
@@ -246,7 +248,7 @@ The parent approved fixture-only repairs. Do not change any assertion. Each fixt
 4. `server/src/voice-call-holder.test.ts`, `createOrchestrator`. Cause: `getEventBus: () => ({})` has no `on` or `emit`. `bindCall` must subscribe and emit activate, as `voice-orchestrator.test.ts` asserts. `endCall` must emit deactivate. Repair: return a bus stub with `on: () => () => {}`, `emit: vi.fn()`, and `clear: vi.fn()`.
 
 **Verify:** `git diff -- '*.test.ts'` shows changes only inside these four fixtures. Server TypeScript compilation (`tsc --noEmit -p server/tsconfig.json`) passes.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Session manager observer core
 

@@ -130,7 +130,7 @@ function createMockSlot(
 }
 
 function createMockSessionManager(sessions: Map<string, ManagedSlot> = new Map()): PimoteSessionManager {
-  const manager = {
+  const mockManager = {
     getSession: (id: string) => sessions.get(id),
     getSlot: (id: string) => sessions.get(id) ?? null,
     getAllSessions: () => Array.from(sessions.values()),
@@ -148,17 +148,36 @@ function createMockSessionManager(sessions: Map<string, ManagedSlot> = new Map()
     },
     getLastKnownGitBranch: () => null,
     onSlotEvicted: undefined as undefined | ((sessionId: string) => void),
-    attachObserver: async () => {
-      throw new Error('not implemented');
+    attachObserver: async (id: string, observer: SessionObserver) => {
+      sessions.get(id)?.observers.set(observer.clientId, observer);
     },
-    detachObserver: () => {
-      throw new Error('not implemented');
+    detachObserver: (id: string, clientId: string) => {
+      sessions.get(id)?.observers.delete(clientId);
     },
-    applySessionReset: async () => {
-      throw new Error('not implemented');
+    applySessionReset: async (slot: ManagedSlot) => {
+      const newId = slot.runtime.session.sessionId;
+      const oldId = slot.sessionState.id;
+      const observers = [...slot.observers.values()];
+      if (newId === oldId) {
+        for (const observer of observers) {
+          await observer.onSessionReset?.(slot, { kind: 'unchanged' });
+        }
+        return;
+      }
+      const manager = mockManager as unknown as PimoteSessionManager;
+      manager.rebuildSessionState(slot);
+      const occupant = sessions.get(newId);
+      if (occupant && occupant !== slot) {
+        manager.onSlotEvicted?.(newId);
+        await manager.closeSession(newId);
+      }
+      manager.reKeySession(slot, oldId, newId);
+      for (const observer of observers) {
+        await observer.onSessionReset?.(slot, { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath });
+      }
     },
   };
-  return manager as unknown as PimoteSessionManager;
+  return mockManager as unknown as PimoteSessionManager;
 }
 
 function createMockSessionRecords(): SessionRecords {
@@ -2362,7 +2381,7 @@ describe('WsHandler', () => {
       const clientRegistry: ClientRegistry = new Map();
 
       const endCall = vi.fn(async () => {});
-      const orchestrator = { endCall, isCallActive: () => true } as any;
+      const orchestrator = { endCall, isCallActive: () => true, callHolder: new Map([['call-session', 'A']]) } as any;
 
       const { ws: wsA, sent: sentA } = createMockWs();
       const handlerA = new WsHandler(
