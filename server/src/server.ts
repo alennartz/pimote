@@ -203,7 +203,13 @@ export async function createServer(
     WsHandler.broadcastSidebarUpdate(sessionId, folderPath, sessionManager, clientRegistry);
   };
   // A re-key collision evicts the existing slot before the runtime is disposed.
-  sessionManager.onSlotEvicted = (_sessionId) => {};
+  sessionManager.onSlotEvicted = (sessionId) => {
+    const slot = sessionManager.getSlot(sessionId);
+    if (!slot) return;
+    for (const clientId of slot.observers.keys()) {
+      clientRegistry.get(clientId)?.sendSessionClosedEvent(sessionId, 'replaced');
+    }
+  };
 
   // Folder registry mutations (update / createHub / membership) report the
   // exact changed/removed paths (their targets plus derived dependents) and

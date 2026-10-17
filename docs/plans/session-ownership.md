@@ -316,7 +316,7 @@ Files: `server/src/ws-handler.ts`, `server/src/server.ts`.
 - `server.ts` `onSlotEvicted`: for each observer client ID of `sessionManager.getSlot(sessionId)`, call `clientRegistry.get(id)?.sendSessionClosedEvent(sessionId, 'replaced')`.
 
 **Verify:** In `server/src/ws-handler.test.ts`, these pass: "archives every live slot", "kill_conflicting_sessions", "archive_session and archived listings", and "folderless deep-link reopen". `server/src/server.test.ts` passes.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Dialog resolution and call_end routing
 

@@ -11,6 +11,7 @@ import type {
   FullResyncEvent,
   RestoreMode,
   SessionRestoreEvent,
+  SessionClosedEvent,
   SessionStateChangedEvent,
   FolderInfo,
   PimoteTreeNode,
@@ -499,6 +500,11 @@ export class WsHandler {
           const requestedSessionId = command.sessionId;
           const existing = this.sessionManager.getSession(requestedSessionId);
           if (existing) {
+            const existingSessionPath = existing.session.sessionFile;
+            if (existingSessionPath && this.sessionMetadataStore.isArchived(existingSessionPath)) {
+              this.sendResponse(id, false, undefined, 'session_archived');
+              break;
+            }
             const restoreMode = await this.syncSessionToClient(requestedSessionId, existing, command.lastCursor);
             WsHandler.broadcastSidebarUpdate(requestedSessionId, existing.folderPath, this.sessionManager, this.clientRegistry);
             this.sendResponse(id, true, {
@@ -511,17 +517,20 @@ export class WsHandler {
           }
 
           // Reopen from disk. A folderless deep link carries no folder: resolve
-          // the session's record by searching known folders (archived included —
-          // opening unarchives on the fly). No record anywhere → the session is
-          // gone for good (never persisted, pruned idle slot): report it as a
-          // definitive not-found so the client drops its orphan instead of
-          // retrying forever.
+          // the session's record by searching known folders (archived included).
+          // No record anywhere → the session is gone for good (never persisted,
+          // pruned idle slot): report it as a definitive not-found so the client
+          // drops its orphan instead of retrying forever.
           const record = await this.findSessionRecord(requestedSessionId, command.folderPath);
           if (!record) {
             this.sendResponse(id, false, undefined, 'session_not_found');
             break;
           }
           const { folderPath, sessionFilePath } = record;
+          if (this.sessionMetadataStore.isArchived(sessionFilePath)) {
+            this.sendResponse(id, false, undefined, 'session_archived');
+            break;
+          }
 
           await this.repoIndex?.runOpenHooks(folderPath);
           const sessionId = await this.sessionManager.openSession(folderPath, sessionFilePath);
@@ -545,23 +554,17 @@ export class WsHandler {
             break;
           }
 
-          // Resolve pending extension UI responses so tools don't hang
           const closingSlot = this.sessionManager.getSession(closeSessionId);
           if (closingSlot) {
-            resolveAllSlotPendingUi(closingSlot);
+            if (closingSlot.observers.has(this.clientId)) {
+              await this.closeSessionForObservers(closeSessionId, closingSlot);
+            } else {
+              await this.sessionManager.closeSession(closeSessionId);
+              this.sendSessionClosedEvent(closeSessionId);
+            }
+          } else {
+            this.sendSessionClosedEvent(closeSessionId);
           }
-
-          await this.sessionManager.closeSession(closeSessionId);
-
-          this.subscribedSessions.delete(closeSessionId);
-          if (this.viewedSessionId === closeSessionId) {
-            this.viewedSessionId = null;
-          }
-
-          this.sendEvent({
-            type: 'session_closed',
-            sessionId: closeSessionId,
-          });
 
           this.sendResponse(id, true);
           break;
@@ -578,10 +581,9 @@ export class WsHandler {
           const deleteSlot = this.sessionManager.getSession(deleteSessionId);
           const deleteSessionPath = deleteSlot?.session.sessionFile ?? (await this.sessionRecords.resolveSessionPath(deleteFolderPath, deleteSessionId));
 
-          // If the session is active in memory, close it first
+          // If the session is active in memory, close it first.
           if (deleteSlot) {
-            resolveAllSlotPendingUi(deleteSlot);
-            await this.sessionManager.closeSession(deleteSessionId);
+            await this.closeSessionForObservers(deleteSessionId, deleteSlot, 'killed');
           }
 
           // Delete the file from disk
@@ -629,6 +631,9 @@ export class WsHandler {
             const archiveSessionPath = archiveSlot?.session.sessionFile ?? (await this.sessionRecords.resolveSessionPath(archiveFolderPath, archiveSessionId));
             if (!archiveSessionPath) continue;
 
+            if (command.archived && archiveSlot) {
+              await this.closeSessionForObservers(archiveSessionId, archiveSlot, 'archived');
+            }
             await this.sessionMetadataStore.setArchived(archiveSessionPath, command.archived);
             this.broadcastSessionArchived(archiveSessionId, archiveFolderPath, command.archived);
             archivedCount++;
@@ -853,7 +858,7 @@ export class WsHandler {
             const targetSlot = this.sessionManager.getSession(targetSessionId);
             if (!targetSlot) continue;
 
-            await this.sessionManager.closeSession(targetSessionId);
+            await this.closeSessionForObservers(targetSessionId, targetSlot, 'killed');
           }
           this.sendResponse(id, true);
           break;
@@ -1635,6 +1640,16 @@ export class WsHandler {
     return restoreMode;
   }
 
+  /** Close one live session for every observer and resolve its pending UI. */
+  private async closeSessionForObservers(sessionId: string, slot: ManagedSlot, reason?: SessionClosedEvent['reason']): Promise<void> {
+    const observerClientIds = [...slot.observers.keys()];
+    for (const clientId of observerClientIds) {
+      this.clientRegistry.get(clientId)?.sendSessionClosedEvent(sessionId, reason);
+    }
+    resolveAllSlotPendingUi(slot);
+    await this.sessionManager.closeSession(sessionId);
+  }
+
   /** Close this handler's WebSocket connection. */
   closeWebSocket(): void {
     try {
@@ -1653,16 +1668,12 @@ export class WsHandler {
     });
   }
 
-  /** Send a session_closed event with reason 'killed' to this client's WebSocket.
-   *  Also removes the session from this handler's subscribedSessions so that
-   *  cleanup() won't stomp stale entries. */
-  sendKilledEvent(sessionId: string): void {
+  /** Send a session_closed event to this client and drop its subscription. */
+  sendSessionClosedEvent(sessionId: string, reason?: SessionClosedEvent['reason']): void {
     this.subscribedSessions.delete(sessionId);
-    this.sendEvent({
-      type: 'session_closed',
-      sessionId,
-      reason: 'killed',
-    });
+    if (this.viewedSessionId === sessionId) this.viewedSessionId = null;
+    const event: SessionClosedEvent = reason ? { type: 'session_closed', sessionId, reason } : { type: 'session_closed', sessionId };
+    this.sendEvent(event);
   }
 
   private broadcastSessionArchived(sessionId: string, folderPath: string, archived: boolean): void {
