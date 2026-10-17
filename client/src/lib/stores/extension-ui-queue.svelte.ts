@@ -40,6 +40,10 @@ function ensureListener() {
       queue = queue.filter((r) => r.sessionId !== event.sessionId);
       return;
     }
+    if (event.type === 'extension_ui_resolved') {
+      queue = queue.filter((r) => !(r.sessionId === event.sessionId && r.requestId === event.requestId));
+      return;
+    }
     if (event.type !== 'extension_ui_request') return;
     const req = event as ExtensionUiRequestEvent;
     if (FIRE_AND_FORGET.has(req.method)) return;

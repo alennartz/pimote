@@ -359,7 +359,7 @@ Cause of the failing cold-boot adoption test: the archived-open test leaves `s-a
 File: `client/src/lib/stores/extension-ui-queue.svelte.ts`. In the `connection.onEvent` listener, on `extension_ui_resolved`, remove only the queue entry that matches both `sessionId` and `requestId`. Unknown IDs change nothing.
 
 **Verify:** `client/src/lib/stores/extension-ui-queue.svelte.test.ts` passes. `npm run check --workspace=client` passes.
-**Status:** not started
+**Status:** done
 
 ### Step 10: Manual-test documentation
 
