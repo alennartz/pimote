@@ -271,7 +271,7 @@ export async function main(options: StartOptions = {}) {
   if (voiceBoot) {
     const orchestrator = voiceBoot.orchestrator;
 
-    // Suppress push notifications for sessions currently owned by a voice call.
+    // Suppress push notifications for sessions currently in a voice call.
     // The user is on the line — we don't need to ping their phone for idle
     // signals or extension UI prompts. Pushes resume automatically once the
     // call ends and `isCallActive` flips back to false.
@@ -280,12 +280,14 @@ export async function main(options: StartOptions = {}) {
     // Tear down orchestrator bookkeeping when a session is being closed.
     sessionManager.onBeforeSessionClose = async (sessionId) => {
       if (!orchestrator.isCallActive(sessionId)) return;
+      const holder = orchestrator.callHolder.get(sessionId);
       await orchestrator.endCall({ sessionId, reason: 'server_ended' });
+      if (holder) server.clientRegistry.get(holder)?.sendCallEndedEvent(sessionId, 'server_ended');
     };
   }
 
-  // Start idle session reaping with client connectivity check
-  sessionManager.startIdleCheck(config.idleTimeout, (clientId) => server.clientRegistry.has(clientId));
+  // Start idle session reaping while no observers remain attached.
+  sessionManager.startIdleCheck(config.idleTimeout);
 
   await server.start(port);
 

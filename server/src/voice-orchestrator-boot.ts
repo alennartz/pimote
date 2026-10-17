@@ -30,8 +30,7 @@ export function isVoiceConfigured(config: PimoteConfig): boolean {
 
 /**
  * Construct a VoiceOrchestrator backed by real seams:
- * - displacement = looks up current owner via clientRegistry and calls its
- *   `sendDisplacedEvent(sessionId)`
+ * - call-end notifications target the active holder through clientRegistry
  *
  * Auth on `/signal` is handled by Cloudflare Access at the edge, and
  * per-session TURN credentials are minted by speechmux and returned to the
@@ -59,6 +58,7 @@ export function buildVoiceOrchestrator(args: {
     config,
     sessionManager,
     busResolver,
+    notifyClientCallEnded: (clientId, event) => args.clientRegistry.get(clientId)?.sendToClient(event),
   });
 
   return {

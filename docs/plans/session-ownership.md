@@ -283,7 +283,7 @@ Files: `server/src/voice-orchestrator.ts`, `server/src/voice-orchestrator-boot.t
 - `index.ts` `onBeforeSessionClose`: read `orchestrator.callHolder.get(sessionId)` before `endCall`. After it, call `server.clientRegistry.get(holder)?.sendCallEndedEvent(sessionId, 'server_ended')`. Change `startIdleCheck` to `sessionManager.startIdleCheck(config.idleTimeout)`. Update the comment that mentions ownership.
 
 **Verify:** `server/src/voice-call-holder.test.ts` and `server/src/voice-orchestrator.test.ts` pass. `server/src/index.test.ts` passes.
-**Status:** not started
+**Status:** done
 
 ### Step 4: WsHandler attach, sync, reset, and detach
 

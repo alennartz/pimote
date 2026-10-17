@@ -10,7 +10,7 @@ import type { EventBusController } from '@earendil-works/pi-coding-agent';
 import type { CallBindErrorCode, CallBindResponse, CallEndReason } from '../../shared/dist/index.js';
 import type { PimoteConfig } from './config.js';
 import type { ManagedSlot, PimoteSessionManager } from './session-manager.js';
-import type { VoiceDeactivateMessage } from './voice/index.js';
+import type { VoiceActivateMessage, VoiceDeactivateMessage } from './voice/index.js';
 
 export type CallBindResultData = Omit<CallBindResponse, 'type' | 'id'>;
 
@@ -82,6 +82,7 @@ export class VoiceOrchestrator {
     }
     this.deactivateUnsubs.clear();
     this.activeCalls.clear();
+    this.callHolder.clear();
   }
 
   /**
@@ -93,19 +94,77 @@ export class VoiceOrchestrator {
    */
   private handleExtensionDeactivated(sessionId: string): void {
     if (!this.activeCalls.has(sessionId)) return;
+    const holder = this.callHolder.get(sessionId);
     this.activeCalls.delete(sessionId);
     this.deactivateUnsubs.get(sessionId)?.();
     this.deactivateUnsubs.delete(sessionId);
+    this.callHolder.delete(sessionId);
+    if (holder) {
+      this.opts.notifyClientCallEnded?.(holder, { type: 'call_ended', sessionId, reason: 'error' });
+    }
     this.opts.notifyCallEnded?.(sessionId);
   }
 
   /** Called by ws-handler for CallBindCommand. */
-  async bindCall(_args: BindCallArgs): Promise<CallBindResultData> {
-    throw new Error('not implemented');
+  async bindCall(args: BindCallArgs): Promise<CallBindResultData> {
+    const slot = this.opts.busResolver.getSlot(args.sessionId);
+    if (!slot) {
+      throw new CallBindError('call_bind_failed_session_not_found', `No session ${args.sessionId}`);
+    }
+
+    const active = this.activeCalls.has(args.sessionId);
+    if (active && !args.force) {
+      throw new CallBindError('call_bind_failed_owned', 'Session already bound to a voice call');
+    }
+
+    // The orchestrator is only constructed when voice is configured, so these
+    // URLs are guaranteed present. Re-read them per call so live config edits
+    // (if supported) take effect on the next bind.
+    const signalUrl = this.opts.config.voice?.speechmuxSignalUrl;
+    const llmWsUrl = this.opts.config.voice?.speechmuxLlmWsUrl;
+    if (!signalUrl || !llmWsUrl) {
+      throw new CallBindError('call_bind_failed_internal', 'voice_disabled: speechmux signal URL / llm WS URL not configured');
+    }
+
+    const bus = this.opts.busResolver.getEventBus(args.sessionId);
+    if (!bus) {
+      throw new CallBindError('call_bind_failed_internal', 'Session has no EventBus');
+    }
+
+    if (active && args.force) {
+      const oldHolder = this.callHolder.get(args.sessionId);
+      await this.endCall({ sessionId: args.sessionId, reason: 'displaced' });
+      if (oldHolder && oldHolder !== args.clientId) {
+        this.opts.notifyClientCallEnded?.(oldHolder, { type: 'call_ended', sessionId: args.sessionId, reason: 'displaced' });
+      }
+    }
+
+    // Subscribe to extension-initiated deactivate BEFORE activating so a
+    // self-deactivate during or after activation is never missed.
+    this.deactivateUnsubs.get(args.sessionId)?.();
+    this.deactivateUnsubs.set(
+      args.sessionId,
+      bus.on('pimote:voice:deactivate', () => this.handleExtensionDeactivated(args.sessionId)),
+    );
+    this.activeCalls.add(args.sessionId);
+    this.callHolder.set(args.sessionId, args.clientId);
+
+    const activate: VoiceActivateMessage = {
+      type: 'pimote:voice:activate',
+      sessionId: args.sessionId,
+      speechmuxWsUrl: llmWsUrl,
+    };
+    bus.emit(activate.type, activate);
+
+    return {
+      sessionId: args.sessionId,
+      webrtcSignalUrl: signalUrl,
+    };
   }
 
   /** Called by ws-handler for CallEndCommand, or internally on displacement/error. Idempotent. */
   async endCall(args: EndCallArgs): Promise<void> {
+    this.callHolder.delete(args.sessionId);
     if (!this.activeCalls.has(args.sessionId)) return;
     this.activeCalls.delete(args.sessionId);
 
