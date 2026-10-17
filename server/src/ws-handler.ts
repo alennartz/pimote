@@ -556,12 +556,9 @@ export class WsHandler {
 
           const closingSlot = this.sessionManager.getSession(closeSessionId);
           if (closingSlot) {
-            if (closingSlot.observers.has(this.clientId)) {
-              await this.closeSessionForObservers(closeSessionId, closingSlot);
-            } else {
-              await this.sessionManager.closeSession(closeSessionId);
-              this.sendSessionClosedEvent(closeSessionId);
-            }
+            const wasObserver = closingSlot.observers.has(this.clientId);
+            await this.closeSessionForObservers(closeSessionId, closingSlot);
+            if (!wasObserver) this.sendSessionClosedEvent(closeSessionId);
           } else {
             this.sendSessionClosedEvent(closeSessionId);
           }
