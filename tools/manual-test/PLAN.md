@@ -83,16 +83,16 @@ only way they can ask the user anything.
 **Driver:** manual-browser (against a test extension that invokes each
 dialog type).
 
-### 4. Session takeover / displacement
+### 4. Shared session observers
 
-**What:** Two clients are open on the same session. The second claims
-with force → the first receives `session_closed { reason: 'displaced' }`
-and its UI returns to the dashboard. The second client takes over and
-can prompt.
+**What:** Two clients open the same session. Both receive the live
+transcript and live bash output, and either client can send a prompt.
+Disconnecting one client leaves the other attached. Archiving closes
+all observers with `session_closed { reason: 'archived' }`; unarchiving
+leaves the session closed until an explicit open.
 
-**Why:** Single-owner semantics is load-bearing: shared across regular
-prompt ownership and voice-call ownership. If displacement breaks,
-voice-mode displacement breaks with it.
+**Why:** Shared observers let several devices watch and control one live
+session without takeover races.
 
 **Driver:** manual-browser (two browsers / tabs).
 

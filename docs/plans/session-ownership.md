@@ -372,7 +372,7 @@ File: `client/src/lib/stores/extension-ui-queue.svelte.ts`. In the `connection.o
 - `tools/manual-test/PLAN.md`: rewrite journey 4 as shared observers (two clients, live transcript, either sends, archive closes both). Keep the call-level `call_ended { reason: 'displaced' }` text in the voice journey.
 
 **Verify:** `rg -n "isOwnedByMe|session_owned|pendingTakeover|remoteSessions|Take Over" docs/MANUAL-TEST-PLAN.md tools/manual-test/PLAN.md` returns nothing.
-**Status:** not started
+**Status:** done
 
 ### Step 11: Full verification
 

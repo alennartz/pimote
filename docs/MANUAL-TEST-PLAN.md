@@ -332,7 +332,7 @@ The dashboard's folders column lists every discovered folder; the list loads in 
 - **[P]** Open a session for folder A (currently working), folder B (idle), no session for folder C
 - **[S]** Reload folder list
 - **[E]** Folders A and B: `activeSessionCount: 1` and the active dot renders; folder C: `activeSessionCount: 0`, no dot
-- **[E]** Session rows carry `liveStatus` (`working` / `idle`) and `isOwnedByMe` enrichment
+- **[E]** Session rows carry `liveStatus` (`working` / `idle`)
 
 ### TC-04.06 — Attention status not shown on the folder row 🟡
 
@@ -346,7 +346,7 @@ The dashboard's folders column lists every discovered folder; the list loads in 
 - **[S]** Click/expand the folder row in the dashboard
 - **[E]** Lists sessions with: id, name (if set), created date, modified date, message count, first message preview
 - **[E]** Sessions sorted by modified date (most recent first, or per SDK ordering)
-- **[E]** Each session enriched with `isOwnedByMe` (true if this client owns the live session) and `liveStatus` (working/idle/null if not managed)
+- **[E]** Each session carries `liveStatus` (working/idle/null if not managed)
 
 ### TC-04.08 — Session list for folder with no sessions 🟡
 
@@ -967,41 +967,41 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[E]** Connection status shows "Session not found" during the restore sync
 - **[E]** Client handles gracefully (orphan session removed from UI and localStorage)
 
-### TC-11.08 — Reconnect rejected when another client owns session 🟠
+### TC-11.08 — Two clients observe one live session 🔴
 
-- **[P]** Tab A has session S open; Tab B also had session S subscribed but was disconnected
-- **[S]** Tab B reconnects, sends `reconnect` for session S (without `force`)
-- **[E]** Server responds `success: false, error: "session_owned"` (Tab A still owns it)
-- **[E]** Tab B shows takeover banner: "This session is owned by another client. Take it over?"
+- **[P]** Tab A and Tab B connect with different client IDs
+- **[S]** Open the same session in both tabs
+- **[E]** Both `open_session` commands succeed; neither tab receives a conflict or close event
+- **[E]** Both tabs show the same transcript and remain subscribed
 
-### TC-11.09 — Force reconnect displaces previous owner 🟠
+### TC-11.09 — Live events fan out to every observer 🟠
 
-- **[P]** Tab A owns session S; Tab B's reconnect was rejected with `session_owned`
-- **[S]** Click "Take Over" in Tab B's takeover banner
-- **[E]** Tab B sends `reconnect` with `force: true`
-- **[E]** Tab A receives `session_closed` event with `reason: 'displaced'`; session removed from Tab A's registry
-- **[E]** Tab B receives buffered events and binds to session S
+- **[P]** Tabs A and B observe the same session
+- **[S]** Run a prompt from either tab
+- **[E]** Both tabs receive the streamed events and finish with the same transcript
+- **[E]** Live bash output also appears in both tabs while the command runs
 
-### TC-11.10 — Dismiss takeover drops session 🟡
+### TC-11.10 — Either observer can send 🟠
 
-- **[P]** Takeover banner showing for session S in Tab B
-- **[S]** Click "Dismiss" in the takeover banner
-- **[E]** Session S removed from Tab B's registry and subscription set
-- **[E]** Banner disappears; Tab B returns to landing page (or switches to another session)
+- **[P]** Tabs A and B observe the same session
+- **[S]** Send one prompt from Tab A, then one from Tab B
+- **[E]** Both commands succeed and the server processes them in arrival order
+- **[E]** Both tabs receive both turns
 
-### TC-11.11 — Reconnect silent rebind when owner disconnected 🟡
+### TC-11.11 — Disconnecting one observer leaves the other attached 🟡
 
-- **[P]** Tab A owned session S but disconnected (clientId no longer in registry)
-- **[S]** Tab B reconnects, sends `reconnect` for session S
-- **[E]** Server silently rebinds — no `session_owned` error (stale owner is gone)
-- **[E]** Tab B receives buffered events normally
+- **[P]** Tabs A and B observe the same session
+- **[S]** Close Tab A's WebSocket
+- **[E]** Tab B stays subscribed and receives subsequent events
+- **[E]** The session is reaped only after the final observer disconnects and the idle timeout expires
 
-### TC-11.12 — Reconnect re-binds live events 🟠
+### TC-11.12 — Archived sessions reject restore without reopening 🟠
 
-- **[P]** Client reconnects to a session where the agent is still working
-- **[S]** After reconnect
-- **[E]** New live events stream correctly to the reconnected client
-- **[E]** `sendLive` and `onStatusChange` callbacks updated to use the new WsHandler
+- **[P]** The session is archived while a client is disconnected
+- **[S]** Reconnect the client
+- **[E]** The server responds `success: false, error: "session_archived"`
+- **[E]** The transcript remains visible locally, but the session leaves the restore set
+- **[E]** Unarchiving does not reopen the session until a client explicitly opens it
 
 ---
 
@@ -1014,14 +1014,6 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[E]** `session_conflict` event received with `processes` list of `{ pid, command }` entries
 - **[E]** Conflict banner appears: "External pi processes detected in this folder."
 - **[E]** Two buttons: "Kill & Continue", "Dismiss"
-
-### TC-12.01a — Remote pimote session conflict detected on session open 🟠
-
-- **[P]** Another client (Tab B) has an active session open for the same folder
-- **[S]** Open a new session for that folder from Tab A
-- **[E]** `session_conflict` event received with `remoteSessions` list of `{ sessionId, status }` entries
-- **[E]** Remote sessions listed alongside any external process conflicts
-- **[E]** `remoteSessions` only includes sessions owned by a _different_ clientId (not the opener's own sessions)
 
 ### TC-12.02 — Conflict detected on reconnect 🟡
 
@@ -1050,24 +1042,9 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[E]** External processes killed; new session opened for folder
 - **[E]** Response includes `sessionId` and `killedProcesses` count
 
-### TC-12.06 — Kill conflicting remote sessions 🟠
-
-- **[P]** `session_conflict` event reported remote pimote sessions in the same folder
-- **[S]** Send `kill_conflicting_sessions` command with the reported session IDs
-- **[E]** Server closes each target session
-- **[E]** Owning clients of those sessions receive `session_closed` events with `reason: 'killed'`
-- **[E]** Sessions removed from killed clients' registries
-- **[E]** Response confirms success
-
-### TC-12.07 — Kill conflicting sessions — owner disconnected 🟡
-
-- **[P]** Conflicting remote session exists but its owner has disconnected
-- **[S]** Send `kill_conflicting_sessions` command with that session ID
-- **[E]** Session closed on server; no notification sent (no connected owner to notify)
-
 ### TC-12.08 — No conflicts when none exist 🟡
 
-- **[P]** No external pi processes or remote pimote sessions in target folder
+- **[P]** No external pi processes in target folder
 - **[S]** Open session
 - **[E]** No `session_conflict` event sent
 
@@ -1076,6 +1053,21 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[P]** Pimote server itself is a Node.js process in the scanned folder
 - **[S]** Open session
 - **[E]** Server's own PID not included in conflicts
+
+### TC-12.10 — Archive closes every observer 🟠
+
+- **[P]** Tabs A and B observe the same live session
+- **[S]** Archive the session from either tab
+- **[E]** Both tabs receive `session_closed` with `reason: 'archived'`
+- **[E]** Both tabs remove the session from their active and restore sets
+- **[E]** The server disposes the live runtime before the archive completes
+
+### TC-12.11 — Unarchive leaves the session closed 🟡
+
+- **[P]** The session is archived and closed
+- **[S]** Unarchive it from the session list
+- **[E]** The archive flag clears and both tabs receive `session_archived` with `archived: false`
+- **[E]** No session reopens until a client explicitly opens it
 
 ---
 
@@ -1142,7 +1134,16 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[P]** Extension dialog open; user closes the session
 - **[E]** All pending UI responses for that session resolved with `undefined`
 
-### TC-13.10 — Extension UI responses cleared on disconnect 🟡
+### TC-13.10 — First dialog answer dismisses other observers 🟠
+
+- **[P]** Tabs A and B observe the same session; an extension opens one dialog
+- **[E]** Both tabs receive the matching `extension_ui_request`
+- **[S]** Answer the dialog in Tab A
+- **[E]** The extension receives Tab A's value
+- **[E]** Tab B receives `extension_ui_resolved` and closes its copy
+- **[E]** A later answer from Tab B is ignored
+
+### TC-13.11 — Extension UI responses cleared on disconnect 🟡
 
 - **[P]** Extension dialog pending; client disconnects
 - **[E]** All pending UI responses resolved with `undefined` during `cleanup()`
@@ -1553,7 +1554,7 @@ The panel system allows pi extensions to push structured card data into the pimo
 - **[S]** Open 2 browser tabs connecting to the same server
 - **[E]** Each gets its own WsHandler with a distinct `clientId`; independent session subscriptions
 - **[E]** No interference between clients
-- **[E]** Sessions owned by one client show as `isOwnedByMe: false` in the other client's `list_sessions`
+- **[E]** Both clients can observe the same live session and receive the same events
 
 ### TC-20.04 — Long-running server stability 🟡
 
@@ -1606,6 +1607,6 @@ The panel system allows pi extensions to push structured card data into the pimo
 
 9. **Markdown XSS protection**: The markdown renderer (streaming-markdown / smd) builds DOM via createElement/createTextNode (no innerHTML), with URL sanitization in the custom renderer's `set_attr` hook to block `javascript:` and other dangerous URI schemes. Verify that malicious markdown (e.g., `[click](javascript:alert(1))`, `<img onerror=...>`) is properly handled in rendered assistant messages.
 
-10. **Session displacement race conditions**: The displacement flow (reconnect → `session_owned` → force reconnect → displaced event) involves multiple round trips. If both clients attempt force reconnects simultaneously, the last one wins. The `pendingTakeover` state is client-local, so server restarts between the initial reject and the force retry will silently succeed (session no longer owned).
+10. **Observer replacement races**: A second socket with the same `clientId` replaces the first socket. During a reconnect race, the newest socket receives future events; verify the older socket cannot detach the replacement observer.
 
 11. **`kill_conflicting_sessions` authorization**: Any connected client can send `kill_conflicting_sessions` with arbitrary session IDs. The server closes those sessions without checking whether the requesting client has any relationship to them. A malicious client could kill any active session.
