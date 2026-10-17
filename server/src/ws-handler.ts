@@ -6,14 +6,17 @@ import type {
   PimoteEvent,
   SessionState,
   SessionMeta,
+  BufferedEventsEvent,
+  ConnectionRestoredEvent,
   FullResyncEvent,
   RestoreMode,
+  SessionRestoreEvent,
   SessionStateChangedEvent,
   FolderInfo,
   PimoteTreeNode,
 } from '../../shared/dist/index.js';
-import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome } from './session-manager.js';
-import { makeDownloadSnapshot, resolveAllSlotPendingUi, resolveSlotPendingUi } from './session-manager.js';
+import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome, SessionObserver, EventSocket } from './session-manager.js';
+import { makeDownloadSnapshot, replaySlotPendingUiRequests, requestSlotPanelResync, resolveAllSlotPendingUi, resolveSlotPendingUi, sendSlotEvent } from './session-manager.js';
 import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
 import { resolveSessionAcrossFolders, type SessionRecordLocation, type SessionRecords } from './session-records.js';
@@ -24,6 +27,7 @@ import { createCodeFolderViaCreators } from './folder-create.js';
 import type { FolderListingService } from './folder-listing.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import type { FolderCreator } from './folder-sources/index.js';
+import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
@@ -156,8 +160,8 @@ export function mapTreeNodes(nodes: SessionTreeNode[]): PimoteTreeNode[] {
  * Create command context actions for extension commands.
  * Captures the ManagedSlot (stable lifetime), not a transient handler.
  * Session resets funnel through sessionManager.applySessionReset, which always
- * reconciles the session map and then notifies the slot's current owner (if any)
- * via each observer's onSessionReset hook — so a reset with no observer still re-keys.
+ * reconciles the session map and then notifies every observer
+ * via its onSessionReset hook — so a reset with no observer still re-keys.
  */
 /** @internal Exported for the SDK delegation contract test. */
 export function createCommandContextActions(slot: ManagedSlot, sessionManager: PimoteSessionManager): ExtensionCommandContextActions {
@@ -193,7 +197,7 @@ export function createCommandContextActions(slot: ManagedSlot, sessionManager: P
   };
 }
 
-/** Client ID → WsHandler lookup for cross-client communication (e.g. displacement notifications) */
+/** Client ID → WsHandler lookup for targeted cross-client notifications. */
 export type ClientRegistry = Map<string, WsHandler>;
 
 export class WsHandler {
@@ -1448,32 +1452,73 @@ export class WsHandler {
     }
   }
 
-  /** Notify the old owner that they've been displaced from a session.
-   *  No-op if the session is unowned or owned by this client.
-   *
-   *  Voice-call tear-down on displacement lives in `sendDisplacedEvent` (the
-   *  old-owner-side site that also emits `call_ended { displaced }`), so this
-   *  method does not call `voiceOrchestrator.endCall` itself — see review
-   *  finding 4.
-   */
-  private displaceOwner(_sessionId: string, _slot: ManagedSlot): void {
-    throw new Error('not implemented');
+  /** Attach this client as an observer and bind extensions on first attach. */
+  async claimSession(sessionId: string, slot: ManagedSlot): Promise<void> {
+    const observer: SessionObserver = {
+      ws: this.ws as unknown as EventSocket,
+      clientId: this.clientId,
+      cursor: slot.sessionState.eventBuffer.currentCursor,
+      onSessionReset: (s, outcome) => this.handleSessionReset(s, outcome),
+    };
+    await this.sessionManager.attachObserver(sessionId, observer);
+    this.subscribedSessions.add(sessionId);
+
+    // Note: do NOT touch `idleSince`. Idleness is an agent-level concept driven by
+    // agent_start/agent_settled — attaching an observer does not extend its clock.
+    if (!slot.sessionState.extensionsBound) {
+      const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
+        isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(sessionId) ?? false,
+      });
+      const commandContextActions = createCommandContextActions(slot, this.sessionManager);
+      await slot.session.bindExtensions({ uiContext, commandContextActions });
+      slot.sessionState.extensionsBound = true;
+    }
+
+    // Re-deliver pending UI requests only to this observer. Other observers
+    // already have their dialogs; broadcasting here would duplicate them.
+    replaySlotPendingUiRequests(slot, (event) => this.sendEvent(event));
+    this.sendSilentDownloadSnapshot(slot);
+    requestSlotPanelResync(slot, 'claim');
   }
 
-  /** Bind a slot to this client — sets ownership, WebSocket routing,
-   *  and subscribes to events. Extensions are bound once on first claim. Public
-   *  so the voice force-bind path (displaceOwner wiring) can transfer ownership
-   *  through this same single operation, exactly like open_session does. */
-  async claimSession(_sessionId: string, _slot: ManagedSlot): Promise<void> {
-    throw new Error('not implemented');
-  }
+  /** Notify this observer after the session manager has rebuilt and re-keyed a slot. */
+  private async handleSessionReset(slot: ManagedSlot, outcome: SessionResetOutcome): Promise<void> {
+    if (outcome.kind === 'unchanged') {
+      this.sendFullResyncForSession(slot.sessionState.id, slot);
+      this.sendSilentDownloadSnapshot(slot);
+      return;
+    }
 
-  /** Notify-only reaction to a session reset that the session manager has ALREADY
-   *  reconciled in the map (rebuild + collision-evict + re-key). Installed as the
-   *  owning connection's onSessionReset; runs only for the slot's current owner.
-   *  Does no map mutation itself — see SessionManager.applySessionReset. */
-  private async handleSessionReset(_slot: ManagedSlot, _outcome: SessionResetOutcome): Promise<void> {
-    throw new Error('not implemented');
+    const { oldId, newId, folderPath } = outcome;
+    this.subscribedSessions.delete(oldId);
+    this.subscribedSessions.add(newId);
+    if (this.viewedSessionId === oldId) this.viewedSessionId = newId;
+
+    // The first observer performs slot-wide reset work. SessionManager invokes
+    // callbacks in map insertion order, so this binds extensions exactly once.
+    const isFirstObserver = slot.observers.keys().next().value === this.clientId;
+    if (isFirstObserver) {
+      const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
+        isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(newId) ?? false,
+      });
+      const commandContextActions = createCommandContextActions(slot, this.sessionManager);
+      await slot.session.bindExtensions({ uiContext, commandContextActions });
+      slot.sessionState.extensionsBound = true;
+    }
+
+    this.sendEvent({
+      type: 'session_replaced',
+      oldSessionId: oldId,
+      newSessionId: newId,
+      folder: await this.resolveFolderInfo(folderPath),
+    });
+    this.sendSilentDownloadSnapshot(slot);
+
+    if (isFirstObserver) {
+      requestSlotPanelResync(slot, 'reset');
+      WsHandler.broadcastSidebarUpdate(oldId, folderPath, this.sessionManager, this.clientRegistry);
+      WsHandler.broadcastSidebarUpdate(newId, folderPath, this.sessionManager, this.clientRegistry);
+    }
   }
 
   /** Surface the fd-missing warning at most once per connection (fire-and-forget toast). */
@@ -1535,13 +1580,59 @@ export class WsHandler {
     }
   }
 
-  private async syncSessionToClient(
-    _sessionId: string,
-    _slot: ManagedSlot,
-    _lastCursor?: number,
-    _noCursorRestoreMode: RestoreMode = 'full_resync_no_cursor',
-  ): Promise<RestoreMode> {
-    throw new Error('not implemented');
+  private async syncSessionToClient(sessionId: string, slot: ManagedSlot, lastCursor?: number, noCursorRestoreMode: RestoreMode = 'full_resync_no_cursor'): Promise<RestoreMode> {
+    let replayResult: ReturnType<import('./event-buffer.js').EventBuffer['replay']> | null = null;
+    let cursorBeforeClaim: number | null = null;
+
+    let restoreMode: RestoreMode;
+
+    if (lastCursor !== undefined) {
+      replayResult = slot.sessionState.eventBuffer.replay(lastCursor);
+      if (replayResult !== null) {
+        restoreMode = 'incremental_replay';
+        this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
+        this.sendEvent({
+          type: 'buffered_events',
+          sessionId,
+          events: replayResult,
+        } as BufferedEventsEvent);
+        this.sendEvent({
+          type: 'connection_restored',
+          sessionId,
+        } as ConnectionRestoredEvent);
+        cursorBeforeClaim = slot.sessionState.eventBuffer.currentCursor;
+      } else {
+        restoreMode = 'full_resync_cursor_stale';
+        this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
+        this.sendFullResyncForSession(sessionId, slot);
+      }
+    } else {
+      restoreMode = noCursorRestoreMode;
+      this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
+      this.sendFullResyncForSession(sessionId, slot);
+    }
+
+    await this.claimSession(sessionId, slot);
+
+    if (replayResult !== null && cursorBeforeClaim !== null) {
+      const catchUp = slot.sessionState.eventBuffer.replay(cursorBeforeClaim);
+      if (catchUp && catchUp.length > 0) {
+        this.sendEvent({
+          type: 'buffered_events',
+          sessionId,
+          events: catchUp,
+        } as BufferedEventsEvent);
+      }
+    }
+
+    if (replayResult !== null) {
+      // Always send panel state after reconnect so the client clears stale cards.
+      this.sendEvent({ type: 'panel_update', sessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
+    }
+
+    this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'completed' } as SessionRestoreEvent);
+
+    return restoreMode;
   }
 
   /** Close this handler's WebSocket connection. */
@@ -1553,14 +1644,7 @@ export class WsHandler {
     }
   }
 
-  /** Session-level displacement no longer exists. */
-  sendDisplacedEvent(_sessionId: string): void {
-    throw new Error('not implemented');
-  }
-
-  /** Broadcast a `call_ended` to this client (used by the session manager's
-   *  before-close hook so the orchestrator bookkeeping owner learns that a
-   *  server-initiated teardown happened). */
+  /** Send a `call_ended` event to this client for a server-initiated teardown. */
   sendCallEndedEvent(sessionId: string, reason: 'user_hangup' | 'displaced' | 'server_ended' | 'error'): void {
     this.sendEvent({
       type: 'call_ended',
@@ -1659,6 +1743,7 @@ export class WsHandler {
           event.messageEntryIds = extractMessageEntryIds(slot.session.sessionManager.getBranch(), rendererRegisteredVisibility(slot.session));
         }
         this.sendEvent(event);
+        sendSlotEvent(slot, event, { exceptClientId: this.clientId });
       },
       () => slot.session.messages[slot.session.messages.length - 1],
     );
@@ -1818,11 +1903,7 @@ export class WsHandler {
     this.loginAbort?.abort();
     this.settlePendingLoginInputs('connection closed');
     for (const sid of this.subscribedSessions) {
-      try {
-        this.sessionManager.detachObserver(sid, this.clientId);
-      } catch {
-        // The observer seam is intentionally unimplemented in this phase.
-      }
+      this.sessionManager.detachObserver(sid, this.clientId);
     }
     this.subscribedSessions.clear();
     this.viewedSessionId = null;

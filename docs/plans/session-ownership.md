@@ -300,7 +300,7 @@ File: `server/src/ws-handler.ts`. Restore the imports test-write removed: `creat
 - Delete `displaceOwner` and `sendDisplacedEvent`. Update the `ClientRegistry`, `createCommandContextActions`, and `server.ts` claim comments to observer terms.
 
 **Verify:** In `server/src/ws-handler.test.ts`, these pass: the "observer command boundary" open, replay, and prompt tests; "open_session — same client ID", "catch-up replay", "disk-backed reopen", "cleanup", "handleSessionReset", "tree navigation interfaces", "fork command", and "panel resync requests".
-**Status:** not started
+**Status:** done
 
 ### Step 5: Open, archive, close, kill, delete, and eviction
 
