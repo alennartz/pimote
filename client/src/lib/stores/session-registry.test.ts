@@ -1718,11 +1718,12 @@ describe('session_not_found cleanup', () => {
 
     sessionRegistry.addSession('s-archived', '/repos/proj', 'proj');
     connection.addSubscribedSession('s-archived', '/repos/proj');
+    sessionRegistry.sessions['s-archived'].messages = [makeUserMessage('keep transcript')];
 
     const opened = await openExistingSession('s-archived', '/repos/proj', { switchTo: false });
 
     expect(opened).toBe(false);
-    expect(sessionRegistry.sessions['s-archived']).toBeDefined();
+    expect(sessionRegistry.sessions['s-archived'].messages).toEqual([makeUserMessage('keep transcript')]);
     expect(connection.subscribedSessions.has('s-archived')).toBe(false);
   });
 

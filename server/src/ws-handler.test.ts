@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { createCommandContextActions, WsHandler, type ClientRegistry } from './ws-handler.js';
-import type { PimoteSessionManager, ManagedSlot, SessionState, SessionObserver } from './session-manager.js';
+import { sendSlotEvent, waitForSlotUiResponse, type PimoteSessionManager, type ManagedSlot, type SessionState, type SessionObserver } from './session-manager.js';
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderRegistry } from './folder-registry.js';
@@ -294,6 +294,111 @@ function flushPromises(): Promise<void> {
 }
 
 // --- Tests ---
+
+describe('observer command boundary', () => {
+  function pair() {
+    const slot = createMockSlot({ id: 'session-1', eventBuffer: createMockEventBuffer({ replayResult: [] }) });
+    const sessions = new Map([['session-1', slot]]);
+    const clientRegistry: ClientRegistry = new Map();
+    const first = createTestHandler('a', { sessions, clientRegistry });
+    const second = createTestHandler('b', { sessions, clientRegistry });
+    for (const ctx of [first, second]) {
+      ctx.sessionManager.attachObserver = async (id, observer) => {
+        sessions.get(id)!.observers.set(observer.clientId, observer);
+      };
+      ctx.sessionManager.detachObserver = (id, clientId) => {
+        sessions.get(id)?.observers.delete(clientId);
+      };
+    }
+    return { slot, sessions, first, second };
+  }
+  async function open(ctx: TestContext, lastCursor = 0) {
+    await ctx.handler.handleMessage(JSON.stringify({ type: 'open_session', sessionId: 'session-1', folderPath: '/home/user/project', lastCursor, id: 'open' }));
+    expect(findResponse(ctx.sent, 'open')).toMatchObject({ success: true });
+  }
+
+  it('opens two observers without closing either and detaches only the disconnected client', async () => {
+    const { slot, first, second } = pair();
+    await open(first);
+    await open(second);
+    expect([...slot.observers.keys()].sort()).toEqual(['a', 'b']);
+    expect(findEvents(first.sent, 'session_closed')).toEqual([]);
+    expect(findEvents(second.sent, 'session_closed')).toEqual([]);
+    first.handler.cleanup();
+    expect([...slot.observers.keys()]).toEqual(['b']);
+  });
+
+  it('replays independently and resyncs only the observer past buffer eviction', async () => {
+    const { slot, first, second } = pair();
+    const events = [{ type: 'agent_start', sessionId: 'session-1', cursor: 5 }];
+    slot.sessionState.eventBuffer.replay = ((cursor: number) => (cursor === 4 ? events : null)) as any;
+    await open(first, 4);
+    await open(second, 0);
+    expect(findEvents(first.sent, 'buffered_events')).toContainEqual(expect.objectContaining({ events }));
+    expect(findEvents(first.sent, 'full_resync')).toEqual([]);
+    expect(findEvents(second.sent, 'full_resync')).toHaveLength(1);
+    expect(slot.observers.size).toBe(2);
+  });
+
+  it('admits sends from either observer into the same prompt path', async () => {
+    const { slot, first, second } = pair();
+    const prompt = vi.fn(async () => {});
+    (slot.session as any).prompt = prompt;
+    await open(first);
+    await open(second);
+    for (const [ctx, message] of [
+      [first, 'first'],
+      [second, 'second'],
+    ] as const) {
+      await ctx.handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-1', message, id: message }));
+      expect(findResponse(ctx.sent, message)).toMatchObject({ success: true });
+    }
+    expect(prompt.mock.calls.map((args: any[]) => args[0])).toEqual(['first', 'second']);
+  });
+
+  it('archives every live slot and closes every observer before setting the flag', async () => {
+    const { slot, sessions, first, second } = pair();
+    (slot.session as any).sessionFile = '/tmp/shared.jsonl';
+    const other = createMockSlot({ id: 'other', session: { ...slot.session, sessionId: 'other' } as any });
+    sessions.set('other', other);
+    await open(first);
+    await open(second);
+    other.observers.set('b', slot.observers.get('b')!);
+    const close = vi.fn(async (id: string) => {
+      sessions.delete(id);
+    });
+    first.sessionManager.closeSession = close;
+    await first.handler.handleMessage(
+      JSON.stringify({ type: 'archive_session', folderPath: '/home/user/project', sessionIds: ['session-1', 'other'], archived: true, id: 'archive' }),
+    );
+    expect(close.mock.calls.map(([id]) => id).sort()).toEqual(['other', 'session-1']);
+    for (const ctx of [first, second]) {
+      expect(findEvents(ctx.sent, 'session_closed')).toContainEqual(expect.objectContaining({ sessionId: 'session-1', reason: 'archived' }));
+    }
+    expect(first.sessionMetadataStore.isArchived('/tmp/shared.jsonl')).toBe(true);
+    await first.handler.handleMessage(JSON.stringify({ type: 'archive_session', folderPath: '/home/user/project', sessionIds: ['session-1'], archived: false, id: 'unarchive' }));
+    expect(sessions.size).toBe(0);
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it('broadcasts a dialog and accepts only its first answer, dismissing other copies', async () => {
+    const { slot, first, second } = pair();
+    await open(first);
+    await open(second);
+    const request = { type: 'extension_ui_request', sessionId: 'session-1', requestId: 'dialog', method: 'confirm', title: 'Continue?' } as const;
+    const result = waitForSlotUiResponse(slot, 'dialog', request);
+    sendSlotEvent(slot, request);
+    expect(findEvents(first.sent, 'extension_ui_request')).toContainEqual(request);
+    expect(findEvents(second.sent, 'extension_ui_request')).toContainEqual(request);
+    await first.handler.handleMessage(JSON.stringify({ type: 'extension_ui_response', sessionId: 'session-1', requestId: 'dialog', confirmed: true, id: 'answer-a' }));
+    await expect(result).resolves.toBe(true);
+    expect(slot.sessionState.pendingUiResponses.has('dialog')).toBe(false);
+    expect(findEvents(second.sent, 'extension_ui_resolved')).toEqual([{ type: 'extension_ui_resolved', sessionId: 'session-1', requestId: 'dialog' }]);
+    expect(findEvents(first.sent, 'extension_ui_resolved')).toEqual([]);
+    await second.handler.handleMessage(JSON.stringify({ type: 'extension_ui_response', sessionId: 'session-1', requestId: 'dialog', confirmed: false, id: 'answer-b' }));
+    expect(findEvents(second.sent, 'extension_ui_resolved')).toHaveLength(1);
+  });
+});
 
 describe('WsHandler', () => {
   describe('clientId', () => {
@@ -757,7 +862,7 @@ describe('WsHandler', () => {
       };
     }
 
-    it('resolves the folder by searching known folders (archived included) and unarchives on open', async () => {
+    it('resolves the folder but rejects an archived session without unarchiving', async () => {
       const sessions = new Map<string, ManagedSlot>();
       const sessionManager = createMockSessionManager(sessions);
       stubDiskReopen(sessionManager, sessions, '/home/user/beta', '/tmp/session-deep.jsonl');
@@ -793,14 +898,10 @@ describe('WsHandler', () => {
 
       const resp = findResponse(sent, 'req-folderless');
       expect(resp).toBeDefined();
-      expect(resp!.success).toBe(true);
-      expect((resp!.data as any).folderPath).toBe('/home/user/beta');
-
-      // Opened straight from the archived folder record → unarchived on the fly.
-      expect(sessionMetadataStore.isArchived('/tmp/session-deep.jsonl')).toBe(false);
-      const archivedEvents = findEvents(sent, 'session_archived');
-      expect(archivedEvents).toHaveLength(1);
-      expect((archivedEvents[0] as any).archived).toBe(false);
+      expect(resp).toMatchObject({ success: false, error: 'session_archived' });
+      expect(sessionMetadataStore.isArchived('/tmp/session-deep.jsonl')).toBe(true);
+      expect(findEvents(sent, 'session_archived')).toEqual([]);
+      expect(sessions.size).toBe(0);
     });
 
     it('responds session_not_found when no known folder holds the session', async () => {

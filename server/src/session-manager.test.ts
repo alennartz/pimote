@@ -43,6 +43,8 @@ function injectSession(manager: PimoteSessionManager, slot: ManagedSlot): void {
   sessions.set(slot.sessionState.id, slot);
 }
 
+let fakeSlotSequence = 0;
+
 function createFakeSlot(
   overrides: Partial<{
     id: string;
@@ -55,7 +57,7 @@ function createFakeSlot(
     treeNavigationInProgress: boolean;
   }> = {},
 ): ManagedSlot {
-  const id = overrides.id ?? 'test-session-' + Math.random().toString(36).slice(2, 8);
+  const id = overrides.id ?? 'test-session-' + String(++fakeSlotSequence);
   const sessionState: SessionState = {
     id,
     eventBuffer: { replay: () => [], currentCursor: 0, onEvent: () => {} } as any,
@@ -285,7 +287,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     const now = Date.now();
     const staleSlot = createFakeSlot({
       id: 'stale-1',
-      connection: null,
+      observers: new Map(),
       idleSince: now - 400_000, // 6.7 minutes ago (past 5-minute timeout)
     });
 
@@ -310,7 +312,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     // long-running turn, it must never be reaped — the agent is actively working.
     const workingSlot = createFakeSlot({
       id: 'working-1',
-      connection: null,
+      observers: new Map(),
       status: 'working',
       idleSince: null,
     });
@@ -335,7 +337,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     const now = Date.now();
     const freshSlot = createFakeSlot({
       id: 'fresh-1',
-      connection: null,
+      observers: new Map(),
       idleSince: now - 60_000, // 1 minute ago (within 5-minute timeout)
     });
 
@@ -350,7 +352,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     manager.stopIdleCheck();
   });
 
-  it('does NOT reap sessions with a connected client (isClientConnected returns true)', async () => {
+  it('does NOT reap sessions with an attached observer', async () => {
     const config = createTestConfig();
     const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
@@ -358,7 +360,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     const now = Date.now();
     const connectedSlot = createFakeSlot({
       id: 'connected-1',
-      connection: { ws: {} as any, connectedClientId: 'client-abc', onSessionReset: null },
+      observers: new Map([['client-abc', { ws: { readyState: 1, send: vi.fn() }, clientId: 'client-abc', cursor: 0, onSessionReset: null }]]),
       idleSince: now - 400_000, // old activity but client is connected
     });
 
@@ -374,7 +376,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     manager.stopIdleCheck();
   });
 
-  it('reaps sessions whose connectedClientId is set but isClientConnected returns false', async () => {
+  it('protects attached observers regardless of a legacy connection callback', async () => {
     const config = createTestConfig();
     const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
@@ -382,7 +384,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     const now = Date.now();
     const ghostSlot = createFakeSlot({
       id: 'ghost-1',
-      connection: { ws: {} as any, connectedClientId: 'dead-client', onSessionReset: null },
+      observers: new Map([['dead-client', { ws: { readyState: 1, send: vi.fn() }, clientId: 'dead-client', cursor: 0, onSessionReset: null }]]),
       idleSince: now - 400_000,
     });
 
@@ -394,7 +396,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
     await vi.advanceTimersByTimeAsync(60_000);
 
-    expect(closeSessionSpy).toHaveBeenCalledWith('ghost-1');
+    expect(closeSessionSpy).not.toHaveBeenCalled();
 
     manager.stopIdleCheck();
   });
@@ -436,7 +438,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     installResponder(bus, true);
     const busySlot = createFakeSlot({
       id: 'busy-agents-1',
-      connection: null,
+      observers: new Map(),
       idleSince: Date.now() - 400_000, // stale, but background agents are running
     });
     busySlot.eventBusRef.current = bus as any;
@@ -461,7 +463,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     installResponder(bus, false);
     const settledSlot = createFakeSlot({
       id: 'settled-agents-1',
-      connection: null,
+      observers: new Map(),
       idleSince: Date.now() - 400_000,
     });
     settledSlot.eventBusRef.current = bus as any;
@@ -484,7 +486,7 @@ describe('PimoteSessionManager — idle reaper', () => {
 
     const silentSlot = createFakeSlot({
       id: 'silent-agents-1',
-      connection: null,
+      observers: new Map(),
       idleSince: Date.now() - 400_000,
     });
     silentSlot.eventBusRef.current = createMockEventBus() as any;
@@ -500,7 +502,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     manager.stopIdleCheck();
   });
 
-  it('uses isClientConnected callback only when connectedClientId is not null', async () => {
+  it('ignores the legacy connection callback for empty observer maps', async () => {
     const config = createTestConfig();
     const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
@@ -509,7 +511,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     // Session with null connection and old activity
     const nullClientSlot = createFakeSlot({
       id: 'null-client-1',
-      connection: null,
+      observers: new Map(),
       idleSince: now - 400_000,
     });
 
@@ -536,7 +538,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     const now = Date.now();
     const navigatingSlot = createFakeSlot({
       id: 'navigating-1',
-      connection: null,
+      observers: new Map(),
       idleSince: now - 400_000,
       treeNavigationInProgress: true,
     });
@@ -559,7 +561,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     const now = Date.now();
     const navigatingSlot = createFakeSlot({
       id: 'navigating-2',
-      connection: null,
+      observers: new Map(),
       idleSince: now - 400_000,
       treeNavigationInProgress: true,
     });
@@ -586,17 +588,17 @@ describe('PimoteSessionManager — idle reaper', () => {
     const now = Date.now();
     const stale1 = createFakeSlot({
       id: 'stale-a',
-      connection: null,
+      observers: new Map(),
       idleSince: now - 400_000,
     });
     const stale2 = createFakeSlot({
       id: 'stale-b',
-      connection: { ws: {} as any, connectedClientId: 'gone-client', onSessionReset: null },
+      observers: new Map(),
       idleSince: now - 500_000,
     });
     const fresh = createFakeSlot({
       id: 'fresh-a',
-      connection: null,
+      observers: new Map(),
       idleSince: now - 100_000, // within timeout
     });
 
@@ -616,29 +618,26 @@ describe('PimoteSessionManager — idle reaper', () => {
     manager.stopIdleCheck();
   });
 
-  it('falls back to reaping when no isClientConnected callback is provided', async () => {
+  it('protects an attached observer without a connection callback', async () => {
     const config = createTestConfig();
     const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
 
     const now = Date.now();
-    // Session has a connectedClientId but no isClientConnected callback is given
+    // Observer presence alone protects the session.
     const slot = createFakeSlot({
       id: 'no-callback-1',
-      connection: { ws: {} as any, connectedClientId: 'some-client', onSessionReset: null },
+      observers: new Map([['some-client', { ws: { readyState: 1, send: vi.fn() }, clientId: 'some-client', cursor: 0, onSessionReset: null }]]),
       idleSince: now - 400_000,
     });
 
     injectSession(manager, slot);
 
-    // No isClientConnected callback — should treat connectedClientId as not verified
     manager.startIdleCheck(300_000);
 
     await vi.advanceTimersByTimeAsync(60_000);
 
-    // Without the callback, isClientConnected defaults to false,
-    // so session with expired activity should be reaped
-    expect(closeSessionSpy).toHaveBeenCalledWith('no-callback-1');
+    expect(closeSessionSpy).not.toHaveBeenCalled();
 
     manager.stopIdleCheck();
   });
@@ -651,7 +650,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     const now = Date.now();
     const slot = createFakeSlot({
       id: 'stop-test-1',
-      connection: null,
+      observers: new Map(),
       idleSince: now - 400_000,
     });
 
@@ -673,7 +672,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     const now = Date.now();
     const slot = createFakeSlot({
       id: 'restart-1',
-      connection: null,
+      observers: new Map(),
       idleSince: now - 400_000,
     });
 

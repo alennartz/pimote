@@ -15,6 +15,32 @@ function slotWith(...observers: SessionObserver[]): ManagedSlot {
   return { observers: new Map(observers.map((entry) => [entry.clientId, entry])) } as unknown as ManagedSlot;
 }
 
+vi.mock('./git-branch.js', () => ({ getGitBranch: async () => null }));
+vi.mock('@earendil-works/pi-coding-agent', () => ({
+  ModelRuntime: { create: async () => ({ getAvailable: async () => [] }) },
+  getAgentDir: () => '/agent',
+  SessionManager: { create: () => ({ getCwd: () => '/project' }) },
+  createEventBus: () => ({ on: () => () => {}, emit: vi.fn(), clear: vi.fn() }),
+  createAgentSessionRuntime: async () => ({
+    session: {
+      sessionId: 'session-1',
+      messages: [],
+      isStreaming: false,
+      subscribe: () => () => {},
+      bindExtensions: vi.fn(async () => {}),
+      setSteeringMode: vi.fn(),
+      setFollowUpMode: vi.fn(),
+    },
+    dispose: vi.fn(async () => {}),
+  }),
+}));
+
+async function managedSession() {
+  const manager = await PimoteSessionManager.create({ bufferSize: 100 } as any, { notify: async () => {} } as any);
+  const id = await manager.openSession('/project');
+  return { manager, slot: manager.getSlot(id)! };
+}
+
 const event: PimoteEvent = {
   type: 'agent_start',
   sessionId: 'session-1',
@@ -69,11 +95,31 @@ describe('session observer fan-out', () => {
 });
 
 describe('session observer lifecycle', () => {
+  it('protects a stale session while any observer remains, then reaps after final detach', async () => {
+    vi.useFakeTimers();
+    const { manager, slot } = await managedSession();
+    try {
+      slot.sessionState.idleSince = Date.now() - 400_000;
+      await manager.attachObserver('session-1', observer('a'));
+      await manager.attachObserver('session-1', observer('b'));
+      manager.startIdleCheck(300_000);
+      manager.detachObserver('session-1', 'a');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(manager.getSlot('session-1')).toBe(slot);
+      manager.detachObserver('session-1', 'b');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(manager.getSlot('session-1')).toBeNull();
+      expect(slot.runtime.dispose).toHaveBeenCalled();
+    } finally {
+      manager.stopIdleCheck();
+      vi.useRealTimers();
+    }
+  });
+
   it('replaces an observer when a second socket presents the same client id', async () => {
     const existing = observer('client-a', 7);
-    const slot = slotWith(existing);
-    const manager = Object.create(PimoteSessionManager.prototype) as PimoteSessionManager;
-    (manager as unknown as { sessions: Map<string, ManagedSlot> }).sessions = new Map([['session-1', slot]]);
+    const { manager, slot } = await managedSession();
+    await manager.attachObserver('session-1', existing);
     const replacement = observer('client-a');
 
     await manager.attachObserver('session-1', replacement);
@@ -82,12 +128,12 @@ describe('session observer lifecycle', () => {
     expect(slot.observers.size).toBe(1);
   });
 
-  it('detaches only the requested client and leaves other observers attached', () => {
+  it('detaches only the requested client and leaves other observers attached', async () => {
     const first = observer('client-a');
     const second = observer('client-b');
-    const slot = slotWith(first, second);
-    const manager = Object.create(PimoteSessionManager.prototype) as PimoteSessionManager;
-    (manager as unknown as { sessions: Map<string, ManagedSlot> }).sessions = new Map([['session-1', slot]]);
+    const { manager, slot } = await managedSession();
+    await manager.attachObserver('session-1', first);
+    await manager.attachObserver('session-1', second);
 
     manager.detachObserver('session-1', 'client-a');
 

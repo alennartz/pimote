@@ -1116,6 +1116,12 @@ export interface SessionConflictEvent {
 
 // -- Extension UI request events --
 
+export interface ExtensionUiResolvedEvent {
+  type: 'extension_ui_resolved';
+  sessionId: string;
+  requestId: string;
+}
+
 export interface ExtensionUiRequestEvent {
   type: 'extension_ui_request';
   sessionId: string;
@@ -1388,6 +1394,7 @@ export type PimoteEvent =
   | PimoteSessionEvent
   // Extension UI
   | ExtensionUiRequestEvent
+  | ExtensionUiResolvedEvent
   // Session conflict
   | SessionConflictEvent
   // Server-level

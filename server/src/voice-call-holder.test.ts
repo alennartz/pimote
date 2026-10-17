@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { VoiceOrchestrator, type VoiceOrchestratorOptions } from './voice-orchestrator.js';
 
-function createOrchestrator(): VoiceOrchestrator {
+function createOrchestrator(notifyClientCallEnded = vi.fn()): VoiceOrchestrator {
   const options: VoiceOrchestratorOptions = {
     config: { voice: { speechmuxSignalUrl: 'https://speechmux.test/signal', speechmuxLlmWsUrl: 'wss://speechmux.test/llm' } } as any,
     sessionManager: {} as any,
+    notifyClientCallEnded,
     busResolver: {
       getSlot: () => ({}) as any,
       getEventBus: () => ({}) as any,
@@ -31,10 +32,13 @@ describe('voice call holder', () => {
   });
 
   it('force binding transfers the holder and clears it when the call ends', async () => {
-    const orchestrator = createOrchestrator();
+    const notify = vi.fn();
+    const orchestrator = createOrchestrator(notify);
     await orchestrator.bindCall({ sessionId: 'session-1', clientId: 'client-a', force: false });
 
     await orchestrator.bindCall({ sessionId: 'session-1', clientId: 'client-b', force: true });
+    expect(notify).toHaveBeenCalledWith('client-a', { type: 'call_ended', sessionId: 'session-1', reason: 'displaced' });
+    expect(notify.mock.calls.some(([, event]) => event.type === 'session_closed')).toBe(false);
     expect(orchestrator.callHolder.get('session-1')).toBe('client-b');
 
     await orchestrator.endCall({ sessionId: 'session-1', reason: 'user_hangup' });

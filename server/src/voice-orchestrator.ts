@@ -56,6 +56,8 @@ export interface VoiceOrchestratorOptions {
    * client tear its VoiceCallStore down instead of waiting for WebRTC to die.
    */
   notifyCallEnded?: (sessionId: string) => void;
+  /** Route a call-ended event to one holder without closing its session. */
+  notifyClientCallEnded?: (clientId: string, event: { type: 'call_ended'; sessionId: string; reason: CallEndReason }) => void;
 }
 
 export class VoiceOrchestrator {

@@ -84,6 +84,36 @@ describe('ConnectionStore — definitive restore rejections', () => {
     c.disconnect();
   });
 
+  it.each(['boot', 'reconnect'])('%s archived rejection removes only the archived restore entry', async (mode) => {
+    const c = new ConnectionStore();
+    const deleted = vi.fn();
+    c.onSessionNotFound = deleted;
+    if (mode === 'reconnect') {
+      c.connect();
+      const initial = instances.at(-1)!;
+      initial.readyState = FakeWebSocket.OPEN;
+      initial.onopen!();
+      await flush();
+      c.disconnect();
+    }
+    c.addSubscribedSession('archived', '/proj');
+    c.addSubscribedSession('retained', '/proj');
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    await flush();
+    const opens = ws.sent.map((raw) => JSON.parse(raw)).filter((cmd) => cmd.type === 'open_session');
+    expect(opens.every((cmd) => !('force' in cmd))).toBe(true);
+    for (const cmd of opens) ws.onmessage!({ data: JSON.stringify({ id: cmd.id, success: false, error: cmd.sessionId === 'archived' ? 'session_archived' : 'internal_error' }) });
+    await flush();
+    expect(c.subscribedSessions.has('archived')).toBe(false);
+    expect(c.subscribedSessions.has('retained')).toBe(true);
+    expect(deleted).not.toHaveBeenCalled();
+    expect(c.ready).toBe(true);
+    c.disconnect();
+  });
+
   it('other restore failures keep the session for the next reconnect cycle', async () => {
     const c = new ConnectionStore();
     const onSessionNotFound = vi.fn();
@@ -110,6 +140,25 @@ describe('ConnectionStore — definitive restore rejections', () => {
     expect(isSessionNotFoundError('session_expired')).toBe(true);
     expect(isSessionNotFoundError('session_archived')).toBe(false);
     expect(isSessionNotFoundError(undefined)).toBe(false);
+  });
+});
+
+describe('ConnectionStore — archive notification', () => {
+  it('drops an archived session from restores but ignores explicit unarchive', async () => {
+    const c = new ConnectionStore();
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    await flush();
+    c.addSubscribedSession('archived', '/proj');
+    c.addSubscribedSession('retained', '/proj');
+    ws.onmessage!({ data: JSON.stringify({ type: 'session_archived', sessionId: 'archived', folderPath: '/proj', archived: true }) });
+    expect(c.subscribedSessions.has('archived')).toBe(false);
+    expect(c.subscribedSessions.has('retained')).toBe(true);
+    ws.onmessage!({ data: JSON.stringify({ type: 'session_archived', sessionId: 'archived', folderPath: '/proj', archived: false }) });
+    expect(c.subscribedSessions.has('archived')).toBe(false);
+    c.disconnect();
   });
 });
 

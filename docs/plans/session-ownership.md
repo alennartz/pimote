@@ -53,7 +53,7 @@ A second socket with the same `clientId` replaces the first. This keeps the exis
 
 **Sends.** A send from any observer enters the existing prompt path. The existing queue orders sends in arrival order. This plan adds no queue and no busy rejection.
 
-**Extension dialogs.** UI requests go through `sendSlotEvent`, so every observer receives them. The first `extension_ui_response` for a request ID resolves it and removes its pending entry. Later responses for that ID find no entry and are dropped.
+**Extension dialogs.** UI requests go through `sendSlotEvent`, so every observer receives them. The first `extension_ui_response` for a request ID resolves it and removes its pending entry. Later responses for that ID find no entry and are dropped. The server sends `extension_ui_resolved { sessionId, requestId }` to every observer except the answering client. Each recipient closes only that matching dialog. Unknown resolution IDs do nothing.
 
 **Open (`open_session`).** The command has no `force` field. Behavior:
 
@@ -77,7 +77,8 @@ callHolder: Map<string, string>; // sessionId -> clientId of the active call
 - `call_bind` with no active call records the caller as holder.
 - `call_bind` with an active call and `force: false` returns `call_bind_failed_owned`.
 - `call_bind` with `force: true` sends `call_ended { reason: 'displaced' }` to the old holder and records the new one.
-- `call_ended` clears the holder.
+- `call_ended` clears the holder, including extension self-deactivation and shutdown.
+- `VoiceOrchestratorOptions.notifyClientCallEnded(clientId, event)` routes `call_ended` to a specific holder. This seam carries `{ type: 'call_ended', sessionId, reason }` and never closes the session.
 - The old holder gets no `session_closed`. The session is not displaced.
 
 **Live bash output (DR-044).** `bash_execution_update` deltas go to every connected observer. They stay out of the replay buffer. A late joiner receives the final bash result and context sync when the command completes. Pi's output limits and truncation apply to that result, so it can be shorter than the live stream.
@@ -94,6 +95,7 @@ callHolder: Map<string, string>; // sessionId -> clientId of the active call
 
 - `session_closed` reason `archived`
 - `open_session` error `session_archived`
+- `extension_ui_resolved { sessionId, requestId }`
 
 ### Technology Choices
 
@@ -115,6 +117,7 @@ Each reason below comes from the discussion. Where none was given, the entry say
 - **Voice keeps a single call holder for now.** This revises the brainstorm's "any observer may take the call." The reason: avoid code churn before the personas rework calling.
 - **Archive closes the session everywhere.** Unarchive is `archive_session` with `archived: false`, which is separate from open.
 - **Opening never unarchives.** Archived sessions reject a soft open with `session_archived`.
+- **First dialog answer dismisses other copies.** The user confirmed the brainstorm behavior during test review. The protocol had no dismissal event, so `extension_ui_resolved` is a new wire addition.
 - **Late joiner waits for the final bash result.** The owner accepted this. Partial output stays unavailable to late joiners.
 
 ## Open items
@@ -163,7 +166,7 @@ Each reason below comes from the discussion. Where none was given, the entry say
 ### Removed Legacy Tests
 
 - `server/src/voice-orchestrator-boot.test.ts` — deleted because it asserted force-bind transfer through the removed session owner and `slot.connection`; holder transfer is covered by `server/src/voice-call-holder.test.ts`.
-- `server/src/voice-orchestrator.test.ts` — deleted because every bind lifecycle case used the removed `ClientConnection` ownership seam; holder admission, rejection, transfer, and cleanup are covered by `server/src/voice-call-holder.test.ts`.
+- `server/src/voice-orchestrator.test.ts` — initially deleted because bind cases used `ClientConnection`. Test review restored its lifecycle/error/bus tests through `clientId`. Only obsolete owner-displacement assertions stay removed, replaced by targeted call-holder transfer coverage.
 - `server/src/ws-handler.test.ts` ownership cases — removed silent rebind, `session_owned` rejection, force takeover, remote-session conflict, ownership enrichment, and displaced collision assertions; observer fan-out and replacement are covered by `server/src/session-observers.test.ts`, while archived open behavior is covered by the remaining archived-session test.
 - `mobile/android/app/src/test/kotlin/com/pimote/android/call/CallControllerTest.kt` session-level displacement cases — removed because the Android mirror no longer accepts the session-level `displaced` reason; call-level `displaced` coverage remains.
 
@@ -195,7 +198,28 @@ Each reason below comes from the discussion. Where none was given, the entry say
 
 ### Red Gate
 
-- `server/src/session-observers.test.ts` runs eight tests and all eight fail through explicit `not implemented` observer seams.
+- `server/src/session-observers.test.ts` contains six tests. Fan-out, attach/detach, and observer reaper lifecycle fail through explicit `not implemented` seams.
 - `server/src/voice-call-holder.test.ts` runs three tests and all three fail through the explicit `not implemented` bind seam.
 - The archived-session restore test in `client/src/lib/stores/session-registry.test.ts` fails because restore-set cleanup is not implemented yet.
-- Server TypeScript compilation, client checking, and Android test compilation remain green; implementation behavior is intentionally absent.
+- Server TypeScript compilation and client checking remain green. Android test compilation was green at test-write and was not rerun during review. Implementation behavior stays absent.
+
+### Test-review additions
+
+- `server/src/ws-handler.test.ts` adds two-client open, independent replay/eviction, either-observer prompts, disconnect cleanup, archive close fan-out, explicit unarchive staying closed, and dialog broadcast/first-answer/dismissal cases. The folderless archived open now rejects without clearing the flag.
+- `server/src/session-observers.test.ts` uses normal manager creation with mocked runtime dependencies, then public open/getSlot/attach/detach seams. It adds final-observer reaper protection and runtime disposal coverage.
+- `server/src/session-manager.test.ts` migrates reaper fixtures and expectations to observer maps. Legacy connection callbacks do not override map presence.
+- `server/src/voice-orchestrator.test.ts` restores session-not-found, disabled configuration, bus activation and response, shutdown, idempotent end, and extension-deactivation/no-loop cases.
+- `server/src/voice-call-holder.test.ts` checks targeted displaced call notification without session closure.
+- `client/src/lib/stores/connection.svelte.test.ts` adds boot/reconnect archived rejection and archive notification restore cleanup. Opens carry no force field.
+- `client/src/lib/stores/session-registry.test.ts` checks transcript contents survive archived open rejection.
+- `client/src/lib/stores/extension-ui-queue.svelte.test.ts` checks matching dialog dismissal, session isolation, and unknown request IDs.
+- `shared/src/protocol.ts` materializes `ExtensionUiResolvedEvent` and adds it to the event union.
+
+### Review verification
+
+- Shared build, server TypeScript compilation, and client checking passed.
+- Targeted server run: 68 failed, 100 passed across five files, including migrated reaper tests. Failures include observer stubs and existing WS lifecycle paths removed in test-write.
+- Targeted client run: 6 failed, 112 passed. New restore cleanup and dialog dismissal tests fail on missing behavior. An existing cold-boot notification adoption test also fails.
+- The review adds behavioral tests, not implementations. Previously green unchanged lifecycle cases remain permitted to pass.
+
+**Review status:** approved
