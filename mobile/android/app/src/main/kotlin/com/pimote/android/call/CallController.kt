@@ -90,7 +90,7 @@ enum class CallEndReason {
  *    state = `Ended(null, BIND_FAILED)`.
  * 3. `wsClient.request(CallBindCommand(sessionId, force = false))` →
  *    [CallState.Binding]. On `call_bind_failed_owned`, retry once with
- *    `force = true` (single-owner displacement). Other failures →
+ *    `force = true` (call-holder transfer). Other failures →
  *    `connection.disconnectWithError`, `Ended(sessionId, BIND_FAILED)`.
  * 4. `speechmuxPeer.connect(signalUrl, sessionId)` → [CallState.Negotiating].
  *    Suspends until ICE Connected or fails.

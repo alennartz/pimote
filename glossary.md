@@ -32,6 +32,22 @@ _Avoid_: manager working directory
 An ordinary persisted Pimote session whose working directory is the manager root. It uses the manager toolset and follows normal conversation navigation and reconnect behavior.
 _Avoid_: ephemeral manager session
 
+**Session**:
+A persisted conversation with pi, tied to a working folder. Multiple connected clients can observe and send commands in the same live session.
+_Avoid_: session owner
+
+**Session observer**:
+A connected client attached to a live session. Each observer receives the shared event stream and keeps an independent replay position.
+_Avoid_: session owner, session takeover
+
+**Archived session**:
+A persisted session marked as archived. Archiving closes its live runtime and observers; unarchiving clears the archive flag but requires an explicit open.
+_Avoid_: deleted session
+
+**Voice call holder**:
+The client bound to the single active voice call for a session. A forced bind transfers the call, not the session.
+_Avoid_: session owner, call owner
+
 **Sparse tree**:
 The discovered representation of the user's folders: included folders and shortcut occurrences over skipped path structure.
 
@@ -133,6 +149,8 @@ _Avoid_: tag template
 - A **persona folder** persists by leaving artifacts in its own folder; persona conferrals are ephemeral, **manager sessions** are not
 - The **manager root** is distinct from scan roots; when nested inside one, its entry is excluded from the sparse tree
 - A **manager session** is an ordinary persisted session rooted at the **manager root**
+- A **session** can have multiple **session observers**, but at most one **voice call holder**
+- An **archived session** has no live runtime; unarchiving it does not open it
 - A connection owns one **pinned order**: **listing windows** slice it, and the **order token** names it on the wire
 - A **repin** replaces a pinned order. Rows merge by canonical path, so windows across pins never duplicate
 - **Two-tier search** filters the whole set. **Matched sessions** narrow only the session lists of session-tier rows

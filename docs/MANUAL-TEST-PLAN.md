@@ -22,7 +22,7 @@
 11. [TP-09a: Slash Command Autocomplete](#tp-09a-slash-command-autocomplete)
 12. [TP-10: Multi-Session Management](#tp-10-multi-session-management)
 13. [TP-11: Reconnect & Event Replay](#tp-11-reconnect--event-replay)
-14. [TP-12: Session Conflict Detection & Takeover](#tp-12-session-conflict-detection--takeover)
+14. [TP-12: External Process Conflict Detection & Takeover](#tp-12-external-process-conflict-detection--takeover)
 15. [TP-13: Extension UI Bridging](#tp-13-extension-ui-bridging)
 16. [TP-14: Push Notifications (VAPID / Web Push)](#tp-14-push-notifications-vapid--web-push)
 17. [TP-15: PWA Installation & Service Worker](#tp-15-pwa-installation--service-worker)
@@ -291,7 +291,7 @@
 - **[P]** App open in Tab A with active sessions
 - **[S]** Open the app in Tab B (same browser)
 - **[E]** Both tabs share the same `clientId` from localStorage
-- **[E]** Tab B’s WebSocket connection displaces Tab A’s on the server (same clientId, new connection replaces old)
+- **[E]** Tab B’s WebSocket replaces Tab A’s socket in the client registry (both tabs share one clientId)
 - **[E]** Tab A loses its connection; Tab B takes over
 - **Note:** This is a known limitation, not a bug. Multi-tab usage in the same browser is not supported because both tabs share localStorage state.
 
@@ -1005,7 +1005,7 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 
 ---
 
-## TP-12: Session Conflict Detection & Takeover
+## TP-12: External Process Conflict Detection & Takeover
 
 ### TC-12.01 — External process conflict detected on session open 🟠
 

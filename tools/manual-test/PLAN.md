@@ -94,7 +94,7 @@ leaves the session closed until an explicit open.
 **Why:** Shared observers let several devices watch and control one live
 session without takeover races.
 
-**Driver:** manual-browser (two browsers / tabs).
+**Driver:** manual-browser (two browsers or profiles with distinct client IDs).
 
 ### 5. Slash commands and tree navigation
 
@@ -141,8 +141,8 @@ bottom gesture zone with three gestures: **swipe up = hang up**, **tap
 server-side end, displacement, or network drop) calling mode auto-
 returns to the normal chat surface for the same session. While a call
 is active, extension UI bridge dialogs reject with
-`ui_bridge_disabled_in_voice_mode`. Displacement of a call owner
-surfaces `call_ended { reason: 'displaced' }` to the old client. There
+`ui_bridge_disabled_in_voice_mode`. Displacement of the voice call
+holder surfaces `call_ended { reason: 'displaced' }` to the old client. There
 is no `CallBanner` strip and no inline phone button in the mobile
 header — calling mode is the only in-call UI.
 

@@ -43,7 +43,7 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => ({
 import { PimoteSessionManager } from '../session-manager.js';
 import type { PushNotificationService } from '../push-notification.js';
 
-describe('voice session ownership', () => {
+describe('voice session binding', () => {
   it('binds a fresh voice factory to each newly constructed or replacement session', async () => {
     const manager = await PimoteSessionManager.create(
       {

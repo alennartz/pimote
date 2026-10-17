@@ -64,7 +64,7 @@ Pimote is published as the app package `@pimote/pimote` at the repo root, backed
 
 The `shared/` directory holds TypeScript types for the WebSocket wire protocol shared between server and client — it's a tsc-only project, not a published package. The voice-mode pi extension lives at `server/src/voice/` and is loaded into each session only when voice is configured (see [Voice mode](#voice-mode)). The static-host pi extension lives at `server/src/static-host/` and is loaded unconditionally — it exposes the `pimote_static_host` / `pimote_static_host_remove` agent tools that publish a local folder under `/s/<slug>/` and push a tappable card to the panel UI. The file-download extension is also loaded into every session; it lets the agent offer any file readable by the server as a one-time, user-approved browser download. The Dashboard also includes an **Agent instructions** editor for the user-level `~/.pi/agent/AGENTS.md`, with optional tag-wrap snippets configured by `tagSnippets` in `~/.config/pimote/config.json` (the snippet lookup does not currently honor a custom `$XDG_CONFIG_HOME`).
 
-A separate **native Android client** lives at `mobile/android/` — a voice-first Kotlin app that places calls through the system telephony stack (`SelfManagedConnectionService`), and exposes your projects as Android system contacts so they're callable by name from Google Assistant / Gemini ("Hey Google, call <project>") and from the dialer's name search. It also ships an **Android Auto** surface (`CarAppService`, currently dev-mode / sideloaded) with a project list that places a new-session call on tap and a recency list that resumes a past session. Independent Gradle project, Docker-based build (`make android-test` / `make android-build`), not part of the npm workspace; speaks the same WebSocket protocol as the PWA. Its folder-listing mirror predates the windowed `list_folders` contract and needs an Android-side update. See `mobile/android/README.md`.
+A separate **native Android client** lives at `mobile/android/` — a voice-first Kotlin app that places calls through the system telephony stack (`SelfManagedConnectionService`), and exposes your projects as Android system contacts so they're callable by name from Google Assistant / Gemini ("Hey Google, call <project>") and from the dialer's name search. It also ships an **Android Auto** surface (`CarAppService`, currently dev-mode / sideloaded) with a project list that places a new-session call on tap and a recency list that resumes a past session. Independent Gradle project, Docker-based build (`make android-test` / `make android-build`), not part of the npm workspace; it maintains a hand-written mirror of the WebSocket protocol. The Android mirror needs updates for both the windowed `list_folders` contract and the session observer/archive contract. See `mobile/android/README.md`.
 
 ### Server
 
@@ -91,12 +91,12 @@ Each conversation with pi is a **session**, tied to a project folder. You can:
 - **Open multiple sessions** simultaneously across different projects — tabs in the active session bar let you switch instantly
 - **Resume existing sessions** — the session list shows all past conversations with creation date, message count, and a preview of the first message
 - **Rename sessions** for easier identification
-- **Archive sessions** to hide them from the default list without deleting them (toggle "show archived" to see them again)
+- **Archive sessions** to hide them from the default list without deleting them (toggle "show archived" to see them again); archiving closes the live session for all observers, and unarchiving does not reopen it
 - **Delete sessions** permanently
 - **Fork sessions** to branch a conversation from a specific point
 - **Start fresh** with a new session in the same project at any time
 
-Session state persists across browser restarts — reopening Pimote restores your open tabs and reconnects automatically.
+Unarchived session state persists across browser restarts — reopening Pimote restores your open tabs and reconnects automatically. Archived sessions leave the restore set; unarchive them, then open them explicitly.
 
 ### Conversation
 
@@ -133,8 +133,9 @@ The file-download extension gives the agent `pimote_send_file({ path })` and `pi
 
 ### Multi-Device and Conflict Handling
 
-- **Session takeover** — if a project has an external pi process running (e.g., from a terminal), Pimote detects it and offers to kill it and take over
-- **Device switching** — if you open the same session from another browser/device, the new connection displaces the old one
+- **Shared sessions** — multiple clients can observe one live session, receive the same events, and send commands
+- **Voice calls** — one client holds the call for a session; a forced call transfer ends the call for the old holder without closing the session
+- **External process conflict** — if a project has an external pi process running (e.g., from a terminal), Pimote detects it and offers to kill it and continue
 - **Push notifications** — enable notifications to get alerted when a background session finishes working (useful when switching away from the browser); a file offer opens that session's Downloads inbox rather than downloading automatically
 
 ### Reconnect

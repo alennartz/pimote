@@ -16,10 +16,10 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Manages multiple concurrent sessions per client with status tracking
 - Brokers WebSocket connections between clients and sessions
 - Buffers coalesced events for seamless reconnect after network drops
-- Detects conflicting external pi processes and remote pimote sessions per folder
-- Tracks per-client session ownership with reconnect displacement
+- Detects conflicting external pi processes per folder
+- Shares live sessions across observers with per-client replay positions and reconnect resync
 - Sends push notifications (Web Push / VAPID) when background sessions finish working
-- Handles session takeover by killing external processes or conflicting remote sessions
+- Handles external-process conflicts by killing matching pi processes in the session folder
 
 **Pimote Client** — A Svelte 5 PWA that:
 
@@ -36,7 +36,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Displays live panel cards pushed by extensions (subagent progress, custom dashboards) in a responsive side panel (desktop) or overlay (mobile)
 - Receives push notifications when background sessions finish working
 - Persists client identity and active sessions in localStorage — reopening the app restores session tabs and reconnects automatically
-- Reconnects transparently with gap replay and session displacement handling
+- Reconnects transparently with per-observer gap replay and archived-session restore handling
 - Optionally upgrades a session into a voice call (PWA-only in v1) — the server bridges to a speechmux sidecar and the pi session runs under a voice-interpreter extension that mediates between spoken user turns and a `my-pi` worker subagent
 - Single-tab per browser (multi-tab not supported — shared localStorage would cause conflicts)
 
