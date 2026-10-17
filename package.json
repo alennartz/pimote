@@ -34,7 +34,9 @@
     "scripts/postinstall-patches.mjs",
     "README.md",
     "LICENSE",
-    "patches/*.patch"
+    "patches/*.patch",
+    "docs/shipped/**",
+    "packages/sdk/README.md"
   ],
   "engines": {
     "node": ">=22.19.0"

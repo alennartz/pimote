@@ -1,6 +1,6 @@
 # @pimote/sdk
 
-Pimote's extensibility SDK — everything a [pi](https://github.com/mariozechner/pi-coding-agent) extension imports to talk to [pimote](https://github.com/alennartz/pimote). One subpath module per extension seam:
+Pimote's extensibility SDK — everything a [pi](https://github.com/earendil-works/pi) extension imports to talk to [pimote](https://github.com/alennartz/pimote). One subpath module per extension seam:
 
 - **`@pimote/sdk/panels`** — push structured card data to the pimote web client
 - **`@pimote/sdk/folders`** — contribute folder discovery and creation to pimote's folder layer
@@ -14,7 +14,7 @@ The root `@pimote/sdk` import re-exports all modules.
 npm install @pimote/sdk
 ```
 
-Requires `@earendil-works/pi-coding-agent` as an optional peer dependency (already present in any pi extension; only the panels and activity seams import from it).
+Requires `@earendil-works/pi-coding-agent` as an optional peer dependency. Any pi extension already has it. The panels and activity modules import only its types, so the package has no runtime dependency on pi.
 
 ## Panels — `@pimote/sdk/panels`
 
@@ -61,7 +61,7 @@ Detects whether the extension is running inside pimote.
 
 Returns a `PanelHandle` if running inside pimote, or `null` otherwise.
 
-Calling `detect()` again with the same key deactivates the previous handle (its methods become no-ops) and returns a new one.
+Calling `detect()` again with the same key deactivates the previous handle (its methods become no-ops) and returns a new one. Handles are scoped to one pi session, so two sessions can detect the same key without deactivating each other.
 
 #### `PanelHandle`
 
@@ -193,7 +193,7 @@ Repo facts as contributed by sources: `path`, `name`, `branch` (`string | null`)
 
 Answer pimote's background-activity poll so the idle reaper does not close a session that holds live work (for example: background subagents still running while the root session is settled).
 
-Pimote reaps sessions that are idle past a timeout with no connected client. Before closing, it emits `pimote:activity:request` on the session's EventBus and reads the answer synchronously. Register a responder if your extension manages work the root session cannot see:
+Pimote reaps sessions that are idle past a timeout, with no connected client and no running bash command. Before closing, it emits `pimote:activity:request` on the session's EventBus and reads the answer synchronously. Register a responder if your extension manages work the root session cannot see:
 
 ```ts
 import { answerActivity } from '@pimote/sdk/activity';
