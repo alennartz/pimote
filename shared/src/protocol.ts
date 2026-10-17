@@ -905,6 +905,14 @@ interface SessionEventBase {
   timestamp?: string;
 }
 
+/** Base for live-only events that never enter the replay cursor stream. */
+interface EphemeralSessionEventBase {
+  /** Which session produced this event */
+  sessionId: string;
+  /** ISO 8601 server-side timestamp */
+  timestamp?: string;
+}
+
 // -- Agent lifecycle events --
 
 export interface AgentStartEvent extends SessionEventBase {
@@ -1025,7 +1033,7 @@ export interface ToolExecutionEndEvent extends SessionEventBase {
 }
 
 /** Live output chunk emitted while a native user bash command is running. */
-export interface BashExecutionUpdateEvent extends SessionEventBase {
+export interface BashExecutionUpdateEvent extends EphemeralSessionEventBase {
   type: 'bash_execution_update';
   /** The originating bash command ID when the SDK supplied one. */
   id?: string;

@@ -201,6 +201,22 @@ export function createCommandContextActions(slot: ManagedSlot, sessionManager: P
 /** Client ID → WsHandler lookup for targeted cross-client notifications. */
 export type ClientRegistry = Map<string, WsHandler>;
 
+/** Close one live session for every observer and resolve its pending UI. */
+export async function closeSessionForObservers(
+  sessionManager: Pick<PimoteSessionManager, 'closeSession'>,
+  clientRegistry: ClientRegistry,
+  sessionId: string,
+  slot: ManagedSlot,
+  reason?: SessionClosedEvent['reason'],
+): Promise<void> {
+  const observerClientIds = slot.observers ? [...slot.observers.keys()] : [];
+  for (const clientId of observerClientIds) {
+    clientRegistry.get(clientId)?.sendSessionClosedEvent(sessionId, reason);
+  }
+  if (slot.sessionState) resolveAllSlotPendingUi(slot);
+  await sessionManager.closeSession(sessionId);
+}
+
 export class WsHandler {
   private subscribedSessions = new Set<string>();
   private fdWarningEmitted = false;
@@ -417,7 +433,7 @@ export class WsHandler {
           const sessions = await this.sessionRecords.listSessionRecords(command.folderPath);
           const archivedLookup = this.sessionMetadataStore.getArchivedLookup(sessions.map((s) => s.path));
 
-          // Build lookup from session ID to managed session for ownership enrichment
+          // Build lookup from session ID to managed session for live-state enrichment
           const activeSessions = this.sessionManager.getAllSessions();
           const slotById = new Map<string, ManagedSlot>();
           for (const s of activeSessions) {
@@ -628,10 +644,17 @@ export class WsHandler {
             const archiveSessionPath = archiveSlot?.session.sessionFile ?? (await this.sessionRecords.resolveSessionPath(archiveFolderPath, archiveSessionId));
             if (!archiveSessionPath) continue;
 
-            if (command.archived && archiveSlot) {
-              await this.closeSessionForObservers(archiveSessionId, archiveSlot, 'archived');
+            if (command.archived) {
+              // Mark the record before runtime disposal closes the slot. A
+              // concurrent open then sees session_archived instead of attaching
+              // to a runtime that is already closing.
+              await this.sessionMetadataStore.setArchived(archiveSessionPath, true);
+              if (archiveSlot) {
+                await this.closeSessionForObservers(archiveSessionId, archiveSlot, 'archived');
+              }
+            } else {
+              await this.sessionMetadataStore.setArchived(archiveSessionPath, false);
             }
-            await this.sessionMetadataStore.setArchived(archiveSessionPath, command.archived);
             this.broadcastSessionArchived(archiveSessionId, archiveFolderPath, command.archived);
             archivedCount++;
           }
@@ -1006,7 +1029,7 @@ export class WsHandler {
         }
         if (trimmed === '/reload') {
           await session.reload();
-          this.sendFullResyncForSession(sessionId, slot);
+          this.sendFullResyncToObservers(sessionId, slot);
           this.sendSilentDownloadSnapshot(slot);
           this.sendResponse(id, true);
           break;
@@ -1189,6 +1212,7 @@ export class WsHandler {
           break;
         }
         await session.setModel(model);
+        this.sendFullResyncToObservers(sessionId, slot);
         const currentModel = session.model;
         this.sendResponse(id, true, {
           model: currentModel ? { provider: currentModel.provider, id: currentModel.id, name: currentModel.name } : null,
@@ -1200,6 +1224,7 @@ export class WsHandler {
 
       case 'cycle_model': {
         const result = await session.cycleModel();
+        this.sendFullResyncToObservers(sessionId, slot);
         if (result) {
           this.sendResponse(id, true, {
             model: { provider: result.model.provider, id: result.model.id, name: result.model.name },
@@ -1225,12 +1250,14 @@ export class WsHandler {
 
       case 'set_thinking_level': {
         session.setThinkingLevel(command.level as AgentSession['thinkingLevel']);
+        this.sendFullResyncToObservers(sessionId, slot);
         this.sendResponse(id, true);
         break;
       }
 
       case 'cycle_thinking_level': {
         const level = session.cycleThinkingLevel();
+        this.sendFullResyncToObservers(sessionId, slot);
         this.sendResponse(id, true, { level });
         break;
       }
@@ -1243,6 +1270,7 @@ export class WsHandler {
 
       case 'set_auto_compaction': {
         session.setAutoCompactionEnabled(command.enabled);
+        this.sendFullResyncToObservers(sessionId, slot);
         this.sendResponse(id, true);
         break;
       }
@@ -1465,9 +1493,14 @@ export class WsHandler {
       ws: this.ws as unknown as EventSocket,
       clientId: this.clientId,
       cursor: slot.sessionState.eventBuffer.currentCursor,
-      onSessionReset: (s, outcome) => this.handleSessionReset(s, outcome),
+      onSessionReset: (s, outcome, isFirstObserver) => this.handleSessionReset(s, outcome, isFirstObserver),
     };
+    this.assertCurrentConnection();
     await this.sessionManager.attachObserver(sessionId, observer);
+    if (!this.isCurrentConnection()) {
+      if (slot.observers.get(this.clientId)?.ws === observer.ws) this.sessionManager.detachObserver(sessionId, this.clientId);
+      throw new Error('WebSocket is no longer connected');
+    }
     this.subscribedSessions.add(sessionId);
 
     // Note: do NOT touch `idleSince`. Idleness is an agent-level concept driven by
@@ -1480,6 +1513,10 @@ export class WsHandler {
       await slot.session.bindExtensions({ uiContext, commandContextActions });
       slot.sessionState.extensionsBound = true;
     }
+    if (!this.isCurrentConnection()) {
+      if (slot.observers.get(this.clientId)?.ws === observer.ws) this.sessionManager.detachObserver(sessionId, this.clientId);
+      throw new Error('WebSocket is no longer connected');
+    }
 
     // Re-deliver pending UI requests only to this observer. Other observers
     // already have their dialogs; broadcasting here would duplicate them.
@@ -1488,8 +1525,16 @@ export class WsHandler {
     requestSlotPanelResync(slot, 'claim');
   }
 
+  private isCurrentConnection(): boolean {
+    return this.clientRegistry.get(this.clientId) === this && this.ws.readyState === 1;
+  }
+
+  private assertCurrentConnection(): void {
+    if (!this.isCurrentConnection()) throw new Error('WebSocket is no longer connected');
+  }
+
   /** Notify this observer after the session manager has rebuilt and re-keyed a slot. */
-  private async handleSessionReset(slot: ManagedSlot, outcome: SessionResetOutcome): Promise<void> {
+  private async handleSessionReset(slot: ManagedSlot, outcome: SessionResetOutcome, firstObserver?: boolean): Promise<void> {
     if (outcome.kind === 'unchanged') {
       this.sendFullResyncForSession(slot.sessionState.id, slot);
       this.sendSilentDownloadSnapshot(slot);
@@ -1501,9 +1546,10 @@ export class WsHandler {
     this.subscribedSessions.add(newId);
     if (this.viewedSessionId === oldId) this.viewedSessionId = newId;
 
-    // The first observer performs slot-wide reset work. SessionManager invokes
-    // callbacks in map insertion order, so this binds extensions exactly once.
-    const isFirstObserver = slot.observers.keys().next().value === this.clientId;
+    // The first observer performs slot-wide reset work. SessionManager captures
+    // that position before awaiting callbacks, so a disconnect during the first
+    // bind cannot make a later observer bind the rebuilt session again.
+    const isFirstObserver = firstObserver ?? slot.observers.keys().next().value === this.clientId;
     if (isFirstObserver) {
       const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
         isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(newId) ?? false,
@@ -1550,10 +1596,10 @@ export class WsHandler {
    *  same enrichment every serve path uses. */
   /**
    * Locate a session's record on disk. With a folder, only that folder is
-   * searched. A folderless deep link searches every known folder — archived
-   * folders included: opening a session unarchives it on the fly — plus the
-   * manager root (`resolveSessionAcrossFolders` owns that rule). Returns
-   * undefined when no folder holds the session.
+   * searched. A folderless deep link searches every known folder, including
+   * archived folders, plus the manager root (`resolveSessionAcrossFolders`
+   * owns that rule). The caller checks the archived flag before opening.
+   * Returns undefined when no folder holds the session.
    */
   private async findSessionRecord(sessionId: string, folderPath?: string): Promise<SessionRecordLocation | undefined> {
     if (folderPath) {
@@ -1644,12 +1690,7 @@ export class WsHandler {
 
   /** Close one live session for every observer and resolve its pending UI. */
   private async closeSessionForObservers(sessionId: string, slot: ManagedSlot, reason?: SessionClosedEvent['reason']): Promise<void> {
-    const observerClientIds = [...slot.observers.keys()];
-    for (const clientId of observerClientIds) {
-      this.clientRegistry.get(clientId)?.sendSessionClosedEvent(sessionId, reason);
-    }
-    resolveAllSlotPendingUi(slot);
-    await this.sessionManager.closeSession(sessionId);
+    await closeSessionForObservers(this.sessionManager, this.clientRegistry, sessionId, slot, reason);
   }
 
   /** Close this handler's WebSocket connection. */
@@ -1756,6 +1797,11 @@ export class WsHandler {
           event.messageEntryIds = extractMessageEntryIds(slot.session.sessionManager.getBranch(), rendererRegisteredVisibility(slot.session));
         }
         this.sendEvent(event);
+        // Tree-navigation events are sent directly to the issuer so the
+        // unopen command path can receive them. Keep an attached issuer's
+        // replay position in sync with the direct delivery as well.
+        const issuer = slot.observers.get(this.clientId);
+        if (issuer && 'cursor' in event && typeof event.cursor === 'number') issuer.cursor = event.cursor;
         sendSlotEvent(slot, event, { exceptClientId: this.clientId });
       },
       () => slot.session.messages[slot.session.messages.length - 1],
@@ -1767,9 +1813,7 @@ export class WsHandler {
     this.sendEvent(makeDownloadSnapshot(slot.sessionState.id, slot.sessionState.downloads));
   }
 
-  /** Send a full_resync event to the client for the given managed session.
-   *  Used when the underlying pi session is reset (newSession, switchSession, fork, navigateTree). */
-  private sendFullResyncForSession(pimoteSessionId: string, slot: ManagedSlot): void {
+  private makeFullResyncEvent(pimoteSessionId: string, slot: ManagedSlot): FullResyncEvent {
     const session = slot.session;
     const model = session.model;
     const state: SessionState = {
@@ -1785,16 +1829,33 @@ export class WsHandler {
       messageCount: session.messages.length,
     };
     const messages = mapContextEntries(session.sessionManager.buildContextEntries(), rendererRegisteredVisibility(session));
-    const fullResyncEvent: FullResyncEvent = {
+    return {
       type: 'full_resync',
       sessionId: pimoteSessionId,
       state,
       messages,
     };
-    this.sendEvent(fullResyncEvent);
+  }
 
+  /** Send a full_resync event to the client for the given managed session.
+   *  Used when the underlying pi session is reset (newSession, switchSession, fork, navigateTree). */
+  private sendFullResyncForSession(pimoteSessionId: string, slot: ManagedSlot): void {
+    this.sendEvent(this.makeFullResyncEvent(pimoteSessionId, slot));
     // Always send panel snapshot so the client clears stale cards after reconnect
     this.sendEvent({ type: 'panel_update', sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
+  }
+
+  /** Fan out current model/composer/panel state after a mutation that the SDK
+   * reports only through events not represented on the wire. */
+  private sendFullResyncToObservers(pimoteSessionId: string, slot: ManagedSlot): void {
+    const fullResync = this.makeFullResyncEvent(pimoteSessionId, slot);
+    const panelUpdate = { type: 'panel_update' as const, sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) };
+    // Keep the direct send for a caller that has not opened the session yet,
+    // then fan out to every other attached observer without duplicating it.
+    this.sendEvent(fullResync);
+    this.sendEvent(panelUpdate);
+    sendSlotEvent(slot, fullResync, { exceptClientId: this.clientId });
+    sendSlotEvent(slot, panelUpdate, { exceptClientId: this.clientId });
   }
 
   /** Send an event to this client (public for broadcast use). */

@@ -171,7 +171,6 @@ describe('EventBuffer', () => {
         expect.objectContaining({
           type: 'bash_execution_update',
           sessionId: SESSION_ID,
-          cursor: 1,
           id: 'bash-1',
           delta: 'output\n',
         }),

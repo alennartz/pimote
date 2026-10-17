@@ -55,7 +55,7 @@ export interface SessionObserver {
   clientId: string;
   ws: EventSocket;
   cursor: number;
-  onSessionReset: ((slot: ManagedSlot, outcome: SessionResetOutcome) => Promise<void>) | null;
+  onSessionReset: ((slot: ManagedSlot, outcome: SessionResetOutcome, isFirstObserver?: boolean) => Promise<void>) | null;
 }
 
 export interface SessionState {
@@ -217,10 +217,14 @@ export function resolveSlotPendingUi(slot: ManagedSlot, requestId: string, value
 
 /** Resolve all pending UI responses with undefined. Used on abort, session close, or session reset. */
 export function resolveAllSlotPendingUi(slot: ManagedSlot): void {
+  const requestIds = [...slot.sessionState.pendingUiResponses.keys()];
   for (const [, pending] of slot.sessionState.pendingUiResponses) {
     pending.resolve(undefined);
   }
   slot.sessionState.pendingUiResponses.clear();
+  for (const requestId of requestIds) {
+    sendSlotEvent(slot, { type: 'extension_ui_resolved', sessionId: slot.sessionState.id, requestId });
+  }
 }
 
 /** Re-send all pending UI request events to the current client. Called on reconnect to recover lost dialogs. */
@@ -710,8 +714,9 @@ export class PimoteSessionManager {
 
     // navigateTree stays in the same file — same session ID, nothing to re-key.
     if (newId === oldId) {
-      for (const observer of observers) {
-        await observer.onSessionReset?.(slot, { kind: 'unchanged' });
+      for (let index = 0; index < observers.length; index++) {
+        const observer = observers[index];
+        await observer.onSessionReset?.(slot, { kind: 'unchanged' }, index === 0);
       }
       return;
     }
@@ -735,8 +740,9 @@ export class PimoteSessionManager {
 
     this.reKeySession(slot, oldId, newId);
 
-    for (const observer of observers) {
-      await observer.onSessionReset?.(slot, { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath });
+    for (let index = 0; index < observers.length; index++) {
+      const observer = observers[index];
+      await observer.onSessionReset?.(slot, { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath }, index === 0);
     }
   }
 
@@ -803,7 +809,7 @@ export class PimoteSessionManager {
     return Array.from(this.sessions.values());
   }
 
-  startIdleCheck(idleTimeout: number, _isClientConnected?: (clientId: string) => boolean): void {
+  startIdleCheck(idleTimeout: number, isCallActive?: (sessionId: string) => boolean): void {
     this.stopIdleCheck();
 
     this.idleCheckHandle = setInterval(() => {
@@ -813,16 +819,18 @@ export class PimoteSessionManager {
         }
 
         const hasObservers = slot.observers.size > 0;
+        const hasActiveCall = isCallActive?.(sessionId) === true;
         // Only idle (non-streaming) sessions are eligible for reaping. `idleSince` is set on
         // `agent_settled` and cleared on `agent_start`, so a working session can never be
         // reaped here, regardless of how long a client has been connected. A standalone bash
         // command does not change the agent-level status, so guard both native execution and
-        // the short extension-admission window explicitly as well. Finally, extensions holding
-        // live background work answer the synchronous activity poll (DR-054); asked only past
-        // the threshold, it fails open to reap when no responder is present.
+        // the short extension-admission window explicitly as well. An active voice call also
+        // protects the session when its audio client is not a transcript observer. Finally,
+        // extensions holding live background work answer the synchronous activity poll (DR-054);
+        // asked only past the threshold, it fails open to reap when no responder is present.
         const idleSince = slot.sessionState.idleSince;
         const bashInProgress = slot.session.isBashRunning || slot.sessionState.bashDispatchInProgress === true;
-        if (!hasObservers && !bashInProgress && idleSince !== null && Date.now() - idleSince > idleTimeout) {
+        if (!hasObservers && !hasActiveCall && !bashInProgress && idleSince !== null && Date.now() - idleSince > idleTimeout) {
           const activityBus = slot.eventBusRef.current;
           if (activityBus && askActivity(activityBus)) continue;
           this.closeSession(sessionId).catch(() => {

@@ -275,9 +275,9 @@ export class SessionRegistry {
     return this.sessions[this.viewedSessionId!] ?? null;
   }
 
-  /** List all active sessions */
+  /** List sessions that belong to the server restore set. */
   get activeSessions(): PerSessionState[] {
-    return Object.values(this.sessions);
+    return Object.values(this.sessions).filter((session) => session.restorable);
   }
 
   private createSessionState(sessionId: string, folderPath: string, projectName: string): PerSessionState {
@@ -802,7 +802,7 @@ export class SessionRegistry {
     this.sessions = rest;
     if (wasViewed) {
       // Switch to another active session if one exists, otherwise go to landing
-      const remaining = Object.keys(this.sessions);
+      const remaining = this.activeSessions.map((session) => session.sessionId);
       this.viewedSessionId = remaining.length > 0 ? remaining[0] : null;
       this.syncViewedPanelStore();
       this.navigateToViewed(true);
@@ -866,7 +866,7 @@ export class SessionRegistry {
    * route page can redirect home (stale deep links).
    */
   adoptRouteView(sessionId: string): boolean {
-    if (!this.sessions[sessionId]) return false;
+    if (!this.isActiveSession(sessionId)) return false;
     this.clearViewNavigation();
     if (this.viewedSessionId === sessionId) return true;
     this.viewedSessionId = sessionId;
@@ -889,9 +889,9 @@ export class SessionRegistry {
     this.syncViewedPanelStore();
   }
 
-  /** Check if a session ID is currently active */
+  /** Check if a session ID has a live server attachment. */
   isActiveSession(sessionId: string): boolean {
-    return sessionId in this.sessions;
+    return this.sessions[sessionId]?.restorable === true;
   }
 
   /** Update session meta (git branch, context usage, lifetime cost) */

@@ -502,7 +502,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     manager.stopIdleCheck();
   });
 
-  it('ignores the legacy connection callback for empty observer maps', async () => {
+  it('protects active voice calls in empty observer maps', async () => {
     const config = createTestConfig();
     const manager = await PimoteSessionManager.create(config, createMockPushService());
     const closeSessionSpy = vi.spyOn(manager, 'closeSession');
@@ -517,15 +517,13 @@ describe('PimoteSessionManager — idle reaper', () => {
 
     injectSession(manager, nullClientSlot);
 
-    const isClientConnected = vi.fn(() => true);
-    manager.startIdleCheck(300_000, isClientConnected);
+    const isCallActive = vi.fn(() => true);
+    manager.startIdleCheck(300_000, isCallActive);
 
     await vi.advanceTimersByTimeAsync(60_000);
 
-    // connection is null, so isClientConnected should not be called
-    expect(isClientConnected).not.toHaveBeenCalled();
-    // But session should still be reaped (null client + past timeout)
-    expect(closeSessionSpy).toHaveBeenCalledWith('null-client-1');
+    expect(isCallActive).toHaveBeenCalledWith('null-client-1');
+    expect(closeSessionSpy).not.toHaveBeenCalled();
 
     manager.stopIdleCheck();
   });

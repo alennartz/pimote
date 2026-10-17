@@ -66,8 +66,10 @@ export class EventBuffer {
    * Process an SDK event: assign cursor, map to PimoteSessionEvent, forward live, and buffer (coalesced).
    */
   onEvent(sdkEvent: IncomingSdkEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void, getLastMessage?: () => AgentMessage | undefined): void {
-    this._cursor++;
-    const cursor = this._cursor;
+    // Native bash output is live-only. Keep it outside the replay cursor
+    // stream so high-volume deltas cannot create gaps for reconnecting
+    // observers.
+    const cursor = sdkEvent.type === 'bash_execution_update' ? this._cursor : ++this._cursor;
 
     const pimoteEvent = this.mapEvent(sdkEvent, sessionId, cursor, getLastMessage);
     // Some SDK events have no Pimote wire representation. mapEvent returns null
@@ -319,7 +321,8 @@ export class EventBuffer {
 
       case 'bash_execution_update':
         return {
-          ...base,
+          sessionId,
+          timestamp: base.timestamp,
           type: 'bash_execution_update',
           ...(sdkEvent.id !== undefined ? { id: sdkEvent.id } : {}),
           delta: sdkEvent.delta,
@@ -351,6 +354,7 @@ export class EventBuffer {
   }
 
   private pushToBuffer(event: PimoteSessionEvent): void {
+    if (!('cursor' in event)) return;
     this.hasBufferedEvent = true;
     this.buffer[this.tail] = { cursor: event.cursor, event };
     this.tail = (this.tail + 1) % this.capacity;

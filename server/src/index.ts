@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, ensureVapidKeys, expandHomePath, managerRootPlacementError } from './config.js';
-import { WsHandler } from './ws-handler.js';
+import { closeSessionForObservers, WsHandler } from './ws-handler.js';
 import { createServer } from './server.js';
 import { PimoteSessionManager } from './session-manager.js';
 import { SessionRecords, resolveSessionAcrossFolders } from './session-records.js';
@@ -188,11 +188,16 @@ export async function main(options: StartOptions = {}) {
               : await resolveSessionAcrossFolders(sessionRecords, knownFolderPaths, config.managerRoot, sessionId);
             if (!resolved) return { sessionId, outcome: 'not_found' };
 
+            // Mark the record before runtime disposal closes the slot. A
+            // concurrent open then sees session_archived instead of attaching
+            // to a runtime that is already closing.
             await sessionMetadataStore.setArchived(resolved.sessionFilePath, true);
+            if (slot) {
+              await closeSessionForObservers(sessionManager, managerClientRegistryRef.current, sessionId, slot, 'archived');
+            }
             // Session activity: targeted metadata invalidation for the folder —
             // covers archive runs without a live slot — and no folder delta.
             folderListing.invalidateSessionMetadata([resolved.folderPath]);
-            if (slot) await sessionManager.closeSession(sessionId);
             for (const [, handler] of managerClientRegistryRef.current) {
               handler.sendToClient({ type: 'session_archived', sessionId, folderPath: resolved.folderPath, archived: true });
             }
@@ -286,8 +291,8 @@ export async function main(options: StartOptions = {}) {
     };
   }
 
-  // Start idle session reaping while no observers remain attached.
-  sessionManager.startIdleCheck(config.idleTimeout);
+  // Start idle session reaping while no observers or voice call holders remain.
+  sessionManager.startIdleCheck(config.idleTimeout, voiceBoot ? (sessionId) => voiceBoot.orchestrator.isCallActive(sessionId) : undefined);
 
   await server.start(port);
 

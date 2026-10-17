@@ -1529,7 +1529,7 @@ describe('SessionRegistry', () => {
         },
       };
 
-      registry.handleEvent({ type: 'bash_execution_update', sessionId: 's1', cursor: 1, id: 'bash-1', delta: 'hello' });
+      registry.handleEvent({ type: 'bash_execution_update', sessionId: 's1', id: 'bash-1', delta: 'hello' });
 
       expect(registry.sessions['s1'].bashExecutions['bash-1'].output).toBe('hello');
     });

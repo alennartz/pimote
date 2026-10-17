@@ -2,7 +2,7 @@ import type { ExtensionUIContext, ExtensionUIDialogOptions, ExtensionWidgetOptio
 import type { PimoteEvent } from '../../shared/dist/index.js';
 import { UI_BRIDGE_DISABLED_IN_VOICE_MODE } from '../../shared/dist/index.js';
 import type { ManagedSlot } from './session-manager.js';
-import { sendSlotEvent, waitForSlotUiResponse } from './session-manager.js';
+import { resolveSlotPendingUi, sendSlotEvent, waitForSlotUiResponse } from './session-manager.js';
 import type { PushNotificationService } from './push-notification.js';
 
 export interface ExtensionUIBridgeOptions {
@@ -61,6 +61,11 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
     return event;
   }
 
+  function dismissDialog(requestId: string, value: unknown): void {
+    if (!resolveSlotPendingUi(slot, requestId, value)) return;
+    sendSlotEvent(slot, { type: 'extension_ui_resolved', sessionId: slot.sessionState.id, requestId });
+  }
+
   async function dialogWithTimeout<T>(requestId: string, requestEvent: PimoteEvent, opts: ExtensionUIDialogOptions | undefined, fallback: T): Promise<T> {
     const responsePromise = waitForSlotUiResponse(slot, requestId, requestEvent) as Promise<T>;
 
@@ -80,8 +85,8 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
 
     if (signal) {
       if (signal.aborted) {
-        // Remove the pending entry we just created — no one will respond to it
-        slot.sessionState.pendingUiResponses.delete(requestId);
+        // Resolve and dismiss the request so every observer drops its copy.
+        dismissDialog(requestId, fallback);
         return fallback;
       }
       racers.push(
@@ -97,11 +102,9 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
     try {
       const result = await Promise.race(racers);
 
-      // If timeout or abort won the race, the pending entry is stale — the server
-      // has already moved on. Remove it so it won't be replayed on reconnect.
-      if (slot.sessionState.pendingUiResponses.has(requestId)) {
-        slot.sessionState.pendingUiResponses.delete(requestId);
-      }
+      // If timeout or abort won the race, resolve and dismiss the pending
+      // request so it won't be replayed on reconnect or remain open elsewhere.
+      dismissDialog(requestId, result);
 
       return result;
     } finally {

@@ -1143,10 +1143,12 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[E]** Tab B receives `extension_ui_resolved` and closes its copy
 - **[E]** A later answer from Tab B is ignored
 
-### TC-13.11 — Extension UI responses cleared on disconnect 🟡
+### TC-13.11 — Extension UI requests replay after reconnect 🟡
 
 - **[P]** Extension dialog pending; client disconnects
-- **[E]** All pending UI responses resolved with `undefined` during `cleanup()`
+- **[S]** Reconnect the client and restore the session
+- **[E]** The pending `extension_ui_request` replays to the client
+- **[E]** The extension remains pending until an observer answers or the request times out
 
 ---
 
