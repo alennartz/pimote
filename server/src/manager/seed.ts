@@ -1,7 +1,5 @@
 import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { PIMOTE_SKILLS_DIR } from '../paths.js';
 import { codeFolderAgentsMd, MEMORY_STUB, personaAgentsMd } from '../folder-seeding.js';
 
 /**
@@ -15,12 +13,11 @@ import { codeFolderAgentsMd, MEMORY_STUB, personaAgentsMd } from '../folder-seed
  * - `memory.md` absent  -> write a stub
  * - `memory.md` present -> untouched
  *
- * The seed template is a code constant in the server package: a vision and
- * lookup map, not a tool listing or product manual. It points to the packaged
- * README (shared user/manager documentation), the server-provided folder
- * skill, and installation-specific `memory.md`. YAML front matter has
- * `kind: persona`, `name: manager`, and a one-line description, so the folder
- * model classifies the seed as a persona. Filesystem errors propagate.
+ * The seed template is a code constant in the server package: identity and
+ * vision only. It points to no documentation. The `pimote-docs` section lists
+ * the shipped docs in every session. YAML front matter has `kind: persona`,
+ * `name: manager`, and a one-line description, so the folder model classifies
+ * the seed as a persona. Filesystem errors propagate.
  *
  * The seeding seams below compose the shared renderers from
  * `folder-seeding.ts` — the one owner of the seeded text — so the folder and
@@ -35,12 +32,9 @@ export { MEMORY_STUB } from '../folder-seeding.js';
  *  prompt: the manager seed and persona creation fold it into their bodies. */
 export const MEMORY_MAINTENANCE_INSTRUCTION = 'Keep your long-term notes up to date in memory.md: record decisions, durable context, and anything worth remembering there.';
 
-/** Stable package paths resolved from this module, in source and server/dist. */
-const PIMOTE_README_PATH = fileURLToPath(new URL('../../../README.md', import.meta.url));
-const PIMOTE_FOLDERS_SKILL_PATH = join(PIMOTE_SKILLS_DIR, 'pimote-folders', 'SKILL.md');
-
-/** The shipped manager `AGENTS.md` template: persona marker, vision, and
- *  lookup table only (AGENTS.md files are maps, not documentation containers). */
+/** The shipped manager `AGENTS.md` template: persona marker, vision, and the
+ *  memory instruction only. Documentation reaches the manager through the
+ *  `pimote-docs` system-prompt section, not through this file. */
 const MANAGER_AGENTS_TEMPLATE = `---
 kind: persona
 name: manager
@@ -53,13 +47,9 @@ description: primary manager for this Pimote installation.
 
 Keep this Pimote installation's folders, personas, hubs, and sessions clear and useful. Help the user understand the installation and coordinate work across its folders and agents.
 
-## Lookup
+## Memory
 
-| File | What it contains |
-| --- | --- |
-| Pimote README (${PIMOTE_README_PATH}) | Shared user and manager guide: setup, configuration, folder behavior, and the dashboard. |
-| pimote-folders skill (${PIMOTE_FOLDERS_SKILL_PATH}) | Folder model, hub recipes, and manager-tool behavior. Read it before changing folder structure or membership. |
-| memory.md | Installation-specific facts and user preferences. Keep product rules in the README or skill. |
+${MEMORY_MAINTENANCE_INSTRUCTION}
 `;
 
 /** Write-if-absent seed for one file. An existing destination (including a

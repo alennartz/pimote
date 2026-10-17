@@ -32,6 +32,8 @@ export interface EventSocket {
 export interface SessionManagerOptions {
   staticHostFactory?: ExtensionFactory;
   fileDownloadFactory?: ExtensionFactory;
+  /** Injects the `pimote-docs` system-prompt section into every session. */
+  pimoteDocsFactory?: ExtensionFactory;
   /** Included only when canonical session cwd equals canonical managerRoot.
    * Manager sessions use the ordinary persisted session and slot lifecycle. */
   managerExtensionFactory?: ExtensionFactory;
@@ -406,6 +408,7 @@ export class PimoteSessionManager {
   private readonly staticHostFactory?: ExtensionFactory;
   private readonly fileDownloadFactory?: ExtensionFactory;
   private readonly managerExtensionFactory?: ExtensionFactory;
+  private readonly pimoteDocsFactory?: ExtensionFactory;
 
   private constructor(
     private readonly config: PimoteConfig,
@@ -418,6 +421,7 @@ export class PimoteSessionManager {
     this.staticHostFactory = options.staticHostFactory;
     this.fileDownloadFactory = options.fileDownloadFactory;
     this.managerExtensionFactory = options.managerExtensionFactory;
+    this.pimoteDocsFactory = options.pimoteDocsFactory;
   }
 
   /** Initialize the one process-lifetime Pi model/auth runtime before serving sessions. */
@@ -491,6 +495,7 @@ export class PimoteSessionManager {
     const staticHostFactory = this.staticHostFactory;
     const fileDownloadFactory = this.fileDownloadFactory;
     const managerExtensionFactory = this.managerExtensionFactory;
+    const pimoteDocsFactory = this.pimoteDocsFactory;
 
     const factory: CreateAgentSessionRuntimeFactory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
       // Services load extension factories before constructing AgentSession.
@@ -503,6 +508,7 @@ export class PimoteSessionManager {
       });
       const extensionFactories = [
         ...(voiceExtensionFactory ? [voiceExtensionFactory] : []),
+        ...(pimoteDocsFactory ? [pimoteDocsFactory] : []),
         ...(staticHostFactory ? [staticHostFactory] : []),
         ...(fileDownloadFactory ? [fileDownloadFactory] : []),
         ...(managerExtensionFactory && (await loadManagerExtension({ cwd }, this.config)) ? [managerExtensionFactory] : []),

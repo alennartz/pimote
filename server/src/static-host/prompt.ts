@@ -1,6 +1,7 @@
 // Always-on description for `pimote_static_host`. Keep the long-answer
 // admonition here so it can influence whether the tool is called; defer report
-// design and layout instructions to the on-demand `static-report` skill.
+// design and layout instructions to `docs/shipped/static-reports.md`, listed in
+// the `pimote-docs` system-prompt section.
 
 export const STATIC_HOST_TOOL_DESCRIPTION: string = [
   "Host a static HTML/asset bundle from a local folder so the user can view it in their browser. Returns a URL and creates a tappable card in the user's session.",
@@ -9,7 +10,7 @@ export const STATIC_HOST_TOOL_DESCRIPTION: string = [
   '',
   'Keep the chat reply to a short summary plus the card. The report replaces the long answer; do not paste a full copy into chat. Short answers stay in chat.',
   '',
-  'Before authoring a report bundle, read the `static-report` skill for report design guidance.',
+  'Before authoring a report bundle, read the static report design guide listed in the `<pimote-docs>` section of your system prompt.',
   '',
   '**No secrets.** Bundle files are served verbatim. Do not include API keys, tokens, credentials, or calls to services requiring authentication.',
   '',

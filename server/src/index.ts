@@ -21,6 +21,7 @@ import type { FolderCreator } from './folder-sources/index.js';
 import { seedManagerRoot } from './manager/index.js';
 import type { ManagerToolContext, SessionArchiveOutcome } from './manager/index.js';
 import { createManagerExtension } from './manager/index.js';
+import { createPimoteDocsExtension } from './pimote-docs/index.js';
 import { PushNotificationService } from './push-notification.js';
 import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore } from './push-infrastructure.js';
 import {
@@ -29,7 +30,6 @@ import {
   PIMOTE_REGISTRY_STORE_DIR,
   PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
   PIMOTE_SESSION_METADATA_PATH,
-  PIMOTE_SKILLS_DIR,
   PIMOTE_STATIC_HOST_DIR,
 } from './paths.js';
 import { FileSessionMetadataStore } from './session-metadata.js';
@@ -104,14 +104,15 @@ export async function main(options: StartOptions = {}) {
   }
   const staticHostRegistry = new InMemoryStaticHostRegistry();
   const staticHostStore = new FileStaticHostStore(PIMOTE_STATIC_HOST_DIR);
-  const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore, skillsDir: PIMOTE_SKILLS_DIR });
+  const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore });
   const fileDownloads = await bootstrapFileDownloads({ storeDir: PIMOTE_FILE_DOWNLOAD_DIR, validSessionIds });
   const managerContextBinding = new ManagerContextBinding();
-  const managerExtensionFactory: ExtensionFactory = (pi) => createManagerExtension(managerContextBinding.get(), { skillsDir: PIMOTE_SKILLS_DIR })(pi);
+  const managerExtensionFactory: ExtensionFactory = (pi) => createManagerExtension(managerContextBinding.get())(pi);
   const sessionManager = await PimoteSessionManager.create(config, pushNotificationService, {
     staticHostFactory,
     fileDownloadFactory: fileDownloads.extensionFactory,
     managerExtensionFactory,
+    pimoteDocsFactory: createPimoteDocsExtension(),
   });
 
   // The folder listing service: ordering, search, and windowing over the

@@ -22,6 +22,8 @@ Owner rulings (2026-01-14): redesign the surface to be small but powerful, then 
 
 **Docs ship as a server-materialized skill.** The `pimote-folders` skill follows the static-report provision pattern: markdown embedded in the server package, materialized into the state skills directory, rewritten on drift (upgrades propagate), and provided to manager sessions through `resources_discover`. SKILL.md is the map (tool table, freshness, the leaf rule); `references/model.md` and `references/recipes.md` carry the concepts and the four recipes with anti-patterns. We rejected seeding docs into `managerRoot` (write-if-absent never upgrades, so installed managers would read stale rules forever) and rejected AGENTS.md pointers into the repo (the manager root is not a checkout). Structural hints also live at the error site: creation collisions carry the leaf rule and the symlink alternative in the error itself.
 
+> **Amendment (2026-10-16, DR-065):** the docs no longer ship as a skill. Documentation lives in `docs/shipped/` and the package ships it. A `pimote-docs` system-prompt section lists each file for every session. The `pimote-folders` skill retires. The tool surface and freshness flag decisions above stand.
+
 **No move tool.** DR-053 keys curation on canonical paths and records the move revisit point; a move tool would need curation migration to be worth its surface. Deferred until moves recur.
 
 ## Consequences

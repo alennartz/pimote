@@ -6,15 +6,13 @@ import { enrichActiveSessionCounts, isValidFolderName } from '../folder-registry
 import { errorToolResult, jsonToolResult, type JsonToolResult } from '../tool-result.js';
 import type { FolderInfo } from '../../../shared/dist/index.js';
 import { MEMORY_MAINTENANCE_INSTRUCTION, seedPersonaFolder } from './seed.js';
-import { ensurePimoteFoldersSkill } from './skill.js';
 import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext } from './types.js';
 
 /**
  * Build the pi `ExtensionFactory` for the manager extension (DR-062: one
  * small, powerful tool surface). Registers the manager's seven pimote tools,
- * acting only through the injected `ManagerToolContext`, and provides the
- * server-materialized `pimote-folders` skill through `resources_discover`
- * when a skills directory is configured.
+ * acting only through the injected `ManagerToolContext`. Folder recipes and
+ * the folder model reach the manager through the `pimote-docs` section.
  *
  * Toolset shape — every dashboard folder mutation has a tool twin, and one
  * read answers the folder space:
@@ -239,30 +237,8 @@ async function resolveParentInRoot(parentPath: string, roots: readonly string[])
   return { parentPath: canonicalParent };
 }
 
-export interface ManagerExtensionOptions {
-  /** Directory the `pimote-folders` skill is materialized into and served
-   *  from through `resources_discover`. Omit to skip skill provision. */
-  skillsDir?: string;
-}
-
-export function createManagerExtension(context: ManagerToolContext, options: ManagerExtensionOptions = {}): ExtensionFactory {
+export function createManagerExtension(context: ManagerToolContext): ExtensionFactory {
   return (pi: ExtensionAPI) => {
-    if (options.skillsDir) {
-      // Same provision pattern as the static-host `static-report` skill:
-      // materialize once per process, serve the SKILL.md path.
-      const skillsDir = options.skillsDir;
-      let skillPathPromise: Promise<string> | undefined;
-      pi.on('resources_discover', async () => {
-        try {
-          skillPathPromise ??= ensurePimoteFoldersSkill(skillsDir);
-          return { skillPaths: [await skillPathPromise] };
-        } catch (err) {
-          console.warn(`[pimote] failed to provide the pimote-folders skill from ${skillsDir}`, err);
-          return {};
-        }
-      });
-    }
-
     pi.registerTool({
       name: 'pimote_list_folders',
       label: 'List folders',
@@ -422,7 +398,7 @@ export function createManagerExtension(context: ManagerToolContext, options: Man
         'required; prompt optional) and gains a memory.md stub. parentPath must be inside a scan root — the tool ' +
         'never invents a default location; choose (or ask) using the folder tree. Included folders are leaves: ' +
         'member folders must stay at their canonical homes and be symlinked in, never nested. Creation ' +
-        'invalidates discovery and broadcasts folders_changed. Full recipes live in the pimote-folders skill.',
+        'invalidates discovery and broadcasts folders_changed. Full recipes live in `recipes.md`, listed in the `pimote-docs` section.',
       parameters: Type.Object({
         kind: Type.Union([Type.Literal('code'), Type.Literal('persona'), Type.Literal('code-hub'), Type.Literal('persona-hub')], {
           description: 'Which of the four wizard shapes to create.',
