@@ -96,6 +96,7 @@ callHolder: Map<string, string>; // sessionId -> clientId of the active call
 - `session_closed` reason `archived`
 - `open_session` error `session_archived`
 - `extension_ui_resolved { sessionId, requestId }`
+- `session_settings_changed { sessionId, model, thinkingLevel, availableThinkingLevels, autoCompactionEnabled }`. Settings mutations send this state-only event and a panel snapshot to the issuer and every other observer. The issuer receives the event directly. Other observers receive it through slot fan-out and never receive a full resync. `/reload` keeps its full transcript refresh for the issuer, while other observers receive only this event and the panel snapshot.
 
 ### Technology Choices
 
@@ -126,6 +127,7 @@ Each reason below comes from the discussion. Where none was given, the entry say
 - **Archived sessions leave the persisted restore set.** The web registry keeps the in-memory transcript but marks the session non-restorable. Boot then stops sending the rejected open.
 - **`notifyCallEnded` stays beside `notifyClientCallEnded`.** `voice-orchestrator.test.ts` asserts the session-scoped hook. Production wires only `notifyClientCallEnded`.
 - **`SessionStateChangedEvent.connectedClientId` stays, always `null`.** The architecture does not list it for removal.
+- **Settings updates preserve observer-local state.** `session_settings_changed` carries model and composer settings without replacing the transcript. The issuer receives the state event directly, and other observers receive the same state-only update through fan-out. Reason: settings updates must not reset other observers' transient state, including pending steering, optimistic messages, and bash executions.
 
 ## Open items
 
