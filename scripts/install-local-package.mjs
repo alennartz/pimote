@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
-import { mkdir, readdir, readlink, realpath, rename, rm, symlink, writeFile, access } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
-const sdkRoot = join(repoRoot, 'packages', 'sdk');
 const xdgDataHome = process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share');
 const deployRoot = process.env.PIMOTE_INSTALL_ROOT || join(xdgDataHome, 'pimote');
 const releasesDir = join(deployRoot, 'releases');
@@ -32,7 +31,7 @@ async function pathExists(path) {
 }
 
 async function assertBuiltArtifacts() {
-  const required = [join(repoRoot, 'client', 'build', 'index.html'), join(repoRoot, 'server', 'dist', 'cli.js'), join(sdkRoot, 'dist', 'activity', 'index.js')];
+  const required = [join(repoRoot, 'client', 'build', 'index.html'), join(repoRoot, 'server', 'dist', 'cli.js'), join(repoRoot, 'packages', 'sdk', 'dist', 'activity', 'index.js')];
 
   for (const path of required) {
     if (!(await pathExists(path))) {
@@ -41,9 +40,16 @@ async function assertBuiltArtifacts() {
   }
 }
 
-function runJson(command, args, cwd) {
-  const raw = execFileSync(command, args, { cwd, encoding: 'utf-8' });
-  return JSON.parse(raw);
+function packPackage(cwd) {
+  const output = execFileSync('npm', ['pack', '--ignore-scripts', '--silent'], {
+    cwd,
+    encoding: 'utf-8',
+  });
+  const filename = output.trim().split(/\r?\n/).at(-1);
+  if (!filename) {
+    throw new Error(`[pimote] npm pack returned no filename for ${cwd}`);
+  }
+  return filename;
 }
 
 function runInherit(command, args, cwd) {
@@ -96,38 +102,35 @@ async function main() {
   await assertBuiltArtifacts();
   await mkdir(releasesDir, { recursive: true });
 
-  const packInfo = runJson('npm', ['pack', '--ignore-scripts', '--json'], repoRoot);
-  if (!Array.isArray(packInfo) || packInfo.length === 0) {
-    throw new Error('[pimote] npm pack did not return any package metadata.');
+  const packageManifest = JSON.parse(await readFile(join(repoRoot, 'package.json'), 'utf-8'));
+  const packageName = packageManifest.name;
+  const version = packageManifest.version;
+  if (typeof packageName !== 'string' || typeof version !== 'string') {
+    throw new Error('[pimote] Root package.json is missing name or version.');
   }
 
-  const tarballFilename = packInfo[0].filename;
-  const packageName = packInfo[0].name;
-  const version = packInfo[0].version;
+  const tarballFilename = packPackage(repoRoot);
   const tarballPath = join(repoRoot, tarballFilename);
   const releaseDir = join(releasesDir, `${timestamp()}-v${version}`);
-  const releasePackageRoot = join(releaseDir, 'node_modules', ...String(packageName).split('/'));
-  const sdkPackageRoot = join(releaseDir, 'node_modules', '@pimote', 'sdk');
-  let sdkTarballPath;
+  const releasePackageRoot = join(releaseDir, 'node_modules', ...packageName.split('/'));
+  const sdkPackageRoot = join(releasePackageRoot, 'node_modules', '@pimote', 'sdk');
+  const piPackageRoot = join(releasePackageRoot, 'node_modules', '@earendil-works', 'pi-coding-agent');
 
   try {
-    const sdkPackInfo = runJson('npm', ['pack', '--ignore-scripts', '--json'], sdkRoot);
-    if (!Array.isArray(sdkPackInfo) || sdkPackInfo.length === 0 || sdkPackInfo[0].name !== '@pimote/sdk') {
-      throw new Error('[pimote] npm pack did not return @pimote/sdk package metadata.');
-    }
-    sdkTarballPath = join(sdkRoot, sdkPackInfo[0].filename);
-
     await mkdir(releaseDir, { recursive: true });
     await writeFile(join(releaseDir, 'package.json'), JSON.stringify({ name: 'pimote-local-install', private: true }, null, 2) + '\n', 'utf-8');
 
-    console.log(`[pimote] Installing ${tarballFilename} and ${sdkPackInfo[0].filename} into ${releaseDir}`);
-    runInherit('npm', ['install', '--omit=dev', '--no-save', '--package-lock=false', tarballPath, sdkTarballPath], releaseDir);
+    console.log(`[pimote] Installing ${tarballFilename} into ${releaseDir}`);
+    runInherit('npm', ['install', '--omit=dev', '--no-save', '--package-lock=false', tarballPath], releaseDir);
 
     if (!(await pathExists(join(releasePackageRoot, 'bin', 'pimote.js')))) {
       throw new Error(`[pimote] Installed package is missing ${join(releasePackageRoot, 'bin', 'pimote.js')}`);
     }
     if (!(await pathExists(join(sdkPackageRoot, 'dist', 'activity', 'index.js')))) {
-      throw new Error(`[pimote] Installed SDK is missing ${join(sdkPackageRoot, 'dist', 'activity', 'index.js')}`);
+      throw new Error(`[pimote] Installed bundled SDK is missing ${join(sdkPackageRoot, 'dist', 'activity', 'index.js')}`);
+    }
+    if (!(await pathExists(join(piPackageRoot, 'package.json')))) {
+      throw new Error(`[pimote] Installed bundled pi is missing ${join(piPackageRoot, 'package.json')}`);
     }
 
     await updateCurrentSymlink(releaseDir);
@@ -139,7 +142,6 @@ async function main() {
     console.log(`[pimote] Package root: ${releasePackageRoot}`);
   } finally {
     await rm(tarballPath, { force: true });
-    if (sdkTarballPath) await rm(sdkTarballPath, { force: true });
   }
 }
 
