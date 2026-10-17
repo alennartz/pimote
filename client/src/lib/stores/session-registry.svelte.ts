@@ -138,6 +138,8 @@ export interface BashExecutionState {
 
 export interface PerSessionState {
   sessionId: string;
+  /** Whether this session belongs in the reconnect restore set. */
+  restorable: boolean;
   folderPath: string;
   projectName: string;
   /** The folder object this session belongs to — canonicalized through the
@@ -281,6 +283,7 @@ export class SessionRegistry {
   private createSessionState(sessionId: string, folderPath: string, projectName: string): PerSessionState {
     return {
       sessionId,
+      restorable: true,
       folderPath,
       projectName,
       folder: null,
@@ -332,7 +335,7 @@ export class SessionRegistry {
   private persistSessions(): void {
     setActiveSessions(
       Object.values(this.sessions)
-        .filter((s) => !s.sessionId.startsWith('pending-'))
+        .filter((s) => !s.sessionId.startsWith('pending-') && s.restorable)
         .map((s) => ({ sessionId: s.sessionId, folderPath: s.folderPath })),
     );
   }
@@ -757,6 +760,14 @@ export class SessionRegistry {
   addSession(sessionId: string, folderPath: string, projectName: string): void {
     this.clearBashOutputBytes(sessionId);
     this.sessions[sessionId] = this.createSessionState(sessionId, folderPath, projectName);
+    this.persistSessions();
+  }
+
+  /** Mark a tracked session as restorable or keep its transcript out of reconnect restores. */
+  setRestorable(sessionId: string, restorable: boolean): void {
+    const session = this.sessions[sessionId];
+    if (!session || session.restorable === restorable) return;
+    session.restorable = restorable;
     this.persistSessions();
   }
 
@@ -1288,6 +1299,15 @@ export async function openExistingSession(sessionId: string, folderPath: string 
       // The server has no trace of the session (never persisted, pruned idle
       // slot). Definitive: drop the orphan even when it was already tracked,
       // otherwise it lingers with no model list and a dead composer.
+      if (response.error === 'session_archived') {
+        connection.removeSubscribedSession(sessionId);
+        if (alreadyTracked) {
+          sessionRegistry.setRestorable(sessionId, false);
+        } else {
+          dropSession(sessionId);
+        }
+        return false;
+      }
       if (isSessionNotFoundError(response.error)) {
         dropSession(sessionId);
         return false;
@@ -1307,6 +1327,7 @@ export async function openExistingSession(sessionId: string, folderPath: string 
     // right folder. The folder row rides the same response: restores emit no
     // session_opened, so this is the wire moment that rebinds the folder
     // object (nature, hub facts) the chip glyph reads.
+    sessionRegistry.setRestorable(sessionId, true);
     const data = response.data as { folderPath?: string; folder?: FolderInfo } | undefined;
     const resolvedFolder = data?.folderPath ?? folderPath;
     if (resolvedFolder) {
@@ -1394,6 +1415,10 @@ connection.onSessionRestored = (sessionId, data) => {
 // owns the cleanup.
 connection.onSessionNotFound = (sessionId) => {
   dropSession(sessionId);
+};
+
+connection.onSessionArchived = (sessionId) => {
+  sessionRegistry.setRestorable(sessionId, false);
 };
 
 connection.onPendingAdopt = (sessionId, folderPath, { openDownloads }) => {

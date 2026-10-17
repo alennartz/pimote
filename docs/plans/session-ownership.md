@@ -352,7 +352,7 @@ File: `client/src/lib/stores/session-registry.svelte.ts`.
 Cause of the failing cold-boot adoption test: the archived-open test leaves `s-archived` in `connection.subscribedSessions`, and its `afterEach` does not remove it. The cold-boot connect then waits forever on that restore, so `onPendingAdopt` never fires. This step removes the entry, which fixes the test.
 
 **Verify:** `client/src/lib/stores/session-registry.test.ts` passes, including "an archived open drops the session" and "cold-boot notification adoption".
-**Status:** not started
+**Status:** done
 
 ### Step 9: Web dialog dismissal
 
