@@ -2,9 +2,7 @@
 //
 // Instantiates a single VoiceCallStore backed by real browser seams and
 // subscribes it to pimote WS voice events (call_ready / call_ended /
-// call_status). Also synthesises a `call_ended { reason: 'displaced' }`
-// when the server sends `session_closed { reason: 'displaced' }` for the
-// session currently under a call, so the local store tears down.
+// call_status).
 
 import type { PimoteEvent } from '@pimote/shared';
 import { VoiceCallStore } from './voice-call.svelte.js';
@@ -38,10 +36,5 @@ connection.onEvent((event: PimoteEvent) => {
   if (event.type === 'call_ready' || event.type === 'call_ended' || event.type === 'call_status') {
     voiceCallStore.handleServerEvent(event);
     return;
-  }
-  if (event.type === 'session_closed' && event.reason === 'displaced') {
-    if (voiceCallStore.state.sessionId === event.sessionId) {
-      voiceCallStore.handleServerEvent({ type: 'call_ended', sessionId: event.sessionId, reason: 'displaced' });
-    }
   }
 });

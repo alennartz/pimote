@@ -80,9 +80,6 @@ export class ConnectionStore {
    *  moment carrying the folder facts (nature, shortcutCount). */
   onSessionRestored: ((sessionId: string, data: OpenSessionResponseData) => void) | null = null;
 
-  /** Called when restoring/opening a session is rejected with session_owned (another client owns it). */
-  onSessionOwned: ((sessionId: string) => void) | null = null;
-
   /** Called when restoring/opening a session is rejected with session_not_found
    *  (the session is gone server-side: never persisted and pruned). The
    *  registry drops the orphan session in response. */
@@ -184,9 +181,7 @@ export class ConnectionStore {
         })
           .then((response) => {
             if (!response.success) {
-              if (response.error === 'session_owned') {
-                this.onSessionOwned?.(sessionId);
-              } else if (isSessionNotFoundError(response.error)) {
+              if (isSessionNotFoundError(response.error)) {
                 // Definitive rejection: the session is gone server-side (for
                 // example never persisted before an idle reap). Tell the user,
                 // drop the subscription, and let the registry delete the orphan.

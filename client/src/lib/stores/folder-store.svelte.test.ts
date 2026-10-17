@@ -125,7 +125,7 @@ describe('FolderStore', () => {
 
       const seeded = folderStore.sessions.get('/r/away');
       expect(seeded).toHaveLength(1);
-      expect(seeded![0]).toMatchObject({ id: 's1', liveStatus: 'working', isOwnedByMe: false });
+      expect(seeded![0]).toMatchObject({ id: 's1', liveStatus: 'working' });
       folderStore.sessions.delete('/r/away');
     });
 

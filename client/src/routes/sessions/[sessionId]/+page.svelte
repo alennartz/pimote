@@ -9,7 +9,7 @@
   import CallingMode from '$lib/components/CallingMode.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { sessionRegistry, confirmTakeover, dismissTakeover, openExistingSession } from '$lib/stores/session-registry.svelte.js';
+  import { sessionRegistry, openExistingSession } from '$lib/stores/session-registry.svelte.js';
   import { decideSessionRoute } from '$lib/session-route.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { voiceCallStore } from '$lib/stores/voice-call-store.js';
@@ -70,7 +70,7 @@
 
     if (decision.action === 'load') {
       attemptedLoads.push(id);
-      void openExistingSession(id, decision.folderPath, { force: true, switchTo: false });
+      void openExistingSession(id, decision.folderPath, { switchTo: false });
       return;
     }
 
@@ -125,20 +125,6 @@
       <StatusBar />
     </div>
     <MobileRuntimeStatus />
-    {#if sessionRegistry.viewed?.pendingTakeover}
-      <div class="bg-warning/10 border-warning/30 text-warning flex items-center gap-2 border-b px-4 py-2 text-sm">
-        <span>This session is owned by another client. Take it over?</span>
-        <button
-          class="bg-warning text-warning-foreground hover:bg-warning/80 ml-auto rounded px-3 py-1 text-xs font-medium"
-          onclick={() => confirmTakeover(sessionRegistry.viewedSessionId!)}
-        >
-          Take Over
-        </button>
-        <button class="border-warning/30 hover:bg-warning/20 rounded border px-3 py-1 text-xs font-medium" onclick={() => dismissTakeover(sessionRegistry.viewedSessionId!)}>
-          Dismiss
-        </button>
-      </div>
-    {/if}
     {#if sessionRegistry.viewed?.conflictingProcesses?.length}
       <div class="bg-destructive/10 border-destructive/30 text-destructive flex items-center gap-2 border-b px-4 py-2 text-sm">
         <span>External pi processes detected in this folder.</span>

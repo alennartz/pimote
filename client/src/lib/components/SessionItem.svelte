@@ -4,7 +4,6 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry, switchToSession, closeSession, openExistingSession } from '$lib/stores/session-registry.svelte.js';
   import Archive from '@lucide/svelte/icons/archive';
-  import Monitor from '@lucide/svelte/icons/monitor';
   import Pencil from '@lucide/svelte/icons/pencil';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Undo2 from '@lucide/svelte/icons/undo-2';
@@ -25,8 +24,6 @@
   let { session, folderPath, onSessionSelect }: Props = $props();
 
   const isActive = $derived(sessionRegistry.isActiveSession(session.id));
-  const isRemoteActive = $derived(session.liveStatus != null && !session.isOwnedByMe);
-
   /** Shorten a cwd path to at most the last 2 segments, with … prefix when truncated. */
   function shortenCwd(cwd: string): string {
     const segments = cwd.split('/').filter(Boolean);
@@ -156,8 +153,6 @@
               </div>
               {#if isActive}
                 <div class="bg-status-connected size-2 shrink-0 rounded-full"></div>
-              {:else if isRemoteActive}
-                <Monitor class="text-muted-foreground size-3.5 shrink-0" />
               {/if}
             </div>
           </button>

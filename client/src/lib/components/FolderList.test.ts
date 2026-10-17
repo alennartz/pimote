@@ -67,17 +67,6 @@ const idleSession: SessionInfo = {
   messageCount: 1,
 };
 
-// Open in the server's memory, but bound to a different client's connection.
-const remoteSession: SessionInfo = {
-  id: 'sess-remote',
-  name: 'Remote session',
-  created: '2026-01-02T00:00:00.000Z',
-  modified: '2026-01-02T00:00:00.000Z',
-  messageCount: 2,
-  liveStatus: 'working',
-  isOwnedByMe: false,
-};
-
 const memberRepo: RepoInfo = { path: '/w/one', name: 'one', branch: 'main', dirty: false, ahead: 0, behind: 0, missing: false };
 
 // Registry/source hub: `repos` marks registry membership.
@@ -273,30 +262,6 @@ describe('folder rows', () => {
 
     expect(shows('Active session')).toBe(true);
     // Idle is open nowhere: not on this client, not bound to another.
-    expect(shows('Idle session')).toBe(false);
-  });
-
-  it('keeps a remote-only live session visible through the half-open cycle', async () => {
-    sessionRegistry.removeSession(activeSession.id);
-    folderStore.sessions.set(alpha.path, [idleSession, remoteSession]);
-    destroy = render();
-    await tick();
-
-    expect(shows('Remote session')).toBe(true);
-    expect(shows('Idle session')).toBe(false);
-
-    nameButton(alpha.path).click();
-    await tick();
-    expect(shows('Idle session')).toBe(true);
-
-    nameButton(alpha.path).click();
-    await tick();
-    expect(shows('Remote session')).toBe(false);
-    expect(shows('Idle session')).toBe(false);
-
-    nameButton(alpha.path).click();
-    await tick();
-    expect(shows('Remote session')).toBe(true);
     expect(shows('Idle session')).toBe(false);
   });
 

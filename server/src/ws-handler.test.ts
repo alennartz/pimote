@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { createCommandContextActions, WsHandler, type ClientRegistry } from './ws-handler.js';
-import type { PimoteSessionManager, ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
+import type { PimoteSessionManager, ManagedSlot, SessionState, SessionObserver } from './session-manager.js';
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderRegistry } from './folder-registry.js';
@@ -113,14 +113,13 @@ function createMockSlot(
     treeNavigationInProgress: false,
   };
 
-  const connection: ClientConnection | null =
-    overrides.connectedClientId != null ? { ws: null as any, connectedClientId: overrides.connectedClientId, onSessionReset: null } : null;
+  const observer: SessionObserver | null = overrides.connectedClientId != null ? { ws: null as any, clientId: overrides.connectedClientId, cursor: 0, onSessionReset: null } : null;
 
   const slot: ManagedSlot = {
     runtime: { session: mockSession } as any,
     folderPath: overrides.folderPath ?? '/home/user/project',
     eventBusRef: { current: overrides.eventBus ?? null },
-    connection,
+    observers: observer ? new Map([[observer.clientId, observer]]) : new Map(),
     sessionState,
     get session() {
       return this.runtime.session;
@@ -149,25 +148,14 @@ function createMockSessionManager(sessions: Map<string, ManagedSlot> = new Map()
     },
     getLastKnownGitBranch: () => null,
     onSlotEvicted: undefined as undefined | ((sessionId: string) => void),
-    // Mirrors the real SessionManager.applySessionReset: reconcile the map ALWAYS
-    // (dispatching through the manager so test overrides of rebuild/close/reKey take
-    // effect), then notify the slot's current owner. Kept faithful so ws-handler
-    // tests exercise the real notify-only handleSessionReset.
-    applySessionReset: async (slot: ManagedSlot) => {
-      const newId = slot.runtime.session.sessionId;
-      const oldId = slot.sessionState.id;
-      if (newId === oldId) {
-        await slot.connection?.onSessionReset?.(slot, { kind: 'unchanged' });
-        return;
-      }
-      manager.rebuildSessionState(slot);
-      const occupant = manager.getSession(newId);
-      if (occupant && occupant !== slot) {
-        manager.onSlotEvicted?.(newId);
-        await manager.closeSession(newId);
-      }
-      manager.reKeySession(slot, oldId, newId);
-      await slot.connection?.onSessionReset?.(slot, { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath });
+    attachObserver: async () => {
+      throw new Error('not implemented');
+    },
+    detachObserver: () => {
+      throw new Error('not implemented');
+    },
+    applySessionReset: async () => {
+      throw new Error('not implemented');
     },
   };
   return manager as unknown as PimoteSessionManager;
@@ -609,247 +597,6 @@ describe('WsHandler', () => {
       const resp = findResponse(sent, 'req-4');
       expect(resp!.success).toBe(true);
     });
-
-    it('re-attaches connection to session', async () => {
-      const session = createMockSlot({
-        id: 'session-1',
-        connectedClientId: null,
-        eventBuffer: createMockEventBuffer({ replayResult: [] }),
-      });
-
-      const sessions = new Map([['session-1', session]]);
-      const { handler } = createTestHandler('client-1', { sessions });
-
-      await handler.handleMessage(
-        JSON.stringify({
-          type: 'open_session',
-          folderPath: '/home/user/project',
-          sessionId: 'session-1',
-          lastCursor: 0,
-          id: 'req-5',
-        }),
-      );
-
-      expect(session.connection?.connectedClientId).toBe('client-1');
-    });
-  });
-
-  describe('open_session — different client ID, old client disconnected (silent rebind)', () => {
-    it('allows opening when old client is not in registry', async () => {
-      const session = createMockSlot({
-        id: 'session-1',
-        connectedClientId: 'old-client',
-        eventBuffer: createMockEventBuffer({ replayResult: [] }),
-      });
-
-      const sessions = new Map([['session-1', session]]);
-      const clientRegistry: ClientRegistry = new Map();
-
-      const { handler, sent } = createTestHandler('new-client', {
-        sessions,
-        clientRegistry,
-      });
-
-      await handler.handleMessage(
-        JSON.stringify({
-          type: 'open_session',
-          folderPath: '/home/user/project',
-          sessionId: 'session-1',
-          lastCursor: 0,
-          id: 'req-6',
-        }),
-      );
-
-      const resp = findResponse(sent, 'req-6');
-      expect(resp).toBeDefined();
-      expect(resp!.success).toBe(true);
-      expect(session.connection?.connectedClientId).toBe('new-client');
-    });
-
-    it('rebinds silently without sending displacement to anyone', async () => {
-      const session = createMockSlot({
-        id: 'session-1',
-        connectedClientId: 'old-client',
-        eventBuffer: createMockEventBuffer({ replayResult: [] }),
-      });
-
-      const sessions = new Map([['session-1', session]]);
-      const clientRegistry: ClientRegistry = new Map();
-
-      const ctx = createTestHandler('new-client', { sessions, clientRegistry });
-      await ctx.handler.handleMessage(
-        JSON.stringify({
-          type: 'open_session',
-          folderPath: '/home/user/project',
-          sessionId: 'session-1',
-          lastCursor: 0,
-          id: 'req-7',
-        }),
-      );
-
-      const closedEvents = findEvents(ctx.sent, 'session_closed');
-      expect(closedEvents).toHaveLength(0);
-    });
-  });
-
-  describe('open_session — different client ID, old client still connected, no force', () => {
-    it('responds with session_owned error', async () => {
-      const session = createMockSlot({
-        id: 'session-1',
-        connectedClientId: 'old-client',
-        eventBuffer: createMockEventBuffer({ replayResult: [] }),
-      });
-
-      const sessions = new Map([['session-1', session]]);
-      const clientRegistry: ClientRegistry = new Map();
-
-      const _oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
-      const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
-
-      await newCtx.handler.handleMessage(
-        JSON.stringify({
-          type: 'open_session',
-          folderPath: '/home/user/project',
-          sessionId: 'session-1',
-          lastCursor: 0,
-          id: 'req-8',
-        }),
-      );
-
-      const resp = findResponse(newCtx.sent, 'req-8');
-      expect(resp).toBeDefined();
-      expect(resp!.success).toBe(false);
-      expect(resp!.error).toBe('session_owned');
-      expect(session.connection?.connectedClientId).toBe('old-client');
-    });
-  });
-
-  describe('open_session — takeover of already-loaded session', () => {
-    it('returns session_owned when session is loaded and owned by another client', async () => {
-      const session = createMockSlot({
-        id: 'session-1',
-        connectedClientId: 'old-client',
-      });
-
-      const sessions = new Map([['session-1', session]]);
-      const clientRegistry: ClientRegistry = new Map();
-
-      const _oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
-      const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
-
-      await newCtx.handler.handleMessage(
-        JSON.stringify({
-          type: 'open_session',
-          folderPath: '/home/user/project',
-          sessionId: 'session-1',
-          id: 'req-9',
-        }),
-      );
-
-      const resp = findResponse(newCtx.sent, 'req-9');
-      expect(resp).toBeDefined();
-      expect(resp!.success).toBe(false);
-      expect(resp!.error).toBe('session_owned');
-      expect(session.connection?.connectedClientId).toBe('old-client');
-    });
-
-    it('displaces old client and reclaims session with force: true', async () => {
-      const session = createMockSlot({
-        id: 'session-1',
-        connectedClientId: 'old-client',
-      });
-
-      const sessions = new Map([['session-1', session]]);
-      const clientRegistry: ClientRegistry = new Map();
-
-      const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
-      const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
-
-      await newCtx.handler.handleMessage(
-        JSON.stringify({
-          type: 'open_session',
-          folderPath: '/home/user/project',
-          sessionId: 'session-1',
-          force: true,
-          id: 'req-10',
-        }),
-      );
-
-      const resp = findResponse(newCtx.sent, 'req-10');
-      expect(resp).toBeDefined();
-      expect(resp!.success).toBe(true);
-      expect(session.connection?.connectedClientId).toBe('new-client');
-
-      const resync = findEvents(newCtx.sent, 'full_resync');
-      expect(resync).toHaveLength(1);
-      expect((resync[0] as any).sessionId).toBe('session-1');
-
-      // Old client gets session_closed with displaced
-      const oldClosedEvents = findEvents(oldCtx.sent, 'session_closed');
-      expect(oldClosedEvents).toHaveLength(1);
-      expect((oldClosedEvents[0] as any).sessionId).toBe('session-1');
-      expect((oldClosedEvents[0] as any).reason).toBe('displaced');
-    });
-
-    it('sends the pending snapshot only to the new owner after takeover', async () => {
-      const session = createMockSlot({
-        id: 'session-1',
-        connectedClientId: 'old-client',
-        downloads: [pendingDownload],
-      });
-      const sessions = new Map([['session-1', session]]);
-      const clientRegistry: ClientRegistry = new Map();
-      const oldCtx = createTestHandler('old-client', { sessions, clientRegistry });
-      const newCtx = createTestHandler('new-client', { sessions, clientRegistry });
-
-      await newCtx.handler.handleMessage(
-        JSON.stringify({
-          type: 'open_session',
-          folderPath: '/home/user/project',
-          sessionId: 'session-1',
-          force: true,
-          id: 'req-download-takeover',
-        }),
-      );
-
-      expect(findEvents(newCtx.sent, 'download_update')).toContainEqual({
-        type: 'download_update',
-        sessionId: 'session-1',
-        cause: 'restored',
-        downloads: [pendingDownload],
-      });
-      expect(findEvents(oldCtx.sent, 'download_update')).toEqual([]);
-    });
-
-    it('reclaims session already owned by same client without displacement', async () => {
-      const session = createMockSlot({
-        id: 'session-1',
-        connectedClientId: 'my-client',
-      });
-
-      const sessions = new Map([['session-1', session]]);
-      const clientRegistry: ClientRegistry = new Map();
-
-      const ctx = createTestHandler('my-client', { sessions, clientRegistry });
-
-      await ctx.handler.handleMessage(
-        JSON.stringify({
-          type: 'open_session',
-          folderPath: '/home/user/project',
-          sessionId: 'session-1',
-          id: 'req-11-same',
-        }),
-      );
-
-      const resp = findResponse(ctx.sent, 'req-11-same');
-      expect(resp).toBeDefined();
-      expect(resp!.success).toBe(true);
-      expect(session.connection?.connectedClientId).toBe('my-client');
-
-      // No displaced events
-      const closedEvents = findEvents(ctx.sent, 'session_closed');
-      expect(closedEvents).toHaveLength(0);
-    });
   });
 
   describe('open_session — disk-backed reopen', () => {
@@ -1099,103 +846,6 @@ describe('WsHandler', () => {
     });
   });
 
-  describe('open_session — remote session conflict detection', () => {
-    it('includes remoteSessions in session_conflict when other pimote sessions exist in same folder', async () => {
-      const existingSession = createMockSlot({
-        id: 'existing-session',
-        connectedClientId: 'other-client',
-        status: 'working',
-      });
-
-      const sessions = new Map([['existing-session', existingSession]]);
-      const sessionManager = createMockSessionManager(sessions);
-
-      const newSessionId = 'new-session';
-      (sessionManager as any).openSession = async (_folderPath: string) => {
-        const newSession = createMockSlot({
-          id: newSessionId,
-          connectedClientId: null,
-        });
-        sessions.set(newSessionId, newSession);
-        return newSessionId;
-      };
-
-      const clientRegistry: ClientRegistry = new Map();
-      const { ws, sent } = createMockWs();
-      const sessionRecords = createMockSessionRecords();
-      const pushService = createMockPushService();
-
-      const handler = new WsHandler('/srv/manager-home', sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
-      clientRegistry.set('my-client', handler);
-
-      await handler.handleMessage(
-        JSON.stringify({
-          type: 'open_session',
-          folderPath: '/home/user/project',
-          id: 'req-11',
-        }),
-      );
-
-      const conflicts = findEvents(sent, 'session_conflict');
-      expect(conflicts.length).toBeGreaterThanOrEqual(1);
-
-      const conflictWithRemote = conflicts.find((e: any) => e.remoteSessions && e.remoteSessions.length > 0);
-      expect(conflictWithRemote).toBeDefined();
-      expect((conflictWithRemote as any).remoteSessions).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            sessionId: 'existing-session',
-            status: 'working',
-          }),
-        ]),
-      );
-    });
-
-    it('does not include own sessions in remoteSessions', async () => {
-      const ownSession = createMockSlot({
-        id: 'own-session',
-        connectedClientId: 'my-client',
-        status: 'idle',
-      });
-
-      const sessions = new Map([['own-session', ownSession]]);
-      const sessionManager = createMockSessionManager(sessions);
-
-      const newSessionId = 'new-session';
-      (sessionManager as any).openSession = async (_folderPath: string) => {
-        const newSession = createMockSlot({
-          id: newSessionId,
-          connectedClientId: null,
-        });
-        sessions.set(newSessionId, newSession);
-        return newSessionId;
-      };
-
-      const clientRegistry: ClientRegistry = new Map();
-      const { ws, sent } = createMockWs();
-      const sessionRecords = createMockSessionRecords();
-      const pushService = createMockPushService();
-
-      const handler = new WsHandler('/srv/manager-home', sessionManager, sessionRecords, ws, pushService, createMockSessionMetadataStore() as any, 'my-client', clientRegistry);
-      clientRegistry.set('my-client', handler);
-
-      await handler.handleMessage(
-        JSON.stringify({
-          type: 'open_session',
-          folderPath: '/home/user/project',
-          id: 'req-12',
-        }),
-      );
-
-      const conflicts = findEvents(sent, 'session_conflict');
-      for (const conflict of conflicts) {
-        const remoteSessions = (conflict as any).remoteSessions ?? [];
-        const ownInRemote = remoteSessions.find((rs: any) => rs.sessionId === 'own-session');
-        expect(ownInRemote).toBeUndefined();
-      }
-    });
-  });
-
   describe('kill_conflicting_sessions', () => {
     it('closes specified sessions and responds with success', async () => {
       const targetSession = createMockSlot({
@@ -1334,8 +984,8 @@ describe('WsHandler', () => {
     });
   });
 
-  describe('list_sessions — ownership enrichment', () => {
-    it('annotates sessions with isOwnedByMe and liveStatus', async () => {
+  describe('list_sessions — live status', () => {
+    it('annotates active sessions with liveStatus', async () => {
       const mySession = createMockSlot({
         id: 'my-session',
         connectedClientId: 'my-client',
@@ -1403,12 +1053,11 @@ describe('WsHandler', () => {
       expect(listedSessions).toHaveLength(4);
 
       for (const s of listedSessions) {
-        expect(s).toHaveProperty('isOwnedByMe');
         expect(s).toHaveProperty('liveStatus');
       }
     });
 
-    it('marks active sessions owned by requesting client with isOwnedByMe=true', async () => {
+    it('marks active sessions with liveStatus for the requesting client', async () => {
       const mySession = createMockSlot({
         id: 'session-a',
         connectedClientId: 'my-client',
@@ -1451,11 +1100,10 @@ describe('WsHandler', () => {
       const resp = findResponse(sent, 'req-list-mine');
       const listedSessions = (resp!.data as any).sessions;
       expect(listedSessions).toHaveLength(1);
-      expect(listedSessions[0].isOwnedByMe).toBe(true);
       expect(listedSessions[0].liveStatus).toBe('working');
     });
 
-    it('marks active sessions owned by another client with isOwnedByMe=false', async () => {
+    it('marks active sessions with liveStatus for another client', async () => {
       const otherSession = createMockSlot({
         id: 'session-b',
         connectedClientId: 'other-client',
@@ -1498,7 +1146,6 @@ describe('WsHandler', () => {
       const resp = findResponse(sent, 'req-list-other');
       const listedSessions = (resp!.data as any).sessions;
       expect(listedSessions).toHaveLength(1);
-      expect(listedSessions[0].isOwnedByMe).toBe(false);
       expect(listedSessions[0].liveStatus).toBe('idle');
     });
 
@@ -1539,7 +1186,6 @@ describe('WsHandler', () => {
       const resp = findResponse(sent, 'req-list-inactive');
       const listedSessions = (resp!.data as any).sessions;
       expect(listedSessions).toHaveLength(1);
-      expect(listedSessions[0].isOwnedByMe).toBe(false);
       expect(listedSessions[0].liveStatus).toBeNull();
     });
   });
@@ -1631,37 +1277,11 @@ describe('WsHandler', () => {
       ]);
     });
 
-    it('unarchives a persisted session when it is reopened', async () => {
+    it('rejects opening a persisted archived session without clearing its archive flag', async () => {
       const reopenedSessionId = 'archived-session';
       const sessionPath = '/tmp/archived-session.jsonl';
       const sessions = new Map<string, ManagedSlot>();
       const sessionManager = createMockSessionManager(sessions);
-      (sessionManager as any).openSession = async (_folderPath: string, sessionFilePath?: string) => {
-        const reopened = createMockSlot({
-          id: reopenedSessionId,
-          session: {
-            subscribe: () => () => {},
-            dispose: () => {},
-            messages: [],
-            model: null,
-            thinkingLevel: 'off',
-            getAvailableThinkingLevels: () => [],
-            isStreaming: false,
-            isCompacting: false,
-            sessionFile: sessionFilePath,
-            sessionId: reopenedSessionId,
-            sessionName: undefined,
-            autoCompactionEnabled: false,
-            bindExtensions: async () => {},
-            modelRuntime: { getAvailable: async () => [] },
-            clearQueue: () => ({ steering: [], followUp: [] }),
-            sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
-          } as any,
-        });
-        sessions.set(reopenedSessionId, reopened);
-        return reopenedSessionId;
-      };
-
       const sessionRecords = {
         ...createMockSessionRecords(),
         resolveSessionPath: async () => sessionPath,
@@ -1675,15 +1295,9 @@ describe('WsHandler', () => {
 
       await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/project', sessionId: reopenedSessionId, id: 'req-open-archived' }));
 
-      expect(sessionMetadataStore.isArchived(sessionPath)).toBe(false);
-      expect(findEvents(sent, 'session_archived')).toEqual([
-        {
-          type: 'session_archived',
-          sessionId: reopenedSessionId,
-          folderPath: '/home/user/project',
-          archived: false,
-        },
-      ]);
+      expect(sessionMetadataStore.isArchived(sessionPath)).toBe(true);
+      const response = findResponse(sent, 'req-open-archived');
+      expect(response).toMatchObject({ success: false, error: 'session_archived' });
     });
   });
 
@@ -1828,31 +1442,19 @@ describe('WsHandler', () => {
   });
 
   describe('cleanup', () => {
-    it('sets connection to null on managed slots', async () => {
+    it('detaches this client observer from managed slots', () => {
       const session = createMockSlot({
         id: 'session-1',
         connectedClientId: 'client-1',
-        eventBuffer: createMockEventBuffer({ replayResult: [] }),
       });
 
       const sessions = new Map([['session-1', session]]);
       const { handler } = createTestHandler('client-1', { sessions });
-
-      await handler.handleMessage(
-        JSON.stringify({
-          type: 'open_session',
-          folderPath: '/home/user/project',
-          sessionId: 'session-1',
-          lastCursor: 0,
-          id: 'req-cleanup',
-        }),
-      );
-
-      expect(session.connection?.connectedClientId).toBe('client-1');
+      (handler as any).subscribedSessions.add('session-1');
 
       handler.cleanup();
 
-      expect(session.connection).toBeNull();
+      expect(session.observers.has('client-1')).toBe(false);
     });
 
     it('clears viewedSessionId', async () => {
@@ -2070,9 +1672,7 @@ describe('WsHandler', () => {
     });
 
     it('reconciles the session map even when the slot has no owner (#6a — no phantom)', async () => {
-      // No connection on the slot (owner disconnected; reset fired via extension).
-      // The old code's `slot.connection?.onSessionReset?.()` would no-op, leaving the
-      // map keyed under the stale ID. applySessionReset must re-key regardless.
+      // A reset with no observer must still re-key the session map.
       const mockAgentSession = {
         subscribe: () => () => {},
         dispose: () => {},
@@ -2095,156 +1695,6 @@ describe('WsHandler', () => {
 
       expect(sessions.has('orphan-old')).toBe(false);
       expect(sessions.has('orphan-new')).toBe(true);
-    });
-
-    it('notifies the owning client on reset, not the issuing client (#6b)', async () => {
-      const mockAgentSession = {
-        subscribe: () => () => {},
-        dispose: () => {},
-        messages: [],
-        model: null,
-        thinkingLevel: 'default',
-        getAvailableThinkingLevels: () => [],
-        isStreaming: false,
-        isCompacting: false,
-        sessionFile: undefined,
-        sessionId: 'shared-old',
-        sessionName: undefined,
-        autoCompactionEnabled: false,
-        bindExtensions: async () => {},
-        modelRuntime: { getAvailable: async () => [] },
-        clearQueue: () => ({ steering: [], followUp: [] }),
-        navigateTree: async () => ({ cancelled: false }),
-        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
-      } as any;
-      const slot = createMockSlot({ id: 'shared-old', session: mockAgentSession, connectedClientId: null });
-      (slot.runtime as any).fork = async () => {
-        mockAgentSession.sessionId = 'shared-new';
-        return { cancelled: false };
-      };
-      const sessions = new Map([['shared-old', slot]]);
-      const clientRegistry: ClientRegistry = new Map();
-
-      // Owner A claims the session.
-      const { handler: handlerA, sent: sentA } = createTestHandler('A', { sessions, clientRegistry });
-      await handlerA.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/project', sessionId: 'shared-old', id: 'req-claim' }));
-
-      // Issuer B (a different client) issues fork on the same session.
-      const { handler: handlerB, sent: sentB } = createTestHandler('B', { sessions, clientRegistry });
-      sentA.length = 0;
-      sentB.length = 0;
-      await handlerB.handleMessage(JSON.stringify({ type: 'fork', sessionId: 'shared-old', entryId: 'e1', id: 'req-fork' }));
-
-      // The owner (A) is told its session was replaced; the issuer (B) is not.
-      expect(findEvents(sentA, 'session_replaced')).toHaveLength(1);
-      expect(findEvents(sentB, 'session_replaced')).toHaveLength(0);
-    });
-
-    it('displaces a colliding occupant when the reset lands on an already-open session ID', async () => {
-      // Simulates an extension calling ctx.switchSession(path) onto a file that is
-      // already open in another slot: the new ID collides with a live map entry.
-      let capturedOnReset: (() => Promise<void>) | undefined;
-      const mockAgentSession = {
-        sessionId: 'old-session',
-        subscribe: () => () => {},
-        dispose: () => {},
-        messages: [],
-        model: null,
-        thinkingLevel: 'default',
-        getAvailableThinkingLevels: () => [],
-        isStreaming: false,
-        isCompacting: false,
-        sessionFile: undefined,
-        sessionName: undefined,
-        autoCompactionEnabled: false,
-        bindExtensions: async (bindings: any) => {
-          if (bindings.commandContextActions) {
-            capturedOnReset = async () => {
-              mockAgentSession.sessionId = 'target-session';
-              await bindings.commandContextActions.newSession();
-            };
-          }
-        },
-        modelRuntime: { getAvailable: async () => [] },
-        clearQueue: () => ({ steering: [], followUp: [] }),
-        navigateTree: async () => ({ cancelled: false }),
-        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
-      } as any;
-
-      const slot = createMockSlot({ id: 'old-session', session: mockAgentSession, connectedClientId: null });
-      (slot.runtime as any).newSession = async () => {
-        mockAgentSession.sessionId = 'target-session';
-        return { cancelled: false };
-      };
-
-      // Occupant slot already holding 'target-session', owned by another client.
-      const occupant = createMockSlot({ id: 'target-session', connectedClientId: 'other-client' });
-
-      const sessions = new Map([
-        ['old-session', slot],
-        ['target-session', occupant],
-      ]);
-      const sessionManager = createMockSessionManager(sessions);
-      (sessionManager as any).rebuildSessionState = (s: ManagedSlot) => {
-        s.sessionState = { ...s.sessionState, id: s.runtime.session.sessionId };
-      };
-      const closeSpy = vi.fn(async (id: string) => {
-        sessions.delete(id);
-      });
-      (sessionManager as any).closeSession = closeSpy;
-
-      const clientRegistry: ClientRegistry = new Map();
-      const { ws, sent } = createMockWs();
-      const handler = new WsHandler(
-        '/srv/manager-home',
-        sessionManager,
-        createMockSessionRecords(),
-        ws,
-        createMockPushService(),
-        createMockSessionMetadataStore() as any,
-        'my-client',
-        clientRegistry,
-      );
-      clientRegistry.set('my-client', handler);
-
-      // Eviction notify is wired at boot in server.ts; mirror it here.
-      (sessionManager as any).onSlotEvicted = (sessionId: string) => {
-        const ownerClientId = sessions.get(sessionId)?.connection?.connectedClientId;
-        if (ownerClientId) clientRegistry.get(ownerClientId)?.sendDisplacedEvent(sessionId);
-      };
-
-      // Register the occupant's owning handler so it receives the displaced event.
-      const { ws: otherWs, sent: otherSent } = createMockWs();
-      const otherHandler = new WsHandler(
-        '/srv/manager-home',
-        sessionManager,
-        createMockSessionRecords(),
-        otherWs,
-        createMockPushService(),
-        createMockSessionMetadataStore() as any,
-        'other-client',
-        clientRegistry,
-      );
-      clientRegistry.set('other-client', otherHandler);
-
-      await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/project', sessionId: 'old-session', id: 'req-open' }));
-      sent.length = 0;
-      otherSent.length = 0;
-
-      expect(capturedOnReset).toBeDefined();
-      await capturedOnReset!();
-
-      // Occupant's owner was notified its session went away.
-      const displaced = findEvents(otherSent, 'session_closed').filter((e: any) => e.reason === 'displaced');
-      expect(displaced).toHaveLength(1);
-      expect((displaced[0] as any).sessionId).toBe('target-session');
-
-      // The occupant's runtime was disposed before re-keying.
-      expect(closeSpy).toHaveBeenCalledWith('target-session');
-
-      // The switching slot now owns the target key.
-      expect(sessions.get('target-session')).toBe(slot);
-      expect(sessions.has('old-session')).toBe(false);
     });
 
     it('sends full_resync (not session_replaced) when session ID stays the same (navigateTree)', async () => {

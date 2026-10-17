@@ -9,8 +9,6 @@ import com.pimote.android.protocol.CallEndReasonWire
 import com.pimote.android.protocol.CallEndedEvent
 import com.pimote.android.protocol.OpenSessionCommand
 import com.pimote.android.protocol.OpenSessionResponseData
-import com.pimote.android.protocol.SessionClosedEvent
-import com.pimote.android.protocol.SessionClosedReasonWire
 import com.pimote.android.telephony.CallConnection
 import com.pimote.android.voice.PeerConnectionFailed
 import com.pimote.android.voice.PeerState
@@ -567,14 +565,7 @@ class CallControllerImpl(
         // (peer.setMicMuted is a no-op before the audio track exists).
         try { peer.setMicMuted(_isMicMuted.value) } catch (_: Throwable) { }
 
-        // 5) Race: server call_ended | server session_closed(displaced) | peer Failed | user hangup.
-        //
-        // The `session_closed { reason: 'displaced' }` branch mirrors the
-        // PWA's `voice-call-store.ts` shortcut: when another client takes
-        // over our session via call_bind(force=true), the server emits
-        // `session_closed` rather than `call_ended`. Without this branch
-        // the call would sit in Active forever and Telecom would keep the
-        // VoIP audio mode on. See docs/plans/android-call-displacement.md.
+        // 5) Race: server call_ended | peer Failed | user hangup.
         val hangup = live.value?.userHangup ?: return  // slot already torn down
         val outcome: Outcome = coroutineScope {
             val winner = CompletableDeferred<Outcome>()
@@ -600,14 +591,8 @@ class CallControllerImpl(
                 hangup.await()
                 winner.complete(Outcome.UserHangup)
             }
-            val w4 = launch(Dispatchers.Unconfined) {
-                wsClient.events.filterIsInstance<SessionClosedEvent>()
-                    .filter { it.sessionId == sessionId && it.reason == SessionClosedReasonWire.DISPLACED }
-                    .first()
-                winner.complete(Outcome.RemoteEnded(CallEndReason.DISPLACED))
-            }
             val r = winner.await()
-            w1.cancel(); w2.cancel(); w3.cancel(); w4.cancel(); w5.cancel()
+            w1.cancel(); w2.cancel(); w3.cancel(); w5.cancel()
             r
         }
 

@@ -62,9 +62,7 @@ describe('ConnectionStore — definitive restore rejections', () => {
       detailAtCallback = c.syncDetail;
     });
     let detailAtCallback: string | null | undefined;
-    const onSessionOwned = vi.fn();
     c.onSessionNotFound = onSessionNotFound;
-    c.onSessionOwned = onSessionOwned;
     c.addSubscribedSession('s-ghost', '/proj');
 
     c.connect();
@@ -77,7 +75,6 @@ describe('ConnectionStore — definitive restore rejections', () => {
     await flush();
 
     expect(onSessionNotFound).toHaveBeenCalledWith('s-ghost');
-    expect(onSessionOwned).not.toHaveBeenCalled();
     expect(detailAtCallback).toBe('Session not found');
     expect(c.subscribedSessions.has('s-ghost')).toBe(false);
     // The dropped session must not block the connection from becoming ready.
@@ -111,7 +108,7 @@ describe('ConnectionStore — definitive restore rejections', () => {
   it('isSessionNotFoundError accepts both the current and legacy error strings', () => {
     expect(isSessionNotFoundError('session_not_found')).toBe(true);
     expect(isSessionNotFoundError('session_expired')).toBe(true);
-    expect(isSessionNotFoundError('session_owned')).toBe(false);
+    expect(isSessionNotFoundError('session_archived')).toBe(false);
     expect(isSessionNotFoundError(undefined)).toBe(false);
   });
 });

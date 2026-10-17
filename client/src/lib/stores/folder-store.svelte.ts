@@ -457,13 +457,12 @@ export class FolderStore {
     }
   }
 
-  applySessionStateChange(event: SessionStateChangedEvent, myClientId: string): void {
+  applySessionStateChange(event: SessionStateChangedEvent, _myClientId: string): void {
     const folder = this.folders.find((f) => f.path === event.folderPath);
     if (folder) {
       folder.activeSessionCount = event.folderActiveSessionCount;
     }
 
-    const isOwnedByMe = event.connectedClientId === myClientId;
     const folderSessions = this.sessions.get(event.folderPath);
     if (folderSessions) {
       const idx = folderSessions.findIndex((s) => s.id === event.sessionId);
@@ -477,7 +476,6 @@ export class FolderStore {
               ? {
                   ...s,
                   liveStatus: event.liveStatus,
-                  isOwnedByMe,
                   name: event.sessionName ?? s.name,
                   firstMessage: event.firstMessage ?? s.firstMessage,
                   messageCount: event.messageCount ?? s.messageCount,
@@ -499,7 +497,6 @@ export class FolderStore {
             created: now,
             modified: now,
             archived: false,
-            isOwnedByMe,
             liveStatus: event.liveStatus,
           },
         ];
@@ -518,7 +515,6 @@ export class FolderStore {
           created: now,
           modified: now,
           archived: false,
-          isOwnedByMe,
           liveStatus: event.liveStatus,
         },
       ]);

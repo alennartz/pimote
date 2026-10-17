@@ -7,7 +7,7 @@
 // no longer spawns it as a sidecar.
 
 import type { PimoteConfig } from './config.js';
-import type { ClientConnection, PimoteSessionManager } from './session-manager.js';
+import type { PimoteSessionManager } from './session-manager.js';
 import type { WsHandler } from './ws-handler.js';
 import { VoiceOrchestrator, type VoiceSessionBusResolver } from './voice-orchestrator.js';
 
@@ -46,7 +46,7 @@ export function buildVoiceOrchestrator(args: {
   sessionManager: PimoteSessionManager;
   clientRegistry: VoiceClientRegistry;
 }): VoiceOrchestratorBootResult | null {
-  const { config, sessionManager, clientRegistry } = args;
+  const { config, sessionManager } = args;
 
   if (!isVoiceConfigured(config)) return null;
 
@@ -59,30 +59,6 @@ export function buildVoiceOrchestrator(args: {
     config,
     sessionManager,
     busResolver,
-    displaceOwner: async (sessionId, newOwner: ClientConnection) => {
-      const slot = sessionManager.getSlot(sessionId);
-      if (!slot) return;
-      // Notify the displaced owner (if a different client), then transfer
-      // ownership to the new caller through the SAME claim path open_session
-      // uses — sets slot.connection, subscribes, rebinds extensions, replays
-      // pending UI. Without the claim, slot.connection stayed the displaced
-      // client: events streamed to a dead socket and idle-reap never fired.
-      const existingClientId = slot.connection?.connectedClientId;
-      if (existingClientId && existingClientId !== newOwner.connectedClientId) {
-        clientRegistry.get(existingClientId)?.sendDisplacedEvent(sessionId);
-      }
-      await clientRegistry.get(newOwner.connectedClientId)?.claimSession(sessionId, slot);
-    },
-    isOwnedByVoiceCall: (sessionId: string): boolean => orchestrator.isCallActive(sessionId),
-    notifyCallEnded: (sessionId: string) => {
-      // The voice extension self-deactivated (speechmux WS failed/dropped).
-      // Tell the owning client so its VoiceCallStore tears down instead of
-      // waiting for WebRTC to time out. (review finding H4)
-      const slot = sessionManager.getSlot(sessionId);
-      const ownerClientId = slot?.connection?.connectedClientId;
-      if (!ownerClientId) return;
-      clientRegistry.get(ownerClientId)?.sendCallEndedEvent(sessionId, 'error');
-    },
   });
 
   return {

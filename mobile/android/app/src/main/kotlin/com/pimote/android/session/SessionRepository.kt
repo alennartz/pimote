@@ -34,7 +34,7 @@ data class ProjectMeta(val folderPath: String, val folderName: String)
  * the wire's `SessionInfo` and drive the in-app contacts list (recency
  * sort, message count, cwd hint, first-message fallback).
  *
- * `liveStatus` and `isOwnedByMe` are intentionally NOT mirrored — the
+ * `liveStatus` is intentionally NOT mirrored — the
  * Android contacts screen does not surface remote-active state, and the
  * archived filter happens at the repository level so the UI never needs
  * to render archived contacts.

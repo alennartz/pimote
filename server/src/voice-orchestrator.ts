@@ -9,8 +9,8 @@
 import type { EventBusController } from '@earendil-works/pi-coding-agent';
 import type { CallBindErrorCode, CallBindResponse, CallEndReason } from '../../shared/dist/index.js';
 import type { PimoteConfig } from './config.js';
-import type { ClientConnection, ManagedSlot, PimoteSessionManager } from './session-manager.js';
-import type { VoiceActivateMessage, VoiceDeactivateMessage } from './voice/index.js';
+import type { ManagedSlot, PimoteSessionManager } from './session-manager.js';
+import type { VoiceDeactivateMessage } from './voice/index.js';
 
 export type CallBindResultData = Omit<CallBindResponse, 'type' | 'id'>;
 
@@ -27,7 +27,7 @@ export class CallBindError extends Error {
 
 export interface BindCallArgs {
   sessionId: string;
-  clientConnection: ClientConnection;
+  clientId: string;
   force: boolean;
 }
 
@@ -50,13 +50,6 @@ export interface VoiceOrchestratorOptions {
   sessionManager: PimoteSessionManager;
   busResolver: VoiceSessionBusResolver;
   /**
-   * Displace the current owner of a session (if any). Implementations wrap
-   * the session-manager's standard displacement path.
-   */
-  displaceOwner: (sessionId: string, newOwner: ClientConnection) => Promise<void>;
-  /** Check whether a session is currently owned by a voice-call client. */
-  isOwnedByVoiceCall: (sessionId: string) => boolean;
-  /**
    * Notify the owning client that a call ended without the client (or the
    * server's own `call_end`) initiating it — i.e. the voice extension
    * self-deactivated because the speechmux WS failed or dropped. Lets the
@@ -66,6 +59,8 @@ export interface VoiceOrchestratorOptions {
 }
 
 export class VoiceOrchestrator {
+  /** Active call holder per session. */
+  readonly callHolder = new Map<string, string>();
   private readonly activeCalls = new Set<string>();
   /** Per-session unsubscribe fns for the `pimote:voice:deactivate` bus
    *  listener installed on bind (so the server learns of extension-initiated
@@ -103,56 +98,8 @@ export class VoiceOrchestrator {
   }
 
   /** Called by ws-handler for CallBindCommand. */
-  async bindCall(args: BindCallArgs): Promise<CallBindResultData> {
-    const slot = this.opts.busResolver.getSlot(args.sessionId);
-    if (!slot) {
-      throw new CallBindError('call_bind_failed_session_not_found', `No session ${args.sessionId}`);
-    }
-
-    const alreadyOwned = this.opts.isOwnedByVoiceCall(args.sessionId);
-    if (alreadyOwned && !args.force) {
-      throw new CallBindError('call_bind_failed_owned', 'Session already bound to a voice call');
-    }
-
-    if (alreadyOwned && args.force) {
-      await this.opts.displaceOwner(args.sessionId, args.clientConnection);
-    }
-
-    // The orchestrator is only constructed when voice is configured, so
-    // these URLs are guaranteed present. Re-read them per call so live
-    // config edits (if/when supported) take effect on the next bind.
-    const signalUrl = this.opts.config.voice?.speechmuxSignalUrl;
-    const llmWsUrl = this.opts.config.voice?.speechmuxLlmWsUrl;
-    if (!signalUrl || !llmWsUrl) {
-      throw new CallBindError('call_bind_failed_internal', 'voice_disabled: speechmux signal URL / llm WS URL not configured');
-    }
-
-    const bus = this.opts.busResolver.getEventBus(args.sessionId);
-    if (!bus) {
-      throw new CallBindError('call_bind_failed_internal', 'Session has no EventBus');
-    }
-
-    // Subscribe to extension-initiated deactivate BEFORE activating so a
-    // self-deactivate during/after activation is never missed. Replace any
-    // prior subscription for this session (force-rebind).
-    this.deactivateUnsubs.get(args.sessionId)?.();
-    this.deactivateUnsubs.set(
-      args.sessionId,
-      bus.on('pimote:voice:deactivate', () => this.handleExtensionDeactivated(args.sessionId)),
-    );
-    this.activeCalls.add(args.sessionId);
-
-    const activate: VoiceActivateMessage = {
-      type: 'pimote:voice:activate',
-      sessionId: args.sessionId,
-      speechmuxWsUrl: llmWsUrl,
-    };
-    bus.emit(activate.type, activate);
-
-    return {
-      sessionId: args.sessionId,
-      webrtcSignalUrl: signalUrl,
-    };
+  async bindCall(_args: BindCallArgs): Promise<CallBindResultData> {
+    throw new Error('not implemented');
   }
 
   /** Called by ws-handler for CallEndCommand, or internally on displacement/error. Idempotent. */

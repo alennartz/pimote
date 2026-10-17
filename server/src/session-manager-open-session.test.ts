@@ -156,9 +156,9 @@ describe('PimoteSessionManager.openSession', () => {
       const slot = manager.getSession(sessionId)!;
       expect(slot.folderPath).toBe(root);
       expect(slot.session.sessionFile).toBe('/tmp/session.jsonl');
-      // The public slot carries viewer ownership, not session ownership.
-      slot.connection = { ws: { send: vi.fn(), readyState: 1 }, connectedClientId: 'viewer-1', onSessionReset: null };
-      slot.connection = null;
+      // The public slot keeps observers separate from session lifetime.
+      slot.observers.set('viewer-1', { ws: { send: vi.fn(), readyState: 1 }, clientId: 'viewer-1', cursor: 0, onSessionReset: null });
+      slot.observers.clear();
       expect(manager.getAllSessions()).toContain(slot);
       expect(await manager.openSession(root, slot.session.sessionFile)).toBe(sessionId);
       expect(manager.getSession(sessionId)).toBe(slot);

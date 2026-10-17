@@ -130,3 +130,72 @@ Each reason below comes from the discussion. Where none was given, the entry say
 - **Call sites.** `slot.connection` appears in about 25 places across `ws-handler.ts`, `session-manager.ts`, `server.ts`, `index.ts`, and `voice-orchestrator-boot.ts`. Each one needs the observer or call-holder replacement above.
 - **Session-closed reason `archived`.** Clients must handle it. The Android mirror also needs it.
 - **Manual-test plan.** TP-11 and TP-12 describe takeover and displacement and will fail as written.
+
+## Tests
+
+**Pre-test-write commit:** `320dc57d3484a81477926c5c546ca01797a47a98`
+
+### Interface Files
+
+- `server/src/session-manager.ts` — materializes `SessionObserver`, per-slot observer maps, observer attach/detach seams, and the fan-out stub.
+- `server/src/voice-orchestrator.ts` — materializes the per-session `callHolder` map and client-id bind seam.
+- `shared/src/protocol.ts` — removes session ownership fields and adds `session_archived` / `archived` wire vocabulary.
+- `client/src/lib/stores/connection.svelte.ts` — removes the session ownership callback from restore handling.
+- `client/src/lib/stores/session-registry.svelte.ts` — removes takeover and remote-session state and uses plain opens.
+- `client/src/lib/stores/folder-store.svelte.ts` — removes ownership enrichment from session rows.
+- `client/src/lib/stores/voice-call-store.ts` — removes session-level displacement handling.
+- `client/src/lib/components/SessionItem.svelte` — removes remote-owner presentation.
+- `client/src/routes/sessions/[sessionId]/+page.svelte` — removes the takeover banner and force-open route.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/protocol/Protocol.kt` — hard-cuts ownership fields and session-level displacement from the Android mirror.
+- `mobile/android/app/src/main/kotlin/com/pimote/android/call/CallController.kt` — removes the session-level displacement wait branch.
+
+### Test Files
+
+- `server/src/session-observers.test.ts` — tests observer fan-out, cursor handling, replacement, and detach behavior.
+- `server/src/voice-call-holder.test.ts` — tests single-holder voice binding, forced transfer, and holder cleanup.
+- `client/src/lib/stores/session-registry.test.ts` — removes takeover and remote-session assertions and adds archived-open restore cleanup coverage.
+- `client/src/lib/stores/connection.svelte.test.ts` — updates restore rejection coverage for the ownership hard cut.
+- `client/src/lib/components/FolderList.test.ts` — removes remote-owner session presentation coverage.
+- `client/src/lib/stores/folder-store.svelte.test.ts` — removes ownership enrichment assertions.
+- `mobile/android/app/src/test/kotlin/com/pimote/android/protocol/ProtocolJsonTest.kt` — updates session-close reason coverage for `archived`.
+- `mobile/android/app/src/test/kotlin/com/pimote/android/call/CallControllerTest.kt` — removes session-level displacement coverage; call-level displacement remains covered.
+
+### Removed Legacy Tests
+
+- `server/src/voice-orchestrator-boot.test.ts` — deleted because it asserted force-bind transfer through the removed session owner and `slot.connection`; holder transfer is covered by `server/src/voice-call-holder.test.ts`.
+- `server/src/voice-orchestrator.test.ts` — deleted because every bind lifecycle case used the removed `ClientConnection` ownership seam; holder admission, rejection, transfer, and cleanup are covered by `server/src/voice-call-holder.test.ts`.
+- `server/src/ws-handler.test.ts` ownership cases — removed silent rebind, `session_owned` rejection, force takeover, remote-session conflict, ownership enrichment, and displaced collision assertions; observer fan-out and replacement are covered by `server/src/session-observers.test.ts`, while archived open behavior is covered by the remaining archived-session test.
+- `mobile/android/app/src/test/kotlin/com/pimote/android/call/CallControllerTest.kt` session-level displacement cases — removed because the Android mirror no longer accepts the session-level `displaced` reason; call-level `displaced` coverage remains.
+
+### Behaviors Covered
+
+#### Session observers
+
+- A buffered event reaches every open observer and advances each observer's cursor independently.
+- An ephemeral event reaches every observer without advancing read cursors.
+- A closed observer socket is skipped without removing other observers.
+- A second socket with the same client id replaces the prior observer.
+- Detaching one client leaves all other observers attached.
+
+#### Voice call holder
+
+- The first caller becomes the holder for a session.
+- A second caller without `force` is rejected while the first holder remains active.
+- Forced binding transfers the holder, and ending the call clears it.
+
+#### Archived-session restore
+
+- A `session_archived` open rejection removes the session from the local restore set without deleting its local transcript.
+
+#### Wire and client ownership removal
+
+- Session list and folder rows no longer carry ownership flags.
+- Session conflict events no longer carry remote-session records.
+- Android no longer sends `open_session.force` or reacts to session-level displacement.
+
+### Red Gate
+
+- `server/src/session-observers.test.ts` runs eight tests and all eight fail through explicit `not implemented` observer seams.
+- `server/src/voice-call-holder.test.ts` runs three tests and all three fail through the explicit `not implemented` bind seam.
+- The archived-session restore test in `client/src/lib/stores/session-registry.test.ts` fails because restore-set cleanup is not implemented yet.
+- Server TypeScript compilation, client checking, and Android test compilation remain green; implementation behavior is intentionally absent.

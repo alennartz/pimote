@@ -146,7 +146,7 @@ class ProtocolJsonTest {
     @Test
     fun `decodes session_closed with each reason and with reason omitted`() {
         // Each named reason round-trips into the typed enum.
-        listOf("displaced" to SessionClosedReasonWire.DISPLACED,
+        listOf("archived" to SessionClosedReasonWire.ARCHIVED,
                "killed" to SessionClosedReasonWire.KILLED,
                "replaced" to SessionClosedReasonWire.REPLACED).forEach { (wire, parsed) ->
             val raw = """{"type":"session_closed","sessionId":"S","reason":"$wire"}"""
@@ -156,7 +156,7 @@ class ProtocolJsonTest {
             assertEquals("S", ev.sessionId)
             assertEquals(parsed, ev.reason)
         }
-        // Reason is optional — older / non-displacement closes may omit it.
+        // Reason is optional for older closes.
         val noReason = json.decodeFromString(
             PimoteEventSerializer,
             """{"type":"session_closed","sessionId":"S"}""",

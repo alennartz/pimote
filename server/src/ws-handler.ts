@@ -6,17 +6,14 @@ import type {
   PimoteEvent,
   SessionState,
   SessionMeta,
-  BufferedEventsEvent,
-  ConnectionRestoredEvent,
   FullResyncEvent,
   RestoreMode,
-  SessionRestoreEvent,
   SessionStateChangedEvent,
   FolderInfo,
   PimoteTreeNode,
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome } from './session-manager.js';
-import { makeDownloadSnapshot, resolveAllSlotPendingUi, resolveSlotPendingUi, replaySlotPendingUiRequests, requestSlotPanelResync } from './session-manager.js';
+import { makeDownloadSnapshot, resolveAllSlotPendingUi, resolveSlotPendingUi } from './session-manager.js';
 import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
 import { resolveSessionAcrossFolders, type SessionRecordLocation, type SessionRecords } from './session-records.js';
@@ -27,7 +24,6 @@ import { createCodeFolderViaCreators } from './folder-create.js';
 import type { FolderListingService } from './folder-listing.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import type { FolderCreator } from './folder-sources/index.js';
-import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
@@ -161,7 +157,7 @@ export function mapTreeNodes(nodes: SessionTreeNode[]): PimoteTreeNode[] {
  * Captures the ManagedSlot (stable lifetime), not a transient handler.
  * Session resets funnel through sessionManager.applySessionReset, which always
  * reconciles the session map and then notifies the slot's current owner (if any)
- * via slot.connection.onSessionReset — so a reset with no live owner still re-keys.
+ * via each observer's onSessionReset hook — so a reset with no observer still re-keys.
  */
 /** @internal Exported for the SDK delegation contract test. */
 export function createCommandContextActions(slot: ManagedSlot, sessionManager: PimoteSessionManager): ExtensionCommandContextActions {
@@ -423,7 +419,7 @@ export class WsHandler {
             slotById.set(s.sessionState.id, s);
           }
 
-          // Enrich each session with ownership, live status, and archived state
+          // Enrich each session with live status and archived state
           const diskSessionIds = new Set(sessions.map((s) => s.id));
           const enriched = sessions
             .map((s) => {
@@ -436,7 +432,6 @@ export class WsHandler {
                 messageCount: s.messageCount,
                 firstMessage: s.firstMessage || undefined,
                 archived: archivedLookup.get(s.path) === true,
-                isOwnedByMe: sl ? sl.connection?.connectedClientId === this.clientId : false,
                 liveStatus: sl ? sl.sessionState.status : null,
                 cwd: s.cwd !== command.folderPath ? s.cwd : undefined,
               };
@@ -459,7 +454,6 @@ export class WsHandler {
                 messageCount: session.messages.length,
                 firstMessage: firstText || undefined,
                 archived: false,
-                isOwnedByMe: slot.connection?.connectedClientId === this.clientId,
                 liveStatus: slot.sessionState.status,
                 cwd: slot.folderPath !== command.folderPath ? slot.folderPath : undefined,
               });
@@ -497,25 +491,10 @@ export class WsHandler {
             break;
           }
 
-          // Existing session: reclaim live in-memory runtime if possible, otherwise reopen from disk.
+          // Existing session: attach this observer to the live runtime when present.
           const requestedSessionId = command.sessionId;
           const existing = this.sessionManager.getSession(requestedSessionId);
           if (existing) {
-            if (existing.connection?.connectedClientId && existing.connection.connectedClientId !== this.clientId) {
-              const oldHandler = this.clientRegistry.get(existing.connection.connectedClientId);
-              if (oldHandler && !command.force) {
-                this.sendResponse(id, false, undefined, 'session_owned');
-                break;
-              }
-              this.displaceOwner(requestedSessionId, existing);
-            }
-
-            const existingSessionPath = existing.session.sessionFile;
-            if (existingSessionPath && this.sessionMetadataStore.isArchived(existingSessionPath)) {
-              await this.sessionMetadataStore.setArchived(existingSessionPath, false);
-              this.broadcastSessionArchived(requestedSessionId, existing.folderPath, false);
-            }
-
             const restoreMode = await this.syncSessionToClient(requestedSessionId, existing, command.lastCursor);
             WsHandler.broadcastSidebarUpdate(requestedSessionId, existing.folderPath, this.sessionManager, this.clientRegistry);
             this.sendResponse(id, true, {
@@ -539,11 +518,6 @@ export class WsHandler {
             break;
           }
           const { folderPath, sessionFilePath } = record;
-
-          if (this.sessionMetadataStore.isArchived(sessionFilePath)) {
-            await this.sessionMetadataStore.setArchived(sessionFilePath, false);
-            this.broadcastSessionArchived(requestedSessionId, folderPath, false);
-          }
 
           await this.repoIndex?.runOpenHooks(folderPath);
           const sessionId = await this.sessionManager.openSession(folderPath, sessionFilePath);
@@ -602,13 +576,6 @@ export class WsHandler {
 
           // If the session is active in memory, close it first
           if (deleteSlot) {
-            // Notify the owning client if it's a different client
-            if (deleteSlot.connection?.connectedClientId && deleteSlot.connection.connectedClientId !== this.clientId) {
-              const ownerHandler = this.clientRegistry.get(deleteSlot.connection.connectedClientId);
-              if (ownerHandler) {
-                ownerHandler.sendKilledEvent(deleteSessionId);
-              }
-            }
             resolveAllSlotPendingUi(deleteSlot);
             await this.sessionManager.closeSession(deleteSessionId);
           }
@@ -738,15 +705,10 @@ export class WsHandler {
             this.sendResponse(id, false, undefined, 'call_bind_failed_session_not_found');
             break;
           }
-          const connection: import('./session-manager.js').ClientConnection = {
-            ws: this.ws as import('./session-manager.js').EventSocket,
-            connectedClientId: this.clientId,
-            onSessionReset: (s, outcome) => this.handleSessionReset(s, outcome),
-          };
           try {
             const data = await this.voiceOrchestrator.bindCall({
               sessionId: command.sessionId,
-              clientConnection: connection,
+              clientId: this.clientId,
               force: command.force ?? false,
             });
             this.sendResponse(id, true, data);
@@ -763,15 +725,9 @@ export class WsHandler {
         }
 
         case 'call_end': {
-          // Route call_ended to the call's OWNER, not necessarily the requester:
-          // a non-owner ending the call must still tear down the owner's
-          // VoiceCallStore (otherwise it stays `active` until WebRTC dies). In the
-          // normal flow requester === owner, so this targets the same socket.
-          const ownerClientId = this.sessionManager.getSlot(command.sessionId)?.connection?.connectedClientId;
           await this.voiceOrchestrator?.endCall({ sessionId: command.sessionId, reason: 'user_hangup' });
           this.sendResponse(id, true);
-          const ownerHandler = ownerClientId ? this.clientRegistry.get(ownerClientId) : undefined;
-          (ownerHandler ?? this).sendCallEndedEvent(command.sessionId, 'user_hangup');
+          this.sendCallEndedEvent(command.sessionId, 'user_hangup');
           break;
         }
 
@@ -892,14 +848,6 @@ export class WsHandler {
           for (const targetSessionId of command.sessionIds) {
             const targetSlot = this.sessionManager.getSession(targetSessionId);
             if (!targetSlot) continue;
-
-            // Notify the owning client if still connected
-            if (targetSlot.connection?.connectedClientId) {
-              const ownerHandler = this.clientRegistry.get(targetSlot.connection.connectedClientId);
-              if (ownerHandler) {
-                ownerHandler.sendKilledEvent(targetSessionId);
-              }
-            }
 
             await this.sessionManager.closeSession(targetSessionId);
           }
@@ -1508,103 +1456,24 @@ export class WsHandler {
    *  method does not call `voiceOrchestrator.endCall` itself — see review
    *  finding 4.
    */
-  private displaceOwner(sessionId: string, slot: ManagedSlot): void {
-    if (slot.connection?.connectedClientId && slot.connection.connectedClientId !== this.clientId) {
-      const oldHandler = this.clientRegistry.get(slot.connection.connectedClientId);
-      if (oldHandler) {
-        oldHandler.sendDisplacedEvent(sessionId);
-      } else if (this.voiceOrchestrator?.isCallActive(sessionId)) {
-        // Stale owner id with no live handler — clean up orchestrator state
-        // so the new owner doesn't inherit a phantom active call.
-        this.voiceOrchestrator.endCall({ sessionId, reason: 'displaced' }).catch((err) => {
-          console.warn('[voice] endCall on displace (stale handler) failed', err);
-        });
-      }
-    }
+  private displaceOwner(_sessionId: string, _slot: ManagedSlot): void {
+    throw new Error('not implemented');
   }
 
   /** Bind a slot to this client — sets ownership, WebSocket routing,
    *  and subscribes to events. Extensions are bound once on first claim. Public
    *  so the voice force-bind path (displaceOwner wiring) can transfer ownership
    *  through this same single operation, exactly like open_session does. */
-  async claimSession(sessionId: string, slot: ManagedSlot): Promise<void> {
-    const connection: import('./session-manager.js').ClientConnection = {
-      ws: this.ws as import('./session-manager.js').EventSocket,
-      connectedClientId: this.clientId,
-      onSessionReset: (s, outcome) => this.handleSessionReset(s, outcome),
-    };
-    slot.connection = connection;
-    // Note: do NOT touch `idleSince` here. Idleness is an agent-level concept driven by
-    // agent_start/agent_end — a client claiming a session does not extend its idle clock.
-    this.subscribedSessions.add(sessionId);
-
-    // Bind extensions when needed. The bridge holds a direct reference to this
-    // ManagedSlot — on reconnect we skip rebinding, but on session reset
-    // we must rebind so the bridge points at the new session state.
-    if (!slot.sessionState.extensionsBound) {
-      const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
-        isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(sessionId) ?? false,
-      });
-      const commandContextActions = createCommandContextActions(slot, this.sessionManager);
-      await slot.session.bindExtensions({ uiContext, commandContextActions });
-      slot.sessionState.extensionsBound = true;
-    }
-
-    // Re-deliver any pending UI requests to the new client (recovers lost dialogs)
-    replaySlotPendingUiRequests(slot);
-    this.sendSilentDownloadSnapshot(slot);
-
-    // Ask extensions to re-project steady panel state: the panel snapshot sent on
-    // (re)connect reflects only the last emitted state and is empty after a server
-    // restart or session reopen.
-    requestSlotPanelResync(slot, 'claim');
+  async claimSession(_sessionId: string, _slot: ManagedSlot): Promise<void> {
+    throw new Error('not implemented');
   }
 
   /** Notify-only reaction to a session reset that the session manager has ALREADY
    *  reconciled in the map (rebuild + collision-evict + re-key). Installed as the
    *  owning connection's onSessionReset; runs only for the slot's current owner.
    *  Does no map mutation itself — see SessionManager.applySessionReset. */
-  private async handleSessionReset(slot: ManagedSlot, outcome: SessionResetOutcome): Promise<void> {
-    // navigateTree stays in the same file — same session ID, just resync.
-    if (outcome.kind === 'unchanged') {
-      this.sendFullResyncForSession(slot.sessionState.id, slot);
-      this.sendSilentDownloadSnapshot(slot);
-      return;
-    }
-
-    const { oldId, newId, folderPath } = outcome;
-
-    // Update handler bookkeeping
-    this.subscribedSessions.delete(oldId);
-    this.subscribedSessions.add(newId);
-    if (this.viewedSessionId === oldId) {
-      this.viewedSessionId = newId;
-    }
-
-    // Rebind extension UI bridge (new session state for dialog routing)
-    const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
-      isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(newId) ?? false,
-    });
-    const commandContextActions = createCommandContextActions(slot, this.sessionManager);
-    await slot.session.bindExtensions({ uiContext, commandContextActions });
-    slot.sessionState.extensionsBound = true;
-
-    // Notify owning client: session replaced (client re-keys in place)
-    this.sendEvent({
-      type: 'session_replaced',
-      oldSessionId: oldId,
-      newSessionId: newId,
-      folder: await this.resolveFolderInfo(folderPath),
-    });
-    this.sendSilentDownloadSnapshot(slot);
-
-    // The rebuilt session state starts with an empty panel snapshot — ask the
-    // re-bound extensions to re-project steady state onto it.
-    requestSlotPanelResync(slot, 'reset');
-
-    // Broadcast sidebar updates for both old (now inactive) and new (now active)
-    WsHandler.broadcastSidebarUpdate(oldId, folderPath, this.sessionManager, this.clientRegistry);
-    WsHandler.broadcastSidebarUpdate(newId, folderPath, this.sessionManager, this.clientRegistry);
+  private async handleSessionReset(_slot: ManagedSlot, _outcome: SessionResetOutcome): Promise<void> {
+    throw new Error('not implemented');
   }
 
   /** Surface the fd-missing warning at most once per connection (fire-and-forget toast). */
@@ -1656,76 +1525,23 @@ export class WsHandler {
 
   private async sendConflictEventIfNeeded(sessionId: string, folderPath: string): Promise<void> {
     const openConflictPids = await findExternalPiProcesses(folderPath);
-    const allSessions = this.sessionManager.getAllSessions();
-    const remoteSessions = allSessions
-      .filter(
-        (s) => s.folderPath === folderPath && s.connection?.connectedClientId !== null && s.connection?.connectedClientId !== this.clientId && s.sessionState.id !== sessionId,
-      )
-      .map((s) => ({ sessionId: s.sessionState.id, status: s.sessionState.status }));
 
-    if (openConflictPids.length > 0 || remoteSessions.length > 0) {
+    if (openConflictPids.length > 0) {
       this.sendEvent({
         type: 'session_conflict',
         sessionId,
         processes: openConflictPids.map((pid) => ({ pid, command: 'pi' })),
-        remoteSessions,
       });
     }
   }
 
-  private async syncSessionToClient(sessionId: string, slot: ManagedSlot, lastCursor?: number, noCursorRestoreMode: RestoreMode = 'full_resync_no_cursor'): Promise<RestoreMode> {
-    let replayResult: ReturnType<import('./event-buffer.js').EventBuffer['replay']> | null = null;
-    let cursorBeforeClaim: number | null = null;
-
-    let restoreMode: RestoreMode;
-
-    if (lastCursor !== undefined) {
-      replayResult = slot.sessionState.eventBuffer.replay(lastCursor);
-      if (replayResult !== null) {
-        restoreMode = 'incremental_replay';
-        this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
-        this.sendEvent({
-          type: 'buffered_events',
-          sessionId,
-          events: replayResult,
-        } as BufferedEventsEvent);
-        this.sendEvent({
-          type: 'connection_restored',
-          sessionId,
-        } as ConnectionRestoredEvent);
-        cursorBeforeClaim = slot.sessionState.eventBuffer.currentCursor;
-      } else {
-        restoreMode = 'full_resync_cursor_stale';
-        this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
-        this.sendFullResyncForSession(sessionId, slot);
-      }
-    } else {
-      restoreMode = noCursorRestoreMode;
-      this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
-      this.sendFullResyncForSession(sessionId, slot);
-    }
-
-    await this.claimSession(sessionId, slot);
-
-    if (replayResult !== null && cursorBeforeClaim !== null) {
-      const catchUp = slot.sessionState.eventBuffer.replay(cursorBeforeClaim);
-      if (catchUp && catchUp.length > 0) {
-        this.sendEvent({
-          type: 'buffered_events',
-          sessionId,
-          events: catchUp,
-        } as BufferedEventsEvent);
-      }
-    }
-
-    if (replayResult !== null) {
-      // Always send panel state after reconnect so the client clears stale cards
-      this.sendEvent({ type: 'panel_update', sessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
-    }
-
-    this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'completed' } as SessionRestoreEvent);
-
-    return restoreMode;
+  private async syncSessionToClient(
+    _sessionId: string,
+    _slot: ManagedSlot,
+    _lastCursor?: number,
+    _noCursorRestoreMode: RestoreMode = 'full_resync_no_cursor',
+  ): Promise<RestoreMode> {
+    throw new Error('not implemented');
   }
 
   /** Close this handler's WebSocket connection. */
@@ -1737,29 +1553,9 @@ export class WsHandler {
     }
   }
 
-  /** Send a session_closed event with reason 'displaced' to this client's WebSocket.
-   *  Also removes the session from this handler's subscribedSessions so that
-   *  cleanup() won't stomp the new owner's bindings when this handler closes. */
-  sendDisplacedEvent(sessionId: string): void {
-    this.subscribedSessions.delete(sessionId);
-    this.sendEvent({
-      type: 'session_closed',
-      sessionId,
-      reason: 'displaced',
-    });
-    // If the old owner had an active voice call on this session, tear down
-    // orchestrator bookkeeping and surface `call_ended { reason: 'displaced' }`
-    // so their VoiceCallStore tears down alongside the session_closed.
-    if (this.voiceOrchestrator?.isCallActive(sessionId)) {
-      this.voiceOrchestrator.endCall({ sessionId, reason: 'displaced' }).catch((err) => {
-        console.warn('[voice] endCall on displace failed', err);
-      });
-      this.sendEvent({
-        type: 'call_ended',
-        sessionId,
-        reason: 'displaced',
-      });
-    }
+  /** Session-level displacement no longer exists. */
+  sendDisplacedEvent(_sessionId: string): void {
+    throw new Error('not implemented');
   }
 
   /** Broadcast a `call_ended` to this client (used by the session manager's
@@ -1984,7 +1780,7 @@ export class WsHandler {
       sessionId,
       folderPath,
       liveStatus: slot ? slot.sessionState.status : null,
-      connectedClientId: slot ? (slot.connection?.connectedClientId ?? null) : null,
+      connectedClientId: null,
       folderActiveSessionCount,
       folderActiveStatus,
       sessionName,
@@ -2022,13 +1818,10 @@ export class WsHandler {
     this.loginAbort?.abort();
     this.settlePendingLoginInputs('connection closed');
     for (const sid of this.subscribedSessions) {
-      const slot = this.sessionManager.getSession(sid);
-      if (slot) {
-        slot.connection = null;
-        // Note: pending UI responses are NOT resolved here — they survive
-        // for replay on reconnect. They are resolved on session close or abort.
-        // Note: do NOT touch `idleSince`. Disconnecting does not reset idleness — if the
-        // agent finished 10 minutes ago, a peeking client should not extend the session's life.
+      try {
+        this.sessionManager.detachObserver(sid, this.clientId);
+      } catch {
+        // The observer seam is intentionally unimplemented in this phase.
       }
     }
     this.subscribedSessions.clear();

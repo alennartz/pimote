@@ -110,8 +110,6 @@ export interface SessionInfo {
   messageCount: number;
   firstMessage?: string;
   archived?: boolean;
-  /** Whether this session is owned by the requesting client */
-  isOwnedByMe?: boolean;
   /** Live status if this is an active in-memory session, null otherwise */
   liveStatus?: 'working' | 'idle' | null;
   /** Session working directory (may differ from the parent folder path) */
@@ -633,15 +631,13 @@ export interface OpenSessionCommand extends CommandBase {
   sessionId?: string;
   /** Last cursor seen by the client; when present the server may attempt incremental replay. */
   lastCursor?: number;
-  /** Force takeover if the session is owned by another client */
-  force?: boolean;
 }
 
 /** Rejection reasons for `open_session` on an existing session. Consumers must
  *  treat `session_not_found` as definitive: the session is neither live on the
  *  server nor persisted on disk (for example a new session never persisted
  *  before an idle reap), so no retry can succeed. */
-export type OpenSessionErrorCode = 'session_owned' | 'session_not_found';
+export type OpenSessionErrorCode = 'session_archived' | 'session_not_found';
 
 export type RestoreMode = 'incremental_replay' | 'full_resync_no_cursor' | 'full_resync_cursor_stale' | 'disk_full_resync';
 
@@ -1116,10 +1112,6 @@ export interface SessionConflictEvent {
   type: 'session_conflict';
   sessionId: string;
   processes: Array<{ pid: number; command: string }>;
-  remoteSessions?: Array<{
-    sessionId: string;
-    status: 'working' | 'idle';
-  }>;
 }
 
 // -- Extension UI request events --
@@ -1144,7 +1136,7 @@ export interface SessionOpenedEvent {
 export interface SessionClosedEvent {
   type: 'session_closed';
   sessionId: string;
-  reason?: 'displaced' | 'killed' | 'replaced';
+  reason?: 'archived' | 'killed' | 'replaced';
 }
 
 export interface SessionDeletedEvent {

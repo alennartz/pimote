@@ -179,7 +179,7 @@ describe('explicit session abort restoration', () => {
     session.pendingSteeringMessages = ['queued'];
     const send = vi.spyOn(connection, 'send');
     if (failure === 'connection loss') send.mockRejectedValue(new Error('WebSocket closed'));
-    else send.mockResolvedValue({ id: 'abort-1', success: false, error: 'session_owned' });
+    else send.mockResolvedValue({ id: 'abort-1', success: false, error: 'internal_error' });
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const view = render();
     await tick();

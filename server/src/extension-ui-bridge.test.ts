@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import type { PimoteEvent, ExtensionUiRequestEvent } from '../../shared/dist/index.js';
-import type { ManagedSlot, EventSocket, ClientConnection } from './session-manager.js';
+import type { ManagedSlot, EventSocket, SessionObserver } from './session-manager.js';
 import type { PushNotificationService, PushNotificationPayload } from './push-notification.js';
 
 /** Create a mock ManagedSlot with a recording WebSocket. */
@@ -14,9 +14,10 @@ function createMockSlot(): { slot: ManagedSlot; sent: PimoteEvent[] } {
     },
   };
 
-  const connection: ClientConnection = {
+  const observer: SessionObserver = {
     ws,
-    connectedClientId: 'test-client',
+    clientId: 'test-client',
+    cursor: 0,
     onSessionReset: null,
   };
 
@@ -24,7 +25,7 @@ function createMockSlot(): { slot: ManagedSlot; sent: PimoteEvent[] } {
     runtime: {} as any,
     folderPath: '/test',
     eventBusRef: { current: null },
-    connection,
+    observers: new Map([[observer.clientId, observer]]),
     sessionState: {
       id: 'test-session',
       eventBuffer: {} as any,
@@ -457,8 +458,8 @@ describe('createExtensionUIBridge', () => {
   });
 
   describe('disconnected state', () => {
-    it('should not throw when connection is null (disconnected)', () => {
-      slot.connection = null;
+    it('should not throw when there are no observers (disconnected)', () => {
+      slot.observers.clear();
       const ui = createExtensionUIBridge(slot);
 
       // Fire-and-forget should silently no-op
@@ -467,7 +468,7 @@ describe('createExtensionUIBridge', () => {
     });
 
     it('should create pending promise even when disconnected (for replay on reconnect)', async () => {
-      slot.connection = null;
+      slot.observers.clear();
       const ui = createExtensionUIBridge(slot);
 
       const promise = ui.select('Pick one', ['a', 'b']);
@@ -486,7 +487,7 @@ describe('createExtensionUIBridge', () => {
     });
 
     it('stores request event metadata for replay', () => {
-      slot.connection = null;
+      slot.observers.clear();
       const ui = createExtensionUIBridge(slot);
 
       ui.select('Pick one', ['a', 'b']);

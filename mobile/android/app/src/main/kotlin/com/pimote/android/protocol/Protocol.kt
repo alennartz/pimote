@@ -46,7 +46,6 @@ data class SessionInfo(
     val messageCount: Int,
     val firstMessage: String? = null,
     val archived: Boolean? = null,
-    val isOwnedByMe: Boolean? = null,
     val liveStatus: String? = null,
     val cwd: String? = null,
 )
@@ -84,7 +83,6 @@ data class OpenSessionCommand(
     val folderPath: String,
     val sessionId: String? = null,
     val lastCursor: Long? = null,
-    val force: Boolean? = null,
     override val type: String = "open_session",
 ) : PimoteCommand
 
@@ -179,18 +177,9 @@ data class SessionArchivedEvent(
     override val type: String = "session_archived",
 ) : PimoteEvent
 
-/**
- * Reason a session was closed by the server. Mirrors
- * `shared/src/protocol.ts` `SessionClosedEvent.reason`.
- *
- * - `DISPLACED` is what we react to in [com.pimote.android.call.CallControllerImpl]
- *   so a remote-driven call takeover tears down the local Telecom call.
- * - `KILLED` / `REPLACED` are accepted by the deserializer but ignored by
- *   the call controller; the WebRTC peer fails organically when the agent
- *   session goes away.
- */
+/** Reason a session was closed by the server. */
 enum class SessionClosedReasonWire {
-    @SerialName("displaced") DISPLACED,
+    @SerialName("archived") ARCHIVED,
     @SerialName("killed") KILLED,
     @SerialName("replaced") REPLACED,
 }

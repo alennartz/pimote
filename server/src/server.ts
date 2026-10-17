@@ -202,12 +202,8 @@ export async function createServer(
   sessionManager.onGitBranchChange = (sessionId, folderPath) => {
     WsHandler.broadcastSidebarUpdate(sessionId, folderPath, sessionManager, clientRegistry);
   };
-  // A re-key collision is about to evict the slot holding this ID. Tell its
-  // owning client its session went away before the runtime is disposed.
-  sessionManager.onSlotEvicted = (sessionId) => {
-    const ownerClientId = sessionManager.getSlot(sessionId)?.connection?.connectedClientId;
-    if (ownerClientId) clientRegistry.get(ownerClientId)?.sendDisplacedEvent(sessionId);
-  };
+  // A re-key collision evicts the existing slot before the runtime is disposed.
+  sessionManager.onSlotEvicted = (_sessionId) => {};
 
   // Folder registry mutations (update / createHub / membership) report the
   // exact changed/removed paths (their targets plus derived dependents) and
@@ -268,7 +264,7 @@ export async function createServer(
     }
 
     // Register new handler first, then clean up and close any stale connection.
-    // cleanup() disconnects the old handler's WebSocket routing (sets slot.connection = null).
+    // cleanup() detaches the old handler's observer from each subscribed slot.
     // Pending UI responses survive on the ManagedSlot for replay when the new
     // handler's reconnect commands reclaim sessions via claimSession().
     // The close handler skips cleanup when the registry already points to a

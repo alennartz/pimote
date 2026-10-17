@@ -863,10 +863,8 @@ describe('SessionRegistry', () => {
         externalProcessCount: 0,
       };
       before.folder = folderRow;
-      before.pendingTakeover = true;
       before.pendingSteeringMessages.push('pending');
       before.conflictingProcesses = [{ pid: 1234, command: 'pi' }];
-      before.conflictingRemoteSessions = [{ sessionId: 'remote', status: 'working' }];
       before.bashExecutions = {
         'bash-in-flight': {
           id: 'bash-in-flight',
@@ -910,10 +908,8 @@ describe('SessionRegistry', () => {
       // rebuild must carry it, same class as the draft.
       expect(session.folder).toBe(folderRow);
       expect(session.needsAttention).toBe(false);
-      expect(session.pendingTakeover).toBe(false);
       expect(session.pendingSteeringMessages).toEqual([]);
       expect(session.conflictingProcesses).toEqual([]);
-      expect(session.conflictingRemoteSessions).toEqual([]);
       expect(session.bashExecutions).toEqual({});
       expect(session.lastBotActivityTimestamp).toBeNull();
     });
@@ -1124,108 +1120,6 @@ describe('SessionRegistry', () => {
       registry.switchTo('s1');
       registry.removeSession('s1');
       expect(registry.viewedSessionId).toBeNull();
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // Session Conflict — Remote Sessions
-  // --------------------------------------------------------------------------
-  describe('Session Conflict — Remote Sessions', () => {
-    it('conflictingRemoteSessions initializes as empty array', () => {
-      registry.addSession('s1', '/path', 'proj');
-      expect(registry.sessions['s1'].conflictingRemoteSessions).toEqual([]);
-    });
-
-    it('session_conflict with remoteSessions populates conflictingRemoteSessions', () => {
-      registry.addSession('s1', '/path', 'proj');
-      registry.handleEvent({
-        type: 'session_conflict',
-        sessionId: 's1',
-        processes: [],
-        remoteSessions: [
-          { sessionId: 'remote-1', status: 'working' },
-          { sessionId: 'remote-2', status: 'idle' },
-        ],
-      });
-      const session = registry.sessions['s1'];
-      expect(session.conflictingRemoteSessions).toHaveLength(2);
-      expect(session.conflictingRemoteSessions[0]).toEqual({ sessionId: 'remote-1', status: 'working' });
-      expect(session.conflictingRemoteSessions[1]).toEqual({ sessionId: 'remote-2', status: 'idle' });
-    });
-
-    it('session_conflict with both processes and remoteSessions populates both fields', () => {
-      registry.addSession('s1', '/path', 'proj');
-      registry.handleEvent({
-        type: 'session_conflict',
-        sessionId: 's1',
-        processes: [{ pid: 1234, command: 'node pi' }],
-        remoteSessions: [{ sessionId: 'remote-1', status: 'idle' }],
-      });
-      const session = registry.sessions['s1'];
-      expect(session.conflictingProcesses).toHaveLength(1);
-      expect(session.conflictingProcesses[0].pid).toBe(1234);
-      expect(session.conflictingRemoteSessions).toHaveLength(1);
-      expect(session.conflictingRemoteSessions[0].sessionId).toBe('remote-1');
-    });
-
-    it('session_conflict with only processes (no remoteSessions) sets remoteSessions to empty', () => {
-      registry.addSession('s1', '/path', 'proj');
-      registry.handleEvent({
-        type: 'session_conflict',
-        sessionId: 's1',
-        processes: [{ pid: 5678, command: 'pi' }],
-      });
-      const session = registry.sessions['s1'];
-      expect(session.conflictingProcesses).toHaveLength(1);
-      expect(session.conflictingRemoteSessions).toEqual([]);
-    });
-
-    it('subsequent session_conflict events replace previous remoteSessions', () => {
-      registry.addSession('s1', '/path', 'proj');
-      registry.handleEvent({
-        type: 'session_conflict',
-        sessionId: 's1',
-        processes: [],
-        remoteSessions: [{ sessionId: 'remote-1', status: 'working' }],
-      });
-      registry.handleEvent({
-        type: 'session_conflict',
-        sessionId: 's1',
-        processes: [],
-        remoteSessions: [
-          { sessionId: 'remote-2', status: 'idle' },
-          { sessionId: 'remote-3', status: 'working' },
-        ],
-      });
-      const session = registry.sessions['s1'];
-      expect(session.conflictingRemoteSessions).toHaveLength(2);
-      expect(session.conflictingRemoteSessions[0].sessionId).toBe('remote-2');
-    });
-
-    it('clearConflict() resets both conflictingProcesses and conflictingRemoteSessions', () => {
-      registry.addSession('s1', '/path', 'proj');
-      registry.handleEvent({
-        type: 'session_conflict',
-        sessionId: 's1',
-        processes: [{ pid: 1234, command: 'pi' }],
-        remoteSessions: [{ sessionId: 'remote-1', status: 'working' }],
-      });
-      expect(registry.sessions['s1'].conflictingProcesses).toHaveLength(1);
-      expect(registry.sessions['s1'].conflictingRemoteSessions).toHaveLength(1);
-      registry.clearConflict('s1');
-      expect(registry.sessions['s1'].conflictingProcesses).toEqual([]);
-      expect(registry.sessions['s1'].conflictingRemoteSessions).toEqual([]);
-    });
-
-    it('session_conflict for unknown sessionId with remoteSessions is ignored', () => {
-      expect(() =>
-        registry.handleEvent({
-          type: 'session_conflict',
-          sessionId: 'unknown',
-          processes: [],
-          remoteSessions: [{ sessionId: 'remote-1', status: 'idle' }],
-        }),
-      ).not.toThrow();
     });
   });
 
@@ -1664,7 +1558,7 @@ describe('openExistingSession (folderless deep link)', () => {
       data: cmd.type === 'open_session' ? { sessionId: 's-deep', folderPath: '/repos/proj' } : undefined,
     }));
 
-    const opened = await openExistingSession('s-deep', undefined, { force: true, switchTo: false });
+    const opened = await openExistingSession('s-deep', undefined, { switchTo: false });
 
     expect(opened).toBe(true);
     expect(sessionRegistry.sessions['s-deep'].folderPath).toBe('/repos/proj');
@@ -1802,7 +1696,7 @@ describe('session_not_found cleanup', () => {
     vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => ({
       id: cmd.id ?? 'test',
       success: false,
-      error: cmd.type === 'open_session' ? 'session_owned' : 'other',
+      error: cmd.type === 'open_session' ? 'internal_error' : 'other',
     }));
 
     sessionRegistry.addSession('s-orphan', '/repos/proj', 'proj');
@@ -1813,6 +1707,23 @@ describe('session_not_found cleanup', () => {
     expect(opened).toBe(false);
     expect(sessionRegistry.sessions['s-orphan']).toBeDefined();
     expect(connection.subscribedSessions.has('s-orphan')).toBe(true);
+  });
+
+  it('an archived open drops the session from the restore set without deleting its local transcript', async () => {
+    vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => ({
+      id: cmd.id ?? 'test',
+      success: false,
+      error: cmd.type === 'open_session' ? 'session_archived' : 'other',
+    }));
+
+    sessionRegistry.addSession('s-archived', '/repos/proj', 'proj');
+    connection.addSubscribedSession('s-archived', '/repos/proj');
+
+    const opened = await openExistingSession('s-archived', '/repos/proj', { switchTo: false });
+
+    expect(opened).toBe(false);
+    expect(sessionRegistry.sessions['s-archived']).toBeDefined();
+    expect(connection.subscribedSessions.has('s-archived')).toBe(false);
   });
 
   it('the reconnect-restore callback (connection.onSessionNotFound) deletes the orphan', () => {

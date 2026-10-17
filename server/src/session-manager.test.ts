@@ -8,7 +8,7 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => ({
 }));
 
 import { createSessionState, makeDownloadSnapshot, PimoteSessionManager, routeSlotDownloadUpdate, setupSlotDownloadListener, singleFlight } from './session-manager.js';
-import type { ManagedSlot, SessionState, ClientConnection } from './session-manager.js';
+import type { ManagedSlot, SessionState, SessionObserver } from './session-manager.js';
 import type { PimoteConfig } from './config.js';
 import type { PushNotificationService } from './push-notification.js';
 
@@ -47,7 +47,7 @@ function createFakeSlot(
   overrides: Partial<{
     id: string;
     folderPath: string;
-    connection: ClientConnection | null;
+    observers: Map<string, SessionObserver>;
     idleSince: number | null;
     status: 'idle' | 'working';
     needsAttention: boolean;
@@ -83,7 +83,7 @@ function createFakeSlot(
     runtime: { session: mockSession } as any,
     folderPath: overrides.folderPath ?? '/home/user/project',
     eventBusRef: { current: null },
-    connection: overrides.connection ?? null,
+    observers: overrides.observers ?? new Map(),
     sessionState,
     get session() {
       return this.runtime.session;

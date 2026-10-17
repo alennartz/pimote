@@ -277,17 +277,10 @@ export async function main(options: StartOptions = {}) {
     // call ends and `isCallActive` flips back to false.
     pushNotificationService.setSuppressionPredicate((sessionId) => orchestrator.isCallActive(sessionId));
 
-    // Tear down orchestrator bookkeeping when a session is being closed (idle
-    // reap, explicit close). Emits call_ended{server_ended} to the owner.
+    // Tear down orchestrator bookkeeping when a session is being closed.
     sessionManager.onBeforeSessionClose = async (sessionId) => {
       if (!orchestrator.isCallActive(sessionId)) return;
-      const slot = sessionManager.getSlot(sessionId);
-      const ownerClientId = slot?.connection?.connectedClientId;
       await orchestrator.endCall({ sessionId, reason: 'server_ended' });
-      if (ownerClientId) {
-        const handler = server.clientRegistry.get(ownerClientId);
-        handler?.sendCallEndedEvent(sessionId, 'server_ended');
-      }
     };
   }
 

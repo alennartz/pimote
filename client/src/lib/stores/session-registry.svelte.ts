@@ -172,8 +172,6 @@ export interface PerSessionState {
   status: 'idle' | 'working';
   needsAttention: boolean;
   conflictingProcesses: Array<{ pid: number; command: string }>;
-  conflictingRemoteSessions: Array<{ sessionId: string; status: 'working' | 'idle' }>;
-  pendingTakeover: boolean;
   gitBranch: string | null;
   sessionName: string | null;
   extensionTitle: string | null;
@@ -304,8 +302,6 @@ export class SessionRegistry {
       status: 'idle',
       needsAttention: false,
       conflictingProcesses: [],
-      conflictingRemoteSessions: [],
-      pendingTakeover: false,
       sessionName: null,
       extensionTitle: null,
       restoreMode: null,
@@ -687,7 +683,6 @@ export class SessionRegistry {
       case 'session_conflict': {
         const conflict = event as SessionConflictEvent;
         session.conflictingProcesses = conflict.processes;
-        session.conflictingRemoteSessions = conflict.remoteSessions ?? [];
         break;
       }
 
@@ -1091,7 +1086,6 @@ export class SessionRegistry {
     const session = this.sessions[sessionId];
     if (session) {
       session.conflictingProcesses = [];
-      session.conflictingRemoteSessions = [];
     }
   }
 }
@@ -1221,7 +1215,7 @@ export async function routeNotificationIntent(intent: AppNotificationIntent): Pr
     await handleDownloadNotificationIntent(downloadIntent, {
       hasSession: (sessionId) => sessionRegistry.isActiveSession(sessionId),
       switchToSession,
-      openExistingSession: (sessionId, folderPath) => openExistingSession(sessionId, folderPath, { force: true, switchTo: true }),
+      openExistingSession: (sessionId, folderPath) => openExistingSession(sessionId, folderPath, { switchTo: true }),
       openDownloadInbox: (sessionId) => downloadUi.openDownloadInbox(sessionId),
     });
 
@@ -1252,7 +1246,7 @@ export async function routeNotificationIntent(intent: AppNotificationIntent): Pr
   }
 
   if (folderPath) {
-    await openExistingSession(intent.sessionId, folderPath, { force: true, switchTo: true });
+    await openExistingSession(intent.sessionId, folderPath, { switchTo: true });
   }
   // No folder resolvable anywhere: stay put. An unresolvable session must not
   // bounce the view the user is already on.
@@ -1260,8 +1254,7 @@ export async function routeNotificationIntent(intent: AppNotificationIntent): Pr
 
 /** Drop every client-side trace of a session: registry entry, wire
  *  subscription, and cached commands. Used when the session is gone
- *  server-side (`session_not_found`) so no orphan lingers, and by takeover
- *  dismissal. */
+ *  server-side (`session_not_found`) so no orphan lingers. */
 function dropSession(sessionId: string): void {
   sessionRegistry.removeSession(sessionId);
   connection.removeSubscribedSession(sessionId);
@@ -1270,7 +1263,7 @@ function dropSession(sessionId: string): void {
 
 /** Open a session by id. `folderPath` may be unknown for a deep link — the
  *  server then resolves the folder and reports it in the response. */
-export async function openExistingSession(sessionId: string, folderPath: string | undefined, opts?: { force?: boolean; switchTo?: boolean }): Promise<boolean> {
+export async function openExistingSession(sessionId: string, folderPath: string | undefined, opts?: { switchTo?: boolean }): Promise<boolean> {
   const projectName = folderPath ? folderPath.split('/').pop() || 'Unknown' : 'Unknown';
   const shouldSwitch = opts?.switchTo !== false;
   const alreadyTracked = !!sessionRegistry.sessions[sessionId];
@@ -1289,15 +1282,9 @@ export async function openExistingSession(sessionId: string, folderPath: string 
       type: 'open_session',
       folderPath,
       sessionId,
-      ...(opts?.force ? { force: true } : {}),
     });
 
     if (!response.success) {
-      if (response.error === 'session_owned') {
-        const session = sessionRegistry.sessions[sessionId];
-        if (session) session.pendingTakeover = true;
-        return false;
-      }
       // The server has no trace of the session (never persisted, pruned idle
       // slot). Definitive: drop the orphan even when it was already tracked,
       // otherwise it lingers with no model list and a dead composer.
@@ -1401,14 +1388,6 @@ connection.onSessionRestored = (sessionId, data) => {
   if (data.folder) sessionRegistry.bindSessionFolder(sessionId, data.folder);
 };
 
-// When restoring/opening is rejected because another client owns the session, prompt user
-connection.onSessionOwned = (sessionId) => {
-  const session = sessionRegistry.sessions[sessionId];
-  if (session) {
-    session.pendingTakeover = true;
-  }
-};
-
 // When restoring/opening is rejected because the session is gone server-side
 // (never persisted, pruned idle slot), delete the orphan locally. This fires
 // from the reconnect restore loop where no `openExistingSession` call frame
@@ -1452,19 +1431,6 @@ for (const { sessionId, folderPath } of persistedSessions) {
   const projectName = folderPath.split('/').pop() || 'Unknown';
   sessionRegistry.addSession(sessionId, folderPath, projectName);
   connection.addSubscribedSession(sessionId, folderPath);
-}
-
-/** Confirm takeover — resend open_session with force:true */
-export function confirmTakeover(sessionId: string): void {
-  const session = sessionRegistry.sessions[sessionId];
-  if (!session) return;
-  session.pendingTakeover = false;
-  void openExistingSession(sessionId, session.folderPath, { force: true, switchTo: true });
-}
-
-/** Dismiss takeover — drop the session */
-export function dismissTakeover(sessionId: string): void {
-  dropSession(sessionId);
 }
 
 // Helper that also sends view_session to server

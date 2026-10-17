@@ -15,7 +15,6 @@ import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, Down
 import type { PushNotificationPayload, PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import type { PanelMessage } from './panel-state.js';
-import { askActivity } from '@pimote/sdk/activity';
 import { getGitBranch } from './git-branch.js';
 import { LoginOrchestrator } from './login-orchestrator.js';
 import { createVoiceExtension } from './voice/index.js';
@@ -45,17 +44,16 @@ export interface PendingUiEntry {
   event: PimoteEvent;
 }
 
-/** Outcome of a session reset, passed to the owning connection's notify
- *  callback so it can react without re-deriving old/new IDs (the slot's state
- *  has already been rebuilt to the new session by the time notify runs). */
+/** Outcome of a session reset, passed to an observer's notify callback after
+ * the slot state has been rebuilt and any map re-key is complete. */
 export type SessionResetOutcome = { kind: 'unchanged' } | { kind: 'rekeyed'; oldId: string; newId: string; folderPath: string };
 
-export interface ClientConnection {
+/** One live client observer of a managed session. The event cursor is the last
+ * buffered event delivered to this observer. */
+export interface SessionObserver {
+  clientId: string;
   ws: EventSocket;
-  connectedClientId: string;
-  /** Notify-only hook the owning connection installs to react to a reset that
-   *  has already been reconciled in the session map. Never performs the map
-   *  reconcile itself — that lives in SessionManager.applySessionReset. */
+  cursor: number;
   onSessionReset: ((slot: ManagedSlot, outcome: SessionResetOutcome) => Promise<void>) | null;
 }
 
@@ -90,22 +88,16 @@ export interface ManagedSlot {
   runtime: AgentSessionRuntime;
   folderPath: string;
   eventBusRef: { current: EventBusController | null };
-  connection: ClientConnection | null;
+  observers: Map<string, SessionObserver>;
   sessionState: SessionState;
   get session(): AgentSession;
 }
 
 // ---- Slot-based helpers (operate on ManagedSlot) ----
 
-/** Send an event to the client connected to this slot. No-op if disconnected. */
-export function sendSlotEvent(slot: ManagedSlot, event: PimoteEvent): void {
-  const ws = slot.connection?.ws;
-  if (!ws || ws.readyState !== 1) return;
-  try {
-    ws.send(JSON.stringify(event));
-  } catch {
-    // WebSocket send failed — ignore (client disconnecting)
-  }
+/** Send one session event to every live observer. */
+export function sendSlotEvent(_slot: ManagedSlot, _event: PimoteEvent): void {
+  throw new Error('not implemented');
 }
 
 /** Dependencies for routing one extension download update to its owning client. */
@@ -594,7 +586,7 @@ export class PimoteSessionManager {
       runtime,
       folderPath: effectiveFolderPath,
       eventBusRef,
-      connection: null,
+      observers: new Map(),
       sessionState,
       get session() {
         return this.runtime.session;
@@ -709,7 +701,6 @@ export class PimoteSessionManager {
 
     // navigateTree stays in the same file — same session ID, nothing to re-key.
     if (newId === oldId) {
-      await slot.connection?.onSessionReset?.(slot, { kind: 'unchanged' });
       return;
     }
 
@@ -731,8 +722,6 @@ export class PimoteSessionManager {
     }
 
     this.reKeySession(slot, oldId, newId);
-
-    await slot.connection?.onSessionReset?.(slot, { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath });
   }
 
   /** Rebuild a slot's SessionState after session replacement.
@@ -762,6 +751,16 @@ export class PimoteSessionManager {
     );
   }
 
+  /** Attach or replace one observer for a live session. */
+  async attachObserver(_sessionId: string, _observer: SessionObserver): Promise<void> {
+    throw new Error('not implemented');
+  }
+
+  /** Detach one observer from a live session. */
+  detachObserver(_sessionId: string, _clientId: string): void {
+    throw new Error('not implemented');
+  }
+
   /** Alias for getSession that returns null (not undefined) for consumers
    *  that expect nullable pointers (e.g. VoiceSessionBusResolver). */
   getSlot(sessionId: string): ManagedSlot | null {
@@ -786,53 +785,8 @@ export class PimoteSessionManager {
     return Array.from(this.sessions.values());
   }
 
-  startIdleCheck(idleTimeout: number, isClientConnected?: (clientId: string) => boolean): void {
-    this.stopIdleCheck();
-
-    this.idleCheckHandle = setInterval(() => {
-      for (const [sessionId, slot] of this.sessions) {
-        if (slot.sessionState.treeNavigationInProgress) {
-          continue;
-        }
-
-        const clientId = slot.connection?.connectedClientId ?? null;
-        const hasConnectedClient = clientId !== null && (isClientConnected?.(clientId) ?? false);
-        // Only idle (non-streaming) sessions are eligible for reaping. `idleSince` is set on
-        // `agent_end` and cleared on `agent_start`, so a working session can never be reaped
-        // here, regardless of how long it's been since a client was connected. A standalone
-        // bash command does not change the agent-level status, so guard both native execution
-        // and the short extension-admission window explicitly as well. Finally, extensions
-        // holding live background work (e.g. non-awaited subagents) answer the synchronous
-        // activity poll (DR-054); asked only past the threshold, it fails open to reap when
-        // no responder is present.
-        const idleSince = slot.sessionState.idleSince;
-        const bashInProgress = slot.session.isBashRunning || slot.sessionState.bashDispatchInProgress === true;
-        if (!hasConnectedClient && !bashInProgress && idleSince !== null && Date.now() - idleSince > idleTimeout) {
-          const activityBus = slot.eventBusRef.current;
-          if (activityBus && askActivity(activityBus)) continue;
-          this.closeSession(sessionId).catch(() => {
-            // Best-effort cleanup — swallow errors during idle reaping
-          });
-        }
-      }
-    }, 60_000);
-
-    this.gitBranchCheckHandle = setInterval(() => {
-      // Snapshot connected sessions and refresh their branches in parallel. The
-      // lookups are async (execFile) so the poll never blocks the event loop;
-      // hot-path readers consume the cache via getLastKnownGitBranch.
-      const connected = [...this.sessions].filter(([, slot]) => slot.connection?.connectedClientId);
-      void Promise.all(
-        connected.map(async ([sessionId, slot]) => {
-          const next = await getGitBranch(slot.folderPath);
-          const prev = this.lastKnownGitBranchBySession.get(sessionId) ?? null;
-          if (next !== prev) {
-            this.lastKnownGitBranchBySession.set(sessionId, next);
-            this.onGitBranchChange?.(sessionId, slot.folderPath);
-          }
-        }),
-      );
-    }, 3000);
+  startIdleCheck(_idleTimeout: number, _isClientConnected?: (clientId: string) => boolean): void {
+    throw new Error('not implemented');
   }
 
   stopIdleCheck(): void {
