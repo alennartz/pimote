@@ -3,6 +3,7 @@ import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import type { PimoteEvent, ExtensionUiRequestEvent } from '../../shared/dist/index.js';
 import type { ManagedSlot, EventSocket, SessionObserver } from './session-manager.js';
 import type { PushNotificationService, PushNotificationPayload } from './push-notification.js';
+import { QueueOwnership } from './queue-ownership.js';
 
 /** Create a mock ManagedSlot with a recording WebSocket. */
 function createMockSlot(): { slot: ManagedSlot; sent: PimoteEvent[] } {
@@ -40,6 +41,7 @@ function createMockSlot(): { slot: ManagedSlot; sent: PimoteEvent[] } {
       panelListenerUnsubs: [],
       panelThrottleTimer: null,
       treeNavigationInProgress: false,
+      queueOwnership: new QueueOwnership(),
     },
     get session() {
       return this.runtime.session;

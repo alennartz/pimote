@@ -10,6 +10,7 @@ import {
 import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory } from '@earendil-works/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
+import { QUEUE_KINDS, QueueOwnership } from './queue-ownership.js';
 import { rendererRegisteredVisibility } from './message-mapper.js';
 import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, DownloadUpdateEvent } from '../../shared/dist/index.js';
 import type { PushNotificationPayload, PushNotificationService } from './push-notification.js';
@@ -83,6 +84,8 @@ export interface SessionState {
   bashDispatchInProgress?: boolean;
   /** Set when abort_bash arrives before native execution has been admitted. */
   bashAbortRequested?: boolean;
+  /** Which client submitted each message in pi's steering and follow-up queues. */
+  queueOwnership: QueueOwnership;
 }
 
 export interface ManagedSlot {
@@ -272,10 +275,14 @@ export function createSessionState(
     treeNavigationInProgress: false,
     bashDispatchInProgress: false,
     bashAbortRequested: false,
+    queueOwnership: new QueueOwnership(),
   };
 
   // Subscribe to session events
   const unsubscribe = session.subscribe((event) => {
+    if (event.type === 'queue_update') {
+      for (const kind of QUEUE_KINDS) state.queueOwnership.syncFromPi(kind, event[kind]);
+    }
     if (event.type === 'agent_start' && state.status !== 'working') {
       state.status = 'working';
       state.idleSince = null;
@@ -294,6 +301,8 @@ export function createSessionState(
       state.status = 'idle';
       state.idleSince = Date.now();
       state.needsAttention = true;
+      // Nothing queued can still arrive from an idle session. Drop unconsumed intents.
+      state.queueOwnership.clearIntents();
       // A user-aborted run does not warrant a completion push: whoever
       // aborted it is already engaged with the session.
       if (!event.aborted && slotRef.slot) callbacks.onSessionIdle?.(sessionId, slotRef.slot);

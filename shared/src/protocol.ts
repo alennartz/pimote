@@ -1114,6 +1114,14 @@ export type PimoteSessionEvent =
   | TreeNavigationStartEvent
   | TreeNavigationEndEvent;
 
+/** Sent to each other sender when an abort clears the shared queue. The client restores these texts as drafts. */
+export interface QueuedDraftsRestoredEvent {
+  type: 'queued_drafts_restored';
+  sessionId: string;
+  steering: string[];
+  followUp: string[];
+}
+
 // -- Session conflict events --
 
 export interface SessionConflictEvent {
@@ -1415,6 +1423,8 @@ export type PimoteEvent =
   | ExtensionUiResolvedEvent
   // Session conflict
   | SessionConflictEvent
+  // Queued drafts
+  | QueuedDraftsRestoredEvent
   // Server-level
   | SessionOpenedEvent
   | SessionClosedEvent

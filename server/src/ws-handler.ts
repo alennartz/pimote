@@ -38,6 +38,7 @@ import type { TreeNavigationStartEvent, TreeNavigationEndEvent } from './event-b
 import { sumLifetimeCostUsd } from './session-cost.js';
 import { completeFileRefs } from './file-references.js';
 import { readEditableFile, writeEditableFile } from './file-edit.js';
+import { attributeDrained } from './queue-ownership.js';
 import type { AgentSession, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { CallBindError } from './voice-orchestrator.js';
@@ -1050,6 +1051,7 @@ export class WsHandler {
       }
 
       case 'steer': {
+        slot.sessionState.queueOwnership.intend('steering', this.clientId, command.message);
         session.steer(command.message).catch((err) => {
           console.error(`[WsHandler] steer error:`, err);
         });
@@ -1064,6 +1066,7 @@ export class WsHandler {
       }
 
       case 'follow_up': {
+        slot.sessionState.queueOwnership.intend('followUp', this.clientId, command.message);
         session.followUp(command.message).catch((err) => {
           console.error(`[WsHandler] followUp error:`, err);
         });
@@ -1098,10 +1101,19 @@ export class WsHandler {
           }
         });
         let abortWatchdog: ReturnType<typeof setTimeout> | undefined;
+        // Read ownership before clearing. Clearing emits queue_update, which empties the ledger.
+        const owners = slot.sessionState.queueOwnership.snapshot();
         // Remove queued input synchronously before cancellation can emit agent_end.
         // The client restores it as a draft only after receiving this response.
         slot.eventBusRef.current?.emit('pimote:voice:cancel-pending', undefined);
-        const queued = session.clearQueue();
+        const drained = session.clearQueue();
+        const drafts = attributeDrained(owners, drained, this.clientId);
+        // Each other sender restores its own messages now. This client restores its own from the response.
+        for (const [clientId, group] of drafts) {
+          if (clientId === this.clientId) continue;
+          this.clientRegistry.get(clientId)?.sendToClient({ type: 'queued_drafts_restored', sessionId, ...group });
+        }
+        const queued = drafts.get(this.clientId) ?? { steering: [], followUp: [] };
         try {
           trace('requested');
           // Resolve pending UI responses first so stuck dialogs unblock.

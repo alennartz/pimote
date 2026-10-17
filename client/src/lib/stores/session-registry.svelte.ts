@@ -43,6 +43,7 @@ import type {
   BashExecutionUpdateEvent,
   AbortResponseData,
   QueueUpdateEvent,
+  QueuedDraftsRestoredEvent,
 } from '@pimote/shared';
 import { connection, isSessionNotFoundError } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
@@ -359,6 +360,17 @@ export class SessionRegistry {
   }
 
   /** Route an incoming event to the correct session's state */
+  /** Prepend recovered queued messages to a session's draft and show it in the composer. */
+  restoreQueuedDrafts(sessionId: string, queued: string[]): void {
+    // A full resync can replace the session object while a request is in flight.
+    // Read the current snapshot and draft only when restoring.
+    const session = this.sessions[sessionId];
+    if (!session || queued.length === 0) return;
+    const text = [...queued, ...(session.draftText ? [session.draftText] : [])].join('\n');
+    session.draftText = text;
+    setEditorText(sessionId, text);
+  }
+
   handleEvent(event: PimoteEvent): void {
     const sessionId = 'sessionId' in event ? event.sessionId : undefined;
 
@@ -386,6 +398,14 @@ export class SessionRegistry {
         // The SDK publishes this snapshot before consumed-message events and
         // after clearQueue. Abort responses restore drafts, not live queues.
         session.pendingSteeringMessages = [...(event as QueueUpdateEvent).steering];
+        break;
+
+      case 'queued_drafts_restored':
+        // Another client aborted the session. Restore only the messages this client sent.
+        {
+          const drafts = event as QueuedDraftsRestoredEvent;
+          this.restoreQueuedDrafts(sessionId, [...drafts.steering, ...drafts.followUp]);
+        }
         break;
 
       case 'auto_retry_end': {
@@ -1490,17 +1510,7 @@ export async function abortSession(sessionId: string): Promise<void> {
       Array.isArray(data.followUp) &&
       data.followUp.every((text) => typeof text === 'string')
     ) {
-      // A full resync can replace this object while the request is in flight.
-      // Read the current snapshot and draft only after the response arrives.
-      const session = sessionRegistry.sessions[sessionId];
-      if (session) {
-        const queued = [...data.steering, ...data.followUp];
-        if (queued.length > 0) {
-          const text = [...queued, ...(session.draftText ? [session.draftText] : [])].join('\n');
-          session.draftText = text;
-          setEditorText(sessionId, text);
-        }
-      }
+      sessionRegistry.restoreQueuedDrafts(sessionId, [...data.steering, ...data.followUp]);
     }
 
     // agent_settled owns the idle transition. A response (especially a timeout)

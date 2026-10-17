@@ -1161,6 +1161,26 @@ describe('SessionRegistry', () => {
       expect(session.status).toBe('working');
     });
 
+    it("queued_drafts_restored prepends this client's messages to its draft", () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions.s1;
+      session.draftText = 'keep draft';
+
+      registry.handleEvent(makeSessionEvent('queued_drafts_restored', 's1', { steering: ['queued a'], followUp: ['later'] }));
+
+      expect(session.draftText).toBe('queued a\nlater\nkeep draft');
+    });
+
+    it('queued_drafts_restored with no messages leaves the draft unchanged', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions.s1;
+      session.draftText = 'keep draft';
+
+      registry.handleEvent(makeSessionEvent('queued_drafts_restored', 's1', { steering: [], followUp: [] }));
+
+      expect(session.draftText).toBe('keep draft');
+    });
+
     it('consumed message_end does not remove an identical message left in the authoritative queue', () => {
       registry.addSession('s1', '/path', 'proj');
       const session = registry.sessions.s1;

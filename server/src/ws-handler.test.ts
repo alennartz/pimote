@@ -11,6 +11,7 @@ import type { FolderListingService } from './folder-listing.js';
 import type { FolderCreator } from './folder-sources/index.js';
 import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer } from './event-buffer.js';
+import { QueueOwnership } from './queue-ownership.js';
 import type { EventBusController } from '@earendil-works/pi-coding-agent';
 import type { DownloadItem, FolderInfo, PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
 
@@ -111,6 +112,7 @@ function createMockSlot(
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
     treeNavigationInProgress: false,
+    queueOwnership: new QueueOwnership(),
   };
 
   const observer: SessionObserver | null = overrides.connectedClientId != null ? { ws: null as any, clientId: overrides.connectedClientId, cursor: 0, onSessionReset: null } : null;
@@ -3980,6 +3982,41 @@ describe('abort diagnostics', () => {
     finishAbort();
     await pending;
     expect(findResponse(sent, 'abort-queue')).toMatchObject({ success: true, data: queued });
+  });
+
+  it('returns only the aborting client’s queued messages', async () => {
+    const slot = createMockSlot({ connectedClientId: 'client-1', status: 'working' });
+    const ownership = slot.sessionState.queueOwnership;
+    ownership.intend('steering', 'client-1', 'mine');
+    ownership.syncFromPi('steering', ['mine']);
+    ownership.intend('steering', 'client-2', 'theirs');
+    ownership.syncFromPi('steering', ['mine', 'theirs']);
+    (slot.session as any).clearQueue = () => ({ steering: ['mine', 'theirs'], followUp: [] });
+    (slot.session as any).abort = async () => {};
+    const { handler, sent } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]) });
+    await handler.handleMessage(JSON.stringify({ type: 'abort', id: 'abort-own', sessionId: slot.sessionState.id }));
+    expect(findResponse(sent, 'abort-own')).toMatchObject({ success: true, data: { steering: ['mine'], followUp: [] } });
+  });
+
+  it('sends each other sender its own queued messages as drafts', async () => {
+    const slot = createMockSlot({ connectedClientId: 'client-1', status: 'working' });
+    const ownership = slot.sessionState.queueOwnership;
+    ownership.intend('steering', 'client-1', 'mine');
+    ownership.syncFromPi('steering', ['mine']);
+    ownership.intend('followUp', 'client-2', 'theirs-later');
+    ownership.syncFromPi('followUp', ['theirs-later']);
+    (slot.session as any).clearQueue = () => ({ steering: ['mine'], followUp: ['theirs-later'] });
+    (slot.session as any).abort = async () => {};
+    const otherSend = vi.fn();
+    const clientRegistry = new Map([['client-2', { sendToClient: otherSend } as any]]);
+    const { handler } = createTestHandler('client-1', { sessions: new Map([[slot.sessionState.id, slot]]), clientRegistry });
+    await handler.handleMessage(JSON.stringify({ type: 'abort', id: 'abort-drafts', sessionId: slot.sessionState.id }));
+    expect(otherSend).toHaveBeenCalledExactlyOnceWith({
+      type: 'queued_drafts_restored',
+      sessionId: slot.sessionState.id,
+      steering: [],
+      followUp: ['theirs-later'],
+    });
   });
 
   it('returns captured messages when abort rejects', async () => {
