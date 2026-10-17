@@ -1550,7 +1550,8 @@ export class WsHandler {
     // that position before awaiting callbacks, so a disconnect during the first
     // bind cannot make a later observer bind the rebuilt session again.
     const isFirstObserver = firstObserver ?? slot.observers.keys().next().value === this.clientId;
-    if (isFirstObserver) {
+    const performsSlotReset = isFirstObserver && !slot.sessionState.extensionsBound;
+    if (performsSlotReset) {
       const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
         isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(newId) ?? false,
       });
