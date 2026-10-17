@@ -1198,6 +1198,16 @@ export interface SessionStateChangedEvent {
   messageCount?: number;
 }
 
+/** Session settings changed without replacing transcript or observer-local state. */
+export interface SessionSettingsChangedEvent {
+  type: 'session_settings_changed';
+  sessionId: string;
+  model: SessionState['model'];
+  thinkingLevel: string;
+  availableThinkingLevels: string[];
+  autoCompactionEnabled: boolean;
+}
+
 export interface ConnectionRestoredEvent {
   type: 'connection_restored';
   sessionId: string;
@@ -1413,6 +1423,7 @@ export type PimoteEvent =
   | SessionArchivedEvent
   | SessionReplacedEvent
   | SessionStateChangedEvent
+  | SessionSettingsChangedEvent
   | ConnectionRestoredEvent
   | FoldersChangedEvent
   | SessionRestoreEvent

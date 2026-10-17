@@ -13,6 +13,7 @@ import type {
   SessionRestoreEvent,
   SessionClosedEvent,
   SessionStateChangedEvent,
+  SessionSettingsChangedEvent,
   FolderInfo,
   PimoteTreeNode,
 } from '../../shared/dist/index.js';
@@ -1029,7 +1030,7 @@ export class WsHandler {
         }
         if (trimmed === '/reload') {
           await session.reload();
-          this.sendFullResyncToObservers(sessionId, slot);
+          this.sendReloadToObservers(sessionId, slot);
           this.sendSilentDownloadSnapshot(slot);
           this.sendResponse(id, true);
           break;
@@ -1212,7 +1213,7 @@ export class WsHandler {
           break;
         }
         await session.setModel(model);
-        this.sendFullResyncToObservers(sessionId, slot);
+        this.sendSessionSettingsToObservers(sessionId, slot);
         const currentModel = session.model;
         this.sendResponse(id, true, {
           model: currentModel ? { provider: currentModel.provider, id: currentModel.id, name: currentModel.name } : null,
@@ -1224,7 +1225,7 @@ export class WsHandler {
 
       case 'cycle_model': {
         const result = await session.cycleModel();
-        this.sendFullResyncToObservers(sessionId, slot);
+        this.sendSessionSettingsToObservers(sessionId, slot);
         if (result) {
           this.sendResponse(id, true, {
             model: { provider: result.model.provider, id: result.model.id, name: result.model.name },
@@ -1250,14 +1251,14 @@ export class WsHandler {
 
       case 'set_thinking_level': {
         session.setThinkingLevel(command.level as AgentSession['thinkingLevel']);
-        this.sendFullResyncToObservers(sessionId, slot);
+        this.sendSessionSettingsToObservers(sessionId, slot);
         this.sendResponse(id, true);
         break;
       }
 
       case 'cycle_thinking_level': {
         const level = session.cycleThinkingLevel();
-        this.sendFullResyncToObservers(sessionId, slot);
+        this.sendSessionSettingsToObservers(sessionId, slot);
         this.sendResponse(id, true, { level });
         break;
       }
@@ -1270,7 +1271,7 @@ export class WsHandler {
 
       case 'set_auto_compaction': {
         session.setAutoCompactionEnabled(command.enabled);
-        this.sendFullResyncToObservers(sessionId, slot);
+        this.sendSessionSettingsToObservers(sessionId, slot);
         this.sendResponse(id, true);
         break;
       }
@@ -1846,16 +1847,40 @@ export class WsHandler {
     this.sendEvent({ type: 'panel_update', sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
   }
 
-  /** Fan out current model/composer/panel state after a mutation that the SDK
-   * reports only through events not represented on the wire. */
-  private sendFullResyncToObservers(pimoteSessionId: string, slot: ManagedSlot): void {
-    const fullResync = this.makeFullResyncEvent(pimoteSessionId, slot);
+  private makeSessionSettingsEvent(pimoteSessionId: string, slot: ManagedSlot): SessionSettingsChangedEvent {
+    const session = slot.session;
+    const model = session.model;
+    return {
+      type: 'session_settings_changed',
+      sessionId: pimoteSessionId,
+      model: model ? { provider: model.provider, id: model.id, name: model.name } : null,
+      thinkingLevel: session.thinkingLevel,
+      availableThinkingLevels: session.getAvailableThinkingLevels(),
+      autoCompactionEnabled: session.autoCompactionEnabled,
+    };
+  }
+
+  /** Fan out settings and panel state without replacing each observer's
+   * transcript or client-local transient state. */
+  private sendSessionSettingsToObservers(pimoteSessionId: string, slot: ManagedSlot): void {
+    const settings = this.makeSessionSettingsEvent(pimoteSessionId, slot);
     const panelUpdate = { type: 'panel_update' as const, sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) };
     // Keep the direct send for a caller that has not opened the session yet,
     // then fan out to every other attached observer without duplicating it.
-    this.sendEvent(fullResync);
+    this.sendEvent(settings);
     this.sendEvent(panelUpdate);
-    sendSlotEvent(slot, fullResync, { exceptClientId: this.clientId });
+    sendSlotEvent(slot, settings, { exceptClientId: this.clientId });
+    sendSlotEvent(slot, panelUpdate, { exceptClientId: this.clientId });
+  }
+
+  /** Reload keeps the historical full transcript refresh for the requesting
+   * observer. Other observers receive only settings and panel updates, so a
+   * reload cannot erase their local transient state. */
+  private sendReloadToObservers(pimoteSessionId: string, slot: ManagedSlot): void {
+    this.sendFullResyncForSession(pimoteSessionId, slot);
+    const settings = this.makeSessionSettingsEvent(pimoteSessionId, slot);
+    const panelUpdate = { type: 'panel_update' as const, sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) };
+    sendSlotEvent(slot, settings, { exceptClientId: this.clientId });
     sendSlotEvent(slot, panelUpdate, { exceptClientId: this.clientId });
   }
 

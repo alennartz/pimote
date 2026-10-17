@@ -27,6 +27,7 @@ import type {
   AutoRetryEndEvent,
   SessionConflictEvent,
   SessionStateChangedEvent,
+  SessionSettingsChangedEvent,
   SessionOpenedEvent,
   SessionRenamedEvent,
   SessionReplacedEvent,
@@ -701,6 +702,15 @@ export class SessionRegistry {
             }
           }
         }
+        break;
+      }
+
+      case 'session_settings_changed': {
+        const settings = event as SessionSettingsChangedEvent;
+        session.model = settings.model;
+        session.thinkingLevel = settings.thinkingLevel;
+        session.availableThinkingLevels = settings.availableThinkingLevels;
+        session.autoCompactionEnabled = settings.autoCompactionEnabled;
         break;
       }
 

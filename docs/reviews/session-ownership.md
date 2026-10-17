@@ -125,7 +125,7 @@ The direct issuer path now updates the attached observer cursor before fan-out t
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/ws-handler.ts:1849-1860`, `client/src/lib/stores/session-registry.svelte.ts:644-680`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Send a state-only settings event, or preserve each observer's transient queue, optimistic message, and bash state when applying this resync.
 
 The settings fix sends `full_resync` to every observer. The client reducer rebuilds the session and preserves only the draft and a few presentation fields. It resets `pendingSteeringMessages`, `optimisticMessageKey`, `bashExecutions`, `needsAttention`, and other local transient state. If observer B is prompting, steering, or running bash while observer A changes the model, B loses that in-flight UI state even though the session itself did not reset.
