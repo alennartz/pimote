@@ -379,4 +379,4 @@ File: `client/src/lib/stores/extension-ui-queue.svelte.ts`. In the `connection.o
 Run `npm run build:shared`, `npm run check` (client check plus server and shared `tsc`), `npx vitest run` in `server/` and `client/`, and `make android-test`. Remaining source references must be legitimate call-level voice vocabulary only.
 
 **Verify:** All commands pass. `rg -n "isOwnedByMe|session_owned|pendingTakeover|remoteSessions|claimSession\(.*force|sendDisplacedEvent|slot\.connection|connectedClientId ===" server/src client/src shared/src` returns no production hits.
-**Status:** not started
+**Status:** done
