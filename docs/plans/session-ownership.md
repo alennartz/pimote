@@ -337,7 +337,7 @@ File: `client/src/lib/stores/connection.svelte.ts`.
 - `onmessage`: before listener dispatch, when `event.type === 'session_archived' && event.archived`, call `removeSubscribedSession(event.sessionId)` and `onSessionArchived?.(event.sessionId)`. Ignore `archived: false`.
 
 **Verify:** `client/src/lib/stores/connection.svelte.test.ts` passes, including the boot and reconnect archived rejection and the archive notification tests.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Web registry archived restore
 

@@ -85,6 +85,9 @@ export class ConnectionStore {
    *  registry drops the orphan session in response. */
   onSessionNotFound: ((sessionId: string) => void) | null = null;
 
+  /** Called when an archived session rejects a restore or is archived live. */
+  onSessionArchived: ((sessionId: string) => void) | null = null;
+
   /** Called after connection restore when a notification-driven adopt should begin. */
   onPendingAdopt: ((sessionId: string, folderPath: string, options: { openDownloads?: boolean }) => void) | null = null;
 
@@ -181,7 +184,13 @@ export class ConnectionStore {
         })
           .then((response) => {
             if (!response.success) {
-              if (isSessionNotFoundError(response.error)) {
+              if (response.error === 'session_archived') {
+                if (this.phase === 'syncing') {
+                  this.syncDetail = 'Session archived';
+                }
+                this.removeSubscribedSession(sessionId);
+                this.onSessionArchived?.(sessionId);
+              } else if (isSessionNotFoundError(response.error)) {
                 // Definitive rejection: the session is gone server-side (for
                 // example never persisted before an idle reap). Tell the user,
                 // drop the subscription, and let the registry delete the orphan.
@@ -292,6 +301,11 @@ export class ConnectionStore {
         this.sessionCursors.set(buffered.sessionId, max);
       } else if ('cursor' in event && typeof event.cursor === 'number' && 'sessionId' in event && typeof event.sessionId === 'string') {
         this.sessionCursors.set(event.sessionId, event.cursor);
+      }
+
+      if (event.type === 'session_archived' && event.archived) {
+        this.removeSubscribedSession(event.sessionId);
+        this.onSessionArchived?.(event.sessionId);
       }
 
       // Notify listeners
