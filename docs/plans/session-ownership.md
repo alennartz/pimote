@@ -46,7 +46,7 @@ A second socket with the same `clientId` replaces the first. This keeps the exis
 
 **Attach and detach.**
 
-- `attachObserver(sessionId, observer)` adds or replaces the entry. It runs the existing claim work: extension binding on first attach, pending UI replay, panel resync. It does not displace anyone.
+- `attachObserver(sessionId, observer)` adds or replaces the map entry only. It does not displace anyone. `WsHandler.claimSession` keeps the claim work: extension binding on first attach, pending UI replay to the attaching observer, panel resync. See Decisions.
 - `detachObserver(sessionId, clientId)` removes the entry. Connection cleanup calls it for every subscribed session.
 
 **Reaper.** A session is protected while `observers.size > 0`.
@@ -119,6 +119,13 @@ Each reason below comes from the discussion. Where none was given, the entry say
 - **Opening never unarchives.** Archived sessions reject a soft open with `session_archived`.
 - **First dialog answer dismisses other copies.** The user confirmed the brainstorm behavior during test review. The protocol had no dismissal event, so `extension_ui_resolved` is a new wire addition.
 - **Late joiner waits for the final bash result.** The owner accepted this. Partial output stays unavailable to late joiners.
+- **Claim work stays in `WsHandler.claimSession`.** Decided during implementation planning. The WS tests drive open, reset, and panel resync through a mocked manager, so the claim work must run in the handler. `attachObserver` only maintains the map. Pending UI replay goes to the attaching observer only. A replay through `sendSlotEvent` would duplicate open dialogs on every other observer.
+- **`close_session` ends the session for every observer.** Decided during implementation planning. Close disposes the runtime and sends `session_closed` to every observer. Reason: close ends the session for every observer, as archive does.
+- **`call_end` routes `call_ended` to the holder.** Decided during implementation planning. The handler reads `VoiceOrchestrator.callHolder` before it ends the call. This keeps the single-holder model.
+- **Re-key collision closes the evicted slot with `replaced`.** When `switchSession` evicts a live slot, each observer of that slot receives `session_closed { reason: 'replaced' }`. The owner previously received `displaced`.
+- **Archived sessions leave the persisted restore set.** The web registry keeps the in-memory transcript but marks the session non-restorable. Boot then stops sending the rejected open.
+- **`notifyCallEnded` stays beside `notifyClientCallEnded`.** `voice-orchestrator.test.ts` asserts the session-scoped hook. Production wires only `notifyClientCallEnded`.
+- **`SessionStateChangedEvent.connectedClientId` stays, always `null`.** The architecture does not list it for removal.
 
 ## Open items
 
@@ -223,3 +230,151 @@ Each reason below comes from the discussion. Where none was given, the entry say
 - The review adds behavioral tests, not implementations. Previously green unchanged lifecycle cases remain permitted to pass.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Repair blocking test fixtures
+
+The parent approved fixture-only repairs. Do not change any assertion. Each fixture below blocks its tests whatever the implementation does. Code reading established each cause. Nobody ran the tests.
+
+1. `server/src/ws-handler.test.ts`, `createMockSessionManager`. Cause: `attachObserver`, `detachObserver`, and `applySessionReset` throw `not implemented`. Only `pair()` overrides attach and detach. Every other open, cleanup, reset, tree-navigation, fork, and panel-resync test runs on the throwing stubs. Repair:
+   - `attachObserver(id, observer)` sets `observer` in `sessions.get(id)?.observers` under `observer.clientId`.
+   - `detachObserver(id, clientId)` deletes `clientId` from `sessions.get(id)?.observers`.
+   - `applySessionReset(slot)` mirrors the production method from Step 2. If the IDs match, it awaits `onSessionReset(slot, { kind: 'unchanged' })` for each observer. Otherwise it calls `manager.rebuildSessionState(slot)`, evicts a colliding occupant through `manager.onSlotEvicted?.(newId)` and `manager.closeSession(newId)`, calls `manager.reKeySession(slot, oldId, newId)`, and awaits `onSessionReset(slot, { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath })` for each observer. Snapshot `slot.observers.values()` before the loop. Dispatch through `manager` so per-test overrides apply, as the pre-test-write mock at `320dc57` did.
+2. `server/src/ws-handler.test.ts`, `describe('call_end')`. Cause: the mock orchestrator `{ endCall, isCallActive }` has no `callHolder`. Holder routing (Decisions) reads it. Repair: add `callHolder: new Map([['call-session', 'A']])` to that mock.
+3. `server/src/session-observers.test.ts`, the `@earendil-works/pi-coding-agent` mock. Cause: the mocked `createAgentSessionRuntime` ignores its factory. `eventBusRef.current` stays `null`, so `openSession` throws in `setupSlotPanelListeners` before any lifecycle assertion. Repair: make the runtime mock invoke the factory argument, so the factory's `createEventBus()` call fills `eventBusRef`. Add mocks for `createAgentSessionServices` and `createAgentSessionFromServices` that return the same fake session. The returned runtime must keep `dispose` as a `vi.fn`.
+4. `server/src/voice-call-holder.test.ts`, `createOrchestrator`. Cause: `getEventBus: () => ({})` has no `on` or `emit`. `bindCall` must subscribe and emit activate, as `voice-orchestrator.test.ts` asserts. `endCall` must emit deactivate. Repair: return a bus stub with `on: () => () => {}`, `emit: vi.fn()`, and `clear: vi.fn()`.
+
+**Verify:** `git diff -- '*.test.ts'` shows changes only inside these four fixtures. Server TypeScript compilation (`tsc --noEmit -p server/tsconfig.json`) passes.
+**Status:** not started
+
+### Step 2: Session manager observer core
+
+File: `server/src/session-manager.ts`.
+
+- `sendSlotEvent(slot, event, options?: { exceptClientId?: string }): void`. Iterate `slot.observers.values()`. Skip the observer whose `clientId` equals `exceptClientId`. Skip an observer whose `ws` is missing or whose `readyState !== 1`. Send `JSON.stringify(event)` inside a try/catch that ignores send errors. After a successful send, set `observer.cursor = event.cursor` when `event` has a numeric `cursor`. Never remove map entries here.
+- `resolveSlotPendingUi(slot, requestId, value): boolean`. Return `true` only when a pending entry existed and was resolved.
+- `replaySlotPendingUiRequests(slot, send: (event: PimoteEvent) => void): void`. Send each pending request event through `send`, not through `sendSlotEvent`.
+- `PimoteSessionManager.attachObserver(sessionId, observer): Promise<void>`. Look up the slot. Throw `Session not found: <id>` if it is missing. Otherwise call `slot.observers.set(observer.clientId, observer)`. A same-`clientId` entry is replaced. Do no claim work.
+- `PimoteSessionManager.detachObserver(sessionId, clientId): void`. Delete the entry when the slot exists. Do nothing otherwise.
+- `applySessionReset(slot)`. Restore observer notification. For the unchanged path, await `observer.onSessionReset?.(slot, { kind: 'unchanged' })` for each observer. After `reKeySession`, await `observer.onSessionReset?.(slot, { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath })` for each observer. Notify in sequence over a snapshot array, in map insertion order.
+- `startIdleCheck(idleTimeout, _isClientConnected?)`. Restore the `320dc57` body and the `askActivity` import from `@pimote/sdk/activity`. Replace the connected-client test with `slot.observers.size > 0`. Ignore the optional callback. Keep it in the signature only because `session-manager.test.ts` still passes it. The git-branch poll filters slots with `slot.observers.size > 0`.
+- Update the `onSlotEvicted` doc comment: consumers notify every observer of the evicted slot.
+
+**Verify:** `server/src/session-observers.test.ts` passes all six tests. `server/src/session-manager.test.ts`, `server/src/session-manager-open-session.test.ts`, and `server/src/extension-ui-bridge.test.ts` pass.
+**Status:** not started
+
+### Step 3: Voice call holder
+
+Files: `server/src/voice-orchestrator.ts`, `server/src/voice-orchestrator-boot.ts`, `server/src/index.ts`.
+
+- `VoiceOrchestrator.bindCall({ sessionId, clientId, force })`:
+  1. Throw `call_bind_failed_session_not_found` when `busResolver.getSlot` returns null.
+  2. Throw `call_bind_failed_owned` when a call is active and `force` is false.
+  3. Throw `call_bind_failed_internal` when a speechmux URL or the bus is missing. Use the same messages as the `320dc57` body.
+  4. When a call is active and `force` is true, read the old holder. Run the existing end path (unsubscribe, emit `pimote:voice:deactivate`). If the old holder differs from `clientId`, call `notifyClientCallEnded?.(oldHolder, { type: 'call_ended', sessionId, reason: 'displaced' })`.
+  5. Subscribe to `pimote:voice:deactivate`. Add to `activeCalls`. Set `callHolder.set(sessionId, clientId)`. Emit `pimote:voice:activate`. Return `{ sessionId, webrtcSignalUrl }`.
+- `endCall` deletes `callHolder` for the session. It never notifies a client. Callers route `call_ended`.
+- `handleExtensionDeactivated` reads the holder, clears `activeCalls`, the unsubscribe entry, and `callHolder`. It then calls `notifyClientCallEnded?.(holder, { type: 'call_ended', sessionId, reason: 'error' })` when a holder existed. It also calls `notifyCallEnded?.(sessionId)`.
+- `stop()` clears `callHolder`.
+- `voice-orchestrator-boot.ts`: wire `notifyClientCallEnded: (clientId, event) => clientRegistry.get(clientId)?.sendToClient(event)`. Do not wire `notifyCallEnded`. Remove the stale `sendDisplacedEvent` doc comment.
+- `index.ts` `onBeforeSessionClose`: read `orchestrator.callHolder.get(sessionId)` before `endCall`. After it, call `server.clientRegistry.get(holder)?.sendCallEndedEvent(sessionId, 'server_ended')`. Change `startIdleCheck` to `sessionManager.startIdleCheck(config.idleTimeout)`. Update the comment that mentions ownership.
+
+**Verify:** `server/src/voice-call-holder.test.ts` and `server/src/voice-orchestrator.test.ts` pass. `server/src/index.test.ts` passes.
+**Status:** not started
+
+### Step 4: WsHandler attach, sync, reset, and detach
+
+File: `server/src/ws-handler.ts`. Restore the imports test-write removed: `createExtensionUIBridge`, `replaySlotPendingUiRequests`, `requestSlotPanelResync`, and the restore event types.
+
+- `private async claimSession(sessionId, slot)`. Build `SessionObserver { clientId: this.clientId, ws: this.ws, cursor: slot.sessionState.eventBuffer.currentCursor, onSessionReset: (s, o) => this.handleSessionReset(s, o) }`. Await `this.sessionManager.attachObserver(sessionId, observer)`. Add `sessionId` to `subscribedSessions`. When `!slot.sessionState.extensionsBound`, bind extensions as the `320dc57` body did and set the flag. Call `replaySlotPendingUiRequests(slot, (e) => this.sendEvent(e))`. Send the silent download snapshot. Call `requestSlotPanelResync(slot, 'claim')`. Do not touch `idleSince`.
+- `private async syncSessionToClient(...)`. Restore the `320dc57` body unchanged: incremental replay or full resync, claim, catch-up from the pre-claim cursor, panel snapshot after replay, and restore started and completed events.
+- `private async handleSessionReset(slot, outcome)`:
+  - `unchanged`: send the full resync and the download snapshot to this client.
+  - `rekeyed`, per observer: move `oldId` to `newId` in `subscribedSessions` and `viewedSessionId`. Send `session_replaced` with `resolveFolderInfo(folderPath)`. Send the download snapshot.
+  - `rekeyed`, slot-wide work runs only when this client is the first key of `slot.observers`. That observer rebinds extensions (bridge `isVoiceModeActive` reads `newId`), sets `extensionsBound`, calls `requestSlotPanelResync(slot, 'reset')`, and broadcasts sidebar updates for `oldId` and `newId`. Order: rebind, `session_replaced`, snapshot, panel resync, sidebar broadcasts. The rule binds once per reset. `bindExtensions` emits `session_start` on each call.
+- `emitBufferedSessionEvent`: keep `this.sendEvent(event)` to the issuer, and add `sendSlotEvent(slot, event, { exceptClientId: this.clientId })`. Tree-navigation events then reach every other observer. The issuer receives the event directly because the tree-navigation tests issue `navigate_tree` without an open. Their mock observer has no socket.
+- `cleanup()`: call `this.sessionManager.detachObserver(sid, this.clientId)` for each subscribed session. Remove the try/catch.
+- Delete `displaceOwner` and `sendDisplacedEvent`. Update the `ClientRegistry`, `createCommandContextActions`, and `server.ts` claim comments to observer terms.
+
+**Verify:** In `server/src/ws-handler.test.ts`, these pass: the "observer command boundary" open, replay, and prompt tests; "open_session — same client ID", "catch-up replay", "disk-backed reopen", "cleanup", "handleSessionReset", "tree navigation interfaces", "fork command", and "panel resync requests".
+**Status:** not started
+
+### Step 5: Open, archive, close, kill, delete, and eviction
+
+Files: `server/src/ws-handler.ts`, `server/src/server.ts`.
+
+- Replace `sendKilledEvent` with `sendSessionClosedEvent(sessionId: string, reason?: SessionClosedEvent['reason']): void`. It deletes `sessionId` from `subscribedSessions`, clears `viewedSessionId` on a match, and sends `session_closed` with the reason when present.
+- Add `private async closeSessionForObservers(sessionId, slot, reason?)`. Snapshot the observer client IDs. Call `this.clientRegistry.get(id)?.sendSessionClosedEvent(sessionId, reason)` for each. Call `resolveAllSlotPendingUi(slot)`. Await `this.sessionManager.closeSession(sessionId)`. Route through handlers, not `sendSlotEvent`, so each handler drops its own subscription.
+- `open_session` rejects archived sessions with `session_archived` before it opens anything or runs hooks. Live path: check `existing.session.sessionFile`. Disk and folderless paths: check `record.sessionFilePath` before `runOpenHooks`. Clear nothing. Update the `findSessionRecord` comment that says opening unarchives.
+- `archive_session` with `archived: true`: for each live slot, await `closeSessionForObservers(id, slot, 'archived')` before `setArchived(path, true)` and the broadcast. With `archived: false`: set the flag and broadcast only. Never close or open.
+- `close_session`: when the slot exists, call `closeSessionForObservers(id, slot)` with no reason. If this client was not an observer, or the slot was missing, call `this.sendSessionClosedEvent(id)`.
+- `kill_conflicting_sessions`: call `closeSessionForObservers(id, slot, 'killed')` per live slot.
+- `delete_session`: replace the bare close with `closeSessionForObservers(id, slot, 'killed')`.
+- `server.ts` `onSlotEvicted`: for each observer client ID of `sessionManager.getSlot(sessionId)`, call `clientRegistry.get(id)?.sendSessionClosedEvent(sessionId, 'replaced')`.
+
+**Verify:** In `server/src/ws-handler.test.ts`, these pass: "archives every live slot", "kill_conflicting_sessions", "archive_session and archived listings", and "folderless deep-link reopen". `server/src/server.test.ts` passes.
+**Status:** not started
+
+### Step 6: Dialog resolution and call_end routing
+
+File: `server/src/ws-handler.ts`.
+
+- `extension_ui_response`: when `resolveSlotPendingUi` returns `true`, call `sendSlotEvent(uiSlot, { type: 'extension_ui_resolved', sessionId, requestId }, { exceptClientId: this.clientId })`. A later answer for the same ID resolves nothing and sends nothing. Always respond success, as today.
+- `call_end`: read `holder = this.voiceOrchestrator?.callHolder.get(sessionId)` before `endCall`. After the response, send `call_ended { reason: 'user_hangup' }` to `this.clientRegistry.get(holder)`, or to this handler when no holder handler exists.
+
+**Verify:** In `server/src/ws-handler.test.ts`, "broadcasts a dialog and accepts only its first answer" and "call_end" pass. The full `server/src/ws-handler.test.ts` passes.
+**Status:** not started
+
+### Step 7: Web connection store archived handling
+
+File: `client/src/lib/stores/connection.svelte.ts`.
+
+- Add `onSessionArchived: ((sessionId: string) => void) | null = null`.
+- Restore loop: when `response.error === 'session_archived'`, call `removeSubscribedSession(sessionId)` and `onSessionArchived?.(sessionId)`. Do not call `onSessionNotFound`. The restore still counts as settled, so `ready` becomes `true`.
+- `onmessage`: before listener dispatch, when `event.type === 'session_archived' && event.archived`, call `removeSubscribedSession(event.sessionId)` and `onSessionArchived?.(event.sessionId)`. Ignore `archived: false`.
+
+**Verify:** `client/src/lib/stores/connection.svelte.test.ts` passes, including the boot and reconnect archived rejection and the archive notification tests.
+**Status:** not started
+
+### Step 8: Web registry archived restore
+
+File: `client/src/lib/stores/session-registry.svelte.ts`.
+
+- Add `restorable: boolean` to `PerSessionState`. Default it to `true` in `createSessionState`.
+- Add `setRestorable(sessionId: string, restorable: boolean): void`. It sets the flag on an existing entry and calls `persistSessions()`. `persistSessions` keeps only entries with `restorable`.
+- `openExistingSession`: on `session_archived`, call `connection.removeSubscribedSession(sessionId)`. If the session was already tracked, call `setRestorable(sessionId, false)` and keep its transcript. Otherwise call `dropSession`. Return `false`. On success, call `setRestorable(sessionId, true)`.
+- Wire `connection.onSessionArchived = (id) => sessionRegistry.setRestorable(id, false)`.
+- The `session_closed` handler already removes the entry for every reason, including `archived`. Leave it.
+
+Cause of the failing cold-boot adoption test: the archived-open test leaves `s-archived` in `connection.subscribedSessions`, and its `afterEach` does not remove it. The cold-boot connect then waits forever on that restore, so `onPendingAdopt` never fires. This step removes the entry, which fixes the test.
+
+**Verify:** `client/src/lib/stores/session-registry.test.ts` passes, including "an archived open drops the session" and "cold-boot notification adoption".
+**Status:** not started
+
+### Step 9: Web dialog dismissal
+
+File: `client/src/lib/stores/extension-ui-queue.svelte.ts`. In the `connection.onEvent` listener, on `extension_ui_resolved`, remove only the queue entry that matches both `sessionId` and `requestId`. Unknown IDs change nothing.
+
+**Verify:** `client/src/lib/stores/extension-ui-queue.svelte.test.ts` passes. `npm run check --workspace=client` passes.
+**Status:** not started
+
+### Step 10: Manual-test documentation
+
+- `docs/MANUAL-TEST-PLAN.md`:
+  - Replace TC-11.08 to TC-11.11 with observer cases: two tabs open one session; both see live events; either tab sends; disconnecting one tab leaves the other attached; an archived session rejects reconnect with `session_archived` and leaves the restore set.
+  - Remove TC-12.01a, TC-12.06, and TC-12.07. Remote-session conflict no longer exists.
+  - Add archive cases: archive closes every observer with `reason: 'archived'`, and unarchive leaves the session closed.
+  - Add a dialog case: the first answer wins, and other tabs close their copy.
+  - Remove the `isOwnedByMe` lines near TC list rows (around lines 335 and 349) and in TC-20.03. Rewrite known-issue item 10, which describes takeover races.
+- `tools/manual-test/PLAN.md`: rewrite journey 4 as shared observers (two clients, live transcript, either sends, archive closes both). Keep the call-level `call_ended { reason: 'displaced' }` text in the voice journey.
+
+**Verify:** `rg -n "isOwnedByMe|session_owned|pendingTakeover|remoteSessions|Take Over" docs/MANUAL-TEST-PLAN.md tools/manual-test/PLAN.md` returns nothing.
+**Status:** not started
+
+### Step 11: Full verification
+
+Run `npm run build:shared`, `npm run check` (client check plus server and shared `tsc`), `npx vitest run` in `server/` and `client/`, and `make android-test`. Remaining source references must be legitimate call-level voice vocabulary only.
+
+**Verify:** All commands pass. `rg -n "isOwnedByMe|session_owned|pendingTakeover|remoteSessions|claimSession\(.*force|sendDisplacedEvent|slot\.connection|connectedClientId ===" server/src client/src shared/src` returns no production hits.
+**Status:** not started
