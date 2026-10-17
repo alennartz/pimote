@@ -31,16 +31,34 @@ Unchanged dashboard, folder, provider-login, download, and Android journeys are 
 
 ## Harness Limitations
 
-The harness uses fabricated pi session JSONL and a local server. It exercises the real WebSocket handlers, event buffer, archive metadata, PWA, and voice holder seam, but it does not run a live LLM or speechmux. Prompt acceptance and queue order are observed at the wire boundary. The external-process check uses a detached Node process whose command line contains `pi-coding-agent`; it validates Pimote's `/proc` detector but not a real pi runtime. Browser dialogs require a fixture extension and are therefore checked through the protocol pending-UI seam when no shipped extension can trigger one.
+The harness uses fabricated pi session JSONL and a local server. It exercises the real WebSocket handlers, event buffer, archive metadata, PWA, and voice holder seam, but it does not run a live LLM or speechmux. Queued-send acceptance and order are observed at the wire boundary. A local `ws` server keeps the voice leg open without speech processing. The external-process check uses a Node process whose command line contains `pi-coding-agent`; it validates Pimote's `/proc` detector but not a real pi runtime. The dialog path uses a temporary global pi extension that calls the shipped UI bridge from a deterministic user-bash hook. These seams weaken only live-provider, real speech, and real third-party extension coverage.
 
 ## Results
 
-_To be filled after execution._
+### Smoke Suite
+
+- **Journey 1 — Connect and open a session:** `npm run build`; the smoke opened the seeded session through two `WsProbe` clients and the PWA. Both probes received the transcript replay. **Pass.** The session view showed the seeded messages, status controls, composer, and no takeover surface. Looks coherent.
+- **Journey 2 — Prompt and bash output:** the smoke submitted queued sends from both observers, executed native bash, observed cursor-free live deltas, and opened a late observer after completion. The late observer replay contained the final bash result. **Pass.** Live output and the settled bash block remain consistent with the transcript. Looks coherent.
+- **Journey 3 — Extension UI bridge:** the temporary `user_bash` extension opened one confirm request. Both observers received it; the first answer resolved the extension and dismissed only the other copy. A later answer produced no second dismissal. **Pass.** The first-answer-wins behavior is coherent across observers.
+- **Journey 4 — Shared session observers:** two probes opened one runtime; either sent; disconnecting one left the other attached; archive sent `session_closed { reason: "archived" }` and `session_archived` to every observer; unarchive left the runtime closed until a soft open. **Pass.** The dashboard and session surfaces show one shared session without owner or takeover language. Looks coherent.
+- **Journey 8 — Voice call:** a local WebSocket stand-in kept the voice extension active. The first bind succeeded, the second failed with `call_bind_failed_owned`, forced transfer sent `call_ended { reason: "displaced" }` only to the old holder, and the session stayed open. **Pass.** Call ownership is isolated from session observation. Looks coherent.
+
+### Topic-Specific Tests
+
+1. **Observer fan-out and sends:** two observers received the same replay; two queued sends appeared in arrival order, and either observer sent after the other disconnected. **Pass.** Shared transcript and command surface are coherent.
+2. **Disconnect retention:** closing one probe did not remove the remaining observer. **Pass.** The remaining client continued to send.
+3. **Archive and explicit unarchive:** every observer received the archived close and archive notification; unarchive did not reopen; a soft open did. **Pass.** Archive state and live runtime state remain separate.
+4. **Stale archived restore:** a stale probe received `session_archived`; the browser boot path removed the injected `pimote:activeSessions` entry. **Pass.** Archived sessions stop boot loops.
+5. **Dialog resolution:** matching `extension_ui_resolved` reached the non-answering observer; unknown or late responses did nothing. **Pass.** Dialog copies converge without duplicate answers.
+6. **Bash output:** connected observers received live deltas without cursors; the late observer received only the final result in replay. **Pass.** Streaming and replay boundaries are coherent.
+7. **Voice holder:** no-force bind rejected the second caller; forced transfer targeted the old holder; no session close occurred. **Pass.** Voice transfer does not masquerade as session displacement.
+8. **External conflict:** a pi-like process in the folder produced `session_conflict` without `remoteSessions`. **Pass.** The conflict warning remains folder-scoped.
+9. **Ownership vocabulary:** browser snapshots and page text contained no `Take Over`, `session owned`, or remote-owner presentation. **Pass.** The observer UI is coherent and owner-free.
 
 ## Plan Updates
 
-- Add the shared-observer journey to `tools/manual-test/PLAN.md` if this run confirms it as a stable primary path.
+- None. Journey 4 already describes shared observers in `tools/manual-test/PLAN.md`.
 
 ## Open Issues
 
-_To be filled after execution._
+None.

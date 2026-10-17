@@ -396,6 +396,40 @@ UN_SHOTS=/tmp/update-notification-shots node tools/manual-test/update-notificati
 
 **Prerequisites:** workspaces built (`npm run build`), `agent-browser` on `PATH`, writable `os.tmpdir()`. No real npm registry, LLM, or push subscription is required; `fake-registry.mjs` intercepts only the npm latest-version URL in the child server process.
 
+### session-observers-smoke
+
+**Purpose:** Exercise the session-ownership redesign against a real sandboxed
+pimote server and PWA. Two WebSocket observers and two agent-browser sessions
+cover shared transcript/send fan-out, disconnect retention, live bash deltas
+and late-join final replay, first-answer extension-dialog dismissal, archive
+close/unarchive/soft-open semantics, stale archived restore cleanup, the
+single-holder voice call transfer, external pi conflict detection, and the
+absence of takeover UI.
+
+**Location:** `tools/manual-test/session-observers-smoke/session-observers-smoke.mjs`
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/session-observers-smoke/session-observers-smoke.mjs
+# Keep the coherence screenshot outside the disposable sandbox:
+SO_SHOTS=/tmp/session-observers-shots node tools/manual-test/session-observers-smoke/session-observers-smoke.mjs
+```
+
+**Inputs:** none. The tool creates an isolated HOME, project, session JSONL,
+and deterministic user-bash dialog extension. `SO_SHOTS` optionally chooses a
+persistent screenshot directory. The sandbox remains on disk for inspection.
+
+**Outputs:** per-check `✓/✗/⊝` lines, a coherence screenshot, and a non-zero
+exit code on hard assertion failure. On failure, the sandbox path and server
+log remain available from the tool output.
+
+**Prerequisites:** workspaces built (`npm run build`), `agent-browser`, `git`,
+and writable `os.tmpdir()`. The voice phase is environment-bounded when the
+host lacks a local `jetson` model catalog. No live LLM or speechmux is needed.
+Tracks and kills only the server and synthetic external process it starts.
+
 ### project-management-smoke
 
 **Purpose:** Exercise the folder-management dashboard end-to-end (the
