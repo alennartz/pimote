@@ -245,9 +245,6 @@ export class ConnectionStore {
           this.onPendingAdopt?.(sid, folderPath, { openDownloads });
         }
       });
-
-      // Re-register push subscription on every connect
-      this.reregisterPushSubscription();
     };
 
     this.ws.onmessage = (ev) => {
@@ -413,30 +410,6 @@ export class ConnectionStore {
     return () => {
       this.listeners.delete(listener);
     };
-  }
-
-  private async reregisterPushSubscription(): Promise<void> {
-    try {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-      if (Notification.permission !== 'granted') return;
-      const reg = await navigator.serviceWorker.ready;
-      const subscription = await reg.pushManager.getSubscription();
-      if (!subscription) return;
-      const sub = subscription.toJSON();
-      if (!sub.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) return;
-      await this.send({
-        type: 'register_push',
-        subscription: {
-          endpoint: sub.endpoint,
-          keys: {
-            p256dh: sub.keys.p256dh,
-            auth: sub.keys.auth,
-          },
-        },
-      });
-    } catch {
-      // Best-effort — don't break connection flow
-    }
   }
 
   private clearCountdownInterval(): void {

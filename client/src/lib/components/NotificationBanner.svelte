@@ -1,135 +1,39 @@
 <script lang="ts">
-  import { connection } from '$lib/stores/connection.svelte.js';
+  import { pushSubscription } from '$lib/stores/push-subscription.svelte.js';
   import Bell from '@lucide/svelte/icons/bell';
-  import X from '@lucide/svelte/icons/x';
-  import { onMount } from 'svelte';
 
-  let show = $state(false);
-  let error = $state('');
-  let enabling = $state(false);
-
-  onMount(() => {
-    // Show banner if push is supported but not yet subscribed
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-    if (localStorage.getItem('pimote-push-dismissed')) return;
-
-    // Show if permission not yet granted, OR if granted but we might need to
-    // re-subscribe (e.g. subscription was lost)
-    if (Notification.permission === 'denied') return;
-
-    if (Notification.permission === 'default') {
-      show = true;
-      return;
-    }
-
-    // Permission is 'granted' — check if we actually have a subscription
-    navigator.serviceWorker.ready
-      .then(async (reg) => {
-        const existing = await reg.pushManager.getSubscription();
-        if (!existing) {
-          show = true; // granted but no subscription — need to re-subscribe
-        }
-      })
-      .catch(() => {});
-  });
-
-  async function enableNotifications() {
-    error = '';
-    enabling = true;
-    try {
-      const reg = await navigator.serviceWorker.ready;
-
-      // Fetch VAPID public key from server
-      const res = await fetch('/api/vapid-key');
-      const { publicKey } = await res.json();
-      if (!publicKey) {
-        error = 'Server returned no VAPID key. Push notifications are not configured.';
-        return;
-      }
-
-      // subscribe() handles permission prompting internally — more reliable
-      // on Android PWAs than calling Notification.requestPermission() first
-      let subscription: PushSubscription;
-      try {
-        subscription = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicKey),
-        });
-      } catch (err) {
-        const msg = (err as Error).message ?? String(err);
-        if (Notification.permission === 'denied') {
-          error = 'Notification permission was denied. Enable notifications for this app in your system settings, then try again.';
-        } else {
-          error = `Push subscription failed: ${msg}`;
-        }
-        console.error('[pimote] pushManager.subscribe() failed:', err, 'Notification.permission:', Notification.permission);
-        return;
-      }
-
-      const sub = subscription.toJSON();
-      if (!sub.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) {
-        error = 'Push subscription returned incomplete data.';
-        console.error('[pimote] Incomplete subscription:', JSON.stringify(sub));
-        return;
-      }
-
-      await connection.send({
-        type: 'register_push',
-        subscription: {
-          endpoint: sub.endpoint,
-          keys: {
-            p256dh: sub.keys.p256dh,
-            auth: sub.keys.auth,
-          },
-        },
-      });
-
-      console.log('[pimote] Push notifications enabled successfully');
-      show = false;
-    } catch (err) {
-      error = `Notification setup failed: ${(err as Error).message ?? err}`;
-      console.error('[pimote] Failed to setup push notifications:', err);
-    } finally {
-      enabling = false;
-    }
-  }
-
-  function dismiss() {
-    localStorage.setItem('pimote-push-dismissed', 'true');
-    show = false;
-  }
-
-  // Convert VAPID key from base64 URL to ArrayBuffer
-  function urlBase64ToUint8Array(base64String: string): ArrayBuffer {
-    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-    const rawData = atob(base64);
-    const outputArray = new Uint8Array(rawData.length);
-    for (let i = 0; i < rawData.length; ++i) {
-      outputArray[i] = rawData.charCodeAt(i);
-    }
-    return outputArray.buffer as ArrayBuffer;
-  }
+  // Visible until this device is subscribed. No dismissal state: the
+  // subscription itself is the source of truth. The layout drives refresh.
+  let show = $derived(pushSubscription.status !== null && pushSubscription.status !== 'subscribed' && pushSubscription.status !== 'unsupported');
 </script>
 
 {#if show}
   <div class="border-border bg-muted/50 flex flex-col border-b">
     <div class="flex items-center gap-3 px-4 py-3">
       <Bell class="text-muted-foreground size-4 shrink-0" />
-      <span class="text-foreground flex-1 text-sm">Enable notifications to know when sessions finish.</span>
-      <button
-        class="bg-primary text-primary-foreground hover:bg-primary/80 rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-        onclick={enableNotifications}
-        disabled={enabling}
-      >
-        {enabling ? 'Enabling…' : 'Enable'}
-      </button>
-      <button class="text-muted-foreground hover:text-foreground rounded-md p-1" onclick={dismiss} title="Dismiss">
-        <X class="size-4" />
-      </button>
+      {#if pushSubscription.status === 'blocked'}
+        <span class="text-foreground flex-1 text-sm">Notifications are blocked. Allow them for this site in browser settings.</span>
+      {:else if pushSubscription.status === 'needs-subscription'}
+        <span class="text-foreground flex-1 text-sm">Notification setup did not finish.</span>
+        <button
+          class="bg-primary text-primary-foreground hover:bg-primary/80 rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+          onclick={() => pushSubscription.refresh()}
+        >
+          Retry
+        </button>
+      {:else}
+        <span class="text-foreground flex-1 text-sm">Enable notifications to know when sessions finish.</span>
+        <button
+          class="bg-primary text-primary-foreground hover:bg-primary/80 rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+          onclick={() => pushSubscription.enable()}
+          disabled={pushSubscription.enabling}
+        >
+          {pushSubscription.enabling ? 'Enabling…' : 'Enable'}
+        </button>
+      {/if}
     </div>
-    {#if error}
-      <div class="text-destructive px-4 pb-3 text-xs">{error}</div>
+    {#if pushSubscription.error}
+      <div class="text-destructive px-4 pb-3 text-xs">{pushSubscription.error}</div>
     {/if}
   </div>
 {/if}

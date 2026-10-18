@@ -11,6 +11,8 @@
   import ConfigFileEditor from '$lib/components/ConfigFileEditor.svelte';
   import ExtensionStatus from '$lib/components/ExtensionStatus.svelte';
   import InstallBanner from '$lib/components/InstallBanner.svelte';
+  import NotificationBanner from '$lib/components/NotificationBanner.svelte';
+  import UpdateBanner from '$lib/components/UpdateBanner.svelte';
   // Side-effect import: subscribes the voice-call store to server events at app boot.
   import '$lib/stores/voice-call-store.js';
   // Side-effect import: subscribes the login store to `login_step` events at app boot.
@@ -29,6 +31,7 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import { routeNotificationIntent, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
+  import { pushSubscription } from '$lib/stores/push-subscription.svelte.js';
   import { updateStore } from '$lib/stores/update.svelte.js';
   import { pushSharedImages } from '$lib/stores/input-bar.svelte.js';
   import { resolveAppViewportHeight } from '$lib/app-viewport.js';
@@ -73,7 +76,15 @@
     if (typeof navigator !== 'undefined') sendFocusState();
   });
 
+  // Register this device's push subscription with the server on every connect.
+  // Also creates the subscription when permission is granted but none exists.
+  $effect(() => {
+    if (connection.status === 'connected') void pushSubscription.refresh();
+  });
+
   onMount(() => {
+    const stopPushSubscription = pushSubscription.start();
+
     // A window opened from a notification must wait until persisted sessions
     // finish restoring before it adopts the notification's owner. The URL is
     // the intent's home: don't strip the params here — adoption navigates to
@@ -180,6 +191,7 @@
     }
 
     return () => {
+      stopPushSubscription();
       connection.disconnect();
       viewport?.removeEventListener('resize', scheduleAppHeightUpdate);
       viewport?.removeEventListener('scroll', scheduleAppHeightUpdate);
@@ -228,6 +240,9 @@
 <div class="bg-background flex overflow-hidden" style={`height: ${appHeight};`}>
   <!-- Main content -->
   <div class="flex flex-1 flex-col overflow-hidden">
+    <NotificationBanner />
+    <UpdateBanner />
+
     <!-- Mobile header -->
     <header class="border-border flex min-h-12 shrink-0 items-center gap-2 border-b px-3 pt-[max(env(safe-area-inset-top),0.25rem)] md:hidden">
       {#if sessionRegistry.viewedSessionId}
