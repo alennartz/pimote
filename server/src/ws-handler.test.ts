@@ -3,7 +3,7 @@ import { VoiceOrchestrator } from './voice-orchestrator.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { createCommandContextActions, WsHandler, type ClientRegistry } from './ws-handler.js';
+import { createCommandContextActions, takeOverClientSlot, WsHandler, type ClientRegistry } from './ws-handler.js';
 import { sendSlotEvent, waitForSlotUiResponse, type PimoteSessionManager, type ManagedSlot, type SessionState, type SessionObserver } from './session-manager.js';
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
@@ -4341,5 +4341,67 @@ describe('call_bind — dormant session reopen', () => {
     expect(resp!.success).toBe(true);
     expect(openSession).not.toHaveBeenCalled();
     expect(orchestrator.callHolder.get('session-1')).toBe('client-1');
+  });
+});
+
+describe('client slot takeover', () => {
+  function createHandlerFor(clientId: string, clientRegistry: ClientRegistry) {
+    const { ws } = createMockWs();
+    const handler = new WsHandler(
+      '/srv/manager-home',
+      {} as PimoteSessionManager,
+      createMockSessionRecords(),
+      ws,
+      createMockPushService(),
+      createMockSessionMetadataStore() as any,
+      clientId,
+      clientRegistry,
+    );
+    handler.cleanup = vi.fn();
+    handler.closeWebSocket = vi.fn();
+    return handler;
+  }
+
+  it('lets distinct clientIds coexist and evicts only the same id', () => {
+    const clientRegistry: ClientRegistry = new Map();
+    const tabOne = createHandlerFor('client-1', clientRegistry);
+    const tabTwoReloaded = createHandlerFor('client-1', clientRegistry);
+    const otherClient = createHandlerFor('client-2', clientRegistry);
+
+    takeOverClientSlot(clientRegistry, 'client-1', tabOne);
+    takeOverClientSlot(clientRegistry, 'client-2', otherClient);
+
+    // The two-tab regression: distinct ids are first-class, no eviction.
+    expect(tabOne.cleanup).not.toHaveBeenCalled();
+    expect(tabOne.closeWebSocket).not.toHaveBeenCalled();
+    expect(otherClient.cleanup).not.toHaveBeenCalled();
+    expect(clientRegistry.get('client-1')).toBe(tabOne);
+    expect(clientRegistry.get('client-2')).toBe(otherClient);
+
+    // Same id reconnect (page reload of the same tab): evict only that id.
+    takeOverClientSlot(clientRegistry, 'client-1', tabTwoReloaded);
+    expect(tabOne.cleanup).toHaveBeenCalledTimes(1);
+    expect(tabOne.closeWebSocket).toHaveBeenCalledTimes(1);
+    expect(otherClient.cleanup).not.toHaveBeenCalled();
+    expect(otherClient.closeWebSocket).not.toHaveBeenCalled();
+    expect(clientRegistry.get('client-1')).toBe(tabTwoReloaded);
+  });
+
+  it('points the registry at the replacement before evicting the stale handler', () => {
+    // The stale handler's close handler skips its own cleanup once the
+    // registry no longer names it — registration must land first.
+    const clientRegistry: ClientRegistry = new Map();
+    const oldHandler = createHandlerFor('client-1', clientRegistry);
+    clientRegistry.set('client-1', oldHandler);
+    const registryAtEviction: ClientRegistry[] = [];
+    oldHandler.cleanup = vi.fn(() => {
+      registryAtEviction.push(new Map(clientRegistry));
+    });
+
+    const newHandler = createHandlerFor('client-1', clientRegistry);
+    takeOverClientSlot(clientRegistry, 'client-1', newHandler);
+
+    expect(registryAtEviction).toHaveLength(1);
+    expect(registryAtEviction[0].get('client-1')).toBe(newHandler);
   });
 });

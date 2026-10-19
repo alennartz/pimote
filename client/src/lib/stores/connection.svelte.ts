@@ -34,6 +34,12 @@ export interface PendingSessionAdopt {
 }
 
 let nextId = 1;
+/** Identity of this tab. sessionStorage, not localStorage: two tabs must not
+ *  share an id — a repeat id makes the server read the other tab's reconnect
+ *  as a stale-connection takeover and close this socket, so two tabs evict
+ *  each other in a loop and the UI flaps between connected and reconnecting —
+ *  but a reload must reclaim its own id, or the server drops this tab's
+ *  queued-draft attribution and pending-UI replays. */
 const clientId =
   getClientId() ??
   (() => {

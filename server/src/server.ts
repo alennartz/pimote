@@ -8,7 +8,8 @@ import type { PimoteSessionManager } from './session-manager.js';
 import type { SessionRecords } from './session-records.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
-import { WsHandler, type ClientRegistry } from './ws-handler.js';
+import { WsHandler, takeOverClientSlot, type ClientRegistry } from './ws-handler.js';
+import { startWebSocketHeartbeat } from './ws-heartbeat.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderRegistry } from './folder-registry.js';
 import type { FolderListingService } from './folder-listing.js';
@@ -229,6 +230,10 @@ export async function createServer(
   const wss = new WebSocketServer({ noServer: true });
   const clientRegistry: ClientRegistry = new Map();
 
+  // Liveness heartbeat — see ws-heartbeat.ts for why this exists. 20s sits
+  // under the ~30s idle drops observed through some proxy paths.
+  const heartbeat = startWebSocketHeartbeat(wss, 20_000);
+
   httpServer.on('upgrade', (req, socket, head) => {
     // Only pathname/searchParams are read, so a fixed base is sufficient — and
     // avoids an uncaught `new URL` throw when a malformed Host header arrives.
@@ -249,6 +254,8 @@ export async function createServer(
   });
 
   wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
+    heartbeat.track(ws);
+
     let url: URL;
     try {
       url = new URL(req.url ?? '/', 'http://localhost');
@@ -269,13 +276,8 @@ export async function createServer(
       return;
     }
 
-    // Register new handler first, then clean up and close any stale connection.
-    // cleanup() detaches the old handler's observer from each subscribed slot.
-    // Pending UI responses survive on the ManagedSlot for replay when the new
-    // handler's reconnect commands reclaim sessions via claimSession().
-    // The close handler skips cleanup when the registry already points to a
-    // different handler, so this is the only place it runs.
-    const existing = clientRegistry.get(clientId);
+    // Same-id takeover semantics (register replacement first, then evict)
+    // live in takeOverClientSlot.
     const handler = new WsHandler(
       config.managerRoot,
       sessionManager,
@@ -291,11 +293,7 @@ export async function createServer(
       creators,
       folderListing,
     );
-    clientRegistry.set(clientId, handler);
-    if (existing) {
-      existing.cleanup();
-      existing.closeWebSocket();
-    }
+    takeOverClientSlot(clientRegistry, clientId, handler);
 
     ws.on('message', (data) => {
       handler.handleMessage(data.toString()).catch((err) => {
@@ -336,6 +334,8 @@ export async function createServer(
     },
     close(): Promise<void> {
       return new Promise((resolve, reject) => {
+        heartbeat.stop();
+
         // Force-close all active WebSocket connections
         wss.clients.forEach((client) => {
           client.close();

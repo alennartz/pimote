@@ -1,10 +1,11 @@
-// Persistence — localStorage helpers for client session state.
+// Persistence — browser-storage helpers for client session state.
+// The client id lives in sessionStorage (per tab, survives reload); everything
+// else is shared localStorage state.
 // All setters silently swallow errors (quota exceeded, private browsing, etc.).
 // Getters return null / empty array on missing or corrupted data.
 
 const KEY_CLIENT_ID = 'pimote:clientId';
 const KEY_ACTIVE_SESSIONS = 'pimote:activeSessions';
-const KEY_VIEWED_SESSION_ID = 'pimote:viewedSessionId';
 const KEY_SHOW_ARCHIVED = 'pimote:showArchived';
 const KEY_SESSION_PILL_SWIPE_HINT_SHOWN = 'pimote:sessionPillSwipeHintShown';
 const KEY_DISMISSED_UPDATE_VERSION = 'pimote:dismissedUpdateVersion';
@@ -16,12 +17,17 @@ export interface PersistedSession {
 }
 
 // ---------------------------------------------------------------------------
-// Client ID
+// Client ID (per tab — sessionStorage)
 // ---------------------------------------------------------------------------
 
+/** This tab's client id. sessionStorage, not localStorage: two tabs must not
+ *  share an identity (the server treats a repeat id as a stale-connection
+ *  takeover and closes the live socket, so two tabs evict each other in a
+ *  loop), but a reload must reclaim its own id so queued-draft attribution
+ *  and takeover of the tab's own stale socket keep working. */
 export function getClientId(): string | null {
   try {
-    return localStorage.getItem(KEY_CLIENT_ID);
+    return sessionStorage.getItem(KEY_CLIENT_ID);
   } catch {
     return null;
   }
@@ -29,7 +35,7 @@ export function getClientId(): string | null {
 
 export function setClientId(id: string): void {
   try {
-    localStorage.setItem(KEY_CLIENT_ID, id);
+    sessionStorage.setItem(KEY_CLIENT_ID, id);
   } catch {
     // best-effort
   }
@@ -61,30 +67,6 @@ export function getActiveSessions(): PersistedSession[] {
 export function setActiveSessions(sessions: PersistedSession[]): void {
   try {
     localStorage.setItem(KEY_ACTIVE_SESSIONS, JSON.stringify(sessions));
-  } catch {
-    // best-effort
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Viewed Session
-// ---------------------------------------------------------------------------
-
-export function getViewedSessionId(): string | null {
-  try {
-    return localStorage.getItem(KEY_VIEWED_SESSION_ID);
-  } catch {
-    return null;
-  }
-}
-
-export function setViewedSessionId(id: string | null): void {
-  try {
-    if (id === null) {
-      localStorage.removeItem(KEY_VIEWED_SESSION_ID);
-    } else {
-      localStorage.setItem(KEY_VIEWED_SESSION_ID, id);
-    }
   } catch {
     // best-effort
   }

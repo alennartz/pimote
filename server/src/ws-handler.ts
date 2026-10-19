@@ -203,6 +203,25 @@ export function createCommandContextActions(slot: ManagedSlot, sessionManager: P
 /** Client ID → WsHandler lookup for targeted cross-client notifications. */
 export type ClientRegistry = Map<string, WsHandler>;
 
+/**
+ * Register `handler` as the live connection for `clientId`, evicting the
+ * previous owner of that id (stale-connection takeover on same-tab reconnect).
+ *
+ * Ordering invariant: the registry is repointed BEFORE the stale handler is
+ * cleaned up and closed, so its close handler skips its own cleanup (the
+ * registry no longer names it) and cannot orphan the sessions the replacement
+ * now owns. Pending UI responses survive on the ManagedSlot for replay when
+ * the replacement's reconnect commands reclaim sessions via claimSession().
+ */
+export function takeOverClientSlot(clientRegistry: ClientRegistry, clientId: string, handler: WsHandler): void {
+  const existing = clientRegistry.get(clientId);
+  clientRegistry.set(clientId, handler);
+  if (existing) {
+    existing.cleanup();
+    existing.closeWebSocket();
+  }
+}
+
 /** Close one live session for every observer and resolve its pending UI. */
 export async function closeSessionForObservers(
   sessionManager: Pick<PimoteSessionManager, 'closeSession'>,

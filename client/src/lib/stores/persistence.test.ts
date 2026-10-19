@@ -2,37 +2,41 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { PersistedSession } from './persistence.js';
 
 // ---------------------------------------------------------------------------
-// localStorage mock — Node v25 has a built-in localStorage that shadows
-// jsdom's, but it's non-functional without --localstorage-file. We provide
-// our own Map-backed mock on globalThis to test the persistence module.
+// Storage mocks — Node v25 has a built-in localStorage that shadows jsdom's,
+// but it's non-functional without --localstorage-file. We provide our own
+// Map-backed mocks on globalThis to test the persistence module. localStorage
+// and sessionStorage get separate maps, so tests can pin which storage a
+// value lands in.
 // ---------------------------------------------------------------------------
 
-let store: Map<string, string>;
 let mockLocalStorage: Storage;
+let mockSessionStorage: Storage;
 
-function createMockLocalStorage(): Storage {
-  store = new Map();
+function createMockStorage(): Storage {
+  const map = new Map<string, string>();
   return {
-    getItem: (key: string) => store.get(key) ?? null,
+    getItem: (key: string) => map.get(key) ?? null,
     setItem: (key: string, value: string) => {
-      store.set(key, String(value));
+      map.set(key, String(value));
     },
     removeItem: (key: string) => {
-      store.delete(key);
+      map.delete(key);
     },
     clear: () => {
-      store.clear();
+      map.clear();
     },
     get length() {
-      return store.size;
+      return map.size;
     },
-    key: (index: number) => [...store.keys()][index] ?? null,
+    key: (index: number) => [...map.keys()][index] ?? null,
   };
 }
 
 beforeEach(() => {
-  mockLocalStorage = createMockLocalStorage();
+  mockLocalStorage = createMockStorage();
+  mockSessionStorage = createMockStorage();
   vi.stubGlobal('localStorage', mockLocalStorage);
+  vi.stubGlobal('sessionStorage', mockSessionStorage);
 });
 
 afterEach(() => {
@@ -42,18 +46,8 @@ afterEach(() => {
 // Dynamic import to pick up the stubbed localStorage each time.
 // The module is pure functions that reference `localStorage` at call time,
 // so a static import works fine.
-const {
-  getClientId,
-  setClientId,
-  getActiveSessions,
-  setActiveSessions,
-  getViewedSessionId,
-  setViewedSessionId,
-  getShowArchived,
-  setShowArchived,
-  getSessionPillSwipeHintShown,
-  setSessionPillSwipeHintShown,
-} = await import('./persistence.js');
+const { getClientId, setClientId, getActiveSessions, setActiveSessions, getShowArchived, setShowArchived, getSessionPillSwipeHintShown, setSessionPillSwipeHintShown } =
+  await import('./persistence.js');
 
 describe('Persistence — Client ID', () => {
   it('returns null when no clientId has been stored', () => {
@@ -71,15 +65,21 @@ describe('Persistence — Client ID', () => {
     expect(getClientId()).toBe('second');
   });
 
-  it('returns null when localStorage.getItem throws', () => {
-    vi.spyOn(mockLocalStorage, 'getItem').mockImplementation(() => {
+  it('keeps the client id out of localStorage — tabs must not share it', () => {
+    setClientId('tab-local');
+    expect(mockSessionStorage.getItem('pimote:clientId')).toBe('tab-local');
+    expect(mockLocalStorage.getItem('pimote:clientId')).toBeNull();
+  });
+
+  it('returns null when sessionStorage.getItem throws', () => {
+    vi.spyOn(mockSessionStorage, 'getItem').mockImplementation(() => {
       throw new Error('SecurityError');
     });
     expect(getClientId()).toBeNull();
   });
 
   it('silently swallows errors on setClientId', () => {
-    vi.spyOn(mockLocalStorage, 'setItem').mockImplementation(() => {
+    vi.spyOn(mockSessionStorage, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceededError');
     });
     expect(() => setClientId('abc')).not.toThrow();
@@ -144,50 +144,6 @@ describe('Persistence — Active Sessions', () => {
       throw new Error('QuotaExceededError');
     });
     expect(() => setActiveSessions([{ sessionId: 's1', folderPath: '/p' }])).not.toThrow();
-  });
-});
-
-describe('Persistence — Viewed Session ID', () => {
-  it('returns null when no viewedSessionId has been stored', () => {
-    expect(getViewedSessionId()).toBeNull();
-  });
-
-  it('round-trips a viewedSessionId through set and get', () => {
-    setViewedSessionId('s1');
-    expect(getViewedSessionId()).toBe('s1');
-  });
-
-  it('overwrites a previously stored viewedSessionId', () => {
-    setViewedSessionId('s1');
-    setViewedSessionId('s2');
-    expect(getViewedSessionId()).toBe('s2');
-  });
-
-  it('clears the stored value when set to null', () => {
-    setViewedSessionId('s1');
-    setViewedSessionId(null);
-    expect(getViewedSessionId()).toBeNull();
-  });
-
-  it('returns null when localStorage.getItem throws', () => {
-    vi.spyOn(mockLocalStorage, 'getItem').mockImplementation(() => {
-      throw new Error('SecurityError');
-    });
-    expect(getViewedSessionId()).toBeNull();
-  });
-
-  it('silently swallows errors on setViewedSessionId', () => {
-    vi.spyOn(mockLocalStorage, 'setItem').mockImplementation(() => {
-      throw new Error('QuotaExceededError');
-    });
-    expect(() => setViewedSessionId('abc')).not.toThrow();
-  });
-
-  it('silently swallows errors on setViewedSessionId(null) removeItem', () => {
-    vi.spyOn(mockLocalStorage, 'removeItem').mockImplementation(() => {
-      throw new Error('SecurityError');
-    });
-    expect(() => setViewedSessionId(null)).not.toThrow();
   });
 });
 
