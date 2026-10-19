@@ -104,7 +104,7 @@ class PimoteConnection(
         CallEndReason.REMOTE_HANGUP -> DisconnectCause.REMOTE
         CallEndReason.DISPLACED -> DisconnectCause.CANCELED
         CallEndReason.SERVER_ENDED -> DisconnectCause.REMOTE
-        CallEndReason.PEER_FAILED, CallEndReason.BIND_FAILED -> DisconnectCause.ERROR
+        CallEndReason.PEER_FAILED, CallEndReason.BIND_FAILED, CallEndReason.SESSION_GONE -> DisconnectCause.ERROR
     }
 
     private fun toSnapshot(state: CallAudioState): AudioRouteSnapshot {

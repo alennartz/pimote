@@ -220,4 +220,73 @@ class ProtocolJsonTest {
         assertEquals("call_bind_failed_owned", CallBindErrorCodes.OWNED)
         assertEquals("call_bind_failed_internal", CallBindErrorCodes.INTERNAL)
     }
+
+    // ----- Current wire fixtures (drift tripwires) ----------------------------
+
+    @Test
+    fun `ListFoldersCommand encodes window params`() {
+        val cmd = ListFoldersCommand(id = "x", offset = 200, limit = 200)
+        val tree = json.encodeToJsonElement(ListFoldersCommand.serializer(), cmd).jsonObject
+        assertEquals("list_folders", tree["type"]!!.jsonPrimitive.content)
+        assertEquals(200, tree["offset"]!!.jsonPrimitive.content.toInt())
+        assertEquals(200, tree["limit"]!!.jsonPrimitive.content.toInt())
+    }
+
+    @Test
+    fun `list_folders response envelope decodes with paging and epoch fields`() {
+        val raw = """{"folders":[{"path":"/p/a","name":"a","nature":"code","shortcutCount":1,
+            "favorite":true,"archived":false,"tags":["t"],"missing":false,"activeSessionCount":2,
+            "externalProcessCount":0,"lastActivity":123}],"roots":["/srv/code"],"managerRoot":"/srv/m",
+            "total":41,"orderToken":"tok","more":true,"epoch":12}""".replace("\n", " ")
+        val data = json.decodeFromString(ListFoldersResponseData.serializer(), raw)
+        assertEquals(1, data.folders.size)
+        assertEquals(true, data.more)
+        assertEquals(12L, data.epoch)
+        assertEquals("/p/a", data.folders[0].path)
+        assertEquals(false, data.folders[0].archived)
+    }
+
+    @Test
+    fun `FolderInfo decodes an archived row`() {
+        val raw = """{"path":"/p/a","name":"a","archived":true,"activeSessionCount":0,"externalProcessCount":0}"""
+        val row = json.decodeFromString(FolderInfo.serializer(), raw)
+        assertEquals(true, row.archived)
+    }
+
+    @Test
+    fun `decodes folders_changed delta`() {
+        val raw = """{"type":"folders_changed","changed":[{"path":"/p/new","name":"new",
+            "activeSessionCount":0,"externalProcessCount":0}],"removedPaths":["/p/gone"],"epoch":34}""".replace("\n", " ")
+        val ev = json.decodeFromString(PimoteEventSerializer, raw)
+        assertTrue(ev is FoldersChangedEvent)
+        ev as FoldersChangedEvent
+        assertEquals("/p/new", ev.changed.single().path)
+        assertEquals(listOf("/p/gone"), ev.removedPaths)
+        assertEquals(34L, ev.epoch)
+    }
+
+    @Test
+    fun `decodes session_state_changed with display metadata`() {
+        val raw = """{"type":"session_state_changed","sessionId":"S","folderPath":"/p",
+            "liveStatus":"idle","connectedClientId":null,"folderActiveSessionCount":1,
+            "folderActiveStatus":"idle","gitBranch":"main","sessionName":"Named",
+            "firstMessage":"hi","messageCount":9}""".replace("\n", " ")
+        val ev = json.decodeFromString(PimoteEventSerializer, raw)
+        assertTrue(ev is SessionStateChangedEvent)
+        ev as SessionStateChangedEvent
+        assertEquals("Named", ev.sessionName)
+        assertEquals("hi", ev.firstMessage)
+        assertEquals(9, ev.messageCount)
+    }
+
+    @Test
+    fun `decodes session_state_changed with blank name and omitted optional fields`() {
+        val raw = """{"type":"session_state_changed","sessionId":"S","folderPath":"/p",
+            "liveStatus":null,"connectedClientId":null,"folderActiveSessionCount":0,
+            "folderActiveStatus":null,"sessionName":""}""".replace("\n", " ")
+        val ev = json.decodeFromString(PimoteEventSerializer, raw) as SessionStateChangedEvent
+        assertEquals("", ev.sessionName)
+        assertEquals(null, ev.firstMessage)
+        assertEquals(null, ev.messageCount)
+    }
 }

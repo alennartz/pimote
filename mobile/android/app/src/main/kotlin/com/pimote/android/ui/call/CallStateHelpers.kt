@@ -21,7 +21,8 @@ fun deriveAvatarRingState(state: CallState, durationSeconds: Long = 0L): AvatarR
             CallEndReason.DISPLACED,
             CallEndReason.SERVER_ENDED -> AvatarRingState.EndedOk
             CallEndReason.PEER_FAILED,
-            CallEndReason.BIND_FAILED -> AvatarRingState.EndedError(describeEndReason(state.reason))
+            CallEndReason.BIND_FAILED,
+            CallEndReason.SESSION_GONE -> AvatarRingState.EndedError(describeEndReason(state.reason))
         }
     }
 
@@ -41,4 +42,5 @@ fun describeEndReason(r: CallEndReason): String = when (r) {
     CallEndReason.SERVER_ENDED -> "Server ended call"
     CallEndReason.PEER_FAILED -> "Voice peer failed (signaling/ICE)"
     CallEndReason.BIND_FAILED -> "Could not bind call"
+    CallEndReason.SESSION_GONE -> "Session no longer exists on the server"
 }

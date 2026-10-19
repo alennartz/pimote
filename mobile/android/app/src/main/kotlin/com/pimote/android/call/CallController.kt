@@ -75,6 +75,10 @@ enum class CallEndReason {
     SERVER_ENDED,
     PEER_FAILED,
     BIND_FAILED,
+    /** The server reported the target session gone for good (definitive
+     *  `call_bind_failed_session_not_found`) — callers should drop any local
+     *  reference to the session (contact row, shortcut). */
+    SESSION_GONE,
 }
 
 /**
@@ -90,8 +94,11 @@ enum class CallEndReason {
  *    state = `Ended(null, BIND_FAILED)`.
  * 3. `wsClient.request(CallBindCommand(sessionId, force = false))` →
  *    [CallState.Binding]. On `call_bind_failed_owned`, retry once with
- *    `force = true` (call-holder transfer). Other failures →
- *    `connection.disconnectWithError`, `Ended(sessionId, BIND_FAILED)`.
+ *    `force = true` (call-holder transfer). On
+ *    `call_bind_failed_session_not_found` the session is gone for good —
+ *    terminate as [CallEndReason.SESSION_GONE] without retrying. Other
+ *    failures → `connection.disconnectWithError`,
+ *    `Ended(sessionId, BIND_FAILED)`.
  * 4. `speechmuxPeer.connect(signalUrl, sessionId)` → [CallState.Negotiating].
  *    Suspends until ICE Connected or fails.
  * 5. Await both `call_ready` for `sessionId` AND peer state == Connected →
@@ -388,7 +395,8 @@ class CallControllerImpl(
             CallEndReason.REMOTE_HANGUP,
             CallEndReason.DISPLACED,
             CallEndReason.SERVER_ENDED,
-            CallEndReason.BIND_FAILED -> false
+            CallEndReason.BIND_FAILED,
+            CallEndReason.SESSION_GONE -> false
             CallEndReason.USER_HANGUP,
             CallEndReason.PEER_FAILED -> true
         }
@@ -403,6 +411,7 @@ class CallControllerImpl(
                 CallEndReason.USER_HANGUP -> snapshot.connection.disconnectAsLocalHangup()
                 CallEndReason.PEER_FAILED -> snapshot.connection.disconnectWithError(failureReason ?: "peer_failed")
                 CallEndReason.BIND_FAILED -> snapshot.connection.disconnectWithError(failureReason ?: "bind_failed")
+                CallEndReason.SESSION_GONE -> snapshot.connection.disconnectWithError(failureReason ?: "session_gone")
                 CallEndReason.REMOTE_HANGUP,
                 CallEndReason.DISPLACED,
                 CallEndReason.SERVER_ENDED -> snapshot.connection.disconnectAsRemoteEnded(reason)
@@ -522,7 +531,15 @@ class CallControllerImpl(
         }
         val bindData = bind.data
         if (!bind.success || bindData == null) {
-            terminate(CallEndReason.BIND_FAILED, failureReason = bind.error ?: "call_bind_failed")
+            // Definitive: the server has no live slot and no session record —
+            // no retry can succeed, so surface it as its own end reason and
+            // let the app drop the stale contact row.
+            val reason = if (bind.error == CallBindErrorCodes.SESSION_NOT_FOUND) {
+                CallEndReason.SESSION_GONE
+            } else {
+                CallEndReason.BIND_FAILED
+            }
+            terminate(reason, failureReason = bind.error ?: "call_bind_failed")
             return
         }
 

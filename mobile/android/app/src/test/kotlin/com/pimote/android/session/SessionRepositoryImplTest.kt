@@ -4,6 +4,7 @@ import com.pimote.android.net.TypedResponse
 import com.pimote.android.net.WsClient
 import com.pimote.android.net.WsState
 import com.pimote.android.protocol.FolderInfo
+import com.pimote.android.protocol.FoldersChangedEvent
 import com.pimote.android.protocol.ListFoldersCommand
 import com.pimote.android.protocol.ListFoldersResponseData
 import com.pimote.android.protocol.ListSessionsCommand
@@ -67,9 +68,9 @@ class SessionRepositoryImplTest {
         fun pendingCount() = pending.size
     }
 
-    private fun seedBootstrap(ws: FakeWs, folders: List<FolderInfo>, sessionsByPath: Map<String, List<SessionInfo>>) {
+    private fun seedBootstrap(ws: FakeWs, folders: List<FolderInfo>, sessionsByPath: Map<String, List<SessionInfo>>, epoch: Long = 5) {
         // ListFolders
-        ws.respondNext(TypedResponse("?", true, ListFoldersResponseData(folders), null))
+        ws.respondNext(TypedResponse("?", true, ListFoldersResponseData(folders, more = false, epoch = epoch), null))
         // Then a list_sessions per folder; respond in matching order.
         folders.forEach { f ->
             ws.respondNext(TypedResponse("?", true, ListSessionsResponseData(sessionsByPath[f.path].orEmpty()), null))
@@ -174,5 +175,112 @@ class SessionRepositoryImplTest {
         advanceUntilIdle()
 
         assertTrue(repo.sessions.value.any { it.sessionId == "newS" })
+    }
+
+    @Test
+    fun `bootstrap pages list_folders until more is false`() = runTest {
+        val ws = FakeWs()
+        val scope = TestScope(StandardTestDispatcher(testScheduler))
+        val repo = SessionRepositoryImpl(ws, scope)
+        repo.start()
+        advanceUntilIdle()
+
+        // Page 1 of 2.
+        val page1 = ws.sent.filterIsInstance<ListFoldersCommand>().single()
+        assertEquals(0, page1.offset)
+        assertEquals(200, page1.limit)
+        ws.respondNext(
+            TypedResponse(
+                "?", true,
+                ListFoldersResponseData(
+                    folders = listOf(FolderInfo("/p/a", "a"), FolderInfo("/p/b", "b")),
+                    more = true,
+                    epoch = 5,
+                ),
+                null,
+            ),
+        )
+        advanceUntilIdle()
+
+        // Page 2 continues at the consumed offset.
+        val page2 = ws.sent.filterIsInstance<ListFoldersCommand>().last()
+        assertEquals(2, page2.offset)
+        ws.respondNext(
+            TypedResponse(
+                "?", true,
+                ListFoldersResponseData(folders = listOf(FolderInfo("/p/c", "c")), more = false, epoch = 5),
+                null,
+            ),
+        )
+        // One list_sessions per folder across both pages.
+        listOf("/p/a", "/p/b", "/p/c").forEach { _ ->
+            ws.respondNext(TypedResponse("?", true, ListSessionsResponseData(emptyList()), null))
+        }
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(ProjectMeta("/p/a", "a"), ProjectMeta("/p/b", "b"), ProjectMeta("/p/c", "c")),
+            repo.projects.value,
+        )
+    }
+
+    @Test
+    fun `folders_changed delta applies live and an epoch gap re-bootstraps`() = runTest {
+        val ws = FakeWs()
+        val scope = TestScope(StandardTestDispatcher(testScheduler))
+        val repo = SessionRepositoryImpl(ws, scope)
+        repo.start()
+        advanceUntilIdle()
+        seedBootstrap(
+            ws,
+            folders = listOf(FolderInfo("/p", "p")),
+            sessionsByPath = mapOf("/p" to emptyList()),
+        )
+        advanceUntilIdle()
+        val bootstrapsBefore = ws.sent.count { it is ListFoldersCommand }
+
+        // Contiguous delta: new folder appears without any request.
+        ws.emit(FoldersChangedEvent(changed = listOf(FolderInfo("/q", "q")), removedPaths = emptyList(), epoch = 6))
+        advanceUntilIdle()
+        assertEquals(bootstrapsBefore, ws.sent.count { it is ListFoldersCommand })
+        assertTrue(repo.projects.value.contains(ProjectMeta("/q", "q")))
+
+        // Gap (6 → 9): two deltas missed — full re-bootstrap.
+        ws.emit(FoldersChangedEvent(changed = listOf(FolderInfo("/r", "r")), removedPaths = emptyList(), epoch = 9))
+        advanceUntilIdle()
+        val refetch = ws.sent.filterIsInstance<ListFoldersCommand>().last()
+        ws.respondNext(
+            TypedResponse("?", true, ListFoldersResponseData(folders = listOf(FolderInfo("/p", "p"), FolderInfo("/q", "q"), FolderInfo("/r", "r")), more = false, epoch = 9), null),
+        )
+        listOf("/p", "/q", "/r").forEach { _ ->
+            ws.respondNext(TypedResponse("?", true, ListSessionsResponseData(emptyList()), null))
+        }
+        advanceUntilIdle()
+
+        assertTrue(ws.sent.count { it is ListFoldersCommand } > bootstrapsBefore)
+        assertEquals(3, repo.projects.value.size)
+    }
+
+    @Test
+    fun `removeSession drops the row`() = runTest {
+        val ws = FakeWs()
+        val scope = TestScope(StandardTestDispatcher(testScheduler))
+        val repo = SessionRepositoryImpl(ws, scope)
+        repo.start()
+        advanceUntilIdle()
+        seedBootstrap(
+            ws,
+            folders = listOf(FolderInfo("/p", "p")),
+            sessionsByPath = mapOf("/p" to listOf(
+                SessionInfo(id = "s1", name = null, created = "t", modified = "t", messageCount = 1),
+                SessionInfo(id = "s2", name = null, created = "t", modified = "t", messageCount = 1),
+            )),
+        )
+        advanceUntilIdle()
+        assertEquals(2, repo.sessions.value.size)
+
+        repo.removeSession("s1")
+
+        assertEquals(listOf("s2"), repo.sessions.value.map { it.sessionId })
     }
 }

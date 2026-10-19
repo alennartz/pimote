@@ -79,10 +79,15 @@ data class TypedResponse<T>(
  * with exponential backoff + jitter, and an immediate reconnect when the OS
  * reports a network change.
  *
- * - WS endpoint is `${pimoteOrigin}/ws`. Wire format is JSON identical to the
- *   PWA — top-level message is either a [com.pimote.android.protocol.PimoteResponse]
- *   (object with `success` field) or a [PimoteEvent] (everything else,
- *   discriminated by `type`).
+ * - WS endpoint is `${pimoteOrigin}/ws?clientId=…`. Wire format is JSON
+ *   identical to the PWA — top-level message is either a
+ *   [com.pimote.android.protocol.PimoteResponse] (object with `success`
+ *   field) or a [PimoteEvent] (everything else, discriminated by `type`).
+ *   The `clientId` query param gives this client a stable identity across
+ *   reconnects so the server can reclaim the stale handler for the same
+ *   client. `version` is deliberately omitted: the server closes clients
+ *   whose build version mismatches (expecting a PWA reload), and a native
+ *   app cannot reload — omitting it opts out of that gate.
  * - [connect] is idempotent. If called with a different origin it tears down
  *   any existing socket and reconnects against the new origin.
  * - [disconnect] is the only way to stop the reconnect loop. Network blips,
@@ -151,6 +156,10 @@ class WsClientImpl(
     },
     private val random: kotlin.random.Random = kotlin.random.Random.Default,
     private val idGenerator: () -> String = { java.util.UUID.randomUUID().toString() },
+    /** Stable per-instance client identity sent as the WS `clientId` query
+     *  param; tests inject a fixed value. One random UUID per process keeps
+     *  reconnects reclaimable server-side without persisting anything. */
+    private val clientId: String = java.util.UUID.randomUUID().toString(),
 ) : WsClient {
     private companion object {
         /** Consecutive failed connection attempts before the loop surfaces
@@ -436,7 +445,7 @@ class WsClientImpl(
             else -> origin
         }
         val trimmed = converted.trimEnd('/')
-        return "$trimmed/ws"
+        return "$trimmed/ws?clientId=$clientId"
     }
 
     private object EndOfConnection : RuntimeException() {

@@ -17,12 +17,15 @@ import kotlinx.serialization.json.jsonPrimitive
  *   - CallBindCommand / CallEndCommand / CallBindResponse
  *   - CallReadyEvent / CallEndedEvent / CallStatusEvent
  *   - OpenSessionCommand / OpenSessionResponseData
- *   - ListFoldersCommand / ListSessionsCommand
+ *   - ListFoldersCommand / ListFoldersResponseData (windowed: more/epoch)
+ *   - ListSessionsCommand
  *   - FolderInfo / SessionInfo
  *   - SessionOpenedEvent / SessionRenamedEvent / SessionArchivedEvent /
- *     SessionDeletedEvent / SessionReplacedEvent
+ *     SessionDeletedEvent / SessionReplacedEvent / SessionStateChangedEvent
+ *   - FoldersChangedEvent (delta: changed/removedPaths/epoch)
  * MUST be reflected here. There is no codegen — keep both sides aligned by
- * hand. See docs/plans/native-android-client.md §Protocol DTOs.
+ * hand. Field additions on the TS side are safe (ignoreUnknownKeys);
+ * renames are not.
  */
 
 // ---------------------------------------------------------------------------
@@ -33,6 +36,8 @@ import kotlinx.serialization.json.jsonPrimitive
 data class FolderInfo(
     val path: String,
     val name: String,
+    /** Curation flag; a row flipped to archived leaves the unarchived set the contact list mirrors. */
+    val archived: Boolean = false,
     val activeSessionCount: Int = 0,
     val externalProcessCount: Int = 0,
 )
@@ -64,6 +69,10 @@ sealed interface PimoteCommand {
 @SerialName("list_folders")
 data class ListFoldersCommand(
     override val id: String,
+    /** Window start into the server's pinned order; null → 0. */
+    val offset: Int? = null,
+    /** Window size; the server clamps to [1, 200] and defaults to 100. */
+    val limit: Int? = null,
     override val type: String = "list_folders",
 ) : PimoteCommand
 
@@ -130,7 +139,13 @@ data class CallBindResponseData(
 )
 
 @Serializable
-data class ListFoldersResponseData(val folders: List<FolderInfo>)
+data class ListFoldersResponseData(
+    val folders: List<FolderInfo>,
+    /** True when more rows exist past this window — keep paging. */
+    val more: Boolean = false,
+    /** Monotonic epoch the window was served under; baseline for folders_changed deltas. */
+    val epoch: Long = 0,
+)
 
 @Serializable
 data class ListSessionsResponseData(val sessions: List<SessionInfo>)
@@ -209,6 +224,33 @@ data class SessionReplacedEvent(
     override val type: String = "session_replaced",
 ) : PimoteEvent
 
+/** Sidebar update: live session/folder aggregates plus display metadata.
+ *  The contact list consumes the display fields; liveStatus stays ignored
+ *  (the contacts surface does not show remote-active state). */
+@Serializable
+@SerialName("session_state_changed")
+data class SessionStateChangedEvent(
+    val sessionId: String,
+    val folderPath: String,
+    /** Display name; empty string explicitly clears a previously shown name. */
+    val sessionName: String? = null,
+    val firstMessage: String? = null,
+    val messageCount: Int? = null,
+    override val type: String = "session_state_changed",
+) : PimoteEvent
+
+/** Delta over the windowed folder listing, broadcast after any folder
+ *  registry/discovery mutation. `epoch` is monotonic and contiguous per
+ *  mutation; a gap means a delta was missed and the set needs a refetch. */
+@Serializable
+@SerialName("folders_changed")
+data class FoldersChangedEvent(
+    val changed: List<FolderInfo>,
+    val removedPaths: List<String>,
+    val epoch: Long,
+    override val type: String = "folders_changed",
+) : PimoteEvent
+
 @Serializable
 @SerialName("call_bind_response")
 data class CallBindResponseEvent(
@@ -276,6 +318,8 @@ object PimoteEventSerializer : JsonContentPolymorphicSerializer<PimoteEvent>(Pim
             "session_closed" -> SessionClosedEvent.serializer()
             "session_deleted" -> SessionDeletedEvent.serializer()
             "session_replaced" -> SessionReplacedEvent.serializer()
+            "session_state_changed" -> SessionStateChangedEvent.serializer()
+            "folders_changed" -> FoldersChangedEvent.serializer()
             "call_bind_response" -> CallBindResponseEvent.serializer()
             "call_ready" -> CallReadyEvent.serializer()
             "call_ended" -> CallEndedEvent.serializer()

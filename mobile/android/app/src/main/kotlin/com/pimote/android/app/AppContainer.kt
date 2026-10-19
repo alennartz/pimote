@@ -6,6 +6,7 @@ import android.os.Build
 import com.pimote.android.call.CallAudioRouter
 import com.pimote.android.call.CallController
 import com.pimote.android.call.CallControllerImpl
+import com.pimote.android.call.CallEndReason
 import com.pimote.android.call.CallForegroundService
 import com.pimote.android.call.CallState
 import com.pimote.android.call.ProximityScreenLock
@@ -19,6 +20,8 @@ import okhttp3.OkHttpClient
 import com.pimote.android.session.SessionRepository
 import com.pimote.android.session.SessionRepositoryImpl
 import com.pimote.android.util.onEdge
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.map
 import com.pimote.android.settings.Settings
 import com.pimote.android.settings.SettingsImpl
@@ -266,6 +269,16 @@ class AppContainer(private val appContext: Context) {
                 .map { s -> s !is CallState.Idle && s !is CallState.Ended }
                 .onEdge { prev, cur -> cur && prev != true }
                 .collect { CallForegroundService.start(appContext) }
+        }
+
+        // A definitive `call_bind_failed_session_not_found` ends the call as
+        // SESSION_GONE — drop the stale contact row so the dead session stops
+        // being callable from every surface fed by [SessionRepository].
+        applicationScope.launch {
+            callController.state
+                .filterIsInstance<CallState.Ended>()
+                .filter { it.reason == CallEndReason.SESSION_GONE && it.sessionId != null }
+                .collect { ended -> sessionRepository.removeSession(ended.sessionId!!) }
         }
 
         // Drive the proximity-to-ear screen lock off call state + audio route.

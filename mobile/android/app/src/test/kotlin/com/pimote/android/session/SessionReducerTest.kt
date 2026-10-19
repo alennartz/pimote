@@ -1,11 +1,13 @@
 package com.pimote.android.session
 
+import com.pimote.android.protocol.FoldersChangedEvent
 import com.pimote.android.protocol.FolderInfo
 import com.pimote.android.protocol.SessionArchivedEvent
 import com.pimote.android.protocol.SessionDeletedEvent
 import com.pimote.android.protocol.SessionOpenedEvent
 import com.pimote.android.protocol.SessionRenamedEvent
 import com.pimote.android.protocol.SessionReplacedEvent
+import com.pimote.android.protocol.SessionStateChangedEvent
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -153,5 +155,144 @@ class SessionReducerTest {
         )
         val out = reduceSessionEvent(snap, SessionDeletedEvent("s", "/p"), fixedNow)
         assertEquals(projects, out.snapshot.projects)
+    }
+
+    // ------------------------------------------- folders_changed deltas
+
+    private fun snapWithEpoch(projects: List<ProjectMeta>, sessions: List<SessionMeta>, epoch: Long?) =
+        SessionSnapshot(projects = projects, sessions = sessions, foldersEpoch = epoch)
+
+    @Test
+    fun `folders_changed upserts new and renamed folders and drops removed ones`() {
+        val before = snapWithEpoch(
+            projects = listOf(ProjectMeta("/p/old", "old"), ProjectMeta("/p/keep", "keep")),
+            sessions = listOf(
+                SessionMeta("s-old", "/p/old", "old", null, archived = false),
+                SessionMeta("s-keep", "/p/keep", "keep", null, archived = false),
+            ),
+            epoch = 7,
+        )
+        val ev = FoldersChangedEvent(
+            changed = listOf(
+                FolderInfo("/p/keep", "keep-renamed"),
+                FolderInfo("/p/new", "new"),
+            ),
+            removedPaths = listOf("/p/old"),
+            epoch = 8,
+        )
+        val out = reduceSessionEvent(before, ev, fixedNow)
+
+        assertEquals(listOf(ProjectMeta("/p/keep", "keep-renamed"), ProjectMeta("/p/new", "new")), out.snapshot.projects)
+        // Sessions of removed folders go with the folder.
+        assertEquals(listOf("s-keep"), out.snapshot.sessions.map { it.sessionId })
+        assertEquals(8L, out.snapshot.foldersEpoch)
+        assertTrue(out.effects.isEmpty())
+    }
+
+    @Test
+    fun `folders_changed treats an archived changed row as a removal`() {
+        val before = snapWithEpoch(
+            projects = listOf(ProjectMeta("/p/a", "a")),
+            sessions = listOf(SessionMeta("s1", "/p/a", "a", null, archived = false)),
+            epoch = 3,
+        )
+        val ev = FoldersChangedEvent(
+            changed = listOf(FolderInfo("/p/a", "a", archived = true)),
+            removedPaths = emptyList(),
+            epoch = 4,
+        )
+        val out = reduceSessionEvent(before, ev, fixedNow)
+        assertTrue(out.snapshot.projects.isEmpty())
+        assertTrue(out.snapshot.sessions.isEmpty())
+    }
+
+    @Test
+    fun `folders_changed with a stale epoch is ignored`() {
+        val before = snapWithEpoch(
+            projects = listOf(ProjectMeta("/p", "p")),
+            sessions = emptyList(),
+            epoch = 10,
+        )
+        val ev = FoldersChangedEvent(
+            changed = listOf(FolderInfo("/p/x", "x")),
+            removedPaths = listOf("/p"),
+            epoch = 10,
+        )
+        val out = reduceSessionEvent(before, ev, fixedNow)
+        assertEquals(before, out.snapshot)
+        assertTrue(out.effects.isEmpty())
+    }
+
+    @Test
+    fun `folders_changed with an epoch gap emits RefetchFolders instead of applying`() {
+        val before = snapWithEpoch(
+            projects = listOf(ProjectMeta("/p", "p")),
+            sessions = emptyList(),
+            epoch = 5,
+        )
+        val ev = FoldersChangedEvent(
+            changed = listOf(FolderInfo("/p/x", "x")),
+            removedPaths = emptyList(),
+            epoch = 8, // two deltas missed
+        )
+        val out = reduceSessionEvent(before, ev, fixedNow)
+        // Projects untouched; the epoch advances so a refetch completion can supersede.
+        assertEquals(listOf(ProjectMeta("/p", "p")), out.snapshot.projects)
+        assertEquals(8L, out.snapshot.foldersEpoch)
+        assertEquals(listOf<SessionEffect>(SessionEffect.RefetchFolders), out.effects)
+    }
+
+    @Test
+    fun `folders_changed before any bootstrap applies directly`() {
+        val ev = FoldersChangedEvent(
+            changed = listOf(FolderInfo("/p/new", "new")),
+            removedPaths = emptyList(),
+            epoch = 1,
+        )
+        val out = reduceSessionEvent(emptySnap, ev, fixedNow)
+        assertEquals(listOf(ProjectMeta("/p/new", "new")), out.snapshot.projects)
+        assertEquals(1L, out.snapshot.foldersEpoch)
+    }
+
+    // ------------------------------------------- session_state_changed
+
+    @Test
+    fun `session_state_changed sets name firstMessage and messageCount`() {
+        val before = snapWith(
+            SessionMeta("s1", "/p", "p", null, archived = false, messageCount = 2, firstMessage = "old"),
+        )
+        val ev = SessionStateChangedEvent(
+            sessionId = "s1",
+            folderPath = "/p",
+            sessionName = "Named",
+            firstMessage = "hello world",
+            messageCount = 12,
+        )
+        val out = reduceSessionEvent(before, ev, fixedNow)
+        val s = out.snapshot.sessions.single()
+        assertEquals("Named", s.name)
+        assertEquals("hello world", s.firstMessage)
+        assertEquals(12, s.messageCount)
+    }
+
+    @Test
+    fun `session_state_changed blank name clears absent fields keep`() {
+        val before = snapWith(
+            SessionMeta("s1", "/p", "p", "Old", archived = false, messageCount = 2, firstMessage = "old"),
+        )
+        val ev = SessionStateChangedEvent(sessionId = "s1", folderPath = "/p", sessionName = "")
+        val out = reduceSessionEvent(before, ev, fixedNow)
+        val s = out.snapshot.sessions.single()
+        assertNull(s.name)
+        assertEquals("old", s.firstMessage)
+        assertEquals(2, s.messageCount)
+    }
+
+    @Test
+    fun `session_state_changed is a no-op for unknown sessions`() {
+        val before = snapWith(SessionMeta("s1", "/p", "p", null, archived = false))
+        val ev = SessionStateChangedEvent(sessionId = "other", folderPath = "/p", sessionName = "x")
+        val out = reduceSessionEvent(before, ev, fixedNow)
+        assertEquals(before, out.snapshot)
     }
 }

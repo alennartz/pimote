@@ -1,5 +1,7 @@
 package com.pimote.android.session
 
+import com.pimote.android.protocol.FoldersChangedEvent
+import com.pimote.android.protocol.FolderInfo
 import com.pimote.android.protocol.ListFoldersCommand
 import com.pimote.android.protocol.ListFoldersResponseData
 import com.pimote.android.protocol.ListSessionsCommand
@@ -10,6 +12,7 @@ import com.pimote.android.protocol.SessionDeletedEvent
 import com.pimote.android.protocol.SessionOpenedEvent
 import com.pimote.android.protocol.SessionRenamedEvent
 import com.pimote.android.protocol.SessionReplacedEvent
+import com.pimote.android.protocol.SessionStateChangedEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -58,7 +61,8 @@ data class SessionMeta(
  * Held state for projects and unarchived sessions, driven by WS events.
  *
  * Bootstrap (on [start] and on every WS reconnect):
- * - `wsClient.request(ListFoldersCommand)` seeds [projects].
+ * - `wsClient.request(ListFoldersCommand)` pages the windowed listing
+ *   (limit 200, `more`-driven) and seeds [projects].
  * - For each folder, `wsClient.request(ListSessionsCommand(folderPath, includeArchived = false))`
  *   concurrently → unioned into [sessions].
  *
@@ -72,13 +76,16 @@ data class SessionMeta(
  * | `session_archived { archived: false }`   | Re-fetch matching folder via `list_sessions` and merge.  |
  * | `session_deleted`                        | Remove.                                                  |
  * | `session_replaced`                       | Replace `oldSessionId` entry with `newSessionId` entry.  |
- * | `session_state_changed`, `session_closed`| Ignored (not displayed in v1 contact list).              |
+ * | `session_state_changed`                  | Update `name`/`firstMessage`/`messageCount` on the row.  |
+ * | `folders_changed`                        | Upsert/remove projects (delta); epoch gap → re-bootstrap.|
+ * | `session_closed`                         | Ignored (not displayed in v1 contact list).              |
  *
  * Reconnect handling: on `WsState` transition `Reconnecting → Connected` the
  * repository automatically calls [refresh] to re-bootstrap.
  *
- * Folder set is bootstrap-only — new projects appear after reconnect or
- * manual [refresh].
+ * The folder set follows `folders_changed` deltas while connected; the epoch
+ * they carry must stay contiguous with the bootstrap epoch — a gap means a
+ * delta was missed and triggers a full re-bootstrap.
  */
 interface SessionRepository {
     val projects: StateFlow<List<ProjectMeta>>
@@ -86,6 +93,10 @@ interface SessionRepository {
     fun start()
     fun stop()
     suspend fun refresh()
+
+    /** Drop one session row (e.g. the server reported the session gone for
+     *  good — a definitive `call_bind_failed_session_not_found`). */
+    fun removeSession(sessionId: String)
 }
 
 /**
@@ -99,12 +110,17 @@ interface SessionRepository {
 data class SessionSnapshot(
     val projects: List<ProjectMeta>,
     val sessions: List<SessionMeta>,
+    /** Folder-listing epoch of the last bootstrap or applied delta; null before the first bootstrap. */
+    val foldersEpoch: Long? = null,
 )
 
 /** Side-effect requests emitted by [reduceSessionEvent]. */
 sealed interface SessionEffect {
     /** Repository should call list_sessions for this folder and merge results. */
     data class RefetchFolder(val folderPath: String) : SessionEffect
+
+    /** Repository should re-bootstrap the whole folder/session set (missed folders_changed delta). */
+    object RefetchFolders : SessionEffect
 }
 
 data class ReducerResult(
@@ -128,9 +144,14 @@ data class ReducerResult(
  * - [SessionReplacedEvent]: swap the `oldSessionId` row for one keyed by
  *   `newSessionId`, preserving folderName/name/archived. No-op if the old row
  *   isn't present.
+ * - [SessionStateChangedEvent]: update `name` (absent keeps, blank clears,
+ *   value sets), `firstMessage`, and `messageCount` on the matching row.
+ * - [FoldersChangedEvent]: upsert `changed` rows into the projects list, drop
+ *   `removedPaths` (and rows the delta reports as archived) plus their
+ *   sessions. A stale epoch (≤ the snapshot's) is ignored; an epoch gap (> +1)
+ *   emits [SessionEffect.RefetchFolders] instead of applying a partial view.
  *
- * Projects list is never modified by event reduction — projects are
- * bootstrap-only.
+ * The projects list is event-maintained between bootstraps.
  */
 fun reduceSessionEvent(
     snapshot: SessionSnapshot,
@@ -202,6 +223,53 @@ fun reduceSessionEvent(
                 ReducerResult(snapshot.copy(sessions = replaced), emptyList())
             }
         }
+        is FoldersChangedEvent -> {
+            val last = snapshot.foldersEpoch
+            when {
+                last != null && event.epoch <= last -> {
+                    // Stale replay — the bootstrap or a later delta already passed this point.
+                    ReducerResult(snapshot, emptyList())
+                }
+                last != null && event.epoch > last + 1 -> {
+                    // A delta was missed; applying only this one would show a partial set.
+                    ReducerResult(snapshot.copy(foldersEpoch = event.epoch), listOf(SessionEffect.RefetchFolders))
+                }
+                else -> {
+                    val removed = buildSet {
+                        addAll(event.removedPaths)
+                        addAll(event.changed.filter { it.archived }.map { it.path })
+                    }
+                    val changedByPath = event.changed.filterNot { it.archived }.associateBy { it.path }
+                    val kept = snapshot.projects
+                        .filterNot { it.folderPath in removed }
+                        .map { p -> changedByPath[p.folderPath]?.let { ProjectMeta(it.path, it.name) } ?: p }
+                    val added = changedByPath.values
+                        .filter { c -> kept.none { it.folderPath == c.path } }
+                        .map { ProjectMeta(it.path, it.name) }
+                    val sessions = snapshot.sessions.filterNot { it.folderPath in removed }
+                    ReducerResult(SessionSnapshot(kept + added, sessions, event.epoch), emptyList())
+                }
+            }
+        }
+        is SessionStateChangedEvent -> {
+            val idx = sessions.indexOfFirst { it.sessionId == event.sessionId }
+            if (idx < 0) {
+                ReducerResult(snapshot, emptyList())
+            } else {
+                val row = sessions[idx]
+                val updated = sessions.toMutableList()
+                updated[idx] = row.copy(
+                    name = when {
+                        event.sessionName == null -> row.name
+                        event.sessionName.isBlank() -> null
+                        else -> event.sessionName
+                    },
+                    firstMessage = event.firstMessage ?: row.firstMessage,
+                    messageCount = event.messageCount ?: row.messageCount,
+                )
+                ReducerResult(snapshot.copy(sessions = updated), emptyList())
+            }
+        }
         else -> ReducerResult(snapshot, emptyList())
     }
 }
@@ -217,8 +285,14 @@ class SessionRepositoryImpl(
     private val scope: kotlinx.coroutines.CoroutineScope,
     private val nowProvider: () -> String = { java.time.Instant.now().toString() },
 ) : SessionRepository {
+    private companion object {
+        /** Server clamps to [1, 200]; ask for the max window to halve round trips. */
+        const val FOLDER_PAGE_LIMIT = 200
+    }
+
     private val _projects = MutableStateFlow<List<ProjectMeta>>(emptyList())
     private val _sessions = MutableStateFlow<List<SessionMeta>>(emptyList())
+    private val _foldersEpoch = MutableStateFlow<Long?>(null)
 
     override val projects: StateFlow<List<ProjectMeta>> = _projects.asStateFlow()
     override val sessions: StateFlow<List<SessionMeta>> = _sessions.asStateFlow()
@@ -236,15 +310,17 @@ class SessionRepositoryImpl(
         collectors.value = child
         child.launch(Dispatchers.Unconfined) {
             wsClient.events.collect { ev ->
-                val snap = SessionSnapshot(_projects.value, _sessions.value)
+                val snap = SessionSnapshot(_projects.value, _sessions.value, _foldersEpoch.value)
                 val out = reduceSessionEvent(snap, ev, nowProvider)
                 if (out.snapshot != snap) {
                     _projects.value = out.snapshot.projects
                     _sessions.value = out.snapshot.sessions
+                    _foldersEpoch.value = out.snapshot.foldersEpoch
                 }
                 for (effect in out.effects) {
                     when (effect) {
                         is SessionEffect.RefetchFolder -> child.launch(Dispatchers.Unconfined) { refetchFolder(effect.folderPath) }
+                        is SessionEffect.RefetchFolders -> child.launch(Dispatchers.Unconfined) { runCatching { refresh() } }
                     }
                 }
             }
@@ -269,20 +345,41 @@ class SessionRepositoryImpl(
         collectors.value = null
     }
 
+    override fun removeSession(sessionId: String) {
+        _sessions.value = _sessions.value.filterNot { it.sessionId == sessionId }
+    }
+
     override suspend fun refresh() {
         com.pimote.android.util.L.d("Session", "refresh()")
-        val foldersResp = try {
-            wsClient.request(
-                ListFoldersCommand(id = java.util.UUID.randomUUID().toString()),
-                ListFoldersResponseData.serializer(),
-            )
+        val folders = mutableListOf<FolderInfo>()
+        var epoch: Long? = null
+        try {
+            // Page the windowed listing until `more` is false — the default
+            // window is 100 rows and would silently truncate past it.
+            var offset = 0
+            var more = true
+            while (more) {
+                val resp = wsClient.request(
+                    ListFoldersCommand(
+                        id = java.util.UUID.randomUUID().toString(),
+                        offset = offset,
+                        limit = FOLDER_PAGE_LIMIT,
+                    ),
+                    ListFoldersResponseData.serializer(),
+                )
+                val data = resp.data ?: break
+                folders += data.folders
+                epoch = data.epoch
+                more = data.more && data.folders.isNotEmpty()
+                offset += data.folders.size
+            }
         } catch (e: Throwable) {
             com.pimote.android.util.L.w("Session", "refresh: list_folders failed: ${e.message}", e)
             throw e
         }
-        val folders = foldersResp.data?.folders.orEmpty()
         com.pimote.android.util.L.i("Session", "refresh: ${folders.size} folder(s)")
         _projects.value = folders.map { ProjectMeta(it.path, it.name) }
+        _foldersEpoch.value = epoch
 
         val merged = LinkedHashMap<String, SessionMeta>()
         // Preserve any sessions for folders we don't have in the bootstrap; replace those we do.

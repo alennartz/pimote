@@ -31,8 +31,7 @@ import org.junit.jupiter.api.Test
  * [SpeechmuxPeer], and the Telecom [CallConnection]. Pure-JVM — no Android.
  *
  * The state machine, error branches, and event-filtering rules under test
- * are documented at length in
- * [CallController]'s KDoc and in docs/plans/native-android-client.md.
+ * are documented at length in [CallController]'s KDoc.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CallControllerTest {
@@ -149,7 +148,7 @@ class CallControllerTest {
     }
 
     @Test
-    fun `non-owned bind failure ends with BIND_FAILED and disconnectWithError`() = runTest {
+    fun `session_not_found bind failure ends with SESSION_GONE without force retry or call_end`() = runTest {
         val ws = FakeWsClient()
         val peer = FakeSpeechmuxPeer()
         val cc = newController(ws, peer, TestScope(StandardTestDispatcher(testScheduler)))
@@ -160,6 +159,32 @@ class CallControllerTest {
         val first = ws.sent.last { it is CallBindCommand } as CallBindCommand
         ws.respondNext(
             TypedResponse<CallBindResponseData>(first.id, success = false, data = null, error = CallBindErrorCodes.SESSION_NOT_FOUND),
+        )
+        advanceUntilIdle()
+
+        val ended = cc.state.value
+        assertTrue(ended is CallState.Ended)
+        assertEquals(CallEndReason.SESSION_GONE, (ended as CallState.Ended).reason)
+        assertEquals("S1", ended.sessionId)
+        assertTrue(conn.transitions.any { it.startsWith("disconnectWithError:") })
+        // Definitive failure: exactly one bind, no force retry, nothing to tell the server.
+        assertEquals(1, ws.sent.count { it is CallBindCommand })
+        assertTrue(ws.sent.none { it is CallEndCommand })
+        assertFalse(peer.disconnected)
+    }
+
+    @Test
+    fun `generic bind failure ends with BIND_FAILED and disconnectWithError`() = runTest {
+        val ws = FakeWsClient()
+        val peer = FakeSpeechmuxPeer()
+        val cc = newController(ws, peer, TestScope(StandardTestDispatcher(testScheduler)))
+        val conn = FakeCallConnection()
+
+        cc.startOutgoing(SessionTarget.ExistingSession("S1"), conn)
+        advanceUntilIdle()
+        val first = ws.sent.last { it is CallBindCommand } as CallBindCommand
+        ws.respondNext(
+            TypedResponse<CallBindResponseData>(first.id, success = false, data = null, error = CallBindErrorCodes.INTERNAL),
         )
         advanceUntilIdle()
 
