@@ -731,10 +731,26 @@ export class WsHandler {
             this.sendResponse(id, false, undefined, 'call_bind_failed_internal');
             break;
           }
-          const slot = this.sessionManager.getSlot(command.sessionId);
-          if (!slot) {
-            this.sendResponse(id, false, undefined, 'call_bind_failed_session_not_found');
-            break;
+          if (!this.sessionManager.getSlot(command.sessionId)) {
+            // A voice call needs a holder, not an observer: reopen a dormant
+            // (idle-reaped or never-opened) session from its disk record so
+            // thin clients can call sessions they are not viewing. No observer
+            // attaches and no transcript syncs — the call-holder reap guard
+            // holds the session for the call, then idle reaping reclaims it.
+            let slot: ManagedSlot | null;
+            try {
+              slot = await this.attemptCallReopen(command.sessionId);
+            } catch (err) {
+              console.warn('[voice] call_bind reopen failed:', err instanceof Error ? err.message : err);
+              this.sendResponse(id, false, undefined, 'call_bind_failed_internal');
+              break;
+            }
+            if (!slot) {
+              this.sendResponse(id, false, undefined, 'call_bind_failed_session_not_found');
+              break;
+            }
+            // A dormant folder's sidebar counts changed: the session is live again.
+            WsHandler.broadcastSidebarUpdate(command.sessionId, slot.folderPath, this.sessionManager, this.clientRegistry);
           }
           try {
             const data = await this.voiceOrchestrator.bindCall({
@@ -1500,6 +1516,21 @@ export class WsHandler {
     }
   }
 
+  /** Bind extensions on a slot that has never bound them. Idempotent via
+   *  `sessionState.extensionsBound`. Normally first-observer work; the
+   *  call_bind reopen path also calls it with zero observers — the UI bridge
+   *  parks requests no observer will deliver, and voice mode (the only
+   *  zero-observer caller) rejects UI bridge calls outright. */
+  private async ensureExtensionsBound(slot: ManagedSlot, sessionId: string): Promise<void> {
+    if (slot.sessionState.extensionsBound) return;
+    const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
+      isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(sessionId) ?? false,
+    });
+    const commandContextActions = createCommandContextActions(slot, this.sessionManager);
+    await slot.session.bindExtensions({ uiContext, commandContextActions });
+    slot.sessionState.extensionsBound = true;
+  }
+
   /** Attach this client as an observer and bind extensions on first attach. */
   async claimSession(sessionId: string, slot: ManagedSlot): Promise<void> {
     const observer: SessionObserver = {
@@ -1518,14 +1549,7 @@ export class WsHandler {
 
     // Note: do NOT touch `idleSince`. Idleness is an agent-level concept driven by
     // agent_start/agent_settled — attaching an observer does not extend its clock.
-    if (!slot.sessionState.extensionsBound) {
-      const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
-        isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(sessionId) ?? false,
-      });
-      const commandContextActions = createCommandContextActions(slot, this.sessionManager);
-      await slot.session.bindExtensions({ uiContext, commandContextActions });
-      slot.sessionState.extensionsBound = true;
-    }
+    await this.ensureExtensionsBound(slot, sessionId);
     if (!this.isCurrentConnection()) {
       if (slot.observers.get(this.clientId)?.ws === observer.ws) this.sessionManager.detachObserver(sessionId, this.clientId);
       throw new Error('WebSocket is no longer connected');
@@ -1565,12 +1589,7 @@ export class WsHandler {
     const isFirstObserver = firstObserver ?? slot.observers.keys().next().value === this.clientId;
     const performsSlotReset = isFirstObserver && !slot.sessionState.extensionsBound;
     if (performsSlotReset) {
-      const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
-        isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(newId) ?? false,
-      });
-      const commandContextActions = createCommandContextActions(slot, this.sessionManager);
-      await slot.session.bindExtensions({ uiContext, commandContextActions });
-      slot.sessionState.extensionsBound = true;
+      await this.ensureExtensionsBound(slot, newId);
     }
 
     this.sendEvent({
@@ -1615,6 +1634,26 @@ export class WsHandler {
    * owns that rule). The caller checks the archived flag before opening.
    * Returns undefined when no folder holds the session.
    */
+  /** Reopen a dormant session on behalf of an incoming `call_bind`. Returns
+   *  the fresh slot, or null when no session record exists or the record is
+   *  archived — both definitive, reported as `call_bind_failed_session_not_found`.
+   *  Throws on reopen failure (corrupt file, open hooks) — the caller maps
+   *  that to `call_bind_failed_internal`. */
+  private async attemptCallReopen(sessionId: string): Promise<ManagedSlot | null> {
+    const record = await this.findSessionRecord(sessionId);
+    if (!record) return null;
+    if (this.sessionMetadataStore.isArchived(record.sessionFilePath)) return null;
+    await this.repoIndex?.runOpenHooks(record.folderPath);
+    const openedId = await this.sessionManager.openSession(record.folderPath, record.sessionFilePath);
+    const slot = this.sessionManager.getSlot(openedId);
+    if (!slot) return null;
+    // The voice extension subscribes to `pimote:voice:activate` when
+    // extensions bind — normally first-observer work. With no observer
+    // coming, bind here so the orchestrator's activation finds a listener.
+    await this.ensureExtensionsBound(slot, openedId);
+    return slot;
+  }
+
   private async findSessionRecord(sessionId: string, folderPath?: string): Promise<SessionRecordLocation | undefined> {
     if (folderPath) {
       const sessionFilePath = await this.sessionRecords.resolveSessionPath(folderPath, sessionId);

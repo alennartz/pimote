@@ -21,8 +21,9 @@
 //   - ListSessionsCommand
 //   - FolderInfo / SessionInfo
 //   - SessionOpenedEvent / SessionRenamedEvent / SessionArchivedEvent /
-//     SessionDeletedEvent / SessionReplacedEvent
-// See docs/plans/native-android-client.md §Protocol DTOs.
+//     SessionDeletedEvent / SessionReplacedEvent / SessionStateChangedEvent /
+//     FoldersChangedEvent
+// The Kotlin file's header carries the same list — keep the two in lockstep.
 // ============================================================================
 
 // ----------------------------------------------------------------------------
@@ -737,6 +738,11 @@ export interface KillConflictingSessionsCommand extends CommandBase {
 
 // -- Voice call commands --
 
+/** Bind a voice call to a session. When the session is not live in server
+ *  memory but a disk record exists, the server reopens it for the call: no
+ *  observer attaches, no transcript syncs, and the call-holder reap guard
+ *  holds the session only for the call's duration. Thin clients may
+ *  therefore bind sessions they are not viewing. */
 export interface CallBindCommand extends CommandBase {
   type: 'call_bind';
   id: string;
@@ -751,7 +757,10 @@ export interface CallEndCommand extends CommandBase {
   sessionId: string;
 }
 
-/** Reason codes returned in PimoteResponse.error for a failed call_bind. */
+/** Reason codes returned in PimoteResponse.error for a failed call_bind.
+ *  `call_bind_failed_session_not_found` is definitive: no live slot exists
+ *  and no unarchived session record was found — no retry can succeed, so
+ *  clients should drop any local reference to the session. */
 export type CallBindErrorCode = 'call_bind_failed_session_not_found' | 'call_bind_failed_owned' | 'call_bind_failed_internal';
 
 /** Reason code returned when an extension attempts a UI bridge call during a voice call. */

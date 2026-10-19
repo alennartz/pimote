@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { VoiceOrchestrator } from './voice-orchestrator.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -4175,5 +4176,170 @@ describe('panel resync requests', () => {
 
     const syncs = bus.emits.filter((e) => e.channel === 'pimote:panels:sync');
     expect(syncs.map((s) => (s.data as { reason: string }).reason)).toEqual(['claim', 'reset']);
+  });
+});
+
+describe('call_bind — dormant session reopen', () => {
+  const SIGNAL_URL = 'https://speechmux.test/signal';
+
+  function stubVoiceSession(bindExtensions: () => Promise<void>, sessionFile?: string): any {
+    return {
+      subscribe: () => () => {},
+      dispose: () => {},
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+      model: null,
+      thinkingLevel: 'off',
+      getAvailableThinkingLevels: () => [],
+      isStreaming: false,
+      isCompacting: false,
+      sessionFile,
+      sessionId: 'session-1',
+      sessionName: undefined,
+      autoCompactionEnabled: false,
+      bindExtensions,
+      modelRuntime: { getAvailable: async () => [] },
+      clearQueue: () => ({ steering: [], followUp: [] }),
+      sessionManager: { buildContextEntries: () => [], getBranch: () => [], getCwd: () => '/home/user/project' },
+    } as any;
+  }
+
+  function buildHarness(args: {
+    sessions: Map<string, ManagedSlot>;
+    sessionRecords: SessionRecords;
+    sessionMetadataStore?: ReturnType<typeof createMockSessionMetadataStore>;
+    folderRegistry?: FolderRegistry;
+  }) {
+    const sessionManager = createMockSessionManager(args.sessions);
+    const bus = { on: vi.fn(() => () => {}), emit: vi.fn(), clear: vi.fn() };
+    const orchestrator = new VoiceOrchestrator({
+      config: { voice: { speechmuxSignalUrl: SIGNAL_URL, speechmuxLlmWsUrl: 'wss://speechmux.test/llm' } } as any,
+      sessionManager: sessionManager as any,
+      busResolver: {
+        getSlot: (id: string) => args.sessions.get(id) ?? null,
+        getEventBus: () => bus as any,
+      },
+    });
+    const clientRegistry: ClientRegistry = new Map();
+    const { ws, sent } = createMockWs();
+    const handler = new WsHandler(
+      '/srv/manager-home',
+      sessionManager,
+      args.sessionRecords,
+      ws,
+      createMockPushService(),
+      (args.sessionMetadataStore ?? createMockSessionMetadataStore()) as any,
+      'client-1',
+      clientRegistry,
+      orchestrator,
+      undefined,
+      args.folderRegistry,
+    );
+    clientRegistry.set('client-1', handler);
+    return { handler, sent, sessionManager, orchestrator, sessions: args.sessions };
+  }
+
+  function recordsWithSessionFile(file: string): SessionRecords {
+    return {
+      ...createMockSessionRecords(),
+      resolveSessionPath: async (folderPath: string, sessionId: string) => (folderPath === '/home/user/project' && sessionId === 'session-1' ? file : undefined),
+    } as SessionRecords;
+  }
+
+  it('reopens a record-backed dormant session without attaching an observer or syncing a transcript', async () => {
+    const sessions = new Map<string, ManagedSlot>();
+    const bindExtensions = vi.fn(async () => {});
+    const { handler, sent, orchestrator, sessionManager } = buildHarness({
+      sessions,
+      sessionRecords: recordsWithSessionFile('/tmp/session-1.jsonl'),
+      folderRegistry: { list: async () => [folderRow('/home/user/project')] } as unknown as FolderRegistry,
+    });
+    (sessionManager as any).openSession = async (folderPath: string, sessionFilePath?: string) => {
+      expect(folderPath).toBe('/home/user/project');
+      expect(sessionFilePath).toBe('/tmp/session-1.jsonl');
+      sessions.set(
+        'session-1',
+        createMockSlot({
+          id: 'session-1',
+          folderPath,
+          session: stubVoiceSession(bindExtensions, sessionFilePath),
+        }),
+      );
+      return 'session-1';
+    };
+
+    await handler.handleMessage(JSON.stringify({ type: 'call_bind', sessionId: 'session-1', id: 'req-bind' }));
+
+    const resp = findResponse(sent, 'req-bind');
+    expect(resp).toBeDefined();
+    expect(resp!.success).toBe(true);
+    expect((resp!.data as any).webrtcSignalUrl).toBe(SIGNAL_URL);
+    // Holder recorded; no observer attached; extensions bound for the voice bus.
+    expect(orchestrator.callHolder.get('session-1')).toBe('client-1');
+    expect(sessions.get('session-1')!.observers.size).toBe(0);
+    expect(bindExtensions).toHaveBeenCalledTimes(1);
+    // No transcript or open fan-out — only the call status and the sidebar refresh.
+    expect(findEvents(sent, 'session_opened')).toHaveLength(0);
+    expect(findEvents(sent, 'full_resync')).toHaveLength(0);
+    const statuses = findEvents(sent, 'call_status');
+    expect(statuses).toHaveLength(1);
+    expect((statuses[0] as any).status).toBe('binding');
+    const sidebar = findEvents(sent, 'session_state_changed');
+    expect(sidebar).toHaveLength(1);
+    expect((sidebar[0] as any).folderActiveSessionCount).toBe(1);
+  });
+
+  it('reports session_not_found when no record exists and never opens a session', async () => {
+    const sessions = new Map<string, ManagedSlot>();
+    const { handler, sent, sessionManager } = buildHarness({
+      sessions,
+      sessionRecords: createMockSessionRecords(),
+      folderRegistry: { list: async () => [folderRow('/home/user/project')] } as unknown as FolderRegistry,
+    });
+    const openSession = vi.fn();
+    (sessionManager as any).openSession = openSession;
+
+    await handler.handleMessage(JSON.stringify({ type: 'call_bind', sessionId: 'session-1', id: 'req-bind' }));
+
+    const resp = findResponse(sent, 'req-bind');
+    expect(resp).toBeDefined();
+    expect(resp!.success).toBe(false);
+    expect(resp!.error).toBe('call_bind_failed_session_not_found');
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('reports session_not_found for an archived record without unarchiving', async () => {
+    const sessions = new Map<string, ManagedSlot>();
+    const { handler, sent, sessionManager } = buildHarness({
+      sessions,
+      sessionRecords: recordsWithSessionFile('/tmp/session-1.jsonl'),
+      sessionMetadataStore: createMockSessionMetadataStore(['/tmp/session-1.jsonl']),
+      folderRegistry: { list: async () => [folderRow('/home/user/project')] } as unknown as FolderRegistry,
+    });
+    const openSession = vi.fn();
+    (sessionManager as any).openSession = openSession;
+
+    await handler.handleMessage(JSON.stringify({ type: 'call_bind', sessionId: 'session-1', id: 'req-bind' }));
+
+    const resp = findResponse(sent, 'req-bind');
+    expect(resp).toBeDefined();
+    expect(resp!.success).toBe(false);
+    expect(resp!.error).toBe('call_bind_failed_session_not_found');
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('binds a live session directly without touching the disk', async () => {
+    const bindExtensions = vi.fn(async () => {});
+    const sessions = new Map<string, ManagedSlot>([['session-1', createMockSlot({ id: 'session-1', session: stubVoiceSession(bindExtensions) })]]);
+    const { handler, sent, sessionManager, orchestrator } = buildHarness({ sessions, sessionRecords: createMockSessionRecords() });
+    const openSession = vi.fn();
+    (sessionManager as any).openSession = openSession;
+
+    await handler.handleMessage(JSON.stringify({ type: 'call_bind', sessionId: 'session-1', id: 'req-bind' }));
+
+    const resp = findResponse(sent, 'req-bind');
+    expect(resp).toBeDefined();
+    expect(resp!.success).toBe(true);
+    expect(openSession).not.toHaveBeenCalled();
+    expect(orchestrator.callHolder.get('session-1')).toBe('client-1');
   });
 });
