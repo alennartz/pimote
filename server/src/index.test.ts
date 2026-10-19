@@ -454,7 +454,7 @@ describe('main — manager toolset port wiring', () => {
 
     const result = await toolNamed(await registeredManagerTools(), 'pimote_list_folders').execute('call-1', {}, undefined, undefined, {});
 
-    expect(result.details).toEqual([
+    expect(result.details.folders).toEqual([
       {
         path: '/workspace/alpha',
         name: 'alpha',
@@ -504,8 +504,8 @@ describe('main — manager toolset port wiring', () => {
 
     const result = await toolNamed(await registeredManagerTools(), 'pimote_list_sessions').execute('call-1', { query: 'login' }, undefined, undefined, {});
 
-    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/alpha');
-    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/beta');
+    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/alpha', { signal: undefined });
+    expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/beta', { signal: undefined });
     expect(mocks.sessionMetadataStore.getArchivedLookup).toHaveBeenCalledWith(['/sessions/s1.jsonl']);
     expect(result.details.sessions).toEqual([
       {

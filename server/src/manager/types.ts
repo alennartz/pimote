@@ -45,8 +45,10 @@ export interface SessionManagerPort {
   getAllSessions(): ManagedSessionSummary[];
 
   /** On-disk session records for one folder (pi SessionManager.list
-   *  for that cwd — open and closed sessions alike). */
-  listDiskSessions(folderPath: string): Promise<DiskSessionRecord[]>;
+   *  for that cwd — open and closed sessions alike). The optional signal is
+   *  the caller's interruption hook: an aborted read rejects promptly while
+   *  any shared cache fill completes for the next reader (DR-072). */
+  listDiskSessions(folderPath: string, signal?: AbortSignal): Promise<DiskSessionRecord[]>;
 
   /** Start a new session in the folder — the same path the open_session WS
    *  command uses. A firstMessage, when given, is sent to the new session
@@ -86,7 +88,10 @@ export interface FolderUpdatePatch {
  * discovery before broadcasting; curation emits its delta through `onChange`.
  */
 export interface FolderRegistryPort {
-  list(): Promise<FolderInfo[]>;
+  /** The optional signal is the caller's interruption hook: the caller
+   *  races the listing (cold-walk discovery included) and rejects on abort
+   *  while shared work completes for the next reader (DR-072). */
+  list(signal?: AbortSignal): Promise<FolderInfo[]>;
   update(patch: FolderUpdatePatch): Promise<void>;
   createHub(input: { name: string; root: string; memberPaths: string[]; body?: string; description?: string; personaText?: string }): Promise<{ path: string }>;
   addMember(hubPath: string, memberPath: string): Promise<void>;

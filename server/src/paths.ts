@@ -32,4 +32,6 @@ export const PIMOTE_REGISTRY_STORE_DIR = join(PIMOTE_STATE_DIR, 'projects');
 export const PIMOTE_STATIC_HOST_DIR = join(PIMOTE_STATE_DIR, 'static-host');
 /** Directory holding per-session pending-download persistence files (`<sessionId>.json`). */
 export const PIMOTE_FILE_DOWNLOAD_DIR = join(PIMOTE_STATE_DIR, 'file-downloads');
+/** Directory holding tool-result spill files: oversized list results the agent greps/jqs instead of holding in context. */
+export const PIMOTE_TOOL_SPILL_DIR = join(PIMOTE_STATE_DIR, 'tool-spill');
 export const LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH = join(PIMOTE_CONFIG_DIR, 'push-subscriptions.json');

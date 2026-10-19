@@ -4,15 +4,23 @@ Reference for the manager session: its folder, persona, hub, and session tools, 
 
 ## Tool surface
 
-| Tool                        | Job                                                                                                                         | Notes                                                                                                                 |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `pimote_list_folders`       | Rows: every folder with nature, curation, git facts (`repo`, hub `repos`), hub membership (`members`), live session counts. | `nature` filter gives the team view (personas) or code view. `fresh: true` drops the discovery cache first.           |
-| `pimote_list_sessions`      | One sessions view: disk history with live state on open rows.                                                               | Filters: `query` (name + first message), `folderPath`, `open`. Newest first, capped.                                  |
-| `pimote_start_session`      | Open a session in a known folder.                                                                                           | `firstMessage` tasks it at once; the run continues in the background.                                                 |
-| `pimote_archive_sessions`   | Mark records archived; evict open slots.                                                                                    | Per-id outcomes. No unarchive tool exists.                                                                            |
-| `pimote_create_folder`      | Create one of the four kinds.                                                                                               | `kind`: `code`, `persona`, `code-hub`, `persona-hub`. Persona kinds need `description`; hub kinds need `memberPaths`. |
-| `pimote_update_folder`      | Curate: favorite, archive or restore, tags.                                                                                 | `archived: false` restores. Keyed by canonical path.                                                                  |
-| `pimote_update_hub_members` | Batch hub membership.                                                                                                       | Removals run before additions. Per-member outcomes.                                                                   |
+| Tool                        | Job                                                                                                                         | Notes                                                                                                                                         |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pimote_list_folders`       | Rows: every folder with nature, curation, git facts (`repo`, hub `repos`), hub membership (`members`), live session counts. | `nature` filter gives the team view (personas) or code view. `fresh: true` drops the discovery cache first. Payload is `{ folders, spill? }`. |
+| `pimote_list_sessions`      | One sessions view: disk history with live state on open rows.                                                               | Filters: `query` (name + first message), `folderPath`, `open`. Newest first, capped. Payload is `{ sessions, spill? }`.                       |
+| `pimote_start_session`      | Open a session in a known folder.                                                                                           | `firstMessage` tasks it at once; the run continues in the background.                                                                         |
+| `pimote_archive_sessions`   | Mark records archived; evict open slots.                                                                                    | Per-id outcomes. No unarchive tool exists.                                                                                                    |
+| `pimote_create_folder`      | Create one of the four kinds.                                                                                               | `kind`: `code`, `persona`, `code-hub`, `persona-hub`. Persona kinds need `description`; hub kinds need `memberPaths`.                         |
+| `pimote_update_folder`      | Curate: favorite, archive or restore, tags.                                                                                 | `archived: false` restores. Keyed by canonical path.                                                                                          |
+| `pimote_update_hub_members` | Batch hub membership.                                                                                                       | Removals run before additions. Per-member outcomes.                                                                                           |
+
+## Large results: the spill guard
+
+A list result whose serialized rows exceed 16KB keeps only the inline prefix that fits. The payload then carries a `spill` field: the absolute path of a JSONL file holding the remaining rows in the same order, the spilled row count, and a search hint. Search the file with `jq` or `grep` instead of re-calling the tool with a bigger limit — one JSON object per line, so `jq -c 'select(.name // .id | test("PATTERN"; "i"))' <file>` works directly. Prefer tighter filters (`query`, `folderPath`, `nature`) when you know what you are looking for; the spill file is for wide sweeps.
+
+## Interruption
+
+The two list tools take the turn's abort signal, and both reject promptly when it fires. Shared server-side work — the discovery walk, the per-folder session cache fills — never dies with a caller: it runs to completion and serves the next reader. Request paths abort; cache fills complete. The walk's 50,000-visit budget, the caches' TTLs, and single-flight dedup bound that work regardless.
 
 ## Freshness
 

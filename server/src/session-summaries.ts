@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
-import { mapWithConcurrency } from './concurrency.js';
+import { mapWithConcurrency, raceSignal } from './concurrency.js';
 
 /**
  * One on-disk session's list metadata — exactly the fields `list_sessions`
@@ -168,6 +168,10 @@ export interface SessionSummaryListOptions {
    *  partial listing — callers whose completeness is safety-critical (the boot
    *  GC allow-list) must never see a silently incomplete result. */
   failOnError?: boolean;
+  /** Caller's interruption hook (DR-072). The caller races the shared fill
+   *  and rejects at once on abort; the fill itself is shared single-flight
+   *  work and always completes for the next reader. */
+  signal?: AbortSignal;
 }
 
 interface FolderListing {
@@ -216,12 +220,14 @@ export class SessionSummaryIndex {
    * reported — thrown under `failOnError`, warned otherwise.
    */
   async list(folderPath: string, options: SessionSummaryListOptions = {}): Promise<SessionSummary[]> {
+    options.signal?.throwIfAborted();
     let promise = this.inFlight.get(folderPath);
     if (!promise) {
       promise = this.listFolder(folderPath).finally(() => this.inFlight.delete(folderPath));
       this.inFlight.set(folderPath, promise);
     }
-    const { summaries, errors } = await promise;
+    const { summaries, errors } = options.signal ? await raceSignal(promise, options.signal) : await promise;
+    options.signal?.throwIfAborted();
     if (errors.length > 0) {
       if (options.failOnError) throw new Error(`Failed to read ${errors.length} session file(s) in ${folderPath}`, { cause: errors[0] });
       for (const error of errors) console.warn(`[SessionSummaryIndex] failed to read a session file in ${folderPath}:`, error);

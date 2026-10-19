@@ -4,6 +4,7 @@ import { sep } from 'node:path';
 import { Type } from 'typebox';
 import { enrichActiveSessionCounts, isValidFolderName } from '../folder-registry.js';
 import { errorToolResult, jsonToolResult, type JsonToolResult } from '../tool-result.js';
+import { spillRows, SPILL_INLINE_BYTES, type SpillInfo } from './spill.js';
 import type { FolderInfo } from '../../../shared/dist/index.js';
 import { MEMORY_MAINTENANCE_INSTRUCTION, seedPersonaFolder } from './seed.js';
 import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext } from './types.js';
@@ -24,6 +25,14 @@ import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext } from
  * - Sessions: `pimote_list_sessions` (one unified view — live state enriched
  *   onto disk records, optional query/open/folderPath filters),
  *   `pimote_start_session`, `pimote_archive_sessions`.
+ *
+ * Reads carry two cross-cutting policies:
+ * - Spill guard (DR-071): list results past a 16KB serialized budget keep
+ *   their first rows inline; the rest spills to a JSONL file the payload
+ *   points at with a jq/grep hint (`spill.ts`).
+ * - Interruption (DR-072): list tools race pi's turn-abort signal against
+ *   the ports — callers reject at once; shared walks and cache fills always
+ *   complete for the next reader. Mutations complete once started.
  * - Mutations: `pimote_create_folder` (kind-parameterized: the four wizard
  *   shapes), `pimote_update_folder` (curation), `pimote_update_hub_members`
  *   (batch add/remove with per-member outcomes).
@@ -173,6 +182,14 @@ interface SessionRow {
   messageCount: number;
 }
 
+/** Spill pointer on a list-tool payload: the rows past the inline budget
+ *  live in a JSONL file the agent searches with jq/grep (see spill.ts). */
+const SpillInfoSchema = Type.Object({
+  file: Type.String({ description: 'Absolute path of the spill file holding the remaining rows (one JSON object per line).' }),
+  rows: Type.Integer({ description: 'Number of rows in the spill file.' }),
+  hint: Type.String({ description: 'How to search the spill file with jq/grep.' }),
+});
+
 const SessionArchiveOutcomeSchema = Type.Object({
   sessionId: Type.String(),
   outcome: Type.Union([Type.Literal('archived'), Type.Literal('open_slot_evicted'), Type.Literal('not_found')]),
@@ -249,26 +266,32 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         'the missing flag, member repos on hub rows, and live session counts. Shortcut reach paths are not ' +
         'separate folders — identity is the canonical path. Filter by nature for the team view (personas) or the ' +
         'code view. Pass fresh: true to drop the discovery cache first — plain reads may serve data up to ~30s ' +
-        'stale while a background refresh runs.',
+        `stale while a background refresh runs. Rows past a ${SPILL_INLINE_BYTES}-byte serialized budget spill to a ` +
+        'JSONL file; the payload then carries `spill` (file path plus a jq/grep hint) and `folders` holds only the inline prefix.',
       parameters: Type.Object({
         fresh: FRESH_PARAM,
         nature: Type.Optional(Type.Union([Type.Literal('code'), Type.Literal('persona')], { description: 'Restrict rows to this nature.' })),
       }),
       annotations: { readOnlyHint: true },
-      outputSchema: Type.Array(FolderInfoSchema),
-      execute: async (_callId, params): Promise<JsonToolResult<{ error: string } | FolderInfo[]>> => {
+      outputSchema: Type.Object({ folders: Type.Array(FolderInfoSchema), spill: Type.Optional(SpillInfoSchema) }),
+      execute: async (_callId, params, signal): Promise<JsonToolResult<{ error: string } | { folders: FolderInfo[]; spill?: SpillInfo }>> => {
+        signal?.throwIfAborted();
         if (params.fresh) context.repos.invalidateListing();
         let folders: FolderInfo[];
         try {
-          folders = await context.folders.list();
+          folders = await context.folders.list(signal);
         } catch (error) {
+          // An abort propagates as a throw: pi records cancellation, not a
+          // tool failure the model would answer.
+          if ((error as Error)?.name === 'AbortError') throw error;
           return errorToolResult(`failed to list folders: ${errorMessage(error)}`);
         }
         // Live counts, same rule the WS serve-paths use — the agent should
         // never see permanently-zeroed indicators.
         enrichActiveSessionCounts(folders, context.sessions.getAllSessions());
-        const rows = folders.filter((folder) => params.nature === undefined || folder.nature === params.nature);
-        return jsonToolResult(rows.map(applyFolderDefaults));
+        const rows = folders.filter((folder) => params.nature === undefined || folder.nature === params.nature).map(applyFolderDefaults);
+        const outcome = await spillRows('pimote_list_folders', rows, signal);
+        return jsonToolResult({ folders: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) });
       },
     });
 
@@ -280,7 +303,9 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         'alike) with live state patched onto open rows (status, needsAttention). Newest first, capped by limit. ' +
         'Optional filters: query (case-insensitive substring against session name and first message), folderPath ' +
         '(must be a known folder), open (true keeps only live sessions). Use this for "what is running", ' +
-        '"find the session about X", and "what happened in this folder" alike.',
+        '"find the session about X", and "what happened in this folder" alike. ' +
+        `Rows past a ${SPILL_INLINE_BYTES}-byte serialized budget spill to a JSONL file; the payload then carries ` +
+        '`spill` (file path plus a jq/grep hint) and `sessions` holds only the inline prefix.',
       parameters: Type.Object({
         query: Type.Optional(Type.String({ description: 'Case-insensitive substring matched against session name and first message. Omit to list all.' })),
         folderPath: Type.Optional(Type.String({ description: 'Restrict the view to this folder path (must be a known folder — code or persona).' })),
@@ -288,13 +313,17 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         limit: Type.Optional(Type.Integer({ description: `Maximum number of rows (default ${LIST_DEFAULT_LIMIT}, max ${LIST_MAX_LIMIT}).` })),
       }),
       annotations: { readOnlyHint: true },
-      outputSchema: Type.Object({ sessions: Type.Array(SessionRowSchema) }),
-      execute: async (_callId, params): Promise<JsonToolResult<{ error: string } | { sessions: SessionRow[] }>> => {
+      outputSchema: Type.Object({ sessions: Type.Array(SessionRowSchema), spill: Type.Optional(SpillInfoSchema) }),
+      execute: async (_callId, params, signal): Promise<JsonToolResult<{ error: string } | { sessions: SessionRow[]; spill?: SpillInfo }>> => {
+        signal?.throwIfAborted();
         const query = params.query?.trim().toLowerCase() || undefined;
         let folders: FolderInfo[];
         try {
-          folders = await context.folders.list();
+          folders = await context.folders.list(signal);
         } catch (error) {
+          // An abort propagates as a throw: pi records cancellation, not a
+          // tool failure the model would answer.
+          if ((error as Error)?.name === 'AbortError') throw error;
           return errorToolResult(`failed to list sessions: ${errorMessage(error)}`);
         }
         let folderPaths: string[];
@@ -311,7 +340,11 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         const openById = new Map(context.sessions.getAllSessions().map((session) => [session.sessionId, session]));
 
         const rows: SessionRow[] = [];
-        const recordsByFolder = await Promise.all(folderPaths.map(async (folderPath) => ({ folderPath, records: await context.sessions.listDiskSessions(folderPath) })));
+        const recordsByFolder = await Promise.all(folderPaths.map(async (folderPath) => ({ folderPath, records: await context.sessions.listDiskSessions(folderPath, signal) })));
+        // The per-folder port races its shared fills (DR-072); this boundary
+        // check guarantees the tool rejects on abort even when a port
+        // implementation completed its work anyway.
+        signal?.throwIfAborted();
         for (const { folderPath, records } of recordsByFolder) {
           for (const record of records) {
             const openSession = openById.get(record.id);
@@ -336,7 +369,8 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
 
         // Newest first; ISO 8601 timestamps compare chronologically as strings.
         rows.sort((a, b) => (a.modified < b.modified ? 1 : a.modified > b.modified ? -1 : 0));
-        return jsonToolResult({ sessions: rows.slice(0, limit) });
+        const outcome = await spillRows('pimote_list_sessions', rows.slice(0, limit), signal);
+        return jsonToolResult({ sessions: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) });
       },
     });
 

@@ -144,8 +144,8 @@ export async function main(options: StartOptions = {}) {
       // On-disk records for one folder: SessionRecords listing enriched
       // with the archived flag from the session metadata store, so search
       // results carry the same archived state the WS list_sessions path serves.
-      listDiskSessions: async (folderPath) => {
-        const records = await sessionRecords.listSessionRecords(folderPath);
+      listDiskSessions: async (folderPath, signal) => {
+        const records = await sessionRecords.listSessionRecords(folderPath, { signal });
         const archivedLookup = sessionMetadataStore.getArchivedLookup(records.map((record) => record.path));
         return records.map((record) => ({
           id: record.id,

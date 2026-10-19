@@ -15,7 +15,7 @@ import {
 } from './folder-model/index.js';
 import { getGitBranch } from './git-branch.js';
 import { materializeHubFolder } from './folder-sources/materialize.js';
-import { mapWithConcurrency } from './concurrency.js';
+import { mapWithConcurrency, raceSignal } from './concurrency.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -328,8 +328,11 @@ export class RepoIndex {
    * dirty state) without a fixed refresh cadence. Only a cold cache (first
    * list, or after `invalidate()`) blocks on the walk.
    */
-  async list(): Promise<RepoInfo[]> {
-    const stamp = await this.currentStamp(true);
+  async list(signal?: AbortSignal): Promise<RepoInfo[]> {
+    const stamp = await this.currentStamp(true, signal);
+    // Boundary check before the probe pass: git probes are bounded and
+    // TTL-cached, so the signal stops the batch but not a probe mid-flight.
+    signal?.throwIfAborted();
     return await mapWithConcurrency(stamp.entries, GIT_PROBE_CONCURRENCY, (entry) => this.resolveServed(entry));
   }
 
@@ -374,8 +377,8 @@ export class RepoIndex {
    * while a background refresh re-walks (manager tree consumers accept trees
    * up to one TTL old). Invalidations discard the tree with the listing.
    */
-  async tree(): Promise<SparseTree> {
-    return (await this.currentStamp(false)).tree;
+  async tree(signal?: AbortSignal): Promise<SparseTree> {
+    return (await this.currentStamp(false, signal)).tree;
   }
 
   /**
@@ -384,8 +387,15 @@ export class RepoIndex {
    * cold reads join or start one walk — never a walk invalidated mid-flight.
    * `refreshWhenStatusesExpire` treats expired git statuses as staleness too
    * (list readers want fresh status; tree readers care about discovery only).
+   *
+   * The optional signal is the caller's interruption hook (DR-072): the
+   * caller is raced against the walk and rejects immediately on abort while
+   * the shared walk runs to completion and fills the cache — request paths
+   * abort, server-owned cache fills complete (the kickRefresh rule). The
+   * single-flight dedup bounds this: aborted callers never stack walks.
    */
-  private async currentStamp(refreshWhenStatusesExpire: boolean): Promise<ListingStamp> {
+  private async currentStamp(refreshWhenStatusesExpire: boolean, signal?: AbortSignal): Promise<ListingStamp> {
+    signal?.throwIfAborted();
     const cached = this.listing;
     if (cached) {
       const statusesDue = refreshWhenStatusesExpire && cached.entries.some((entry) => this.statusExpired(entry));
@@ -398,10 +408,18 @@ export class RepoIndex {
     // that was already running. Invalidations are user-action driven, so the
     // loop converges on the fresh state.
     for (;;) {
-      await this.discover();
+      await this.discoverWithin(signal);
       const listing = this.listing;
       if (listing) return listing;
     }
+  }
+
+  /** The walk, raced against the caller's signal (DR-072): an aborted caller
+   *  rejects at once; the walk itself is never linked to a caller and always
+   *  completes, so no joiner can inherit another caller's abort. */
+  private discoverWithin(signal?: AbortSignal): Promise<ListingStamp> {
+    const walk = this.discover();
+    return signal ? raceSignal(walk, signal) : walk;
   }
 
   /**
@@ -417,7 +435,10 @@ export class RepoIndex {
     await this.refreshInFlight;
   }
 
-  /** Single-flight full re-scan; shared by cold lists and background refreshes. */
+  /** Single-flight full re-scan; shared by cold lists and background
+   *  refreshes. Never linked to a caller's signal: an aborted caller races
+   *  the walk instead (`discoverWithin`), and the walk always completes so
+   *  its stamp fills the cache for the next reader. */
   private discover(): Promise<ListingStamp> {
     if (!this.listingPromise) {
       const generation = this.walkGeneration;

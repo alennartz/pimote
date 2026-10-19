@@ -407,7 +407,9 @@ async function resolveAbsentPaths(repos: RepoInfo[], hubPaths: Iterable<string>)
  *  built over. No manager tool reads the tree directly (DR-062 ruling:
  *  rows carry identity and membership). */
 export interface FolderModelPort {
-  tree(): Promise<SparseTree>;
+  /** Optional interruption hook — the caller races the cold walk
+   *  (DR-072 race semantics in the repo index). */
+  tree(signal?: AbortSignal): Promise<SparseTree>;
 }
 
 export class FolderRegistry implements FolderRegistryPort {
@@ -424,9 +426,12 @@ export class FolderRegistry implements FolderRegistryPort {
   /**
    * The merged folder view: every unique canonical scan entry (code and
    * persona) plus source-listed repos/hubs, with curation overrides applied.
+   * The optional signal is the caller's interruption hook: the caller races
+   * the cold discovery walk in the repo index (DR-072) and rejects on abort
+   * while the walk completes and fills the cache.
    */
-  async list(): Promise<FolderInfo[]> {
-    return sortFolders(await this.viewOver(await this.tree.tree(), await this.repos.list()));
+  async list(signal?: AbortSignal): Promise<FolderInfo[]> {
+    return sortFolders(await this.viewOver(await this.tree.tree(signal), await this.repos.list(signal)));
   }
 
   /**

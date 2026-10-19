@@ -14,6 +14,9 @@ import { SessionSummaryIndex, type SessionSummary } from './session-summaries.js
 export interface SessionRecordOptions {
   /** Throw on an I/O error instead of returning a partial result. */
   failOnError?: boolean;
+  /** Caller's interruption hook: an aborted listing rejects — it never
+   *  degrades to a partial (empty) result, which callers would read as data. */
+  signal?: AbortSignal;
 }
 
 export class SessionRecords {
@@ -28,9 +31,11 @@ export class SessionRecords {
    */
   async listSessionRecords(folderPath: string, options: SessionRecordOptions = {}): Promise<SessionSummary[]> {
     try {
-      return await this.summaries.list(folderPath, { failOnError: options.failOnError });
+      return await this.summaries.list(folderPath, { failOnError: options.failOnError, signal: options.signal });
     } catch (err) {
-      if (options.failOnError) throw err;
+      // An abort is never demoted to a partial result, regardless of
+      // failOnError: the caller asked to stop, not for an empty listing.
+      if (options.failOnError || (err as Error)?.name === 'AbortError') throw err;
       console.warn(`[SessionRecords] Failed to list sessions for ${folderPath}:`, err);
       return [];
     }

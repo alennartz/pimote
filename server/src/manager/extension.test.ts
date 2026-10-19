@@ -1,11 +1,28 @@
-import { describe, it, expect, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { describe, it, expect, vi, afterAll } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Value } from 'typebox/value';
 import type { FolderInfo } from '../../../shared/dist/index.js';
 import { createManagerExtension } from './extension.js';
-import type { DiskSessionRecord, ManagerToolContext, ManagerSessionSummary } from './types.js';
+import type { DiskSessionRecord, ManagerSessionSummary, ManagerToolContext } from './types.js';
+
+// Spill files land in a per-process temp dir: the guard's real fs behavior
+// (JSONL write, inline prefix) is under test; the shared state dir is not.
+// vi.hoisted runs before import bindings initialize, so path helpers come
+// from a dynamic import; the mock factory awaits the same promise.
+const spillDirPromise = vi.hoisted(async () => {
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  return join(tmpdir(), `pimote-spill-test-${process.pid}`);
+});
+vi.mock('../paths.js', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  PIMOTE_TOOL_SPILL_DIR: await spillDirPromise,
+}));
+afterAll(async () => {
+  await rm(await spillDirPromise, { recursive: true, force: true });
+});
 
 // Minimal fake ExtensionAPI: records registerTool defs and hands back
 // observable port-routing behavior when the tests drive `execute` directly.
@@ -111,7 +128,7 @@ describe('createManagerExtension()', () => {
     expect(ports.folders.list).toHaveBeenCalledTimes(1);
 
     await toolNamed(toolDefs, 'pimote_list_sessions').execute('c', {}, undefined, undefined, {});
-    expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/alpha');
+    expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/alpha', undefined);
   });
 
   it('describes folder nature, identity versus reach, freshness, and the leaf rule in the tool descriptions', () => {
@@ -131,8 +148,9 @@ describe('pimote_list_folders', () => {
     const schema = toolNamed(toolDefs, 'pimote_list_folders').outputSchema;
 
     // Every FolderInfo field is declared, and the defaulted fields are marked
-    // `default` so the wire row is self-describing.
-    const properties = (schema as any).items.properties;
+    // `default` so the wire row is self-describing. The payload is the spill
+    // envelope: `folders` rows plus the optional spill pointer.
+    const properties = (schema as any).properties.folders.items.properties;
     for (const field of [
       'path',
       'name',
@@ -153,7 +171,7 @@ describe('pimote_list_folders', () => {
     ]) {
       expect(properties, `missing FolderInfo field ${field}`).toHaveProperty(field);
     }
-    expect(Value.Check(schema, [])).toBe(true);
+    expect(Value.Check(schema, { folders: [] })).toBe(true);
   });
 
   it('serves complete rows with defaults, hub membership, and own repo facts', async () => {
@@ -169,7 +187,7 @@ describe('pimote_list_folders', () => {
     const result = (await toolNamed(register(ports), 'pimote_list_folders').execute('c', {}, undefined, undefined, {})) as ToolResult;
 
     expect(result.isError ?? false).toBe(false);
-    const [ada, bare] = result.details;
+    const [ada, bare] = result.details.folders;
     expect(ada.persona).toEqual({ name: 'Ada', description: 'helpful agent' });
     expect(ada.repos).toEqual(hubMembers);
     expect(ada.members).toEqual(inventory);
@@ -188,7 +206,7 @@ describe('pimote_list_folders', () => {
 
     const result = (await toolNamed(register(ports), 'pimote_list_folders').execute('c', {}, undefined, undefined, {})) as ToolResult;
 
-    const byPath = new Map((result.details as FolderInfo[]).map((folder) => [folder.path, folder]));
+    const byPath = new Map((result.details.folders as FolderInfo[]).map((folder) => [folder.path, folder]));
     expect(byPath.get('/w/alpha')!.activeSessionCount).toBe(2);
     expect(byPath.get('/w/beta')!.activeSessionCount).toBe(0);
   });
@@ -201,8 +219,8 @@ describe('pimote_list_folders', () => {
     const personas = (await toolNamed(toolDefs, 'pimote_list_folders').execute('c', { nature: 'persona' }, undefined, undefined, {})) as ToolResult;
     const code = (await toolNamed(toolDefs, 'pimote_list_folders').execute('c', { nature: 'code' }, undefined, undefined, {})) as ToolResult;
 
-    expect((personas.details as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/ada']);
-    expect((code.details as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/app']);
+    expect((personas.details.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/ada']);
+    expect((code.details.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/app']);
   });
 
   it('drops the discovery cache first when fresh: true', async () => {
@@ -249,8 +267,8 @@ describe('pimote_list_sessions', () => {
     const result = (await listTool(ports).execute('call-1', { query: 'LOGIN' }, undefined, undefined, {})) as ToolResult;
 
     expect(ports.sessions.listDiskSessions).toHaveBeenCalledTimes(2);
-    expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/alpha');
-    expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/beta');
+    expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/alpha', undefined);
+    expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/beta', undefined);
     // Newest first: s3 (06-03) before s1 (06-02); s2 never matched.
     const rows = result.details.sessions as Array<Record<string, unknown>>;
     expect(rows.map((r) => r.id)).toEqual(['s3', 's1']);
@@ -305,7 +323,7 @@ describe('pimote_list_sessions', () => {
     const result = (await listTool(ports).execute('call-1', { query: 'login', folderPath: '/w/personas/ada' }, undefined, undefined, {})) as ToolResult;
 
     expect(ports.sessions.listDiskSessions).toHaveBeenCalledTimes(1);
-    expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/personas/ada');
+    expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/personas/ada', undefined);
     expect(result.details.sessions[0].folderPath).toBe('/w/personas/ada');
   });
 
@@ -602,5 +620,121 @@ describe('pimote_update_hub_members', () => {
     expect(result.details.error).toContain('nothing to update');
     expect(ports.folders.addMember).not.toHaveBeenCalled();
     expect(ports.folders.removeMember).not.toHaveBeenCalled();
+  });
+});
+
+describe('list tool spill guard', () => {
+  async function executeFolders(ports: ReturnType<typeof spyPorts>, params: Record<string, unknown> = {}) {
+    return (await toolNamed(register(ports), 'pimote_list_folders').execute('c', params, undefined, undefined, {})) as ToolResult;
+  }
+
+  function bulkFolders(count: number, tagLength = 500): FolderInfo[] {
+    return Array.from({ length: count }, (_, i) => ({ ...makeFolder(`/w/bulk-${i}`), tags: ['x'.repeat(tagLength)] }));
+  }
+
+  it('keeps small results fully inline with no spill pointer', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
+
+    const result = await executeFolders(ports);
+
+    expect(result.details.folders).toHaveLength(1);
+    expect(result.details.spill).toBeUndefined();
+    expect(Value.Check(toolNamed(register(ports), 'pimote_list_folders').outputSchema, result.details)).toBe(true);
+  });
+
+  it('spills rows past the inline budget: inline prefix, JSONL remainder, path and jq hint in the payload', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue(bulkFolders(30));
+
+    const result = await executeFolders(ports);
+
+    const inline = result.details.folders as FolderInfo[];
+    expect(inline.length).toBeGreaterThanOrEqual(1);
+    expect(inline.length).toBeLessThan(30);
+    const spill = result.details.spill;
+    expect(spill.file).toContain('pimote_list_folders');
+    expect(spill.rows).toBe(30 - inline.length);
+    expect(spill.hint).toContain('jq');
+    expect(spill.hint).toContain(spill.file);
+    const lines = (await readFile(spill.file, 'utf8')).trim().split('\n');
+    expect(lines).toHaveLength(spill.rows);
+    // The remainder continues exactly where the inline prefix stopped.
+    expect(JSON.parse(lines[0]).path).toBe(`/w/bulk-${inline.length}`);
+    expect(Value.Check(toolNamed(register(ports), 'pimote_list_folders').outputSchema, result.details)).toBe(true);
+  });
+
+  it('spills the sessions view the same way, after the limit cut', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
+    ports.sessions.listDiskSessions.mockResolvedValue(Array.from({ length: 60 }, (_, i) => makeRecord({ id: `s${i}`, firstMessage: 'x'.repeat(300) })));
+
+    const result = (await toolNamed(register(ports), 'pimote_list_sessions').execute('c', { limit: 100 }, undefined, undefined, {})) as ToolResult;
+
+    const inline = result.details.sessions as FolderInfo[];
+    expect(inline.length).toBeGreaterThanOrEqual(1);
+    expect(inline.length).toBeLessThan(60);
+    expect(result.details.spill.rows).toBe(60 - inline.length);
+    const lines = (await readFile(result.details.spill.file, 'utf8')).trim().split('\n');
+    expect(JSON.parse(lines[0]).id).toBe(`s${inline.length}`);
+  });
+
+  it('keeps a single oversized row inline with no spill file', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue(bulkFolders(1, 20_000));
+
+    const result = await executeFolders(ports);
+
+    expect(result.details.folders).toHaveLength(1);
+    expect(result.details.spill).toBeUndefined();
+  });
+});
+
+describe('list tool interruption', () => {
+  it('threads the tool signal into the folder listing port', async () => {
+    const ports = spyPorts();
+    const controller = new AbortController();
+
+    await toolNamed(register(ports), 'pimote_list_folders').execute('c', {}, controller.signal, undefined, {});
+
+    expect(ports.folders.list).toHaveBeenCalledWith(controller.signal);
+  });
+
+  it('threads the tool signal into the per-folder session reads', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
+    const controller = new AbortController();
+
+    await toolNamed(register(ports), 'pimote_list_sessions').execute('c', {}, controller.signal, undefined, {});
+
+    expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/alpha', controller.signal);
+  });
+
+  it('rejects before touching the ports when the signal is already aborted', async () => {
+    const ports = spyPorts();
+    const controller = new AbortController();
+    controller.abort();
+
+    const run = toolNamed(register(ports), 'pimote_list_folders').execute('c', { fresh: true }, controller.signal, undefined, {});
+
+    await expect(run).rejects.toThrow();
+    expect(ports.folders.list).not.toHaveBeenCalled();
+    expect(ports.repos.invalidateListing).not.toHaveBeenCalled();
+  });
+
+  it('rejects promptly when the signal aborts mid-fill; the shared fill still completes', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
+    ports.sessions.listDiskSessions.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return [makeRecord({ id: 's1' })];
+    });
+    const controller = new AbortController();
+    const run = toolNamed(register(ports), 'pimote_list_sessions').execute('c', {}, controller.signal, undefined, {});
+    controller.abort();
+
+    // The shared fill runs to completion, but the caller rejects instead of
+    // consuming its result.
+    await expect(run).rejects.toThrow();
   });
 });
