@@ -67,7 +67,11 @@
     tick().then(() => autoResize());
   });
 
-  let lastSeq = 0;
+  // Initialize from the singleton's current seq: the request store outlives
+  // this component, so a fresh mount must only react to requests arriving
+  // after mount, never replay a stale one (which would refill the composer
+  // with old text).
+  let lastSeq = editorTextRequest.seq;
   $effect(() => {
     const { sessionId, text, seq } = editorTextRequest;
     if (seq !== lastSeq) {
