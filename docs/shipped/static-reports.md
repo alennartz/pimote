@@ -10,11 +10,10 @@ Short answers belong in the chat as normal markdown. These include a sentence, a
 
 Keep the chat message to a one-to-three sentence summary of the key takeaways plus the hosted card. Never paste the full report content into the chat as well.
 
-## One self-contained file
+## Self-contained rendering
 
-- Everything lives in a single `index.html` at the bundle root: inline `<style>` and `<script>`, no build step.
+- The bundle root holds `index.html`, with inline `<style>` and `<script>` and no build step.
 - No external CDNs or font downloads. The report must render offline and instantly. Use the system font stack.
-- Data you present goes inline in the HTML, or inline JSON plus a little JS. Do not put it in side files the page fetches.
 
 ## Page structure
 
