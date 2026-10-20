@@ -2,6 +2,7 @@ import {
   createAgentSessionRuntime,
   createAgentSessionServices,
   createAgentSessionFromServices,
+  createCodemodeExtension,
   createEventBus,
   ModelRuntime,
   getAgentDir,
@@ -526,6 +527,9 @@ export class PimoteSessionManager {
         ...(staticHostFactory ? [staticHostFactory] : []),
         ...(fileDownloadFactory ? [fileDownloadFactory] : []),
         ...(managerExtensionFactory && (await loadManagerExtension({ cwd }, this.config)) ? [managerExtensionFactory] : []),
+        // pi's codemode builtin. SDK sessions skip pi's built-in extensions, so
+        // register it here. It stays inactive until defaultTools enables it.
+        createCodemodeExtension(),
       ];
       const eventBus = createEventBus();
       eventBusRef.current = eventBus;

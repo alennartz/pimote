@@ -193,7 +193,7 @@ describe('PimoteSessionManager.openSession', () => {
 
     expect(serviceArgs).toHaveLength(2);
     expect(serviceArgs.map((args) => args.modelRuntime)).toEqual([modelRuntime, modelRuntime]);
-    expect(serviceArgs[0]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory]);
-    expect(serviceArgs[1]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory]);
+    expect(serviceArgs[0]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory, expect.any(Function)]);
+    expect(serviceArgs[1]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory, expect.any(Function)]);
   });
 });
