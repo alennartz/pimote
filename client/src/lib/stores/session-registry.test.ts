@@ -1267,6 +1267,166 @@ describe('SessionRegistry', () => {
     });
   });
 
+  // --------------------------------------------------------------------------
+  // Optimistic user message convergence (multi-observer)
+  //
+  // The composer appends the sent text before the server round-trip
+  // (addOptimisticUserMessage) and reconciles it against the next user
+  // message_end events. These tests pin whether each client converges to
+  // the server-authoritative transcript order.
+  // --------------------------------------------------------------------------
+  describe('Optimistic user message convergence (multi-observer)', () => {
+    function textsOf(sessionId: string): string[] {
+      const session = registry.sessions[sessionId]!;
+      return session.messages.map((m) => m.content.find((c: any) => c.type === 'text')?.text ?? '');
+    }
+
+    function replayUserMessage(sessionId: string, text: string): void {
+      registry.handleEvent(makeSessionEvent('message_start', sessionId, { role: 'user' }));
+      registry.handleEvent(makeSessionEvent('message_end', sessionId, { message: makeUserMessage(text) }));
+    }
+
+    it('single sender: echo replaces the optimistic entry exactly once', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.addOptimisticUserMessage('s1', 'my message');
+
+      replayUserMessage('s1', 'my message');
+
+      expect(textsOf('s1')).toEqual(['my message']);
+      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+      expect(registry.sessions['s1'].streamingMessage).toBeNull();
+    });
+
+    it('two senders: the other client\u2019s echo inserts ahead of the pending optimistic slot, own echo replaces it — server order preserved', () => {
+      // Client B holds an optimistic entry while client A\u2019s prompt
+      // (server-ordered first) reaches B. A\u2019s echo must land before B\u2019s
+      // pending entry, then B\u2019s echo replaces the entry in place.
+      registry.addSession('s1', '/path', 'proj');
+      registry.addOptimisticUserMessage('s1', 'message from B');
+
+      // Wire order for B: A\u2019s user message, then B\u2019s.
+      replayUserMessage('s1', 'message from A');
+      replayUserMessage('s1', 'message from B');
+
+      expect(textsOf('s1')).toEqual(['message from A', 'message from B']);
+      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+    });
+
+    it('foreign echo that overtook the own prompt keeps the own entry pending until its echo matches', () => {
+      // Server order [foreign, own] can reach this client as foreign-echo
+      // first when the own prompt response resolved before the foreign
+      // message_end crossed the wire. The pending entry must survive the
+      // foreign echo (no text match) and reconcile on its own echo.
+      registry.addSession('s1', '/path', 'proj');
+      registry.addOptimisticUserMessage('s1', 'mine');
+
+      replayUserMessage('s1', 'theirs');
+      expect(textsOf('s1')).toEqual(['theirs', 'mine']);
+      expect(registry.sessions['s1'].optimisticMessageKeys).toHaveLength(1);
+
+      replayUserMessage('s1', 'mine');
+      expect(textsOf('s1')).toEqual(['theirs', 'mine']);
+      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+    });
+
+    it('reconnect replay: buffered_events replaces the pending optimistic entry once', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.addOptimisticUserMessage('s1', 'sent right before the drop');
+
+      registry.handleEvent({
+        type: 'buffered_events',
+        sessionId: 's1',
+        events: [
+          makeSessionEvent('message_start', 's1', { role: 'user' }) as any,
+          makeSessionEvent('message_end', 's1', { message: makeUserMessage('sent right before the drop') }) as any,
+        ],
+      });
+
+      expect(textsOf('s1')).toEqual(['sent right before the drop']);
+      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+    });
+
+    it('full resync replaces the whole transcript: an unreconciled optimistic entry is dropped, not duplicated', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.addOptimisticUserMessage('s1', 'dropped by the server race');
+
+      registry.handleEvent({
+        type: 'full_resync',
+        sessionId: 's1',
+        state: {
+          model: null,
+          thinkingLevel: 'off',
+          isStreaming: false,
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 's1',
+          autoCompactionEnabled: false,
+          messageCount: 0,
+        },
+        messages: [makeUserMessage('real message')],
+      });
+
+      expect(textsOf('s1')).toEqual(['real message']);
+      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+    });
+
+    it('same client sends twice before any echo: both entries reconcile in order (FIFO)', () => {
+      // agent_start still in flight, so the composer took the prompt path
+      // twice. The server steers the second message into the active run;
+      // each echo replaces its own entry.
+      registry.addSession('s1', '/path', 'proj');
+      registry.addOptimisticUserMessage('s1', 'first');
+      registry.addOptimisticUserMessage('s1', 'second');
+
+      replayUserMessage('s1', 'first');
+      replayUserMessage('s1', 'second');
+
+      expect(textsOf('s1')).toEqual(['first', 'second']);
+      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+    });
+
+    it('assistant echo orders ahead of a still-pending optimistic entry', () => {
+      // Double send: the first prompt runs, the second is steered and
+      // consumed only after the assistant turn. Server order
+      // [first, assistant, second] must survive on the client.
+      registry.addSession('s1', '/path', 'proj');
+      registry.addOptimisticUserMessage('s1', 'first');
+      registry.addOptimisticUserMessage('s1', 'second');
+
+      replayUserMessage('s1', 'first');
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
+      registry.handleEvent(makeSessionEvent('message_end', 's1', { message: makeAssistantMessage('the reply') }));
+      replayUserMessage('s1', 'second');
+
+      expect(textsOf('s1')).toEqual(['first', 'the reply', 'second']);
+      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+    });
+
+    it('a mid-run user echo does not kill the in-flight assistant streaming placeholder', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.addOptimisticUserMessage('s1', 'steered mid-run');
+
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
+      expect(registry.sessions['s1'].streamingMessage?.role).toBe('assistant');
+
+      replayUserMessage('s1', 'steered mid-run');
+
+      expect(registry.sessions['s1'].streamingMessage?.role).toBe('assistant');
+      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+    });
+
+    it('queued_drafts_restored returns an unconsumed optimistic entry to the composer and drops the transcript copy', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.addOptimisticUserMessage('s1', 'queued but aborted');
+
+      registry.handleEvent(makeSessionEvent('queued_drafts_restored', 's1', { steering: ['queued but aborted'], followUp: [] }));
+
+      expect(textsOf('s1')).toEqual([]);
+      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+      expect(registry.sessions['s1'].draftText).toBe('queued but aborted');
+    });
+  });
+
   describe('Session Replacement', () => {
     it('replaceSession re-keys the session entry with clean state', () => {
       registry.addSession('old-id', '/home/user/project', 'project');

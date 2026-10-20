@@ -193,7 +193,17 @@ export interface PerSessionState {
   draftText: string;
   pendingSteeringMessages: string[];
   lastBotActivityTimestamp: string | null;
-  optimisticMessageKey: string | null;
+  /** FIFO of messageKeys for optimistic user entries awaiting their echo,
+   * oldest first. Each incoming user message_end reconciles the front entry
+   * by text; confirmed foreign messages insert ahead of the oldest entry. */
+  optimisticMessageKeys: string[];
+}
+
+/** First text block of a message; '' for image-only or missing messages. */
+function messageText(message: PimoteAgentMessage | undefined): string {
+  if (!message) return '';
+  const textContent = message.content.find((c: PimoteMessageContent) => c.type === 'text');
+  return textContent?.text ?? '';
 }
 
 export class SessionRegistry {
@@ -321,7 +331,7 @@ export class SessionRegistry {
       draftText: '',
       pendingSteeringMessages: [],
       lastBotActivityTimestamp: null,
-      optimisticMessageKey: null,
+      optimisticMessageKeys: [],
     };
   }
 
@@ -356,7 +366,7 @@ export class SessionRegistry {
     const key = 'msg-' + this._nextMessageKey++;
     session.messages = [...session.messages, message];
     session.messageKeys = [...session.messageKeys, key];
-    session.optimisticMessageKey = key;
+    session.optimisticMessageKeys = [...session.optimisticMessageKeys, key];
   }
 
   /** Route an incoming event to the correct session's state */
@@ -366,6 +376,21 @@ export class SessionRegistry {
     // Read the current snapshot and draft only when restoring.
     const session = this.sessions[sessionId];
     if (!session || queued.length === 0) return;
+    // An optimistic entry whose text comes back in a restored queue was never
+    // consumed: the message lives in the composer again, so drop the
+    // transcript copy — no echo will ever reconcile it.
+    if (session.optimisticMessageKeys.length > 0) {
+      const restoredTexts = queued;
+      const droppedKeys = session.optimisticMessageKeys.filter((key) => {
+        const idx = session.messageKeys.indexOf(key);
+        return idx !== -1 && restoredTexts.includes(messageText(session.messages[idx]));
+      });
+      if (droppedKeys.length > 0) {
+        session.messages = session.messages.filter((_, i) => !droppedKeys.includes(session.messageKeys[i]));
+        session.messageKeys = session.messageKeys.filter((key) => !droppedKeys.includes(key));
+        session.optimisticMessageKeys = session.optimisticMessageKeys.filter((key) => !droppedKeys.includes(key));
+      }
+    }
     const text = [...queued, ...(session.draftText ? [session.draftText] : [])].join('\n');
     session.draftText = text;
     setEditorText(sessionId, text);
@@ -508,7 +533,7 @@ export class SessionRegistry {
       case 'message_start': {
         const start = event as MessageStartEvent;
         // Skip streaming placeholder when we already have an optimistic user message displayed
-        if (start.role === 'user' && session.optimisticMessageKey) {
+        if (start.role === 'user' && session.optimisticMessageKeys.length > 0) {
           break;
         }
         session.streamingKey = 'msg-' + this._nextMessageKey++;
@@ -554,20 +579,36 @@ export class SessionRegistry {
         const end = event as MessageEndEvent;
         const message: PimoteAgentMessage = end.message;
 
-        if (message.role === 'user' && session.optimisticMessageKey) {
-          // Replace the optimistic message with the real server message
-          const idx = session.messageKeys.indexOf(session.optimisticMessageKey);
-          if (idx !== -1) {
-            const newMessages = [...session.messages];
-            newMessages[idx] = message;
-            session.messages = newMessages;
+        // Reconcile optimistic entries. Server events arrive in transcript
+        // order, so the echo of our oldest pending prompt replaces that entry
+        // in place, while any other confirmed message (a foreign user message
+        // or an assistant turn) belongs ahead of every still-unconfirmed
+        // entry — appending it would swap the final order.
+        const frontKey = session.optimisticMessageKeys[0];
+        const frontIdx = frontKey !== undefined ? session.messageKeys.indexOf(frontKey) : -1;
+        if (message.role === 'user' && frontIdx !== -1 && messageText(message) === messageText(session.messages[frontIdx])) {
+          const newMessages = [...session.messages];
+          newMessages[frontIdx] = message;
+          session.messages = newMessages;
+          session.optimisticMessageKeys = session.optimisticMessageKeys.slice(1);
+          // The echo's message_start was skipped, so no placeholder exists for
+          // it. Clear streaming state only for a user placeholder from an
+          // unskipped start — never an assistant placeholder streaming across
+          // a mid-run user echo (steering).
+          if (session.streamingMessage?.role === 'user') {
+            session.streamingMessage = null;
+            session.streamingKey = null;
           }
-          session.optimisticMessageKey = null;
-          session.streamingMessage = null;
-          session.streamingKey = null;
         } else {
-          session.messages = [...session.messages, message];
-          // Always append a key in lockstep with messages. If streamingKey is
+          if (frontIdx === -1) {
+            // Key desync: untrack the queue. A resync rebuild is the only
+            // reliable repair, and unreconciled entries must not keep
+            // shifting insert positions.
+            session.optimisticMessageKeys = [];
+          }
+          const insertIdx = session.optimisticMessageKeys.length > 0 ? session.messageKeys.indexOf(session.optimisticMessageKeys[0]) : session.messages.length;
+          session.messages = [...session.messages.slice(0, insertIdx), message, ...session.messages.slice(insertIdx)];
+          // Always place a key in lockstep with messages. If streamingKey is
           // null here (e.g. agent_end cleared it before message_end, or
           // message_end arrived without a preceding message_start), falling
           // through without a key would desync messages/messageKeys by 1 and
@@ -584,7 +625,7 @@ export class SessionRegistry {
               keysLen: session.messageKeys.length,
             });
           }
-          session.messageKeys = [...session.messageKeys, key];
+          session.messageKeys = [...session.messageKeys.slice(0, insertIdx), key, ...session.messageKeys.slice(insertIdx)];
           session.streamingMessage = null;
           session.streamingKey = null;
         }

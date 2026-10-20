@@ -11,7 +11,7 @@ import type { FolderRegistry } from './folder-registry.js';
 import type { FolderListingService } from './folder-listing.js';
 import type { FolderCreator } from './folder-sources/index.js';
 import type { PushNotificationService } from './push-notification.js';
-import { EventBuffer } from './event-buffer.js';
+import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
 import { QueueOwnership } from './queue-ownership.js';
 import type { EventBusController } from '@earendil-works/pi-coding-agent';
 import type { DownloadItem, FolderInfo, PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
@@ -376,6 +376,46 @@ describe('observer command boundary', () => {
       expect(findResponse(ctx.sent, message)).toMatchObject({ success: true });
     }
     expect(prompt.mock.calls.map((args: any[]) => args[0])).toEqual(['first', 'second']);
+  });
+
+  // A prompt that races a run start (agent_start still in flight on the
+  // sender, so its composer took the prompt path) must not die inside pi's
+  // "Agent is already processing" throw. The handler steers it into the
+  // active run under this client's queue ownership, so the consumed user
+  // message echoes back and the sender's optimistic entry reconciles.
+  it('prompt racing an active run is steered into it, not dropped', async () => {
+    const { slot, first, second } = pair();
+    const steer = vi.fn(async () => {});
+    const prompt = vi.fn(async () => {});
+    (slot.session as any).isStreaming = true;
+    (slot.session as any).steer = steer;
+    (slot.session as any).prompt = prompt;
+    await open(first);
+    await open(second);
+
+    await second.handler.handleMessage(
+      JSON.stringify({ type: 'prompt', sessionId: 'session-1', message: 'raced the run start', images: ['data:image/png;base64,AAA'], id: 'race' }),
+    );
+
+    expect(findResponse(second.sent, 'race')).toMatchObject({ success: true });
+    expect(prompt).not.toHaveBeenCalled();
+    expect(steer).toHaveBeenCalledWith('raced the run start', [expect.objectContaining({ mimeType: 'image/png' })]);
+  });
+
+  it('slash prompt racing an active run keeps the prompt() path for pi extension commands', async () => {
+    const { slot, first } = pair();
+    const steer = vi.fn(async () => {});
+    const prompt = vi.fn(async () => {});
+    (slot.session as any).isStreaming = true;
+    (slot.session as any).steer = steer;
+    (slot.session as any).prompt = prompt;
+    await open(first);
+
+    await first.handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-1', message: '/explain this', id: 'slash' }));
+
+    expect(findResponse(first.sent, 'slash')).toMatchObject({ success: true });
+    expect(steer).not.toHaveBeenCalled();
+    expect(prompt).toHaveBeenCalledWith('/explain this', { images: undefined });
   });
 
   it('archives every live slot and closes every observer before setting the flag', async () => {
@@ -1476,6 +1516,45 @@ describe('WsHandler', () => {
 
       const resp = findResponse(sent, 'req-catchup');
       expect(resp!.success).toBe(true);
+    });
+
+    it('does not replay events that were already delivered live during claimSession', async () => {
+      // Real buffer so the two replay calls see true cursor ranges.
+      const eventBuffer = new EventBuffer(64);
+      // History the reconnecting client already holds (cursor 1).
+      eventBuffer.onEvent({ type: 'agent_start' } as IncomingSdkEvent, 'session-1', () => {});
+
+      const slot = createMockSlot({ id: 'session-1', eventBuffer });
+      // Extensions bind during claimSession. The agent consumes the in-flight
+      // prompt inside that window, so the user message fans out live to the
+      // just-attached observer — the same sendSlotEvent path the production
+      // subscription uses.
+      (slot.session as any).bindExtensions = async () => {
+        const sendLive = (e: PimoteSessionEvent) => sendSlotEvent(slot, e);
+        eventBuffer.onEvent({ type: 'message_start', message: { role: 'user', content: [] } } as IncomingSdkEvent, 'session-1', sendLive);
+        eventBuffer.onEvent({ type: 'message_end', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } } as IncomingSdkEvent, 'session-1', sendLive);
+      };
+
+      const sessions = new Map([['session-1', slot]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-1',
+          lastCursor: 0,
+          id: 'req-live-during-claim',
+        }),
+      );
+
+      // The live fan-out is the only delivery of the user message.
+      expect(findEvents(sent, 'message_start')).toHaveLength(1);
+      expect(findEvents(sent, 'message_end')).toHaveLength(1);
+      // The single buffered batch is the pre-claim history only.
+      const buffered = findEvents(sent, 'buffered_events');
+      expect(buffered).toHaveLength(1);
+      expect((buffered[0] as any).events.map((e: PimoteSessionEvent) => e.type)).toEqual(['agent_start']);
     });
 
     it('does not send catch-up when no new events were buffered', async () => {

@@ -1078,6 +1078,24 @@ export class WsHandler {
           break;
         }
 
+        // A plain prompt can race a run start: the sender's composer still saw
+        // an idle session when it chose the prompt path, but the session began
+        // streaming inside the round-trip window. pi's prompt() would then
+        // throw ("Agent is already processing") and the message would be lost
+        // while the response still reports success, stranding the sender's
+        // optimistic transcript entry. Steer it into the active run instead —
+        // the consumed user message echoes back and reconciles like any
+        // steering message. Slash input keeps the prompt() path: pi executes
+        // extension commands even while streaming.
+        if (session.isStreaming && !trimmed.startsWith('/')) {
+          slot.sessionState.queueOwnership.intend('steering', this.clientId, command.message);
+          session.steer(command.message, parseDataUrlImages(command.images)).catch((err) => {
+            console.error(`[WsHandler] steer error:`, err);
+          });
+          this.sendResponse(id, true);
+          break;
+        }
+
         session.prompt(command.message, { images: parseDataUrlImages(command.images) }).catch((err) => {
           console.error(`[WsHandler] prompt error:`, err);
         });
@@ -1740,7 +1758,15 @@ export class WsHandler {
     await this.claimSession(sessionId, slot);
 
     if (replayResult !== null && cursorBeforeClaim !== null) {
-      const catchUp = slot.sessionState.eventBuffer.replay(cursorBeforeClaim);
+      // claimSession attaches the observer synchronously at cursorBeforeClaim,
+      // so every event buffered since then was already fanned out live by
+      // sendSlotEvent, which also advanced the observer's cursor. Replay from
+      // the observer's cursor — never from cursorBeforeClaim — or the catch-up
+      // re-delivers those events and the client appends each message_end twice.
+      // The observer cursor still trails when a live send was skipped (socket
+      // not open), which is the gap the catch-up legitimately retries.
+      const observer = slot.observers.get(this.clientId);
+      const catchUp = slot.sessionState.eventBuffer.replay(observer ? observer.cursor : cursorBeforeClaim);
       if (catchUp && catchUp.length > 0) {
         this.sendEvent({
           type: 'buffered_events',
