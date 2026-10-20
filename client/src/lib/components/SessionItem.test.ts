@@ -67,8 +67,10 @@ const archivedSession: SessionInfo = {
 
 let target: HTMLDivElement;
 let destroy: (() => void) | null = null;
+let renderedSession: SessionInfo | null = null;
 
 function render(session: SessionInfo) {
+  renderedSession = session;
   target = document.createElement('div');
   document.body.appendChild(target);
   const component = mount(SessionItem, { target, props: { session, folderPath } });
@@ -79,6 +81,19 @@ function surface(): HTMLElement {
   const el = target.querySelector('.touch-pan-y');
   if (!(el instanceof HTMLElement)) throw new Error('swipe surface not found');
   return el;
+}
+
+function rowButton(): HTMLButtonElement {
+  const name = renderedSession ? displayNameText(renderedSession) : '';
+  const el = Array.from(target.querySelectorAll('button')).find((b) => (b.textContent ?? '').includes(name));
+  if (!(el instanceof HTMLButtonElement)) throw new Error('row button not found');
+  return el;
+}
+
+function displayNameText(session: SessionInfo): string {
+  if (session.name) return session.name;
+  if (session.firstMessage) return session.firstMessage.length > 60 ? session.firstMessage.slice(0, 60) + '…' : session.firstMessage;
+  return `Session ${session.id.slice(0, 8)}`;
 }
 
 /** Tray buttons render their label as exact text (icon contributes none). */
@@ -122,8 +137,10 @@ beforeEach(() => {
 afterEach(() => {
   destroy?.();
   destroy = null;
+  renderedSession = null;
   sessionRegistry.removeSession(openSession.id);
   sessionRegistry.removeSession(idleSession.id);
+  sessionRegistry.removeSession(archivedSession.id);
   document.body.innerHTML = '';
 });
 
@@ -223,5 +240,46 @@ describe('session row swipe gestures', () => {
       sessionIds: [archivedSession.id],
       archived: false,
     });
+  });
+});
+
+describe('session row click', () => {
+  it('unarchives an archived session, then opens it', async () => {
+    render(archivedSession);
+    await tick();
+
+    const order: string[] = [];
+    (connection.send as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: { type: string }) => {
+      order.push(cmd.type);
+      return { success: true, data: {} };
+    });
+
+    rowButton().click();
+
+    await vi.waitFor(() => expect(order).toContain('open_session'));
+    expect(order.slice(0, 2)).toEqual(['archive_session', 'open_session']);
+    expect(connection.send).toHaveBeenCalledWith({
+      type: 'archive_session',
+      folderPath,
+      sessionIds: [archivedSession.id],
+      archived: false,
+    });
+  });
+
+  it('opens a non-archived session directly', async () => {
+    render(idleSession);
+    await tick();
+
+    const order: string[] = [];
+    (connection.send as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: { type: string }) => {
+      order.push(cmd.type);
+      return { success: true, data: {} };
+    });
+
+    rowButton().click();
+
+    await vi.waitFor(() => expect(order).toContain('open_session'));
+    expect(order[0]).toBe('open_session');
+    expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'archive_session' }));
   });
 });

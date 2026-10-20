@@ -50,25 +50,36 @@
         switchToSession(session.id);
         return;
       }
+      // The server rejects a soft open of an archived session (DR-068). A
+      // click is an explicit user action: unarchive first, then open.
+      if (session.archived && !(await setArchived(false))) return;
       await openExistingSession(session.id, folderPath, { switchTo: true });
     } catch (e) {
       console.error('Failed to open session:', e);
     }
   }
 
-  async function toggleArchived(archived: boolean) {
+  /** Send archive_session. Returns whether the server accepted it. Archiving
+   *  a session open on this client also closes it. */
+  async function setArchived(archived: boolean): Promise<boolean> {
     try {
-      await connection.send({
+      const response = await connection.send({
         type: 'archive_session',
         folderPath,
         sessionIds: [session.id],
         archived,
       });
+      if (!response.success) {
+        console.error('Failed to update archive state:', response.error);
+        return false;
+      }
       if (archived && isActive) {
         closeSession(session.id);
       }
+      return true;
     } catch (e) {
       console.error('Failed to update archive state:', e);
+      return false;
     }
   }
 
@@ -90,7 +101,7 @@
   }
 
   async function swipeArchive(): Promise<SwipeActionOutcome> {
-    await toggleArchived(!session.archived);
+    await setArchived(!session.archived);
     return 'stay';
   }
 
@@ -180,7 +191,7 @@
             <ContextMenu.Item
               class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none max-md:min-h-11 max-md:px-3"
               onSelect={() => {
-                void toggleArchived(!session.archived);
+                void setArchived(!session.archived);
               }}
             >
               {#if session.archived}
