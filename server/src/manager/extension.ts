@@ -296,16 +296,21 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         const outcome = await spillRows('pimote_list_folders', rows, signal);
         // Channel split (DR-073): the guard bounds only the model-facing view;
         // structuredContent carries every row for codemode scripts, details
-        // carries the truncation metadata for renderers.
+        // carries the truncation metadata for renderers — only when the guard
+        // actually truncated.
         return jsonToolResult(
           { folders: rows },
           {
             modelView: { folders: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) },
-            details: {
-              totalRows: rows.length,
-              inlineRows: outcome.rows.length,
-              ...(outcome.spill ? { spill: { file: outcome.spill.file, rows: outcome.spill.rows } } : {}),
-            },
+            ...(outcome.spill
+              ? {
+                  details: {
+                    totalRows: rows.length,
+                    inlineRows: outcome.rows.length,
+                    spill: { file: outcome.spill.file, rows: outcome.spill.rows },
+                  },
+                }
+              : {}),
           },
         );
       },
@@ -391,11 +396,15 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
           { sessions: rows.slice(0, limit) },
           {
             modelView: { sessions: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) },
-            details: {
-              totalRows: Math.min(rows.length, limit),
-              inlineRows: outcome.rows.length,
-              ...(outcome.spill ? { spill: { file: outcome.spill.file, rows: outcome.spill.rows } } : {}),
-            },
+            ...(outcome.spill
+              ? {
+                  details: {
+                    totalRows: Math.min(rows.length, limit),
+                    inlineRows: outcome.rows.length,
+                    spill: { file: outcome.spill.file, rows: outcome.spill.rows },
+                  },
+                }
+              : {}),
           },
         );
       },
