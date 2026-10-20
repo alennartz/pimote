@@ -15,7 +15,7 @@ import type { ManagerToolContext } from './types.js';
 
 interface FakeToolDef {
   name: string;
-  execute: (...args: unknown[]) => Promise<{ details: any; isError?: boolean }>;
+  execute: (...args: unknown[]) => Promise<{ details?: any; structuredContent: any; isError?: boolean }>;
 }
 
 function makeFakePi(): { toolDefs: FakeToolDef[]; api: any } {
@@ -64,7 +64,7 @@ describe('pimote_create_folder (kind: persona)', () => {
     root: string;
     parentPath: string;
     ports: ManagerToolContext;
-    run: (params: unknown) => Promise<{ details: any; isError?: boolean }>;
+    run: (params: unknown) => Promise<{ details?: any; structuredContent: any; isError?: boolean }>;
     cleanup: () => Promise<void>;
   }> {
     const root = await mkdtemp(join(tmpdir(), 'persona-create-'));
@@ -95,7 +95,7 @@ describe('pimote_create_folder (kind: persona)', () => {
       });
 
       expect(result.isError ?? false).toBe(false);
-      const folderPath = result.details.folderPath as string;
+      const folderPath = result.structuredContent.folderPath as string;
       await expect(realpath(join(sandbox.parentPath, 'ada'))).resolves.toBe(folderPath);
 
       // AGENTS.md front matter carries the persona name and description —
@@ -130,10 +130,10 @@ describe('pimote_create_folder (kind: persona)', () => {
     try {
       const result = await sandbox.run({ kind: 'persona', name: 'ada', parentPath: sandbox.parentPath, description: 'helpful agent' });
       expect(result.isError ?? false).toBe(false);
-      const agents = await readFile(join(result.details.folderPath, 'AGENTS.md'), 'utf8');
+      const agents = await readFile(join(result.structuredContent.folderPath, 'AGENTS.md'), 'utf8');
       expect(parsePersonaFrontMatter(agents)).toEqual({ name: 'ada', description: 'helpful agent' });
       expect(agents).toContain('memory.md');
-      await expect(stat(join(result.details.folderPath, 'memory.md'))).resolves.toBeTruthy();
+      await expect(stat(join(result.structuredContent.folderPath, 'memory.md'))).resolves.toBeTruthy();
     } finally {
       await sandbox.cleanup();
     }
@@ -179,7 +179,7 @@ describe('pimote_create_folder (kind: persona)', () => {
     try {
       const result = await sandbox.run({ kind: 'persona', name: 'ada', parentPath: sandbox.root, description: 'helpful agent' });
       expect(result.isError ?? false).toBe(false);
-      await expect(realpath(join(sandbox.root, 'ada'))).resolves.toBe(result.details.folderPath);
+      await expect(realpath(join(sandbox.root, 'ada'))).resolves.toBe(result.structuredContent.folderPath);
     } finally {
       await sandbox.cleanup();
     }
@@ -223,7 +223,7 @@ describe('pimote_create_folder (kind: persona)', () => {
       sandbox.ports.config.roots = [alias];
       const result = await sandbox.run({ kind: 'persona', name: 'ada', parentPath: sandbox.parentPath, description: 'helpful agent' });
       expect(result.isError ?? false).toBe(false);
-      await expect(realpath(join(sandbox.parentPath, 'ada'))).resolves.toBe(result.details.folderPath);
+      await expect(realpath(join(sandbox.parentPath, 'ada'))).resolves.toBe(result.structuredContent.folderPath);
     } finally {
       await sandbox.cleanup();
     }
@@ -241,8 +241,8 @@ describe('pimote_create_folder (kind: persona)', () => {
       expect(result.isError).toBe(true);
       // The collision error carries the structural hint (DR-062): the leaf
       // rule and the symlink alternative, at the error site.
-      expect(result.details.error).toContain('leaves');
-      expect(result.details.error).toContain('never nested');
+      expect(result.structuredContent.error).toContain('leaves');
+      expect(result.structuredContent.error).toContain('never nested');
       await expect(readdir(existing)).resolves.toEqual(['notes.txt']);
       await expect(readFile(join(existing, 'notes.txt'), 'utf8')).resolves.toBe('user-owned\n');
       expect(sandbox.ports.repos.invalidateListing).not.toHaveBeenCalled();

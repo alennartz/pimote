@@ -4,7 +4,7 @@ import { sep } from 'node:path';
 import { Type } from 'typebox';
 import { enrichActiveSessionCounts, isValidFolderName } from '../folder-registry.js';
 import { errorToolResult, jsonToolResult, type JsonToolResult } from '../tool-result.js';
-import { spillRows, SPILL_INLINE_BYTES, type SpillInfo } from './spill.js';
+import { spillRows, SPILL_INLINE_BYTES } from './spill.js';
 import type { FolderInfo } from '../../../shared/dist/index.js';
 import { MEMORY_MAINTENANCE_INSTRUCTION, seedPersonaFolder } from './seed.js';
 import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext } from './types.js';
@@ -26,13 +26,16 @@ import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext } from
  *   onto disk records, optional query/open/folderPath filters),
  *   `pimote_start_session`, `pimote_archive_sessions`.
  *
- * Reads carry two cross-cutting policies:
+ * Reads carry three cross-cutting policies:
  * - Spill guard (DR-071): list results past a 16KB serialized budget keep
  *   their first rows inline; the rest spills to a JSONL file the payload
  *   points at with a jq/grep hint (`spill.ts`).
  * - Interruption (DR-072): list tools race pi's turn-abort signal against
  *   the ports — callers reject at once; shared walks and cache fills always
  *   complete for the next reader. Mutations complete once started.
+ * - Channel split (DR-073): the guard bounds only the model-facing view;
+ *   `structuredContent` carries every row for codemode scripts, `details`
+ *   carries truncation metadata only — never a payload copy.
  * - Mutations: `pimote_create_folder` (kind-parameterized: the four wizard
  *   shapes), `pimote_update_folder` (curation), `pimote_update_hub_members`
  *   (batch add/remove with per-member outcomes).
@@ -274,7 +277,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       }),
       annotations: { readOnlyHint: true },
       outputSchema: Type.Object({ folders: Type.Array(FolderInfoSchema), spill: Type.Optional(SpillInfoSchema) }),
-      execute: async (_callId, params, signal): Promise<JsonToolResult<{ error: string } | { folders: FolderInfo[]; spill?: SpillInfo }>> => {
+      execute: async (_callId, params, signal): Promise<JsonToolResult> => {
         signal?.throwIfAborted();
         if (params.fresh) context.repos.invalidateListing();
         let folders: FolderInfo[];
@@ -291,7 +294,20 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         enrichActiveSessionCounts(folders, context.sessions.getAllSessions());
         const rows = folders.filter((folder) => params.nature === undefined || folder.nature === params.nature).map(applyFolderDefaults);
         const outcome = await spillRows('pimote_list_folders', rows, signal);
-        return jsonToolResult({ folders: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) });
+        // Channel split (DR-073): the guard bounds only the model-facing view;
+        // structuredContent carries every row for codemode scripts, details
+        // carries the truncation metadata for renderers.
+        return jsonToolResult(
+          { folders: rows },
+          {
+            modelView: { folders: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) },
+            details: {
+              totalRows: rows.length,
+              inlineRows: outcome.rows.length,
+              ...(outcome.spill ? { spill: { file: outcome.spill.file, rows: outcome.spill.rows } } : {}),
+            },
+          },
+        );
       },
     });
 
@@ -314,7 +330,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       }),
       annotations: { readOnlyHint: true },
       outputSchema: Type.Object({ sessions: Type.Array(SessionRowSchema), spill: Type.Optional(SpillInfoSchema) }),
-      execute: async (_callId, params, signal): Promise<JsonToolResult<{ error: string } | { sessions: SessionRow[]; spill?: SpillInfo }>> => {
+      execute: async (_callId, params, signal): Promise<JsonToolResult> => {
         signal?.throwIfAborted();
         const query = params.query?.trim().toLowerCase() || undefined;
         let folders: FolderInfo[];
@@ -370,7 +386,18 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         // Newest first; ISO 8601 timestamps compare chronologically as strings.
         rows.sort((a, b) => (a.modified < b.modified ? 1 : a.modified > b.modified ? -1 : 0));
         const outcome = await spillRows('pimote_list_sessions', rows.slice(0, limit), signal);
-        return jsonToolResult({ sessions: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) });
+        // Channel split (DR-073): see pimote_list_folders.
+        return jsonToolResult(
+          { sessions: rows.slice(0, limit) },
+          {
+            modelView: { sessions: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) },
+            details: {
+              totalRows: Math.min(rows.length, limit),
+              inlineRows: outcome.rows.length,
+              ...(outcome.spill ? { spill: { file: outcome.spill.file, rows: outcome.spill.rows } } : {}),
+            },
+          },
+        );
       },
     });
 
@@ -391,7 +418,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         folderPath: Type.String(),
         firstMessageSent: Type.Boolean(),
       }),
-      execute: async (_callId, params): Promise<JsonToolResult<{ error: string } | { sessionId: string; folderPath: string; firstMessageSent: boolean }>> => {
+      execute: async (_callId, params): Promise<JsonToolResult> => {
         const folders = await context.folders.list();
         if (!folders.some((folder) => folder.path === params.folderPath)) {
           return errorToolResult(`unknown folder: ${params.folderPath} — use pimote_list_folders to see known folders`);
@@ -445,7 +472,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         body: Type.Optional(Type.String({ description: 'Code kinds only: seeded AGENTS.md body; a stub is written even when empty.' })),
       }),
       outputSchema: FolderPathResultSchema,
-      execute: async (_callId, params): Promise<JsonToolResult<{ error: string } | { folderPath: string }>> => {
+      execute: async (_callId, params): Promise<JsonToolResult> => {
         const kind: CreateFolderKind = params.kind;
         if (!isValidFolderName(params.name)) {
           return errorToolResult(`invalid name ${JSON.stringify(params.name)} — use one nonempty basename segment (not "." or "..")`);
@@ -532,7 +559,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         removeTags: Type.Optional(Type.Array(Type.String(), { description: 'User tags to remove.' })),
       }),
       outputSchema: FolderPathResultSchema,
-      execute: async (_callId, params): Promise<JsonToolResult<{ error: string } | { folderPath: string }>> => {
+      execute: async (_callId, params): Promise<JsonToolResult> => {
         const { folderPath, favorite, archived, addTags, removeTags } = params;
         if (favorite === undefined && archived === undefined && !addTags?.length && !removeTags?.length) {
           return errorToolResult('nothing to update — pass at least one of favorite, archived, addTags, removeTags');
@@ -569,7 +596,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         remove: Type.Optional(Type.Array(Type.String(), { description: 'Canonical member paths to remove.' })),
       }),
       outputSchema: Type.Object({ results: Type.Array(MemberOutcomeSchema) }),
-      execute: async (_callId, params): Promise<JsonToolResult<{ error: string } | { results: MemberOutcome[] }>> => {
+      execute: async (_callId, params): Promise<JsonToolResult> => {
         const additions = params.add ?? [];
         const removals = params.remove ?? [];
         if (additions.length === 0 && removals.length === 0) {

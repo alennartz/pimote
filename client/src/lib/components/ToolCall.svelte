@@ -223,10 +223,10 @@
   }
 
   let argsText = $derived(streaming && !content.args ? (content.text ?? '') : formatData(content.args));
-  // Prefer the structured payload when the text is just its serialization
-  // (pimote tools stringify their payload into the text block) — renders as
-  // pretty typed data instead of a compact JSON string. Built-in tools keep
-  // their prose text; their `data` (details) is metadata, not the result.
+  // Prefer structured data when the text is just its serialization — renders
+  // as pretty typed data instead of a compact JSON string. Most tools keep
+  // prose in the text and leave details as metadata or empty, so this fires
+  // rarely.
   let resultValue = $derived.by(() => {
     if (!isResult && result === undefined) return partialResult;
     const text = isResult ? content.result : result;

@@ -101,8 +101,8 @@ describe('createFileDownloadExtension', () => {
     const tool = pi.toolDefs.find((candidate) => candidate.name === 'pimote_send_file')!;
     const result = await tool.execute('call-1', { path: 'report.pdf' }, undefined, undefined, makeContext('session-1', '/workspace/project'));
     expect(manager.offer).toHaveBeenCalledWith({ sessionId: 'session-1', workspaceRoot: '/workspace/project', path: 'report.pdf' });
-    expect(result).toMatchObject({ details: { id: 'opaque-1', filename: 'report.pdf', sizeBytes: 42 } });
-    expect((result as { details: Record<string, unknown> }).details).not.toHaveProperty('href');
+    expect(result).toMatchObject({ structuredContent: { id: 'opaque-1', filename: 'report.pdf', sizeBytes: 42 } });
+    expect((result as { structuredContent: Record<string, unknown> }).structuredContent).not.toHaveProperty('href');
   });
 
   it('passes session ownership into the cancel tool', async () => {

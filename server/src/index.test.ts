@@ -383,7 +383,7 @@ describe('main — manager toolset port wiring', () => {
     name: string;
     parameters: { type?: string; properties?: Record<string, unknown> };
     annotations: { readOnlyHint?: boolean };
-    execute: (...args: unknown[]) => Promise<{ details: any }>;
+    execute: (...args: unknown[]) => Promise<{ details?: any; structuredContent: any }>;
   }
 
   /** Run main(), then register the manager extension's tools against a fake
@@ -454,7 +454,7 @@ describe('main — manager toolset port wiring', () => {
 
     const result = await toolNamed(await registeredManagerTools(), 'pimote_list_folders').execute('call-1', {}, undefined, undefined, {});
 
-    expect(result.details.folders).toEqual([
+    expect(result.structuredContent.folders).toEqual([
       {
         path: '/workspace/alpha',
         name: 'alpha',
@@ -507,7 +507,7 @@ describe('main — manager toolset port wiring', () => {
     expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/alpha', { signal: undefined });
     expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/beta', { signal: undefined });
     expect(mocks.sessionMetadataStore.getArchivedLookup).toHaveBeenCalledWith(['/sessions/s1.jsonl']);
-    expect(result.details.sessions).toEqual([
+    expect(result.structuredContent.sessions).toEqual([
       {
         id: 's1',
         name: 'Fix login',
@@ -541,8 +541,10 @@ describe('main — manager toolset port wiring', () => {
     expect(mocks.sessionManager.openSession).toHaveBeenNthCalledWith(2, '/workspace/alpha');
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith('do the thing');
-    expect(withMessage.details).toEqual({ sessionId: 'sess-9', folderPath: '/workspace/alpha', firstMessageSent: true });
-    expect(withoutMessage.details).toEqual({ sessionId: 'sess-9', folderPath: '/workspace/alpha', firstMessageSent: false });
+    expect(withMessage.structuredContent).toEqual({ sessionId: 'sess-9', folderPath: '/workspace/alpha', firstMessageSent: true });
+    expect(withoutMessage.structuredContent).toEqual({ sessionId: 'sess-9', folderPath: '/workspace/alpha', firstMessageSent: false });
+    // Action tools have no renderer metadata: details stays empty.
+    expect(withMessage.details).toBeUndefined();
   });
 
   it('wires openSession for a persona folder', async () => {
@@ -552,7 +554,7 @@ describe('main — manager toolset port wiring', () => {
     const result = await toolNamed(await registeredManagerTools(), 'pimote_start_session').execute('call-1', { folderPath: '/workspace/personas/ada' }, undefined, undefined, {});
 
     expect(mocks.sessionManager.openSession).toHaveBeenCalledWith('/workspace/personas/ada');
-    expect(result.details).toEqual({ sessionId: 'sess-10', folderPath: '/workspace/personas/ada', firstMessageSent: false });
+    expect(result.structuredContent).toEqual({ sessionId: 'sess-10', folderPath: '/workspace/personas/ada', firstMessageSent: false });
   });
 
   it('wires archiveSessions for an open session: canonical archive on the slot file, slot evicted, clients notified', async () => {
@@ -568,7 +570,7 @@ describe('main — manager toolset port wiring', () => {
     // The live slot's session file wins; no disk scan is needed.
     expect(mocks.sessionRecords.resolveSessionPath).not.toHaveBeenCalled();
     expect(broadcast).toHaveBeenCalledWith({ type: 'session_archived', sessionId: 's1', folderPath: '/workspace/alpha', archived: true });
-    expect(result.details.results).toEqual([{ sessionId: 's1', outcome: 'open_slot_evicted' }]);
+    expect(result.structuredContent.results).toEqual([{ sessionId: 's1', outcome: 'open_slot_evicted' }]);
   });
 
   it('wires archiveSessions for a closed session: resolves the record across folders, archives on disk, leaves no slot to evict', async () => {
@@ -580,7 +582,7 @@ describe('main — manager toolset port wiring', () => {
     expect(mocks.sessionRecords.resolveSessionPath).toHaveBeenCalledWith('/workspace/alpha', 's2');
     expect(mocks.sessionMetadataStore.setArchived).toHaveBeenCalledWith('/sessions/s2.jsonl', true);
     expect(mocks.sessionManager.closeSession).not.toHaveBeenCalled();
-    expect(result.details.results).toEqual([{ sessionId: 's2', outcome: 'archived' }]);
+    expect(result.structuredContent.results).toEqual([{ sessionId: 's2', outcome: 'archived' }]);
   });
 
   it('wires archiveSessions for an unknown session id: reports not_found without touching the metadata store', async () => {
@@ -590,7 +592,7 @@ describe('main — manager toolset port wiring', () => {
 
     expect(mocks.sessionMetadataStore.setArchived).not.toHaveBeenCalled();
     expect(mocks.sessionManager.closeSession).not.toHaveBeenCalled();
-    expect(result.details.results).toEqual([{ sessionId: 'ghost', outcome: 'not_found' }]);
+    expect(result.structuredContent.results).toEqual([{ sessionId: 'ghost', outcome: 'not_found' }]);
   });
 
   it('passes the canonical managerRoot to the session manager without scanning it', async () => {

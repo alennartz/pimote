@@ -16,7 +16,9 @@ Reference for the manager session: its folder, persona, hub, and session tools, 
 
 ## Large results: the spill guard
 
-A list result whose serialized rows exceed 16KB keeps only the inline prefix that fits. The payload then carries a `spill` field: the absolute path of a JSONL file holding the remaining rows in the same order, the spilled row count, and a search hint. Search the file with `jq` or `grep` instead of re-calling the tool with a bigger limit — one JSON object per line, so `jq -c 'select(.name // .id | test("PATTERN"; "i"))' <file>` works directly. Prefer tighter filters (`query`, `folderPath`, `nature`) when you know what you are looking for; the spill file is for wide sweeps.
+A list result whose serialized rows exceed 16KB keeps only the inline prefix that fits. The result then carries a `spill` field: the absolute path of a JSONL file holding the remaining rows in the same order, the spilled row count, and a search hint. Search the file with `jq` or `grep` instead of re-calling the tool with a bigger limit — one JSON object per line, so `jq -c 'select(.name // .id | test("PATTERN"; "i"))' <file>` works directly. Prefer tighter filters (`query`, `folderPath`, `nature`) when you know what you are looking for; the spill file is for wide sweeps.
+
+The guard bounds only the result you see. Codemode scripts calling these tools receive every row in `structuredContent` and never need the spill file.
 
 ## Interruption
 

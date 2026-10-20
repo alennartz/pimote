@@ -174,7 +174,7 @@ describe('createStaticHostExtension', () => {
 
     const removeTool = pi.toolDefs.find((t) => t.name === 'pimote_static_host_remove')!;
     const out = await removeTool.execute('c', { slug: 'taken-2' }, undefined, undefined, makeCtx('sess-X'));
-    expect((out.details as { removed: boolean }).removed).toBe(true);
+    expect((out.structuredContent as { removed: boolean }).removed).toBe(true);
   });
 
   function navigateEvents(): Array<{ url: string }> {
