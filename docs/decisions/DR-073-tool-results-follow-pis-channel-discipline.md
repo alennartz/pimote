@@ -16,7 +16,7 @@ One audience per channel, for every pimote tool:
 
 - `content` — the model-facing view. Data tools bound it with the spill guard; the inline prefix plus the `spill` pointer live here.
 - `structuredContent` — the complete, outputSchema-valid payload. Never truncated. Codemode scripts never need the spill file.
-- `details` — renderer/state metadata only (list tools: `totalRows`, `inlineRows`, spill pointer). Undefined otherwise. Never a copy of the payload.
+- `details` — renderer/state metadata only (list tools: `totalRows`, `inlineRows`, plus the spill pointer when the guard truncated; present on every list call, since the counts help a renderer even under budget). Undefined for tools with none. Never a copy of the payload.
 
 `jsonToolResult` gained optional `modelView`/`details` overrides; the ten small action tools keep the single-payload call, where the channels legitimately coincide.
 

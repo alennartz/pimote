@@ -296,21 +296,17 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         const outcome = await spillRows('pimote_list_folders', rows, signal);
         // Channel split (DR-073): the guard bounds only the model-facing view;
         // structuredContent carries every row for codemode scripts, details
-        // carries the truncation metadata for renderers — only when the guard
-        // actually truncated.
+        // carries renderer metadata for the list view: row counts, plus the
+        // spill pointer when the guard truncated.
         return jsonToolResult(
           { folders: rows },
           {
             modelView: { folders: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) },
-            ...(outcome.spill
-              ? {
-                  details: {
-                    totalRows: rows.length,
-                    inlineRows: outcome.rows.length,
-                    spill: { file: outcome.spill.file, rows: outcome.spill.rows },
-                  },
-                }
-              : {}),
+            details: {
+              totalRows: rows.length,
+              inlineRows: outcome.rows.length,
+              ...(outcome.spill ? { spill: { file: outcome.spill.file, rows: outcome.spill.rows } } : {}),
+            },
           },
         );
       },
@@ -396,15 +392,11 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
           { sessions: rows.slice(0, limit) },
           {
             modelView: { sessions: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) },
-            ...(outcome.spill
-              ? {
-                  details: {
-                    totalRows: Math.min(rows.length, limit),
-                    inlineRows: outcome.rows.length,
-                    spill: { file: outcome.spill.file, rows: outcome.spill.rows },
-                  },
-                }
-              : {}),
+            details: {
+              totalRows: Math.min(rows.length, limit),
+              inlineRows: outcome.rows.length,
+              ...(outcome.spill ? { spill: { file: outcome.spill.file, rows: outcome.spill.rows } } : {}),
+            },
           },
         );
       },

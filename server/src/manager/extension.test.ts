@@ -639,9 +639,9 @@ describe('list tool spill guard', () => {
     const result = await executeFolders(ports);
 
     expect(result.structuredContent.folders).toHaveLength(1);
-    // Under budget: no spill pointer on the model view, no truncation metadata.
+    // Under budget: no spill pointer on the model view; details still reports the row counts.
     expect(JSON.parse(result.content[0].text).spill).toBeUndefined();
-    expect(result.details).toBeUndefined();
+    expect(result.details).toEqual({ totalRows: 1, inlineRows: 1 });
     expect(Value.Check(toolNamed(register(ports), 'pimote_list_folders').outputSchema, result.structuredContent)).toBe(true);
   });
 
@@ -694,9 +694,9 @@ describe('list tool spill guard', () => {
     const result = await executeFolders(ports);
 
     expect(result.structuredContent.folders).toHaveLength(1);
-    // A single monster row stays fully inline: no spill pointer, no metadata.
+    // A single monster row stays fully inline: no spill pointer; details reports the counts.
     expect(JSON.parse(result.content[0].text).spill).toBeUndefined();
-    expect(result.details).toBeUndefined();
+    expect(result.details).toEqual({ totalRows: 1, inlineRows: 1 });
   });
 });
 
