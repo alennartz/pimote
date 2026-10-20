@@ -674,7 +674,9 @@
         spellcheck={false}
         aria-label="Bash command"
         class="border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:border-ring focus:ring-ring block w-full resize-none overflow-hidden rounded-xl border py-3 pr-11 pl-4 text-sm transition-colors focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50
-          {isBangCommand ? 'border-warning bg-warning/10 focus:border-warning focus:ring-warning font-mono' : 'pointer-events-none absolute inset-0 opacity-0'}
+          {isBangCommand
+          ? 'border-warning bg-warning/10 focus:border-warning focus:ring-warning font-mono [font-variant-ligatures:none]'
+          : 'pointer-events-none absolute inset-0 opacity-0'}
           {dragOver ? 'ring-ring ring-2' : ''}"
       ></textarea>
 

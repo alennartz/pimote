@@ -164,5 +164,6 @@
     line-height: 1.5;
     color: var(--muted-foreground);
     font-family: var(--font-mono);
+    font-variant-ligatures: none;
   }
 </style>

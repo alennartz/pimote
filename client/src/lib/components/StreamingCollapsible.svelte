@@ -59,6 +59,7 @@
     line-height: 1.5;
     color: var(--foreground);
     font-family: var(--font-mono);
+    font-variant-ligatures: none;
   }
 
   .collapsible-text.scrollable {

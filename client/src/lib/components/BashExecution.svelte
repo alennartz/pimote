@@ -210,6 +210,7 @@
     min-width: 0;
     overflow-wrap: anywhere;
     font-family: var(--font-mono, monospace);
+    font-variant-ligatures: none;
     font-size: 0.82rem;
     font-weight: 600;
   }
@@ -221,6 +222,7 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     font-family: var(--font-mono, monospace);
+    font-variant-ligatures: none;
     font-size: 0.78rem;
     line-height: 1.45;
   }

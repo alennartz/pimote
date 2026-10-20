@@ -36,6 +36,10 @@
       '.cm-scroller': {
         overflow: 'auto',
         fontFamily: 'var(--font-mono)',
+        // JetBrains Mono Variable shapes `--` / `!!` as spacer+ligature pairs;
+        // renderers that clip ligature ink to its advance drop the first
+        // character visually. Command text must stay verbatim.
+        fontVariantLigatures: 'none',
         lineHeight: '1.6',
       },
       '.cm-content': {

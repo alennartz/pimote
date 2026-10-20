@@ -318,6 +318,7 @@
   .tool-name {
     flex-shrink: 0;
     font-family: var(--font-mono);
+    font-variant-ligatures: none;
     font-weight: 500;
     color: var(--foreground);
   }
@@ -329,6 +330,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: var(--font-mono);
+    font-variant-ligatures: none;
     font-size: 0.75rem;
     color: var(--muted-foreground);
   }

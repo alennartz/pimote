@@ -170,6 +170,7 @@
     border-radius: 0;
     font-size: 0.875em;
     font-family: var(--font-mono);
+    font-variant-ligatures: none;
     line-height: 1.5;
     display: block;
     white-space: pre;
@@ -194,6 +195,7 @@
     padding: 3px 8px;
     font-size: 0.7rem;
     font-family: var(--font-mono, monospace);
+    font-variant-ligatures: none;
     line-height: 1;
     color: var(--muted-foreground);
     background: color-mix(in oklch, var(--surface-hover) 85%, transparent);

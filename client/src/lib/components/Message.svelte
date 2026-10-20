@@ -482,6 +482,7 @@
     margin-top: 6px;
     color: var(--muted-foreground);
     font-family: var(--font-mono, monospace);
+    font-variant-ligatures: none;
     font-size: 0.75rem;
   }
 
@@ -543,6 +544,7 @@
 
   .skill-label {
     font-family: var(--font-mono, monospace);
+    font-variant-ligatures: none;
   }
 
   .skill-line-count {
@@ -637,6 +639,7 @@
 
   .custom-label {
     font-family: var(--font-mono, monospace);
+    font-variant-ligatures: none;
   }
 
   .custom-line-count {

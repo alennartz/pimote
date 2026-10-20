@@ -49,6 +49,7 @@
     border-radius: 0;
     font-size: 0.875em;
     font-family: var(--font-mono);
+    font-variant-ligatures: none;
     line-height: 1.5;
     white-space: pre;
     display: block;
