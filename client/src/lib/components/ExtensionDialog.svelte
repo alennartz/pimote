@@ -4,7 +4,7 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
-  import { Badge } from '$lib/components/ui/badge/index.js';
+  import CodeEditorDialog from '$lib/components/CodeEditorDialog.svelte';
   import { getExtensionDialogInitialValue } from '$lib/extension-dialog-state.js';
   import type { ResolvedEditorLanguage } from '$lib/editor-language.js';
 
@@ -19,23 +19,19 @@
     return uiQueue.all.find((r) => !INLINE_METHODS.has(r.method) && r.sessionId === viewedId) ?? null;
   });
 
-  // Lazy-loaded editor deps (CodeMirror + highlight.js) — only fetched when editor dialog opens
-  let editorModule: typeof import('$lib/components/ExtensionCodeEditor.svelte') | null = $state(null);
+  // Language detection is lazy too: editor-language pulls in highlight.js.
   let editorLanguage: ResolvedEditorLanguage | null = $state(null);
 
   $effect(() => {
-    if (current?.method === 'editor') {
-      // Kick off both lazy loads in parallel
-      const title = current.title;
-      const prefill = current.prefill as string | undefined;
-      Promise.all([import('$lib/components/ExtensionCodeEditor.svelte'), import('$lib/editor-language.js')]).then(([mod, langMod]) => {
-        editorModule = mod;
-        editorLanguage = langMod.resolveEditorLanguage(title, prefill);
-      });
-    } else {
-      editorModule = null;
+    if (current?.method !== 'editor') {
       editorLanguage = null;
+      return;
     }
+    const title = current.title;
+    const prefill = current.prefill as string | undefined;
+    void import('$lib/editor-language.js').then((langMod) => {
+      editorLanguage = langMod.resolveEditorLanguage(title, prefill);
+    });
   });
 
   $effect(() => {
@@ -95,50 +91,17 @@
         </Dialog.Footer>
       </form>
     </Dialog.Content>
-  {:else if current?.method === 'editor'}
-    <Dialog.Content
-      showCloseButton={false}
-      class="top-0 left-0 flex h-dvh w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 sm:top-1/2 sm:left-1/2 sm:h-[min(92dvh,960px)] sm:w-[min(96vw,1280px)] sm:max-w-[min(96vw,1280px)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl"
-    >
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          handleEditorSubmit();
-        }}
-        class="flex h-full min-h-0 flex-col"
-      >
-        <header class="bg-background/95 z-10 flex shrink-0 flex-col gap-2 border-b px-4 py-3 backdrop-blur sm:px-5" style="padding-top: max(0.75rem, env(safe-area-inset-top));">
-          <div class="flex flex-col items-start gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div class="w-full min-w-0 sm:w-auto">
-              <div class="text-base font-semibold break-words">{current.title ?? 'Editor'}</div>
-              {#if current.message}
-                <div class="text-muted-foreground mt-1 text-sm">{current.message}</div>
-              {/if}
-            </div>
-            {#if editorLanguage}
-              <Badge variant="outline" class="max-w-full shrink-0 whitespace-nowrap">{editorLanguage.label}</Badge>
-            {/if}
-          </div>
-        </header>
-
-        <div class="min-h-0 flex-1 overflow-hidden">
-          {#if editorModule}
-            <editorModule.default bind:value={inputValue} language={editorLanguage?.id ?? null} />
-          {:else}
-            <div class="flex h-full items-center justify-center">
-              <span class="text-muted-foreground text-sm">Loading editor…</span>
-            </div>
-          {/if}
-        </div>
-
-        <div
-          class="bg-background/95 z-10 flex shrink-0 flex-col gap-2 border-t px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-end sm:px-5"
-          style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));"
-        >
-          <Button variant="outline" type="button" class="w-full sm:w-auto" onclick={handleCancel}>Cancel</Button>
-          <Button type="submit" class="w-full sm:w-auto">Save</Button>
-        </div>
-      </form>
-    </Dialog.Content>
   {/if}
 </Dialog.Root>
+{#if current?.method === 'editor'}
+  <CodeEditorDialog
+    bind:open={dialogOpen}
+    title={current.title ?? 'Editor'}
+    subtitle={(current.message as string | undefined) ?? null}
+    badge={editorLanguage?.label ?? null}
+    language={editorLanguage?.id ?? null}
+    bind:value={inputValue}
+    onclose={handleCancel}
+    onsave={handleEditorSubmit}
+  />
+{/if}
