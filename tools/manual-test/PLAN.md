@@ -280,7 +280,7 @@ manager sessions: submission creates a session on the ordinary
 conversation surface, old sessions resume behind the `Previous sessions`
 click and across full server restarts, a disconnect keeps runs processing
 server-side, and reconnect replays from the client's cursor. The
-manager-exclusive pimote toolset (`pimote_list_folders`,
+manager-exclusive pimote toolset (`pimote_find_folders`,
 `pimote_create_folder`, `pimote_update_folder`, `pimote_update_hub_members`, …)
 answers over real server APIs; `pimote_create_folder` publishes new persona
 folders via `folders_changed`. Manager folder listings remain complete,

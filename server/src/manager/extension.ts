@@ -4,7 +4,7 @@ import { sep } from 'node:path';
 import { Type } from 'typebox';
 import { enrichActiveSessionCounts, isValidFolderName } from '../folder-registry.js';
 import { errorToolResult, jsonToolResult, type JsonToolResult } from '../tool-result.js';
-import { spillRows, SPILL_INLINE_BYTES } from './spill.js';
+import { spillRows } from './spill.js';
 import type { FolderInfo } from '../../../shared/dist/index.js';
 import { MEMORY_MAINTENANCE_INSTRUCTION, seedPersonaFolder } from './seed.js';
 import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext } from './types.js';
@@ -17,14 +17,14 @@ import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext } from
  *
  * Toolset shape — every dashboard folder mutation has a tool twin, and one
  * read answers the folder space:
- * - `pimote_list_folders` — rows + curation + git facts (`repo`, hub `repos`)
- *   + hub membership (`members`) + live counts, `nature` filter, `fresh`
- *   flag. Identity and membership live on the rows; no separate repo or tree
- *   view (owner ruling 2026-01-14: the walk-structure report has no manager
- *   job).
- * - Sessions: `pimote_list_sessions` (one unified view — live state enriched
- *   onto disk records, optional query/open/folderPath filters),
- *   `pimote_start_session`, `pimote_archive_sessions`.
+ * - `pimote_find_folders` — rows + curation + git facts (`repo`, hub `repos`)
+ *   + hub membership (`members`) + live counts; query/nature/hub/archived
+ *   filters, the query two-tier like the dashboard search (DR-074). Identity
+ *   and membership live on the rows; no separate repo or tree view (owner
+ *   ruling 2026-01-14: the walk-structure report has no manager job).
+ * - Sessions: `pimote_find_sessions` (one unified view — live state enriched
+ *   onto disk records, optional query/open/folderPath/includeArchived
+ *   filters), `pimote_start_session`, `pimote_archive_sessions`.
  *
  * Reads carry three cross-cutting policies:
  * - Spill guard (DR-071): list results past a 16KB serialized budget keep
@@ -40,14 +40,11 @@ import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext } from
  *   shapes), `pimote_update_folder` (curation), `pimote_update_hub_members`
  *   (batch add/remove with per-member outcomes).
  *
- * `fresh: true` on a read drops the shared discovery cache first so
- * the read blocks on a fresh walk instead of serving data up to one TTL
- * (~30s) old. Absorbs a dedicated rescan tool.
+ * No freshness flag (DR-074, revising DR-062): reads serve the shared
+ * discovery cache as-is — stale while revalidating, up to one ~30s TTL —
+ * and mutations invalidate and broadcast at once.
  */
 
-/** Default/capped result count for pimote_list_sessions. */
-const LIST_DEFAULT_LIMIT = 20;
-const LIST_MAX_LIMIT = 100;
 /** Excerpt length for firstMessage in list rows. */
 const FIRST_MESSAGE_EXCERPT_LENGTH = 200;
 
@@ -76,16 +73,6 @@ function isCollision(error: unknown): boolean {
 /** Live status of one open session, mirrored from ManagedSessionSummary. */
 const SESSION_STATUS = Type.Union([Type.Literal('working'), Type.Literal('idle')]);
 
-/** Freshness flag shared by the folder-space reads. */
-const FRESH_PARAM = Type.Optional(
-  Type.Boolean({
-    description:
-      'Drop the discovery cache before reading, so the result reflects the filesystem now. ' +
-      'Without it, reads may serve data up to one TTL (~30s) old while a background refresh runs. ' +
-      'Use after manual mv/ln, or to verify that a change converged.',
-  }),
-);
-
 /** Output schemas: the machine-readable contract for each tool's
  *  structuredContent. */
 const RepoInfoSchema = Type.Object({
@@ -108,7 +95,7 @@ const PersonaInfoSchema = Type.Object({
   description: Type.Optional(Type.String()),
 });
 
-/** Structured output for `pimote_list_folders`: the complete `FolderInfo`
+/** Structured output for `pimote_find_folders`: the complete `FolderInfo`
  *  row. The defaulted fields (favorite/archived/missing false, tags empty,
  *  counts zero) are required and annotated with their defaults. Repo facts and
  *  hub member inventory stay explicit so the single list tool answers both. */
@@ -153,7 +140,7 @@ function applyFolderDefaults(folder: FolderInfo): FolderInfo {
   };
 }
 
-/** One session row of `pimote_list_sessions`: a disk record with live state
+/** One session row of `pimote_find_sessions`: a disk record with live state
  *  patched on when the session is open. */
 const SessionRowSchema = Type.Object({
   id: Type.String(),
@@ -168,7 +155,7 @@ const SessionRowSchema = Type.Object({
   messageCount: Type.Integer(),
 });
 
-/** One session row, as returned by pimote_list_sessions. */
+/** One session row, as returned by pimote_find_sessions. */
 interface SessionRow {
   id: string;
   name?: string;
@@ -257,29 +244,48 @@ async function resolveParentInRoot(parentPath: string, roots: readonly string[])
   return { parentPath: canonicalParent };
 }
 
+/** Two-tier dashboard search semantics (folder-listing `matchRow`): a folder
+ *  matches when its text — persona name, name, path, tags — contains the
+ *  query, or when any of its disk sessions matches on name or first message.
+ *  Session reads run per surviving row, so apply the cheaper filters first
+ *  and keep this tier small. */
+async function filterByQuery(rows: FolderInfo[], query: string, sessions: ManagerToolContext['sessions'], signal: AbortSignal | undefined): Promise<FolderInfo[]> {
+  const matched: FolderInfo[] = [];
+  for (const row of rows) {
+    const folderText = [row.persona?.name ?? row.name, row.name, row.path, ...row.tags];
+    if (folderText.some((text) => text.toLowerCase().includes(query))) {
+      matched.push(row);
+      continue;
+    }
+    const records = await sessions.listDiskSessions(row.path, signal);
+    if (records.some((record) => `${record.name ?? ''}\n${record.firstMessage}`.toLowerCase().includes(query))) matched.push(row);
+  }
+  return matched;
+}
+
 export function createManagerExtension(context: ManagerToolContext): ExtensionFactory {
   return (pi: ExtensionAPI) => {
     pi.registerTool({
-      name: 'pimote_list_folders',
-      label: 'List folders',
-      description:
-        'List every known folder: code folders (git-initialized — repos and hub folders) and persona folders ' +
-        '(agent homes whose AGENTS.md carries persona marker front matter), each keyed by its canonical path. ' +
-        'Rows carry nature and persona metadata, shortcut count (hub variant), favorite/archived/tags curation, ' +
-        'the missing flag, member repos on hub rows, and live session counts. Shortcut reach paths are not ' +
-        'separate folders — identity is the canonical path. Filter by nature for the team view (personas) or the ' +
-        'code view. Pass fresh: true to drop the discovery cache first — plain reads may serve data up to ~30s ' +
-        `stale while a background refresh runs. Rows past a ${SPILL_INLINE_BYTES}-byte serialized budget spill to a ` +
-        'JSONL file; the payload then carries `spill` (file path plus a jq/grep hint) and `folders` holds only the inline prefix.',
+      name: 'pimote_find_folders',
+      label: 'Find folders',
+      description: 'Find known folders — code, persona, and hub — by query across name, path, tags, and session text, with curation state and live session counts.',
+      promptGuidelines: ['Filter pimote_find_folders with query, nature, and hub instead of scanning full listings.'],
       parameters: Type.Object({
-        fresh: FRESH_PARAM,
-        nature: Type.Optional(Type.Union([Type.Literal('code'), Type.Literal('persona')], { description: 'Restrict rows to this nature.' })),
+        query: Type.Optional(
+          Type.String({
+            description:
+              'Case-insensitive substring matched against folder name, path, tags, and persona name; ' +
+              'a folder also matches when any of its sessions matches on name or first message (two-tier, as the dashboard search).',
+          }),
+        ),
+        nature: Type.Optional(Type.Union([Type.Literal('code'), Type.Literal('persona')], { description: 'Restrict rows to this base nature (hub rows keep their base nature).' })),
+        hub: Type.Optional(Type.Boolean({ description: 'true: only hub rows. false: exclude hub rows. Omit: both.' })),
+        includeArchived: Type.Optional(Type.Boolean({ description: 'true: include folders flagged archived. Default false.' })),
       }),
       annotations: { readOnlyHint: true },
       outputSchema: Type.Object({ folders: Type.Array(FolderInfoSchema), spill: Type.Optional(SpillInfoSchema) }),
       execute: async (_callId, params, signal): Promise<JsonToolResult> => {
         signal?.throwIfAborted();
-        if (params.fresh) context.repos.invalidateListing();
         let folders: FolderInfo[];
         try {
           folders = await context.folders.list(signal);
@@ -292,8 +298,13 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         // Live counts, same rule the WS serve-paths use — the agent should
         // never see permanently-zeroed indicators.
         enrichActiveSessionCounts(folders, context.sessions.getAllSessions());
-        const rows = folders.filter((folder) => params.nature === undefined || folder.nature === params.nature).map(applyFolderDefaults);
-        const outcome = await spillRows('pimote_list_folders', rows, signal);
+        let rows = folders.map(applyFolderDefaults);
+        if (params.nature !== undefined) rows = rows.filter((row) => row.nature === params.nature);
+        if (params.hub !== undefined) rows = rows.filter((row) => row.shortcutCount > 0 === params.hub);
+        if (!params.includeArchived) rows = rows.filter((row) => !row.archived);
+        const query = params.query?.trim().toLowerCase() || undefined;
+        if (query !== undefined) rows = await filterByQuery(rows, query, context.sessions, signal);
+        const outcome = await spillRows('pimote_find_folders', rows, signal);
         // Channel split (DR-073): the guard bounds only the model-facing view;
         // structuredContent carries every row for codemode scripts, details
         // carries renderer metadata for the list view: row counts, plus the
@@ -313,21 +324,18 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     });
 
     pi.registerTool({
-      name: 'pimote_list_sessions',
-      label: 'List sessions',
-      description:
-        'One unified view of sessions across every known folder: on-disk history (open and closed sessions ' +
-        'alike) with live state patched onto open rows (status, needsAttention). Newest first, capped by limit. ' +
-        'Optional filters: query (case-insensitive substring against session name and first message), folderPath ' +
-        '(must be a known folder), open (true keeps only live sessions). Use this for "what is running", ' +
-        '"find the session about X", and "what happened in this folder" alike. ' +
-        `Rows past a ${SPILL_INLINE_BYTES}-byte serialized budget spill to a JSONL file; the payload then carries ` +
-        '`spill` (file path plus a jq/grep hint) and `sessions` holds only the inline prefix.',
+      name: 'pimote_find_sessions',
+      label: 'Find sessions',
+      description: 'Find sessions across all folders, open and closed, newest first, filtered by query, folder, open, and archived state.',
+      promptGuidelines: [
+        'Prefer filtered pimote_find_sessions calls: pass folderPath and query first; use open: true for what is running now.',
+        'Pass includeArchived only when you need archived history.',
+      ],
       parameters: Type.Object({
         query: Type.Optional(Type.String({ description: 'Case-insensitive substring matched against session name and first message. Omit to list all.' })),
         folderPath: Type.Optional(Type.String({ description: 'Restrict the view to this folder path (must be a known folder — code or persona).' })),
         open: Type.Optional(Type.Boolean({ description: 'True: keep only sessions a live slot currently holds.' })),
-        limit: Type.Optional(Type.Integer({ description: `Maximum number of rows (default ${LIST_DEFAULT_LIMIT}, max ${LIST_MAX_LIMIT}).` })),
+        includeArchived: Type.Optional(Type.Boolean({ description: 'true: include sessions flagged archived. Default false.' })),
       }),
       annotations: { readOnlyHint: true },
       outputSchema: Type.Object({ sessions: Type.Array(SessionRowSchema), spill: Type.Optional(SpillInfoSchema) }),
@@ -346,14 +354,13 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         let folderPaths: string[];
         if (params.folderPath !== undefined) {
           if (!folders.some((folder) => folder.path === params.folderPath)) {
-            return errorToolResult(`unknown folder: ${params.folderPath} — use pimote_list_folders to see known folders`);
+            return errorToolResult(`unknown folder: ${params.folderPath} — use pimote_find_folders to see known folders`);
           }
           folderPaths = [params.folderPath];
         } else {
           folderPaths = [...new Set(folders.map((folder) => folder.path))];
         }
 
-        const limit = Math.min(Math.max(1, params.limit ?? LIST_DEFAULT_LIMIT), LIST_MAX_LIMIT);
         const openById = new Map(context.sessions.getAllSessions().map((session) => [session.sessionId, session]));
 
         const rows: SessionRow[] = [];
@@ -364,6 +371,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         signal?.throwIfAborted();
         for (const { folderPath, records } of recordsByFolder) {
           for (const record of records) {
+            if (!params.includeArchived && record.archived) continue;
             const openSession = openById.get(record.id);
             if (params.open === true && openSession === undefined) continue;
             if (query !== undefined) {
@@ -386,14 +394,14 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
 
         // Newest first; ISO 8601 timestamps compare chronologically as strings.
         rows.sort((a, b) => (a.modified < b.modified ? 1 : a.modified > b.modified ? -1 : 0));
-        const outcome = await spillRows('pimote_list_sessions', rows.slice(0, limit), signal);
-        // Channel split (DR-073): see pimote_list_folders.
+        const outcome = await spillRows('pimote_find_sessions', rows, signal);
+        // Channel split (DR-073): see pimote_find_folders.
         return jsonToolResult(
-          { sessions: rows.slice(0, limit) },
+          { sessions: rows },
           {
             modelView: { sessions: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) },
             details: {
-              totalRows: Math.min(rows.length, limit),
+              totalRows: rows.length,
               inlineRows: outcome.rows.length,
               ...(outcome.spill ? { spill: { file: outcome.spill.file, rows: outcome.spill.rows } } : {}),
             },
@@ -405,11 +413,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_start_session',
       label: 'Start session',
-      description:
-        'Start a new agent session in a known folder and return its session id. ' +
-        'With a firstMessage the new session is tasked immediately and the agent run continues in the ' +
-        'background; the tool returns as soon as the session is open. folderPath must be one of the ' +
-        'paths returned by pimote_list_folders.',
+      description: 'Start a new agent session in a known folder, optionally tasked with a first message that runs in the background.',
       parameters: Type.Object({
         folderPath: Type.String({ description: 'Absolute canonical path of the folder to start the session in (must be a known folder).' }),
         firstMessage: Type.Optional(Type.String({ description: 'Optional first user message, sent to the new session right away.' })),
@@ -422,7 +426,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       execute: async (_callId, params): Promise<JsonToolResult> => {
         const folders = await context.folders.list();
         if (!folders.some((folder) => folder.path === params.folderPath)) {
-          return errorToolResult(`unknown folder: ${params.folderPath} — use pimote_list_folders to see known folders`);
+          return errorToolResult(`unknown folder: ${params.folderPath} — use pimote_find_folders to see known folders`);
         }
         const firstMessage = params.firstMessage?.trim() || undefined;
         const sessionId = await context.sessions.openSession(params.folderPath, firstMessage);
@@ -433,11 +437,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_archive_sessions',
       label: 'Archive sessions',
-      description:
-        'Archive one or more sessions by id: each on-disk record is marked archived, and a session that ' +
-        'is currently open has its live slot evicted (closed) as part of archiving. Returns a per-id ' +
-        'outcome: "archived", "open_slot_evicted" (was open; slot closed and record archived), or ' +
-        '"not_found". Find session ids with pimote_list_sessions.',
+      description: 'Archive sessions by id, evicting any open session, and return a per-id outcome.',
       parameters: Type.Object({
         sessionIds: Type.Array(Type.String(), { minItems: 1, description: 'Session ids to archive.' }),
       }),
@@ -450,17 +450,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_create_folder',
       label: 'Create folder',
-      description:
-        'Create a folder at <parentPath>/<name> — the four dashboard wizard shapes in one tool, selected by kind. ' +
-        '"code": git-initialized repo folder (routed through the configured folder creator) plus a seeded ' +
-        'AGENTS.md (body). "persona": agent home with persona-marker AGENTS.md (description required; prompt ' +
-        'folds into the shipped template) and a memory.md stub. "code-hub"/"persona-hub": hub folder with one ' +
-        'symlink per member (memberPaths, discovered folders of any nature), a managed member block in its ' +
-        'AGENTS.md, git init, and a member .gitignore; the persona-hub variant is itself a persona (description ' +
-        'required; prompt optional) and gains a memory.md stub. parentPath must be inside a scan root — the tool ' +
-        'never invents a default location; choose (or ask) using the folder tree. Included folders are leaves: ' +
-        'member folders must stay at their canonical homes and be symlinked in, never nested. Creation ' +
-        'invalidates discovery and broadcasts folders_changed. Full recipes live in `recipes.md`, listed in the `pimote-docs` section.',
+      description: 'Create one of the four folder shapes — code, persona, code-hub, persona-hub — at a chosen path inside a scan root.',
       parameters: Type.Object({
         kind: Type.Union([Type.Literal('code'), Type.Literal('persona'), Type.Literal('code-hub'), Type.Literal('persona-hub')], {
           description: 'Which of the four wizard shapes to create.',
@@ -535,7 +525,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
           return jsonToolResult({ folderPath: created.path });
         } catch (error) {
           return errorToolResult(
-            `failed to create hub: ${errorMessage(error)} — members must be discovered folders (see pimote_list_folders), ` +
+            `failed to create hub: ${errorMessage(error)} — members must be discovered folders (see pimote_find_folders), ` +
               `must not contain or live inside the hub, and must have unique basenames. ${NESTING_HINT}`,
           );
         }
@@ -545,11 +535,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_update_folder',
       label: 'Update folder',
-      description:
-        'Apply curation to one folder, keyed by its canonical path: favorite, archive/restore (archived: ' +
-        'false restores), and tag changes (addTags/removeTags; source-contributed and inherited tags are not ' +
-        'removable). The registry broadcasts the folders_changed delta. At least one field is required. ' +
-        'folderPath must be a known folder — see pimote_list_folders.',
+      description: 'Apply curation — favorite, archived, tags — to one folder by canonical path.',
       parameters: Type.Object({
         folderPath: Type.String({ description: 'Canonical path of the folder to curate.' }),
         favorite: Type.Optional(Type.Boolean()),
@@ -574,7 +560,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
             ...(removeTags?.length ? { removeTags } : {}),
           });
         } catch (error) {
-          return errorToolResult(`failed to update folder: ${errorMessage(error)} — use pimote_list_folders to see known folders`);
+          return errorToolResult(`failed to update folder: ${errorMessage(error)} — use pimote_find_folders to see known folders`);
         }
         return jsonToolResult({ folderPath });
       },
@@ -583,14 +569,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_update_hub_members',
       label: 'Update hub members',
-      description:
-        'Add and remove hub members in one batched call: hub-side symlinks plus the managed member block in ' +
-        'the hub AGENTS.md. Removals run first, then additions — a replace-by-same-name swap works in one call. ' +
-        'Members must be discovered folders (any nature) with unique basenames; removing works by path even ' +
-        'when the member folder is already gone and never touches the member folder itself. Returns one outcome ' +
-        'per member path ("added", "removed", or "error" with the registry message). The registry broadcasts a ' +
-        'folders_changed delta per accepted mutation. The dashboard performs one add or remove at a time; the ' +
-        'manager surface batches (DR-062 over DR-061).',
+      description: 'Add and remove hub members in one batched call, returning a per-member outcome.',
       parameters: Type.Object({
         hubPath: Type.String({ description: 'Canonical path of the hub folder.' }),
         add: Type.Optional(Type.Array(Type.String(), { description: 'Canonical paths of discovered folders to add as members.' })),

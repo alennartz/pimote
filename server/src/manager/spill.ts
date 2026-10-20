@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { PIMOTE_TOOL_SPILL_DIR } from '../paths.js';
 
 /**
- * Spill guard for the manager list tools (pimote_list_folders,
- * pimote_list_sessions). A result whose serialized rows exceed the inline
+ * Spill guard for the manager find tools (pimote_find_folders,
+ * pimote_find_sessions). A result whose serialized rows exceed the inline
  * budget keeps its first rows in the tool result and spills the rest to a
  * JSONL file under the pimote state dir; the payload carries the file path
  * plus a jq/grep hint, so the agent searches the remainder with CLI tools

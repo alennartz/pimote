@@ -425,24 +425,24 @@ describe('main — manager toolset port wiring', () => {
     warn.mockRestore();
   });
 
-  it('registers exactly the pinned manager toolset, with pimote_list_folders read-only', async () => {
+  it('registers exactly the pinned manager toolset, with pimote_find_folders read-only', async () => {
     const tools = await registeredManagerTools();
 
     expect(tools.map((tool) => tool.name)).toEqual([
-      'pimote_list_folders',
-      'pimote_list_sessions',
+      'pimote_find_folders',
+      'pimote_find_sessions',
       'pimote_start_session',
       'pimote_archive_sessions',
       'pimote_create_folder',
       'pimote_update_folder',
       'pimote_update_hub_members',
     ]);
-    const list = toolNamed(tools, 'pimote_list_folders');
+    const list = toolNamed(tools, 'pimote_find_folders');
     expect(list.annotations.readOnlyHint).toBe(true);
-    expect(Object.keys(list.parameters.properties ?? {}).sort()).toEqual(['fresh', 'nature']);
+    expect(Object.keys(list.parameters.properties ?? {}).sort()).toEqual(['hub', 'includeArchived', 'nature', 'query']);
   });
 
-  it('wires pimote_list_folders: FolderInfo defaults materialized and live counts enriched through the session manager', async () => {
+  it('wires pimote_find_folders: FolderInfo defaults materialized and live counts enriched through the session manager', async () => {
     mocks.folderRegistry.list.mockResolvedValue([
       { path: '/workspace/alpha', name: 'alpha', nature: 'code' },
       { path: '/workspace/personas/ada', name: 'ada', nature: 'persona', persona: { name: 'Ada' } },
@@ -452,7 +452,7 @@ describe('main — manager toolset port wiring', () => {
       { sessionState: { id: 's2', status: 'working', needsAttention: true }, folderPath: '/workspace/alpha' },
     ]);
 
-    const result = await toolNamed(await registeredManagerTools(), 'pimote_list_folders').execute('call-1', {}, undefined, undefined, {});
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_find_folders').execute('call-1', {}, undefined, undefined, {});
 
     expect(result.structuredContent.folders).toEqual([
       {
@@ -502,7 +502,7 @@ describe('main — manager toolset port wiring', () => {
     );
     mocks.sessionMetadataStore.getArchivedLookup.mockReturnValue(new Map([['/sessions/s1.jsonl', true]]));
 
-    const result = await toolNamed(await registeredManagerTools(), 'pimote_list_sessions').execute('call-1', { query: 'login' }, undefined, undefined, {});
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_find_sessions').execute('call-1', { query: 'login', includeArchived: true }, undefined, undefined, {});
 
     expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/alpha', { signal: undefined });
     expect(mocks.sessionRecords.listSessionRecords).toHaveBeenCalledWith('/workspace/beta', { signal: undefined });

@@ -38,12 +38,13 @@ function makeFakePi(): { toolDefs: any[]; api: any } {
   return { toolDefs, api: api as any };
 }
 
-// The pinned toolset (DR-062): eight tools — one folder read (rows carry
-// git facts and hub membership), a unified sessions view, freshness flags,
-// kind-parameterized creation, batched hub membership.
+// The pinned toolset (DR-062, revised by DR-074): seven tools — one folder
+// read (rows carry git facts and hub membership; query/nature/hub/archived
+// filters), a unified sessions view, kind-parameterized creation, batched
+// hub membership.
 const MANAGER_TOOL_NAMES = [
-  'pimote_list_folders',
-  'pimote_list_sessions',
+  'pimote_find_folders',
+  'pimote_find_sessions',
   'pimote_start_session',
   'pimote_archive_sessions',
   'pimote_create_folder',
@@ -124,28 +125,28 @@ describe('createManagerExtension()', () => {
     ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
     const toolDefs = register(ports);
 
-    await toolNamed(toolDefs, 'pimote_list_folders').execute('c', {}, undefined, undefined, {});
+    await toolNamed(toolDefs, 'pimote_find_folders').execute('c', {}, undefined, undefined, {});
     expect(ports.folders.list).toHaveBeenCalledTimes(1);
 
-    await toolNamed(toolDefs, 'pimote_list_sessions').execute('c', {}, undefined, undefined, {});
+    await toolNamed(toolDefs, 'pimote_find_sessions').execute('c', {}, undefined, undefined, {});
     expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/alpha', undefined);
   });
 
-  it('describes folder nature, identity versus reach, freshness, and the leaf rule in the tool descriptions', () => {
+  it('describes the folder query semantics and the leaf rule in the tool descriptions', () => {
     const toolDefs = register(spyPorts());
     const descriptions = Object.fromEntries(toolDefs.map((def) => [def.name, def.description as string]));
 
-    expect(descriptions.pimote_list_folders).toContain('canonical path');
-    expect(descriptions.pimote_list_folders).toContain('fresh: true');
+    expect(descriptions.pimote_find_folders).toContain('session text');
+    expect(descriptions.pimote_find_folders).toContain('curation state');
     expect(descriptions.pimote_create_folder).toContain('Included folders are leaves');
     expect(descriptions.pimote_create_folder).toContain('never nested');
   });
 });
 
-describe('pimote_list_folders', () => {
+describe('pimote_find_folders', () => {
   it('declares the complete FolderInfo schema: all fields, defaults on the defaulted ones', () => {
     const toolDefs = register(spyPorts());
-    const schema = toolNamed(toolDefs, 'pimote_list_folders').outputSchema;
+    const schema = toolNamed(toolDefs, 'pimote_find_folders').outputSchema;
 
     // Every FolderInfo field is declared, and the defaulted fields are marked
     // `default` so the wire row is self-describing. The payload is the spill
@@ -184,7 +185,7 @@ describe('pimote_list_folders', () => {
       { ...makeFolder('/w/bare'), repo: ownRepo },
     ]);
 
-    const result = (await toolNamed(register(ports), 'pimote_list_folders').execute('c', {}, undefined, undefined, {})) as ToolResult;
+    const result = (await toolNamed(register(ports), 'pimote_find_folders').execute('c', {}, undefined, undefined, {})) as ToolResult;
 
     expect(result.isError ?? false).toBe(false);
     const [ada, bare] = result.structuredContent.folders;
@@ -192,7 +193,7 @@ describe('pimote_list_folders', () => {
     expect(ada.repos).toEqual(hubMembers);
     expect(ada.members).toEqual(inventory);
     expect(bare.repo).toEqual(ownRepo);
-    expect(Value.Check(toolNamed(register(ports), 'pimote_list_folders').outputSchema, result.structuredContent)).toBe(true);
+    expect(Value.Check(toolNamed(register(ports), 'pimote_find_folders').outputSchema, result.structuredContent)).toBe(true);
     expect(bare).toMatchObject({ shortcutCount: 0, favorite: false, archived: false, tags: [], missing: false, activeSessionCount: 0, externalProcessCount: 0 });
   });
 
@@ -204,7 +205,7 @@ describe('pimote_list_folders', () => {
       { sessionId: 's2', folderPath: '/w/alpha', status: 'working', needsAttention: true },
     ]);
 
-    const result = (await toolNamed(register(ports), 'pimote_list_folders').execute('c', {}, undefined, undefined, {})) as ToolResult;
+    const result = (await toolNamed(register(ports), 'pimote_find_folders').execute('c', {}, undefined, undefined, {})) as ToolResult;
 
     const byPath = new Map((result.structuredContent.folders as FolderInfo[]).map((folder) => [folder.path, folder]));
     expect(byPath.get('/w/alpha')!.activeSessionCount).toBe(2);
@@ -216,38 +217,67 @@ describe('pimote_list_folders', () => {
     ports.folders.list.mockResolvedValue([makeFolder('/w/app'), makePersonaFolder('/w/ada')]);
 
     const toolDefs = register(ports);
-    const personas = (await toolNamed(toolDefs, 'pimote_list_folders').execute('c', { nature: 'persona' }, undefined, undefined, {})) as ToolResult;
-    const code = (await toolNamed(toolDefs, 'pimote_list_folders').execute('c', { nature: 'code' }, undefined, undefined, {})) as ToolResult;
+    const personas = (await toolNamed(toolDefs, 'pimote_find_folders').execute('c', { nature: 'persona' }, undefined, undefined, {})) as ToolResult;
+    const code = (await toolNamed(toolDefs, 'pimote_find_folders').execute('c', { nature: 'code' }, undefined, undefined, {})) as ToolResult;
 
     expect((personas.structuredContent.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/ada']);
     expect((code.structuredContent.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/app']);
   });
 
-  it('drops the discovery cache first when fresh: true', async () => {
+  it('filters hub rows with the hub flag', async () => {
     const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/app'), { ...makeFolder('/w/hub'), shortcutCount: 2 }]);
+
     const toolDefs = register(ports);
+    const hubs = (await toolNamed(toolDefs, 'pimote_find_folders').execute('c', { hub: true }, undefined, undefined, {})) as ToolResult;
+    const plain = (await toolNamed(toolDefs, 'pimote_find_folders').execute('c', { hub: false }, undefined, undefined, {})) as ToolResult;
+    const both = (await toolNamed(toolDefs, 'pimote_find_folders').execute('c', {}, undefined, undefined, {})) as ToolResult;
 
-    await toolNamed(toolDefs, 'pimote_list_folders').execute('c', {}, undefined, undefined, {});
-    expect(ports.repos.invalidateListing).not.toHaveBeenCalled();
+    expect((hubs.structuredContent.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/hub']);
+    expect((plain.structuredContent.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/app']);
+    expect(both.structuredContent.folders).toHaveLength(2);
+  });
 
-    await toolNamed(toolDefs, 'pimote_list_folders').execute('c', { fresh: true }, undefined, undefined, {});
-    expect(ports.repos.invalidateListing).toHaveBeenCalledTimes(1);
+  it('hides archived folders unless includeArchived is set', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/app'), { ...makeFolder('/w/old'), archived: true }]);
+
+    const toolDefs = register(ports);
+    const deflt = (await toolNamed(toolDefs, 'pimote_find_folders').execute('c', {}, undefined, undefined, {})) as ToolResult;
+    const all = (await toolNamed(toolDefs, 'pimote_find_folders').execute('c', { includeArchived: true }, undefined, undefined, {})) as ToolResult;
+
+    expect((deflt.structuredContent.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/app']);
+    expect(all.structuredContent.folders).toHaveLength(2);
+  });
+
+  it('matches the query two-tier: folder text, else member session text', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([{ ...makeFolder('/w/tagged'), tags: ['deploy'] }, makeFolder('/w/session-hit'), makeFolder('/w/miss')]);
+    ports.sessions.listDiskSessions.mockImplementation(async (folderPath: string) =>
+      folderPath === '/w/session-hit' ? [makeRecord({ id: 's1', firstMessage: 'deploy the api' })] : [],
+    );
+
+    const result = (await toolNamed(register(ports), 'pimote_find_folders').execute('c', { query: 'DEPLOY' }, undefined, undefined, {})) as ToolResult;
+
+    expect((result.structuredContent.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/tagged', '/w/session-hit']);
+    // Folder-text hits skip the session tier; only the unmatched rows are read.
+    expect(ports.sessions.listDiskSessions).toHaveBeenCalledTimes(2);
   });
 
   it('returns a tool error when the folder model fails', async () => {
     const ports = spyPorts();
     ports.folders.list.mockRejectedValue(new Error('listing failed'));
 
-    const result = (await toolNamed(register(ports), 'pimote_list_folders').execute('c', {}, undefined, undefined, {})) as ToolResult;
+    const result = (await toolNamed(register(ports), 'pimote_find_folders').execute('c', {}, undefined, undefined, {})) as ToolResult;
 
     expect(result.isError).toBe(true);
     expect(result.structuredContent.error).toContain('failed to list folders');
   });
 });
 
-describe('pimote_list_sessions', () => {
+describe('pimote_find_sessions', () => {
   function listTool(ports: ReturnType<typeof spyPorts>) {
-    return toolNamed(register(ports), 'pimote_list_sessions');
+    return toolNamed(register(ports), 'pimote_find_sessions');
   }
 
   it('matches name and firstMessage across every folder, newest first, with open state and excerpts', async () => {
@@ -264,7 +294,7 @@ describe('pimote_list_sessions', () => {
     });
     ports.sessions.getAllSessions.mockReturnValue([{ sessionId: 's1', folderPath: '/w/alpha', status: 'idle', needsAttention: false }]);
 
-    const result = (await listTool(ports).execute('call-1', { query: 'LOGIN' }, undefined, undefined, {})) as ToolResult;
+    const result = (await listTool(ports).execute('call-1', { query: 'LOGIN', includeArchived: true }, undefined, undefined, {})) as ToolResult;
 
     expect(ports.sessions.listDiskSessions).toHaveBeenCalledTimes(2);
     expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/alpha', undefined);
@@ -285,17 +315,30 @@ describe('pimote_list_sessions', () => {
     expect((first.firstMessage as string).endsWith('…')).toBe(true);
   });
 
-  it('lists without a query, newest first, capped by limit', async () => {
+  it('lists without a query, newest first', async () => {
     const ports = spyPorts();
     ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
     ports.sessions.listDiskSessions.mockResolvedValue(['a', 'b', 'c'].map((id) => makeRecord({ id, modified: `2025-06-0${id.charCodeAt(0) - 96}T10:00:00.000Z` })));
 
-    const tool = listTool(ports);
-    const all = (await tool.execute('c', {}, undefined, undefined, {})) as ToolResult;
-    const limited = (await tool.execute('c', { limit: 2 }, undefined, undefined, {})) as ToolResult;
+    const all = (await listTool(ports).execute('c', {}, undefined, undefined, {})) as ToolResult;
 
     expect((all.structuredContent.sessions as unknown[]).map((row: any) => row.id)).toEqual(['c', 'b', 'a']);
-    expect(limited.structuredContent.sessions).toHaveLength(2);
+  });
+
+  it('hides archived sessions unless includeArchived is set', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
+    ports.sessions.listDiskSessions.mockResolvedValue([
+      makeRecord({ id: 's1', modified: '2025-06-02T10:00:00.000Z' }),
+      makeRecord({ id: 's2', modified: '2025-06-03T10:00:00.000Z', archived: true }),
+    ]);
+
+    const tool = listTool(ports);
+    const deflt = (await tool.execute('c', {}, undefined, undefined, {})) as ToolResult;
+    const all = (await tool.execute('c', { includeArchived: true }, undefined, undefined, {})) as ToolResult;
+
+    expect((deflt.structuredContent.sessions as unknown[]).map((row: any) => row.id)).toEqual(['s1']);
+    expect((all.structuredContent.sessions as unknown[]).map((row: any) => row.id)).toEqual(['s2', 's1']);
   });
 
   it('keeps only live sessions when open: true, with live status and attention', async () => {
@@ -335,7 +378,7 @@ describe('pimote_list_sessions', () => {
 
     expect(result.isError).toBe(true);
     expect(result.structuredContent.error).toContain('unknown folder');
-    expect(result.structuredContent.error).toContain('use pimote_list_folders to see known folders');
+    expect(result.structuredContent.error).toContain('use pimote_find_folders to see known folders');
     expect(ports.sessions.listDiskSessions).not.toHaveBeenCalled();
   });
 
@@ -539,7 +582,7 @@ describe('pimote_create_folder', () => {
 
       expect(result.isError).toBe(true);
       expect(result.structuredContent.error).toContain('Unknown folder: /w/ghost');
-      expect(result.structuredContent.error).toContain('pimote_list_folders');
+      expect(result.structuredContent.error).toContain('pimote_find_folders');
     } finally {
       await sandbox.cleanup();
     }
@@ -579,7 +622,7 @@ describe('pimote_update_folder', () => {
     ports.folders.update.mockRejectedValue(new Error('Unknown folder: /w/ghost'));
     const unknown = (await tool.execute('c', { folderPath: '/w/ghost', favorite: true }, undefined, undefined, {})) as ToolResult;
     expect(unknown.isError).toBe(true);
-    expect(unknown.structuredContent.error).toContain('use pimote_list_folders');
+    expect(unknown.structuredContent.error).toContain('use pimote_find_folders');
   });
 });
 
@@ -625,7 +668,7 @@ describe('pimote_update_hub_members', () => {
 
 describe('list tool spill guard', () => {
   async function executeFolders(ports: ReturnType<typeof spyPorts>, params: Record<string, unknown> = {}) {
-    return (await toolNamed(register(ports), 'pimote_list_folders').execute('c', params, undefined, undefined, {})) as ToolResult;
+    return (await toolNamed(register(ports), 'pimote_find_folders').execute('c', params, undefined, undefined, {})) as ToolResult;
   }
 
   function bulkFolders(count: number, tagLength = 500): FolderInfo[] {
@@ -642,7 +685,7 @@ describe('list tool spill guard', () => {
     // Under budget: no spill pointer on the model view; details still reports the row counts.
     expect(JSON.parse(result.content[0].text).spill).toBeUndefined();
     expect(result.details).toEqual({ totalRows: 1, inlineRows: 1 });
-    expect(Value.Check(toolNamed(register(ports), 'pimote_list_folders').outputSchema, result.structuredContent)).toBe(true);
+    expect(Value.Check(toolNamed(register(ports), 'pimote_find_folders').outputSchema, result.structuredContent)).toBe(true);
   });
 
   it('spills rows past the inline budget: inline prefix, JSONL remainder, path and jq hint in the payload', async () => {
@@ -658,7 +701,7 @@ describe('list tool spill guard', () => {
     expect(inline.length).toBeGreaterThanOrEqual(1);
     expect(inline.length).toBeLessThan(30);
     const spill = view.spill!;
-    expect(spill.file).toContain('pimote_list_folders');
+    expect(spill.file).toContain('pimote_find_folders');
     expect(spill.rows).toBe(30 - inline.length);
     expect(spill.hint).toContain('jq');
     expect(spill.hint).toContain(spill.file);
@@ -668,15 +711,15 @@ describe('list tool spill guard', () => {
     expect(JSON.parse(lines[0]).path).toBe(`/w/bulk-${inline.length}`);
     // details carries the truncation metadata, never a row copy.
     expect(result.details).toEqual({ totalRows: 30, inlineRows: inline.length, spill: { file: spill.file, rows: spill.rows } });
-    expect(Value.Check(toolNamed(register(ports), 'pimote_list_folders').outputSchema, result.structuredContent)).toBe(true);
+    expect(Value.Check(toolNamed(register(ports), 'pimote_find_folders').outputSchema, result.structuredContent)).toBe(true);
   });
 
-  it('spills the sessions view the same way, after the limit cut', async () => {
+  it('spills the sessions view the same way once rows pass the inline budget', async () => {
     const ports = spyPorts();
     ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
     ports.sessions.listDiskSessions.mockResolvedValue(Array.from({ length: 60 }, (_, i) => makeRecord({ id: `s${i}`, firstMessage: 'x'.repeat(300) })));
 
-    const result = (await toolNamed(register(ports), 'pimote_list_sessions').execute('c', { limit: 100 }, undefined, undefined, {})) as ToolResult;
+    const result = (await toolNamed(register(ports), 'pimote_find_sessions').execute('c', {}, undefined, undefined, {})) as ToolResult;
 
     expect(result.structuredContent.sessions).toHaveLength(60);
     const view = JSON.parse(result.content[0].text) as { sessions: unknown[]; spill?: { file: string; rows: number } };
@@ -705,7 +748,7 @@ describe('list tool interruption', () => {
     const ports = spyPorts();
     const controller = new AbortController();
 
-    await toolNamed(register(ports), 'pimote_list_folders').execute('c', {}, controller.signal, undefined, {});
+    await toolNamed(register(ports), 'pimote_find_folders').execute('c', {}, controller.signal, undefined, {});
 
     expect(ports.folders.list).toHaveBeenCalledWith(controller.signal);
   });
@@ -715,7 +758,7 @@ describe('list tool interruption', () => {
     ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
     const controller = new AbortController();
 
-    await toolNamed(register(ports), 'pimote_list_sessions').execute('c', {}, controller.signal, undefined, {});
+    await toolNamed(register(ports), 'pimote_find_sessions').execute('c', {}, controller.signal, undefined, {});
 
     expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/alpha', controller.signal);
   });
@@ -725,11 +768,10 @@ describe('list tool interruption', () => {
     const controller = new AbortController();
     controller.abort();
 
-    const run = toolNamed(register(ports), 'pimote_list_folders').execute('c', { fresh: true }, controller.signal, undefined, {});
+    const run = toolNamed(register(ports), 'pimote_find_folders').execute('c', {}, controller.signal, undefined, {});
 
     await expect(run).rejects.toThrow();
     expect(ports.folders.list).not.toHaveBeenCalled();
-    expect(ports.repos.invalidateListing).not.toHaveBeenCalled();
   });
 
   it('rejects promptly when the signal aborts mid-fill; the shared fill still completes', async () => {
@@ -740,7 +782,7 @@ describe('list tool interruption', () => {
       return [makeRecord({ id: 's1' })];
     });
     const controller = new AbortController();
-    const run = toolNamed(register(ports), 'pimote_list_sessions').execute('c', {}, controller.signal, undefined, {});
+    const run = toolNamed(register(ports), 'pimote_find_sessions').execute('c', {}, controller.signal, undefined, {});
     controller.abort();
 
     // The shared fill runs to completion, but the caller rejects instead of

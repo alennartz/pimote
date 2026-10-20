@@ -1,6 +1,6 @@
 # Topology recipes
 
-Recipes for the four folder kinds. All four are one `pimote_create_folder` call. `parentPath` must sit inside a scan root. Pick parent and members with `pimote_list_folders`, where hub rows carry `members`.
+Recipes for the four folder kinds. All four are one `pimote_create_folder` call. `parentPath` must sit inside a scan root. Pick parent and members with `pimote_find_folders`, where hub rows carry `members`.
 
 ## Code folder
 
@@ -32,7 +32,7 @@ Creates `platform/` with symlinks to `api` and `web`, a generated `AGENTS.md` wi
 pimote_create_folder { kind: "persona-hub", name: "danny", parentPath: "/srv/repos", description: "crew lead", prompt: "You are Danny Ocean.", memberPaths: ["/srv/repos/rusty", "/srv/repos/livingston"] }
 ```
 
-Same as the code hub, plus the persona marker and a `memory.md` stub. The hub itself is a persona. Expected folder shape, as `pimote_list_folders` reports it: one hub row with two members, plus one row per member.
+Same as the code hub, plus the persona marker and a `memory.md` stub. The hub itself is a persona. Expected folder shape, as `pimote_find_folders` reports it: one hub row with two members, plus one row per member.
 
 ```
 /srv/repos/

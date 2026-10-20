@@ -1139,12 +1139,12 @@ async function main() {
     }
 
     // ============================================================
-    section('B — manager tool use (pimote_list_folders through the ports)');
+    section('B — manager tool use (pimote_find_folders through the ports)');
     // ============================================================
     if (jetsonUsable) {
       const listNow = await probeA.listFolders({ includeArchived: true, repin: true });
       const expectedCount = listNow.data.folders.length;
-      await sendSessionPrompt('Call the pimote_list_folders tool now. After it returns, reply with ONLY the number of folders, nothing else.');
+      await sendSessionPrompt('Call the pimote_find_folders tool now. After it returns, reply with ONLY the number of folders, nothing else.');
       let sawToolCall = false;
       let answer = null;
       for (let i = 0; i < 90; i++) {
@@ -1153,7 +1153,7 @@ async function main() {
           `(() => {
             const assistant = Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ');
             const toolNames = Array.from(document.querySelectorAll('.tool-block .tool-name')).map((e) => e.textContent.trim());
-            return { toolCall: toolNames.includes('pimote_list_folders'), assistant, tail: document.body.innerText.slice(-400) };
+            return { toolCall: toolNames.includes('pimote_find_folders'), assistant, tail: document.body.innerText.slice(-400) };
           })()`,
         );
         if (state?.toolCall) sawToolCall = true;
@@ -1163,16 +1163,16 @@ async function main() {
           if (answer !== null && (state.toolCall || i > 30)) break;
         }
       }
-      soft(sawToolCall, 'manager rendered a pimote_list_folders tool call', 'model chose not to call the tool');
+      soft(sawToolCall, 'manager rendered a pimote_find_folders tool call', 'model chose not to call the tool');
       soft(answer === expectedCount, `manager answered the folder count (${answer} vs expected ${expectedCount})`, 'model reply unparseable or wrong');
       await browser(['screenshot', join(shotsDir, '08-manager-tool.png')], { allowFailure: true });
     }
 
     // ============================================================
-    section('B — manager tool use (pimote_list_folders nature filter)');
+    section('B — manager tool use (pimote_find_folders nature filter)');
     // ============================================================
     if (jetsonUsable) {
-      await sendSessionPrompt('Call the pimote_list_folders tool now with nature "persona". After it returns, reply with ONLY the word TEAMDONE, nothing else.');
+      await sendSessionPrompt('Call the pimote_find_folders tool now with nature "persona". After it returns, reply with ONLY the word TEAMDONE, nothing else.');
       let sawListCall = false;
       let listDone = false;
       for (let i = 0; i < 90; i++) {
@@ -1182,7 +1182,7 @@ async function main() {
             // Role-scoped: the user's own prompt names the tool and TEAMDONE.
             const assistant = Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ');
             const toolNames = Array.from(document.querySelectorAll('.tool-block .tool-name')).map((e) => e.textContent.trim());
-            return { toolCall: toolNames.includes('pimote_list_folders'), done: /TEAMDONE/.test(assistant), tail: document.body.innerText.slice(-400) };
+            return { toolCall: toolNames.includes('pimote_find_folders'), done: /TEAMDONE/.test(assistant), tail: document.body.innerText.slice(-400) };
           })()`,
         );
         if (state?.toolCall) sawListCall = true;
@@ -1192,7 +1192,7 @@ async function main() {
         }
         if (state && !state.tail.includes('Abort') && i > 30) break;
       }
-      soft(sawListCall, 'manager rendered a pimote_list_folders tool call', 'model chose not to call the tool');
+      soft(sawListCall, 'manager rendered a pimote_find_folders tool call', 'model chose not to call the tool');
       soft(listDone, 'manager answered from the nature-filtered rows (TEAMDONE)', 'model reply unparseable or missing');
       await browser(['screenshot', join(shotsDir, '08b-manager-teamview.png')], { allowFailure: true });
     }
@@ -1328,7 +1328,7 @@ async function main() {
         const reopened = await openManagerHistoryRecord('PONG');
         assert(reopened === 'clicked', 'manager history record reopens for the follow-up tool run');
         await sendSessionPrompt(
-          `Call the pimote_list_folders tool now with nature "persona". After it returns, reply with ONLY the folderPath value of the persona named "${personaName}", nothing else.`,
+          `Call the pimote_find_folders tool now with nature "persona". After it returns, reply with ONLY the folderPath value of the persona named "${personaName}", nothing else.`,
         );
         let sawListCall = false;
         let directory = '';
@@ -1338,7 +1338,7 @@ async function main() {
             `(() => {
               const assistant = Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ');
               const toolNames = Array.from(document.querySelectorAll('.tool-block .tool-name')).map((e) => e.textContent.trim());
-              return { toolCall: toolNames.includes('pimote_list_folders'), assistant, tail: document.body.innerText.slice(-400) };
+              return { toolCall: toolNames.includes('pimote_find_folders'), assistant, tail: document.body.innerText.slice(-400) };
             })()`,
           );
           if (state?.toolCall) sawListCall = true;
@@ -1348,7 +1348,7 @@ async function main() {
           }
           if (state && !state.tail.includes('Abort') && i > 30) break;
         }
-        soft(sawListCall, 'manager rendered a pimote_list_folders tool call', 'model chose not to call the tool');
+        soft(sawListCall, 'manager rendered a pimote_find_folders tool call', 'model chose not to call the tool');
         assert(directory.includes(personaPathC), `list_folders (nature persona) reply carries the persona canonical path (${directory.slice(0, 80).replaceAll('\n', ' ')})`);
         await closeViewedSession();
       } else {

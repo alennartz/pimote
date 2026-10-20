@@ -465,12 +465,12 @@ unarchived), wire probes for `create_persona_folder` / `add_hub_member` /
 `members`), resume of an existing session,
 the active-session dot, virtualized row lookup through dashboard scrolling,
 server-authoritative dashboard search and picker search (persona display names
-included), the manager chat (streamed reply, `pimote_list_folders` calls including the
+included), the manager chat (streamed reply, `pimote_find_folders` calls including the
 nature-filtered team view, abort, persisted transcript across reload
 reconnect, disconnect-mid-run persistence, history reopening behind the
 `Previous sessions` click, a persisted manager session record on disk, and
 the folder tools `pimote_create_folder` (kind persona) → `folders_changed` →
-dashboard row plus the `pimote_list_folders` nature-filtered team view), the
+dashboard row plus the `pimote_find_folders` nature-filtered team view), the
 missing-member warning chip, the unscanned-cwd `classifyFolder` session
 fallback (list/open in cwds outside the scan roots never lists or curates
 them), legacy `multiRepo` registry read-compat (loads unchanged; the next
@@ -575,9 +575,9 @@ spawns. No real LLM, network, or push subscription required.
 
 - generated `AGENTS.md`). Asserts, without any LLM: the registered names are
   the pinned seven-tool set (no `*_projects`, no retired persona/search/repo/
-  tree/disband names), `pimote_list_folders` returns complete FolderInfo rows
+  tree/disband names), `pimote_find_folders` returns complete FolderInfo rows
   with schema defaults (hub rows carry their member repos),
-  `pimote_list_folders` nature-filtered rows serve the persona team view, and
+  `pimote_find_folders` nature-filtered rows serve the persona team view, and
   `pimote_create_folder` (kind persona) materializes the persona folder
   (parseable front matter, caller prompt folded in, memory stub, leaf-rule
   hint on collisions) and publishes it exactly on success (discovery

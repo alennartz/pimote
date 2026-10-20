@@ -10,7 +10,7 @@
 //
 // Covers, hard and without an LLM: the pinned DR-062 toolset registers by
 // name (seven tools; no `*_projects` or retired persona/search/repo/tree/disband names survive),
-// pimote_list_folders returns complete FolderInfo rows with schema defaults
+// pimote_find_folders returns complete FolderInfo rows with schema defaults
 // (and the nature filter serves the team view; hub rows carry their member
 // lists), and pimote_create_folder
 // (kind persona) materializes the persona folder (front matter + memory stub)
@@ -183,8 +183,8 @@ async function main() {
   createManagerExtension(context)(piStub);
   const names = [...tools.keys()];
   const expected = [
-    'pimote_list_folders',
-    'pimote_list_sessions',
+    'pimote_find_folders',
+    'pimote_find_sessions',
     'pimote_start_session',
     'pimote_archive_sessions',
     'pimote_create_folder',
@@ -207,9 +207,9 @@ async function main() {
     'the pre-redesign tool names are gone',
   );
 
-  // --- pimote_list_folders: complete FolderInfo rows with schema defaults ---
-  section('pimote_list_folders execution');
-  const listResult = await tools.get('pimote_list_folders').execute('call-1', {});
+  // --- pimote_find_folders: complete FolderInfo rows with schema defaults ---
+  section('pimote_find_folders execution');
+  const listResult = await tools.get('pimote_find_folders').execute('call-1', {});
   assert(listResult.isError !== true, 'list_folders executes without error');
   const rows = listResult.structuredContent;
   assert(Array.isArray(rows), 'structured output is a FolderInfo array');
@@ -232,12 +232,12 @@ async function main() {
 
   // --- The unified sessions view still executes ---
   section('remaining folder-view tools execute');
-  const sessionsResult = await tools.get('pimote_list_sessions').execute('call-4', {});
+  const sessionsResult = await tools.get('pimote_find_sessions').execute('call-4', {});
   assert(sessionsResult.isError !== true && Array.isArray(sessionsResult.structuredContent?.sessions), 'list_sessions executes against the sessions port');
 
-  // --- pimote_list_folders nature filter: the team view ---
-  section('pimote_list_folders nature filter');
-  const personasResult = await tools.get('pimote_list_folders').execute('call-5', { nature: 'persona' });
+  // --- pimote_find_folders nature filter: the team view ---
+  section('pimote_find_folders nature filter');
+  const personasResult = await tools.get('pimote_find_folders').execute('call-5', { nature: 'persona' });
   assert(personasResult.isError !== true, 'list_folders (nature: persona) executes without error');
   const personaRows = personasResult.structuredContent;
   assert(Array.isArray(personaRows) && personaRows.every((row) => row.nature === 'persona'), 'every filtered row is a persona');
@@ -290,7 +290,7 @@ async function main() {
     const outside = await tools.get('pimote_create_folder').execute('call-9', { kind: 'persona', name: 'stray', parentPath: sandbox, description: 'x' });
     assert(outside.isError === true && !(await exists(join(sandbox, 'stray'))), 'parentPath outside the scan roots is rejected with no disk effect');
 
-    const personasAfter = (await tools.get('pimote_list_folders').execute('call-10', { nature: 'persona' })).structuredContent;
+    const personasAfter = (await tools.get('pimote_find_folders').execute('call-10', { nature: 'persona' })).structuredContent;
     assert(
       personasAfter?.some((row) => row.path === zetaC && row.persona?.name === 'zeta'),
       'the nature-filtered team view picks up the created persona',
