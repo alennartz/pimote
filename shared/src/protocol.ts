@@ -1405,6 +1405,19 @@ export interface LoginStepEvent {
   step: LoginStep;
 }
 
+// -- Server capabilities --
+
+/**
+ * Advertised once when a client WebSocket connection opens (every connection,
+ * including reconnects, gets a fresh copy). Features the server has not
+ * enabled carry `false` so clients can hide the related UI affordances.
+ */
+export interface ServerCapabilitiesEvent {
+  type: 'server_capabilities';
+  /** Voice calling is configured (speechmux signalling + LLM WS URLs). */
+  voice: boolean;
+}
+
 // -- Version mismatch --
 
 export interface UpdateStatus {
@@ -1463,6 +1476,7 @@ export type PimoteEvent =
   | LoginStepEvent
   // Version
   | VersionMismatchEvent
+  | ServerCapabilitiesEvent
   | UpdateAvailableEvent;
 
 // ----------------------------------------------------------------------------

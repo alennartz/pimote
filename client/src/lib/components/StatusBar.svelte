@@ -16,6 +16,7 @@
   import { GitBranch, House } from '@lucide/svelte';
   import SessionRenameDialog from './SessionRenameDialog.svelte';
   import CallButton from './CallButton.svelte';
+  import { serverCapabilities } from '$lib/stores/server-capabilities.svelte.js';
   import DownloadInbox from './DownloadInbox.svelte';
 
   let restoreLabel = $derived(sessionRegistry.viewed?.isRestoring ? getRestoreModeLabel(sessionRegistry.viewed.restoreMode) : null);
@@ -136,8 +137,10 @@
       AGENTS.md
     </Button>
 
-    <!-- Voice call button -->
-    <CallButton sessionId={sessionRegistry.viewed?.sessionId} />
+    <!-- Voice call button (hidden when the server has voice disabled) -->
+    {#if serverCapabilities.voice}
+      <CallButton sessionId={sessionRegistry.viewed?.sessionId} />
+    {/if}
 
     <!-- Streaming indicator -->
     {#if sessionRegistry.viewed?.isStreaming}

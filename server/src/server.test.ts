@@ -18,7 +18,8 @@ import { createServer, type PimoteServer } from './server.js';
 import type { FolderRegistry } from './folder-registry.js';
 import type { FolderListingService } from './folder-listing.js';
 import type { RepoIndex } from './repo-index.js';
-import type { FolderInfo, PimoteEvent } from '../../shared/dist/index.js';
+import type { FolderInfo, PimoteEvent, ServerCapabilitiesEvent } from '../../shared/dist/index.js';
+import { WebSocket } from 'ws';
 
 function makeDownloads(): DownloadManager {
   return {
@@ -254,5 +255,61 @@ describe('createServer — app name branding', () => {
 
     const manifest = await (await fetch(`${base}/pwa/manifest.json`)).json();
     expect(manifest.name).toBe('Pimote');
+  });
+});
+
+describe('createServer — server_capabilities advertisement', () => {
+  let server: PimoteServer;
+
+  afterEach(async () => {
+    await server?.close();
+  });
+
+  async function startServer(voiceOrchestrator: unknown): Promise<number> {
+    server = await createServer(
+      { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0 },
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      voiceOrchestrator as any,
+      new InMemoryStaticHostRegistry(),
+      makeDownloads(),
+    );
+    await server.start(0);
+    return (server.httpServer.address() as AddressInfo).port;
+  }
+
+  /** Resolves with the server's capabilities event for a fresh WS connection. */
+  function awaitCapabilities(port: number): Promise<ServerCapabilitiesEvent> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+      const timer = setTimeout(() => {
+        ws.close();
+        reject(new Error('timed out waiting for server_capabilities'));
+      }, 2000);
+      ws.on('message', (raw) => {
+        const event = JSON.parse(String(raw)) as PimoteEvent;
+        if (event.type === 'server_capabilities') {
+          clearTimeout(timer);
+          ws.close();
+          resolve(event);
+        }
+      });
+      ws.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+  }
+
+  it('advertises voice disabled when no voice orchestrator is wired', async () => {
+    const port = await startServer(undefined);
+    await expect(awaitCapabilities(port)).resolves.toEqual({ type: 'server_capabilities', voice: false });
+  });
+
+  it('advertises voice enabled when a voice orchestrator is wired', async () => {
+    const port = await startServer({ callHolder: new Map() });
+    await expect(awaitCapabilities(port)).resolves.toEqual({ type: 'server_capabilities', voice: true });
   });
 });

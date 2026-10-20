@@ -5,6 +5,7 @@
   import ModelPicker from './ModelPicker.svelte';
   import ThinkingPicker from './ThinkingPicker.svelte';
   import CallButton from './CallButton.svelte';
+  import { serverCapabilities } from '$lib/stores/server-capabilities.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { fileEditorStore } from '$lib/stores/file-editor.svelte.js';
@@ -91,10 +92,12 @@
           <ThinkingPicker />
         </div>
 
-        <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
-          <span class="text-muted-foreground">Voice call</span>
-          <CallButton sessionId={session?.sessionId} variant="dialog-row" onAction={() => (open = false)} />
-        </div>
+        {#if serverCapabilities.voice}
+          <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
+            <span class="text-muted-foreground">Voice call</span>
+            <CallButton sessionId={session?.sessionId} variant="dialog-row" onAction={() => (open = false)} />
+          </div>
+        {/if}
 
         <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
           <span class="text-muted-foreground">Folder instructions</span>

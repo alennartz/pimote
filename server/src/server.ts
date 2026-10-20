@@ -19,7 +19,7 @@ import { serveStaticHostRoute, type StaticHostRegistry } from './static-host/ind
 import { applyAppNameToHtml, applyAppNameToManifest, resolveAppName } from './branding.js';
 import { serveFileDownloadRoute, type DownloadManager } from './file-download/index.js';
 import crypto from 'node:crypto';
-import type { UpdateAvailableEvent, VersionMismatchEvent } from '../../shared/dist/index.js';
+import type { UpdateAvailableEvent, VersionMismatchEvent, ServerCapabilitiesEvent } from '../../shared/dist/index.js';
 import type { UpdateChecker } from './update-check.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -294,6 +294,16 @@ export async function createServer(
       folderListing,
     );
     takeOverClientSlot(clientRegistry, clientId, handler);
+
+    // Advertise capabilities once per connection so clients can hide
+    // affordances for disabled features. Voice is enabled iff an
+    // orchestrator was wired at boot (it is only built when speechmux is
+    // configured — see voice-orchestrator-boot.ts).
+    const capabilities: ServerCapabilitiesEvent = {
+      type: 'server_capabilities',
+      voice: voiceOrchestrator !== undefined,
+    };
+    handler.sendToClient(capabilities);
 
     ws.on('message', (data) => {
       handler.handleMessage(data.toString()).catch((err) => {
