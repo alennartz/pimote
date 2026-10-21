@@ -382,9 +382,11 @@
       // Steer the current generation (text only, no images)
       if (!text) return;
       const sessionId = sessionRegistry.viewed.sessionId;
+      const isSlashCommand = text.startsWith('/');
       // Show the pending pill before the round-trip. Slash input waits for
-      // pi's queue_update: a command may run instead of queueing.
-      const showPill = !text.startsWith('/');
+      // pi's command handling or queue_update: a command may run instead of
+      // queueing.
+      const showPill = !isSlashCommand;
       if (showPill) sessionRegistry.viewed.pendingSteeringMessages.push(text);
       // Remove the pill when pi will not queue the text. A queued text needs
       // no cleanup: pi's queue_update snapshot already replaced the list.
@@ -394,17 +396,28 @@
         if (idx !== -1) pending!.splice(idx, 1);
       };
       try {
-        const steerResponse = await connection.send({
-          type: 'steer',
-          sessionId,
-          message: text,
-        });
-        if (!steerResponse.success) {
+        const dispatchResponse = isSlashCommand
+          ? await connection.send({
+              type: 'prompt',
+              sessionId,
+              message: text,
+            })
+          : await connection.send({
+              type: 'steer',
+              sessionId,
+              message: text,
+            });
+        if (!dispatchResponse.success) {
           dropPill();
-          console.error('Steer rejected:', steerResponse.error);
+          console.error(`${isSlashCommand ? 'Prompt' : 'Steer'} rejected:`, dispatchResponse.error);
         } else {
           sent = true;
-          if ((steerResponse.data as PromptResponseData | undefined)?.outcome !== 'queued') dropPill();
+          const promptData = dispatchResponse.data as Record<string, unknown> | undefined;
+          if (promptData?.tree) {
+            treeDialogStore.openDialog(sessionId, promptData.tree as import('@pimote/shared').PimoteTreeNode[], (promptData.currentLeafId as string) ?? null);
+          } else if ((dispatchResponse.data as PromptResponseData | undefined)?.outcome !== 'queued') {
+            dropPill();
+          }
         }
       } catch (e) {
         dropPill();

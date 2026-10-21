@@ -1103,30 +1103,15 @@ export class WsHandler {
 
     const session = slot.session;
 
+    // Pimote handles its own slash commands before pi sees the input. Keep this
+    // boundary shared by prompt, steer, and follow-up so a streaming composer
+    // cannot turn a built-in command into a queued user message.
+    if ((command.type === 'prompt' || command.type === 'steer' || command.type === 'follow_up') && (await this.dispatchPimoteSlashCommand(id, sessionId, slot, command.message))) {
+      return;
+    }
+
     switch (command.type) {
       case 'prompt': {
-        // Intercept pimote built-in slash commands
-        const trimmed = command.message.trim();
-        if (trimmed === '/new') {
-          const result = await slot.runtime.newSession();
-          if (!result.cancelled) await this.sessionManager.applySessionReset(slot);
-          this.sendResponse(id, true, { success: !result.cancelled });
-          break;
-        }
-        if (trimmed === '/reload') {
-          await session.reload();
-          this.sendReloadToObservers(sessionId, slot);
-          this.sendSilentDownloadSnapshot(slot);
-          this.sendResponse(id, true);
-          break;
-        }
-        if (trimmed === '/tree') {
-          const tree = mapTreeNodes(session.sessionManager.getTree() as SessionTreeNode[]);
-          const currentLeafId = session.sessionManager.getLeafId();
-          this.sendResponse(id, true, { tree, currentLeafId });
-          break;
-        }
-
         // A prompt that races a run start joins the steering queue.
         await this.dispatchInput(id, slot, {
           text: command.message,
@@ -1609,6 +1594,36 @@ export class WsHandler {
     const commandContextActions = createCommandContextActions(slot, this.sessionManager);
     await slot.session.bindExtensions({ uiContext, commandContextActions });
     slot.sessionState.extensionsBound = true;
+  }
+
+  /** Dispatch slash commands owned by Pimote before pi can queue them as text. */
+  private async dispatchPimoteSlashCommand(id: string, sessionId: string, slot: ManagedSlot, message: string): Promise<boolean> {
+    const session = slot.session;
+    const trimmed = message.trim();
+
+    if (trimmed === '/new') {
+      const result = await slot.runtime.newSession();
+      if (!result.cancelled) await this.sessionManager.applySessionReset(slot);
+      this.sendResponse(id, true, { success: !result.cancelled });
+      return true;
+    }
+
+    if (trimmed === '/reload') {
+      await session.reload();
+      this.sendReloadToObservers(sessionId, slot);
+      this.sendSilentDownloadSnapshot(slot);
+      this.sendResponse(id, true);
+      return true;
+    }
+
+    if (trimmed === '/tree') {
+      const tree = mapTreeNodes(session.sessionManager.getTree() as SessionTreeNode[]);
+      const currentLeafId = session.sessionManager.getLeafId();
+      this.sendResponse(id, true, { tree, currentLeafId });
+      return true;
+    }
+
+    return false;
   }
 
   /**

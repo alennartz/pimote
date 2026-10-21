@@ -5,6 +5,7 @@ import type { PimoteCommand, PimoteResponse } from '@pimote/shared';
 import InputBar from './InputBar.svelte';
 import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 import { connection } from '$lib/stores/connection.svelte.js';
+import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
 
 // The composer settles its optimistic transcript entry and pending-steer pill
 // from the dispatch outcome the server reports (started | queued | handled).
@@ -56,6 +57,7 @@ afterEach(async () => {
   sessionRegistry.sessions = {};
   sessionRegistry.viewedSessionId = null;
   connection.ready = false;
+  treeDialogStore.closeDialog();
 });
 
 describe('prompt dispatch outcome', () => {
@@ -92,6 +94,20 @@ describe('prompt dispatch outcome', () => {
     await submit('/quota');
     expect(sent[0]).not.toHaveProperty('clientMessageId');
     expect(texts()).toEqual([]);
+  });
+
+  it('slash input uses the prompt path while streaming', async () => {
+    setupSession(true);
+    const sent = respond(undefined);
+    await submit('/tree');
+    expect(sent[0]).toMatchObject({ type: 'prompt', sessionId: 's1', message: '/tree' });
+  });
+
+  it('opens the tree dialog when a streaming slash command returns tree data', async () => {
+    setupSession(true);
+    respond({ tree: [], currentLeafId: null });
+    await submit('/tree');
+    expect(treeDialogStore.state).toMatchObject({ open: true, sessionId: 's1', tree: [], currentLeafId: null });
   });
 });
 

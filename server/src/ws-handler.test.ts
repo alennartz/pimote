@@ -467,6 +467,26 @@ describe('observer command boundary', () => {
     expect(cancel).toHaveBeenCalledOnce();
   });
 
+  it('steer routes Pimote slash commands through command handling', async () => {
+    const { slot, first } = pair();
+    const prompt = vi.fn(async () => {});
+    (slot.session as any).isStreaming = true;
+    (slot.session as any).prompt = prompt;
+    (slot.session as any).sessionManager = {
+      getTree: () => [],
+      getLeafId: () => null,
+    };
+    await open(first);
+
+    await first.handler.handleMessage(JSON.stringify({ type: 'steer', sessionId: 'session-1', message: '/tree', id: 'tree-steer' }));
+
+    expect(findResponse(first.sent, 'tree-steer')).toMatchObject({
+      success: true,
+      data: { tree: [], currentLeafId: null },
+    });
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
   it('follow_up dispatches with the followUp behavior and fails the response when pi rejects it', async () => {
     const { slot, first } = pair();
     const prompt = vi.fn(async () => {
