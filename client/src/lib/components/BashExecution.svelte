@@ -218,7 +218,9 @@
   .bash-output {
     margin: 6px 0 0;
     max-width: 100%;
+    max-height: 400px;
     overflow-x: auto;
+    overflow-y: auto;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     font-family: var(--font-mono, monospace);
