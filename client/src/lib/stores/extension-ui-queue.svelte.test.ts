@@ -32,4 +32,22 @@ describe('extension dialog resolution', () => {
     emit({ type: 'extension_ui_resolved', sessionId: 's1', requestId: 'missing' });
     expect(queue.all).toHaveLength(2);
   });
+
+  it('drops a session\u2019s dialogs when a restore starts and keeps the ones the server re-sends, once', () => {
+    const queue = getExtensionUiQueue();
+    // Answered elsewhere while this client was offline: never re-sent.
+    emit({ type: 'extension_ui_request', sessionId: 'r1', requestId: 'stale', method: 'confirm', title: 'Old?' });
+    emit({ type: 'extension_ui_request', sessionId: 'r1', requestId: 'live', method: 'confirm', title: 'Still?' });
+    emit({ type: 'extension_ui_request', sessionId: 'r2', requestId: 'untouched', method: 'confirm', title: 'Other?' });
+
+    emit({ type: 'session_restore', sessionId: 'r1', mode: 'incremental_replay', status: 'started' });
+    emit({ type: 'extension_ui_request', sessionId: 'r1', requestId: 'live', method: 'confirm', title: 'Still?' });
+    emit({ type: 'extension_ui_request', sessionId: 'r1', requestId: 'live', method: 'confirm', title: 'Still?' });
+
+    const ids = queue.all.filter((r) => r.sessionId === 'r1' || r.sessionId === 'r2').map(({ sessionId, requestId }) => [sessionId, requestId]);
+    expect(ids).toEqual([
+      ['r2', 'untouched'],
+      ['r1', 'live'],
+    ]);
+  });
 });

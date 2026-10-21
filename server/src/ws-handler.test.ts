@@ -59,6 +59,7 @@ function createMockEventBuffer(opts?: { replayResult?: PimoteSessionEvent[] | nu
     },
     currentCursor: maxCursor,
     onEvent: () => {},
+    expectPromptEcho: () => {},
   } as unknown as EventBuffer;
 }
 
@@ -88,6 +89,7 @@ function createMockSlot(
     thinkingLevel: 'default',
     getAvailableThinkingLevels: () => [],
     isStreaming: false,
+    state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
     isCompacting: false,
     sessionFile: undefined,
     sessionId: id,
@@ -378,44 +380,133 @@ describe('observer command boundary', () => {
     expect(prompt.mock.calls.map((args: any[]) => args[0])).toEqual(['first', 'second']);
   });
 
+  // The prompt response reports pi's dispatch outcome so the sender can
+  // settle its optimistic entry. Only a started prompt stamps its echo.
+  function promptWith(disposition: 'started' | 'queued' | 'handled') {
+    return vi.fn(async (_text: string, options: any) => {
+      options.preflightResult(disposition);
+    });
+  }
+
+  it('a started prompt reports `started` and stamps its echo with the clientMessageId', async () => {
+    const { slot, first } = pair();
+    const prompt = promptWith('started');
+    const expectPromptEcho = vi.fn();
+    (slot.session as any).prompt = prompt;
+    (slot.sessionState.eventBuffer as any).expectPromptEcho = expectPromptEcho;
+    await open(first);
+
+    await first.handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-1', message: 'hello', clientMessageId: 'c1', id: 'p' }));
+
+    expect(findResponse(first.sent, 'p')).toMatchObject({ success: true, data: { outcome: 'started' } });
+    expect(expectPromptEcho).toHaveBeenCalledWith('c1');
+  });
+
   // A prompt that races a run start (agent_start still in flight on the
   // sender, so its composer took the prompt path) must not die inside pi's
-  // "Agent is already processing" throw. The handler steers it into the
-  // active run under this client's queue ownership, so the consumed user
-  // message echoes back and the sender's optimistic entry reconciles.
-  it('prompt racing an active run is steered into it, not dropped', async () => {
-    const { slot, first, second } = pair();
-    const steer = vi.fn(async () => {});
-    const prompt = vi.fn(async () => {});
+  // "Agent is already processing" throw. pi queues it as steering under this
+  // client's queue ownership; the sender drops its optimistic entry.
+  it('a prompt racing an active run joins the steering queue and reports `queued`', async () => {
+    const { slot, second } = pair();
+    const prompt = promptWith('queued');
+    const expectPromptEcho = vi.fn();
+    const intend = vi.spyOn(slot.sessionState.queueOwnership, 'intend');
     (slot.session as any).isStreaming = true;
-    (slot.session as any).steer = steer;
     (slot.session as any).prompt = prompt;
-    await open(first);
+    (slot.sessionState.eventBuffer as any).expectPromptEcho = expectPromptEcho;
     await open(second);
 
     await second.handler.handleMessage(
-      JSON.stringify({ type: 'prompt', sessionId: 'session-1', message: 'raced the run start', images: ['data:image/png;base64,AAA'], id: 'race' }),
+      JSON.stringify({ type: 'prompt', sessionId: 'session-1', message: 'raced the run start', images: ['data:image/png;base64,AAA'], clientMessageId: 'c1', id: 'race' }),
     );
 
-    expect(findResponse(second.sent, 'race')).toMatchObject({ success: true });
-    expect(prompt).not.toHaveBeenCalled();
-    expect(steer).toHaveBeenCalledWith('raced the run start', [expect.objectContaining({ mimeType: 'image/png' })]);
+    expect(findResponse(second.sent, 'race')).toMatchObject({ success: true, data: { outcome: 'queued' } });
+    expect(prompt).toHaveBeenCalledWith(
+      'raced the run start',
+      expect.objectContaining({ streamingBehavior: 'steer', images: [expect.objectContaining({ mimeType: 'image/png' })] }),
+    );
+    expect(intend).toHaveBeenCalledWith('steering', expect.any(String), 'raced the run start');
+    expect(expectPromptEcho).not.toHaveBeenCalled();
   });
 
-  it('slash prompt racing an active run keeps the prompt() path for pi extension commands', async () => {
+  it('a prompt an input handler consumes reports `handled`', async () => {
     const { slot, first } = pair();
-    const steer = vi.fn(async () => {});
-    const prompt = vi.fn(async () => {});
+    (slot.session as any).prompt = promptWith('handled');
+    await open(first);
+
+    await first.handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-1', message: 'consumed', clientMessageId: 'c1', id: 'p' }));
+
+    expect(findResponse(first.sent, 'p')).toMatchObject({ success: true, data: { outcome: 'handled' } });
+  });
+
+  it('a prompt without a clientMessageId answers before pi dispatches it', async () => {
+    // An extension command handler can wait on a dialog; the composer must
+    // not wait with it.
+    const { slot, first } = pair();
+    (slot.session as any).prompt = vi.fn(() => new Promise<void>(() => {}));
+    await open(first);
+
+    await first.handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-1', message: '/ask-me', id: 'slash' }));
+
+    expect(findResponse(first.sent, 'slash')).toEqual(expect.objectContaining({ success: true }));
+    expect(findResponse(first.sent, 'slash')).not.toHaveProperty('data');
+  });
+
+  it('steer reports pi\u2019s outcome and releases its queue intent when pi does not queue it', async () => {
+    const { slot, first } = pair();
+    const prompt = promptWith('handled');
+    const cancel = vi.spyOn(slot.sessionState.queueOwnership, 'cancel');
     (slot.session as any).isStreaming = true;
-    (slot.session as any).steer = steer;
     (slot.session as any).prompt = prompt;
     await open(first);
 
-    await first.handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-1', message: '/explain this', id: 'slash' }));
+    await first.handler.handleMessage(JSON.stringify({ type: 'steer', sessionId: 'session-1', message: 'consumed by a handler', id: 's' }));
 
-    expect(findResponse(first.sent, 'slash')).toMatchObject({ success: true });
-    expect(steer).not.toHaveBeenCalled();
-    expect(prompt).toHaveBeenCalledWith('/explain this', { images: undefined });
+    expect(findResponse(first.sent, 's')).toMatchObject({ success: true, data: { outcome: 'handled' } });
+    expect(prompt).toHaveBeenCalledWith('consumed by a handler', expect.objectContaining({ streamingBehavior: 'steer' }));
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it('follow_up dispatches with the followUp behavior and fails the response when pi rejects it', async () => {
+    const { slot, first } = pair();
+    const prompt = vi.fn(async () => {
+      throw new Error('Cannot submit a prompt while compaction is in progress.');
+    });
+    (slot.session as any).isStreaming = true;
+    (slot.session as any).prompt = prompt;
+    await open(first);
+
+    await first.handler.handleMessage(JSON.stringify({ type: 'follow_up', sessionId: 'session-1', message: 'later', id: 'f' }));
+
+    expect(prompt).toHaveBeenCalledWith('later', expect.objectContaining({ streamingBehavior: 'followUp' }));
+    expect(findResponse(first.sent, 'f')).toMatchObject({ success: false });
+  });
+
+  it('a mid-run full_resync carries the in-flight message and running tool calls', async () => {
+    const { slot, first } = pair();
+    (slot.session as any).isStreaming = true;
+    (slot.session as any).state = {
+      streamingMessage: { role: 'assistant', content: [{ type: 'text', text: 'half a sent' }] },
+      pendingToolCalls: new Set(['tc-1']),
+    };
+    await first.handler.handleMessage(JSON.stringify({ type: 'open_session', sessionId: 'session-1', folderPath: '/home/user/project', id: 'open' }));
+
+    expect(findEvents(first.sent, 'full_resync')[0]).toMatchObject({
+      streamingMessage: { role: 'assistant', content: [{ type: 'text', text: 'half a sent' }] },
+      runningToolCallIds: ['tc-1'],
+    });
+  });
+
+  it('a prompt pi rejects before dispatch fails the response', async () => {
+    const { slot, first } = pair();
+    (slot.session as any).prompt = vi.fn(async () => {
+      throw new Error('Cannot submit a prompt while compaction is in progress.');
+    });
+    await open(first);
+
+    await first.handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-1', message: 'hello', clientMessageId: 'c1', id: 'p' }));
+
+    expect(findResponse(first.sent, 'p')).toMatchObject({ success: false, error: 'Cannot submit a prompt while compaction is in progress.' });
   });
 
   it('archives every live slot and closes every observer before setting the flag', async () => {
@@ -785,6 +876,7 @@ describe('WsHandler', () => {
             thinkingLevel: 'off',
             getAvailableThinkingLevels: () => [],
             isStreaming: false,
+            state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
             isCompacting: false,
             sessionFile: sessionFilePath,
             sessionId: reopenedSessionId,
@@ -856,6 +948,7 @@ describe('WsHandler', () => {
             thinkingLevel: 'off',
             getAvailableThinkingLevels: () => [],
             isStreaming: false,
+            state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
             isCompacting: false,
             sessionFile: sessionFilePath,
             sessionId: reopenedSessionId,
@@ -908,6 +1001,7 @@ describe('WsHandler', () => {
             thinkingLevel: 'off',
             getAvailableThinkingLevels: () => [],
             isStreaming: false,
+            state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
             isCompacting: false,
             sessionFile: sessionFilePath,
             sessionId: 'session-deep',
@@ -1785,6 +1879,7 @@ describe('WsHandler', () => {
         thinkingLevel: 'default',
         getAvailableThinkingLevels: () => [],
         isStreaming: false,
+        state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
         isCompacting: false,
         sessionFile: undefined,
         sessionName: undefined,
@@ -1910,6 +2005,7 @@ describe('WsHandler', () => {
         thinkingLevel: 'default',
         getAvailableThinkingLevels: () => [],
         isStreaming: false,
+        state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
         isCompacting: false,
         sessionFile: '/tmp/session.json',
         sessionName: undefined,
@@ -2153,6 +2249,7 @@ describe('WsHandler', () => {
           thinkingLevel: 'default',
           getAvailableThinkingLevels: () => [],
           isStreaming: false,
+          state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
           isCompacting: false,
           sessionFile: undefined,
           sessionId: 'session-tree-nav',
@@ -2251,6 +2348,7 @@ describe('WsHandler', () => {
           thinkingLevel: 'default',
           getAvailableThinkingLevels: () => [],
           isStreaming: false,
+          state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
           isCompacting: false,
           sessionFile: undefined,
           sessionId: 'session-tree-cancel',
@@ -2337,6 +2435,7 @@ describe('WsHandler', () => {
           thinkingLevel: 'default',
           getAvailableThinkingLevels: () => [],
           isStreaming: false,
+          state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
           isCompacting: false,
           sessionFile: undefined,
           sessionId: 'session-tree-overlap',
@@ -2651,6 +2750,7 @@ describe('WsHandler', () => {
         thinkingLevel: 'default',
         getAvailableThinkingLevels: () => [],
         isStreaming: false,
+        state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
         isCompacting: false,
         sessionFile: undefined,
         sessionId: 'session-fork-ok',
@@ -2724,6 +2824,7 @@ describe('WsHandler', () => {
         thinkingLevel: 'default',
         getAvailableThinkingLevels: () => [],
         isStreaming: false,
+        state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
         isCompacting: false,
         sessionFile: undefined,
         sessionId: 'session-fork-cancel',
@@ -2798,6 +2899,7 @@ describe('WsHandler', () => {
         thinkingLevel: 'default',
         getAvailableThinkingLevels: () => [],
         isStreaming: false,
+        state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
         isCompacting: false,
         sessionFile: undefined,
         sessionId: 'session-fork-replace',
@@ -2873,6 +2975,7 @@ describe('WsHandler', () => {
         thinkingLevel: 'default',
         getAvailableThinkingLevels: () => [],
         isStreaming: false,
+        state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
         isCompacting: false,
         sessionFile: undefined,
         sessionId: 'session-fork-notext',
@@ -2946,6 +3049,7 @@ describe('WsHandler', () => {
           thinkingLevel: 'default',
           getAvailableThinkingLevels: () => [],
           isStreaming: false,
+          state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
           isCompacting: false,
           sessionFile: undefined,
           sessionId: 'session-1',
@@ -4099,6 +4203,25 @@ describe('abort diagnostics', () => {
     });
   });
 
+  it('holds an offline sender\u2019s drafts and delivers them on its next claim', async () => {
+    const slot = createMockSlot({ connectedClientId: 'client-1', status: 'working' });
+    const ownership = slot.sessionState.queueOwnership;
+    ownership.intend('followUp', 'client-2', 'theirs-later');
+    ownership.syncFromPi('followUp', ['theirs-later']);
+    (slot.session as any).clearQueue = () => ({ steering: [], followUp: ['theirs-later'] });
+    (slot.session as any).abort = async () => {};
+    const sessions = new Map([[slot.sessionState.id, slot]]);
+    const { handler } = createTestHandler('client-1', { sessions });
+    await handler.handleMessage(JSON.stringify({ type: 'abort', id: 'abort-offline', sessionId: slot.sessionState.id }));
+    expect(slot.sessionState.undeliveredDrafts?.get('client-2')).toEqual({ steering: [], followUp: ['theirs-later'] });
+
+    const returning = createTestHandler('client-2', { sessions });
+    await returning.handler.handleMessage(JSON.stringify({ type: 'open_session', id: 'reopen', sessionId: slot.sessionState.id, folderPath: slot.folderPath }));
+
+    expect(findEvents(returning.sent, 'queued_drafts_restored')).toEqual([expect.objectContaining({ sessionId: slot.sessionState.id, steering: [], followUp: ['theirs-later'] })]);
+    expect(slot.sessionState.undeliveredDrafts?.has('client-2')).toBe(false);
+  });
+
   it('returns captured messages when abort rejects', async () => {
     const slot = createMockSlot({ connectedClientId: 'client-1', status: 'working' });
     const queued = { steering: ['unsent'], followUp: [] };
@@ -4212,6 +4335,7 @@ describe('panel resync requests', () => {
       thinkingLevel: 'default',
       getAvailableThinkingLevels: () => [],
       isStreaming: false,
+      state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
       isCompacting: false,
       sessionFile: undefined,
       sessionName: undefined,
@@ -4270,6 +4394,7 @@ describe('call_bind — dormant session reopen', () => {
       thinkingLevel: 'off',
       getAvailableThinkingLevels: () => [],
       isStreaming: false,
+      state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
       isCompacting: false,
       sessionFile,
       sessionId: 'session-1',

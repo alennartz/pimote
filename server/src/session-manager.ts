@@ -11,9 +11,9 @@ import {
 import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory } from '@earendil-works/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
-import { QUEUE_KINDS, QueueOwnership } from './queue-ownership.js';
-import { rendererRegisteredVisibility } from './message-mapper.js';
-import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, DownloadUpdateEvent } from '../../shared/dist/index.js';
+import { QUEUE_KINDS, QueueOwnership, type QueueTexts } from './queue-ownership.js';
+import { extractMessageEntryIds, rendererRegisteredVisibility } from './message-mapper.js';
+import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, DownloadUpdateEvent, SessionSettingsChangedEvent } from '../../shared/dist/index.js';
 import type { PushNotificationPayload, PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import type { PanelMessage } from './panel-state.js';
@@ -87,6 +87,8 @@ export interface SessionState {
   bashAbortRequested?: boolean;
   /** Which client submitted each message in pi's steering and follow-up queues. */
   queueOwnership: QueueOwnership;
+  /** Abort-drained drafts for senders that were offline, delivered on their next claim. */
+  undeliveredDrafts?: Map<string, QueueTexts>;
 }
 
 export interface ManagedSlot {
@@ -257,7 +259,11 @@ export function createSessionState(
   folderPath: string,
 ): SessionState {
   const sessionId = session.sessionId;
-  const eventBuffer = new EventBuffer(config.bufferSize, rendererRegisteredVisibility(session));
+  // Wall-clock base: a recreated slot's cursors sit above every cursor its
+  // predecessor handed out (at most 1000 events per millisecond of lifetime),
+  // so a client's stale cursor replays as stale instead of as caught up.
+  const visibility = rendererRegisteredVisibility(session);
+  const eventBuffer = new EventBuffer(config.bufferSize, visibility, Date.now() * 1000, () => extractMessageEntryIds(session.sessionManager.getBranch(), visibility));
 
   const state: SessionState = {
     id: sessionId,
@@ -321,6 +327,7 @@ export function createSessionState(
 
   // Bind feature EventBus listeners after the state holder exists.
   state.panelListenerUnsubs = setupSlotPanelListeners(eventBus, state, sessionId, callbacks.sendEvent);
+  state.panelListenerUnsubs.push(eventBus.on(SETTINGS_CHANGED_CHANNEL, () => callbacks.sendEvent(makeSessionSettingsEvent(sessionId, session))));
   state.downloadListenerUnsub = setupSlotDownloadListener(eventBus, {
     sessionId,
     folderPath,
@@ -352,6 +359,38 @@ function teardownSessionState(state: SessionState): void {
 
   // Unsubscribe from session events
   state.unsubscribe();
+}
+
+/** EventBus channel on which the settings watcher reports model and thinking-level changes. */
+const SETTINGS_CHANGED_CHANNEL = 'pimote:settings-changed';
+
+/** Snapshot of a session's settings, as observers render them. */
+export function makeSessionSettingsEvent(sessionId: string, session: AgentSession): SessionSettingsChangedEvent {
+  const model = session.model;
+  return {
+    type: 'session_settings_changed',
+    sessionId,
+    model: model ? { provider: model.provider, id: model.id, name: model.name } : null,
+    thinkingLevel: session.thinkingLevel,
+    availableThinkingLevels: session.getAvailableThinkingLevels(),
+    autoCompactionEnabled: session.autoCompactionEnabled,
+  };
+}
+
+/**
+ * Report model and thinking-level changes from every source (pimote commands,
+ * slash commands, extensions, pi's own clamping) on the session EventBus, so
+ * every observer renders current settings. pi emits no session event for a
+ * model change; only extensions see `model_select`.
+ */
+export function createSettingsWatchExtension(): ExtensionFactory {
+  return (pi) => {
+    const report = () => {
+      pi.events.emit(SETTINGS_CHANGED_CHANNEL, undefined);
+    };
+    pi.on('model_select', report);
+    pi.on('thinking_level_select', report);
+  };
 }
 
 /** Register panel detection and data listeners for a SessionState on an EventBus. */
@@ -530,6 +569,7 @@ export class PimoteSessionManager {
         // pi's codemode builtin. SDK sessions skip pi's built-in extensions, so
         // register it here. It stays inactive until defaultTools enables it.
         createCodemodeExtension(),
+        createSettingsWatchExtension(),
       ];
       const eventBus = createEventBus();
       eventBusRef.current = eventBus;

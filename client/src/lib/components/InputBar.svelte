@@ -10,7 +10,7 @@
   import CommandAutocomplete from './CommandAutocomplete.svelte';
   import { extractFileRefPrefix, resolveFileRefSelection } from '$lib/file-ref-prefix.js';
   import { parseBangBashCommand } from '$lib/bash-command.js';
-  import type { BashResponseData, CommandInfo } from '@pimote/shared';
+  import type { BashResponseData, CommandInfo, PromptResponseData } from '@pimote/shared';
   import Send from '@lucide/svelte/icons/send';
   import MessageSquare from '@lucide/svelte/icons/message-square';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
@@ -381,38 +381,69 @@
     if (sessionRegistry.viewed?.isStreaming) {
       // Steer the current generation (text only, no images)
       if (!text) return;
-      sessionRegistry.viewed.pendingSteeringMessages.push(text);
+      const sessionId = sessionRegistry.viewed.sessionId;
+      // Show the pending pill before the round-trip. Slash input waits for
+      // pi's queue_update: a command may run instead of queueing.
+      const showPill = !text.startsWith('/');
+      if (showPill) sessionRegistry.viewed.pendingSteeringMessages.push(text);
+      // Remove the pill when pi will not queue the text. A queued text needs
+      // no cleanup: pi's queue_update snapshot already replaced the list.
+      const dropPill = () => {
+        const pending = sessionRegistry.sessions[sessionId]?.pendingSteeringMessages;
+        const idx = showPill && pending ? pending.lastIndexOf(text) : -1;
+        if (idx !== -1) pending!.splice(idx, 1);
+      };
       try {
-        await connection.send({
+        const steerResponse = await connection.send({
           type: 'steer',
-          sessionId: sessionRegistry.viewed.sessionId,
+          sessionId,
           message: text,
         });
-        sent = true;
+        if (!steerResponse.success) {
+          dropPill();
+          console.error('Steer rejected:', steerResponse.error);
+        } else {
+          sent = true;
+          if ((steerResponse.data as PromptResponseData | undefined)?.outcome !== 'queued') dropPill();
+        }
       } catch (e) {
+        dropPill();
         console.error('Failed to send steer:', e);
       }
     } else {
       // Send a new prompt (text and/or images)
       if (!text && stagedImages.length === 0) return;
+      const sessionId = sessionRegistry.viewed!.sessionId;
+      // Show the user message before the round-trip. Slash input renders on
+      // its echo only: extension commands never echo, and skill or template
+      // expansion echoes different text.
+      const clientMessageId = text.startsWith('/') ? undefined : crypto.randomUUID();
+      if (clientMessageId) sessionRegistry.addOptimisticUserMessage(sessionId, text, clientMessageId);
       try {
         const promptResponse = await connection.send({
           type: 'prompt',
-          sessionId: sessionRegistry.viewed!.sessionId,
+          sessionId,
           message: text,
           ...(stagedImages.length > 0 ? { images: stagedImages } : {}),
+          ...(clientMessageId ? { clientMessageId } : {}),
         });
-        sent = true;
-
-        // Handle /tree response — open tree dialog instead of adding a message
-        const promptData = promptResponse.data as Record<string, unknown> | undefined;
-        if (promptData?.tree) {
-          treeDialogStore.openDialog(sessionRegistry.viewed!.sessionId, promptData.tree as import('@pimote/shared').PimoteTreeNode[], (promptData.currentLeafId as string) ?? null);
+        if (!promptResponse.success) {
+          if (clientMessageId) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+          console.error('Prompt rejected:', promptResponse.error);
         } else {
-          // Show the user message immediately instead of waiting for the server event
-          sessionRegistry.addOptimisticUserMessage(sessionRegistry.viewed!.sessionId, text);
+          sent = true;
+          // Handle /tree response — open tree dialog instead of adding a message
+          const promptData = promptResponse.data as Record<string, unknown> | undefined;
+          if (promptData?.tree) {
+            treeDialogStore.openDialog(sessionId, promptData.tree as import('@pimote/shared').PimoteTreeNode[], (promptData.currentLeafId as string) ?? null);
+          } else if (clientMessageId && (promptData as PromptResponseData | undefined)?.outcome !== 'started') {
+            // Only a started prompt echoes a stamped user message. A queued
+            // prompt shows in the steering queue and echoes unstamped later.
+            sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+          }
         }
       } catch (e) {
+        if (clientMessageId) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
         console.error('Failed to send prompt:', e);
       }
     }

@@ -87,14 +87,25 @@ dialog type).
 
 **What:** Two clients open the same session. Both receive the live
 transcript and live bash output, and either client can send a prompt.
-Disconnecting one client leaves the other attached. Archiving closes
-all observers with `session_closed { reason: 'archived' }`; unarchiving
+Each sender's optimistic entry settles exactly once: its stamped echo
+replaces it, and a `queued` or `handled` outcome (a `/`-command, a
+steer into an active run) removes it, so later turns append at the
+bottom on every client (DR-076). Disconnecting one client leaves the
+other attached. A client that returns after the slot was reaped and
+reopened by the other client (or after a server restart) gets a full
+resync, not an empty replay (DR-077). A dialog the other client answered
+while one was offline is gone after reconnect. Archiving closes all
+observers with `session_closed { reason: 'archived' }`; unarchiving
 leaves the session closed until an explicit open.
 
 **Why:** Shared observers let several devices watch and control one live
 session without takeover races.
 
-**Driver:** manual-browser (two browsers or profiles with distinct client IDs).
+**Driver:** `tools/manual-test/session-observers-smoke/` (transcript/send
+fan-out, dialog resolution, archive/restore, voice holder) plus
+manual-browser for the optimistic-entry and reaped-slot reconnect checks
+(two browsers or profiles with distinct client IDs; a duplicated tab must
+take a fresh client ID).
 
 ### 5. Slash commands and tree navigation
 

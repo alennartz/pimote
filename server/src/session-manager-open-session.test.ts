@@ -39,6 +39,7 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
   return {
     ModelRuntime: { create: modelRuntimeCreate },
     getAgentDir: vi.fn(() => '/agent-dir'),
+    createCodemodeExtension: () => () => {},
     createEventBus: vi.fn(() => ({
       on: vi.fn(() => () => {}),
       emit: vi.fn(() => undefined),
@@ -193,7 +194,7 @@ describe('PimoteSessionManager.openSession', () => {
 
     expect(serviceArgs).toHaveLength(2);
     expect(serviceArgs.map((args) => args.modelRuntime)).toEqual([modelRuntime, modelRuntime]);
-    expect(serviceArgs[0]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory, expect.any(Function)]);
-    expect(serviceArgs[1]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory, expect.any(Function)]);
+    expect(serviceArgs[0]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory, expect.any(Function), expect.any(Function)]);
+    expect(serviceArgs[1]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory, expect.any(Function), expect.any(Function)]);
   });
 });

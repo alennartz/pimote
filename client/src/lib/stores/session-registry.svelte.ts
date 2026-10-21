@@ -193,17 +193,16 @@ export interface PerSessionState {
   draftText: string;
   pendingSteeringMessages: string[];
   lastBotActivityTimestamp: string | null;
-  /** FIFO of messageKeys for optimistic user entries awaiting their echo,
-   * oldest first. Each incoming user message_end reconciles the front entry
-   * by text; confirmed foreign messages insert ahead of the oldest entry. */
-  optimisticMessageKeys: string[];
+  /** Optimistic user entries awaiting their prompt's outcome, oldest first.
+   * The user echo stamped with an entry's clientMessageId replaces it in
+   * place. Every other confirmed message inserts ahead of the oldest entry. */
+  optimisticEntries: OptimisticEntry[];
 }
 
-/** First text block of a message; '' for image-only or missing messages. */
-function messageText(message: PimoteAgentMessage | undefined): string {
-  if (!message) return '';
-  const textContent = message.content.find((c: PimoteMessageContent) => c.type === 'text');
-  return textContent?.text ?? '';
+/** An optimistic user entry: its render key and the id its echo carries. */
+export interface OptimisticEntry {
+  key: string;
+  clientMessageId: string;
 }
 
 export class SessionRegistry {
@@ -331,7 +330,7 @@ export class SessionRegistry {
       draftText: '',
       pendingSteeringMessages: [],
       lastBotActivityTimestamp: null,
-      optimisticMessageKeys: [],
+      optimisticEntries: [],
     };
   }
 
@@ -352,8 +351,9 @@ export class SessionRegistry {
     );
   }
 
-  /** Add an optimistic user message so it renders immediately before the server round-trip */
-  addOptimisticUserMessage(sessionId: string, text: string): void {
+  /** Add an optimistic user message so it renders immediately before the server round-trip.
+   *  `clientMessageId` must match the prompt command's id. */
+  addOptimisticUserMessage(sessionId: string, text: string, clientMessageId: string): void {
     const session = this.sessions[sessionId];
     if (!session) return;
 
@@ -366,7 +366,42 @@ export class SessionRegistry {
     const key = 'msg-' + this._nextMessageKey++;
     session.messages = [...session.messages, message];
     session.messageKeys = [...session.messageKeys, key];
-    session.optimisticMessageKeys = [...session.optimisticMessageKeys, key];
+    session.optimisticEntries = [...session.optimisticEntries, { key, clientMessageId }];
+  }
+
+  /**
+   * Give streamed messages their persisted entry ids. `ids` comes from the
+   * server's context view of the branch (extractMessageEntryIds), whose tail
+   * matches the client's tail: streamed messages are the newest, and a
+   * compaction shortens only the head. Zip from the end, skipping entries pi
+   * never persists (pending optimistic prompts, aborted-empty assistant
+   * placeholders). Stop at the first message whose id disagrees.
+   */
+  private applyMessageEntryIds(session: PerSessionState, ids: readonly string[]): void {
+    const pendingKeys = session.optimisticEntries.map((e) => e.key);
+    let idIdx = ids.length - 1;
+    for (let i = session.messages.length - 1; i >= 0 && idIdx >= 0; i--) {
+      if (pendingKeys.includes(session.messageKeys[i])) continue;
+      const msg = session.messages[i];
+      const isAbortedPlaceholder = msg.role === 'assistant' && msg.aborted === true && msg.content.every((c) => c.type === 'text' && !c.text);
+      if (isAbortedPlaceholder) continue;
+      if (msg.entryId !== undefined && msg.entryId !== ids[idIdx]) break;
+      msg.entryId = ids[idIdx--];
+    }
+  }
+
+  /** Remove an optimistic user message whose prompt will not echo it
+   *  (queued, handled, rejected, or lost with the connection). */
+  dropOptimisticUserMessage(sessionId: string, clientMessageId: string): void {
+    const session = this.sessions[sessionId];
+    if (!session) return;
+    const entry = session.optimisticEntries.find((e) => e.clientMessageId === clientMessageId);
+    if (!entry) return;
+    session.optimisticEntries = session.optimisticEntries.filter((e) => e !== entry);
+    const idx = session.messageKeys.indexOf(entry.key);
+    if (idx === -1) return;
+    session.messages = session.messages.filter((_, i) => i !== idx);
+    session.messageKeys = session.messageKeys.filter((_, i) => i !== idx);
   }
 
   /** Route an incoming event to the correct session's state */
@@ -376,21 +411,6 @@ export class SessionRegistry {
     // Read the current snapshot and draft only when restoring.
     const session = this.sessions[sessionId];
     if (!session || queued.length === 0) return;
-    // An optimistic entry whose text comes back in a restored queue was never
-    // consumed: the message lives in the composer again, so drop the
-    // transcript copy — no echo will ever reconcile it.
-    if (session.optimisticMessageKeys.length > 0) {
-      const restoredTexts = queued;
-      const droppedKeys = session.optimisticMessageKeys.filter((key) => {
-        const idx = session.messageKeys.indexOf(key);
-        return idx !== -1 && restoredTexts.includes(messageText(session.messages[idx]));
-      });
-      if (droppedKeys.length > 0) {
-        session.messages = session.messages.filter((_, i) => !droppedKeys.includes(session.messageKeys[i]));
-        session.messageKeys = session.messageKeys.filter((key) => !droppedKeys.includes(key));
-        session.optimisticMessageKeys = session.optimisticMessageKeys.filter((key) => !droppedKeys.includes(key));
-      }
-    }
     const text = [...queued, ...(session.draftText ? [session.draftText] : [])].join('\n');
     session.draftText = text;
     setEditorText(sessionId, text);
@@ -495,28 +515,8 @@ export class SessionRegistry {
         session.streamingMessage = null;
         session.streamingKey = null;
         // Apply entry IDs so fork targets work on messages received via streaming.
-        //
-        // Alignment: messageEntryIds comes from the persisted branch
-        // (extractMessageEntryIds on the server) and includes custom-entry
-        // ids whenever the client also shows them (same visibility
-        // predicate on both sides). The client list can also hold
-        // pi-agent-core's synthetic aborted-assistant placeholders (abort
-        // pushes an empty assistant into state but never persists an entry).
-        // Skip aborted-empty messages so IDs land on the right
-        // real messages. Without this, every barge-in shifts subsequent
-        // entryIds one slot earlier, breaking fork / tree navigation targeting.
         if (endEvent.messageEntryIds) {
-          const ids = endEvent.messageEntryIds;
-          let idIdx = 0;
-          for (let i = 0; i < session.messages.length && idIdx < ids.length; i++) {
-            const msg = session.messages[i];
-            const isAbortedPlaceholder = msg.role === 'assistant' && msg.aborted === true && msg.content.every((c) => c.type === 'text' && !c.text);
-            if (isAbortedPlaceholder) continue;
-            if (!msg.entryId) {
-              msg.entryId = ids[idIdx];
-            }
-            idIdx++;
-          }
+          this.applyMessageEntryIds(session, endEvent.messageEntryIds);
         }
         // Refresh meta (context usage changes after each turn, branch may change)
         connection
@@ -532,8 +532,8 @@ export class SessionRegistry {
 
       case 'message_start': {
         const start = event as MessageStartEvent;
-        // Skip streaming placeholder when we already have an optimistic user message displayed
-        if (start.role === 'user' && session.optimisticMessageKeys.length > 0) {
+        // Our own prompt's echo: its optimistic entry is already displayed.
+        if (start.role === 'user' && start.clientMessageId !== undefined && session.optimisticEntries.some((e) => e.clientMessageId === start.clientMessageId)) {
           break;
         }
         session.streamingKey = 'msg-' + this._nextMessageKey++;
@@ -579,18 +579,19 @@ export class SessionRegistry {
         const end = event as MessageEndEvent;
         const message: PimoteAgentMessage = end.message;
 
-        // Reconcile optimistic entries. Server events arrive in transcript
-        // order, so the echo of our oldest pending prompt replaces that entry
-        // in place, while any other confirmed message (a foreign user message
-        // or an assistant turn) belongs ahead of every still-unconfirmed
-        // entry — appending it would swap the final order.
-        const frontKey = session.optimisticMessageKeys[0];
-        const frontIdx = frontKey !== undefined ? session.messageKeys.indexOf(frontKey) : -1;
-        if (message.role === 'user' && frontIdx !== -1 && messageText(message) === messageText(session.messages[frontIdx])) {
+        // Reconcile optimistic entries. The server stamps a started prompt's
+        // user echo with the sender's clientMessageId, so our own echo
+        // replaces its entry in place. Server events arrive in transcript
+        // order, so any other confirmed message (a foreign user message or an
+        // assistant turn) belongs ahead of every still-unconfirmed entry.
+        const ownEntry =
+          message.role === 'user' && end.clientMessageId !== undefined ? session.optimisticEntries.find((e) => e.clientMessageId === end.clientMessageId) : undefined;
+        const ownIdx = ownEntry ? session.messageKeys.indexOf(ownEntry.key) : -1;
+        if (ownEntry && ownIdx !== -1) {
           const newMessages = [...session.messages];
-          newMessages[frontIdx] = message;
+          newMessages[ownIdx] = message;
           session.messages = newMessages;
-          session.optimisticMessageKeys = session.optimisticMessageKeys.slice(1);
+          session.optimisticEntries = session.optimisticEntries.filter((e) => e !== ownEntry);
           // The echo's message_start was skipped, so no placeholder exists for
           // it. Clear streaming state only for a user placeholder from an
           // unskipped start — never an assistant placeholder streaming across
@@ -600,13 +601,10 @@ export class SessionRegistry {
             session.streamingKey = null;
           }
         } else {
-          if (frontIdx === -1) {
-            // Key desync: untrack the queue. A resync rebuild is the only
-            // reliable repair, and unreconciled entries must not keep
-            // shifting insert positions.
-            session.optimisticMessageKeys = [];
-          }
-          const insertIdx = session.optimisticMessageKeys.length > 0 ? session.messageKeys.indexOf(session.optimisticMessageKeys[0]) : session.messages.length;
+          // Untrack entries whose key is gone (key desync): they must not
+          // shift insert positions. A resync rebuild repairs the transcript.
+          session.optimisticEntries = session.optimisticEntries.filter((e) => session.messageKeys.includes(e.key));
+          const insertIdx = session.optimisticEntries.length > 0 ? session.messageKeys.indexOf(session.optimisticEntries[0].key) : session.messages.length;
           session.messages = [...session.messages.slice(0, insertIdx), message, ...session.messages.slice(insertIdx)];
           // Always place a key in lockstep with messages. If streamingKey is
           // null here (e.g. agent_end cleared it before message_end, or
@@ -734,6 +732,19 @@ export class SessionRegistry {
         rebuilt.status = state.isStreaming ? 'working' : 'idle';
         rebuilt.messageKeys = this.generateMessageKeys(messages.length);
         this.rebuildToolExecutions(rebuilt);
+        if (resync.streamingMessage) {
+          // The in-flight message: later deltas extend its last block.
+          const blocks = resync.streamingMessage.content;
+          rebuilt.streamingKey = 'msg-' + this._nextMessageKey++;
+          rebuilt.streamingMessage = {
+            ...resync.streamingMessage,
+            content: blocks.map((block, i) => ({ ...block, streaming: i === blocks.length - 1 })),
+          };
+        }
+        for (const toolCallId of resync.runningToolCallIds ?? []) {
+          const call = this.findToolCall(rebuilt, toolCallId);
+          rebuilt.toolExecutions[toolCallId] = { name: call?.toolName ?? '', args: call?.args, partialResult: '', status: 'running' };
+        }
         this.sessions[sessionId] = rebuilt;
         break;
       }
@@ -1011,6 +1022,15 @@ export class SessionRegistry {
   }
 
   /** Rebuild toolExecutions from a full message history (for rehydration) */
+  /** The tool_call block for `toolCallId`, searched from the newest message. */
+  private findToolCall(session: PerSessionState, toolCallId: string): PimoteMessageContent | undefined {
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      const block = session.messages[i].content.find((c) => c.type === 'tool_call' && c.toolCallId === toolCallId);
+      if (block) return block;
+    }
+    return undefined;
+  }
+
   rebuildToolExecutions(session: PerSessionState): void {
     session.toolExecutions = {};
     for (const message of session.messages) {

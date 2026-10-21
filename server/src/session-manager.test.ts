@@ -7,7 +7,15 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => ({
   ModelRuntime: { create: modelRuntimeCreate },
 }));
 
-import { createSessionState, makeDownloadSnapshot, PimoteSessionManager, routeSlotDownloadUpdate, setupSlotDownloadListener, singleFlight } from './session-manager.js';
+import {
+  createSessionState,
+  createSettingsWatchExtension,
+  makeDownloadSnapshot,
+  PimoteSessionManager,
+  routeSlotDownloadUpdate,
+  setupSlotDownloadListener,
+  singleFlight,
+} from './session-manager.js';
 import type { ManagedSlot, SessionState, SessionObserver } from './session-manager.js';
 import type { PimoteConfig } from './config.js';
 import type { PushNotificationService } from './push-notification.js';
@@ -97,6 +105,50 @@ function createFakeSlot(
 
 // --- Tests ---
 
+describe('session settings fan-out', () => {
+  it('reports model and thinking-level changes from any source to every observer', () => {
+    // A real-ish EventBus: the watcher extension and the slot share it.
+    const handlers = new Map<string, Array<(data: unknown) => void>>();
+    const eventBus = {
+      on: vi.fn((channel: string, fn: (data: unknown) => void) => {
+        handlers.set(channel, [...(handlers.get(channel) ?? []), fn]);
+        return vi.fn();
+      }),
+      emit: vi.fn((channel: string, data: unknown) => {
+        for (const fn of handlers.get(channel) ?? []) fn(data);
+      }),
+    } as any;
+    const session = {
+      sessionId: 'settings-test',
+      isStreaming: false,
+      messages: [],
+      model: { provider: 'p', id: 'm2', name: 'Model 2' },
+      thinkingLevel: 'high',
+      getAvailableThinkingLevels: () => ['low', 'high'],
+      autoCompactionEnabled: true,
+      sessionManager: { getBranch: () => [] },
+      subscribe: vi.fn(() => vi.fn()),
+    } as any;
+    const sendEvent = vi.fn();
+    createSessionState(session, eventBus, createTestConfig(), { sendEvent, notify: vi.fn(async () => {}) }, { slot: null }, '/home/user/project');
+
+    const piHandlers = new Map<string, () => void>();
+    createSettingsWatchExtension()({ on: (event: string, fn: () => void) => piHandlers.set(event, fn), events: eventBus } as any);
+    piHandlers.get('model_select')!();
+    piHandlers.get('thinking_level_select')!();
+
+    const settings = {
+      type: 'session_settings_changed',
+      sessionId: 'settings-test',
+      model: { provider: 'p', id: 'm2', name: 'Model 2' },
+      thinkingLevel: 'high',
+      availableThinkingLevels: ['low', 'high'],
+      autoCompactionEnabled: true,
+    };
+    expect(sendEvent.mock.calls.filter(([e]) => e.type === 'session_settings_changed')).toEqual([[settings], [settings]]);
+  });
+});
+
 describe('session lifecycle idle boundary', () => {
   it('keeps the session working at agent_end and enters idle only at agent_settled', () => {
     let listener: ((event: any) => void) | undefined;
@@ -107,6 +159,7 @@ describe('session lifecycle idle boundary', () => {
       pendingMessageCount: 1,
       agent: { waitForIdle: vi.fn(async () => {}), continue: vi.fn(async () => {}) },
       messages: [],
+      sessionManager: { getBranch: () => [] },
       subscribe: vi.fn((fn: (event: any) => void) => {
         listener = fn;
         return vi.fn();

@@ -123,6 +123,7 @@ export async function main(options: StartOptions = {}) {
     listRows: () => folderRegistry.listLazy(),
     enrichRows: (rows) => folderRegistry.enrichRows(rows),
     sessionSummaries,
+    archivedLookup: (paths) => sessionMetadataStore.getArchivedLookup(paths),
     listLiveSessions: () => sessionManager.getAllSessions(),
   });
 

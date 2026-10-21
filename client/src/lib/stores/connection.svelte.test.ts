@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { ConnectionStore, isSessionNotFoundError } from './connection.svelte.js';
+import { ConnectionStore, connection, isSessionNotFoundError } from './connection.svelte.js';
 
 // --- Fake WebSocket ---------------------------------------------------------
 // connect() does `new WebSocket(...)` against the global and reads the
@@ -254,5 +254,31 @@ describe('ConnectionStore — socket identity guards', () => {
     expect(ws2.sent.length).toBe(1);
 
     c.disconnect();
+  });
+});
+
+describe('duplicate-tab client id guard', () => {
+  // Duplicating a tab copies sessionStorage. The tab that already holds the id
+  // answers a newcomer's hello; the newcomer takes a fresh id.
+  function nextMessage(channel: BroadcastChannel): Promise<{ type: string; id: string }> {
+    return new Promise((resolve) => {
+      channel.onmessage = (event) => resolve(event.data);
+    });
+  }
+
+  it('defends its id against a newcomer that announces the same id', async () => {
+    const other = new BroadcastChannel('pimote-client-id');
+    const reply = nextMessage(other);
+    other.postMessage({ type: 'hello', id: connection.clientId });
+    expect(await reply).toEqual({ type: 'taken', id: connection.clientId });
+    other.close();
+  });
+
+  it('takes a fresh id when another tab already holds it', async () => {
+    const other = new BroadcastChannel('pimote-client-id');
+    const before = connection.clientId;
+    other.postMessage({ type: 'taken', id: before });
+    await vi.waitFor(() => expect(connection.clientId).not.toBe(before));
+    other.close();
   });
 });

@@ -513,7 +513,9 @@ The dashboard's folders column lists every discovered folder; the list loads in 
 - **[S]** Send a second steering message
 - **[E]** Both messages appear in the pending bar, one per line
 - **[S]** Wait for the agent to consume the first steering message (a user-role message appears in the conversation with matching text)
-- **[E]** The consumed message is removed from the pending bar via reconciliation (text match against `message_end` events)
+- **[E]** The consumed message leaves the pending bar when pi's `queue_update` snapshot drops it
+- **[S]** Steer with text an input handler consumes (or that pi rejects)
+- **[E]** The steer response reports `handled` (or fails); its pill disappears without waiting for a `queue_update`, and a rejected text stays in the InputBar
 
 ### TC-06.03b — Dequeue pending steering messages for editing 🟠
 
@@ -918,7 +920,7 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 
 - **[P]** Session open with ongoing conversation; events buffered
 - **[S]** Disconnect client briefly (kill WS, toggle network); reconnect
-- **[E]** Client sends `reconnect` with `sessionId` and `lastCursor`
+- **[E]** Client sends `open_session` with `sessionId` and `lastCursor`
 - **[E]** Server responds with `buffered_events` containing missed events
 - **[E]** Followed by `connection_restored` event
 - **[E]** Conversation state is seamlessly restored (no duplicate or missing messages)
@@ -938,6 +940,13 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 - **[E]** Client rebuilds conversation from scratch — no missing data
 - **[E]** If session had active panel cards, a `panel_update` event follows the resync; panel re-appears
 
+### TC-11.03a — Reconnect after the slot was recreated → full resync 🟠
+
+- **[P]** Client A holds a cursor for a session; A disconnects; the slot is reaped (or the server restarts); client B reopens the session and runs a turn
+- **[S]** Client A reconnects
+- **[E]** Server returns `full_resync` (restore mode `full_resync_cursor_stale`), never an empty `buffered_events` (DR-077)
+- **[E]** Client A shows B's turn
+
 ### TC-11.04 — Event buffer coalescing 🟠
 
 - **[P]** Agent sends many `message_update` deltas while client is connected
@@ -956,7 +965,7 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 
 - **[P]** 3 sessions open with different cursors
 - **[S]** Disconnect and reconnect
-- **[E]** Client sends 3 `reconnect` commands (one per subscribed session)
+- **[E]** Client sends 3 `open_session` commands with `lastCursor` (one per subscribed session)
 - **[E]** Each session gets its own `buffered_events` or `full_resync`
 
 ### TC-11.07 — Session gone server-side during disconnect 🟡

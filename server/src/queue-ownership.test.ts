@@ -49,6 +49,23 @@ describe('QueueOwnership', () => {
     expect(ledger.snapshot().steering).toEqual([{ clientId: undefined, text: 'handled-by-extension' }]);
   });
 
+  it('tags a message pi rewrote with the oldest submission of the same kind', () => {
+    // Input handlers and skill or template expansion change the queued text.
+    const ledger = new QueueOwnership();
+    ledger.intend('followUp', 'client-a', 'other kind');
+    ledger.intend('steering', 'client-b', '/skill:review the diff');
+    ledger.syncFromPi('steering', ['<skill name="review">...</skill>\n\nthe diff']);
+    expect(ledger.snapshot().steering).toEqual([{ clientId: 'client-b', text: '<skill name="review">...</skill>\n\nthe diff' }]);
+  });
+
+  it('cancel removes a submission pi did not queue', () => {
+    const ledger = new QueueOwnership();
+    const started = ledger.intend('steering', 'client-a', 'started a run instead');
+    ledger.cancel(started);
+    ledger.syncFromPi('steering', ['from-voice']);
+    expect(ledger.snapshot().steering).toEqual([{ clientId: undefined, text: 'from-voice' }]);
+  });
+
   it('returns copies from snapshot', () => {
     const ledger = new QueueOwnership();
     ledger.intend('steering', 'client-a', 'x');
@@ -83,13 +100,13 @@ describe('attributeDrained', () => {
     expect(groups.get('client-a')).toEqual({ steering: ['voice'], followUp: [] });
   });
 
-  it('sends everything to the fallback client when the ledger disagrees with pi', () => {
+  it('attributes each drained text on its own when the ledger disagrees with pi', () => {
     const ledger = new QueueOwnership();
     ledger.intend('steering', 'client-b', 'known');
     ledger.syncFromPi('steering', ['known']);
     const groups = attributeDrained(ledger.snapshot(), { steering: ['known', 'unknown'], followUp: [] }, 'client-a');
-    expect([...groups.keys()]).toEqual(['client-a']);
-    expect(groups.get('client-a')).toEqual({ steering: ['known', 'unknown'], followUp: [] });
+    expect(groups.get('client-b')).toEqual({ steering: ['known'], followUp: [] });
+    expect(groups.get('client-a')).toEqual({ steering: ['unknown'], followUp: [] });
   });
 
   it('returns no groups when pi drained nothing', () => {

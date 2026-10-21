@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (the two-tier fold into `pimote_find_folders` is revised by DR-075; the rest stands)
 
 ## Context
 

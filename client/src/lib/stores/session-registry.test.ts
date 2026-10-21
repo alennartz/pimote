@@ -1271,9 +1271,10 @@ describe('SessionRegistry', () => {
   // Optimistic user message convergence (multi-observer)
   //
   // The composer appends the sent text before the server round-trip
-  // (addOptimisticUserMessage) and reconciles it against the next user
-  // message_end events. These tests pin whether each client converges to
-  // the server-authoritative transcript order.
+  // (addOptimisticUserMessage) under a clientMessageId. The server stamps a
+  // started prompt's user echo with that id; the composer drops the entry
+  // when the prompt will not echo it. These tests pin whether each client
+  // converges to the server-authoritative transcript order.
   // --------------------------------------------------------------------------
   describe('Optimistic user message convergence (multi-observer)', () => {
     function textsOf(sessionId: string): string[] {
@@ -1281,74 +1282,83 @@ describe('SessionRegistry', () => {
       return session.messages.map((m) => m.content.find((c: any) => c.type === 'text')?.text ?? '');
     }
 
-    function replayUserMessage(sessionId: string, text: string): void {
-      registry.handleEvent(makeSessionEvent('message_start', sessionId, { role: 'user' }));
-      registry.handleEvent(makeSessionEvent('message_end', sessionId, { message: makeUserMessage(text) }));
+    function userEcho(sessionId: string, text: string, clientMessageId?: string): PimoteEvent[] {
+      const stamp = clientMessageId !== undefined ? { clientMessageId } : {};
+      return [makeSessionEvent('message_start', sessionId, { role: 'user', ...stamp }), makeSessionEvent('message_end', sessionId, { message: makeUserMessage(text), ...stamp })];
     }
 
-    it('single sender: echo replaces the optimistic entry exactly once', () => {
-      registry.addSession('s1', '/path', 'proj');
-      registry.addOptimisticUserMessage('s1', 'my message');
+    function replayUserMessage(sessionId: string, text: string, clientMessageId?: string): void {
+      for (const event of userEcho(sessionId, text, clientMessageId)) registry.handleEvent(event);
+    }
 
-      replayUserMessage('s1', 'my message');
+    function replayAssistantMessage(sessionId: string, text: string): void {
+      registry.handleEvent(makeSessionEvent('message_start', sessionId, { role: 'assistant' }));
+      registry.handleEvent(makeSessionEvent('message_end', sessionId, { message: makeAssistantMessage(text) }));
+    }
+
+    it('single sender: the stamped echo replaces the optimistic entry exactly once', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.addOptimisticUserMessage('s1', 'my message', 'c1');
+
+      replayUserMessage('s1', 'my message', 'c1');
 
       expect(textsOf('s1')).toEqual(['my message']);
-      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+      expect(registry.sessions['s1'].optimisticEntries).toEqual([]);
       expect(registry.sessions['s1'].streamingMessage).toBeNull();
     });
 
-    it('two senders: the other client\u2019s echo inserts ahead of the pending optimistic slot, own echo replaces it — server order preserved', () => {
-      // Client B holds an optimistic entry while client A\u2019s prompt
-      // (server-ordered first) reaches B. A\u2019s echo must land before B\u2019s
-      // pending entry, then B\u2019s echo replaces the entry in place.
+    it('the stamped echo replaces its entry even when pi rewrote the text', () => {
+      // Input handlers and template expansion can change the text pi records.
       registry.addSession('s1', '/path', 'proj');
-      registry.addOptimisticUserMessage('s1', 'message from B');
+      registry.addOptimisticUserMessage('s1', 'typed text', 'c1');
 
-      // Wire order for B: A\u2019s user message, then B\u2019s.
-      replayUserMessage('s1', 'message from A');
-      replayUserMessage('s1', 'message from B');
+      replayUserMessage('s1', 'typed text, rewritten by an input handler', 'c1');
 
-      expect(textsOf('s1')).toEqual(['message from A', 'message from B']);
-      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+      expect(textsOf('s1')).toEqual(['typed text, rewritten by an input handler']);
+      expect(registry.sessions['s1'].optimisticEntries).toEqual([]);
     });
 
-    it('foreign echo that overtook the own prompt keeps the own entry pending until its echo matches', () => {
-      // Server order [foreign, own] can reach this client as foreign-echo
-      // first when the own prompt response resolved before the foreign
-      // message_end crossed the wire. The pending entry must survive the
-      // foreign echo (no text match) and reconcile on its own echo.
+    it('two senders: the other client\u2019s echo inserts ahead of the pending entry, own echo replaces it \u2014 server order preserved', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.addOptimisticUserMessage('s1', 'mine');
+      registry.addOptimisticUserMessage('s1', 'message from B', 'b1');
 
-      replayUserMessage('s1', 'theirs');
-      expect(textsOf('s1')).toEqual(['theirs', 'mine']);
-      expect(registry.sessions['s1'].optimisticMessageKeys).toHaveLength(1);
+      // Wire order for B: A\u2019s user message (stamped with A\u2019s id), then B\u2019s.
+      replayUserMessage('s1', 'message from A', 'a1');
+      expect(textsOf('s1')).toEqual(['message from A', 'message from B']);
+      expect(registry.sessions['s1'].optimisticEntries).toHaveLength(1);
 
-      replayUserMessage('s1', 'mine');
-      expect(textsOf('s1')).toEqual(['theirs', 'mine']);
-      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+      replayUserMessage('s1', 'message from B', 'b1');
+      expect(textsOf('s1')).toEqual(['message from A', 'message from B']);
+      expect(registry.sessions['s1'].optimisticEntries).toEqual([]);
+    });
+
+    it('a foreign echo with the same text does not consume the own entry', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.addOptimisticUserMessage('s1', 'same words', 'mine');
+
+      replayUserMessage('s1', 'same words', 'theirs');
+
+      expect(textsOf('s1')).toEqual(['same words', 'same words']);
+      expect(registry.sessions['s1'].optimisticEntries).toHaveLength(1);
     });
 
     it('reconnect replay: buffered_events replaces the pending optimistic entry once', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.addOptimisticUserMessage('s1', 'sent right before the drop');
+      registry.addOptimisticUserMessage('s1', 'sent right before the drop', 'c1');
 
       registry.handleEvent({
         type: 'buffered_events',
         sessionId: 's1',
-        events: [
-          makeSessionEvent('message_start', 's1', { role: 'user' }) as any,
-          makeSessionEvent('message_end', 's1', { message: makeUserMessage('sent right before the drop') }) as any,
-        ],
+        events: userEcho('s1', 'sent right before the drop', 'c1') as any,
       });
 
       expect(textsOf('s1')).toEqual(['sent right before the drop']);
-      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+      expect(registry.sessions['s1'].optimisticEntries).toEqual([]);
     });
 
     it('full resync replaces the whole transcript: an unreconciled optimistic entry is dropped, not duplicated', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.addOptimisticUserMessage('s1', 'dropped by the server race');
+      registry.addOptimisticUserMessage('s1', 'dropped by the server race', 'c1');
 
       registry.handleEvent({
         type: 'full_resync',
@@ -1367,63 +1377,150 @@ describe('SessionRegistry', () => {
       });
 
       expect(textsOf('s1')).toEqual(['real message']);
-      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+      expect(registry.sessions['s1'].optimisticEntries).toEqual([]);
     });
 
-    it('same client sends twice before any echo: both entries reconcile in order (FIFO)', () => {
-      // agent_start still in flight, so the composer took the prompt path
-      // twice. The server steers the second message into the active run;
-      // each echo replaces its own entry.
+    it('a dropped entry (prompt queued) leaves no stale copy; its later unstamped echo appends once', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.addOptimisticUserMessage('s1', 'first');
-      registry.addOptimisticUserMessage('s1', 'second');
+      registry.addOptimisticUserMessage('s1', 'steered', 'c1');
+      registry.dropOptimisticUserMessage('s1', 'c1');
+      expect(textsOf('s1')).toEqual([]);
 
-      replayUserMessage('s1', 'first');
-      replayUserMessage('s1', 'second');
+      replayAssistantMessage('s1', 'the reply');
+      replayUserMessage('s1', 'steered');
 
-      expect(textsOf('s1')).toEqual(['first', 'second']);
-      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+      expect(textsOf('s1')).toEqual(['the reply', 'steered']);
+      expect(registry.sessions['s1'].optimisticEntries).toEqual([]);
+    });
+
+    it('a prompt that never echoes does not pin later messages above the bottom', () => {
+      // Regression: a never-echoed entry used to stay at the front of the
+      // queue, so every later turn inserted above it and the newest turn
+      // appeared to vanish on each message_end.
+      registry.addSession('s1', '/path', 'proj');
+      registry.addOptimisticUserMessage('s1', 'consumed by an input handler', 'c1');
+      registry.dropOptimisticUserMessage('s1', 'c1');
+      registry.addOptimisticUserMessage('s1', 'run the bench', 'c2');
+      replayUserMessage('s1', 'run the bench', 'c2');
+
+      for (const turn of ['turn 1', 'turn 2', 'turn 3']) replayAssistantMessage('s1', turn);
+
+      expect(textsOf('s1')).toEqual(['run the bench', 'turn 1', 'turn 2', 'turn 3']);
     });
 
     it('assistant echo orders ahead of a still-pending optimistic entry', () => {
-      // Double send: the first prompt runs, the second is steered and
-      // consumed only after the assistant turn. Server order
-      // [first, assistant, second] must survive on the client.
       registry.addSession('s1', '/path', 'proj');
-      registry.addOptimisticUserMessage('s1', 'first');
-      registry.addOptimisticUserMessage('s1', 'second');
+      registry.addOptimisticUserMessage('s1', 'pending', 'c1');
 
-      replayUserMessage('s1', 'first');
-      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
-      registry.handleEvent(makeSessionEvent('message_end', 's1', { message: makeAssistantMessage('the reply') }));
-      replayUserMessage('s1', 'second');
+      replayAssistantMessage('s1', 'the reply');
 
-      expect(textsOf('s1')).toEqual(['first', 'the reply', 'second']);
-      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+      expect(textsOf('s1')).toEqual(['the reply', 'pending']);
+      expect(registry.sessions['s1'].optimisticEntries).toHaveLength(1);
     });
 
-    it('a mid-run user echo does not kill the in-flight assistant streaming placeholder', () => {
+    it('the own echo does not kill an in-flight assistant streaming placeholder', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.addOptimisticUserMessage('s1', 'steered mid-run');
+      registry.addOptimisticUserMessage('s1', 'mine', 'c1');
 
       registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
       expect(registry.sessions['s1'].streamingMessage?.role).toBe('assistant');
 
-      replayUserMessage('s1', 'steered mid-run');
+      replayUserMessage('s1', 'mine', 'c1');
 
       expect(registry.sessions['s1'].streamingMessage?.role).toBe('assistant');
-      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+      expect(registry.sessions['s1'].optimisticEntries).toEqual([]);
     });
 
-    it('queued_drafts_restored returns an unconsumed optimistic entry to the composer and drops the transcript copy', () => {
+    it('queued_drafts_restored restores the composer and leaves the transcript alone', () => {
       registry.addSession('s1', '/path', 'proj');
-      registry.addOptimisticUserMessage('s1', 'queued but aborted');
+      registry.addOptimisticUserMessage('s1', 'started prompt', 'c1');
 
       registry.handleEvent(makeSessionEvent('queued_drafts_restored', 's1', { steering: ['queued but aborted'], followUp: [] }));
 
-      expect(textsOf('s1')).toEqual([]);
-      expect(registry.sessions['s1'].optimisticMessageKeys).toEqual([]);
+      expect(textsOf('s1')).toEqual(['started prompt']);
+      expect(registry.sessions['s1'].optimisticEntries).toHaveLength(1);
       expect(registry.sessions['s1'].draftText).toBe('queued but aborted');
+    });
+  });
+
+  describe('Fork entry ids', () => {
+    function streamMessage(sessionId: string, message: PimoteAgentMessage): void {
+      registry.handleEvent(makeSessionEvent('message_start', sessionId, { role: message.role }));
+      registry.handleEvent(makeSessionEvent('message_end', sessionId, { message }));
+    }
+
+    it('assigns ids to streamed messages from the tail, even when compaction shortened the server view', () => {
+      registry.addSession('s1', '/path', 'proj');
+      streamMessage('s1', makeUserMessage('old question'));
+      streamMessage('s1', makeAssistantMessage('old answer'));
+      registry.handleEvent(makeSessionEvent('agent_end', 's1', { messageEntryIds: ['e-old-q', 'e-old-a'] }));
+      // Compaction replaces the old messages with a summary in the server's
+      // context view; the client keeps its full history.
+      streamMessage('s1', makeUserMessage('new question'));
+      streamMessage('s1', makeAssistantMessage('new answer'));
+      // Pending prompt sent after the run: never persisted yet.
+      registry.addOptimisticUserMessage('s1', 'pending', 'c1');
+
+      registry.handleEvent(makeSessionEvent('agent_end', 's1', { messageEntryIds: ['summary', 'e-new-q', 'e-new-a'] }));
+
+      expect(registry.sessions['s1']!.messages.map((m) => m.entryId)).toEqual(['e-old-q', 'e-old-a', 'e-new-q', 'e-new-a', undefined]);
+    });
+
+    it('stops at a message whose id disagrees instead of shifting ids onto the wrong messages', () => {
+      registry.addSession('s1', '/path', 'proj');
+      streamMessage('s1', makeUserMessage('q'));
+      registry.sessions['s1']!.messages[0].entryId = 'e-unexpected';
+      streamMessage('s1', makeAssistantMessage('a'));
+
+      registry.handleEvent(makeSessionEvent('agent_end', 's1', { messageEntryIds: ['e-q', 'e-a'] }));
+
+      expect(registry.sessions['s1']!.messages.map((m) => m.entryId)).toEqual(['e-unexpected', 'e-a']);
+    });
+  });
+
+  describe('Mid-run full resync', () => {
+    function resync(extra: Record<string, unknown>): void {
+      registry.handleEvent({
+        type: 'full_resync',
+        sessionId: 's1',
+        state: {
+          model: null,
+          thinkingLevel: 'off',
+          isStreaming: true,
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 's1',
+          autoCompactionEnabled: false,
+          messageCount: 1,
+        },
+        messages: [
+          {
+            role: 'assistant',
+            content: [{ type: 'tool_call', toolCallId: 'tc-1', toolName: 'bash', args: { command: 'ls' } }],
+          },
+        ],
+        ...extra,
+      } as any);
+    }
+
+    it('keeps the in-flight message live: later deltas extend its last block', () => {
+      registry.addSession('s1', '/path', 'proj');
+      resync({ streamingMessage: { role: 'assistant', content: [{ type: 'text', text: 'half a ' }] } });
+
+      registry.handleEvent(makeSessionEvent('message_update', 's1', { subtype: 'delta', contentIndex: 0, content: { type: 'text', text: 'sentence' } }));
+
+      const session = registry.sessions['s1']!;
+      expect(session.streamingKey).not.toBeNull();
+      expect(session.streamingMessage?.content).toEqual([{ type: 'text', text: 'half a sentence', streaming: true }]);
+    });
+
+    it('tracks tool calls still running, so their output and result apply', () => {
+      registry.addSession('s1', '/path', 'proj');
+      resync({ runningToolCallIds: ['tc-1'] });
+
+      registry.handleEvent(makeSessionEvent('tool_execution_update', 's1', { toolCallId: 'tc-1', content: 'file.txt\n' }));
+
+      expect(registry.sessions['s1']!.toolExecutions['tc-1']).toMatchObject({ name: 'bash', args: { command: 'ls' }, status: 'running', partialResult: 'file.txt\n' });
     });
   });
 

@@ -75,6 +75,57 @@ describe('EventBuffer', () => {
     });
   });
 
+  describe('prompt echo stamp', () => {
+    const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] });
+
+    it('stamps only the next user message, live and in replay', () => {
+      const buffer = new EventBuffer(20);
+      const live: PimoteSessionEvent[] = [];
+      buffer.expectPromptEcho('c1');
+      for (const event of [
+        makeSdkEvent('message_start', { message: { role: 'system', content: '' } }),
+        makeSdkEvent('message_end', { message: { role: 'system', content: '' } }),
+        makeSdkEvent('message_start', { message: user('mine') }),
+        makeSdkEvent('message_end', { message: user('mine') }),
+        makeSdkEvent('message_start', { message: user('steered later') }),
+        makeSdkEvent('message_end', { message: user('steered later') }),
+      ]) {
+        buffer.onEvent(event as IncomingSdkEvent, SESSION_ID, (e) => live.push(e));
+      }
+      const stamps = live.map((e) => (e as { clientMessageId?: string }).clientMessageId);
+      expect(stamps).toEqual([undefined, undefined, 'c1', 'c1', undefined, undefined]);
+      expect(buffer.replay(0)!.map((e) => (e as { clientMessageId?: string }).clientMessageId)).toEqual(stamps);
+    });
+
+    it('agent_settled drops an unused stamp', () => {
+      const buffer = new EventBuffer(20);
+      const live: PimoteSessionEvent[] = [];
+      buffer.expectPromptEcho('c1');
+      buffer.onEvent(makeSdkEvent('agent_settled') as IncomingSdkEvent, SESSION_ID, (e) => live.push(e));
+      buffer.onEvent(makeSdkEvent('message_end', { message: user('later prompt') }) as IncomingSdkEvent, SESSION_ID, (e) => live.push(e));
+      expect((live[1] as { clientMessageId?: string }).clientMessageId).toBeUndefined();
+    });
+  });
+
+  describe('agent_end entry ids', () => {
+    it('attaches the context entry ids to a final agent_end, live and in replay', () => {
+      const buffer = new EventBuffer(10, undefined, 0, () => ['e1', 'e2']);
+      const live: PimoteSessionEvent[] = [];
+      buffer.onEvent(makeSdkEvent('agent_end') as IncomingSdkEvent, SESSION_ID, (e) => live.push(e));
+      expect(live[0]).toMatchObject({ type: 'agent_end', messageEntryIds: ['e1', 'e2'] });
+      expect(buffer.replay(0)).toEqual(live);
+    });
+
+    it('skips the ids on a retrying agent_end', () => {
+      const getIds = vi.fn(() => ['e1']);
+      const buffer = new EventBuffer(10, undefined, 0, getIds);
+      const live: PimoteSessionEvent[] = [];
+      buffer.onEvent(makeSdkEvent('agent_end', { willRetry: true }) as IncomingSdkEvent, SESSION_ID, (e) => live.push(e));
+      expect(live[0]).toEqual(expect.not.objectContaining({ messageEntryIds: expect.anything() }));
+      expect(getIds).not.toHaveBeenCalled();
+    });
+  });
+
   describe('tree navigation events', () => {
     it('maps tree_navigation_start to the wire event (not agent_start)', () => {
       const buffer = new EventBuffer(10);
@@ -267,13 +318,33 @@ describe('EventBuffer', () => {
       expect(replayed).toEqual([]);
     });
 
-    it('returns empty array when fromCursor is ahead of currentCursor', () => {
+    it('returns null when fromCursor is ahead of currentCursor (a cursor this buffer never handed out)', () => {
+      // A client that saw cursor 999 from an earlier buffer for the same
+      // session id (idle reap, restart) must resync, not count as caught up.
       const buffer = new EventBuffer(100);
       const sendLive = vi.fn();
 
       buffer.onEvent(makeSdkEvent('agent_start'), SESSION_ID, sendLive);
-      const replayed = buffer.replay(999);
-      expect(replayed).toEqual([]);
+      expect(buffer.replay(999)).toBeNull();
+    });
+
+    it('starts above baseCursor and treats a cursor below it as stale', () => {
+      const buffer = new EventBuffer(100, undefined, 5_000);
+      const live: PimoteSessionEvent[] = [];
+
+      // Empty buffer: only its own base counts as caught up.
+      expect(buffer.replay(5_000)).toEqual([]);
+      expect(buffer.replay(120)).toBeNull();
+
+      buffer.onEvent(makeSdkEvent('agent_start'), SESSION_ID, (e) => live.push(e));
+      buffer.onEvent(makeSdkEvent('agent_end'), SESSION_ID, (e) => live.push(e));
+
+      expect(live.map((e) => e.cursor)).toEqual([5_001, 5_002]);
+      expect(buffer.replay(5_000)).toEqual(live);
+      expect(buffer.replay(5_001)).toEqual([live[1]]);
+      // A cursor from an earlier buffer's range is stale, never a partial replay.
+      expect(buffer.replay(4_999)).toBeNull();
+      expect(buffer.replay(1)).toBeNull();
     });
 
     it('returns null when fromCursor is too old (before oldest buffered)', () => {

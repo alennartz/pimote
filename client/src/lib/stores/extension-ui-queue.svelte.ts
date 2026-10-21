@@ -44,9 +44,17 @@ function ensureListener() {
       queue = queue.filter((r) => !(r.sessionId === event.sessionId && r.requestId === event.requestId));
       return;
     }
+    // A restore re-sends every dialog still pending on the server. Drop the
+    // local copies first: another observer may have answered one while this
+    // client was offline, and extension_ui_resolved is not replayed.
+    if (event.type === 'session_restore' && event.status === 'started') {
+      queue = queue.filter((r) => r.sessionId !== event.sessionId);
+      return;
+    }
     if (event.type !== 'extension_ui_request') return;
     const req = event as ExtensionUiRequestEvent;
     if (FIRE_AND_FORGET.has(req.method)) return;
+    if (queue.some((r) => r.sessionId === req.sessionId && r.requestId === req.requestId)) return;
     queue = [...queue, req as unknown as DialogRequest];
   });
 }

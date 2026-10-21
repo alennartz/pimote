@@ -13,12 +13,21 @@ import type {
   SessionRestoreEvent,
   SessionClosedEvent,
   SessionStateChangedEvent,
-  SessionSettingsChangedEvent,
   FolderInfo,
   PimoteTreeNode,
+  PromptOutcome,
+  PromptResponseData,
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome, SessionObserver, EventSocket } from './session-manager.js';
-import { makeDownloadSnapshot, replaySlotPendingUiRequests, requestSlotPanelResync, resolveAllSlotPendingUi, resolveSlotPendingUi, sendSlotEvent } from './session-manager.js';
+import {
+  makeDownloadSnapshot,
+  makeSessionSettingsEvent,
+  replaySlotPendingUiRequests,
+  requestSlotPanelResync,
+  resolveAllSlotPendingUi,
+  resolveSlotPendingUi,
+  sendSlotEvent,
+} from './session-manager.js';
 import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
 import { getMergedPanelCards } from './panel-state.js';
 import { resolveSessionAcrossFolders, type SessionRecordLocation, type SessionRecords } from './session-records.js';
@@ -33,12 +42,12 @@ import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
-import { mapContextEntries, extractMessageEntryIds, rendererRegisteredVisibility } from './message-mapper.js';
+import { mapAgentMessage, mapContextEntries, rendererRegisteredVisibility } from './message-mapper.js';
 import type { TreeNavigationStartEvent, TreeNavigationEndEvent } from './event-buffer.js';
 import { sumLifetimeCostUsd } from './session-cost.js';
 import { completeFileRefs } from './file-references.js';
 import { readEditableFile, writeEditableFile } from './file-edit.js';
-import { attributeDrained } from './queue-ownership.js';
+import { attributeDrained, type Intent } from './queue-ownership.js';
 import type { AgentSession, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { CallBindError } from './voice-orchestrator.js';
@@ -50,6 +59,46 @@ function parseDataUrlImages(images?: string[]): { type: 'image'; data: string; m
     const match = url.match(/^data:(image\/[^;]+);base64,(.+)$/s);
     if (!match) throw new Error('Invalid image data URL');
     return { type: 'image' as const, data: match[2], mimeType: match[1] };
+  });
+}
+
+/**
+ * Hand user input to pi and resolve with pi's dispatch outcome. Input that
+ * meets an active run joins the `streamingBehavior` queue; input that meets an
+ * idle session starts a run. Extension commands run either way. `onStarted`
+ * runs inside pi's `started` preflight, before pi emits the run's messages.
+ * Rejects when pi refuses the prompt before dispatch.
+ */
+function dispatchPrompt(
+  session: Pick<AgentSession, 'prompt'>,
+  text: string,
+  images: ReturnType<typeof parseDataUrlImages>,
+  streamingBehavior: 'steer' | 'followUp',
+  onStarted: () => void,
+): Promise<PromptOutcome> {
+  return new Promise((resolve, reject) => {
+    let dispatched = false;
+    session
+      .prompt(text, {
+        images,
+        streamingBehavior,
+        preflightResult: (disposition) => {
+          dispatched = true;
+          if (disposition === 'started') onStarted();
+          resolve(disposition);
+        },
+      })
+      .then(
+        // pi defers a prompt submitted while it emits agent_settled and returns
+        // without a preflight. The deferred run echoes unstamped, like a queued one.
+        () => {
+          if (!dispatched) resolve('queued');
+        },
+        (err: unknown) => {
+          if (dispatched) console.error(`[WsHandler] prompt error:`, err);
+          else reject(err);
+        },
+      );
   });
 }
 
@@ -1078,37 +1127,23 @@ export class WsHandler {
           break;
         }
 
-        // A plain prompt can race a run start: the sender's composer still saw
-        // an idle session when it chose the prompt path, but the session began
-        // streaming inside the round-trip window. pi's prompt() would then
-        // throw ("Agent is already processing") and the message would be lost
-        // while the response still reports success, stranding the sender's
-        // optimistic transcript entry. Steer it into the active run instead —
-        // the consumed user message echoes back and reconciles like any
-        // steering message. Slash input keeps the prompt() path: pi executes
-        // extension commands even while streaming.
-        if (session.isStreaming && !trimmed.startsWith('/')) {
-          slot.sessionState.queueOwnership.intend('steering', this.clientId, command.message);
-          session.steer(command.message, parseDataUrlImages(command.images)).catch((err) => {
-            console.error(`[WsHandler] steer error:`, err);
-          });
-          this.sendResponse(id, true);
-          break;
-        }
-
-        session.prompt(command.message, { images: parseDataUrlImages(command.images) }).catch((err) => {
-          console.error(`[WsHandler] prompt error:`, err);
+        // A prompt that races a run start joins the steering queue.
+        await this.dispatchInput(id, slot, {
+          text: command.message,
+          images: command.images,
+          behavior: 'steer',
+          intent: session.isStreaming ? slot.sessionState.queueOwnership.intend('steering', this.clientId, command.message) : undefined,
+          clientMessageId: command.clientMessageId,
         });
-        this.sendResponse(id, true);
         break;
       }
 
       case 'steer': {
-        slot.sessionState.queueOwnership.intend('steering', this.clientId, command.message);
-        session.steer(command.message).catch((err) => {
-          console.error(`[WsHandler] steer error:`, err);
+        await this.dispatchInput(id, slot, {
+          text: command.message,
+          behavior: 'steer',
+          intent: slot.sessionState.queueOwnership.intend('steering', this.clientId, command.message),
         });
-        this.sendResponse(id, true);
         break;
       }
 
@@ -1119,11 +1154,11 @@ export class WsHandler {
       }
 
       case 'follow_up': {
-        slot.sessionState.queueOwnership.intend('followUp', this.clientId, command.message);
-        session.followUp(command.message).catch((err) => {
-          console.error(`[WsHandler] followUp error:`, err);
+        await this.dispatchInput(id, slot, {
+          text: command.message,
+          behavior: 'followUp',
+          intent: slot.sessionState.queueOwnership.intend('followUp', this.clientId, command.message),
         });
-        this.sendResponse(id, true);
         break;
       }
 
@@ -1164,7 +1199,15 @@ export class WsHandler {
         // Each other sender restores its own messages now. This client restores its own from the response.
         for (const [clientId, group] of drafts) {
           if (clientId === this.clientId) continue;
-          this.clientRegistry.get(clientId)?.sendToClient({ type: 'queued_drafts_restored', sessionId, ...group });
+          const sender = this.clientRegistry.get(clientId);
+          if (sender) {
+            sender.sendToClient({ type: 'queued_drafts_restored', sessionId, ...group });
+          } else {
+            // Hold an offline sender's drafts until its next claim of this session.
+            const held = (slot.sessionState.undeliveredDrafts ??= new Map());
+            const prior = held.get(clientId) ?? { steering: [], followUp: [] };
+            held.set(clientId, { steering: [...prior.steering, ...group.steering], followUp: [...prior.followUp, ...group.followUp] });
+          }
         }
         const queued = drafts.get(this.clientId) ?? { steering: [], followUp: [] };
         try {
@@ -1568,6 +1611,57 @@ export class WsHandler {
     slot.sessionState.extensionsBound = true;
   }
 
+  /**
+   * Dispatch prompt, steer, or follow-up input through pi's prompt path and
+   * answer with pi's outcome, so the sender can settle its optimistic entry
+   * or pending-queue pill. Only a `started` prompt stamps its echo with
+   * `clientMessageId`. Slash input is answered at once without an outcome:
+   * pi reports an extension command only after its handler finishes, and a
+   * handler can wait on a dialog.
+   */
+  private async dispatchInput(
+    id: string,
+    slot: ManagedSlot,
+    input: { text: string; images?: string[]; behavior: 'steer' | 'followUp'; intent?: Intent; clientMessageId?: string },
+  ): Promise<void> {
+    const ownership = slot.sessionState.queueOwnership;
+    // A queued input already consumed its intent in pi's queue_update; any
+    // other outcome leaves one behind that would mis-tag a later entry.
+    const releaseIntent = () => {
+      if (input.intent) ownership.cancel(input.intent);
+    };
+    const fail = (err: unknown) => {
+      releaseIntent();
+      this.sendResponse(id, false, undefined, err instanceof Error ? err.message : String(err));
+    };
+    let dispatch: Promise<PromptOutcome>;
+    try {
+      dispatch = dispatchPrompt(slot.session, input.text, parseDataUrlImages(input.images), input.behavior, () => {
+        if (input.clientMessageId !== undefined) slot.sessionState.eventBuffer.expectPromptEcho(input.clientMessageId);
+      });
+    } catch (err) {
+      fail(err);
+      return;
+    }
+    if (input.text.trimStart().startsWith('/')) {
+      dispatch.then(releaseIntent, (err) => {
+        releaseIntent();
+        console.error(`[WsHandler] input dispatch error:`, err);
+      });
+      this.sendResponse(id, true);
+      return;
+    }
+    let outcome: PromptOutcome;
+    try {
+      outcome = await dispatch;
+    } catch (err) {
+      fail(err);
+      return;
+    }
+    releaseIntent();
+    this.sendResponse(id, true, { outcome } satisfies PromptResponseData);
+  }
+
   /** Attach this client as an observer and bind extensions on first attach. */
   async claimSession(sessionId: string, slot: ManagedSlot): Promise<void> {
     const observer: SessionObserver = {
@@ -1595,6 +1689,11 @@ export class WsHandler {
     // Re-deliver pending UI requests only to this observer. Other observers
     // already have their dialogs; broadcasting here would duplicate them.
     replaySlotPendingUiRequests(slot, (event) => this.sendEvent(event));
+    const heldDrafts = slot.sessionState.undeliveredDrafts?.get(this.clientId);
+    if (heldDrafts) {
+      slot.sessionState.undeliveredDrafts!.delete(this.clientId);
+      this.sendEvent({ type: 'queued_drafts_restored', sessionId, ...heldDrafts });
+    }
     this.sendSilentDownloadSnapshot(slot);
     requestSlotPanelResync(slot, 'claim');
   }
@@ -1889,11 +1988,6 @@ export class WsHandler {
       sdkEvent,
       sessionId,
       (event) => {
-        // Augment agent_end with message entry IDs so the client can enable
-        // fork targets on messages that arrived via streaming (without IDs).
-        if (event.type === 'agent_end') {
-          event.messageEntryIds = extractMessageEntryIds(slot.session.sessionManager.getBranch(), rendererRegisteredVisibility(slot.session));
-        }
         this.sendEvent(event);
         // Tree-navigation events are sent directly to the issuer so the
         // unopen command path can receive them. Keep an attached issuer's
@@ -1927,11 +2021,24 @@ export class WsHandler {
       messageCount: session.messages.length,
     };
     const messages = mapContextEntries(session.sessionManager.buildContextEntries(), rendererRegisteredVisibility(session));
+    // A mid-run snapshot carries the in-flight message and running tool calls.
+    // The observer missed their start events, so without them it drops the
+    // deltas and tool output that follow.
+    const partial = session.isStreaming ? session.state.streamingMessage : undefined;
+    const streamingMessage =
+      partial === undefined
+        ? undefined
+        : 'content' in partial && Array.isArray(partial.content) && partial.content.length > 0
+          ? mapAgentMessage(partial)
+          : { role: partial.role, content: [] };
+    const runningToolCallIds = [...session.state.pendingToolCalls];
     return {
       type: 'full_resync',
       sessionId: pimoteSessionId,
       state,
       messages,
+      ...(streamingMessage ? { streamingMessage } : {}),
+      ...(runningToolCallIds.length > 0 ? { runningToolCallIds } : {}),
     };
   }
 
@@ -1943,23 +2050,10 @@ export class WsHandler {
     this.sendEvent({ type: 'panel_update', sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
   }
 
-  private makeSessionSettingsEvent(pimoteSessionId: string, slot: ManagedSlot): SessionSettingsChangedEvent {
-    const session = slot.session;
-    const model = session.model;
-    return {
-      type: 'session_settings_changed',
-      sessionId: pimoteSessionId,
-      model: model ? { provider: model.provider, id: model.id, name: model.name } : null,
-      thinkingLevel: session.thinkingLevel,
-      availableThinkingLevels: session.getAvailableThinkingLevels(),
-      autoCompactionEnabled: session.autoCompactionEnabled,
-    };
-  }
-
   /** Fan out settings and panel state without replacing each observer's
    * transcript or client-local transient state. */
   private sendSessionSettingsToObservers(pimoteSessionId: string, slot: ManagedSlot): void {
-    const settings = this.makeSessionSettingsEvent(pimoteSessionId, slot);
+    const settings = makeSessionSettingsEvent(pimoteSessionId, slot.session);
     const panelUpdate = { type: 'panel_update' as const, sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) };
     // Keep the direct send for a caller that has not opened the session yet,
     // then fan out to every other attached observer without duplicating it.
@@ -1974,7 +2068,7 @@ export class WsHandler {
    * reload cannot erase their local transient state. */
   private sendReloadToObservers(pimoteSessionId: string, slot: ManagedSlot): void {
     this.sendFullResyncForSession(pimoteSessionId, slot);
-    const settings = this.makeSessionSettingsEvent(pimoteSessionId, slot);
+    const settings = makeSessionSettingsEvent(pimoteSessionId, slot.session);
     const panelUpdate = { type: 'panel_update' as const, sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) };
     sendSlotEvent(slot, settings, { exceptClientId: this.clientId });
     sendSlotEvent(slot, panelUpdate, { exceptClientId: this.clientId });

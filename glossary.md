@@ -40,6 +40,21 @@ _Avoid_: session owner
 A connected client attached to a live session. Each observer receives the shared event stream and keeps an independent replay position.
 _Avoid_: session owner, session takeover
 
+**Replay cursor**:
+An observer's position in a live session's event buffer. A cursor belongs to one buffer: a cursor from an earlier buffer for the same session id (idle reap, server restart, voice reopen) forces a full resync.
+_Avoid_: epoch (reserved for the folder listing's **wire epoch**)
+
+**Optimistic entry**:
+A user message the composer shows before the server echoes it, keyed by a `clientMessageId`. The echo stamped with that id replaces it; a prompt outcome other than `started` removes it.
+_Avoid_: pending message (that is a **queued message**)
+
+**Prompt outcome**:
+How pi dispatched a prompt, steer, or follow-up: `started` (began a run), `queued` (joined the active run's queue), or `handled` (an extension command or input handler consumed it).
+
+**Queued message**:
+A steer or follow-up waiting in pi's queue for the active run, owned by the client that sent it. An abort returns each queued message to its sender as a draft.
+_Avoid_: pending steer
+
 **Archived session**:
 A persisted session marked as archived. Archiving closes its live runtime and observers; unarchiving clears the archive flag but requires an explicit open.
 _Avoid_: deleted session
@@ -150,6 +165,8 @@ _Avoid_: tag template
 - The **manager root** is distinct from scan roots; when nested inside one, its entry is excluded from the sparse tree
 - A **manager session** is an ordinary persisted session rooted at the **manager root**
 - A **session** can have multiple **session observers**, but at most one **voice call holder**
+- Each **session observer** keeps its own **replay cursor** into the session's shared event buffer
+- Only a `started` **prompt outcome** echoes a stamped user message that settles an **optimistic entry**; a `queued` outcome yields a **queued message** instead
 - An **archived session** has no live runtime; unarchiving it does not open it
 - A connection owns one **pinned order**: **listing windows** slice it, and the **order token** names it on the wire
 - A **repin** replaces a pinned order. Rows merge by canonical path, so windows across pins never duplicate

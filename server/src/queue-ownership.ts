@@ -23,7 +23,8 @@ export interface OwnedEntry {
 
 export type QueueOwners = Record<QueueKind, OwnedEntry[]>;
 
-interface Intent {
+/** One client submission that pi may still queue. Returned by {@link QueueOwnership.intend}. */
+export interface Intent {
   kind: QueueKind;
   clientId: string;
   text: string;
@@ -39,9 +40,17 @@ export class QueueOwnership {
   /** Submissions the server made that pi has not yet reported as queued. */
   private intents: Intent[] = [];
 
-  /** Record a client submission before pi queues it. */
-  intend(kind: QueueKind, clientId: string, text: string): void {
-    this.intents.push({ kind, clientId, text });
+  /** Record a client submission before pi queues it. Cancel the returned
+   *  intent when pi reports any outcome other than `queued`. */
+  intend(kind: QueueKind, clientId: string, text: string): Intent {
+    const intent: Intent = { kind, clientId, text };
+    this.intents.push(intent);
+    return intent;
+  }
+
+  /** Drop one submission that pi did not queue (started, handled, or rejected). */
+  cancel(intent: Intent): void {
+    this.intents = this.intents.filter((candidate) => candidate !== intent);
   }
 
   /** Update the ledger from a `queue_update` snapshot of pi's queue. */
@@ -60,9 +69,11 @@ export class QueueOwnership {
     }
     survivors.reverse();
 
-    // Pi appends new messages at the end of its queue.
+    // Pi appends new messages at the end of its queue. Pi queues the text
+    // after input handlers and skill or template expansion, so an exact match
+    // can fail; fall back to the oldest submission of the same kind.
     const additions = texts.slice(survivors.length).map((text): OwnedEntry => {
-      const intent = takeFirst(this.intents, (candidate) => candidate.kind === kind && candidate.text === text);
+      const intent = takeFirst(this.intents, (candidate) => candidate.kind === kind && candidate.text === text) ?? takeFirst(this.intents, (candidate) => candidate.kind === kind);
       return { clientId: intent?.clientId, text };
     });
     this.owners[kind] = [...survivors, ...additions];
@@ -81,21 +92,21 @@ export class QueueOwnership {
 
 /**
  * Group texts that pi drained from its queue by the client that submitted them.
- * Untagged entries go to `fallbackClientId`. If the ledger does not match the
- * drained texts, every entry goes to `fallbackClientId`.
+ * Each drained text takes the first unclaimed ledger entry with the same text,
+ * as pi removes by first match. Untagged or unmatched texts go to
+ * `fallbackClientId`.
  */
 export function attributeDrained(owners: QueueOwners, drained: QueueTexts, fallbackClientId: string): Map<string, QueueTexts> {
   const groups = new Map<string, QueueTexts>();
   for (const kind of QUEUE_KINDS) {
-    const entries = owners[kind];
-    const texts = drained[kind];
-    const aligned = entries.length === texts.length && entries.every((entry, index) => entry.text === texts[index]);
-    texts.forEach((text, index) => {
-      const clientId = (aligned ? entries[index].clientId : undefined) ?? fallbackClientId;
+    const entries = [...owners[kind]];
+    for (const text of drained[kind]) {
+      const entry = takeFirst(entries, (candidate) => candidate.text === text);
+      const clientId = entry?.clientId ?? fallbackClientId;
       const group = groups.get(clientId) ?? { steering: [], followUp: [] };
       group[kind].push(text);
       groups.set(clientId, group);
-    });
+    }
   }
   return groups;
 }

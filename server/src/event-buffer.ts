@@ -48,18 +48,38 @@ export class EventBuffer {
    * solely through live-only deltas; that history is caught up rather than
    * considered stale. */
   private hasBufferedEvent = false;
-  private _cursor = 0;
+  private _cursor: number;
+  /** Sender id for the next user message: the echo of a prompt that just started a run. */
+  private pendingPromptEcho: string | undefined;
 
   constructor(
     private readonly capacity: number,
     /** TUI-parity filter for persisted custom entries; omit to keep them invisible. */
     private readonly isCustomEntryVisible?: CustomEntryVisibility,
+    /** First cursor minus one. A session id can outlive its buffer (idle
+     *  reap, server restart, voice reopen), so production buffers start above
+     *  any cursor an earlier buffer for the same session handed out. */
+    private readonly baseCursor = 0,
+    /** Entry ids of the session's context messages, attached to each final
+     *  agent_end so clients can fork from messages that arrived by streaming. */
+    private readonly getMessageEntryIds?: () => string[],
   ) {
     this.buffer = new Array(capacity);
+    this._cursor = baseCursor;
   }
 
   get currentCursor(): number {
     return this._cursor;
+  }
+
+  /**
+   * Stamp the next user message_start/message_end with `clientMessageId`.
+   * Call it from pi's `started` preflight: pi prepares the run's messages
+   * before it fires the callback and emits them right after, so the next user
+   * message is the prompt's own. agent_settled drops an unused stamp.
+   */
+  expectPromptEcho(clientMessageId: string): void {
+    this.pendingPromptEcho = clientMessageId;
   }
 
   /**
@@ -85,7 +105,12 @@ export class EventBuffer {
    * Returns empty array if client is caught up.
    */
   replay(fromCursor: number): PimoteSessionEvent[] | null {
-    if (fromCursor >= this._cursor) {
+    // A cursor outside this buffer's range came from an earlier buffer for the
+    // same session id. Its position means nothing here.
+    if (fromCursor < this.baseCursor || fromCursor > this._cursor) {
+      return null;
+    }
+    if (fromCursor === this._cursor) {
       return [];
     }
 
@@ -134,7 +159,8 @@ export class EventBuffer {
         // The real agent_end carries { messages, willRetry } — there is no `error`
         // field on it. Error text reaches the client via the failed assistant
         // message (message_end), not here.
-        return { ...base, type: 'agent_end', ...(sdkEvent.willRetry ? { willRetry: true } : {}) };
+        if (sdkEvent.willRetry) return { ...base, type: 'agent_end', willRetry: true };
+        return { ...base, type: 'agent_end', ...(this.getMessageEntryIds ? { messageEntryIds: this.getMessageEntryIds() } : {}) };
 
       case 'turn_start':
         return { ...base, type: 'turn_start' };
@@ -144,7 +170,12 @@ export class EventBuffer {
 
       case 'message_start':
         // The role lives on the event's message, not a top-level `role` field.
-        return { ...base, type: 'message_start', role: sdkEvent.message.role };
+        return {
+          ...base,
+          type: 'message_start',
+          role: sdkEvent.message.role,
+          ...(sdkEvent.message.role === 'user' && this.pendingPromptEcho !== undefined ? { clientMessageId: this.pendingPromptEcho } : {}),
+        };
 
       case 'message_update': {
         const ame = sdkEvent.assistantMessageEvent;
@@ -207,10 +238,16 @@ export class EventBuffer {
         if (isEmpty(message) && getLastMessage) {
           message = getLastMessage();
         }
+        let clientMessageId: string | undefined;
+        if (sdkEvent.message.role === 'user' && this.pendingPromptEcho !== undefined) {
+          clientMessageId = this.pendingPromptEcho;
+          this.pendingPromptEcho = undefined;
+        }
         return {
           ...base,
           type: 'message_end',
           message: message ? mapAgentMessage(message) : { role: 'assistant', content: [] },
+          ...(clientMessageId !== undefined ? { clientMessageId } : {}),
         };
       }
 
@@ -295,6 +332,7 @@ export class EventBuffer {
       // and only when no retry/compaction/queued-continuation is pending). It
       // drives the idle UI transition + completion notification.
       case 'agent_settled':
+        this.pendingPromptEcho = undefined;
         return { ...base, type: 'agent_settled', ...(sdkEvent.aborted ? { aborted: true } : {}) };
 
       // Custom entries with a registered renderer become display-only

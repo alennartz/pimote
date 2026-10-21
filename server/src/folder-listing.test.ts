@@ -46,6 +46,8 @@ function fakeWorld(
     rows?: FolderInfo[];
     summaries?: Record<string, SessionSummary[]>;
     live?: LiveSessionRef[];
+    /** Session file paths flagged archived in the metadata store. */
+    archived?: string[];
     listMany?: (folderPaths: string[]) => Promise<Map<string, SessionSummary[]>>;
     enrichRows?: (rows: FolderInfo[]) => Promise<void>;
   } = {},
@@ -55,12 +57,14 @@ function fakeWorld(
     summaries: new Map(Object.entries(init.summaries ?? {})),
     live: init.live ?? [],
   };
+  const archived = new Set(init.archived ?? []);
   const deps: FolderListingDeps = {
     listRows: async () => state.rows,
     enrichRows: init.enrichRows ?? (async () => {}),
     sessionSummaries: {
       listMany: init.listMany ?? (async (folderPaths: string[]) => new Map(folderPaths.map((p) => [p, state.summaries.get(p) ?? []]))),
     },
+    archivedLookup: (paths: string[]) => new Map(paths.map((p) => [p, archived.has(p)])),
     listLiveSessions: () => state.live,
   };
   return { deps, state };
@@ -429,6 +433,33 @@ describe('FolderListing', () => {
 
       const folderMatch = await service.query({ query: 'sess' });
       expect(folderMatch.rows[0].matchedSessionIds).toBeUndefined();
+    });
+
+    it('session tier respects the archive gate: archived sessions match only under includeArchived, while ordering still counts them', async () => {
+      const { deps } = fakeWorld({
+        rows: [row('/w/sess', { name: 'sess' })],
+        summaries: {
+          '/w/sess': [
+            summary('old', '2025-01-01T00:00:00Z', { firstMessage: 'archived widgets talk' }),
+            summary('live', '2024-06-01T00:00:00Z', { firstMessage: 'widgets today' }),
+          ],
+        },
+        archived: ['/sessions/old.jsonl'],
+      });
+      const service = new FolderListing(deps);
+      await warm(service);
+
+      // Gate off: the archived session cannot match; the live one can.
+      const gated = await service.query({ query: 'widgets' });
+      expect(paths(gated)).toEqual(['/w/sess']);
+      expect(gated.rows[0].matchedSessionIds).toEqual(['live']);
+
+      // Gate on: archived sessions match again.
+      const open = await service.query({ query: 'widgets', includeArchived: true });
+      expect(open.rows[0].matchedSessionIds).toEqual(['old', 'live']);
+
+      // Ordering is untouched: the archived session still sets lastActivity.
+      expect(gated.rows[0].lastActivity).toBe(new Date('2025-01-01T00:00:00Z').getTime());
     });
 
     it('filter then slice: total is the post-filter count and the window is [offset, offset+limit) of the filtered order', async () => {

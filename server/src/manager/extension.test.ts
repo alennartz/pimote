@@ -131,16 +131,6 @@ describe('createManagerExtension()', () => {
     await toolNamed(toolDefs, 'pimote_find_sessions').execute('c', {}, undefined, undefined, {});
     expect(ports.sessions.listDiskSessions).toHaveBeenCalledWith('/w/alpha', undefined);
   });
-
-  it('describes the folder query semantics and the leaf rule in the tool descriptions', () => {
-    const toolDefs = register(spyPorts());
-    const descriptions = Object.fromEntries(toolDefs.map((def) => [def.name, def.description as string]));
-
-    expect(descriptions.pimote_find_folders).toContain('session text');
-    expect(descriptions.pimote_find_folders).toContain('curation state');
-    expect(descriptions.pimote_create_folder).toContain('Included folders are leaves');
-    expect(descriptions.pimote_create_folder).toContain('never nested');
-  });
 });
 
 describe('pimote_find_folders', () => {
@@ -250,18 +240,16 @@ describe('pimote_find_folders', () => {
     expect(all.structuredContent.folders).toHaveLength(2);
   });
 
-  it('matches the query two-tier: folder text, else member session text', async () => {
+  it('matches the query on folder text only; session content belongs to find_sessions', async () => {
     const ports = spyPorts();
-    ports.folders.list.mockResolvedValue([{ ...makeFolder('/w/tagged'), tags: ['deploy'] }, makeFolder('/w/session-hit'), makeFolder('/w/miss')]);
-    ports.sessions.listDiskSessions.mockImplementation(async (folderPath: string) =>
-      folderPath === '/w/session-hit' ? [makeRecord({ id: 's1', firstMessage: 'deploy the api' })] : [],
-    );
+    ports.folders.list.mockResolvedValue([{ ...makeFolder('/w/tagged'), tags: ['deploy'] }, makeFolder('/w/session-hit')]);
+    ports.sessions.listDiskSessions.mockImplementation(async () => [makeRecord({ id: 's1', firstMessage: 'deploy the api' })]);
 
     const result = (await toolNamed(register(ports), 'pimote_find_folders').execute('c', { query: 'DEPLOY' }, undefined, undefined, {})) as ToolResult;
 
-    expect((result.structuredContent.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/tagged', '/w/session-hit']);
-    // Folder-text hits skip the session tier; only the unmatched rows are read.
-    expect(ports.sessions.listDiskSessions).toHaveBeenCalledTimes(2);
+    expect((result.structuredContent.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/tagged']);
+    // The session tier is gone (revising DR-074): folder search never reads sessions.
+    expect(ports.sessions.listDiskSessions).not.toHaveBeenCalled();
   });
 
   it('returns a tool error when the folder model fails', async () => {

@@ -40,7 +40,7 @@ let nextId = 1;
  *  each other in a loop and the UI flaps between connected and reconnecting —
  *  but a reload must reclaim its own id, or the server drops this tab's
  *  queued-draft attribution and pending-UI replays. */
-const clientId =
+let clientId =
   getClientId() ??
   (() => {
     const id = crypto.randomUUID();
@@ -48,8 +48,35 @@ const clientId =
     return id;
   })();
 
+/**
+ * Duplicating a tab copies sessionStorage, and with it this tab's id. Announce
+ * the id to the other tabs; a tab that already holds it answers, and the
+ * newcomer takes a fresh id. Both tabs announce and answer, so two tabs that
+ * start together both move to fresh ids, which is harmless.
+ */
+function guardDuplicateTabId(onRenamed: () => void): void {
+  if (typeof BroadcastChannel === 'undefined') return;
+  const channel = new BroadcastChannel('pimote-client-id');
+  // Node (tests, SSR) keeps the process alive for an open channel.
+  (channel as BroadcastChannel & { unref?: () => void }).unref?.();
+  channel.onmessage = (event: MessageEvent<{ type: 'hello' | 'taken'; id: string }>) => {
+    const msg = event.data;
+    if (msg?.id !== clientId) return;
+    if (msg.type === 'hello') {
+      channel.postMessage({ type: 'taken', id: clientId });
+      return;
+    }
+    clientId = crypto.randomUUID();
+    setClientId(clientId);
+    onRenamed();
+  };
+  channel.postMessage({ type: 'hello', id: clientId });
+}
+
 export class ConnectionStore {
-  readonly clientId: string = clientId;
+  get clientId(): string {
+    return clientId;
+  }
   status: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' = $state('disconnected');
   /** True only after WebSocket is open AND all session reconnects have completed. */
   ready: boolean = $state(false);
@@ -509,6 +536,12 @@ export class ConnectionStore {
 }
 
 export const connection = new ConnectionStore();
+
+// A renamed tab reconnects under its fresh id. If its first socket already
+// evicted the original tab, that tab reconnects once and keeps its id.
+guardDuplicateTabId(() => {
+  if (connection.status !== 'disconnected') connection.connect();
+});
 
 // Wire the voice trace helper so client-side voice logs ship to the server.
 import { configureVoiceTrace } from './voice-trace.js';

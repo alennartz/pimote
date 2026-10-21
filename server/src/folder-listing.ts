@@ -32,6 +32,10 @@ export interface FolderListingDeps {
   /** Session-derived metadata source: the batched summary pass over known
    *  folder paths, reusing the per-file summary cache. */
   sessionSummaries: Pick<SessionSummaryIndex, 'listMany'>;
+  /** Archived flags for session file paths (the session metadata store).
+   *  Gates the search session tier only — archived sessions keep counting
+   *  toward `lastActivity`, so ordering never changes under the gate. */
+  archivedLookup(paths: string[]): Map<string, boolean>;
   /** Live in-memory sessions, folded into lastActivity at pin/query time and
    *  used for session-count enrichment on delta rows. */
   listLiveSessions(): ReadonlyArray<LiveSessionRef>;
@@ -55,7 +59,8 @@ export interface FolderQueryRequest {
   offset?: number;
   /** Window size; default 100, clamped to [1, 200]. */
   limit?: number;
-  /** Two-tier search over the full set, case-insensitive substring. */
+  /** Two-tier search (folder text, then non-archived sessions unless
+   *  `includeArchived`), case-insensitive substring. */
   query?: string;
   /** Default false. */
   includeArchived?: boolean;
@@ -99,8 +104,10 @@ export interface FolderListingService {
    *  substring tiers:
    *  the folder tier matches display name (persona name if present, else folder
    *  name), name, path, tags and returns the row without `matchedSessionIds`;
-   *  the session tier matches session `name`/`firstMessage` and returns
-   *  `matchedSessionIds` with just the matched session ids. Filter then slice:
+   *  the session tier matches session `name`/`firstMessage` — archived sessions
+   *  only under `includeArchived`, the folder tier's gate — and returns
+   *  `matchedSessionIds` with just the matched session ids. `lastActivity`
+   *  stays ungated: archived sessions still rank folders. Filter then slice:
    *  `total` is the post-filter count over the whole set; the window is
    *  `[offset, offset+limit)` of the filtered order. `includeArchived` defaults
    *  to false. `lastActivity` folds in live in-memory sessions at query time,
@@ -123,7 +130,7 @@ export interface FolderListingService {
 
 interface SessionMetadata {
   readonly lastActivity: number;
-  readonly sessions: ReadonlyArray<{ readonly id: string; readonly text: string }>;
+  readonly sessions: ReadonlyArray<{ readonly id: string; readonly text: string; readonly archived: boolean }>;
 }
 
 interface OrderSnapshot {
@@ -147,7 +154,7 @@ interface ConnectionPin {
 const METADATA_TTL_MS = 30_000;
 const ORPHAN_PIN_TTL_MS = 30 * 60_000;
 
-function projectMetadata(summaries: ReadonlyMap<string, SessionSummary[]>): ReadonlyMap<string, SessionMetadata> {
+function projectMetadata(summaries: ReadonlyMap<string, SessionSummary[]>, archivedLookup: (path: string) => boolean): ReadonlyMap<string, SessionMetadata> {
   return new Map(
     Array.from(summaries, ([path, sessions]) => [
       path,
@@ -156,6 +163,7 @@ function projectMetadata(summaries: ReadonlyMap<string, SessionSummary[]>): Read
         sessions: sessions.map((session) => ({
           id: session.id,
           text: `${session.name ?? ''}\n${session.firstMessage ?? ''}`.toLowerCase(),
+          archived: archivedLookup(session.path),
         })),
       },
     ]),
@@ -170,14 +178,16 @@ function orderedPaths(rows: readonly FolderInfo[], metadata: ReadonlyMap<string,
     .map((row) => row.path);
 }
 
-function matchRow(row: FolderInfo, metadata: SessionMetadata | undefined, query: string): FolderInfo | undefined {
+function matchRow(row: FolderInfo, metadata: SessionMetadata | undefined, query: string, includeArchived: boolean): FolderInfo | undefined {
   const { matchedSessionIds: _annotation, ...copy } = row;
   // Served rows carry the ordering fact so the client re-sort mirrors the
   // pinned order before lazy session lists land; absent when no activity.
   const annotated: FolderInfo = metadata?.lastActivity ? { ...copy, lastActivity: metadata.lastActivity } : copy;
   const folderText = [row.persona?.name ?? row.name, row.name, row.path, ...row.tags];
   if (!query || folderText.some((text) => text.toLowerCase().includes(query))) return annotated;
-  const ids = metadata?.sessions.filter((session) => session.text.includes(query)).map((session) => session.id) ?? [];
+  // The session tier honors the same archive gate as the folder tier;
+  // lastActivity above stays ungated so ordering never shifts with it.
+  const ids = metadata?.sessions.filter((session) => (includeArchived || !session.archived) && session.text.includes(query)).map((session) => session.id) ?? [];
   return ids.length ? { ...annotated, matchedSessionIds: ids } : undefined;
 }
 
@@ -262,7 +272,7 @@ export class FolderListing implements FolderListingService {
     const matches = searched.flatMap((path) => {
       const row = byPath.get(path);
       if (!row || (row.archived && !req.includeArchived)) return [];
-      const match = matchRow(row, metadata.get(path), query);
+      const match = matchRow(row, metadata.get(path), query, req.includeArchived === true);
       return match ? [match] : [];
     });
     const window = normalizeWindow(req.offset, req.limit);
@@ -388,7 +398,9 @@ export class FolderListing implements FolderListingService {
       // listing is needed solely to enumerate the full-scan paths.
       const paths = full ? (rows ?? (await this.deps.listRows())).map((row) => row.path) : [...invalidatedPaths];
       const summaries = await this.deps.sessionSummaries.listMany(paths);
-      const projected = projectMetadata(summaries);
+      const sessionPaths = [...summaries.values()].flatMap((list) => list.map((session) => session.path));
+      const archived = this.deps.archivedLookup(sessionPaths);
+      const projected = projectMetadata(summaries, (path) => archived.get(path) === true);
       this.metadata = full ? projected : new Map([...Array.from(this.metadata).filter(([path]) => !paths.includes(path)), ...projected]);
       // Success only: a failed refresh keeps the bookkeeping so its paths stay
       // stale-eligible and a later invalidation or TTL refresh re-reads them.

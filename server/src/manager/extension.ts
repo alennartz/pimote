@@ -19,7 +19,8 @@ import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext } from
  * read answers the folder space:
  * - `pimote_find_folders` — rows + curation + git facts (`repo`, hub `repos`)
  *   + hub membership (`members`) + live counts; query/nature/hub/archived
- *   filters, the query two-tier like the dashboard search (DR-074). Identity
+ *   filters, the query on folder text only — session content search lives in
+ *   `pimote_find_sessions` (revising the DR-074 two-tier fold). Identity
  *   and membership live on the rows; no separate repo or tree view (owner
  *   ruling 2026-01-14: the walk-structure report has no manager job).
  * - Sessions: `pimote_find_sessions` (one unified view — live state enriched
@@ -244,23 +245,11 @@ async function resolveParentInRoot(parentPath: string, roots: readonly string[])
   return { parentPath: canonicalParent };
 }
 
-/** Two-tier dashboard search semantics (folder-listing `matchRow`): a folder
- *  matches when its text — persona name, name, path, tags — contains the
- *  query, or when any of its disk sessions matches on name or first message.
- *  Session reads run per surviving row, so apply the cheaper filters first
- *  and keep this tier small. */
-async function filterByQuery(rows: FolderInfo[], query: string, sessions: ManagerToolContext['sessions'], signal: AbortSignal | undefined): Promise<FolderInfo[]> {
-  const matched: FolderInfo[] = [];
-  for (const row of rows) {
-    const folderText = [row.persona?.name ?? row.name, row.name, row.path, ...row.tags];
-    if (folderText.some((text) => text.toLowerCase().includes(query))) {
-      matched.push(row);
-      continue;
-    }
-    const records = await sessions.listDiskSessions(row.path, signal);
-    if (records.some((record) => `${record.name ?? ''}\n${record.firstMessage}`.toLowerCase().includes(query))) matched.push(row);
-  }
-  return matched;
+/** Folder-text match: persona display name, name, path, tags. Session content
+ *  never matches here — `pimote_find_sessions` owns it (revising the DR-074
+ *  two-tier fold). */
+function filterByQuery(rows: FolderInfo[], query: string): FolderInfo[] {
+  return rows.filter((row) => [row.persona?.name ?? row.name, row.name, row.path, ...row.tags].some((text) => text.toLowerCase().includes(query)));
 }
 
 export function createManagerExtension(context: ManagerToolContext): ExtensionFactory {
@@ -268,14 +257,12 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_find_folders',
       label: 'Find folders',
-      description: 'Find known folders — code, persona, and hub — by query across name, path, tags, and session text, with curation state and live session counts.',
+      description: 'Find known folders — code, persona, and hub — by query across name, path, tags, and persona name, with curation state and live session counts.',
       promptGuidelines: ['Filter pimote_find_folders with query, nature, and hub instead of scanning full listings.'],
       parameters: Type.Object({
         query: Type.Optional(
           Type.String({
-            description:
-              'Case-insensitive substring matched against folder name, path, tags, and persona name; ' +
-              'a folder also matches when any of its sessions matches on name or first message (two-tier, as the dashboard search).',
+            description: 'Case-insensitive substring matched against folder name, path, tags, and persona name. ' + 'Session content search lives in pimote_find_sessions.',
           }),
         ),
         nature: Type.Optional(Type.Union([Type.Literal('code'), Type.Literal('persona')], { description: 'Restrict rows to this base nature (hub rows keep their base nature).' })),
@@ -303,7 +290,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         if (params.hub !== undefined) rows = rows.filter((row) => row.shortcutCount > 0 === params.hub);
         if (!params.includeArchived) rows = rows.filter((row) => !row.archived);
         const query = params.query?.trim().toLowerCase() || undefined;
-        if (query !== undefined) rows = await filterByQuery(rows, query, context.sessions, signal);
+        if (query !== undefined) rows = filterByQuery(rows, query);
         const outcome = await spillRows('pimote_find_folders', rows, signal);
         // Channel split (DR-073): the guard bounds only the model-facing view;
         // structuredContent carries every row for codemode scripts, details

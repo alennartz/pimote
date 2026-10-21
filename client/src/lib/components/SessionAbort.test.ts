@@ -249,7 +249,7 @@ describe('explicit session abort restoration', () => {
     const response = deferredResponse();
     const send = vi.spyOn(connection, 'send').mockImplementation((command) => {
       if (command.type === 'abort') return response.promise;
-      return Promise.resolve({ id: 'steer-1', success: true });
+      return Promise.resolve({ id: 'steer-1', success: true, data: { outcome: 'queued' } });
     });
     const view = render();
     await tick();

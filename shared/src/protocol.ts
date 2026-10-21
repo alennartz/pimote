@@ -272,6 +272,25 @@ export interface PromptCommand extends CommandBase {
   message: string;
   images?: string[];
   streamingBehavior?: 'streaming' | 'blocking';
+  /** Sender-chosen id for the optimistic transcript entry. When the prompt
+   *  starts a run, the server stamps the echoed user message with it. */
+  clientMessageId?: string;
+}
+
+/**
+ * How pi dispatched an accepted prompt:
+ * - `started`: the prompt began a run; its user message echoes with the
+ *   command's `clientMessageId`.
+ * - `queued`: the prompt joined the active run's steering queue; it echoes
+ *   unstamped when the run consumes it.
+ * - `handled`: an extension command or input handler consumed the prompt; no
+ *   user message echoes.
+ */
+export type PromptOutcome = 'started' | 'queued' | 'handled';
+
+/** Response data for a plain `prompt` (not the `/new`, `/reload`, `/tree` built-ins). */
+export interface PromptResponseData {
+  outcome: PromptOutcome;
 }
 
 export interface SteerCommand extends CommandBase {
@@ -544,7 +563,8 @@ export interface ListFoldersCommand extends CommandBase {
   offset?: number; // default 0
   /** Window size; server-clamped to [1, 200]. */
   limit?: number; // default 100
-  /** Two-tier search over the full set, case-insensitive substring. */
+  /** Two-tier search (folder text, then non-archived sessions unless
+   *  `includeArchived`), case-insensitive substring. */
   query?: string;
   includeArchived?: boolean; // default false
   /** Omitted → use this connection's pin (created at WebSocket open). */
@@ -976,6 +996,8 @@ export interface TurnEndEvent extends SessionEventBase {
 export interface MessageStartEvent extends SessionEventBase {
   type: 'message_start';
   role: string;
+  /** Present on the user message that a `started` prompt echoes. */
+  clientMessageId?: string;
 }
 
 export interface MessageUpdateEvent extends SessionEventBase {
@@ -1003,6 +1025,8 @@ export interface StreamingMessage {
 export interface MessageEndEvent extends SessionEventBase {
   type: 'message_end';
   message: PimoteAgentMessage;
+  /** Present on the user message that a `started` prompt echoes. */
+  clientMessageId?: string;
 }
 
 /**
@@ -1261,6 +1285,11 @@ export interface FullResyncEvent {
   sessionId: string;
   state: SessionState;
   messages: PimoteAgentMessage[];
+  /** The message pi is streaming at snapshot time, as far as it has streamed.
+   *  Later message_update deltas extend its last block. */
+  streamingMessage?: StreamingMessage;
+  /** Tool calls executing at snapshot time; their updates and ends follow live. */
+  runningToolCallIds?: string[];
 }
 
 // -- Panel events --
