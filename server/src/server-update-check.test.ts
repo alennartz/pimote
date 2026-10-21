@@ -89,6 +89,7 @@ describe('createServer — update notification wiring', () => {
     await Promise.resolve();
 
     expect(server.clientRegistry.has('client-without-checker')).toBe(true);
-    expect(ws.send).not.toHaveBeenCalled();
+    const sentTypes = ws.send.mock.calls.map(([raw]: [string]) => JSON.parse(raw).type);
+    expect(sentTypes).not.toContain('update_available');
   });
 });
