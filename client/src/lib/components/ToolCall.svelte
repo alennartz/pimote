@@ -6,6 +6,7 @@
   import WriteFileBlock from './WriteFileBlock.svelte';
   import { createEditDiffStreamer, type EditArgs, type EditEntry } from '$lib/edit-diff.js';
   import { createWriteContentStreamer, extractWriteContent } from '$lib/write-content.js';
+  import { createCodemodeCodeStreamer, extractCodemodeCode } from '$lib/codemode-content.js';
   import { inferLanguageFromPath } from '$lib/editor-language.js';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
@@ -54,6 +55,7 @@
   let durationSuffix = $derived(effectiveDurationMs !== undefined ? ` · ${formatToolDuration(effectiveDurationMs)}` : '');
   let isEdit = $derived(toolName === 'edit');
   let isWrite = $derived(toolName === 'write');
+  let isCodemode = $derived(toolName === 'codemode');
 
   // Streaming-diff state used only when isEdit.
   let streamer: ReturnType<typeof createEditDiffStreamer> | undefined = $state();
@@ -92,10 +94,11 @@
     streamingEntries = streamer.entries.map((e) => ({ oldText: e.oldText, newText: e.newText }));
   });
 
-  // Edit and write tool sections render expanded while active (streaming or the
-  // result is still in progress). See the delayed-collapse effect below.
+  // Edit, write, and codemode tool sections render expanded while active
+  // (streaming or the result is still in progress). See the delayed-collapse
+  // effect below.
   $effect(() => {
-    if (!isEdit && !isWrite) return;
+    if (!isEdit && !isWrite && !isCodemode) return;
     if (streaming || inProgress) {
       expanded = true;
     }
@@ -105,7 +108,7 @@
   // first time it fully scrolls out of view, rather than snapping shut on
   // completion.
   $effect(() => {
-    if (!isEdit && !isWrite) return;
+    if (!isEdit && !isWrite && !isCodemode) return;
     if (streaming || inProgress) return;
     if (!expanded) return;
     if (!rootEl) return;
@@ -146,6 +149,39 @@
     streamingBody = writeStreamer.content;
   });
 
+  // Streaming-code state used only when isCodemode. Mirrors the write streamer:
+  // feed `content.text` deltas into a codemode-content streamer (write-on-growth)
+  // and snapshot the script source into $state so Svelte re-renders.
+  let codemodeStreamer: ReturnType<typeof createCodemodeCodeStreamer> | undefined = $state();
+
+  let codemodeStreamerWritten = 0;
+  let streamingCode = $state('');
+
+  $effect(() => {
+    if (!isCodemode) return;
+    if (!streaming) {
+      // Keep `streamingCode` so the finalized-else-streamed fallback covers the
+      // tick between `streaming` flipping off and `content.args` arriving.
+      if (codemodeStreamer) {
+        codemodeStreamer.dispose();
+        codemodeStreamer = undefined;
+        codemodeStreamerWritten = 0;
+      }
+      return;
+    }
+    const text = content.text ?? '';
+    if (!text) return;
+    if (!codemodeStreamer) {
+      codemodeStreamer = createCodemodeCodeStreamer();
+      codemodeStreamerWritten = 0;
+    }
+    if (text.length > codemodeStreamerWritten) {
+      codemodeStreamer.write(text.slice(codemodeStreamerWritten));
+      codemodeStreamerWritten = text.length;
+    }
+    streamingCode = codemodeStreamer.code;
+  });
+
   // Path: prefer finalized args; fall back to scanning the partial args JSON so
   // markdown mode kicks in as soon as the path field has streamed through.
   let writePath = $derived.by(() => {
@@ -169,6 +205,13 @@
   // streamed body otherwise (same prefer-finalized-else-streamed pattern as edit).
   let finalizedBody = $derived<string | undefined>(isWrite && content.args ? extractWriteContent(content.args) : undefined);
   let writeBody = $derived(isWrite ? (finalizedBody ?? streamingBody) : '');
+
+  // Prefer the finalized source once args are available; fall back to the last
+  // streamed source otherwise (same prefer-finalized-else-streamed pattern as
+  // edit and write). Codemode scripts are always JavaScript, highlighted as
+  // TypeScript.
+  let finalizedCode = $derived<string | undefined>(isCodemode && content.args ? extractCodemodeCode(content.args) : undefined);
+  let codemodeCode = $derived(isCodemode ? (finalizedCode ?? streamingCode) : '');
 
   let finalizedEntries = $derived<ReadonlyArray<EditEntry> | undefined>(isEdit && content.args ? ((content.args as EditArgs).edits ?? []) : undefined);
   // Prefer the finalized view once args are available; fall back to the
@@ -270,6 +313,10 @@
       {:else if isWrite && (writeBody !== '' || content.args)}
         <div class="tool-section">
           <WriteFileBlock content={writeBody} mode={isMarkdown ? 'markdown' : 'code'} language={writeLanguage} streaming={streaming && !isCompleted} />
+        </div>
+      {:else if isCodemode && (codemodeCode !== '' || content.args)}
+        <div class="tool-section">
+          <WriteFileBlock content={codemodeCode} mode="code" language="typescript" streaming={streaming && !isCompleted} copyLabel="Copy script" />
         </div>
       {:else if argsText}
         <div class="tool-section">

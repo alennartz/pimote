@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * Renders a `write` tool's file body inside collapsible, copyable chrome, in
-   * one of two modes:
+   * Renders a `write` tool's file body — or a `codemode` tool's script source —
+   * inside collapsible, copyable chrome, in one of two modes:
    *
    *   - `code`     — syntax-highlighted `<pre><code>` via `code-highlight.ts`
    *                  (throttled while `streaming`, flushed when it ends).
@@ -25,8 +25,9 @@
     mode,
     language,
     streaming = false,
+    copyLabel = 'Copy file contents',
   }: {
-    /** File body (streaming or finalized). */
+    /** File body or script source (streaming or finalized). */
     content: string;
     /** Render strategy. */
     mode: 'code' | 'markdown';
@@ -34,6 +35,8 @@
     language: string | null;
     /** Drives throttled highlight + auto-scroll while true. */
     streaming?: boolean;
+    /** Copy button label, aria-label, and title. */
+    copyLabel?: string;
   } = $props();
 
   const MAX_COLLAPSED_LINES = 20;
@@ -125,8 +128,8 @@
 </script>
 
 <div class="write-file-block" data-mode={mode} bind:this={rootEl}>
-  <button type="button" class="code-copy-btn" class:copied aria-label="Copy file contents" title="Copy file contents" onclick={copy}>
-    {copied ? 'Copied' : 'Copy'}
+  <button type="button" class="code-copy-btn" class:copied aria-label={copyLabel} title={copyLabel} onclick={copy}>
+    {copied ? 'Copied' : copyLabel}
   </button>
 
   {#if mode === 'code'}

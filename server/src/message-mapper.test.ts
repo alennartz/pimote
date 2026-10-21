@@ -41,6 +41,26 @@ describe('mapAgentMessage', () => {
       expect(result.content).toEqual([{ type: 'tool_result', toolCallId: 'tc-1', toolName: 'read', result: 'file contents', isError: undefined }]);
     });
 
+    it('joins every text block of a multi-block tool result', () => {
+      // codemode splits its result into a status header block plus one block
+      // per script output item; the client must see all of them.
+      const result = m({
+        role: 'toolResult',
+        toolCallId: 'tc-6',
+        toolName: 'codemode',
+        content: [
+          { type: 'text', text: 'Script completed\nOutput:\n' },
+          { type: 'text', text: 'shape-check ok' },
+        ],
+      });
+      expect(result.content[0]).toMatchObject({ type: 'tool_result', result: 'Script completed\nOutput:\n\nshape-check ok' });
+    });
+
+    it('omits result when a tool result has no text blocks', () => {
+      const result = m({ role: 'toolResult', toolCallId: 'tc-7', toolName: 'bash', content: [] });
+      expect(result.content[0]).toMatchObject({ type: 'tool_result', result: undefined });
+    });
+
     it('forwards tool result details as structured data for the client', () => {
       const payload = { slug: 'demo', url: '/s/demo/' };
       const result = m({

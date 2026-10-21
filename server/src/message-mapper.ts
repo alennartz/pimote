@@ -198,13 +198,11 @@ function mapContentBlocks(content: string | readonly AgentContentItem[]): Pimote
 export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
   switch (msg.role) {
     case 'toolResult': {
-      let text: string | undefined;
-      for (const c of msg.content) {
-        if (c.type === 'text') {
-          text = c.text;
-          break;
-        }
-      }
+      // Join every text block. Tools may split one result across blocks
+      // (codemode emits a status header block plus one block per script
+      // output item); taking only the first drops the payload.
+      const texts = msg.content.flatMap((c) => (c.type === 'text' ? [c.text] : []));
+      const text = texts.length > 0 ? texts.join('\n') : undefined;
       return {
         role: 'toolResult',
         content: [
