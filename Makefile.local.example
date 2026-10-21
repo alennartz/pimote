@@ -1,20 +1,63 @@
-# Copy to Makefile.local and adjust for your machine.
-# This file is intentionally untracked.
+# Copy this file to Makefile.local for local deployment targets.
+# Makefile.local is ignored by Git.
 
-# Example XDG overrides
-# XDG_DATA_HOME := $(HOME)/.local/share
-# XDG_CONFIG_HOME := $(HOME)/.config
+.PHONY: start-installed install-local install-service deploy redeploy deploy-paths restart undeploy logs status
 
-# Pimote install/runtime locations
-# PIMOTE_INSTALL_ROOT := $(XDG_DATA_HOME)/pimote
-# PIMOTE_SERVICE_NAME := pimote
-# PIMOTE_SYSTEMD_UNIT_PATH := $(XDG_CONFIG_HOME)/systemd/user/$(PIMOTE_SERVICE_NAME).service
-# PIMOTE_ENV_FILE := $(XDG_CONFIG_HOME)/pimote/env
-# PIMOTE_KEEP_RELEASES := 3
+# Override these values for the local deployment.
+XDG_DATA_HOME ?= $(HOME)/.local/share
+XDG_CONFIG_HOME ?= $(HOME)/.config
+PIMOTE_INSTALL_ROOT ?= $(XDG_DATA_HOME)/pimote
+PIMOTE_PACKAGE_NAME ?= @pimote/pimote
+PIMOTE_SERVICE_NAME ?= pimote
+PIMOTE_SYSTEMD_UNIT_PATH ?= $(XDG_CONFIG_HOME)/systemd/user/$(PIMOTE_SERVICE_NAME).service
+PIMOTE_ENV_FILE ?= $(XDG_CONFIG_HOME)/pimote/env
+PIMOTE_KEEP_RELEASES ?= 3
+SYSTEMCTL ?= systemctl --user
+JOURNALCTL ?= journalctl --user
+CURRENT_PACKAGE_DIR := $(PIMOTE_INSTALL_ROOT)/current/node_modules/$(PIMOTE_PACKAGE_NAME)
 
-# Service manager commands
-# SYSTEMCTL := systemctl --user
-# JOURNALCTL := journalctl --user
+export XDG_DATA_HOME XDG_CONFIG_HOME
+export PIMOTE_INSTALL_ROOT PIMOTE_PACKAGE_NAME PIMOTE_SERVICE_NAME
+export PIMOTE_SYSTEMD_UNIT_PATH PIMOTE_ENV_FILE PIMOTE_KEEP_RELEASES
 
-# Optional runtime override
-# PORT := 3000
+start-installed:
+	node $(CURRENT_PACKAGE_DIR)/bin/pimote.js start $(if $(PORT),--port $(PORT),)
+
+install-local: build
+	node ./scripts/install-local-package.mjs
+
+install-service:
+	node ./scripts/install-systemd-service.mjs
+
+deploy-paths:
+	@echo "Install root:     $(PIMOTE_INSTALL_ROOT)"
+	@echo "Current package:  $(CURRENT_PACKAGE_DIR)"
+	@echo "Service name:     $(PIMOTE_SERVICE_NAME)"
+	@echo "Systemd unit:     $(PIMOTE_SYSTEMD_UNIT_PATH)"
+	@echo "Env file:         $(PIMOTE_ENV_FILE)"
+
+deploy: install-local install-service
+	$(SYSTEMCTL) daemon-reload
+	$(SYSTEMCTL) enable --now $(PIMOTE_SERVICE_NAME)
+	$(SYSTEMCTL) restart $(PIMOTE_SERVICE_NAME)
+
+redeploy: deploy
+
+restart:
+	$(SYSTEMCTL) restart $(PIMOTE_SERVICE_NAME)
+
+undeploy:
+	$(SYSTEMCTL) stop $(PIMOTE_SERVICE_NAME)
+
+logs:
+	$(JOURNALCTL) -u $(PIMOTE_SERVICE_NAME) -f
+
+status:
+	$(SYSTEMCTL) status $(PIMOTE_SERVICE_NAME)
+
+# Optional local Pi patch hook. Keep this in your personal Makefile.local only
+# when ../my-pi is available.
+# build-server: patch-pi-preamble
+#
+# patch-pi-preamble:
+#	node ./scripts/patch-pi-preamble.mjs

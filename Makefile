@@ -1,8 +1,7 @@
 .PHONY: all install build build-shared build-sdk build-server build-client package \
         dev dev-server dev-client \
-        start start-installed restart test clean help \
+        start test clean help \
         format format-check lint check \
-        install-local install-service deploy redeploy undeploy logs status deploy-paths \
         android-image android-build android-test android-shell android-gradle android-clean
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -10,25 +9,10 @@
 # Optional machine-local overrides live in Makefile.local (gitignored).
 -include Makefile.local
 
-# PORT is optional — if not set, the server uses the value from ~/.config/pimote/config.json
+# PORT is optional — if not set, the server uses the value from the Pimote config.
 # Override with: make start PORT=3001
 
 ARTIFACTS_DIR ?= .artifacts
-XDG_DATA_HOME ?= $(HOME)/.local/share
-XDG_CONFIG_HOME ?= $(HOME)/.config
-PIMOTE_INSTALL_ROOT ?= $(XDG_DATA_HOME)/pimote
-PIMOTE_PACKAGE_NAME ?= @pimote/pimote
-PIMOTE_SERVICE_NAME ?= pimote
-PIMOTE_SYSTEMD_UNIT_PATH ?= $(XDG_CONFIG_HOME)/systemd/user/$(PIMOTE_SERVICE_NAME).service
-PIMOTE_ENV_FILE ?= $(XDG_CONFIG_HOME)/pimote/env
-PIMOTE_KEEP_RELEASES ?= 3
-SYSTEMCTL ?= systemctl --user
-JOURNALCTL ?= journalctl --user
-CURRENT_PACKAGE_DIR := $(PIMOTE_INSTALL_ROOT)/current/node_modules/$(PIMOTE_PACKAGE_NAME)
-
-export XDG_DATA_HOME XDG_CONFIG_HOME
-export PIMOTE_INSTALL_ROOT PIMOTE_PACKAGE_NAME PIMOTE_SERVICE_NAME
-export PIMOTE_SYSTEMD_UNIT_PATH PIMOTE_ENV_FILE PIMOTE_KEEP_RELEASES
 
 # ── Default ───────────────────────────────────────────────────────────────────
 
@@ -85,10 +69,6 @@ dev-client:
 start:
 	node ./bin/pimote.js start $(if $(PORT),--port $(PORT),)
 
-## Run the currently installed local deployment package.
-start-installed:
-	node $(CURRENT_PACKAGE_DIR)/bin/pimote.js start $(if $(PORT),--port $(PORT),)
-
 # ── Lint & Format ─────────────────────────────────────────────────────────────
 
 ## Format all files with Prettier
@@ -124,51 +104,6 @@ clean:
 	rm -rf client/.svelte-kit
 	rm -rf client/build
 	rm -rf $(ARTIFACTS_DIR)
-
-# ── Local installed deployment ────────────────────────────────────────────────
-
-## Install the built app as a local release under $(PIMOTE_INSTALL_ROOT)
-install-local: build
-	node ./scripts/install-local-package.mjs
-
-## Write/update the user systemd unit to run the installed package
-install-service:
-	node ./scripts/install-systemd-service.mjs
-
-## Show the local deployment paths used by deploy/install-service
-deploy-paths:
-	@echo "Install root:     $(PIMOTE_INSTALL_ROOT)"
-	@echo "Current package:  $(CURRENT_PACKAGE_DIR)"
-	@echo "Service name:     $(PIMOTE_SERVICE_NAME)"
-	@echo "Systemd unit:     $(PIMOTE_SYSTEMD_UNIT_PATH)"
-	@echo "Env file:         $(PIMOTE_ENV_FILE)"
-
-# ── Service ───────────────────────────────────────────────────────────────────
-
-## Install the local package release, update the systemd unit, and restart/enable the service
-deploy: install-local install-service
-	$(SYSTEMCTL) daemon-reload
-	$(SYSTEMCTL) enable --now $(PIMOTE_SERVICE_NAME)
-	$(SYSTEMCTL) restart $(PIMOTE_SERVICE_NAME)
-
-## Reinstall the local package release and restart the service
-redeploy: deploy
-
-## Restart the service
-restart:
-	$(SYSTEMCTL) restart $(PIMOTE_SERVICE_NAME)
-
-## Stop the service
-undeploy:
-	$(SYSTEMCTL) stop $(PIMOTE_SERVICE_NAME)
-
-## View logs (live)
-logs:
-	$(JOURNALCTL) -u $(PIMOTE_SERVICE_NAME) -f
-
-## Check status
-status:
-	$(SYSTEMCTL) status $(PIMOTE_SERVICE_NAME)
 
 # ── Android client (mobile/android) ───────────────────────────────────────────
 
@@ -221,7 +156,6 @@ help:
 	@echo "  dev-client       Run Vite dev server (proxies /ws to :PORT)"
 	@echo ""
 	@echo "  start            Start the repo build via the pimote CLI"
-	@echo "  start-installed  Start the installed local deployment"
 	@echo "  test             Run all tests (server + client, single run)"
 	@echo ""
 	@echo "  format           Format all files with Prettier (writes changes)"
@@ -231,16 +165,7 @@ help:
 	@echo ""
 	@echo "  clean            Remove all build artifacts"
 	@echo ""
-	@echo "  install-local    Install the app into $(PIMOTE_INSTALL_ROOT)"
-	@echo "  install-service  Write/update the user systemd unit ($(PIMOTE_SYSTEMD_UNIT_PATH))"
-	@echo "  deploy-paths     Show local deployment paths"
-	@echo "  deploy           Install local release + update unit + restart service"
-	@echo "                   (override locally via Makefile.local)"
-	@echo "  redeploy         Alias for deploy"
-	@echo "  restart          Restart the service"
-	@echo "  undeploy         Stop the service"
-	@echo "  logs             Tail service logs"
-	@echo "  status           Show service status"
+	@echo "  deployment       Copy Makefile.local.example for local deployment targets"
 	@echo ""
 	@echo "  android-image    Build the Android build container image ($(ANDROID_IMAGE))"
 	@echo "  android-build    Assemble the debug APK inside the build container"

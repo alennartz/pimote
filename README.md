@@ -289,9 +289,10 @@ pimote version
 
 ### Local installed deployment
 
-If you want your personal Pimote service to run from an installed package instead of this repo's live build output, use the deployment targets:
+Deployment targets are local. Copy the generic template, set local values, then run the targets:
 
 ```bash
+cp Makefile.local.example Makefile.local
 make deploy
 ```
 
@@ -299,10 +300,10 @@ This will:
 
 - build the app
 - pack the npm package
-- install it under `~/.local/share/pimote/releases/...`
-- update `~/.local/share/pimote/current`
-- write/update `~/.config/systemd/user/pimote.service`
-- reload and restart the user service
+- install it under the configured release root
+- update the configured `current` symlink
+- write or update the configured user systemd unit
+- reload and restart the configured user service
 
 Useful follow-up commands:
 
@@ -346,10 +347,6 @@ npm install         Install workspace dependencies
 npm run build       Build shared → server → client
 npm start           Start the repo build via the publishable CLI
 make package        Create a publishable npm tarball in .artifacts/
-make install-local  Install the built package under ~/.local/share/pimote
-make install-service Write/update the user systemd unit
-make deploy         Install local release + restart service
-make start-installed Run the currently installed package manually
 make dev-server     Server with hot-reload (tsx watch)
 make dev-client     Vite dev server with HMR
 make test           Run all tests (server + client)
@@ -358,6 +355,8 @@ make lint           Run ESLint
 make check          Type-check (svelte-check + tsc)
 make clean          Remove all build artifacts
 make help           Show make targets
+
+Copy `Makefile.local.example` to `Makefile.local` for local deployment targets.
 ```
 
 For first-publish steps, see [docs/releasing.md](docs/releasing.md).
