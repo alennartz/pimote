@@ -31,10 +31,8 @@
     "server/dist/**/*.js",
     "shared/dist/**/*.js",
     "shared/dist/**/*.d.ts",
-    "scripts/postinstall-patches.mjs",
     "README.md",
     "LICENSE",
-    "patches/*.patch",
     "docs/shipped/**",
     "packages/sdk/README.md"
   ],
@@ -47,7 +45,8 @@
     "packages/sdk"
   ],
   "scripts": {
-    "build": "npm run build:shared && npm run build --workspace=@pimote/sdk && npm run build --workspace=@pimote/server && npm run build --workspace=client",
+    "build": "npm run patch:dependencies && npm run build:shared && npm run build --workspace=@pimote/sdk && npm run build --workspace=@pimote/server && npm run build --workspace=client",
+    "patch:dependencies": "node ./scripts/patch-dependencies.mjs",
     "build:shared": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('shared/dist', { recursive: true, force: true }); rmSync('shared/tsconfig.tsbuildinfo', { force: true });\" && tsc -b shared --force",
     "start": "node ./bin/pimote.js start",
     "format": "prettier --write .",
@@ -55,10 +54,9 @@
     "lint": "eslint .",
     "check": "npm run check --workspace=client && tsc --noEmit -p server/tsconfig.json && tsc --noEmit -p shared/tsconfig.json",
     "prepare": "husky",
-    "postinstall": "node ./scripts/postinstall-patches.mjs",
     "prepack": "npm run build",
     "pack:dry-run": "npm pack --dry-run",
-    "test:patches": "node --test scripts/postinstall-patches.test.mjs"
+    "test:patches": "node --test scripts/patch-dependencies.test.mjs"
   },
   "lint-staged": {
     "*.{ts,js,svelte,css,html,json,md,yaml}": "prettier --write",
@@ -71,6 +69,7 @@
     "globals": "^17.4.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
+    "patch-package": "^8.0.1",
     "prettier": "^3.8.1",
     "prettier-plugin-svelte": "^3.5.1",
     "prettier-plugin-tailwindcss": "^0.7.2",
@@ -82,7 +81,6 @@
     "@pimote/sdk": "^0.15.0-rc.2",
     "@streamparser/json": "^0.0.22",
     "jiti": "^2.7.0",
-    "patch-package": "^8.0.1",
     "semver": "^7.8.5",
     "typebox": "^1.1.38",
     "web-push": "^3.6.7",

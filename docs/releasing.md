@@ -11,17 +11,17 @@
 ```bash
 npm run build
 make test
-npm pack --dry-run
+npm pack --ignore-scripts --dry-run
 ```
 
 Optional smoke test using the packed tarball:
 
 ```bash
 TMPDIR=$(mktemp -d)
-npm pack
+npm pack --ignore-scripts
 cd "$TMPDIR"
 npm init -y
-npm install /path/to/pimote-<version>.tgz
+npm install --ignore-scripts /path/to/pimote-<version>.tgz
 npx pimote help
 # or directly from the registry name:
 npx @pimote/pimote help
@@ -39,6 +39,7 @@ npm publish
 
 ## Notes
 
-- `prepack` rebuilds the app before packaging.
-- The published package includes the built client, built server, CLI entrypoint, and runtime patches.
+- `build` applies dependency patches before compiling the client and server.
+- `prepack` rebuilds the app before packaging, so bundled Pi contains the patched runtime.
+- The published package has no Pimote patch-install hook. A consumer install can disable scripts and still use the patched bundle.
 - Pimote is currently in the `0.x` phase, so treat minor versions as potentially breaking.

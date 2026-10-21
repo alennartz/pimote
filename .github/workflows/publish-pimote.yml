@@ -32,23 +32,48 @@ jobs:
         run: make test
 
       - name: Pack dry run
-        run: npm pack --dry-run
+        run: npm pack --ignore-scripts --dry-run
+
+      - name: Pack release
+        run: echo "PIMOTE_TARBALL=$(npm pack --ignore-scripts --silent)" >> "$GITHUB_ENV"
 
       - name: Smoke test packed install
         run: |
-          TARBALL=$(npm pack --ignore-scripts --silent)
           TMPDIR=$(mktemp -d)
-          cp "$TARBALL" "$TMPDIR/"
+          cp "$PIMOTE_TARBALL" "$TMPDIR/"
           cd "$TMPDIR"
           npm init -y >/dev/null
-          npm install "./$TARBALL"
+          npm install --ignore-scripts "./$PIMOTE_TARBALL"
           npx pimote help
+          node --input-type=module - "$TMPDIR" <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+
+          const root = process.argv[2];
+          const packageRoot = join(root, 'node_modules', '@pimote', 'pimote');
+          const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
+          if (manifest.scripts?.postinstall) {
+            throw new Error('Pimote still declares a postinstall script');
+          }
+
+          const piPath = join(packageRoot, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'core', 'agent-session.js');
+          const piSource = await readFile(piPath, 'utf8');
+          for (const marker of [
+            'try {\n            this._isAgentRunActive = false;\n            this._cacheWarmer?.onAgentSettled();',
+            'finally {\n            this._resolveIdleWaitIfIdle();',
+            'catch (error) {\n                try {\n                    await this._emitAgentSettled();',
+          ]) {
+            if (!piSource.includes(marker)) {
+              throw new Error(`Bundled Pi is not patched: ${marker}`);
+            }
+          }
+          NODE
 
       - name: Publish
         run: |
           VERSION=$(node -p "require('./package.json').version")
           if [[ "$VERSION" == *-* ]]; then
-            npm publish --tag next
+            npm publish "$PIMOTE_TARBALL" --tag next
           else
-            npm publish
+            npm publish "$PIMOTE_TARBALL"
           fi

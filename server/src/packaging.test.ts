@@ -69,6 +69,17 @@ describe('packed root package declares all server runtime dependencies', () => {
     expect([...undeclared.entries()].map(([spec, files]) => `${spec} (${files.join(', ')})`)).toEqual([]);
   });
 
+  it('does not require a consumer install hook for dependency patches', async () => {
+    const rootPackageJson = JSON.parse(await readFile(rootPackagePath, 'utf-8')) as {
+      files: string[];
+      scripts: Record<string, string>;
+    };
+
+    expect(rootPackageJson.scripts.postinstall).toBeUndefined();
+    expect(rootPackageJson.files).not.toContain('scripts/postinstall-patches.mjs');
+    expect(rootPackageJson.files).not.toContain('patches/*.patch');
+  });
+
   it('bundles the exact pi runtime targeted by the settlement patch', async () => {
     const rootPackageJson = JSON.parse(await readFile(rootPackagePath, 'utf-8')) as {
       dependencies: Record<string, string>;

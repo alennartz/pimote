@@ -1,4 +1,4 @@
-.PHONY: all install build build-shared build-sdk build-server build-client package \
+.PHONY: all install build patch-dependencies build-shared build-sdk build-server build-client package \
         dev dev-server dev-client \
         start test clean help \
         format format-check lint check \
@@ -25,20 +25,24 @@ install:
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
-## Build everything in dependency order: shared → SDK → server, then client
-build: build-shared build-sdk build-server build-client
+## Apply dependency patches before compiling or bundling any workspace
+patch-dependencies:
+	npm run patch:dependencies
 
-build-shared:
+## Build everything in dependency order: shared → SDK → server, then client
+build: patch-dependencies build-shared build-sdk build-server build-client
+
+build-shared: patch-dependencies
 	npm run build:shared
 
-build-sdk:
+build-sdk: patch-dependencies
 	npm run build --workspace=@pimote/sdk
 
 ## Server depends on shared and SDK; rebuild both first if you've changed them
-build-server: build-shared build-sdk
+build-server: patch-dependencies build-shared build-sdk
 	npm run build --workspace=@pimote/server
 
-build-client:
+build-client: patch-dependencies
 	npm run build --workspace=client
 
 ## Create a publishable tarball in $(ARTIFACTS_DIR)
@@ -89,7 +93,7 @@ check:
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
-test:
+test: patch-dependencies
 	npm run test --workspace=@pimote/server -- --run
 	npm run test --workspace=client -- --run
 	npm run test:patches
@@ -146,7 +150,8 @@ help:
 	@echo "Usage: make [target] [PORT=3000]"
 	@echo ""
 	@echo "  install          Install all workspace dependencies"
-	@echo "  build            Build shared → server → client (production)"
+	@echo "  build            Apply patches, then build shared → server → client (production)"
+	@echo "  patch-dependencies Apply checked-in dependency patches"
 	@echo "  build-shared     Build shared types/utils only"
 	@echo "  build-server     Build server only (rebuilds shared first)"
 	@echo "  build-client     Build client only"

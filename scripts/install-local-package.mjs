@@ -40,6 +40,20 @@ async function assertBuiltArtifacts() {
   }
 }
 
+async function assertPatchedPi(piPackageRoot) {
+  const path = join(piPackageRoot, 'dist', 'core', 'agent-session.js');
+  const source = await readFile(path, 'utf8');
+  const markers = [
+    'try {\n            this._isAgentRunActive = false;\n            this._cacheWarmer?.onAgentSettled();',
+    'finally {\n            this._resolveIdleWaitIfIdle();',
+    'catch (error) {\n                try {\n                    await this._emitAgentSettled();',
+  ];
+
+  if (markers.some((marker) => !source.includes(marker))) {
+    throw new Error(`[pimote] Bundled Pi is not patched: ${path}`);
+  }
+}
+
 function packPackage(cwd) {
   const output = execFileSync('npm', ['pack', '--ignore-scripts', '--silent'], {
     cwd,
@@ -121,7 +135,7 @@ async function main() {
     await writeFile(join(releaseDir, 'package.json'), JSON.stringify({ name: 'pimote-local-install', private: true }, null, 2) + '\n', 'utf-8');
 
     console.log(`[pimote] Installing ${tarballFilename} into ${releaseDir}`);
-    runInherit('npm', ['install', '--omit=dev', '--no-save', '--package-lock=false', tarballPath], releaseDir);
+    runInherit('npm', ['install', '--omit=dev', '--ignore-scripts', '--no-save', '--package-lock=false', tarballPath], releaseDir);
 
     if (!(await pathExists(join(releasePackageRoot, 'bin', 'pimote.js')))) {
       throw new Error(`[pimote] Installed package is missing ${join(releasePackageRoot, 'bin', 'pimote.js')}`);
@@ -132,6 +146,7 @@ async function main() {
     if (!(await pathExists(join(piPackageRoot, 'package.json')))) {
       throw new Error(`[pimote] Installed bundled pi is missing ${join(piPackageRoot, 'package.json')}`);
     }
+    await assertPatchedPi(piPackageRoot);
 
     await updateCurrentSymlink(releaseDir);
     await pruneOldReleases();

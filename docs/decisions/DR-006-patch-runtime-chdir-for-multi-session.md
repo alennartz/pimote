@@ -14,7 +14,7 @@ Investigation of the SDK internals confirmed the chdir is belt-and-suspenders fo
 
 ## Decision
 
-Patch out the two `process.chdir()` calls (in `AgentSessionRuntime.apply()` and `createAgentSessionRuntime()`) via `patch-package`. This is a 6-line patch that unblocks full runtime adoption while preserving pimote's multi-session correctness.
+Patch out the two `process.chdir()` calls (in `AgentSessionRuntime.apply()` and `createAgentSessionRuntime()`) via a checked-in dependency patch. The build applies this patch before compilation and packaging. This is a 6-line patch that unblocks full runtime adoption while preserving pimote's multi-session correctness.
 
 Two alternatives were rejected:
 
@@ -25,6 +25,6 @@ An upstream discussion has been posted on pi-mono requesting the chdir be made o
 
 ## Consequences
 
-- Pimote depends on `patch-package` to apply this patch on install. The patch must be re-evaluated on each SDK version upgrade.
+- The published package carries the patched Pi runtime, so consumer installs do not apply this patch. The patch must be re-evaluated on each Pi version upgrade.
 - If upstream makes chdir opt-out or removes it, the patch can be dropped.
 - The patch is safe as long as the SDK continues threading explicit `cwd` through its internals — a regression there would affect the CLI too, so it's unlikely to go unnoticed.
