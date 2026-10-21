@@ -50,7 +50,7 @@ object PhoneAccountRules {
      * or the input is malformed. Pure; uses '/' as the only separator.
      *
      * Examples:
-     * - `/Users/alenna/repos/pimote` -> `"repos"`
+     * - `/home/user/repos/pimote` -> `"repos"`
      * - `/repos/pimote` -> `"repos"`
      * - `/pimote` -> `null`
      * - `pimote` -> `null`

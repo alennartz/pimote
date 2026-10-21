@@ -1,6 +1,6 @@
 // Interpreter prompt for the pimote voice extension. Adapted from voxcoder's
-// interpreter prompt — see docs/plans/voice-mode.md (Step 2) and
-// /home/alenna/repos/voxcoder/server/src/interpreter/prompt.ts.
+// interpreter prompt — see docs/plans/voice-mode.md (Step 2) and the
+// corresponding interpreter prompt in the voxcoder repository.
 //
 // Multimodal placeholders from voxcoder are removed (the PWA is a separate
 // text surface in v1 — it renders scrollback directly, not through the

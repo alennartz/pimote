@@ -39,7 +39,7 @@ adb install mobile/android/app/build/outputs/apk/debug/app-debug.apk
 adb install mobile/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-**Test device IP (static, reserved on home LAN):** `192.168.1.240`
+Use the device address assigned by your local network. Keep a reserved test-device address in `README.local.md` if your setup needs one.
 
 The wireless-debug `adb pair` / `adb connect` ports are _not_ static — Android
 randomizes them each time wireless debugging is toggled. The pairing port is

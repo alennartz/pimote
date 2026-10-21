@@ -169,7 +169,7 @@ class PhoneAccountRulesTest {
 
     @Test
     fun `rootSegmentOf returns parent's last segment for absolute path`() {
-        assertEquals("repos", PhoneAccountRules.rootSegmentOf("/Users/alenna/repos/pimote"))
+        assertEquals("repos", PhoneAccountRules.rootSegmentOf("/home/user/repos/pimote"))
     }
 
     @Test

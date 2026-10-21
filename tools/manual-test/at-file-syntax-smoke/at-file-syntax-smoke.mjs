@@ -34,7 +34,7 @@
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile, appendFile, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve as pathResolve } from 'node:path';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
@@ -431,9 +431,10 @@ async function main() {
     // Boot a second pimote whose PATH excludes fd / fdfind. Use a free port and
     // a fresh sandbox-state dir but the same fabricated session tree.
     const fdMissingPort = await getFreePort();
+    const piAgentBin = join(homedir(), '.pi', 'agent', 'bin');
     const sanitizedPath = (process.env.PATH ?? '')
       .split(':')
-      .filter((dir) => dir && dir !== '/home/alenna/.pi/agent/bin' && dir !== '/usr/bin' && dir !== '/bin')
+      .filter((dir) => dir && dir !== piAgentBin && dir !== '/usr/bin' && dir !== '/bin')
       .join(':');
     // Build an isolated bin dir holding only the node toolchain symlinks we need
     // (node is invoked by absolute path, so an empty PATH would still boot, but

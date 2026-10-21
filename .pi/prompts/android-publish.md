@@ -1,5 +1,5 @@
 ---
-description: Build the Android debug APK and publish it to gdrive:pimote-builds
+description: Build the Android debug APK and publish it to a configured rclone destination
 ---
 
 Build and publish the Pimote native Android debug APK. Do not trust an
@@ -24,7 +24,7 @@ If the build fails, stop and report the failure. Do not publish a stale APK.
 
 ## Phase 2 — Publish to Google Drive
 
-The published artifact lives in the `gdrive:pimote-builds/` rclone remote.
+Set `PIMOTE_ANDROID_RCLONE_DESTINATION` to the rclone destination for the published artifact before uploading.
 
 **Naming convention** (verified from existing entries):
 
@@ -39,18 +39,20 @@ Compute the name and upload:
 
 ```bash
 STAMP=$(date +%Y-%m-%d-%H%M)
-SHA=$(git -C /home/alenna/repos/pimote rev-parse --short=7 HEAD)
+REPO_ROOT=$(git rev-parse --show-toplevel)
+SHA=$(git rev-parse --short=7 HEAD)
 NAME="app-debug-${STAMP}-${SHA}.apk"
+DESTINATION="${PIMOTE_ANDROID_RCLONE_DESTINATION:?Set PIMOTE_ANDROID_RCLONE_DESTINATION first}"
 rclone copyto \
-  /home/alenna/repos/pimote/mobile/android/app/build/outputs/apk/debug/app-debug.apk \
-  "gdrive:pimote-builds/${NAME}" \
+  "$REPO_ROOT/mobile/android/app/build/outputs/apk/debug/app-debug.apk" \
+  "${DESTINATION}/${NAME}" \
   --progress
 ```
 
 Then verify the upload landed:
 
 ```bash
-rclone ls gdrive:pimote-builds | head
+rclone ls "$PIMOTE_ANDROID_RCLONE_DESTINATION" | head
 ```
 
 Report the final published filename to the user.

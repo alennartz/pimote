@@ -19,3 +19,5 @@ Thumbs.db
 # Local deployment/hosting details
 Deployment.md
 Makefile.local
+mobile/android/README.local.md
+.pi/prompts/*.local.md

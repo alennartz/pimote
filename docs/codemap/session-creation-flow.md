@@ -10,7 +10,7 @@ This document maps the complete flow of how extensions can trigger creating a ne
 
 A **slot** is the server's internal representation of an active session. The term comes from the UI concept where each open session appears as a tab/pill in the "session bar."
 
-**File**: `/home/alenna/repos/pimote/server/src/session-manager.ts`
+**File**: `server/src/session-manager.ts`
 
 **Interface**:
 
@@ -35,7 +35,7 @@ private readonly sessions = new Map<string, ManagedSlot>();
 
 Extensions can trigger `newSession` through the `ExtensionCommandContextActions` interface.
 
-**File**: `/home/alenna/repos/pimote/server/src/ws-handler.ts` (lines 38-76)
+**File**: `server/src/ws-handler.ts` (lines 38-76)
 
 **Creation**:
 
@@ -67,7 +67,7 @@ function createCommandContextActions(slot: ManagedSlot): ExtensionCommandContext
 
 When a client claims a session, extensions are bound once.
 
-**File**: `/home/alenna/repos/pimote/server/src/ws-handler.ts` (lines 819-853)
+**File**: `server/src/ws-handler.ts` (lines 819-853)
 
 **Flow in `claimSession`**:
 
@@ -170,7 +170,7 @@ private async handleSessionReset(slot: ManagedSlot): Promise<void> {
 
 ### Step 4: Wire Protocol - SessionReplacedEvent
 
-**File**: `/home/alenna/repos/pimote/shared/src/protocol.ts`
+**File**: `shared/src/protocol.ts`
 
 **Event Definition**:
 
@@ -187,7 +187,7 @@ This event is sent from server to client via WebSocket.
 
 ### Step 5: Client-Side Session Registry Update
 
-**File**: `/home/alenna/repos/pimote/client/src/lib/stores/session-registry.svelte.ts` (lines 674-682)
+**File**: `client/src/lib/stores/session-registry.svelte.ts` (lines 674-682)
 
 ```typescript
 case 'session_replaced': {
@@ -243,7 +243,7 @@ replaceSession(oldSessionId: string, newSessionId: string, folderPath: string, p
 
 ### Step 6: UI Update - New Session Appears as Tab
 
-**File**: `/home/alenna/repos/pimote/client/src/lib/components/ActiveSessionBar.svelte`
+**File**: `client/src/lib/components/ActiveSessionBar.svelte`
 
 The session bar iterates over `sessionRegistry.activeSessions` (which is now updated with the new session):
 
@@ -267,7 +267,7 @@ The session bar iterates over `sessionRegistry.activeSessions` (which is now upd
 
 Extensions interact with the UI through the `ExtensionUIContext`, which is created by `createExtensionUIBridge`.
 
-**File**: `/home/alenna/repos/pimote/server/src/extension-ui-bridge.ts`
+**File**: `server/src/extension-ui-bridge.ts`
 
 **Key Features**:
 

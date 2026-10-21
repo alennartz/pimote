@@ -112,4 +112,4 @@ This documentation can be used for:
 - Debugging session creation issues
 - Understanding the slot-based architecture for future refactoring
 
-All documentation is stored in `/home/alenna/repos/pimote/docs/codemap/`
+All documentation is stored in the repository's `docs/codemap/` directory
