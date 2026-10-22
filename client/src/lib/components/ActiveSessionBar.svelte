@@ -5,6 +5,7 @@
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import { ContextMenu } from 'bits-ui';
   import { onMount } from 'svelte';
+  import type { Attachment } from 'svelte/attachments';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { connection } from '$lib/stores/connection.svelte.js';
@@ -13,13 +14,12 @@
   import { getSessionPillSwipeHintShown, setSessionPillSwipeHintShown } from '$lib/stores/persistence.js';
   import { getSessionChipLabel, getSessionDisplayName } from '$lib/session-summary.js';
   import { getSessionPillIconColor } from '$lib/session-pill-status.js';
-  import { shouldOpenSessionPillActions } from './session-pill-gesture.js';
+  import { isUpwardSessionPillSwipe, shouldOpenSessionPillActions } from './session-pill-gesture.js';
   import FolderNatureIcon, { folderIconKind } from './FolderNatureIcon.svelte';
 
   const uiQueue = getExtensionUiQueue();
 
   let mobileActionsSessionId = $state<string | null>(null);
-  let suppressTapSessionId = $state<string | null>(null);
   let openContextMenuSessionId = $state<string | null>(null);
   let hintSessionId = $state<string | null>(null);
   let deleteSessionId = $state<string | null>(null);
@@ -44,7 +44,6 @@
   function openMobileActions(sessionId: string) {
     openContextMenuSessionId = null;
     mobileActionsSessionId = sessionId;
-    suppressTapSessionId = sessionId;
     resetTouchState();
   }
 
@@ -77,12 +76,14 @@
     const touch = e.touches[0];
     touchDeltaX = touch.clientX - touchStartX;
     touchDeltaY = touch.clientY - touchStartY;
+    if (e.cancelable && isUpwardSessionPillSwipe(touchDeltaX, touchDeltaY)) e.preventDefault();
   }
 
-  function handleTouchEnd(sessionId: string) {
+  function handleTouchEnd(sessionId: string, e: TouchEvent) {
     if (touchSessionId !== sessionId) return;
 
     if (shouldOpenSessionPillActions(touchDeltaX, touchDeltaY)) {
+      if (e.cancelable) e.preventDefault();
       markSwipeHintSeen();
       openMobileActions(sessionId);
       return;
@@ -91,12 +92,29 @@
     resetTouchState();
   }
 
-  function handlePillClick(sessionId: string) {
-    if (suppressTapSessionId === sessionId) {
-      suppressTapSessionId = null;
-      return;
-    }
+  // Chrome on Android turns a fast upward flick into a fling even though
+  // touch-action: pan-x blocks the scroll, then swallows the next tap to stop
+  // that invisible fling. Cancelling the swipe's touches prevents the fling.
+  // Svelte touch handlers are passive, so these listeners attach directly.
+  function chipSwipe(sessionId: string): Attachment<HTMLButtonElement> {
+    return (node) => {
+      const onStart = (e: TouchEvent) => handleTouchStart(sessionId, e);
+      const onMove = (e: TouchEvent) => handleTouchMove(sessionId, e);
+      const onEnd = (e: TouchEvent) => handleTouchEnd(sessionId, e);
+      node.addEventListener('touchstart', onStart, { passive: true });
+      node.addEventListener('touchmove', onMove, { passive: false });
+      node.addEventListener('touchend', onEnd, { passive: false });
+      node.addEventListener('touchcancel', resetTouchState);
+      return () => {
+        node.removeEventListener('touchstart', onStart);
+        node.removeEventListener('touchmove', onMove);
+        node.removeEventListener('touchend', onEnd);
+        node.removeEventListener('touchcancel', resetTouchState);
+      };
+    };
+  }
 
+  function handlePillClick(sessionId: string) {
     if (mobileActionsSessionId === sessionId) {
       mobileActionsSessionId = null;
       return;
@@ -109,6 +127,7 @@
   async function archiveAndCloseSession(sessionId: string) {
     const session = sessionRegistry.sessions[sessionId];
     if (!session) return;
+    mobileActionsSessionId = null;
 
     try {
       await connection.send({
@@ -117,7 +136,6 @@
         sessionIds: [sessionId],
         archived: true,
       });
-      mobileActionsSessionId = null;
       closeSession(sessionId);
     } catch (e) {
       console.error('Failed to archive session:', e);
@@ -232,10 +250,7 @@
                   closeSession(session.sessionId);
                 }
               }}
-              ontouchstart={(e) => handleTouchStart(session.sessionId, e)}
-              ontouchmove={(e) => handleTouchMove(session.sessionId, e)}
-              ontouchend={() => handleTouchEnd(session.sessionId)}
-              ontouchcancel={resetTouchState}
+              {@attach chipSwipe(session.sessionId)}
               title={getSessionDisplayName(session) ?? session.projectName}
             >
               <!-- Folder glyph as the state indicator, colored like the old

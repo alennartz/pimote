@@ -72,6 +72,55 @@ afterEach(() => {
 });
 
 describe('active session bar touch behavior', () => {
+  it('cancels upward swipe touches so the browser starts no fling', async () => {
+    render();
+    await tick();
+    const sessionChip = chip();
+
+    sessionChip.dispatchEvent(touchEvent('touchstart', [{ clientX: 100, clientY: 100 }]));
+    const move = touchEvent('touchmove', [{ clientX: 102, clientY: 60 }]);
+    sessionChip.dispatchEvent(move);
+    const end = touchEvent('touchend', []);
+    sessionChip.dispatchEvent(end);
+
+    expect(move.defaultPrevented).toBe(true);
+    expect(end.defaultPrevented).toBe(true);
+  });
+
+  it('switches on the first tap after a swipe-opened tray is dismissed', async () => {
+    render();
+    await tick();
+    const sessionChip = chip();
+
+    sessionChip.dispatchEvent(touchEvent('touchstart', [{ clientX: 100, clientY: 100 }]));
+    sessionChip.dispatchEvent(touchEvent('touchmove', [{ clientX: 100, clientY: 60 }]));
+    sessionChip.dispatchEvent(touchEvent('touchend', []));
+    await tick();
+    expect(target.textContent).toContain('Session actions');
+
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }));
+    await tick();
+    expect(target.textContent).not.toContain('Session actions');
+
+    chip().click();
+    expect(connection.send).toHaveBeenCalledWith({ type: 'view_session', sessionId: id });
+  });
+
+  it('leaves horizontal drags to the browser', async () => {
+    render();
+    await tick();
+    const sessionChip = chip();
+
+    sessionChip.dispatchEvent(touchEvent('touchstart', [{ clientX: 100, clientY: 100 }]));
+    const move = touchEvent('touchmove', [{ clientX: 160, clientY: 95 }]);
+    sessionChip.dispatchEvent(move);
+    const end = touchEvent('touchend', []);
+    sessionChip.dispatchEvent(end);
+
+    expect(move.defaultPrevented).toBe(false);
+    expect(end.defaultPrevented).toBe(false);
+  });
+
   it('closes a long-press context menu when the same gesture becomes an upward swipe', async () => {
     render();
     await tick();
