@@ -273,6 +273,35 @@
     if (!canSend) return;
     const focusSnapshot = captureTextareaFocus();
 
+    function clearSubmittedComposer(sessionId: string): void {
+      inputText = '';
+      autocompleteVisible = false;
+      selectedCommand = null;
+      fileRefPrefix = null;
+      stagedImages = [];
+      if (sessionRegistry.viewedSessionId === sessionId) {
+        sessionRegistry.sessions[sessionId]!.draftText = '';
+      }
+      if (messageTextareaEl) messageTextareaEl.style.height = 'auto';
+      if (bashTextareaEl) bashTextareaEl.style.height = 'auto';
+      restoreTextareaFocus(focusSnapshot);
+    }
+
+    function restoreSubmittedComposer(sessionId: string, draft: string, images: string[], clientMessageId?: string): void {
+      const session = sessionRegistry.sessions[sessionId];
+      if (!session || session.draftText !== '') return;
+      // A later optimistic prompt owns the empty composer. Do not put an older
+      // failed submission back on top of it.
+      if (clientMessageId && session.optimisticEntries.some((entry) => entry.clientMessageId !== clientMessageId)) return;
+      if (sessionRegistry.viewedSessionId === sessionId && (inputText !== '' || stagedImages.length > 0)) return;
+
+      session.draftText = draft;
+      if (sessionRegistry.viewedSessionId !== sessionId) return;
+      inputText = draft;
+      stagedImages = [...images];
+      tick().then(() => autoResize());
+    }
+
     // Native bang commands are dispatched before slash commands, steering, or
     // ordinary prompts. They are independent of model streaming and own their
     // caller-generated correlation ID so live output can be reduced correctly.
@@ -376,18 +405,19 @@
       return;
     }
 
-    let sent = false;
-
     if (sessionRegistry.viewed?.isStreaming) {
       // Steer the current generation (text only, no images)
       if (!text) return;
       const sessionId = sessionRegistry.viewed.sessionId;
+      const submittedDraft = inputText;
+      const submittedImages = [...stagedImages];
       const isSlashCommand = text.startsWith('/');
-      // Show the pending pill before the round-trip. Slash input waits for
-      // pi's command handling or queue_update: a command may run instead of
-      // queueing.
+      // Show the pending pill and clear the submitted draft before the
+      // round-trip. Slash input waits for pi's command handling or
+      // queue_update: a command may run instead of queueing.
       const showPill = !isSlashCommand;
       if (showPill) sessionRegistry.viewed.pendingSteeringMessages.push(text);
+      clearSubmittedComposer(sessionId);
       // Remove the pill when pi will not queue the text. A queued text needs
       // no cleanup: pi's queue_update snapshot already replaced the list.
       const dropPill = () => {
@@ -409,9 +439,9 @@
             });
         if (!dispatchResponse.success) {
           dropPill();
+          restoreSubmittedComposer(sessionId, submittedDraft, submittedImages);
           console.error(`${isSlashCommand ? 'Prompt' : 'Steer'} rejected:`, dispatchResponse.error);
         } else {
-          sent = true;
           const promptData = dispatchResponse.data as Record<string, unknown> | undefined;
           if (promptData?.tree) {
             treeDialogStore.openDialog(sessionId, promptData.tree as import('@pimote/shared').PimoteTreeNode[], (promptData.currentLeafId as string) ?? null);
@@ -421,30 +451,34 @@
         }
       } catch (e) {
         dropPill();
+        restoreSubmittedComposer(sessionId, submittedDraft, submittedImages);
         console.error('Failed to send steer:', e);
       }
     } else {
       // Send a new prompt (text and/or images)
       if (!text && stagedImages.length === 0) return;
       const sessionId = sessionRegistry.viewed!.sessionId;
-      // Show the user message before the round-trip. Slash input renders on
-      // its echo only: extension commands never echo, and skill or template
-      // expansion echoes different text.
+      const submittedDraft = inputText;
+      const submittedImages = [...stagedImages];
+      // Show the user message and clear the submitted draft before the
+      // round-trip. Slash input renders on its echo only: extension commands
+      // never echo, and skill or template expansion echoes different text.
       const clientMessageId = text.startsWith('/') ? undefined : crypto.randomUUID();
       if (clientMessageId) sessionRegistry.addOptimisticUserMessage(sessionId, text, clientMessageId);
+      clearSubmittedComposer(sessionId);
       try {
         const promptResponse = await connection.send({
           type: 'prompt',
           sessionId,
           message: text,
-          ...(stagedImages.length > 0 ? { images: stagedImages } : {}),
+          ...(submittedImages.length > 0 ? { images: submittedImages } : {}),
           ...(clientMessageId ? { clientMessageId } : {}),
         });
         if (!promptResponse.success) {
           if (clientMessageId) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+          restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, clientMessageId);
           console.error('Prompt rejected:', promptResponse.error);
         } else {
-          sent = true;
           // Handle /tree response — open tree dialog instead of adding a message
           const promptData = promptResponse.data as Record<string, unknown> | undefined;
           if (promptData?.tree) {
@@ -457,23 +491,10 @@
         }
       } catch (e) {
         if (clientMessageId) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+        restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, clientMessageId);
         console.error('Failed to send prompt:', e);
       }
     }
-
-    if (!sent) return;
-
-    inputText = '';
-    autocompleteVisible = false;
-    selectedCommand = null;
-    stagedImages = [];
-    if (sessionRegistry.viewed) {
-      sessionRegistry.viewed.draftText = '';
-    }
-    if (textareaEl) {
-      textareaEl.style.height = 'auto';
-    }
-    restoreTextareaFocus(focusSnapshot);
   }
 
   function handleAbort() {

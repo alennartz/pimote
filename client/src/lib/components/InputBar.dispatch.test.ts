@@ -61,6 +61,45 @@ afterEach(async () => {
 });
 
 describe('prompt dispatch outcome', () => {
+  it('clears the composer when the optimistic entry is added, before the dispatch response', async () => {
+    setupSession(false);
+    let release!: (response: PimoteResponse) => void;
+    const sent = vi.spyOn(connection, 'send').mockImplementation(
+      () =>
+        new Promise<PimoteResponse>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const textarea = await submit('hello');
+
+    expect(textarea.value).toBe('');
+    expect(texts()).toEqual(['hello']);
+    expect(sent).toHaveBeenCalledTimes(1);
+
+    release({ id: 'r', success: true, data: { outcome: 'started' } });
+    await tick();
+  });
+
+  it('does not clear a newer draft when the dispatch response arrives', async () => {
+    setupSession(false);
+    let release!: (response: PimoteResponse) => void;
+    vi.spyOn(connection, 'send').mockImplementation(
+      () =>
+        new Promise<PimoteResponse>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const textarea = await submit('hello');
+
+    textarea.value = 'next draft';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+    release({ id: 'r', success: true, data: { outcome: 'started' } });
+    for (let i = 0; i < 4; i++) await tick();
+
+    expect(textarea.value).toBe('next draft');
+  });
+
   it('a started prompt keeps its optimistic entry and sends its clientMessageId', async () => {
     setupSession(false);
     const sent = respond({ outcome: 'started' });
@@ -112,6 +151,24 @@ describe('prompt dispatch outcome', () => {
 });
 
 describe('steer dispatch outcome', () => {
+  it('clears the composer when the pending steer is shown, before the dispatch response', async () => {
+    const session = setupSession(true);
+    let release!: (response: PimoteResponse) => void;
+    vi.spyOn(connection, 'send').mockImplementation(
+      () =>
+        new Promise<PimoteResponse>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const textarea = await submit('turn left');
+
+    expect(textarea.value).toBe('');
+    expect(session.pendingSteeringMessages).toEqual(['turn left']);
+
+    release({ id: 'r', success: true, data: { outcome: 'queued' } });
+    await tick();
+  });
+
   it('a queued steer keeps its pending pill', async () => {
     const session = setupSession(true);
     respond({ outcome: 'queued' });
