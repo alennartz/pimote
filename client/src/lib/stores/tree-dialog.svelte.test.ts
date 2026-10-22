@@ -13,6 +13,17 @@ function node(overrides: Partial<PimoteTreeNode> & Pick<PimoteTreeNode, 'id' | '
   };
 }
 
+function makeDeepTree(length: number): PimoteTreeNode[] {
+  const roots: PimoteTreeNode[] = [];
+  let children = roots;
+  for (let i = 0; i < length; i += 1) {
+    const next = node({ id: `node-${i}`, type: 'message', preview: i === length - 1 ? 'target' : `node ${i}`, timestamp: '2026-04-11T10:00:00.000Z' });
+    children.push(next);
+    children = next.children;
+  }
+  return roots;
+}
+
 describe('TreeDialogStore', () => {
   let store: TreeDialogStore;
 
@@ -125,6 +136,22 @@ describe('TreeDialogStore', () => {
     store.setNodeLabel('m1', 'Important branch');
 
     expect(store.state.tree?.[0].label).toBe('Important branch');
+  });
+
+  it('handles a deeply nested session tree without recursive traversal', () => {
+    const tree = makeDeepTree(3_843);
+    store.openDialog('session-123', tree, 'node-3842');
+
+    const filtered = store.getFilteredTree();
+    expect(filtered).toHaveLength(1);
+    let leaf = filtered[0];
+    for (let i = 0; i < 3_843 - 1; i += 1) leaf = leaf.children[0];
+    expect(leaf.id).toBe('node-3842');
+
+    store.setNodeLabel('node-3842', 'Important branch');
+    leaf = store.state.tree![0];
+    for (let i = 0; i < 3_843 - 1; i += 1) leaf = leaf.children[0];
+    expect(leaf.label).toBe('Important branch');
   });
 
   it('clears labels locally when setNodeLabel receives undefined', () => {

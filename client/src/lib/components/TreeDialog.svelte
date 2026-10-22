@@ -7,17 +7,11 @@
   import { setEditorText } from '$lib/stores/input-bar.svelte.js';
   import { treeDialogStore, type TreeFilterMode } from '$lib/stores/tree-dialog.svelte.js';
   import { formatRelativeTime } from '$lib/format-relative-time.js';
+  import { buildTreeRows, findTreePath } from '$lib/tree-dialog-utils.js';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import Tag from '@lucide/svelte/icons/tag';
 
   type SummaryMode = 'none' | 'summarize' | 'custom';
-
-  interface TreeRow {
-    node: PimoteTreeNode;
-    depth: number;
-    expanded: boolean;
-    hasChildren: boolean;
-  }
 
   interface NavigationSessionState {
     inProgress: boolean;
@@ -51,7 +45,7 @@
     const tree = treeDialogStore.state.tree ?? [];
     const currentLeafId = treeDialogStore.state.currentLeafId;
     if (!currentLeafId) return new Set<string>();
-    return new Set(findPathToNode(tree, currentLeafId));
+    return new Set(findTreePath(tree, currentLeafId));
   });
 
   const treeRows = $derived.by(() => buildTreeRows(treeDialogStore.getFilteredTree(), treeDialogStore.expandedNodeIds, activePath));
@@ -127,39 +121,6 @@
       clearLongPressTimer();
     };
   });
-
-  function findPathToNode(nodes: PimoteTreeNode[], targetId: string): string[] {
-    for (const node of nodes) {
-      if (node.id === targetId) return [node.id];
-      const childPath = findPathToNode(node.children, targetId);
-      if (childPath.length > 0) {
-        return [node.id, ...childPath];
-      }
-    }
-    return [];
-  }
-
-  function buildTreeRows(nodes: PimoteTreeNode[], expandedNodeIds: Set<string>, activePathNodes: Set<string>, depth = 0): TreeRow[] {
-    const rows: TreeRow[] = [];
-    const hasSiblings = nodes.length > 1;
-
-    for (const node of nodes) {
-      const hasChildren = node.children.length > 0;
-      const expanded = hasChildren && (expandedNodeIds.has(node.id) || activePathNodes.has(node.id));
-
-      rows.push({ node, depth, expanded, hasChildren });
-
-      if (expanded) {
-        // Indent children when this node is a fork (multiple children)
-        // or when this node has siblings (parent was a fork), so each
-        // branch's continuation is visually nested under its head.
-        const childDepth = node.children.length > 1 || hasSiblings ? depth + 1 : depth;
-        rows.push(...buildTreeRows(node.children, expandedNodeIds, activePathNodes, childDepth));
-      }
-    }
-
-    return rows;
-  }
 
   function setNavigationState(sessionId: string, next: NavigationSessionState): void {
     navigationStateBySession.set(sessionId, next);

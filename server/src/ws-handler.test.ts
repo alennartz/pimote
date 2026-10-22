@@ -3,7 +3,7 @@ import { VoiceOrchestrator } from './voice-orchestrator.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { createCommandContextActions, takeOverClientSlot, WsHandler, type ClientRegistry } from './ws-handler.js';
+import { createCommandContextActions, mapTreeNodes, takeOverClientSlot, WsHandler, type ClientRegistry } from './ws-handler.js';
 import { sendSlotEvent, waitForSlotUiResponse, type PimoteSessionManager, type ManagedSlot, type SessionState, type SessionObserver } from './session-manager.js';
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
@@ -2112,6 +2112,41 @@ describe('WsHandler', () => {
   });
 
   describe('tree navigation interfaces', () => {
+    it('maps deeply nested trees without overflowing the call stack', () => {
+      const root = {
+        entry: {
+          id: 'entry-0',
+          type: 'message',
+          message: { role: 'user', content: [{ type: 'text', text: 'root' }] },
+          timestamp: '2026-04-11T12:00:00.000Z',
+        },
+        children: [],
+      } as any;
+      let parent = root;
+      for (let i = 1; i < 5000; i += 1) {
+        const child = {
+          entry: {
+            id: `entry-${i}`,
+            type: 'message',
+            message: { role: 'assistant', content: [{ type: 'text', text: `node ${i}` }] },
+            timestamp: '2026-04-11T12:00:00.000Z',
+          },
+          children: [],
+        } as any;
+        parent.children = [child];
+        parent = child;
+      }
+
+      const mapped = mapTreeNodes([root]);
+      expect(mapped).toHaveLength(1);
+      let node = mapped[0];
+      for (let i = 0; i < 5000; i += 1) {
+        expect(node.id).toBe(`entry-${i}`);
+        if (i < 4999) node = node.children[0];
+      }
+      expect(node.children).toEqual([]);
+    });
+
     it('returns mapped tree data when prompt message is /tree', async () => {
       const tree = [
         {

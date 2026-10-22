@@ -185,9 +185,18 @@ async function resolveContainingFolder(filePath: string): Promise<string> {
 
 /** Map pi SDK tree nodes to the wire transfer shape used by pimote clients. */
 export function mapTreeNodes(nodes: SessionTreeNode[]): PimoteTreeNode[] {
-  return nodes.map((node) => {
+  const mapped: PimoteTreeNode[] = [];
+  const pending: Array<{ node: SessionTreeNode; destination: PimoteTreeNode[] }> = [];
+
+  for (let i = nodes.length - 1; i >= 0; i -= 1) {
+    pending.push({ node: nodes[i], destination: mapped });
+  }
+
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    const { node } = current;
     const timestamp = typeof node.entry.timestamp === 'string' ? node.entry.timestamp : new Date(0).toISOString();
-    return {
+    const mappedNode: PimoteTreeNode = {
       id: node.entry.id,
       type: node.entry.type,
       role:
@@ -203,9 +212,16 @@ export function mapTreeNodes(nodes: SessionTreeNode[]): PimoteTreeNode[] {
       timestamp,
       label: node.label,
       labelTimestamp: node.labelTimestamp,
-      children: mapTreeNodes(node.children),
+      children: [],
     };
-  });
+    current.destination.push(mappedNode);
+
+    for (let i = node.children.length - 1; i >= 0; i -= 1) {
+      pending.push({ node: node.children[i], destination: mappedNode.children });
+    }
+  }
+
+  return mapped;
 }
 
 /**
