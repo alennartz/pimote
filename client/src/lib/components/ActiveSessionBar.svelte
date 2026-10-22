@@ -20,6 +20,7 @@
 
   let mobileActionsSessionId = $state<string | null>(null);
   let suppressTapSessionId = $state<string | null>(null);
+  let openContextMenuSessionId = $state<string | null>(null);
   let hintSessionId = $state<string | null>(null);
   let deleteSessionId = $state<string | null>(null);
 
@@ -41,9 +42,18 @@
   }
 
   function openMobileActions(sessionId: string) {
+    openContextMenuSessionId = null;
     mobileActionsSessionId = sessionId;
     suppressTapSessionId = sessionId;
     resetTouchState();
+  }
+
+  function handleContextMenuOpenChange(sessionId: string, open: boolean) {
+    if (open) {
+      openContextMenuSessionId = sessionId;
+    } else if (openContextMenuSessionId === sessionId) {
+      openContextMenuSessionId = null;
+    }
   }
 
   function markSwipeHintSeen() {
@@ -205,7 +215,7 @@
         {@const isViewed = sessionRegistry.viewedSessionId === session.sessionId}
         {@const hasPendingUi = uiQueue.hasRequestForSession(session.sessionId)}
         {@const chipLabel = getSessionChipLabel(session) ?? session.projectName}
-        <ContextMenu.Root>
+        <ContextMenu.Root open={openContextMenuSessionId === session.sessionId} onOpenChange={(open) => handleContextMenuOpenChange(session.sessionId, open)}>
           <ContextMenu.Trigger class="shrink-0">
             <button
               class="group/chip {isViewed
