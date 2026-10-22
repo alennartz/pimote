@@ -15,4 +15,5 @@ export const STATIC_HOST_TOOL_DESCRIPTION: string = [
   '**No secrets.** Bundle files are served verbatim. Do not include API keys, tokens, credentials, or calls to services requiring authentication.',
   '',
   '**Workflow.** Create a folder containing at least `index.html`, then call this tool with its absolute path, a short lowercase slug, and a card title. The user opens the hosted report from the session card.',
+  '**Live serving.** Pimote serves files directly from the registered folder. Changes to source files appear at the hosted URL without rehosting the bundle.',
 ].join('\n');
