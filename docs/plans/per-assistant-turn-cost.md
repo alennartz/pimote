@@ -193,3 +193,87 @@ Remove `nextRoundtripCostUsd` and its cache-read estimate from the server calcul
 Popover click/tap, keyboard accessibility, one-open-at-a-time behavior, responsive placement, interrupted-row placement, and status/settings integration remain in the default manual-testing phase. The approved interaction mock defines these expectations.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Complete session usage projection
+
+Implement `projectSessionUsage(entries, stats)` in `server/src/session-usage.ts` behind its existing interface. Copy token totals from `stats.tokens`. Aggregate only input, output, cache-read, and cache-write dollars from Pi's usage-bearing entry types: assistant messages, tool results, compactions, branch summaries, and usage entries. Ignore other entries and missing usage. Return zero category dollars for empty history. Do not calculate a scalar total or add subset token categories.
+
+**Verify:** `server/src/session-usage.test.ts` passes, including the authoritative token totals and all five usage-bearing entry types.
+**Status:** not started
+
+### Step 2: Preserve usage across server delivery
+
+In `server/src/message-mapper.ts`, adapt Pi's real `Usage` type to `PimoteUsage`. Preserve assistant and tool-result usage, including optional subset fields. Keep tool-result correlation in the existing `tool_result.toolCallId` block. Other roles omit usage. Let `mapAgentMessages` and `mapContextEntries` retain usage through their existing calls to `mapAgentMessage`.
+
+In `server/src/event-buffer.ts`, attach the current assistant message's cumulative usage to `message_start` and `message_update`. Forward only snapshots with finite, nonnegative token and cost fields. Keep validation at the SDK mapping seam and reuse it for streaming snapshots. Do not filter by provider. Preserve mapped final usage in `message_end` and buffered replay. Keep terminal abort/error messages intact when applying the existing empty-content fallback.
+
+In `server/src/ws-handler.ts`, update `makeFullResyncEvent` to map the in-flight SDK message's usage even when its content is empty. Preserve the existing running-tool and context-entry behavior.
+
+**Verify:** `server/src/message-usage.test.ts` passes. Existing mapper, event-buffer, and mid-run resync coverage retains its current behavior.
+**Status:** not started
+
+### Step 3: Use Pi session totals and remove server forecast
+
+In `server/src/ws-handler.ts`, replace the `sumLifetimeCostUsd` import with `projectSessionUsage`. In `get_session_meta`, read `session.getSessionStats()` and `session.sessionManager.getEntries()`. Set `lifetimeCostUsd` to `stats.cost` and `usageBreakdown` to `projectSessionUsage(entries, stats)`. Keep cached git-branch and context-usage handling. Leave `get_session_stats` unchanged.
+
+Remove the context cache-read forecast calculation and output. Remove `nextRoundtripCostUsd` from `SessionMeta` in `shared/src/protocol.ts`. Keep the usage interfaces already committed there. Delete `server/src/session-cost.ts` and its superseded `server/src/session-cost.test.ts` coverage.
+
+**Verify:** The `get_session_meta` cases in `server/src/ws-handler.test.ts` pass. Metadata keeps Pi's scalar total when category sums differ and never returns the forecast field.
+**Status:** not started
+
+### Step 4: Implement row and disclosure projections
+
+Implement `summarizeAssistantRowUsage(assistant, messages)` in `client/src/lib/assistant-row-usage.ts`. Correlate tool-result usage with `tool_call` IDs in the supplied assistant snapshot. Sum the assistant's usage and every matching tool result, including multiple results for one ID. Exclude unrelated and usage-less tool results. Return `null` when no contributor has usage. Keep each assistant response separate. Sum `cost.total` independently from categories and do not count subset tokens twice.
+
+Implement `summarizeCostDisclosure(totalCostUsd, breakdown)` in `client/src/lib/cost-disclosure.ts`. Hide invalid and nonpositive totals. Use `<$0.01` below one cent and two decimals otherwise. Compare categories with the authoritative total using the one-cent tolerance, including floating-point rounding at that threshold. Return positive Unknown only above the tolerance. Mark larger category overages inconsistent without changing the total. Missing breakdowns do not invent Unknown.
+
+Remove `formatCombinedCost` from `client/src/lib/session-summary.ts` and remove its obsolete coverage from `client/src/lib/session-summary.test.ts`. Retain `formatSessionCost` and its coverage only if a remaining caller needs it. Use the disclosure projection for the new cost UI.
+
+**Verify:** `client/src/lib/assistant-row-usage.test.ts` and `client/src/lib/cost-disclosure.test.ts` pass without changes to their approved expectations.
+**Status:** not started
+
+### Step 5: Retain usage in session state
+
+In `client/src/lib/stores/session-registry.svelte.ts`, replace `nextRoundtripCostUsd` with optional `usageBreakdown` in `PerSessionState`, state initialization, and `updateMeta`. Keep session totals independent of partial message updates. Remove forecast fields from the existing `client/src/lib/stores/session-registry.test.ts` fixtures.
+
+Store `message_start.usage` in `streamingMessage`. Replace that snapshot when `message_update` supplies usage. Preserve final `message_end.message.usage` without adding partial snapshots. Keep the existing full-resync spread that restores in-flight usage.
+
+Implement the existing `getAssistantRowUsage(sessionId, messageIndex)` interface through the pure row projection. Retain the last positive partial usage as a client-only override when an aborted or errored terminal assistant message has no usable final usage. Associate overrides with stable message keys, not indices that optimistic insertion can move. Apply overrides only during row projection. Do not mutate terminal wire messages. Clear overrides when full resync rebuilds session state and when the session is removed. Final usable usage takes precedence.
+
+**Verify:** `client/src/lib/stores/session-usage.test.ts` passes. Existing session-registry coverage retains optimistic-message reconciliation and resync behavior. Approved tests remain unchanged.
+**Status:** not started
+
+### Step 6: Build the reusable cost popover
+
+Create `client/src/lib/components/ui/popover/` wrappers and their `index.ts` exports using the existing Bits UI dependency. Follow the local dialog and dropdown-menu wrapper patterns for props, refs, classes, portals, and exports.
+
+Create `client/src/lib/components/CostBreakdownPopover.svelte`. Accept the authoritative total, optional `PimoteUsageBreakdown`, and an accessible context label. Use `summarizeCostDisclosure` for visibility, trigger text, Unknown, and inconsistency. Render a muted numeric button and a category view with available token counts and four-decimal category dollars. Show no Tools category or negative Unknown. Keep valid older-server totals usable without a breakdown. Explain Pi's configured-price basis without claiming invoice accuracy.
+
+Use Bits UI for positioning, expanded state, keyboard activation, focus handling, Escape, and outside dismissal. Include an accessible close control. Coordinate open state within the existing client UI so opening any cost disclosure closes the previous one. Keep this state separate from usage accounting.
+
+**Verify:** Against `docs/mocks/per-assistant-turn-cost/index.html`, the default manual-testing phase confirms click, tap, Enter, Space, Escape, close, outside dismissal, and one-open-at-a-time behavior.
+**Status:** not started
+
+### Step 7: Integrate transcript and session disclosures
+
+In `client/src/lib/components/MessageList.svelte`, retain each finalized message's original transcript index in display entries. Derive finalized assistant row summaries through `sessionRegistry.getAssistantRowUsage`. Derive streaming summaries from the current streaming snapshot and finalized transcript through `summarizeAssistantRowUsage`. Pass the summary to `client/src/lib/components/Message.svelte` without changing message identity, tool rendering, or fork targets.
+
+In `Message.svelte`, add the cost disclosure to assistant rows only. Place its number left of the bot icon on desktop and right on narrow layouts. Add it beside the compact interrupted indicator when the bot icon is absent. Keep one cost per assistant message, not per content block. Cost remains visible for positive terminal error or abort usage.
+
+In `client/src/lib/components/StatusBar.svelte` and `client/src/lib/components/SessionSettingsDialog.svelte`, replace `formatCombinedCost` and static cost text with the reusable popover. Pass the session's `lifetimeCostUsd` and optional `usageBreakdown`. Keep the full Pi total separate from transcript projections.
+
+**Verify:** The default manual-testing phase confirms desktop and narrow-layout placement, streaming updates, nested tool correlation, interrupted-row costs, status-bar disclosure, and mobile session settings against the approved mock. Existing MessageList and StatusBar coverage retains its behavior.
+**Status:** not started
+
+### Step 8: Update the cost smoke and verify integration
+
+Update `tools/manual-test/cost-accumulation-smoke/cost-accumulation-smoke.mjs` to exercise Pi's complete-session total and category breakdowns. Replace static span/title selectors with accessible cost-button and popover selectors. Extend persisted fixtures with matching nested tool usage, category dollars, compaction, branch-summary, and usage entries. Check separate assistant rows, authoritative session totals, four cost categories, Unknown, and hidden zero spend.
+
+Extend the smoke's live-event scenarios for replacement of partial snapshots, terminal partial-only fallback, final replay, in-flight full resync, and reload. Verify that full resync or reload drops transient fallback but preserves persisted final usage. Remove forecast expectations while retaining actual cache-read and cache-write checks.
+
+Run the approved feature test files through each workspace's Vitest command, then run `npm run check`. Run the updated smoke and complete the default manual-testing phase for the interaction checks. Do not alter approved feature tests to accommodate implementation failures. Keep native Android files unchanged.
+
+**Verify:** All approved feature tests pass, `npm run check` succeeds, and the updated cost smoke and manual interaction checks pass. Production code contains no `nextRoundtripCostUsd`, `formatCombinedCost`, or `sumLifetimeCostUsd` references.
+**Status:** not started
