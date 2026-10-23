@@ -36,6 +36,9 @@ _Avoid_: ephemeral manager session
 A persisted conversation with pi, tied to a working folder. Multiple connected clients can observe and send commands in the same live session.
 _Avoid_: session owner
 
+**Session cost**:
+Pi's authoritative whole-session dollar total. Pimote shows it separately from assistant-row costs, with an optional breakdown of input, output, cache-read, and cache-write costs from persisted usage.
+
 **Session observer**:
 A connected client attached to a live session. Each observer receives the shared event stream and keeps an independent replay position.
 _Avoid_: session owner, session takeover
@@ -56,7 +59,7 @@ A steer or follow-up waiting in pi's queue for the active run, owned by the clie
 _Avoid_: pending steer
 
 **Assistant message row**:
-One assistant message as rendered in Pimote's transcript, normally with one bot icon. Its text, thinking, and tool calls belong to one provider response; tool results are associated with their matching calls, not separate assistant rows.
+One assistant message as rendered in Pimote's transcript, normally with one bot icon. Its text, thinking, and tool calls belong to one provider response; matching tool-result usage contributes to its cost breakdown, while a later assistant response has its own row.
 _Avoid_: assistant turn (ambiguous with a complete agent run)
 
 **Archived session**:

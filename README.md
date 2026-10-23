@@ -72,7 +72,7 @@ Node.js process that embeds pi `AgentSession` instances directly via the SDK. Ma
 
 ### Client
 
-Installable PWA (Svelte 5, Tailwind CSS, shadcn-svelte) with real-time streaming, multi-session tabs, a folder dashboard with a manager composer and persisted session list, extension UI, push notifications, and a session StatusBar that surfaces model/thinking controls plus live context-window and lifetime-cost indicators. Works on phone and desktop.
+Installable PWA (Svelte 5, Tailwind CSS, shadcn-svelte) with real-time streaming, multi-session tabs, a folder dashboard with a manager composer and persisted session list, extension UI, push notifications, and a session StatusBar that surfaces model/thinking controls plus live context-window and session-cost indicators. Assistant responses also show their own cost breakdowns. Works on phone and desktop.
 
 ## Pi documentation
 
@@ -108,7 +108,9 @@ Once in a session, you can:
 - **Steer** the agent while it's working — messages queue and deliver when the agent is ready
 - **Abort** a running agent turn
 - **Switch models** and **thinking levels** on the fly
-- See **session context usage** and **lifetime cost** at a glance in the StatusBar
+- See **session context usage** and Pi's complete-session cost breakdown in the StatusBar or session settings
+- See each **assistant response's cost breakdown**, including matching tool-result usage, in the transcript
+- Costs use Pi's configured model prices, not provider invoice totals
 - **Compact** the conversation to manage context window usage (also supports auto-compaction)
 - Use **slash commands** — type `/` to get autocomplete for skills, extension commands, and prompt templates
 - **Reference files with `@`** — type `@` to get TUI-style path autocomplete (backed by `fd`); the literal `@path` is sent through to the agent, which reads the file with its own tools (no server-side inlining)
