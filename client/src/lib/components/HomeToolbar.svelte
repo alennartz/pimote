@@ -201,7 +201,9 @@
          the box and the New session button. -->
     <div class="border-border bg-card absolute top-full right-0 left-0 z-30 mt-1 flex max-h-64 flex-col gap-1 overflow-y-auto rounded-xl border p-1 shadow-lg">
       {#each managerSessions as session (session.id)}
-        <SessionItem {session} folderPath={managerRoot} />
+        <div class="shrink-0">
+          <SessionItem {session} folderPath={managerRoot} />
+        </div>
       {/each}
     </div>
   {/if}

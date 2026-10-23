@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
 import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
+import type { SessionInfo } from '@pimote/shared';
 
 // bits-ui popper layers expect browser APIs jsdom doesn't ship.
 class TestResizeObserver {
@@ -15,7 +16,11 @@ Element.prototype.scrollIntoView ??= () => {};
 vi.mock('$lib/stores/connection.svelte.js', () => {
   // Module-scope stores register listeners (onEvent/onDisconnect/…) at import
   // time; answer any such call with a no-op spy.
-  const base: Record<string, unknown> = { status: 'connected', send: vi.fn(async () => ({ success: true, data: {} })) };
+  const base: Record<string, unknown> = {
+    status: 'connected',
+    managerRoot: '/w/manager',
+    send: vi.fn(async () => ({ success: true, data: {} })),
+  };
   const connection = new Proxy(base, {
     get(target, prop) {
       if (typeof prop !== 'string') return undefined;
@@ -29,6 +34,19 @@ vi.mock('$lib/stores/connection.svelte.js', () => {
 });
 
 const { default: HomeToolbar } = await import('./HomeToolbar.svelte');
+const { folderStore } = await import('$lib/stores/folder-store.svelte.js');
+
+const managerRoot = '/w/manager';
+
+function makeManagerSession(index: number): SessionInfo {
+  return {
+    id: `manager-${index}`,
+    name: `Manager session ${index}`,
+    created: '2026-01-01T00:00:00.000Z',
+    modified: '2026-01-02T00:00:00.000Z',
+    messageCount: index + 1,
+  };
+}
 
 let destroy: (() => void) | null = null;
 
@@ -49,6 +67,8 @@ afterEach(async () => {
   destroy?.();
   destroy = null;
   document.body.innerHTML = '';
+  folderStore.sessions.clear();
+  vi.restoreAllMocks();
   await drainBodyScrollLockCleanup();
 });
 
@@ -84,6 +104,29 @@ describe('combined search / manager box', () => {
     expect(document.querySelector('input[aria-label="Search folders"]')).not.toBeNull();
     expect(document.querySelector('textarea[aria-label="Message the manager"]')).toBeNull();
     expect(modeToggle().getAttribute('data-mode')).toBe('search');
+  });
+
+  it('keeps previous-session rows from shrinking when the dropdown overflows', async () => {
+    const sessions = Array.from({ length: 8 }, (_, index) => makeManagerSession(index));
+    folderStore.sessions.set(managerRoot, sessions);
+    vi.spyOn(folderStore, 'loadSessions').mockResolvedValue(undefined);
+    destroy = render();
+    await tick();
+
+    modeToggle().click();
+    await tick();
+    const previousSessions = document.querySelector('button[aria-label="Previous sessions"]');
+    if (!(previousSessions instanceof HTMLButtonElement)) throw new Error('previous sessions button not found');
+    previousSessions.click();
+    await tick();
+
+    const rowButtons = sessions.map((session) => {
+      const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find((candidate) => candidate.textContent?.includes(session.name!));
+      if (!button) throw new Error(`session row not found: ${session.name}`);
+      return button;
+    });
+    expect(rowButtons).toHaveLength(sessions.length);
+    expect(rowButtons.every((button) => button.closest('div.shrink-0') !== null)).toBe(true);
   });
 
   it('the New session button opens the folder picker', async () => {
