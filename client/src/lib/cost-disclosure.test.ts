@@ -11,9 +11,12 @@ describe('summarizeCostDisclosure', () => {
     expect(summarizeCostDisclosure(total)).toBeNull();
   });
   it.each([
-    [0.0001, '<$0.01'],
-    [0.0099, '<$0.01'],
-    [0.01, '$0.01'],
+    [0.0999, '9.99¢'],
+    [0.09999, '10.00¢'],
+    [0.1, '$0.10'],
+    [0.01, '1.00¢'],
+    [0.0001, '0.01¢'],
+    [0.000099, '<0.01¢'],
     [1.234, '$1.23'],
   ])('formats reported total %s', (total, label) => {
     expect(summarizeCostDisclosure(total as number)?.label).toBe(label);

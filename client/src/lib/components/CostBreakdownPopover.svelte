@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import X from '@lucide/svelte/icons/x';
   import type { PimoteUsageBreakdown } from '@pimote/shared';
-  import { summarizeCostDisclosure } from '$lib/cost-disclosure.js';
+  import { formatCostUsd, summarizeCostDisclosure } from '$lib/cost-disclosure.js';
   import * as Popover from '$lib/components/ui/popover/index.js';
 
   interface Props {
@@ -28,7 +28,7 @@
   }
 
   function formatCategoryCost(value: number): string {
-    return Number.isFinite(value) && value >= 0 ? `$${value.toFixed(4)}` : '—';
+    return formatCostUsd(value) ?? '—';
   }
 
   function handleOpenChange(nextOpen: boolean): void {
@@ -57,7 +57,7 @@
         <button
           {...props}
           type="button"
-          class="cost-disclosure-trigger text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 rounded-sm px-0.5 text-xs tabular-nums underline decoration-dotted underline-offset-2 outline-none focus-visible:ring-2"
+          class="cost-disclosure-trigger text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 cursor-pointer rounded-sm px-0.5 text-xs tabular-nums no-underline outline-none focus-visible:ring-2"
           aria-label={`${contextLabel}: ${disclosure.label}. Show cost breakdown`}
           aria-expanded={open}
           aria-controls={contentId}
@@ -78,7 +78,6 @@
       <div class="flex items-start justify-between gap-3">
         <div>
           <h2 id={titleId} class="text-sm font-semibold">{contextLabel} cost</h2>
-          <p class="text-muted-foreground mt-0.5 text-xs">Total {disclosure.label}</p>
         </div>
         <Popover.Close>
           {#snippet child({ props })}
@@ -130,13 +129,7 @@
             </div>
           </dl>
         </div>
-
-        {#if disclosure.inconsistent}
-          <p class="text-destructive mt-3 text-xs">Reported categories exceed the authoritative total.</p>
-        {/if}
       {/if}
-
-      <p class="text-muted-foreground mt-3 text-[0.7rem] leading-relaxed">Pi calculates this total from configured model prices. It is not an invoice amount.</p>
     </Popover.Content>
   </Popover.Root>
 {/if}

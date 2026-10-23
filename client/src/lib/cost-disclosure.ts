@@ -7,6 +7,15 @@ export interface CostDisclosure {
 }
 
 const CENT = 0.01;
+const DIME = 0.1;
+
+export function formatCostUsd(value: number): string | null {
+  if (!Number.isFinite(value) || value < 0) return null;
+  if (value >= DIME) return `$${value.toFixed(2)}`;
+  const cents = value * 100;
+  if (value > 0 && cents < 0.01) return '<0.01¢';
+  return `${cents.toFixed(2)}¢`;
+}
 
 function exceedsCentTolerance(value: number, scale: number): boolean {
   // Floating-point subtraction can turn an exact one-cent difference into a
@@ -20,7 +29,7 @@ function exceedsCentTolerance(value: number, scale: number): boolean {
 export function summarizeCostDisclosure(totalCostUsd: number | null | undefined, breakdown?: PimoteUsageBreakdown): CostDisclosure | null {
   if (totalCostUsd == null || !Number.isFinite(totalCostUsd) || totalCostUsd <= 0) return null;
 
-  const label = totalCostUsd < CENT ? '<$0.01' : `$${totalCostUsd.toFixed(2)}`;
+  const label = formatCostUsd(totalCostUsd)!;
   if (!breakdown) return { label, unknownCostUsd: null, inconsistent: false };
 
   const categoryCosts = [breakdown.cost.input, breakdown.cost.output, breakdown.cost.cacheRead, breakdown.cost.cacheWrite];
