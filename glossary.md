@@ -55,6 +55,10 @@ How pi dispatched a prompt, steer, or follow-up: `started` (began a run), `queue
 A steer or follow-up waiting in pi's queue for the active run, owned by the client that sent it. An abort returns each queued message to its sender as a draft.
 _Avoid_: pending steer
 
+**Assistant message row**:
+One assistant message as rendered in Pimote's transcript, normally with one bot icon. Its text, thinking, and tool calls belong to one provider response; tool results are associated with their matching calls, not separate assistant rows.
+_Avoid_: assistant turn (ambiguous with a complete agent run)
+
 **Archived session**:
 A persisted session marked as archived. Archiving closes its live runtime and observers; unarchiving clears the archive flag but requires an explicit open.
 _Avoid_: deleted session
@@ -166,6 +170,7 @@ _Avoid_: tag template
 - A **manager session** is an ordinary persisted session rooted at the **manager root**
 - A **session** can have multiple **session observers**, but at most one **voice call holder**
 - Each **session observer** keeps its own **replay cursor** into the session's shared event buffer
+- One **assistant message row** renders one assistant message; matching tool results contribute to that row's cost, while the later assistant response has its own row
 - Only a `started` **prompt outcome** echoes a stamped user message that settles an **optimistic entry**; a `queued` outcome yields a **queued message** instead
 - An **archived session** has no live runtime; unarchiving it does not open it
 - A connection owns one **pinned order**: **listing windows** slice it, and the **order token** names it on the wire
