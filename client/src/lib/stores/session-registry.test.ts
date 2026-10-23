@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { PimoteEvent, PimoteAgentMessage, FolderInfo } from '@pimote/shared';
 import { SessionRegistry, routeNotificationIntent, sessionRegistry, openExistingSession } from './session-registry.svelte.js';
 import { connection } from './connection.svelte.js';
+import { commandStore } from './command-store.svelte.js';
 
 function makeSessionEvent(type: string, sessionId: string, extra: Record<string, any> = {}): PimoteEvent {
   return { type, sessionId, cursor: 0, ...extra } as any;
@@ -1810,6 +1811,21 @@ describe('SessionRegistry', () => {
 
       expect(registry.sessions['s1'].bashExecutions['bash-1'].output).toBe('hello');
     });
+  });
+});
+
+describe('session_commands_changed', () => {
+  it('replaces the cached commands after a resource reload', () => {
+    const sessionId = 'commands-refresh';
+    const commands = [{ name: 'skill:fresh-skill', description: 'Fresh skill', hasArgCompletions: false }];
+    commandStore.setCommands(sessionId, [{ name: 'skill:old-skill', description: 'Old skill', hasArgCompletions: false }]);
+
+    for (const listener of (connection as any).listeners) {
+      listener({ type: 'session_commands_changed', sessionId, commands });
+    }
+
+    expect(commandStore.getCommands(sessionId)).toEqual(commands);
+    commandStore.removeSession(sessionId);
   });
 });
 

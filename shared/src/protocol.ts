@@ -1256,6 +1256,13 @@ export interface SessionSettingsChangedEvent {
   autoCompactionEnabled: boolean;
 }
 
+/** Slash-command sources changed after a session resource reload. */
+export interface SessionCommandsChangedEvent {
+  type: 'session_commands_changed';
+  sessionId: string;
+  commands: CommandInfo[];
+}
+
 export interface ConnectionRestoredEvent {
   type: 'connection_restored';
   sessionId: string;
@@ -1493,6 +1500,7 @@ export type PimoteEvent =
   | SessionReplacedEvent
   | SessionStateChangedEvent
   | SessionSettingsChangedEvent
+  | SessionCommandsChangedEvent
   | ConnectionRestoredEvent
   | FoldersChangedEvent
   | SessionRestoreEvent

@@ -28,6 +28,7 @@ import type {
   SessionConflictEvent,
   SessionStateChangedEvent,
   SessionSettingsChangedEvent,
+  SessionCommandsChangedEvent,
   SessionOpenedEvent,
   SessionRenamedEvent,
   SessionReplacedEvent,
@@ -1497,6 +1498,11 @@ connection.onEvent((event) => {
       connection.addSubscribedSession(replaced.newSessionId, folder?.path ?? '');
       commandStore.removeSession(replaced.oldSessionId);
       fetchFullSessionData(replaced.newSessionId);
+      break;
+    }
+    case 'session_commands_changed': {
+      const commands = event as SessionCommandsChangedEvent;
+      commandStore.setCommands(commands.sessionId, commands.commands);
       break;
     }
     default: {

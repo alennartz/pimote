@@ -95,6 +95,8 @@ function createMockSlot(
     sessionId: id,
     sessionName: undefined,
     autoCompactionEnabled: false,
+    resourceLoader: { getSkills: () => ({ skills: [], diagnostics: [] }) },
+    promptTemplates: [],
     bindExtensions: async () => {},
     modelRuntime: { getAvailable: async () => [] },
     clearQueue: () => ({ steering: [], followUp: [] }),
@@ -2124,6 +2126,29 @@ describe('WsHandler', () => {
       expect(resync).toHaveLength(1);
       expect((resync[0] as any).state.availableThinkingLevels).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
       expect(findResponse(sent, 'req-reload')!.success).toBe(true);
+    });
+
+    it('publishes the refreshed command list after reload', async () => {
+      let skills: Array<{ name: string; description: string }> = [];
+      const slot = createMockSlot({ id: 'session-reload', connectedClientId: 'client-1' });
+      (slot.session as any).reload = vi.fn(async () => {
+        skills = [{ name: 'fresh-skill', description: 'Fresh skill' }];
+      });
+      (slot.session as any).resourceLoader = {
+        getSkills: () => ({
+          skills: skills.map((skill) => ({ ...skill, filePath: '/fake', baseDir: '/fake', source: 'test', disableModelInvocation: false })),
+          diagnostics: [],
+        }),
+      };
+
+      const sessions = new Map([['session-reload', slot]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-reload', message: '/reload', id: 'req-reload-commands' }));
+
+      const updates = findEvents(sent, 'session_commands_changed');
+      expect(updates).toHaveLength(1);
+      expect((updates[0] as any).commands).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'skill:fresh-skill', description: 'Fresh skill' })]));
     });
   });
 

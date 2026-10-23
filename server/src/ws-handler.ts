@@ -13,6 +13,8 @@ import type {
   SessionRestoreEvent,
   SessionClosedEvent,
   SessionStateChangedEvent,
+  SessionCommandsChangedEvent,
+  CommandInfo,
   FolderInfo,
   PimoteTreeNode,
   PromptOutcome,
@@ -100,6 +102,51 @@ function dispatchPrompt(
         },
       );
   });
+}
+
+function getSessionCommands(session: AgentSession): CommandInfo[] {
+  const commands: CommandInfo[] = [];
+
+  // Skills
+  const { skills } = session.resourceLoader.getSkills();
+  for (const skill of skills) {
+    commands.push({
+      name: `skill:${skill.name}`,
+      description: skill.description,
+      hasArgCompletions: false,
+    });
+  }
+
+  // Prompt templates
+  for (const template of session.promptTemplates) {
+    commands.push({
+      name: template.name,
+      description: template.description,
+      hasArgCompletions: false,
+    });
+  }
+
+  // Extension commands
+  const extensionCommands = session.extensionRunner?.getRegisteredCommands() ?? [];
+  for (const cmd of extensionCommands) {
+    commands.push({
+      name: cmd.name,
+      description: cmd.description ?? '',
+      hasArgCompletions: !!cmd.getArgumentCompletions,
+    });
+  }
+
+  // Pimote built-in commands
+  commands.push(
+    { name: 'new', description: 'Start a new session', hasArgCompletions: false },
+    { name: 'reload', description: 'Reload extensions and skills', hasArgCompletions: false },
+    { name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false },
+    { name: 'login', description: 'Log in to a model provider', hasArgCompletions: false },
+    { name: 'logout', description: 'Log out from a model provider', hasArgCompletions: false },
+    { name: 'compact', description: 'Manually compact the session context', hasArgCompletions: false },
+  );
+
+  return commands;
 }
 
 type SessionTreeNode = ReturnType<AgentSession['sessionManager']['getTree']>[number];
@@ -1502,48 +1549,7 @@ export class WsHandler {
       }
 
       case 'get_commands': {
-        const commands: import('../../shared/dist/index.js').CommandInfo[] = [];
-
-        // Skills
-        const { skills } = session.resourceLoader.getSkills();
-        for (const skill of skills) {
-          commands.push({
-            name: `skill:${skill.name}`,
-            description: skill.description,
-            hasArgCompletions: false,
-          });
-        }
-
-        // Prompt templates
-        for (const template of session.promptTemplates) {
-          commands.push({
-            name: template.name,
-            description: template.description,
-            hasArgCompletions: false,
-          });
-        }
-
-        // Extension commands
-        const extensionCommands = session.extensionRunner?.getRegisteredCommands() ?? [];
-        for (const cmd of extensionCommands) {
-          commands.push({
-            name: cmd.name,
-            description: cmd.description ?? '',
-            hasArgCompletions: !!cmd.getArgumentCompletions,
-          });
-        }
-
-        // Pimote built-in commands
-        commands.push(
-          { name: 'new', description: 'Start a new session', hasArgCompletions: false },
-          { name: 'reload', description: 'Reload extensions and skills', hasArgCompletions: false },
-          { name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false },
-          { name: 'login', description: 'Log in to a model provider', hasArgCompletions: false },
-          { name: 'logout', description: 'Log out from a model provider', hasArgCompletions: false },
-          { name: 'compact', description: 'Manually compact the session context', hasArgCompletions: false },
-        );
-
-        this.sendResponse(id, true, { commands });
+        this.sendResponse(id, true, { commands: getSessionCommands(session) });
         break;
       }
 
@@ -2157,14 +2163,25 @@ export class WsHandler {
     sendSlotEvent(slot, panelUpdate, { exceptClientId: this.clientId });
   }
 
+  private makeSessionCommandsEvent(pimoteSessionId: string, slot: ManagedSlot): SessionCommandsChangedEvent {
+    return {
+      type: 'session_commands_changed',
+      sessionId: pimoteSessionId,
+      commands: getSessionCommands(slot.session),
+    };
+  }
+
   /** Reload keeps the historical full transcript refresh for the requesting
-   * observer. Other observers receive only settings and panel updates, so a
-   * reload cannot erase their local transient state. */
+   * observer. Other observers receive settings, commands, and panel updates,
+   * so a reload cannot erase their local transient state. */
   private sendReloadToObservers(pimoteSessionId: string, slot: ManagedSlot): void {
     this.sendFullResyncForSession(pimoteSessionId, slot);
     const settings = makeSessionSettingsEvent(pimoteSessionId, slot.session);
+    const commands = this.makeSessionCommandsEvent(pimoteSessionId, slot);
     const panelUpdate = { type: 'panel_update' as const, sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) };
+    this.sendEvent(commands);
     sendSlotEvent(slot, settings, { exceptClientId: this.clientId });
+    sendSlotEvent(slot, commands, { exceptClientId: this.clientId });
     sendSlotEvent(slot, panelUpdate, { exceptClientId: this.clientId });
   }
 
