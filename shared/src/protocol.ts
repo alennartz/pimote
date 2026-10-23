@@ -158,6 +158,48 @@ export interface PimoteMessageContent {
   streaming?: boolean;
 }
 
+/** Provider usage reported by Pi for one assistant response or nested tool call. */
+export interface PimoteUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  /** Subset of cacheWrite retained for one hour. */
+  cacheWrite1h?: number;
+  /** Subset of output spent on reasoning. */
+  reasoning?: number;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+}
+
+/** Token and category-dollar totals used by session and assistant-row disclosures. */
+export interface PimoteUsageBreakdown {
+  tokens: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  };
+}
+
+export interface AssistantRowUsage {
+  totalCostUsd: number;
+  breakdown: PimoteUsageBreakdown;
+}
+
 export interface PimoteAgentMessage {
   role: string;
   content: PimoteMessageContent[];
@@ -182,6 +224,8 @@ export interface PimoteAgentMessage {
   aborted?: boolean;
   /** Present on assistant messages whose turn failed before producing content. */
   errorMessage?: string;
+  /** Provider usage for assistant responses and nested tool-result model work. */
+  usage?: PimoteUsage;
   /**
    * Present when role === 'system' — pi 0.87+ transcript system-prompt bookkeeping.
    * Named prompt-section updates keyed by section name; `null` marks a removed section.
@@ -426,17 +470,12 @@ export interface SessionMeta {
     percent: number | null;
     contextWindow: number;
   } | null;
-  /** Total USD cost summed over the session branch; 0 when no spend / nothing to show. Always a number, never null. */
+  /** Total USD cost from Pi's complete session statistics. */
   lifetimeCostUsd: number;
-  /**
-   * Lower-bound USD cost of the next server round trip: the current context
-   * token count re-priced at the model's cache-read rate (the whole context is
-   * re-sent as the cached prefix, so cache-read is the cheapest it can bill).
-   * Ignores the new input/output tokens the next turn will add (unknowable), so
-   * it is a floor on the next turn's spend. null when context tokens or model
-   * cache-read pricing are unknown.
-   */
-  nextRoundtripCostUsd: number | null;
+  /** Category rollup from persisted usage entries. Absent on older servers. */
+  usageBreakdown?: PimoteUsageBreakdown;
+  /** Legacy forecast field retained temporarily for older clients and servers. */
+  nextRoundtripCostUsd?: number | null;
 }
 
 export interface GetCommandsCommand extends CommandBase {
@@ -997,6 +1036,8 @@ export interface TurnEndEvent extends SessionEventBase {
 export interface MessageStartEvent extends SessionEventBase {
   type: 'message_start';
   role: string;
+  /** Cumulative usage snapshot for the in-flight assistant message, when available. */
+  usage?: PimoteUsage;
   /** Present on the user message that a `started` prompt echoes. */
   clientMessageId?: string;
 }
@@ -1006,6 +1047,8 @@ export interface MessageUpdateEvent extends SessionEventBase {
   contentIndex: number;
   subtype: 'start' | 'delta' | 'end';
   content: { type: 'text' | 'thinking' | 'tool_call'; text: string };
+  /** Cumulative usage snapshot for the in-flight assistant message, when available. */
+  usage?: PimoteUsage;
   /** Present only on tool_call start */
   toolCallId?: string;
   /** Present only on tool_call start */
@@ -1020,6 +1063,8 @@ export interface MessageUpdateEvent extends SessionEventBase {
 export interface StreamingMessage {
   role: string;
   content: PimoteMessageContent[];
+  /** Latest cumulative provider usage snapshot for the in-flight message. */
+  usage?: PimoteUsage;
   customType?: string;
 }
 

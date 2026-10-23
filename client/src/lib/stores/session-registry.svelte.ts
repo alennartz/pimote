@@ -989,7 +989,7 @@ export class SessionRegistry {
     // same folder.
     session.contextUsage = meta.contextUsage;
     session.lifetimeCostUsd = meta.lifetimeCostUsd;
-    session.nextRoundtripCostUsd = meta.nextRoundtripCostUsd;
+    session.nextRoundtripCostUsd = meta.nextRoundtripCostUsd ?? null;
     for (const candidate of Object.values(this.sessions)) {
       if (candidate.folderPath === session.folderPath) {
         candidate.gitBranch = meta.gitBranch;

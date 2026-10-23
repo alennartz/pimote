@@ -129,3 +129,35 @@ Remove `nextRoundtripCostUsd` and its cache-read estimate from the server calcul
 ### DR Supersessions
 
 - **DR-028** (Server-side idempotent cost recompute over the session branch) — superseded because the product now uses Pi’s built-in whole-session accounting, including tool results, compactions, branch summaries, usage entries, compacted history, and alternate branches. New decision: `SessionStats.cost` is authoritative. Pimote adds only the category rollup needed for the tooltip. The idempotent recompute rationale remains because Pi calculates stats from persisted entries.
+
+## Tests
+
+**Pre-test-write commit:** `2f8e3045fb397c97b758dfcd0af5a72d845fcd98`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — Defines serializable usage, breakdown, row-summary, streaming, and metadata shapes.
+- `server/src/session-usage.ts` — Defines the session usage projection seam over persisted Pi entries.
+- `client/src/lib/assistant-row-usage.ts` — Defines the assistant-row usage projection seam over transcript snapshots.
+- `client/src/lib/stores/session-registry.svelte.ts` — Keeps legacy metadata wiring type-safe while the additive usage fields roll out.
+
+### Test Files
+
+- `server/src/session-usage.test.ts` — Covers session token authority and category-cost aggregation.
+- `client/src/lib/assistant-row-usage.test.ts` — Covers assistant and matching tool-result usage aggregation.
+
+### Behaviors Covered
+
+#### Server session usage projection
+
+- Preserve Pi's session token totals while aggregating input, output, cache-read, and cache-write dollars from assistant, tool-result, compaction, branch-summary, and usage entries.
+- Ignore entries without usage-bearing model work.
+- Return zero category costs for an empty persisted history.
+
+#### Assistant-row usage projection
+
+- Return an assistant response's own usage as the row breakdown.
+- Add every matching tool-result usage and exclude unrelated or usage-less tool results.
+- Keep multiple assistant rows separate when projecting a later response.
+- Accept a streaming usage snapshot without adding subset fields twice.
+- Return no row usage when the snapshot and matching tool results contain no usage.
