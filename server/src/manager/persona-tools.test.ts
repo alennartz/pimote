@@ -43,6 +43,7 @@ function makePorts(overrides: Partial<ManagerToolContext> = {}): ManagerToolCont
       listDiskSessions: vi.fn(async () => []),
       openSession: vi.fn(async () => 'session-new'),
       archiveSessions: vi.fn(async () => []),
+      resumeSession: vi.fn(async (sessionId: string) => ({ sessionId, outcome: 'not_found' as const })),
     },
     folders: {
       list: vi.fn(async () => [] as FolderInfo[]),
@@ -54,6 +55,7 @@ function makePorts(overrides: Partial<ManagerToolContext> = {}): ManagerToolCont
     repos: { invalidateListing: vi.fn() },
     creators: { create: vi.fn(async () => ({ folderPath: '/unused' })) },
     notifyFoldersChanged: vi.fn(),
+    notifySessionSuggested: vi.fn(),
     config: { roots: ['/tmp'], managerRoot: '/srv/manager-home', idleTimeout: 1_000, bufferSize: 10, port: 3000 },
     ...overrides,
   };

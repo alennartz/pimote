@@ -443,6 +443,10 @@ export class PimoteSessionManager {
    *  concurrent opens of the same on-disk session share one runtime instead
    *  of building (and leaking) a second one over the same file. */
   private readonly inFlightOpens = new Map<string, Promise<string>>();
+  /** Lifecycle locks keyed by stable session id. Archive, resume, and open
+   *  callers use this seam so metadata and live-slot transitions cannot cross
+   *  each other halfway through an operation. */
+  private readonly sessionOperationLocks = new Map<string, Promise<unknown>>();
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
   private gitBranchCheckHandle: ReturnType<typeof setInterval> | null = null;
   private lastKnownGitBranchBySession = new Map<string, string | null>();
@@ -530,6 +534,19 @@ export class PimoteSessionManager {
     const alreadyOpenId = this.findSlotIdBySessionFile(sessionFilePath);
     if (alreadyOpenId) return alreadyOpenId;
     return singleFlight(this.inFlightOpens, sessionFilePath, () => this.doOpenSession(folderPath, sessionFilePath));
+  }
+
+  /** Serialize metadata and runtime lifecycle changes for one stable session
+   *  id. Callers keep lookup, archive checks, opens, and closes inside this
+   *  operation so an archive cannot close a slot that a resume just opened. */
+  withSessionOperation<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.sessionOperationLocks.get(sessionId) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    const settled = current.finally(() => {
+      if (this.sessionOperationLocks.get(sessionId) === settled) this.sessionOperationLocks.delete(sessionId);
+    });
+    this.sessionOperationLocks.set(sessionId, settled);
+    return settled;
   }
 
   /** Find the id of an open slot bound to the given session file, if any. */
@@ -661,8 +678,17 @@ export class PimoteSessionManager {
     slotRef.slot = slot;
 
     this.sessions.set(sessionId, slot);
-    this.lastKnownGitBranchBySession.set(sessionId, await getGitBranch(effectiveFolderPath));
-    return sessionId;
+    try {
+      this.lastKnownGitBranchBySession.set(sessionId, await getGitBranch(effectiveFolderPath));
+      return sessionId;
+    } catch (error) {
+      try {
+        await this.closeSession(sessionId);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Session opening and cleanup failed', { cause: cleanupError });
+      }
+      throw error;
+    }
   }
 
   private handleSessionIdle(sessionId: string, slot: ManagedSlot): void {
@@ -866,30 +892,26 @@ export class PimoteSessionManager {
     this.stopIdleCheck();
 
     this.idleCheckHandle = setInterval(() => {
-      for (const [sessionId, slot] of this.sessions) {
-        if (slot.sessionState.treeNavigationInProgress) {
-          continue;
-        }
+      for (const [sessionId, candidate] of this.sessions) {
+        this.withSessionOperation(sessionId, async () => {
+          const slot = this.sessions.get(sessionId);
+          if (slot !== candidate) return;
+          if (slot.sessionState.treeNavigationInProgress) return;
 
-        const hasObservers = slot.observers.size > 0;
-        const hasActiveCall = isCallActive?.(sessionId) === true;
-        // Only idle (non-streaming) sessions are eligible for reaping. `idleSince` is set on
-        // `agent_settled` and cleared on `agent_start`, so a working session can never be
-        // reaped here, regardless of how long a client has been connected. A standalone bash
-        // command does not change the agent-level status, so guard both native execution and
-        // the short extension-admission window explicitly as well. An active voice call also
-        // protects the session when its audio client is not a transcript observer. Finally,
-        // extensions holding live background work answer the synchronous activity poll (DR-054);
-        // asked only past the threshold, it fails open to reap when no responder is present.
-        const idleSince = slot.sessionState.idleSince;
-        const bashInProgress = slot.session.isBashRunning || slot.sessionState.bashDispatchInProgress === true;
-        if (!hasObservers && !hasActiveCall && !bashInProgress && idleSince !== null && Date.now() - idleSince > idleTimeout) {
-          const activityBus = slot.eventBusRef.current;
-          if (activityBus && askActivity(activityBus)) continue;
-          this.closeSession(sessionId).catch(() => {
-            // Best-effort cleanup — swallow errors during idle reaping
-          });
-        }
+          const hasObservers = slot.observers.size > 0;
+          const hasActiveCall = isCallActive?.(sessionId) === true;
+          // Only settled sessions can reap. Bash admission and active calls also
+          // protect unobserved slots. Poll extensions only after the idle threshold.
+          const idleSince = slot.sessionState.idleSince;
+          const bashInProgress = slot.session.isBashRunning || slot.sessionState.bashDispatchInProgress === true;
+          if (!hasObservers && !hasActiveCall && !bashInProgress && idleSince !== null && Date.now() - idleSince > idleTimeout) {
+            const activityBus = slot.eventBusRef.current;
+            if (activityBus && askActivity(activityBus)) return;
+            await this.closeSession(sessionId);
+          }
+        }).catch(() => {
+          // Best-effort cleanup — swallow errors during idle reaping
+        });
       }
     }, 60_000);
 

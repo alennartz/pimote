@@ -34,6 +34,17 @@ export interface SessionArchiveOutcome {
   outcome: 'archived' | 'open_slot_evicted' | 'not_found';
 }
 
+/** Outcome of explicitly resuming one existing session by id. */
+export interface SessionResumeOutcome {
+  sessionId: string;
+  /** The session's effective folder path, when the session exists. */
+  folderPath?: string;
+  /** - `resumed`: the original record is now open (and was unarchived when needed).
+   *  - `already_open`: the original session was already live and unarchived.
+   *  - `not_found`: no live slot and no on-disk record in any known folder. */
+  outcome: 'resumed' | 'already_open' | 'not_found';
+}
+
 /**
  * Narrow session-manager seam for manager tools (DI port per DR-039 —
  * structural interfaces only where they serve dependency injection; the real
@@ -60,6 +71,11 @@ export interface SessionManagerPort {
    *  that is currently open has its live slot evicted (closed) as part of
    *  archiving. Reports a per-id outcome. */
   archiveSessions(sessionIds: string[]): Promise<SessionArchiveOutcome[]>;
+
+  /** Explicitly resume one existing session by id. An archived record's
+   *  original file is opened first, then its archive flag is cleared. This
+   *  never creates a new session and returns the original id. */
+  resumeSession(sessionId: string): Promise<SessionResumeOutcome>;
 }
 
 /** Narrow RepoIndex seam for manager tools: freshness only. Git facts reach
@@ -138,6 +154,7 @@ export interface ManagerToolContext {
    *  (code folders, plain personas): registry-routed mutations broadcast
    *  through the registry's own onChange channel. */
   notifyFoldersChanged(changedPaths: string[]): void;
+  notifySessionSuggested(managerSessionId: string, targetSessionId: string): void;
   config: PimoteConfig;
 }
 

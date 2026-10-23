@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Value } from 'typebox/value';
 import type { FolderInfo } from '../../../shared/dist/index.js';
 import { createManagerExtension } from './extension.js';
-import type { DiskSessionRecord, ManagerSessionSummary, ManagerToolContext } from './types.js';
+import type { DiskSessionRecord, ManagerSessionSummary, ManagerToolContext, SessionResumeOutcome } from './types.js';
 
 // Spill files land in a per-process temp dir: the guard's real fs behavior
 // (JSONL write, inline prefix) is under test; the shared state dir is not.
@@ -38,7 +38,7 @@ function makeFakePi(): { toolDefs: any[]; api: any } {
   return { toolDefs, api: api as any };
 }
 
-// The pinned toolset (DR-062, revised by DR-074): seven tools — one folder
+// The pinned toolset (DR-062, revised by DR-074): eight tools — one folder
 // read (rows carry git facts and hub membership; query/nature/hub/archived
 // filters), a unified sessions view, kind-parameterized creation, batched
 // hub membership.
@@ -46,6 +46,7 @@ const MANAGER_TOOL_NAMES = [
   'pimote_find_folders',
   'pimote_find_sessions',
   'pimote_start_session',
+  'pimote_resume_session',
   'pimote_archive_sessions',
   'pimote_create_folder',
   'pimote_update_folder',
@@ -59,6 +60,7 @@ function spyPorts() {
       listDiskSessions: vi.fn(async (_folderPath: string) => [] as DiskSessionRecord[]),
       openSession: vi.fn(async (_folderPath: string, _firstMessage?: string) => 'session-new'),
       archiveSessions: vi.fn(async (_sessionIds: string[]) => []),
+      resumeSession: vi.fn(async (sessionId: string): Promise<SessionResumeOutcome> => ({ sessionId, outcome: 'not_found' })),
     },
     folders: {
       list: vi.fn(async () => [] as FolderInfo[]),
@@ -70,6 +72,7 @@ function spyPorts() {
     repos: { invalidateListing: vi.fn() },
     creators: { create: vi.fn(async () => ({ folderPath: '/w/created' })) },
     notifyFoldersChanged: vi.fn(),
+    notifySessionSuggested: vi.fn(),
   };
 }
 
@@ -382,6 +385,47 @@ describe('pimote_find_sessions', () => {
   });
 });
 
+describe('manager session suggestions', () => {
+  const executionContext = { sessionManager: { getSessionId: () => 'executing-manager' } };
+
+  it('notifies after start with the execution-time manager identity', async () => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/code')]);
+    ports.sessions.openSession.mockImplementation(async () => {
+      expect(ports.notifySessionSuggested).not.toHaveBeenCalled();
+      return 'target';
+    });
+    await toolNamed(register(ports), 'pimote_start_session').execute('call', { folderPath: '/w/code' }, undefined, undefined, executionContext);
+    expect(ports.notifySessionSuggested).toHaveBeenCalledWith('executing-manager', 'target');
+  });
+
+  it('does not notify for unknown folders or rejected starts', async () => {
+    const ports = spyPorts();
+    const tool = toolNamed(register(ports), 'pimote_start_session');
+    await tool.execute('call', { folderPath: '/unknown' }, undefined, undefined, executionContext);
+    ports.folders.list.mockResolvedValue([makeFolder('/w/code')]);
+    ports.sessions.openSession.mockRejectedValue(new Error('failed'));
+    await expect(tool.execute('call', { folderPath: '/w/code' }, undefined, undefined, executionContext)).rejects.toThrow('failed');
+    expect(ports.notifySessionSuggested).not.toHaveBeenCalled();
+  });
+
+  it.each(['resumed', 'already_open'] as const)('notifies for %s', async (outcome) => {
+    const ports = spyPorts();
+    ports.sessions.resumeSession.mockResolvedValue({ sessionId: 'target', outcome, folderPath: '/w/code' });
+    await toolNamed(register(ports), 'pimote_resume_session').execute('call', { sessionId: 'target' }, undefined, undefined, executionContext);
+    expect(ports.notifySessionSuggested).toHaveBeenCalledWith('executing-manager', 'target');
+  });
+
+  it('does not notify for missing sessions or rejected resumes', async () => {
+    const ports = spyPorts();
+    const tool = toolNamed(register(ports), 'pimote_resume_session');
+    await tool.execute('call', { sessionId: 'missing' }, undefined, undefined, executionContext);
+    ports.sessions.resumeSession.mockRejectedValue(new Error('failed'));
+    await expect(tool.execute('call', { sessionId: 'target' }, undefined, undefined, executionContext)).rejects.toThrow('failed');
+    expect(ports.notifySessionSuggested).not.toHaveBeenCalled();
+  });
+});
+
 describe('pimote_start_session', () => {
   function startTool(ports: ReturnType<typeof spyPorts>) {
     return toolNamed(register(ports), 'pimote_start_session');
@@ -449,6 +493,32 @@ describe('pimote_archive_sessions', () => {
       { sessionId: 's2', outcome: 'not_found' },
       { sessionId: 's3', outcome: 'open_slot_evicted' },
     ]);
+  });
+});
+
+describe('pimote_resume_session', () => {
+  it('resumes an existing id through the session port without inventing a new id', async () => {
+    const ports = spyPorts();
+    ports.sessions.resumeSession.mockResolvedValue({ sessionId: 's1', folderPath: '/w/alpha', outcome: 'resumed' });
+
+    const result = (await toolNamed(register(ports), 'pimote_resume_session').execute('call-1', { sessionId: 's1' }, undefined, undefined, {})) as ToolResult;
+
+    expect(ports.sessions.resumeSession).toHaveBeenCalledWith('s1');
+    expect(result.structuredContent).toEqual({ sessionId: 's1', folderPath: '/w/alpha', outcome: 'resumed' });
+  });
+
+  it('surfaces already-open and missing outcomes without creating a session', async () => {
+    const ports = spyPorts();
+    const tool = toolNamed(register(ports), 'pimote_resume_session');
+    ports.sessions.resumeSession.mockResolvedValueOnce({ sessionId: 's1', folderPath: '/w/alpha', outcome: 'already_open' });
+    ports.sessions.resumeSession.mockResolvedValueOnce({ sessionId: 'ghost', outcome: 'not_found' });
+
+    const open = (await tool.execute('call-1', { sessionId: 's1' }, undefined, undefined, {})) as ToolResult;
+    const missing = (await tool.execute('call-2', { sessionId: 'ghost' }, undefined, undefined, {})) as ToolResult;
+
+    expect(open.structuredContent.outcome).toBe('already_open');
+    expect(missing.structuredContent).toEqual({ sessionId: 'ghost', outcome: 'not_found' });
+    expect(ports.sessions.openSession).not.toHaveBeenCalled();
   });
 });
 

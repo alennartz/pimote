@@ -7,11 +7,11 @@ import { errorToolResult, jsonToolResult, type JsonToolResult } from '../tool-re
 import { spillRows } from './spill.js';
 import type { FolderInfo } from '../../../shared/dist/index.js';
 import { MEMORY_MAINTENANCE_INSTRUCTION, seedPersonaFolder } from './seed.js';
-import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext } from './types.js';
+import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext, SessionResumeOutcome } from './types.js';
 
 /**
  * Build the pi `ExtensionFactory` for the manager extension (DR-062: one
- * small, powerful tool surface). Registers the manager's seven pimote tools,
+ * small, powerful tool surface). Registers the manager's eight pimote tools,
  * acting only through the injected `ManagerToolContext`. Folder recipes and
  * the folder model reach the manager through the `pimote-docs` section.
  *
@@ -25,7 +25,10 @@ import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext } from
  *   ruling 2026-01-14: the walk-structure report has no manager job).
  * - Sessions: `pimote_find_sessions` (one unified view — live state enriched
  *   onto disk records, optional query/open/folderPath/includeArchived
- *   filters), `pimote_start_session`, `pimote_archive_sessions`.
+ *   filters), `pimote_start_session`, `pimote_resume_session`, and
+ *   `pimote_archive_sessions`. `pimote_resume_session` is an explicit action:
+ *   it clears an archived flag and reopens the original record; it never starts
+ *   a new session.
  *
  * Reads carry three cross-cutting policies:
  * - Spill guard (DR-071): list results past a 16KB serialized budget keep
@@ -184,6 +187,12 @@ const SpillInfoSchema = Type.Object({
 const SessionArchiveOutcomeSchema = Type.Object({
   sessionId: Type.String(),
   outcome: Type.Union([Type.Literal('archived'), Type.Literal('open_slot_evicted'), Type.Literal('not_found')]),
+});
+
+const SessionResumeOutcomeSchema = Type.Object({
+  sessionId: Type.String(),
+  folderPath: Type.Optional(Type.String()),
+  outcome: Type.Union([Type.Literal('resumed'), Type.Literal('already_open'), Type.Literal('not_found')]),
 });
 
 /** Structured output for the folder/hub mutations that resolve to a path. */
@@ -410,14 +419,34 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         folderPath: Type.String(),
         firstMessageSent: Type.Boolean(),
       }),
-      execute: async (_callId, params): Promise<JsonToolResult> => {
+      execute: async (_callId, params, _signal, _onUpdate, ctx): Promise<JsonToolResult> => {
+        const managerSessionId = ctx.sessionManager?.getSessionId();
         const folders = await context.folders.list();
         if (!folders.some((folder) => folder.path === params.folderPath)) {
           return errorToolResult(`unknown folder: ${params.folderPath} — use pimote_find_folders to see known folders`);
         }
         const firstMessage = params.firstMessage?.trim() || undefined;
         const sessionId = await context.sessions.openSession(params.folderPath, firstMessage);
+        if (managerSessionId) context.notifySessionSuggested(managerSessionId, sessionId);
         return jsonToolResult({ sessionId, folderPath: params.folderPath, firstMessageSent: firstMessage !== undefined });
+      },
+    });
+
+    pi.registerTool({
+      name: 'pimote_resume_session',
+      label: 'Resume session',
+      description:
+        'Resume one existing session by id. If the record is archived, clear its archive flag and reopen the original persisted session. Never create a new session; use pimote_find_sessions with includeArchived to find archived ids.',
+      promptGuidelines: ['Use this for an existing session id; use pimote_start_session only when a new conversation is wanted.'],
+      parameters: Type.Object({
+        sessionId: Type.String({ description: 'The existing session id to resume. This operation preserves the original session and does not create a replacement.' }),
+      }),
+      outputSchema: SessionResumeOutcomeSchema,
+      execute: async (_callId, params, _signal, _onUpdate, ctx): Promise<JsonToolResult> => {
+        const managerSessionId = ctx.sessionManager?.getSessionId();
+        const result: SessionResumeOutcome = await context.sessions.resumeSession(params.sessionId);
+        if (managerSessionId && result.outcome !== 'not_found') context.notifySessionSuggested(managerSessionId, result.sessionId);
+        return jsonToolResult(result);
       },
     });
 

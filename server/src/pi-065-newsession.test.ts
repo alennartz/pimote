@@ -50,11 +50,13 @@ const model: Model<'openai-completions'> = {
 
 function makeManagerContext(): ManagerToolContext {
   return {
+    notifySessionSuggested: vi.fn(),
     sessions: {
       getAllSessions: vi.fn(() => []),
       listDiskSessions: vi.fn(async () => []),
       openSession: vi.fn(async () => 'session-new'),
       archiveSessions: vi.fn(async () => []),
+      resumeSession: vi.fn(async (sessionId: string) => ({ sessionId, outcome: 'not_found' as const })),
     },
     folders: {
       list: vi.fn(async () => [] as FolderInfo[]),

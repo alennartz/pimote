@@ -332,6 +332,42 @@ describe('PimoteSessionManager — idle reaper', () => {
     vi.useRealTimers();
   });
 
+  it.each(['observer', 'working', 'navigation', 'bash', 'dispatch', 'fresh', 'call', 'extension', 'replacement', 'eligible'])('rechecks queued reap: %s', async (change) => {
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
+    const slot = createFakeSlot({ id: 'queued', idleSince: Date.now() - 400_000 });
+    injectSession(manager, slot);
+    const close = vi.spyOn(manager, 'closeSession').mockResolvedValue(undefined);
+    let release!: () => void;
+    const blocker = manager.withSessionOperation(
+      'queued',
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await Promise.resolve();
+    let activeCall = false;
+    manager.startIdleCheck(300_000, () => activeCall);
+    await vi.advanceTimersByTimeAsync(60_000);
+    if (change === 'observer') slot.observers.set('client', {} as SessionObserver);
+    if (change === 'working') slot.sessionState.idleSince = null;
+    if (change === 'navigation') slot.sessionState.treeNavigationInProgress = true;
+    if (change === 'bash') Object.assign(slot.session, { isBashRunning: true });
+    if (change === 'dispatch') slot.sessionState.bashDispatchInProgress = true;
+    if (change === 'fresh') slot.sessionState.idleSince = Date.now();
+    if (change === 'call') activeCall = true;
+    if (change === 'extension') {
+      slot.eventBusRef.current = createMockEventBus() as any;
+      installResponder(slot.eventBusRef.current as any, true);
+    }
+    if (change === 'replacement') injectSession(manager, createFakeSlot({ id: 'queued', idleSince: Date.now() - 400_000 }));
+    release();
+    await blocker;
+    await manager.withSessionOperation('queued', async () => {});
+    expect(close).toHaveBeenCalledTimes(change === 'eligible' ? 1 : 0);
+    manager.stopIdleCheck();
+  });
+
   it('reaps sessions with no connected client past idle timeout', async () => {
     const config = createTestConfig();
     const manager = await PimoteSessionManager.create(config, createMockPushService());

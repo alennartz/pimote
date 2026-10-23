@@ -172,7 +172,7 @@ _Avoid_: tag template
 - Each **session observer** keeps its own **replay cursor** into the session's shared event buffer
 - One **assistant message row** renders one assistant message; matching tool results contribute to that row's cost, while the later assistant response has its own row
 - Only a `started` **prompt outcome** echoes a stamped user message that settles an **optimistic entry**; a `queued` outcome yields a **queued message** instead
-- An **archived session** has no live runtime; unarchiving it does not open it
+- An **archived session** has no live runtime; dashboard unarchiving does not open it, while the explicit manager resume action clears the flag and opens the original record
 - A connection owns one **pinned order**: **listing windows** slice it, and the **order token** names it on the wire
 - A **repin** replaces a pinned order. Rows merge by canonical path, so windows across pins never duplicate
 - **Two-tier search** filters the whole set. **Matched sessions** narrow only the session lists of session-tier rows

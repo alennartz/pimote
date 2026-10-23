@@ -1443,9 +1443,25 @@ export async function openExistingSession(sessionId: string, folderPath: string 
   }
 }
 
+const suggestedSessionOpens = new Map<string, Promise<boolean>>(); // eslint-disable-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
+
+function attachSuggestedSession(sessionId: string, folderPath: string): void {
+  if (suggestedSessionOpens.has(sessionId)) return;
+  if (sessionRegistry.sessions[sessionId]?.restorable && connection.subscribedSessions.has(sessionId)) return;
+  const opening = openExistingSession(sessionId, folderPath, { switchTo: false });
+  suggestedSessionOpens.set(sessionId, opening);
+  void opening.finally(() => {
+    if (suggestedSessionOpens.get(sessionId) === opening) suggestedSessionOpens.delete(sessionId);
+  });
+}
+
 // Subscribe to connection events and route to the registry
 connection.onEvent((event) => {
   switch (event.type) {
+    case 'session_suggested': {
+      attachSuggestedSession(event.sessionId, event.folderPath);
+      break;
+    }
     case 'session_opened': {
       const folder = (event as SessionOpenedEvent).folder;
       const projectName = folder?.name ?? 'Unknown';

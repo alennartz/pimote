@@ -24,12 +24,15 @@ const mocks = vi.hoisted(() => {
     getModelRuntime: vi.fn(() => ({})),
     getAllSessions: vi.fn(() => []),
     getSession: vi.fn(() => undefined),
+    getLastKnownGitBranch: vi.fn(() => null),
     closeSession: vi.fn(async () => undefined),
     openSession: vi.fn(async () => 'session-new'),
+    withSessionOperation: vi.fn(async (_sessionId: string, operation: () => Promise<unknown>) => operation()),
   };
   const sessionMetadataStore = {
     initialize: vi.fn(async () => undefined),
     getArchivedLookup: vi.fn(() => new Map<string, boolean>()),
+    isArchived: vi.fn(() => false),
     setArchived: vi.fn(async () => undefined),
   };
   const folderRegistry = {
@@ -168,6 +171,7 @@ function resetMocks(): void {
   mocks.sessionManager.closeSession.mockReset().mockResolvedValue(undefined);
   mocks.sessionManager.openSession.mockReset().mockResolvedValue('session-new');
   mocks.sessionMetadataStore.getArchivedLookup.mockReset().mockReturnValue(new Map<string, boolean>());
+  mocks.sessionMetadataStore.isArchived.mockReset().mockReturnValue(false);
   mocks.sessionMetadataStore.setArchived.mockReset().mockResolvedValue(undefined);
   mocks.folderRegistry.list.mockReset().mockResolvedValue([]);
   mocks.sessionManagerCreate.mockReset().mockResolvedValue(mocks.sessionManager);
@@ -432,6 +436,7 @@ describe('main — manager toolset port wiring', () => {
       'pimote_find_folders',
       'pimote_find_sessions',
       'pimote_start_session',
+      'pimote_resume_session',
       'pimote_archive_sessions',
       'pimote_create_folder',
       'pimote_update_folder',
@@ -547,6 +552,32 @@ describe('main — manager toolset port wiring', () => {
     expect(withMessage.details).toBeUndefined();
   });
 
+  it('suggests only to current manager observers with the target slot folder', async () => {
+    mocks.folderRegistry.list.mockResolvedValue([alphaFolder]);
+    mocks.sessionManager.openSession.mockResolvedValue('target');
+    const observerSocket = {};
+    const observerSend = vi.fn();
+    const unrelatedSend = vi.fn();
+    mocks.server.clientRegistry.set('observer', { sendToObserver: observerSend });
+    mocks.server.clientRegistry.set('unrelated', { sendToObserver: unrelatedSend });
+    mocks.sessionManager.getSession.mockImplementation((id: string) => {
+      if (id === 'manager')
+        return {
+          observers: new Map([
+            ['observer', { ws: observerSocket }],
+            ['disconnected', { ws: {} }],
+          ]),
+        };
+      if (id === 'target') return { folderPath: '/effective/target' };
+      return undefined;
+    });
+    await toolNamed(await registeredManagerTools(), 'pimote_start_session').execute('call', { folderPath: '/workspace/alpha' }, undefined, undefined, {
+      sessionManager: { getSessionId: () => 'manager' },
+    });
+    expect(observerSend).toHaveBeenCalledWith(observerSocket, { type: 'session_suggested', sessionId: 'target', folderPath: '/effective/target' });
+    expect(unrelatedSend).not.toHaveBeenCalled();
+  });
+
   it('wires openSession for a persona folder', async () => {
     mocks.folderRegistry.list.mockResolvedValue([{ path: '/workspace/personas/ada', name: 'ada', nature: 'persona', persona: { name: 'Ada' } }]);
     mocks.sessionManager.openSession.mockResolvedValue('sess-10');
@@ -593,6 +624,78 @@ describe('main — manager toolset port wiring', () => {
     expect(mocks.sessionMetadataStore.setArchived).not.toHaveBeenCalled();
     expect(mocks.sessionManager.closeSession).not.toHaveBeenCalled();
     expect(result.structuredContent.results).toEqual([{ sessionId: 'ghost', outcome: 'not_found' }]);
+  });
+
+  it('wires resumeSession for an archived record: opens the original file, clears metadata, and broadcasts the state change', async () => {
+    mocks.folderRegistry.list.mockResolvedValue([alphaFolder]);
+    mocks.sessionRecords.resolveSessionPath.mockResolvedValue('/sessions/s3.jsonl');
+    mocks.sessionMetadataStore.isArchived.mockReturnValue(true);
+    mocks.sessionManager.openSession.mockResolvedValue('s3');
+    const slot = {
+      session: { sessionFile: '/sessions/s3.jsonl', sessionName: 'old', messages: [] },
+      folderPath: '/workspace/alpha',
+      sessionState: { status: 'idle', needsAttention: false },
+    };
+    mocks.sessionManager.getSession.mockReturnValueOnce(undefined).mockReturnValue(slot);
+    const broadcast = vi.fn();
+    mocks.server.clientRegistry.set('client-1', { sendToClient: broadcast });
+
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_resume_session').execute('call-1', { sessionId: 's3' }, undefined, undefined, {});
+
+    expect(mocks.sessionManager.openSession).toHaveBeenCalledWith('/workspace/alpha', '/sessions/s3.jsonl');
+    expect(mocks.sessionMetadataStore.setArchived).toHaveBeenCalledWith('/sessions/s3.jsonl', false);
+    expect(broadcast).toHaveBeenCalledWith({ type: 'session_archived', sessionId: 's3', folderPath: '/workspace/alpha', archived: false });
+    expect(result.structuredContent).toEqual({ sessionId: 's3', folderPath: '/workspace/alpha', outcome: 'resumed' });
+  });
+
+  it.each(['open', 'metadata', 'cleanup'])('rolls back failed resume without success broadcasts: %s', async (failure) => {
+    mocks.folderRegistry.list.mockResolvedValue([alphaFolder]);
+    mocks.sessionRecords.resolveSessionPath.mockResolvedValue('/sessions/s3.jsonl');
+    mocks.sessionMetadataStore.isArchived.mockReturnValue(true);
+    const slot = { session: { sessionFile: '/sessions/s3.jsonl' }, folderPath: '/workspace/alpha' };
+    mocks.sessionManager.getSession.mockReturnValueOnce(undefined).mockReturnValue(slot);
+    const original = new Error(failure === 'open' ? 'open failed after publication' : 'metadata failed');
+    if (failure === 'open') mocks.sessionManager.openSession.mockRejectedValue(original);
+    else {
+      mocks.sessionManager.openSession.mockResolvedValue('s3');
+      mocks.sessionMetadataStore.setArchived.mockRejectedValue(original);
+    }
+    const cleanup = new Error('cleanup failed');
+    if (failure === 'cleanup') mocks.sessionManager.closeSession.mockRejectedValue(cleanup);
+    const broadcast = vi.fn();
+    mocks.server.clientRegistry.set('client', { sendToClient: broadcast });
+    const tool = toolNamed(await registeredManagerTools(), 'pimote_resume_session');
+    const operation = tool.execute('call', { sessionId: 's3' }, undefined, undefined, {});
+    if (failure === 'cleanup') await expect(operation).rejects.toMatchObject({ errors: [original, cleanup] });
+    else await expect(operation).rejects.toBe(original);
+    expect(mocks.sessionManager.closeSession).toHaveBeenCalledWith('s3');
+    expect(mocks.sessionMetadataStore.setArchived).not.toHaveBeenCalledWith('/sessions/s3.jsonl', true);
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it('returns already_open without reopening an unarchived live session', async () => {
+    const slot = {
+      session: { sessionFile: '/sessions/s4.jsonl', sessionName: 'live', messages: [] },
+      folderPath: '/workspace/alpha',
+      sessionState: { status: 'idle', needsAttention: false },
+    };
+    mocks.sessionManager.getSession.mockReturnValue(slot);
+    mocks.sessionMetadataStore.isArchived.mockReturnValue(false);
+
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_resume_session').execute('call-1', { sessionId: 's4' }, undefined, undefined, {});
+
+    expect(mocks.sessionManager.openSession).not.toHaveBeenCalled();
+    expect(result.structuredContent).toEqual({ sessionId: 's4', folderPath: '/workspace/alpha', outcome: 'already_open' });
+  });
+
+  it('reports not_found for resume without touching metadata or opening a runtime', async () => {
+    mocks.folderRegistry.list.mockResolvedValue([alphaFolder]);
+
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_resume_session').execute('call-1', { sessionId: 'ghost' }, undefined, undefined, {});
+
+    expect(mocks.sessionMetadataStore.setArchived).not.toHaveBeenCalled();
+    expect(mocks.sessionManager.openSession).not.toHaveBeenCalled();
+    expect(result.structuredContent).toEqual({ sessionId: 'ghost', outcome: 'not_found' });
   });
 
   it('passes the canonical managerRoot to the session manager without scanning it', async () => {

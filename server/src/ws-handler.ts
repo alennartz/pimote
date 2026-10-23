@@ -641,51 +641,53 @@ export class WsHandler {
 
           // Existing session: attach this observer to the live runtime when present.
           const requestedSessionId = command.sessionId;
-          const existing = this.sessionManager.getSession(requestedSessionId);
-          if (existing) {
-            const existingSessionPath = existing.session.sessionFile;
-            if (existingSessionPath && this.sessionMetadataStore.isArchived(existingSessionPath)) {
-              this.sendResponse(id, false, undefined, 'session_archived');
-              break;
+          await this.sessionManager.withSessionOperation(requestedSessionId, async () => {
+            const existing = this.sessionManager.getSession(requestedSessionId);
+            if (existing) {
+              const existingSessionPath = existing.session.sessionFile;
+              if (existingSessionPath && this.sessionMetadataStore.isArchived(existingSessionPath)) {
+                this.sendResponse(id, false, undefined, 'session_archived');
+                return;
+              }
+              const restoreMode = await this.syncSessionToClient(requestedSessionId, existing, command.lastCursor);
+              WsHandler.broadcastSidebarUpdate(requestedSessionId, existing.folderPath, this.sessionManager, this.clientRegistry);
+              this.sendResponse(id, true, {
+                sessionId: requestedSessionId,
+                folderPath: existing.folderPath,
+                restoreMode,
+                folder: await this.resolveFolderInfo(existing.folderPath),
+              });
+              return;
             }
-            const restoreMode = await this.syncSessionToClient(requestedSessionId, existing, command.lastCursor);
-            WsHandler.broadcastSidebarUpdate(requestedSessionId, existing.folderPath, this.sessionManager, this.clientRegistry);
+
+            // Reopen from disk. A folderless deep link carries no folder: resolve
+            // the session's record by searching known folders (archived included).
+            // No record anywhere → the session is gone for good (never persisted,
+            // pruned idle slot): report it as a definitive not-found so the client
+            // drops its orphan instead of retrying forever.
+            const record = await this.findSessionRecord(requestedSessionId, command.folderPath);
+            if (!record) {
+              this.sendResponse(id, false, undefined, 'session_not_found');
+              return;
+            }
+            const { folderPath, sessionFilePath } = record;
+            if (this.sessionMetadataStore.isArchived(sessionFilePath)) {
+              this.sendResponse(id, false, undefined, 'session_archived');
+              return;
+            }
+
+            await this.repoIndex?.runOpenHooks(folderPath);
+            const sessionId = await this.sessionManager.openSession(folderPath, sessionFilePath);
+            const reopenedSlot = this.sessionManager.getSession(sessionId)!;
+            await this.syncSessionToClient(sessionId, reopenedSlot, undefined, 'disk_full_resync');
+            WsHandler.broadcastSidebarUpdate(sessionId, reopenedSlot.folderPath, this.sessionManager, this.clientRegistry);
+            await this.sendConflictEventIfNeeded(sessionId, reopenedSlot.folderPath);
             this.sendResponse(id, true, {
-              sessionId: requestedSessionId,
-              folderPath: existing.folderPath,
-              restoreMode,
-              folder: await this.resolveFolderInfo(existing.folderPath),
+              sessionId,
+              folderPath: reopenedSlot.folderPath,
+              restoreMode: 'disk_full_resync',
+              folder: await this.resolveFolderInfo(reopenedSlot.folderPath),
             });
-            break;
-          }
-
-          // Reopen from disk. A folderless deep link carries no folder: resolve
-          // the session's record by searching known folders (archived included).
-          // No record anywhere → the session is gone for good (never persisted,
-          // pruned idle slot): report it as a definitive not-found so the client
-          // drops its orphan instead of retrying forever.
-          const record = await this.findSessionRecord(requestedSessionId, command.folderPath);
-          if (!record) {
-            this.sendResponse(id, false, undefined, 'session_not_found');
-            break;
-          }
-          const { folderPath, sessionFilePath } = record;
-          if (this.sessionMetadataStore.isArchived(sessionFilePath)) {
-            this.sendResponse(id, false, undefined, 'session_archived');
-            break;
-          }
-
-          await this.repoIndex?.runOpenHooks(folderPath);
-          const sessionId = await this.sessionManager.openSession(folderPath, sessionFilePath);
-          const reopenedSlot = this.sessionManager.getSession(sessionId)!;
-          await this.syncSessionToClient(sessionId, reopenedSlot, undefined, 'disk_full_resync');
-          WsHandler.broadcastSidebarUpdate(sessionId, reopenedSlot.folderPath, this.sessionManager, this.clientRegistry);
-          await this.sendConflictEventIfNeeded(sessionId, reopenedSlot.folderPath);
-          this.sendResponse(id, true, {
-            sessionId,
-            folderPath: reopenedSlot.folderPath,
-            restoreMode: 'disk_full_resync',
-            folder: await this.resolveFolderInfo(reopenedSlot.folderPath),
           });
           break;
         }
@@ -697,14 +699,16 @@ export class WsHandler {
             break;
           }
 
-          const closingSlot = this.sessionManager.getSession(closeSessionId);
-          if (closingSlot) {
-            const wasObserver = closingSlot.observers.has(this.clientId);
-            await this.closeSessionForObservers(closeSessionId, closingSlot);
-            if (!wasObserver) this.sendSessionClosedEvent(closeSessionId);
-          } else {
-            this.sendSessionClosedEvent(closeSessionId);
-          }
+          await this.sessionManager.withSessionOperation(closeSessionId, async () => {
+            const closingSlot = this.sessionManager.getSession(closeSessionId);
+            if (closingSlot) {
+              const wasObserver = closingSlot.observers.has(this.clientId);
+              await this.closeSessionForObservers(closeSessionId, closingSlot);
+              if (!wasObserver) this.sendSessionClosedEvent(closeSessionId);
+            } else {
+              this.sendSessionClosedEvent(closeSessionId);
+            }
+          });
 
           this.sendResponse(id, true);
           break;
@@ -718,42 +722,44 @@ export class WsHandler {
             break;
           }
 
-          const deleteSlot = this.sessionManager.getSession(deleteSessionId);
-          const deleteSessionPath = deleteSlot?.session.sessionFile ?? (await this.sessionRecords.resolveSessionPath(deleteFolderPath, deleteSessionId));
+          await this.sessionManager.withSessionOperation(deleteSessionId, async () => {
+            const deleteSlot = this.sessionManager.getSession(deleteSessionId);
+            const deleteSessionPath = deleteSlot?.session.sessionFile ?? (await this.sessionRecords.resolveSessionPath(deleteFolderPath, deleteSessionId));
 
-          // If the session is active in memory, close it first.
-          if (deleteSlot) {
-            await this.closeSessionForObservers(deleteSessionId, deleteSlot, 'killed');
-          }
+            // If the session is active in memory, close it first.
+            if (deleteSlot) {
+              await this.closeSessionForObservers(deleteSessionId, deleteSlot, 'killed');
+            }
 
-          // Delete the file from disk
-          const deleted = await this.sessionRecords.deleteSession(deleteFolderPath, deleteSessionId);
-          if (!deleted) {
-            this.sendResponse(id, false, undefined, `Session not found: ${deleteSessionId}`);
-            break;
-          }
+            // Delete the file from disk
+            const deleted = await this.sessionRecords.deleteSession(deleteFolderPath, deleteSessionId);
+            if (!deleted) {
+              this.sendResponse(id, false, undefined, `Session not found: ${deleteSessionId}`);
+              return;
+            }
 
-          if (deleteSessionPath) {
-            await this.sessionMetadataStore.delete(deleteSessionPath);
-          }
+            if (deleteSessionPath) {
+              await this.sessionMetadataStore.delete(deleteSessionPath);
+            }
 
-          // Broadcast deletion to all clients so sidebar lists update
-          const deleteEvent = {
-            type: 'session_deleted' as const,
-            sessionId: deleteSessionId,
-            folderPath: deleteFolderPath,
-          };
-          for (const [, handler] of this.clientRegistry) {
-            handler.sendToClient(deleteEvent);
-          }
+            // Broadcast deletion to all clients so sidebar lists update
+            const deleteEvent = {
+              type: 'session_deleted' as const,
+              sessionId: deleteSessionId,
+              folderPath: deleteFolderPath,
+            };
+            for (const [, handler] of this.clientRegistry) {
+              handler.sendToClient(deleteEvent);
+            }
 
-          this.subscribedSessions.delete(deleteSessionId);
-          if (this.viewedSessionId === deleteSessionId) {
-            this.viewedSessionId = null;
-          }
+            this.subscribedSessions.delete(deleteSessionId);
+            if (this.viewedSessionId === deleteSessionId) {
+              this.viewedSessionId = null;
+            }
 
-          this.folderListing?.invalidateSessionMetadata([deleteFolderPath]);
-          this.sendResponse(id, true);
+            this.folderListing?.invalidateSessionMetadata([deleteFolderPath]);
+            this.sendResponse(id, true);
+          });
           break;
         }
 
@@ -767,23 +773,25 @@ export class WsHandler {
 
           let archivedCount = 0;
           for (const archiveSessionId of archiveSessionIds) {
-            const archiveSlot = this.sessionManager.getSession(archiveSessionId);
-            const archiveSessionPath = archiveSlot?.session.sessionFile ?? (await this.sessionRecords.resolveSessionPath(archiveFolderPath, archiveSessionId));
-            if (!archiveSessionPath) continue;
+            await this.sessionManager.withSessionOperation(archiveSessionId, async () => {
+              const archiveSlot = this.sessionManager.getSession(archiveSessionId);
+              const archiveSessionPath = archiveSlot?.session.sessionFile ?? (await this.sessionRecords.resolveSessionPath(archiveFolderPath, archiveSessionId));
+              if (!archiveSessionPath) return;
 
-            if (command.archived) {
-              // Mark the record before runtime disposal closes the slot. A
-              // concurrent open then sees session_archived instead of attaching
-              // to a runtime that is already closing.
-              await this.sessionMetadataStore.setArchived(archiveSessionPath, true);
-              if (archiveSlot) {
-                await this.closeSessionForObservers(archiveSessionId, archiveSlot, 'archived');
+              if (command.archived) {
+                // Mark the record before runtime disposal closes the slot. A
+                // concurrent open then sees session_archived instead of attaching
+                // to a runtime that is already closing.
+                await this.sessionMetadataStore.setArchived(archiveSessionPath, true);
+                if (archiveSlot) {
+                  await this.closeSessionForObservers(archiveSessionId, archiveSlot, 'archived');
+                }
+              } else {
+                await this.sessionMetadataStore.setArchived(archiveSessionPath, false);
               }
-            } else {
-              await this.sessionMetadataStore.setArchived(archiveSessionPath, false);
-            }
-            this.broadcastSessionArchived(archiveSessionId, archiveFolderPath, command.archived);
-            archivedCount++;
+              this.broadcastSessionArchived(archiveSessionId, archiveFolderPath, command.archived);
+              archivedCount++;
+            });
           }
 
           this.folderListing?.invalidateSessionMetadata([archiveFolderPath]);
@@ -856,26 +864,32 @@ export class WsHandler {
             this.sendResponse(id, false, undefined, 'call_bind_failed_internal');
             break;
           }
-          if (!this.sessionManager.getSlot(command.sessionId)) {
-            // A voice call needs a holder, not an observer: reopen a dormant
-            // (idle-reaped or never-opened) session from its disk record so
-            // thin clients can call sessions they are not viewing. No observer
-            // attaches and no transcript syncs — the call-holder reap guard
-            // holds the session for the call, then idle reaping reclaims it.
-            let slot: ManagedSlot | null;
-            try {
-              slot = await this.attemptCallReopen(command.sessionId);
-            } catch (err) {
+          const reopenResult = await this.sessionManager
+            .withSessionOperation(command.sessionId, async () => {
+              const existingSlot = this.sessionManager.getSlot(command.sessionId);
+              if (existingSlot) return { slot: existingSlot, reopened: false };
+              // A voice call needs a holder, not an observer: reopen a dormant
+              // (idle-reaped or never-opened) session from its disk record so
+              // thin clients can call sessions they are not viewing. No observer
+              // attaches and no transcript syncs — the call-holder reap guard
+              // holds the session for the call, then idle reaping reclaims it.
+              return { slot: await this.attemptCallReopen(command.sessionId), reopened: true };
+            })
+            .catch((err: unknown) => {
               console.warn('[voice] call_bind reopen failed:', err instanceof Error ? err.message : err);
-              this.sendResponse(id, false, undefined, 'call_bind_failed_internal');
-              break;
-            }
-            if (!slot) {
-              this.sendResponse(id, false, undefined, 'call_bind_failed_session_not_found');
-              break;
-            }
+              return { error: true as const };
+            });
+          if ('error' in reopenResult) {
+            this.sendResponse(id, false, undefined, 'call_bind_failed_internal');
+            break;
+          }
+          if (!reopenResult.slot) {
+            this.sendResponse(id, false, undefined, 'call_bind_failed_session_not_found');
+            break;
+          }
+          if (reopenResult.reopened) {
             // A dormant folder's sidebar counts changed: the session is live again.
-            WsHandler.broadcastSidebarUpdate(command.sessionId, slot.folderPath, this.sessionManager, this.clientRegistry);
+            WsHandler.broadcastSidebarUpdate(command.sessionId, reopenResult.slot.folderPath, this.sessionManager, this.clientRegistry);
           }
           try {
             const data = await this.voiceOrchestrator.bindCall({
@@ -2152,6 +2166,11 @@ export class WsHandler {
     const panelUpdate = { type: 'panel_update' as const, sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) };
     sendSlotEvent(slot, settings, { exceptClientId: this.clientId });
     sendSlotEvent(slot, panelUpdate, { exceptClientId: this.clientId });
+  }
+
+  /** Send only while the observer still owns this connected socket. */
+  sendToObserver(ws: EventSocket, event: PimoteEvent): void {
+    if (this.ws === ws && this.ws.readyState === 1) this.sendEvent(event);
   }
 
   /** Send an event to this client (public for broadcast use). */

@@ -574,7 +574,7 @@ spawns. No real LLM, network, or push subscription required.
 (mkdir + absolute member symlinks + `git init` + root-anchored `.gitignore`
 
 - generated `AGENTS.md`). Asserts, without any LLM: the registered names are
-  the pinned seven-tool set (no `*_projects`, no retired persona/search/repo/
+  the pinned eight-tool set (no `*_projects`, no retired persona/search/repo/
   tree/disband names), `pimote_find_folders` returns complete FolderInfo rows
   with schema defaults (hub rows carry their member repos),
   `pimote_find_folders` nature-filtered rows serve the persona team view, and

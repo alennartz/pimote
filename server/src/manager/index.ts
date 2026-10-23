@@ -9,6 +9,7 @@ export type {
   ManagedSessionSummary,
   DiskSessionRecord,
   SessionArchiveOutcome,
+  SessionResumeOutcome,
   CreateFolderKind,
 } from './types.js';
 export { createManagerExtension } from './extension.js';

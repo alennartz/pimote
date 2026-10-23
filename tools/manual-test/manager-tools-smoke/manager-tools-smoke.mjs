@@ -9,7 +9,7 @@
 // symlinks + `git init` + `.gitignore` + generated AGENTS.md).
 //
 // Covers, hard and without an LLM: the pinned DR-062 toolset registers by
-// name (seven tools; no `*_projects` or retired persona/search/repo/tree/disband names survive),
+// name (eight tools; no `*_projects` or retired persona/search/repo/tree/disband names survive),
 // pimote_find_folders returns complete FolderInfo rows with schema defaults
 // (and the nature filter serves the team view; hub rows carry their member
 // lists), and pimote_create_folder
@@ -132,6 +132,7 @@ async function main() {
         throw new Error('not used by this probe');
       },
       archiveSessions: async () => [],
+      resumeSession: async (sessionId) => ({ sessionId, outcome: 'not_found' }),
     },
     creators: {
       create: async () => {
@@ -186,6 +187,7 @@ async function main() {
     'pimote_find_folders',
     'pimote_find_sessions',
     'pimote_start_session',
+    'pimote_resume_session',
     'pimote_archive_sessions',
     'pimote_create_folder',
     'pimote_update_folder',

@@ -140,6 +140,7 @@ function createMockSessionManager(sessions: Map<string, ManagedSlot> = new Map()
     getSlot: (id: string) => sessions.get(id) ?? null,
     getAllSessions: () => Array.from(sessions.values()),
     openSession: async () => 'new-session-id',
+    withSessionOperation: async (_id: string, operation: () => Promise<unknown>) => operation(),
     closeSession: async (id: string) => {
       sessions.delete(id);
     },
@@ -283,6 +284,21 @@ function createTestHandler(
 
   return { handler, ws, sent, sessions, sessionManager, clientRegistry, sessionMetadataStore };
 }
+
+describe('observer-targeted push', () => {
+  it('rejects stale and closed sockets', () => {
+    const { handler, ws, sent } = createTestHandler('observer');
+    const event = { type: 'session_suggested' as const, sessionId: 'target', folderPath: '/target' };
+    handler.sendToObserver(createMockWs().ws, event);
+    expect(sent).toEqual([]);
+    ws.readyState = 3;
+    handler.sendToObserver(ws, event);
+    expect(sent).toEqual([]);
+    ws.readyState = 1;
+    handler.sendToObserver(ws, event);
+    expect(sent).toEqual([event]);
+  });
+});
 
 // --- Helpers ---
 

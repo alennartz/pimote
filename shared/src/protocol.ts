@@ -1189,6 +1189,12 @@ export interface SessionOpenedEvent {
   folder: FolderInfo;
 }
 
+export interface SessionSuggestedEvent {
+  type: 'session_suggested';
+  sessionId: string;
+  folderPath: string;
+}
+
 export interface SessionClosedEvent {
   type: 'session_closed';
   sessionId: string;
@@ -1479,6 +1485,7 @@ export type PimoteEvent =
   | QueuedDraftsRestoredEvent
   // Server-level
   | SessionOpenedEvent
+  | SessionSuggestedEvent
   | SessionClosedEvent
   | SessionDeletedEvent
   | SessionRenamedEvent

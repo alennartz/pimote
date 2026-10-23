@@ -19,7 +19,7 @@ import { createCodeFolderViaCreators } from './folder-create.js';
 import { createBuiltinCreator } from './folder-sources/builtin.js';
 import type { FolderCreator } from './folder-sources/index.js';
 import { seedManagerRoot } from './manager/index.js';
-import type { ManagerToolContext, SessionArchiveOutcome } from './manager/index.js';
+import type { ManagerToolContext, SessionArchiveOutcome, SessionResumeOutcome } from './manager/index.js';
 import { createManagerExtension } from './manager/index.js';
 import { createPimoteDocsExtension } from './pimote-docs/index.js';
 import { PushNotificationService } from './push-notification.js';
@@ -128,12 +128,25 @@ export async function main(options: StartOptions = {}) {
   });
 
   // Manager tools use startup-built ports through ordinary persisted sessions.
-  // Manager-initiated session_archived events fan out to every connected
-  // client exactly like the ws-handler archive_session flow; the client
-  // registry is created inside createServer, so the archive port closes over
-  // this ref, swapped in right after createServer returns.
+  // Manager-initiated archive-state events fan out to every connected client
+  // exactly like the ws-handler archive_session flow; the client registry is
+  // created inside createServer, so these ports close over this ref, swapped
+  // in right after createServer returns.
   const managerClientRegistryRef: { current: Map<string, import('./ws-handler.js').WsHandler> } = { current: new Map() };
+  /** Manager mutations share the session manager's lifecycle lock with the
+   *  WebSocket archive/open paths. */
+  const runManagerSessionOperation = <T>(sessionId: string, operation: () => Promise<T>): Promise<T> => sessionManager.withSessionOperation(sessionId, operation);
+
   const managerContext: ManagerToolContext = {
+    notifySessionSuggested: (managerSessionId, targetSessionId) => {
+      const managerSlot = sessionManager.getSession(managerSessionId);
+      const targetSlot = sessionManager.getSession(targetSessionId);
+      if (!managerSlot || !targetSlot) return;
+      const event = { type: 'session_suggested' as const, sessionId: targetSessionId, folderPath: targetSlot.folderPath };
+      for (const [clientId, observer] of managerSlot.observers) {
+        managerClientRegistryRef.current.get(clientId)?.sendToObserver(observer.ws, event);
+      }
+    },
     sessions: {
       getAllSessions: () =>
         sessionManager.getAllSessions().map((slot) => ({
@@ -180,32 +193,112 @@ export async function main(options: StartOptions = {}) {
       archiveSessions: async (sessionIds: string[]): Promise<SessionArchiveOutcome[]> => {
         const knownFolderPaths = (await folderRegistry.list()).map((folder) => folder.path);
         return Promise.all(
-          sessionIds.map(async (sessionId): Promise<SessionArchiveOutcome> => {
-            const slot = sessionManager.getSession(sessionId);
-            // Folderless lookup is the shared `resolveSessionAcrossFolders`
-            // rule: known folders plus the manager root, deduplicated.
-            const resolved = slot?.session.sessionFile
-              ? { folderPath: slot.folderPath, sessionFilePath: slot.session.sessionFile }
-              : await resolveSessionAcrossFolders(sessionRecords, knownFolderPaths, config.managerRoot, sessionId);
-            if (!resolved) return { sessionId, outcome: 'not_found' };
+          sessionIds.map((sessionId) =>
+            runManagerSessionOperation(sessionId, async (): Promise<SessionArchiveOutcome> => {
+              const slot = sessionManager.getSession(sessionId);
+              // Folderless lookup is the shared `resolveSessionAcrossFolders`
+              // rule: known folders plus the manager root, deduplicated.
+              const resolved = slot?.session.sessionFile
+                ? { folderPath: slot.folderPath, sessionFilePath: slot.session.sessionFile }
+                : await resolveSessionAcrossFolders(sessionRecords, knownFolderPaths, config.managerRoot, sessionId);
+              if (!resolved) return { sessionId, outcome: 'not_found' };
 
-            // Mark the record before runtime disposal closes the slot. A
-            // concurrent open then sees session_archived instead of attaching
-            // to a runtime that is already closing.
-            await sessionMetadataStore.setArchived(resolved.sessionFilePath, true);
-            if (slot) {
-              await closeSessionForObservers(sessionManager, managerClientRegistryRef.current, sessionId, slot, 'archived');
-            }
-            // Session activity: targeted metadata invalidation for the folder —
-            // covers archive runs without a live slot — and no folder delta.
-            folderListing.invalidateSessionMetadata([resolved.folderPath]);
-            for (const [, handler] of managerClientRegistryRef.current) {
-              handler.sendToClient({ type: 'session_archived', sessionId, folderPath: resolved.folderPath, archived: true });
-            }
-            return { sessionId, outcome: slot ? 'open_slot_evicted' : 'archived' };
-          }),
+              // Mark the record before runtime disposal closes the slot. A
+              // concurrent open then sees session_archived instead of attaching
+              // to a runtime that is already closing.
+              await sessionMetadataStore.setArchived(resolved.sessionFilePath, true);
+              if (slot) {
+                await closeSessionForObservers(sessionManager, managerClientRegistryRef.current, sessionId, slot, 'archived');
+              }
+              // Session activity: targeted metadata invalidation for the folder —
+              // covers archive runs without a live slot — and no folder delta.
+              folderListing.invalidateSessionMetadata([resolved.folderPath]);
+              for (const [, handler] of managerClientRegistryRef.current) {
+                handler.sendToClient({ type: 'session_archived', sessionId, folderPath: resolved.folderPath, archived: true });
+              }
+              return { sessionId, outcome: slot ? 'open_slot_evicted' : 'archived' };
+            }),
+          ),
         );
       },
+      /** Explicit manager action for reopening an existing record. The
+       *  original file is opened while its archive flag is still set, so a
+       *  concurrent ordinary open cannot attach to it halfway through the
+       *  transition. The flag is cleared only after the original runtime is
+       *  live; a failure therefore leaves the record archived and closed. */
+      resumeSession: async (sessionId: string): Promise<SessionResumeOutcome> =>
+        runManagerSessionOperation(sessionId, async (): Promise<SessionResumeOutcome> => {
+          const knownFolderPaths = (await folderRegistry.list()).map((folder) => folder.path);
+          const existing = sessionManager.getSession(sessionId);
+          if (existing && !existing.session.sessionFile) {
+            return { sessionId, folderPath: existing.folderPath, outcome: 'already_open' };
+          }
+          const resolved = existing?.session.sessionFile
+            ? { folderPath: existing.folderPath, sessionFilePath: existing.session.sessionFile }
+            : await resolveSessionAcrossFolders(sessionRecords, knownFolderPaths, config.managerRoot, sessionId);
+          if (!resolved) return { sessionId, outcome: 'not_found' };
+
+          const archived = sessionMetadataStore.isArchived(resolved.sessionFilePath);
+          if (existing && !archived) {
+            return { sessionId, folderPath: existing.folderPath, outcome: 'already_open' };
+          }
+
+          let openedId = sessionId;
+          let slot = existing;
+          if (!slot) {
+            await repoIndex.runOpenHooks(resolved.folderPath);
+            try {
+              openedId = await sessionManager.openSession(resolved.folderPath, resolved.sessionFilePath);
+            } catch (error) {
+              const failedSlot = sessionManager.getSession(sessionId);
+              if (failedSlot) {
+                try {
+                  await closeSessionForObservers(sessionManager, managerClientRegistryRef.current, sessionId, failedSlot, archived ? 'archived' : undefined);
+                } catch (cleanupError) {
+                  throw new AggregateError([error, cleanupError], 'Session resume opening and cleanup failed', { cause: cleanupError });
+                }
+              }
+              throw error;
+            }
+            if (openedId !== sessionId) {
+              const error = new Error(`session resume changed the session id from ${sessionId} to ${openedId}`);
+              try {
+                await sessionManager.closeSession(openedId);
+              } catch (cleanupError) {
+                throw new AggregateError([error, cleanupError], 'Session resume validation and cleanup failed', { cause: cleanupError });
+              }
+              throw error;
+            }
+            slot = sessionManager.getSession(openedId);
+            if (!slot) {
+              throw new Error(`session resume did not produce a live slot for ${sessionId}`);
+            }
+          }
+
+          const folderPath = slot?.folderPath ?? resolved.folderPath;
+          if (archived) {
+            try {
+              await sessionMetadataStore.setArchived(resolved.sessionFilePath, false);
+            } catch (error) {
+              // A rejected metadata transaction preserves the original archived entry.
+              // Close the runtime without replacing its archivedAt timestamp.
+              if (slot) {
+                try {
+                  await closeSessionForObservers(sessionManager, managerClientRegistryRef.current, openedId, slot, 'archived');
+                } catch (cleanupError) {
+                  throw new AggregateError([error, cleanupError], 'Session resume metadata and cleanup failed', { cause: cleanupError });
+                }
+              }
+              throw error;
+            }
+            folderListing.invalidateSessionMetadata([...new Set([resolved.folderPath, folderPath])]);
+            for (const [, handler] of managerClientRegistryRef.current) {
+              handler.sendToClient({ type: 'session_archived', sessionId, folderPath, archived: false });
+            }
+          }
+          if (slot) WsHandler.broadcastSidebarUpdate(openedId, folderPath, sessionManager, managerClientRegistryRef.current);
+          return { sessionId, folderPath, outcome: 'resumed' };
+        }),
     },
     folders: folderRegistry,
     repos: repoIndex,

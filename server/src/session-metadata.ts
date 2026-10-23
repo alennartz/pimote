@@ -13,6 +13,7 @@ interface SessionMetadataFile {
 
 export class FileSessionMetadataStore {
   private sessions = new Map<string, SessionMetadataEntry>();
+  private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly filePath: string) {}
 
@@ -41,7 +42,8 @@ export class FileSessionMetadataStore {
   }
 
   get(path: string): SessionMetadataEntry | undefined {
-    return this.sessions.get(path);
+    const entry = this.sessions.get(path);
+    return entry ? { ...entry } : undefined;
   }
 
   isArchived(path: string): boolean {
@@ -52,42 +54,45 @@ export class FileSessionMetadataStore {
     return new Map(paths.map((path) => [path, this.isArchived(path)]));
   }
 
-  async setArchived(path: string, archived: boolean): Promise<void> {
-    const existing = this.sessions.get(path) ?? {};
-
-    if (archived) {
-      this.sessions.set(path, {
-        ...existing,
-        archived: true,
-        archivedAt: existing.archivedAt ?? new Date().toISOString(),
-      });
-    } else if (Object.keys(existing).length === 0) {
-      return;
-    } else {
-      const next: SessionMetadataEntry = { ...existing, archived: false };
-      delete next.archivedAt;
-      if (!next.archived) {
-        this.sessions.delete(path);
+  setArchived(path: string, archived: boolean): Promise<void> {
+    return this.mutate(async (sessions) => {
+      const existing = sessions.get(path) ?? {};
+      if (archived) {
+        sessions.set(path, {
+          ...existing,
+          archived: true,
+          archivedAt: existing.archivedAt ?? new Date().toISOString(),
+        });
       } else {
-        this.sessions.set(path, next);
+        if (Object.keys(existing).length === 0) return;
+        sessions.delete(path);
       }
-    }
-
-    await this.save();
+      await this.save(sessions);
+      this.sessions = sessions;
+    });
   }
 
-  async delete(path: string): Promise<void> {
-    if (!this.sessions.delete(path)) return;
-    await this.save();
+  delete(path: string): Promise<void> {
+    return this.mutate(async (sessions) => {
+      if (!sessions.delete(path)) return;
+      await this.save(sessions);
+      this.sessions = sessions;
+    });
   }
 
-  private async save(): Promise<void> {
+  private mutate(operation: (sessions: Map<string, SessionMetadataEntry>) => Promise<void>): Promise<void> {
+    const current = this.mutationQueue.then(() => operation(new Map(this.sessions)));
+    this.mutationQueue = current.catch(() => undefined);
+    return current;
+  }
+
+  private async save(sessions: Map<string, SessionMetadataEntry>): Promise<void> {
     try {
       await mkdir(dirname(this.filePath), { recursive: true });
       const tmpPath = this.filePath + '.tmp';
       const payload: SessionMetadataFile = {
         version: 1,
-        sessions: Object.fromEntries(this.sessions.entries()),
+        sessions: Object.fromEntries(sessions.entries()),
       };
       await writeFile(tmpPath, JSON.stringify(payload, null, 2) + '\n', 'utf-8');
       await rename(tmpPath, this.filePath);

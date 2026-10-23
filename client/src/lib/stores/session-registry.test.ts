@@ -1820,6 +1820,60 @@ describe('SessionRegistry', () => {
 // deep-link open: the server searches its folders and reports the folder back,
 // and the client records it on the session and the subscription map.
 
+describe('session_suggested', () => {
+  const emit = (sessionId: string) => {
+    for (const listener of (connection as any).listeners) listener({ type: 'session_suggested', sessionId, folderPath: '/repos/target' });
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const id of ['suggested-target', 'pending-suggestion']) {
+      sessionRegistry.removeSession(id);
+      connection.removeSubscribedSession(id);
+    }
+    sessionRegistry.pendingNewSession = null;
+  });
+
+  it('attaches once without navigating or consuming a pending placeholder', async () => {
+    let resolveOpen!: (value: any) => void;
+    const send = vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => {
+      if (cmd.type === 'open_session')
+        return new Promise((resolve) => {
+          resolveOpen = resolve;
+        });
+      return { id: 'test', success: false };
+    });
+    sessionRegistry.addSession('pending-suggestion', '/repos/new', 'new');
+    sessionRegistry.pendingNewSession = 'pending-suggestion';
+    sessionRegistry.switchTo('pending-suggestion');
+    emit('suggested-target');
+    emit('suggested-target');
+    expect(send.mock.calls.filter(([cmd]) => cmd.type === 'open_session')).toHaveLength(1);
+    expect(sessionRegistry.viewedSessionId).toBe('pending-suggestion');
+    expect(sessionRegistry.pendingNewSession).toBe('pending-suggestion');
+    expect(connection.subscribedSessions.get('suggested-target')).toBe('/repos/target');
+    resolveOpen({ id: 'test', success: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    emit('suggested-target');
+    expect(send.mock.calls.filter(([cmd]) => cmd.type === 'open_session')).toHaveLength(1);
+    expect(send.mock.calls.some(([cmd]) => cmd.type === 'view_session')).toBe(false);
+    expect(sessionRegistry.sessions['suggested-target'].restorable).toBe(true);
+  });
+
+  it('keeps drafts and transcripts for subscribed targets', () => {
+    sessionRegistry.addSession('suggested-target', '/repos/target', 'target');
+    const target = sessionRegistry.sessions['suggested-target'];
+    target.draftText = 'unsent';
+    target.messages = [makeUserMessage('history')];
+    connection.addSubscribedSession('suggested-target', '/repos/target');
+    const send = vi.spyOn(connection, 'send');
+    emit('suggested-target');
+    expect(send).not.toHaveBeenCalled();
+    expect(target.draftText).toBe('unsent');
+    expect(target.messages).toEqual([makeUserMessage('history')]);
+  });
+});
+
 describe('openExistingSession (folderless deep link)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
