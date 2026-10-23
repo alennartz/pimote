@@ -229,8 +229,9 @@ export interface Card {
   footer?: string[];
   /**
    * Optional same-origin URL. When present, the client renders the entire
-   * card as a clickable link (same-tab navigation). No server-side validation
-   * — any string is allowed; the consumer is responsible for using a sane URL.
+   * card as a clickable link that opens in a new tab. No server-side
+   * validation — any string is allowed; the consumer is responsible for
+   * using a sane URL.
    */
   href?: string;
 }
@@ -1339,7 +1340,7 @@ export type DownloadUpdateEvent = DownloadOfferedUpdateEvent | DownloadSnapshotU
 /**
  * Server-initiated client navigation request. Emitted by extensions that
  * register a new same-origin surface (e.g. `pimote_static_host`) and want
- * the client to jump to it on creation. The client decides whether to act —
+ * the client to open it in a new tab on creation. The client decides whether to act —
  * the static-host extension emits this only when the session is the one
  * that issued the tool call, but clients should still ignore the event when
  * the targeted `sessionId` is not the currently viewed session to avoid

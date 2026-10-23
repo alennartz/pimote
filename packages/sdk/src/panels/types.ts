@@ -17,7 +17,7 @@ export interface Card {
   footer?: string[];
   /**
    * Optional same-origin URL. When present, the client renders the entire
-   * card as a clickable link (same-tab navigation). Kept in lock-step with
+   * card as a clickable link that opens in a new tab. Kept in lock-step with
    * the protocol `Card` type in `shared/src/protocol.ts`.
    */
   href?: string;

@@ -37,6 +37,8 @@ function languageFromCodeEl(codeEl: HTMLElement): string | null {
 // Protocol-relative (`//host`) is deliberately excluded — it leaves the
 // origin — as are all other schemes (`javascript:`, `data:`, ...).
 const SAFE_URL_PATTERN = /^(?:https?:\/\/|mailto:|\/[^/])/i;
+// HTTP(S) pages and same-origin root-relative pages open in a new tab.
+const NEW_TAB_URL_PATTERN = /^(?:https?:\/\/|\/[^/])/i;
 
 /**
  * Create an smd renderer targeting the given container element,
@@ -110,6 +112,11 @@ export function createRenderer(container: HTMLElement): smd.Default_Renderer & {
         }
       }
       smd.default_set_attr(data, type, value);
+      if (type === smd.Attr.Href && NEW_TAB_URL_PATTERN.test(value.trim())) {
+        const link = data.nodes[data.index];
+        link.setAttribute('target', '_blank');
+        link.setAttribute('rel', 'noopener noreferrer');
+      }
     },
     add_text(data: smd.Default_Renderer_Data, text: string) {
       // Append the fresh text node first (smd holds element refs only).

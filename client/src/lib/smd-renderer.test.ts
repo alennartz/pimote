@@ -87,11 +87,21 @@ describe('createRenderer', () => {
       expect(link!.getAttribute('href')).toBe('https://example.com');
     });
 
-    it('keeps the href on a root-relative link', () => {
+    it('opens external links in a new tab', () => {
+      const container = renderComplete('[external](https://example.com)');
+      const link = container.querySelector('a');
+      expect(link).not.toBeNull();
+      expect(link!.getAttribute('target')).toBe('_blank');
+      expect(link!.getAttribute('rel')).toBe('noopener noreferrer');
+    });
+
+    it('opens root-relative links in a new tab', () => {
       const container = renderComplete('[Hello Page](/s/hello-pimote/)');
       const link = container.querySelector('a');
       expect(link).not.toBeNull();
       expect(link!.getAttribute('href')).toBe('/s/hello-pimote/');
+      expect(link!.getAttribute('target')).toBe('_blank');
+      expect(link!.getAttribute('rel')).toBe('noopener noreferrer');
     });
 
     it('drops javascript: URLs', () => {

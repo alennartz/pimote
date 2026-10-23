@@ -816,7 +816,9 @@ export class SessionRegistry {
         if (sessionId === this.viewedSessionId) {
           const url = (event as NavigateEvent).url;
           if (typeof url === 'string' && url.length > 0) {
-            location.href = url;
+            // Static-host navigation is intentionally new-tab only. A popup
+            // blocker can suppress it; the sidebar card remains available.
+            window.open(url, '_blank', 'noopener,noreferrer');
           }
         }
         break;
