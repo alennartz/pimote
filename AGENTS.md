@@ -15,3 +15,7 @@ Pimote is a PWA + Node.js server for remote access to pi (a coding agent), plus 
 ## Maintenance Instructions
 
 If `codemap.md` is missing or feels stale relative to what you find, say so — don't silently work around it.
+
+## Pulling Features
+
+A product manager persona exists in `../product-manager` if the user asks about pulling features or the backlog. spin up a long lived subagent in that cwd and interact with it.
