@@ -980,6 +980,11 @@ export class SessionRegistry {
   }
 
   /** Update session meta (git branch, context usage, lifetime cost) */
+  /** Return row usage, including an active-view-only terminal partial fallback. */
+  getAssistantRowUsage(_sessionId: string, _messageIndex: number): import('@pimote/shared').AssistantRowUsage | null {
+    throw new Error('not implemented');
+  }
+
   updateMeta(sessionId: string, meta: SessionMeta): void {
     const session = this.sessions[sessionId];
     if (!session) return;

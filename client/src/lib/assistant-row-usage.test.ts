@@ -79,10 +79,10 @@ describe('summarizeAssistantRowUsage', () => {
     ];
 
     expect(summarizeAssistantRowUsage(message, messages)).toEqual({
-      totalCostUsd: 11.1,
+      totalCostUsd: expect.closeTo(11.1, 12),
       breakdown: {
         tokens: { input: 111, output: 222, cacheRead: 333, cacheWrite: 444, total: 1110 },
-        cost: { input: 1.11, output: 2.22, cacheRead: 3.33, cacheWrite: 4.44 },
+        cost: { input: expect.closeTo(1.11, 12), output: expect.closeTo(2.22, 12), cacheRead: expect.closeTo(3.33, 12), cacheWrite: expect.closeTo(4.44, 12) },
       },
     });
   });
@@ -94,10 +94,10 @@ describe('summarizeAssistantRowUsage', () => {
     const result = summarizeAssistantRowUsage(message, [message, toolResult('tool-1', nested), toolResult('tool-1', nested), toolResult('tool-1')]);
 
     expect(result).toMatchObject({
-      totalCostUsd: 1.2,
+      totalCostUsd: expect.closeTo(1.2, 12),
       breakdown: {
         tokens: { input: 30, output: 60, cacheRead: 90, cacheWrite: 120, total: 300 },
-        cost: { input: 0.12, output: 0.24, cacheRead: 0.36, cacheWrite: 0.48 },
+        cost: { input: expect.closeTo(0.12, 12), output: expect.closeTo(0.24, 12), cacheRead: expect.closeTo(0.36, 12), cacheWrite: expect.closeTo(0.48, 12) },
       },
     });
   });
@@ -120,7 +120,11 @@ describe('summarizeAssistantRowUsage', () => {
     const streaming = {
       role: 'assistant',
       content: [{ type: 'text', text: 'partial' }],
-      usage: usage({ input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 }, { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, totalTokens: 100 }),
+      usage: {
+        ...usage({ input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 }, { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, totalTokens: 100 }),
+        cacheWrite1h: 15,
+        reasoning: 8,
+      },
     } as unknown as StreamingMessage;
 
     expect(summarizeAssistantRowUsage(streaming, [])).toEqual({

@@ -106,6 +106,12 @@ The reducer follows Pi’s usage inclusion policy: assistant messages, tool resu
 
 If Pi emits partial usage but the terminal aborted or errored message has no usable usage, retain the last positive partial amount in the active PWA transcript. Keep it as a client-only override. A full resync or reload can lose this fallback, and Pi’s session total can omit it. Final usage stored by Pi remains available after reload.
 
+#### Client row access and cost disclosure projection
+
+`SessionRegistry.getAssistantRowUsage(sessionId: string, messageIndex: number): AssistantRowUsage | null` exposes a finalized transcript row's summary. It incorporates the active-view-only terminal partial override without mutating the terminal wire message. Full resync discards overrides. Persisted final usage remains available after reload.
+
+`client/src/lib/cost-disclosure.ts` defines `summarizeCostDisclosure(totalCostUsd: number | null | undefined, breakdown?: PimoteUsageBreakdown): CostDisclosure | null`. `CostDisclosure` contains `label: string`, `unknownCostUsd: number | null`, and `inconsistent: boolean`. Invalid or nonpositive totals return null. Missing breakdowns keep valid totals visible without inventing Unknown. Category differences within one cent return no Unknown and no inconsistency. Larger positive remainders return Unknown. Larger overages mark inconsistency without changing the total.
+
 #### Cost disclosure interaction
 
 The cost trigger is a real button with an accessible name and expanded state. Click, tap, Enter, and Space open its popover. Escape, the close control, and an outside click close it. One popover opens at a time.
@@ -139,12 +145,19 @@ Remove `nextRoundtripCostUsd` and its cache-read estimate from the server calcul
 - `shared/src/protocol.ts` — Defines serializable usage, breakdown, row-summary, streaming, and metadata shapes.
 - `server/src/session-usage.ts` — Defines the session usage projection seam over persisted Pi entries.
 - `client/src/lib/assistant-row-usage.ts` — Defines the assistant-row usage projection seam over transcript snapshots.
-- `client/src/lib/stores/session-registry.svelte.ts` — Keeps legacy metadata wiring type-safe while the additive usage fields roll out.
+- `client/src/lib/stores/session-registry.svelte.ts` — Exposes row usage with client-only terminal fallback and retains streaming/final usage state.
+- `client/src/lib/cost-disclosure.ts` — Defines total visibility, formatting, and category mismatch projection.
+- `server/src/message-mapper.ts` and `server/src/event-buffer.ts` — Existing public mapping and live/replay boundaries.
+- `server/src/ws-handler.ts` — Existing metadata command boundary.
 
 ### Test Files
 
 - `server/src/session-usage.test.ts` — Covers session token authority and category-cost aggregation.
 - `client/src/lib/assistant-row-usage.test.ts` — Covers assistant and matching tool-result usage aggregation.
+- `server/src/message-usage.test.ts` — Covers usage mapping, persisted context, valid partial snapshots, final delivery, and replay.
+- `server/src/ws-handler.test.ts` — Covers authoritative Pi metadata totals, category costs, and forecast absence.
+- `client/src/lib/stores/session-usage.test.ts` — Covers replacement, final replay/resync/reload, in-flight resync, terminal fallback, metadata storage, and forecast absence.
+- `client/src/lib/cost-disclosure.test.ts` — Covers numeric formatting, visibility, missing breakdowns, rounding tolerance, Unknown, and inconsistent overages.
 
 ### Behaviors Covered
 
@@ -161,3 +174,22 @@ Remove `nextRoundtripCostUsd` and its cache-read estimate from the server calcul
 - Keep multiple assistant rows separate when projecting a later response.
 - Accept a streaming usage snapshot without adding subset fields twice.
 - Return no row usage when the snapshot and matching tool results contain no usage.
+
+#### Wire, state, and disclosure boundaries
+
+- Preserve assistant and tool-result usage and tool-call correlation through mapping and persisted context.
+- Forward finite, nonnegative partial usage, omit invalid snapshots, and preserve final usage through replay.
+- Replace snapshots with final usage. Preserve final usage across resync and reload.
+- Keep aborted/errored partial-only fallback in the active view without mutating terminal wire data. Discard it on full resync and reload.
+- Restore in-flight usage from full resync.
+- Use Pi's scalar session total and token counts with persisted category dollars. Partial snapshots do not change session totals.
+- Remove forecast output and client state while retaining actual cache costs.
+- Hide invalid/nonpositive totals. Format positive totals below one cent as `<$0.01` and larger totals to two decimals.
+- Ignore category differences within one cent. Show larger positive Unknown remainders and flag larger overages without negative Unknown.
+- Keep older-server totals visible when no breakdown exists.
+
+#### Manual validation
+
+Popover click/tap, keyboard accessibility, one-open-at-a-time behavior, responsive placement, interrupted-row placement, and status/settings integration remain in the default manual-testing phase. The approved interaction mock defines these expectations.
+
+**Review status:** approved

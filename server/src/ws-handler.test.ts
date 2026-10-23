@@ -2733,6 +2733,19 @@ describe('WsHandler', () => {
   });
 
   describe('get_session_meta', () => {
+    it('uses Pi complete-session totals and category usage, without a forecast', async () => {
+      const tokens = { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, total: 100 };
+      const usage = { ...tokens, totalTokens: 100, cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 } };
+      const slot = createMockSlot({ id: 'session-usage' });
+      (slot.session as any).getSessionStats = () => ({ cost: 7, tokens });
+      (slot.session as any).sessionManager = { getEntries: () => [{ type: 'usage', id: 'alternate-branch', usage }] };
+      const { handler, sent } = createTestHandler('client-1', { sessions: new Map([['session-usage', slot]]) });
+      await handler.handleMessage(JSON.stringify({ type: 'get_session_meta', sessionId: 'session-usage', id: 'req-usage' }));
+      const meta = (findResponse(sent, 'req-usage')!.data as any).meta;
+      expect(meta.lifetimeCostUsd).toBe(7);
+      expect(meta.usageBreakdown).toEqual({ tokens, cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4 } });
+      expect(meta).not.toHaveProperty('nextRoundtripCostUsd');
+    });
     it('returns the cached git branch (no synchronous git shell-out on the hot path)', async () => {
       const session = createMockSlot({
         id: 'session-meta',
@@ -2758,7 +2771,7 @@ describe('WsHandler', () => {
       expect((resp!.data as any).meta.gitBranch).toBe('feature-x');
     });
 
-    it('prices the next round-trip lower bound at the model cache-read rate', async () => {
+    it('omits the forecast even when context tokens and cache pricing are available', async () => {
       const session = createMockSlot({
         id: 'session-cost',
         session: {
@@ -2768,6 +2781,7 @@ describe('WsHandler', () => {
           // cacheRead is USD per MILLION tokens.
           model: { cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
           sessionId: 'session-cost',
+          getSessionStats: () => ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }),
           getContextUsage: () => ({ tokens: 50_000, contextWindow: 200_000, percent: 25 }),
           sessionManager: { getEntries: () => [] },
         },
@@ -2778,11 +2792,12 @@ describe('WsHandler', () => {
       await handler.handleMessage(JSON.stringify({ type: 'get_session_meta', sessionId: 'session-cost', id: 'req-cost' }));
 
       const meta = (findResponse(sent, 'req-cost')!.data as any).meta;
-      // 50_000 tokens * 0.3 / 1e6 = 0.015
-      expect(meta.nextRoundtripCostUsd).toBeCloseTo(0.015, 10);
+      expect(meta.lifetimeCostUsd).toBe(0);
+      expect(meta.usageBreakdown.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+      expect(meta).not.toHaveProperty('nextRoundtripCostUsd');
     });
 
-    it('reports a null next round-trip cost when context tokens or pricing are unknown', async () => {
+    it('omits the forecast when context tokens and pricing are unknown', async () => {
       const session = createMockSlot({
         id: 'session-nocost',
         session: {
@@ -2791,6 +2806,7 @@ describe('WsHandler', () => {
           messages: [],
           model: null,
           sessionId: 'session-nocost',
+          getSessionStats: () => ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }),
           getContextUsage: () => ({ tokens: null, contextWindow: 200_000, percent: null }),
           sessionManager: { getEntries: () => [] },
         },
@@ -2801,7 +2817,8 @@ describe('WsHandler', () => {
       await handler.handleMessage(JSON.stringify({ type: 'get_session_meta', sessionId: 'session-nocost', id: 'req-nocost' }));
 
       const meta = (findResponse(sent, 'req-nocost')!.data as any).meta;
-      expect(meta.nextRoundtripCostUsd).toBeNull();
+      expect(meta.lifetimeCostUsd).toBe(0);
+      expect(meta).not.toHaveProperty('nextRoundtripCostUsd');
     });
   });
 
