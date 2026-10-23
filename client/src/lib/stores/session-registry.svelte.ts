@@ -56,7 +56,7 @@ import { downloadUi } from './download-ui.svelte.js';
 import { coordinateDownloadUpdate } from '../download-coordinator.js';
 import { handleDownloadNotificationIntent, type DownloadNotificationIntent } from '../download-notification-intent.js';
 import { getActiveSessions, setActiveSessions } from './persistence.js';
-import { summarizeAssistantRowUsage } from '../assistant-row-usage.js';
+import { summarizeAssistantRowUsage, type ToolResultUsageIndex } from '../assistant-row-usage.js';
 
 /** Maximum UTF-8 bytes retained from live bash deltas per execution. */
 export const MAX_BASH_LIVE_OUTPUT_BYTES = 256 * 1024;
@@ -85,8 +85,36 @@ function truncateUtf8(value: string, maxBytes: number): string {
 
 function hasPositiveUsage(usage: PimoteUsage | undefined): usage is PimoteUsage {
   if (!usage) return false;
-  const costs = [usage.cost.input, usage.cost.output, usage.cost.cacheRead, usage.cost.cacheWrite, usage.cost.total];
-  return costs.every(Number.isFinite) && costs.some((cost) => cost > 0);
+  const values = [
+    usage.input,
+    usage.output,
+    usage.cacheRead,
+    usage.cacheWrite,
+    usage.totalTokens,
+    usage.cost.input,
+    usage.cost.output,
+    usage.cost.cacheRead,
+    usage.cost.cacheWrite,
+    usage.cost.total,
+  ];
+  return values.every((value) => Number.isFinite(value) && value >= 0) && values.some((value) => value > 0);
+}
+
+function isZeroUsage(usage: PimoteUsage | undefined): boolean {
+  if (!usage) return false;
+  const values = [
+    usage.input,
+    usage.output,
+    usage.cacheRead,
+    usage.cacheWrite,
+    usage.totalTokens,
+    usage.cost.input,
+    usage.cost.output,
+    usage.cost.cacheRead,
+    usage.cost.cacheWrite,
+    usage.cost.total,
+  ];
+  return values.every((value) => value === 0);
 }
 
 /** Append a live delta without allowing the transient browser buffer to grow unbounded. */
@@ -594,9 +622,16 @@ export class SessionRegistry {
         if (start.role === 'user' && start.clientMessageId !== undefined && session.optimisticEntries.some((e) => e.clientMessageId === start.clientMessageId)) {
           break;
         }
+        // Pi emits a second assistant start with an all-zero usage snapshot for
+        // an abort or provider error. Keep the prior positive snapshot until
+        // that terminal message can receive the client-only fallback.
+        const previousPositiveUsage = session.lastPositiveStreamingUsage;
         this.resetAssistantUsageTracking(session);
         session.streamingKey = 'msg-' + this._nextMessageKey++;
         session.streamingMessage = { role: start.role, content: [] };
+        if (start.role === 'assistant' && previousPositiveUsage && isZeroUsage(start.usage)) {
+          session.lastPositiveStreamingUsage = previousPositiveUsage;
+        }
         this.rememberStreamingUsage(session, start.usage);
         break;
       }
@@ -692,7 +727,7 @@ export class SessionRegistry {
           session.streamingKey = null;
         }
         if (message.role === 'assistant') {
-          if (message.usage === undefined && (message.aborted === true || message.errorMessage !== undefined) && insertedKey && partialUsage) {
+          if (!hasPositiveUsage(message.usage) && (message.aborted === true || message.errorMessage !== undefined) && insertedKey && partialUsage) {
             this.storeAssistantUsageOverride(session, insertedKey, partialUsage);
           }
           session.lastPositiveStreamingUsage = null;
@@ -1054,15 +1089,16 @@ export class SessionRegistry {
 
   /** Update session meta (git branch, context usage, lifetime cost) */
   /** Return row usage, including an active-view-only terminal partial fallback. */
-  getAssistantRowUsage(sessionId: string, messageIndex: number): import('@pimote/shared').AssistantRowUsage | null {
+  getAssistantRowUsage(sessionId: string, messageIndex: number, toolResultUsageIndex?: ToolResultUsageIndex): import('@pimote/shared').AssistantRowUsage | null {
     const session = this.sessions[sessionId];
     const message = session?.messages[messageIndex];
     if (!session || !message || message.role !== 'assistant') return null;
 
     const key = session.messageKeys[messageIndex];
     const fallback = key ? session.assistantUsageOverrides[key] : undefined;
-    const snapshot = message.usage === undefined && fallback ? { ...message, usage: fallback } : message;
-    return summarizeAssistantRowUsage(snapshot, session.messages);
+    const snapshot = !hasPositiveUsage(message.usage) && fallback ? { ...message, usage: fallback } : message;
+    const usage = sessionId === this.viewedSessionId ? snapshot : message;
+    return summarizeAssistantRowUsage(usage, session.messages, toolResultUsageIndex);
   }
 
   updateMeta(sessionId: string, meta: SessionMeta): void {

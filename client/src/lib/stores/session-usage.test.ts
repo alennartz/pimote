@@ -7,6 +7,7 @@ const event = (type: string, extra = {}) => ({ type, sessionId: 's1', cursor: 1,
 const makeRegistry = () => {
   const registry = new SessionRegistry();
   registry.addSession('s1', '/path', 'project');
+  registry.switchTo('s1');
   return registry;
 };
 const resync = (messages: unknown[], streamingMessage?: unknown) =>
@@ -60,12 +61,43 @@ describe('SessionRegistry usage boundaries', () => {
     reload.handleEvent(resync([message]));
     expect(reload.getAssistantRowUsage('s1', 0)).toBeNull();
   });
+  it('retains the last partial snapshot across Pi’s zero-usage failure message', () => {
+    const registry = makeRegistry();
+    const zeroUsage = {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+    registry.handleEvent(event('message_start', { role: 'assistant', usage: usage(1) }));
+    registry.handleEvent(event('message_start', { role: 'assistant', usage: zeroUsage }));
+    const message = { role: 'assistant', content: [], aborted: true, usage: zeroUsage };
+    registry.handleEvent(event('message_end', { message }));
+    expect(registry.getAssistantRowUsage('s1', 0)?.totalCostUsd).toBe(1);
+    expect(message.usage).toEqual(zeroUsage);
+  });
   it('keeps terminal final usage instead of the partial fallback', () => {
     const registry = makeRegistry();
     registry.handleEvent(event('message_start', { role: 'assistant', usage: usage(1) }));
     const message = { role: 'assistant', content: [], aborted: true, usage: usage(2) };
     registry.handleEvent(event('message_end', { message }));
     registry.handleEvent(resync([message]));
+    expect(registry.getAssistantRowUsage('s1', 0)?.totalCostUsd).toBe(2);
+  });
+  it('keeps persisted usage for a background session without exposing its transient fallback', () => {
+    const registry = makeRegistry();
+    registry.handleEvent(event('message_start', { role: 'assistant', usage: usage(1) }));
+    const partial = { role: 'assistant', content: [], aborted: true };
+    registry.handleEvent(event('message_end', { message: partial }));
+
+    registry.addSession('s2', '/path/other', 'other');
+    registry.switchTo('s2');
+    expect(registry.getAssistantRowUsage('s1', 0)).toBeNull();
+
+    const persisted = { ...partial, usage: usage(2) };
+    registry.handleEvent(resync([persisted]));
     expect(registry.getAssistantRowUsage('s1', 0)?.totalCostUsd).toBe(2);
   });
   it('stores additive session breakdowns without forecast state or partial updates to the Pi total', () => {

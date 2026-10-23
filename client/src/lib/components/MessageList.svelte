@@ -2,7 +2,7 @@
   import { tick, onDestroy } from 'svelte';
   import { formatRelativeTime } from '$lib/format-relative-time.js';
   import type { PimoteAgentMessage, StreamingMessage, AssistantRowUsage } from '@pimote/shared';
-  import { summarizeAssistantRowUsage } from '$lib/assistant-row-usage.js';
+  import { indexToolResultUsage, summarizeAssistantRowUsage } from '$lib/assistant-row-usage.js';
   import type { BashExecutionState, PerSessionState } from '$lib/stores/session-registry.svelte.js';
   import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
@@ -155,14 +155,16 @@
     return entries;
   });
 
+  let toolResultUsageIndex = $derived.by(() => indexToolResultUsage(session?.messages ?? []));
+
   function getAssistantRowUsage(entry: Extract<DisplayEntry, { kind: 'message' }>): AssistantRowUsage | null {
     if (entry.message.role !== 'assistant' || !session) return null;
-    if (entry.streaming) return summarizeAssistantRowUsage(entry.message, session.messages);
+    if (entry.streaming) return summarizeAssistantRowUsage(entry.message, session.messages, toolResultUsageIndex);
     if (entry.messageIndex === null) return null;
     // Explicit sources, such as manager transcripts, are not owned by the
     // regular session registry. Derive their rows directly from their snapshot.
-    if (source) return summarizeAssistantRowUsage(entry.message, session.messages);
-    return sessionRegistry.getAssistantRowUsage(session.sessionId, entry.messageIndex);
+    if (source) return summarizeAssistantRowUsage(entry.message, session.messages, toolResultUsageIndex);
+    return sessionRegistry.getAssistantRowUsage(session.sessionId, entry.messageIndex, toolResultUsageIndex);
   }
 
   // Show streaming indicator when streaming but no content yet

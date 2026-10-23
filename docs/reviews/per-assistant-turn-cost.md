@@ -15,7 +15,7 @@ The implementation covers the planned wire, session, row-projection, disclosure,
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/stores/session-registry.svelte.ts:425-443,591-600,694-700`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Preserve the last positive snapshot across Pi's failure `message_start` and treat an all-zero terminal usage snapshot as unusable.
 
 Pi's `handleRunFailure` emits a failure assistant message with an all-zero `usage` object. The mapper preserves that object, so `message.usage === undefined` is false. Pi emits a new `message_start` before that terminal message, and `resetAssistantUsageTracking` clears the positive streaming snapshot. The client therefore cannot retain partial cost for an aborted or errored stream, although the plan requires it.
@@ -25,7 +25,7 @@ Pi's `handleRunFailure` emits a failure assistant message with an all-zero `usag
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `client/src/lib/stores/session-registry.svelte.ts:1057-1065`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Apply `assistantUsageOverrides` only when `sessionId === this.viewedSessionId`.
 
 The plan requires terminal partial usage to remain an active-view-only override. `getAssistantRowUsage` applies the override for any session ID, so callers can expose transient data from a background session instead of the persisted transcript.
@@ -35,7 +35,7 @@ The plan requires terminal partial usage to remain an active-view-only override.
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `shared/src/protocol.ts:1302-1307`, `server/src/ws-handler.ts:107-141,2160-2179`, `client/src/lib/stores/session-registry.svelte.ts:1593-1596`
-- **Status:** open
+- **Status:** dismissed
 - **Fix:** Keep the command-refresh change in a separate review scope, or add it explicitly to this plan.
 
 Commit `92669b5` adds a `session_commands_changed` protocol event and server/client command-cache refresh behavior. The per-assistant-turn-cost plan does not cover this feature. The change is preserved, but it needs separate scope or plan coverage.
@@ -45,7 +45,7 @@ Commit `92669b5` adds a `session_commands_changed` protocol event and server/cli
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `client/src/lib/assistant-row-usage.ts:10-18`, `client/src/lib/components/MessageList.svelte:159-174`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Build one `toolCallId` to usage index per transcript snapshot and reuse it for all assistant rows.
 
 The plan calls for indexing tool-result usage by `toolCallId`. The implementation scans every message for every assistant row. Recomputing all rows after each message replacement is O(rows × messages), which can make long transcripts costly to render.
