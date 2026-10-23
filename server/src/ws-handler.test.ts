@@ -3,7 +3,7 @@ import { VoiceOrchestrator } from './voice-orchestrator.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { createCommandContextActions, mapTreeNodes, takeOverClientSlot, WsHandler, type ClientRegistry } from './ws-handler.js';
+import { createCommandContextActions, mapTreeNodes, serializeTreeResponse, takeOverClientSlot, WsHandler, type ClientRegistry } from './ws-handler.js';
 import { sendSlotEvent, waitForSlotUiResponse, type PimoteSessionManager, type ManagedSlot, type SessionState, type SessionObserver } from './session-manager.js';
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
@@ -14,7 +14,7 @@ import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
 import { QueueOwnership } from './queue-ownership.js';
 import type { EventBusController } from '@earendil-works/pi-coding-agent';
-import type { DownloadItem, FolderInfo, PimoteEvent, PimoteResponse, PimoteSessionEvent } from '../../shared/dist/index.js';
+import type { DownloadItem, FolderInfo, PimoteEvent, PimoteResponse, PimoteSessionEvent, PimoteTreeNode } from '../../shared/dist/index.js';
 
 describe('extension command context actions', () => {
   it('delegates waitForIdle to the SDK settle-aware primitive', async () => {
@@ -2144,6 +2144,38 @@ describe('WsHandler', () => {
         expect(node.id).toBe(`entry-${i}`);
         if (i < 4999) node = node.children[0];
       }
+      expect(node.children).toEqual([]);
+    });
+
+    it('serializes deeply nested tree responses without overflowing JSON.stringify', () => {
+      const tree: PimoteTreeNode[] = [];
+      let children = tree;
+      for (let i = 0; i < 10_000; i += 1) {
+        const next: PimoteTreeNode = {
+          id: `entry-${i}`,
+          type: i % 2 === 0 ? 'message' : 'custom',
+          ...(i % 2 === 0 ? { role: 'assistant' } : { customType: 'trace' }),
+          preview: `node ${i}`,
+          timestamp: '2026-04-11T12:00:00.000Z',
+          children: [],
+        };
+        children.push(next);
+        children = next.children;
+      }
+
+      const parsed = JSON.parse(serializeTreeResponse('req-tree-deep', tree, 'entry-9999')) as {
+        id: string;
+        success: boolean;
+        data: { tree: PimoteTreeNode[]; currentLeafId: string };
+      };
+
+      expect(parsed.id).toBe('req-tree-deep');
+      expect(parsed.success).toBe(true);
+      expect(parsed.data.currentLeafId).toBe('entry-9999');
+      expect(parsed.data.tree).toHaveLength(1);
+      let node = parsed.data.tree[0];
+      for (let i = 0; i < 10_000 - 1; i += 1) node = node.children[0];
+      expect(node.id).toBe('entry-9999');
       expect(node.children).toEqual([]);
     });
 

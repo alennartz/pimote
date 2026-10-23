@@ -224,6 +224,47 @@ export function mapTreeNodes(nodes: SessionTreeNode[]): PimoteTreeNode[] {
   return mapped;
 }
 
+/** Serialize a tree response without recursive traversal in JSON.stringify. */
+export function serializeTreeResponse(id: string, tree: PimoteTreeNode[], currentLeafId: string | null): string {
+  type Frame = { kind: 'array'; nodes: PimoteTreeNode[]; index: number } | { kind: 'close_node' };
+
+  const chunks: string[] = ['{"id":', JSON.stringify(id), ',"success":true,"data":{"tree":['];
+  const pending: Frame[] = [{ kind: 'array', nodes: tree, index: 0 }];
+
+  while (pending.length > 0) {
+    const frame = pending[pending.length - 1];
+    if (frame.kind === 'close_node') {
+      pending.pop();
+      chunks.push('}');
+      continue;
+    }
+
+    if (frame.index >= frame.nodes.length) {
+      pending.pop();
+      chunks.push(']');
+      continue;
+    }
+
+    const node = frame.nodes[frame.index];
+    frame.index += 1;
+    if (frame.index > 1) chunks.push(',');
+
+    chunks.push('{"id":', JSON.stringify(node.id), ',"type":', JSON.stringify(node.type));
+    if (node.role !== undefined) chunks.push(',"role":', JSON.stringify(node.role));
+    if (node.customType !== undefined) chunks.push(',"customType":', JSON.stringify(node.customType));
+    chunks.push(',"preview":', JSON.stringify(node.preview), ',"timestamp":', JSON.stringify(node.timestamp));
+    if (node.label !== undefined) chunks.push(',"label":', JSON.stringify(node.label));
+    if (node.labelTimestamp !== undefined) chunks.push(',"labelTimestamp":', JSON.stringify(node.labelTimestamp));
+    chunks.push(',"children":[');
+
+    pending.push({ kind: 'close_node' });
+    pending.push({ kind: 'array', nodes: node.children, index: 0 });
+  }
+
+  chunks.push(',"currentLeafId":', JSON.stringify(currentLeafId), '}}');
+  return chunks.join('');
+}
+
 /**
  * Create command context actions for extension commands.
  * Captures the ManagedSlot (stable lifetime), not a transient handler.
@@ -1635,7 +1676,7 @@ export class WsHandler {
     if (trimmed === '/tree') {
       const tree = mapTreeNodes(session.sessionManager.getTree() as SessionTreeNode[]);
       const currentLeafId = session.sessionManager.getLeafId();
-      this.sendResponse(id, true, { tree, currentLeafId });
+      this.sendSerializedResponse(serializeTreeResponse(id, tree, currentLeafId));
       return true;
     }
 
@@ -1966,6 +2007,14 @@ export class WsHandler {
 
     try {
       this.ws.send(JSON.stringify(response));
+    } catch (err) {
+      console.error('[WsHandler] Failed to send response:', err);
+    }
+  }
+
+  private sendSerializedResponse(serialized: string): void {
+    try {
+      this.ws.send(serialized);
     } catch (err) {
       console.error('[WsHandler] Failed to send response:', err);
     }
