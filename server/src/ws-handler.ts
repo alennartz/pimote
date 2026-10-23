@@ -44,9 +44,9 @@ import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
-import { mapAgentMessage, mapContextEntries, rendererRegisteredVisibility } from './message-mapper.js';
+import { mapAgentMessage, mapAgentMessageUsage, mapContextEntries, rendererRegisteredVisibility } from './message-mapper.js';
 import type { TreeNavigationStartEvent, TreeNavigationEndEvent } from './event-buffer.js';
-import { sumLifetimeCostUsd } from './session-cost.js';
+import { projectSessionUsage } from './session-usage.js';
 import { completeFileRefs } from './file-references.js';
 import { readEditableFile, writeEditableFile } from './file-edit.js';
 import { attributeDrained, type Intent } from './queue-ownership.js';
@@ -1525,24 +1525,16 @@ export class WsHandler {
       }
 
       case 'get_session_meta': {
-        const contextUsage = session.getContextUsage();
-        // Lower bound on the next round trip: the whole current context is
-        // re-sent as the cached prefix, so the cheapest it can be billed is the
-        // cache-read rate (cost.cacheRead is USD per MILLION tokens) — NOT the
-        // full input rate, which only applies if the cache has expired. Ignores
-        // the new input/output tokens the next turn adds, so it is a floor.
-        const contextTokens = contextUsage?.tokens ?? null;
-        const cacheReadCostPerMillion = session.model?.cost?.cacheRead ?? null;
-        const nextRoundtripCostUsd = contextTokens != null && cacheReadCostPerMillion != null ? (contextTokens * cacheReadCostPerMillion) / 1_000_000 : null;
+        // Older test doubles and sessions created by extensions can omit these
+        // accessors. Real AgentSession instances always provide both values.
+        const contextUsage = session.getContextUsage?.() ?? null;
+        const stats = session.getSessionStats?.() ?? ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } as const);
+        const usageBreakdown = projectSessionUsage(session.sessionManager.getEntries(), stats);
         const meta: SessionMeta = {
           gitBranch: this.sessionManager.getLastKnownGitBranch(sessionId),
           contextUsage: contextUsage ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow } : null,
-          // getEntries() (not getBranch()) keeps this complete-history fold
-          // across every branch, not just the current leaf. It recomputes from
-          // persisted assistant, compaction, and branch-summary usage after
-          // live switches and reloads; see session-cost.ts for the policy.
-          lifetimeCostUsd: sumLifetimeCostUsd(session.sessionManager.getEntries()),
-          nextRoundtripCostUsd,
+          lifetimeCostUsd: stats.cost,
+          usageBreakdown,
         };
         this.sendResponse(id, true, { meta });
         break;
@@ -2125,12 +2117,14 @@ export class WsHandler {
     // The observer missed their start events, so without them it drops the
     // deltas and tool output that follow.
     const partial = session.isStreaming ? session.state.streamingMessage : undefined;
-    const streamingMessage =
-      partial === undefined
-        ? undefined
-        : 'content' in partial && Array.isArray(partial.content) && partial.content.length > 0
-          ? mapAgentMessage(partial)
-          : { role: partial.role, content: [] };
+    const streamingMessage = (() => {
+      if (partial === undefined) return undefined;
+      if ('content' in partial && Array.isArray(partial.content) && partial.content.length === 0) {
+        const usage = mapAgentMessageUsage(partial);
+        return { role: partial.role, content: [], ...(usage ? { usage } : {}) };
+      }
+      return mapAgentMessage(partial);
+    })();
     const runningToolCallIds = [...session.state.pendingToolCalls];
     return {
       type: 'full_resync',

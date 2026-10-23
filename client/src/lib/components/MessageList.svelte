@@ -1,7 +1,8 @@
 <script lang="ts">
   import { tick, onDestroy } from 'svelte';
   import { formatRelativeTime } from '$lib/format-relative-time.js';
-  import type { PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
+  import type { PimoteAgentMessage, StreamingMessage, AssistantRowUsage } from '@pimote/shared';
+  import { summarizeAssistantRowUsage } from '$lib/assistant-row-usage.js';
   import type { BashExecutionState, PerSessionState } from '$lib/stores/session-registry.svelte.js';
   import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
@@ -117,7 +118,7 @@
   }
 
   type DisplayEntry =
-    | { kind: 'message'; key: string; message: PimoteAgentMessage | StreamingMessage; streaming: boolean }
+    | { kind: 'message'; key: string; message: PimoteAgentMessage | StreamingMessage; streaming: boolean; messageIndex: number | null }
     | { kind: 'bash'; key: string; execution: BashExecutionState };
 
   // Unified display entries: finalized messages, streaming message, and the
@@ -134,6 +135,9 @@
         key: session.messageKeys[i] ?? `fallback-${i}`,
         message: msg as PimoteAgentMessage | StreamingMessage,
         streaming: false,
+        // Keep the source transcript index even when display:false entries are
+        // filtered out. The registry uses this index to find persisted usage.
+        messageIndex: i,
       });
     }
     if (session.streamingMessage && session.streamingKey) {
@@ -142,6 +146,7 @@
         key: session.streamingKey,
         message: session.streamingMessage,
         streaming: true,
+        messageIndex: null,
       });
     }
     for (const execution of Object.values(session.bashExecutions)) {
@@ -149,6 +154,16 @@
     }
     return entries;
   });
+
+  function getAssistantRowUsage(entry: Extract<DisplayEntry, { kind: 'message' }>): AssistantRowUsage | null {
+    if (entry.message.role !== 'assistant' || !session) return null;
+    if (entry.streaming) return summarizeAssistantRowUsage(entry.message, session.messages);
+    if (entry.messageIndex === null) return null;
+    // Explicit sources, such as manager transcripts, are not owned by the
+    // regular session registry. Derive their rows directly from their snapshot.
+    if (source) return summarizeAssistantRowUsage(entry.message, session.messages);
+    return sessionRegistry.getAssistantRowUsage(session.sessionId, entry.messageIndex);
+  }
 
   // Show streaming indicator when streaming but no content yet
   let showStreamingIndicator = $derived.by(() => {
@@ -235,7 +250,8 @@
         {#if entry.kind === 'bash'}
           <BashExecution execution={entry.execution} onCancel={readOnly ? undefined : () => handleBashCancel(entry.execution.id)} />
         {:else}
-          <Message message={entry.message} streaming={entry.streaming} messageKey={entry.key} onfork={source ? undefined : handleFork} />
+          {@const assistantRowUsage = getAssistantRowUsage(entry)}
+          <Message message={entry.message} streaming={entry.streaming} messageKey={entry.key} {assistantRowUsage} onfork={source ? undefined : handleFork} />
         {/if}
       {/each}
 

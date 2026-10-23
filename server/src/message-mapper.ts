@@ -1,6 +1,57 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { sessionEntryToContextMessages, type SessionEntry } from '@earendil-works/pi-coding-agent';
-import type { PimoteAgentMessage, PimoteMessageContent } from '../../shared/dist/index.js';
+import type { PimoteAgentMessage, PimoteMessageContent, PimoteUsage } from '../../shared/dist/index.js';
+
+/** The SDK usage carried by assistant and tool-result messages. */
+type SdkUsage = NonNullable<Extract<AgentMessage, { role: 'assistant' | 'toolResult' }>['usage']>;
+
+function isFiniteNonNegative(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * Adapt one SDK usage snapshot to the self-contained Pimote wire shape.
+ * Invalid required fields are rejected at this SDK boundary. Optional subset
+ * fields are included only when they are valid numbers.
+ */
+function mapUsage(usage: SdkUsage | undefined): PimoteUsage | undefined {
+  if (!usage) return undefined;
+  const required = [
+    usage.input,
+    usage.output,
+    usage.cacheRead,
+    usage.cacheWrite,
+    usage.totalTokens,
+    usage.cost?.input,
+    usage.cost?.output,
+    usage.cost?.cacheRead,
+    usage.cost?.cacheWrite,
+    usage.cost?.total,
+  ];
+  if (!required.every(isFiniteNonNegative)) return undefined;
+
+  return {
+    input: usage.input,
+    output: usage.output,
+    cacheRead: usage.cacheRead,
+    cacheWrite: usage.cacheWrite,
+    totalTokens: usage.totalTokens,
+    ...(isFiniteNonNegative(usage.cacheWrite1h) ? { cacheWrite1h: usage.cacheWrite1h } : {}),
+    ...(isFiniteNonNegative(usage.reasoning) ? { reasoning: usage.reasoning } : {}),
+    cost: {
+      input: usage.cost.input,
+      output: usage.cost.output,
+      cacheRead: usage.cost.cacheRead,
+      cacheWrite: usage.cost.cacheWrite,
+      total: usage.cost.total,
+    },
+  };
+}
+
+/** Map usage from an SDK assistant or tool-result message. */
+export function mapAgentMessageUsage(message: AgentMessage | undefined): PimoteUsage | undefined {
+  return message && (message.role === 'assistant' || message.role === 'toolResult') ? mapUsage(message.usage) : undefined;
+}
 
 /**
  * The element type of any array-shaped AgentMessage content, derived from the
@@ -203,6 +254,7 @@ export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
       // output item); taking only the first drops the payload.
       const texts = msg.content.flatMap((c) => (c.type === 'text' ? [c.text] : []));
       const text = texts.length > 0 ? texts.join('\n') : undefined;
+      const usage = mapAgentMessageUsage(msg);
       return {
         role: 'toolResult',
         content: [
@@ -218,6 +270,7 @@ export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
             ...(msg.durationMs !== undefined ? { durationMs: msg.durationMs } : {}),
           },
         ],
+        ...(usage ? { usage } : {}),
       };
     }
 
@@ -226,6 +279,7 @@ export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
 
     case 'assistant': {
       const content = mapContentBlocks(msg.content);
+      const usage = mapAgentMessageUsage(msg);
       // Aborted assistant turns are a real signal in voice mode (every barge-in
       // produces one via pi-agent-core's handleRunFailure) and shouldn't be
       // confused with malformed messages. Log the empty-content warning only
@@ -239,6 +293,7 @@ export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
         content,
         ...(aborted ? { aborted: true } : {}),
         ...(typeof msg.errorMessage === 'string' ? { errorMessage: msg.errorMessage } : {}),
+        ...(usage ? { usage } : {}),
       };
     }
 

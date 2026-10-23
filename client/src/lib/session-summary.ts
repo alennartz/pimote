@@ -79,33 +79,6 @@ export function getContextDisplay(session: SessionSummarySource | null | undefin
   return null;
 }
 
-/**
- * Adaptive display for the session lifetime cost figure.
- * - usd <= 0            → null (caller hides the indicator)
- * - 0 < usd < 0.01      → "<$0.01"
- * - usd >= 0.01         → "$" + usd.toFixed(2)   (e.g. "$1.23", "$0.04")
- */
-export function formatSessionCost(usd: number): string | null {
-  if (usd <= 0) return null;
-  if (usd < 0.01) return '<$0.01';
-  return '$' + usd.toFixed(2);
-}
-
-/**
- * Combined cost display: lifetime session cost with the next-round-trip lower
- * bound appended in parentheses.
- * - "$1.23 (+$0.03)" when both are present
- * - "$1.23" when there is no next-round-trip figure
- * - null when there is no lifetime cost to show (increment is meaningless alone)
- */
-export function formatCombinedCost(lifetimeUsd: number, nextRoundtripUsd: number | null | undefined): string | null {
-  const base = formatSessionCost(lifetimeUsd);
-  if (!base) return null;
-  if (nextRoundtripUsd == null || nextRoundtripUsd <= 0) return base;
-  const increment = nextRoundtripUsd < 0.01 ? '+<$0.01' : '+$' + nextRoundtripUsd.toFixed(2);
-  return `${base} (${increment})`;
-}
-
 export function getContextTone(percent: number | null | undefined): 'normal' | 'warning' | 'critical' {
   if (percent != null && percent > 90) return 'critical';
   if (percent != null && percent > 70) return 'warning';

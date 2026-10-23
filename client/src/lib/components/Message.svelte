@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
+  import type { AssistantRowUsage, PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import TextBlock from './TextBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
@@ -16,6 +16,7 @@
   import CircleSlash from '@lucide/svelte/icons/circle-slash';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
   import { parseAssistantError } from '$lib/assistant-error.js';
+  import CostBreakdownPopover from './CostBreakdownPopover.svelte';
 
   const MAX_COLLAPSED_LINES = 10;
   const SKILL_COLLAPSED_LINES = 3;
@@ -24,8 +25,15 @@
     message,
     streaming = false,
     messageKey = '',
+    assistantRowUsage = null,
     onfork,
-  }: { message: PimoteAgentMessage | StreamingMessage; streaming?: boolean; messageKey?: string; onfork?: (entryId: string) => void } = $props();
+  }: {
+    message: PimoteAgentMessage | StreamingMessage;
+    streaming?: boolean;
+    messageKey?: string;
+    assistantRowUsage?: AssistantRowUsage | null;
+    onfork?: (entryId: string) => void;
+  } = $props();
   let userMenuOpen = $state(false);
   let customExpanded = $state(false);
   let systemExpanded = $state(false);
@@ -165,27 +173,39 @@
     <div class="message aborted-indicator text-muted-foreground flex items-center gap-2 px-2 py-1 text-xs italic">
       <CircleSlash size={12} />
       <span>interrupted</span>
+      {#if assistantRowUsage}
+        <div class="aborted-cost not-italic">
+          <CostBreakdownPopover totalCostUsd={assistantRowUsage.totalCostUsd} breakdown={assistantRowUsage.breakdown} contextLabel="Interrupted assistant response" />
+        </div>
+      {/if}
     </div>
   {:else}
     <div class="message assistant-message {isAbortedAssistant ? 'aborted' : ''} {assistantError ? 'errored' : ''}">
-      <div class="assistant-icon-col">
-        {#if hasAssistantMenu}
-          <button class="message-icon assistant-icon" onclick={() => (toolMenuOpen = !toolMenuOpen)}>
-            <Bot size={16} />
-          </button>
-          {#if toolMenuOpen}
-            <div class="tool-menu">
-              {#if hasSpeakableText}
-                <TtsButton {messageKey} {textContent} />
-              {/if}
-              <CopyButton text={textContent} title="Copy message" />
-            </div>
-          {/if}
-        {:else}
-          <div class="message-icon assistant-icon">
-            <Bot size={16} />
+      <div class="assistant-meta">
+        {#if assistantRowUsage}
+          <div class="assistant-cost">
+            <CostBreakdownPopover totalCostUsd={assistantRowUsage.totalCostUsd} breakdown={assistantRowUsage.breakdown} contextLabel="Assistant response" />
           </div>
         {/if}
+        <div class="assistant-icon-col">
+          {#if hasAssistantMenu}
+            <button class="message-icon assistant-icon" onclick={() => (toolMenuOpen = !toolMenuOpen)}>
+              <Bot size={16} />
+            </button>
+            {#if toolMenuOpen}
+              <div class="tool-menu">
+                {#if hasSpeakableText}
+                  <TtsButton {messageKey} {textContent} />
+                {/if}
+                <CopyButton text={textContent} title="Copy message" />
+              </div>
+            {/if}
+          {:else}
+            <div class="message-icon assistant-icon">
+              <Bot size={16} />
+            </div>
+          {/if}
+        </div>
       </div>
       <div class="message-body">
         {#if assistantError}
@@ -409,6 +429,23 @@
 
   .fork-btn:hover {
     background: color-mix(in oklch, var(--secondary) 90%, white);
+  }
+
+  .assistant-meta {
+    display: flex;
+    flex-shrink: 0;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .assistant-cost {
+    order: 0;
+    flex-shrink: 0;
+    margin-top: 8px;
+  }
+
+  .aborted-cost {
+    margin-left: auto;
   }
 
   .assistant-icon {
@@ -707,6 +744,21 @@
       flex-direction: row;
       align-items: center;
       margin-top: 0;
+    }
+
+    .assistant-meta {
+      align-items: center;
+      gap: 6px;
+    }
+
+    .assistant-icon-col {
+      order: 0;
+    }
+
+    .assistant-cost {
+      order: 1;
+      margin-top: 0;
+      margin-bottom: 0;
     }
 
     .tool-menu {

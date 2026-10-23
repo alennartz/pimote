@@ -10,7 +10,8 @@
   import FilePen from '@lucide/svelte/icons/file-pen';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { updateStore } from '$lib/stores/update.svelte.js';
-  import { getContextDisplay, getContextTone, getSessionDisplayName, formatCombinedCost } from '$lib/session-summary.js';
+  import { getContextDisplay, getContextTone, getSessionDisplayName } from '$lib/session-summary.js';
+  import CostBreakdownPopover from './CostBreakdownPopover.svelte';
   import { getRestoreModeLabel } from '$lib/restore-status.js';
   import { getAppName } from '$lib/branding.js';
   import { GitBranch, House } from '@lucide/svelte';
@@ -35,8 +36,6 @@
   let contextPercent = $derived(sessionRegistry.viewed?.contextUsage?.percent);
 
   let contextDisplay = $derived(getContextDisplay(sessionRegistry.viewed));
-
-  let costDisplay = $derived(formatCombinedCost(sessionRegistry.viewed?.lifetimeCostUsd ?? 0, sessionRegistry.viewed?.nextRoundtripCostUsd));
 
   let contextColor = $derived(
     getContextTone(contextPercent) === 'critical' ? 'text-red-400' : getContextTone(contextPercent) === 'warning' ? 'text-amber-400' : 'text-muted-foreground',
@@ -100,10 +99,8 @@
     {/if}
 
     <!-- Session cost -->
-    {#if costDisplay}
-      <span class="text-muted-foreground flex items-center gap-1" title="Session cost (next round-trip lower bound)">
-        {costDisplay}
-      </span>
+    {#if sessionRegistry.viewed}
+      <CostBreakdownPopover totalCostUsd={sessionRegistry.viewed.lifetimeCostUsd} breakdown={sessionRegistry.viewed.usageBreakdown} contextLabel="Session" />
     {/if}
 
     <!-- Git branch -->

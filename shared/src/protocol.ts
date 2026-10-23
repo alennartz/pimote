@@ -474,8 +474,6 @@ export interface SessionMeta {
   lifetimeCostUsd: number;
   /** Category rollup from persisted usage entries. Absent on older servers. */
   usageBreakdown?: PimoteUsageBreakdown;
-  /** Legacy forecast field retained temporarily for older clients and servers. */
-  nextRoundtripCostUsd?: number | null;
 }
 
 export interface GetCommandsCommand extends CommandBase {

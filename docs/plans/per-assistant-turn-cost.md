@@ -196,12 +196,14 @@ Popover click/tap, keyboard accessibility, one-open-at-a-time behavior, responsi
 
 ## Steps
 
+**Pre-implementation commit:** `cbfd1e9881dcfa8f79a41ca27226158c53aeb4e0`
+
 ### Step 1: Complete session usage projection
 
 Implement `projectSessionUsage(entries, stats)` in `server/src/session-usage.ts` behind its existing interface. Copy token totals from `stats.tokens`. Aggregate only input, output, cache-read, and cache-write dollars from Pi's usage-bearing entry types: assistant messages, tool results, compactions, branch summaries, and usage entries. Ignore other entries and missing usage. Return zero category dollars for empty history. Do not calculate a scalar total or add subset token categories.
 
 **Verify:** `server/src/session-usage.test.ts` passes, including the authoritative token totals and all five usage-bearing entry types.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Preserve usage across server delivery
 
@@ -212,7 +214,7 @@ In `server/src/event-buffer.ts`, attach the current assistant message's cumulati
 In `server/src/ws-handler.ts`, update `makeFullResyncEvent` to map the in-flight SDK message's usage even when its content is empty. Preserve the existing running-tool and context-entry behavior.
 
 **Verify:** `server/src/message-usage.test.ts` passes. Existing mapper, event-buffer, and mid-run resync coverage retains its current behavior.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Use Pi session totals and remove server forecast
 
@@ -221,7 +223,7 @@ In `server/src/ws-handler.ts`, replace the `sumLifetimeCostUsd` import with `pro
 Remove the context cache-read forecast calculation and output. Remove `nextRoundtripCostUsd` from `SessionMeta` in `shared/src/protocol.ts`. Keep the usage interfaces already committed there. Delete `server/src/session-cost.ts` and its superseded `server/src/session-cost.test.ts` coverage.
 
 **Verify:** The `get_session_meta` cases in `server/src/ws-handler.test.ts` pass. Metadata keeps Pi's scalar total when category sums differ and never returns the forecast field.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Implement row and disclosure projections
 
@@ -232,7 +234,7 @@ Implement `summarizeCostDisclosure(totalCostUsd, breakdown)` in `client/src/lib/
 Remove `formatCombinedCost` from `client/src/lib/session-summary.ts` and remove its obsolete coverage from `client/src/lib/session-summary.test.ts`. Retain `formatSessionCost` and its coverage only if a remaining caller needs it. Use the disclosure projection for the new cost UI.
 
 **Verify:** `client/src/lib/assistant-row-usage.test.ts` and `client/src/lib/cost-disclosure.test.ts` pass without changes to their approved expectations.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Retain usage in session state
 
@@ -243,7 +245,7 @@ Store `message_start.usage` in `streamingMessage`. Replace that snapshot when `m
 Implement the existing `getAssistantRowUsage(sessionId, messageIndex)` interface through the pure row projection. Retain the last positive partial usage as a client-only override when an aborted or errored terminal assistant message has no usable final usage. Associate overrides with stable message keys, not indices that optimistic insertion can move. Apply overrides only during row projection. Do not mutate terminal wire messages. Clear overrides when full resync rebuilds session state and when the session is removed. Final usable usage takes precedence.
 
 **Verify:** `client/src/lib/stores/session-usage.test.ts` passes. Existing session-registry coverage retains optimistic-message reconciliation and resync behavior. Approved tests remain unchanged.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Build the reusable cost popover
 
@@ -254,7 +256,7 @@ Create `client/src/lib/components/CostBreakdownPopover.svelte`. Accept the autho
 Use Bits UI for positioning, expanded state, keyboard activation, focus handling, Escape, and outside dismissal. Include an accessible close control. Coordinate open state within the existing client UI so opening any cost disclosure closes the previous one. Keep this state separate from usage accounting.
 
 **Verify:** Against `docs/mocks/per-assistant-turn-cost/index.html`, the default manual-testing phase confirms click, tap, Enter, Space, Escape, close, outside dismissal, and one-open-at-a-time behavior.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Integrate transcript and session disclosures
 
@@ -265,7 +267,7 @@ In `Message.svelte`, add the cost disclosure to assistant rows only. Place its n
 In `client/src/lib/components/StatusBar.svelte` and `client/src/lib/components/SessionSettingsDialog.svelte`, replace `formatCombinedCost` and static cost text with the reusable popover. Pass the session's `lifetimeCostUsd` and optional `usageBreakdown`. Keep the full Pi total separate from transcript projections.
 
 **Verify:** The default manual-testing phase confirms desktop and narrow-layout placement, streaming updates, nested tool correlation, interrupted-row costs, status-bar disclosure, and mobile session settings against the approved mock. Existing MessageList and StatusBar coverage retains its behavior.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Update the cost smoke and verify integration
 
@@ -276,4 +278,4 @@ Extend the smoke's live-event scenarios for replacement of partial snapshots, te
 Run the approved feature test files through each workspace's Vitest command, then run `npm run check`. Run the updated smoke and complete the default manual-testing phase for the interaction checks. Do not alter approved feature tests to accommodate implementation failures. Keep native Android files unchanged.
 
 **Verify:** All approved feature tests pass, `npm run check` succeeds, and the updated cost smoke and manual interaction checks pass. Production code contains no `nextRoundtripCostUsd`, `formatCombinedCost`, or `sumLifetimeCostUsd` references.
-**Status:** not started
+**Status:** done

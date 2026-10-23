@@ -10,6 +10,8 @@ import type {
   PimoteEvent,
   PimoteAgentMessage,
   PimoteMessageContent,
+  PimoteUsage,
+  PimoteUsageBreakdown,
   StreamingMessage,
   SessionState,
   SessionMeta,
@@ -54,6 +56,7 @@ import { downloadUi } from './download-ui.svelte.js';
 import { coordinateDownloadUpdate } from '../download-coordinator.js';
 import { handleDownloadNotificationIntent, type DownloadNotificationIntent } from '../download-notification-intent.js';
 import { getActiveSessions, setActiveSessions } from './persistence.js';
+import { summarizeAssistantRowUsage } from '../assistant-row-usage.js';
 
 /** Maximum UTF-8 bytes retained from live bash deltas per execution. */
 export const MAX_BASH_LIVE_OUTPUT_BYTES = 256 * 1024;
@@ -78,6 +81,12 @@ function truncateUtf8(value: string, maxBytes: number): string {
     else high = middle - 1;
   }
   return value.slice(0, low);
+}
+
+function hasPositiveUsage(usage: PimoteUsage | undefined): usage is PimoteUsage {
+  if (!usage) return false;
+  const costs = [usage.cost.input, usage.cost.output, usage.cost.cacheRead, usage.cost.cacheWrite, usage.cost.total];
+  return costs.every(Number.isFinite) && costs.some((cost) => cost > 0);
 }
 
 /** Append a live delta without allowing the transient browser buffer to grow unbounded. */
@@ -165,6 +174,12 @@ export interface PerSessionState {
   availableThinkingLevels: string[];
   streamingMessage: StreamingMessage | null;
   streamingKey: string | null;
+  /** Last positive assistant snapshot retained until a terminal event. */
+  lastPositiveStreamingUsage: PimoteUsage | null;
+  /** Partial usage waiting for its terminal assistant message to arrive. */
+  pendingAssistantUsage: { key: string; usage: PimoteUsage } | null;
+  /** Client-only terminal partials keyed by the stable transcript message key. */
+  assistantUsageOverrides: Record<string, PimoteUsage>;
   messageKeys: string[];
   toolExecutions: Record<
     string,
@@ -187,10 +202,10 @@ export interface PerSessionState {
   downloads: DownloadItem[];
   widgetCards: Record<string, Card>;
   contextUsage: { percent: number | null; contextWindow: number } | null;
-  /** Total USD cost summed over the session branch; 0 when no spend. */
+  /** Total USD cost from Pi's complete session statistics; 0 when no spend. */
   lifetimeCostUsd: number;
-  /** Lower-bound USD cost of the next round trip (context re-sent at cache-read rate); null when unknown. */
-  nextRoundtripCostUsd: number | null;
+  /** Category rollup from persisted usage entries, when supplied by the server. */
+  usageBreakdown?: PimoteUsageBreakdown;
   draftText: string;
   pendingSteeringMessages: string[];
   lastBotActivityTimestamp: string | null;
@@ -309,6 +324,9 @@ export class SessionRegistry {
       availableThinkingLevels: [],
       streamingMessage: null,
       streamingKey: null,
+      lastPositiveStreamingUsage: null,
+      pendingAssistantUsage: null,
+      assistantUsageOverrides: {},
       messageKeys: [],
       toolExecutions: {},
       bashExecutions: {},
@@ -327,7 +345,6 @@ export class SessionRegistry {
       gitBranch: null,
       contextUsage: null,
       lifetimeCostUsd: 0,
-      nextRoundtripCostUsd: null,
       draftText: '',
       pendingSteeringMessages: [],
       lastBotActivityTimestamp: null,
@@ -405,6 +422,42 @@ export class SessionRegistry {
     session.messageKeys = session.messageKeys.filter((_, i) => i !== idx);
   }
 
+  private resetAssistantUsageTracking(session: PerSessionState, clearOverrides = false): void {
+    session.lastPositiveStreamingUsage = null;
+    session.pendingAssistantUsage = null;
+    if (clearOverrides) session.assistantUsageOverrides = {};
+  }
+
+  clearAssistantUsageTracking(sessionId: string): void {
+    const session = this.sessions[sessionId];
+    if (session) this.resetAssistantUsageTracking(session, true);
+  }
+
+  private rememberStreamingUsage(session: PerSessionState, usage: PimoteUsage | undefined): void {
+    if (usage === undefined) return;
+    if (!session.streamingMessage) return;
+    session.streamingMessage = { ...session.streamingMessage, usage };
+    if (session.streamingMessage.role === 'assistant' && hasPositiveUsage(usage)) {
+      session.lastPositiveStreamingUsage = usage;
+    }
+  }
+
+  private retainPartialAssistantUsage(session: PerSessionState): void {
+    if (!session.streamingKey || !session.lastPositiveStreamingUsage) return;
+    if (session.streamingMessage?.role !== 'assistant') return;
+    session.pendingAssistantUsage = {
+      key: session.streamingKey,
+      usage: session.lastPositiveStreamingUsage,
+    };
+  }
+
+  private storeAssistantUsageOverride(session: PerSessionState, key: string, usage: PimoteUsage): void {
+    session.assistantUsageOverrides = {
+      ...session.assistantUsageOverrides,
+      [key]: usage,
+    };
+  }
+
   /** Route an incoming event to the correct session's state */
   /** Prepend recovered queued messages to a session's draft and show it in the composer. */
   restoreQueuedDrafts(sessionId: string, queued: string[]): void {
@@ -468,8 +521,10 @@ export class SessionRegistry {
         session.streamingRevision++;
         session.status = 'idle';
         session.isStreaming = false;
+        this.retainPartialAssistantUsage(session);
         session.streamingMessage = null;
         session.streamingKey = null;
+        session.lastPositiveStreamingUsage = null;
         if (sessionId !== this.viewedSessionId) {
           session.needsAttention = true;
         }
@@ -513,8 +568,10 @@ export class SessionRegistry {
         // for a partial message when a run ends abnormally (e.g. user abort during a
         // thinking block), so without this the streaming placeholder would linger
         // indefinitely and the UI would continue to look "streaming".
+        this.retainPartialAssistantUsage(session);
         session.streamingMessage = null;
         session.streamingKey = null;
+        session.lastPositiveStreamingUsage = null;
         // Apply entry IDs so fork targets work on messages received via streaming.
         if (endEvent.messageEntryIds) {
           this.applyMessageEntryIds(session, endEvent.messageEntryIds);
@@ -537,8 +594,10 @@ export class SessionRegistry {
         if (start.role === 'user' && start.clientMessageId !== undefined && session.optimisticEntries.some((e) => e.clientMessageId === start.clientMessageId)) {
           break;
         }
+        this.resetAssistantUsageTracking(session);
         session.streamingKey = 'msg-' + this._nextMessageKey++;
         session.streamingMessage = { role: start.role, content: [] };
+        this.rememberStreamingUsage(session, start.usage);
         break;
       }
 
@@ -563,6 +622,7 @@ export class SessionRegistry {
             block.streaming = false;
           }
         }
+        this.rememberStreamingUsage(session, update.usage);
         break;
       }
 
@@ -579,6 +639,8 @@ export class SessionRegistry {
       case 'message_end': {
         const end = event as MessageEndEvent;
         const message: PimoteAgentMessage = end.message;
+        const partialUsage = session.lastPositiveStreamingUsage ?? session.pendingAssistantUsage?.usage;
+        let insertedKey: string | null = null;
 
         // Reconcile optimistic entries. The server stamps a started prompt's
         // user echo with the sender's clientMessageId, so our own echo
@@ -615,6 +677,7 @@ export class SessionRegistry {
           // would resolve to the wrong index, clobbering the previous
           // assistant message and duplicating the user message in the UI.
           const key = session.streamingKey ?? 'msg-' + this._nextMessageKey++;
+          insertedKey = key;
           if (!session.streamingKey) {
             console.error('[session-desync] message_end without streamingKey', {
               sessionId,
@@ -627,6 +690,13 @@ export class SessionRegistry {
           session.messageKeys = [...session.messageKeys.slice(0, insertIdx), key, ...session.messageKeys.slice(insertIdx)];
           session.streamingMessage = null;
           session.streamingKey = null;
+        }
+        if (message.role === 'assistant') {
+          if (message.usage === undefined && (message.aborted === true || message.errorMessage !== undefined) && insertedKey && partialUsage) {
+            this.storeAssistantUsageOverride(session, insertedKey, partialUsage);
+          }
+          session.lastPositiveStreamingUsage = null;
+          session.pendingAssistantUsage = null;
         }
         session.messageCount++;
         // Capture firstMessage from first user message
@@ -741,6 +811,9 @@ export class SessionRegistry {
             ...resync.streamingMessage,
             content: blocks.map((block, i) => ({ ...block, streaming: i === blocks.length - 1 })),
           };
+          if (rebuilt.streamingMessage.role === 'assistant' && hasPositiveUsage(rebuilt.streamingMessage.usage)) {
+            rebuilt.lastPositiveStreamingUsage = rebuilt.streamingMessage.usage;
+          }
         }
         for (const toolCallId of resync.runningToolCallIds ?? []) {
           const call = this.findToolCall(rebuilt, toolCallId);
@@ -981,8 +1054,15 @@ export class SessionRegistry {
 
   /** Update session meta (git branch, context usage, lifetime cost) */
   /** Return row usage, including an active-view-only terminal partial fallback. */
-  getAssistantRowUsage(_sessionId: string, _messageIndex: number): import('@pimote/shared').AssistantRowUsage | null {
-    throw new Error('not implemented');
+  getAssistantRowUsage(sessionId: string, messageIndex: number): import('@pimote/shared').AssistantRowUsage | null {
+    const session = this.sessions[sessionId];
+    const message = session?.messages[messageIndex];
+    if (!session || !message || message.role !== 'assistant') return null;
+
+    const key = session.messageKeys[messageIndex];
+    const fallback = key ? session.assistantUsageOverrides[key] : undefined;
+    const snapshot = message.usage === undefined && fallback ? { ...message, usage: fallback } : message;
+    return summarizeAssistantRowUsage(snapshot, session.messages);
   }
 
   updateMeta(sessionId: string, meta: SessionMeta): void {
@@ -994,7 +1074,11 @@ export class SessionRegistry {
     // same folder.
     session.contextUsage = meta.contextUsage;
     session.lifetimeCostUsd = meta.lifetimeCostUsd;
-    session.nextRoundtripCostUsd = meta.nextRoundtripCostUsd ?? null;
+    if (meta.usageBreakdown === undefined) {
+      delete session.usageBreakdown;
+    } else {
+      session.usageBreakdown = meta.usageBreakdown;
+    }
     for (const candidate of Object.values(this.sessions)) {
       if (candidate.folderPath === session.folderPath) {
         candidate.gitBranch = meta.gitBranch;
@@ -1242,6 +1326,7 @@ async function fetchFullSessionData(sessionId: string): Promise<void> {
       // the canonical list; context-excluded `!!` results may be absent by
       // design.
       sessionRegistry.clearBash(sessionId);
+      sessionRegistry.clearAssistantUsageTracking(sessionId);
       const messages = (msgRes.data as { messages: PimoteAgentMessage[] }).messages;
       session.messages = messages;
       session.messageKeys = sessionRegistry.generateMessageKeys(messages.length);

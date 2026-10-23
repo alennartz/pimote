@@ -1,7 +1,7 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { PimoteSessionEvent } from '../../shared/dist/index.js';
-import { mapAgentMessage, mapCustomEntry, type CustomEntryVisibility } from './message-mapper.js';
+import { mapAgentMessage, mapAgentMessageUsage, mapCustomEntry, type CustomEntryVisibility } from './message-mapper.js';
 
 /**
  * Tree-navigation lifecycle events are synthesized by the ws-handler (they are
@@ -168,14 +168,17 @@ export class EventBuffer {
       case 'turn_end':
         return { ...base, type: 'turn_end' };
 
-      case 'message_start':
+      case 'message_start': {
         // The role lives on the event's message, not a top-level `role` field.
+        const usage = sdkEvent.message.role === 'assistant' ? mapAgentMessageUsage(sdkEvent.message) : undefined;
         return {
           ...base,
           type: 'message_start',
           role: sdkEvent.message.role,
+          ...(usage ? { usage } : {}),
           ...(sdkEvent.message.role === 'user' && this.pendingPromptEcho !== undefined ? { clientMessageId: this.pendingPromptEcho } : {}),
         };
+      }
 
       case 'message_update': {
         const ame = sdkEvent.assistantMessageEvent;
@@ -198,6 +201,7 @@ export class EventBuffer {
         }
 
         const delta = 'delta' in ame ? ame.delta : '';
+        const usage = mapAgentMessageUsage(sdkEvent.message) ?? ('partial' in ame ? mapAgentMessageUsage(ame.partial) : undefined);
 
         const result: PimoteSessionEvent & { type: 'message_update' } = {
           ...base,
@@ -208,6 +212,7 @@ export class EventBuffer {
             type: contentType,
             text: delta,
           },
+          ...(usage ? { usage } : {}),
         };
 
         // Extract tool call metadata on toolcall_start from the partial message.
