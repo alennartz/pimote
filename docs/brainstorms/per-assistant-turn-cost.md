@@ -14,12 +14,13 @@ Show each assistant message’s Pi-calculated cost in the PWA transcript. Also k
 - Ordinary tool output has no separate usage record. When a later assistant request sends that output to the model, its tokens appear in that request’s input, cache-read, or cache-write usage. Pi does not attribute those tokens to one specific tool result.
 - Show reported positive cost as soon as reliable usage arrives. Use partial usage only when Pi exposes it. Otherwise, update when the assistant response or tool result completes. Replace partial totals with final totals; do not add snapshots together or estimate cost.
 - Keep reported cost on aborted and errored assistant messages. Show cost beside the compact “interrupted” row when that row has no bot icon. Retries need no special grouping or presentation.
+- If an aborted stream has no final Pi usage, keep its last reported partial cost in the active PWA transcript only. Do not persist this fallback. A full resync or reload can lose it, and Pi’s session total can omit it. The partial value is best-known data, not a final usage record.
 
 ### Whole-session total and breakdown
 
 - Use Pi’s `AgentSession.getSessionStats().cost` as the authoritative whole-session total. Pi counts assistant messages, tool results, compactions, branch summaries, other usage entries, compacted history, and alternate branches. Keep one total; do not split it by source.
 - Pi’s session stats expose cumulative token counts by category and one cumulative dollar total. The cost tooltip needs a category rollup from the same usage-bearing entries: input, output, cache read, and cache write. Keep Pi’s scalar cost as the total.
-- If the category costs fall short of Pi’s total, show the positive remainder as **Unknown**. Treat a material category overage as inconsistent data, not a negative Unknown value. Ignore minor floating-point residue.
+- If category costs fall short of Pi’s total by more than $0.01, show the positive remainder as **Unknown**. Treat an overage greater than $0.01 as inconsistent data, not a negative Unknown value. Ignore differences of one cent or less.
 - Pi calculates these costs from provider usage and the selected model’s configured prices. This is Pi’s cost figure, not a verified provider invoice amount.
 
 ### UI and scope
@@ -36,7 +37,7 @@ Remove the next-round-trip cache-read forecast end to end: calculation, protocol
 
 ## Direction
 
-Forward the Pi usage data needed for per-message rows and session breakdowns over the existing server–PWA protocol. Keep Pi’s session total authoritative. Add only the category rollup needed for the tooltip; it does not replace or recompute the whole-session total. Preserve the same cost data across live delivery, replay, resync, reconnect, and reload. Ship in the PWA only.
+Forward the Pi usage data needed for per-message rows and session breakdowns over the existing server–PWA protocol. Keep Pi’s session total authoritative. Add only the category rollup needed for the tooltip; it does not replace or recompute the whole-session total. Preserve final usage across live delivery, replay, resync, reconnect, and reload. Partial-only aborted snapshots stay transient in the active PWA view. Ship in the PWA only.
 
 ## Open questions
 
