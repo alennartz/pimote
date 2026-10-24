@@ -37,6 +37,9 @@ export type Event =
   | { type: 'eb:activate'; msg: VoiceActivateMessage }
   | { type: 'eb:deactivate'; msg: VoiceDeactivateMessage }
 
+  // ---- Interpreter model setup ----
+  | { type: 'interpreter_model_applied' }
+
   // ---- WS lifecycle ----
   | { type: 'ws:opened' }
   | { type: 'ws:open_failed'; error: unknown }

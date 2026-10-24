@@ -1,4 +1,5 @@
 import type { WebSocket } from 'ws';
+import { randomUUID } from 'node:crypto';
 import { basename, dirname, sep } from 'node:path';
 import type {
   PimoteCommand,
@@ -22,6 +23,7 @@ import type {
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome, SessionObserver, EventSocket } from './session-manager.js';
 import {
+  createCommandContextActions,
   makeDownloadSnapshot,
   makeSessionSettingsEvent,
   replaySlotPendingUiRequests,
@@ -40,7 +42,6 @@ import { createCodeFolderViaCreators } from './folder-create.js';
 import type { FolderListingService } from './folder-listing.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import type { FolderCreator } from './folder-sources/index.js';
-import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
@@ -50,7 +51,7 @@ import { projectSessionUsage } from './session-usage.js';
 import { completeFileRefs } from './file-references.js';
 import { readEditableFile, writeEditableFile } from './file-edit.js';
 import { attributeDrained, type Intent } from './queue-ownership.js';
-import type { AgentSession, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
+import type { AgentSession } from '@earendil-works/pi-coding-agent';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { CallBindError } from './voice-orchestrator.js';
 
@@ -312,46 +313,8 @@ export function serializeTreeResponse(id: string, tree: PimoteTreeNode[], curren
   return chunks.join('');
 }
 
-/**
- * Create command context actions for extension commands.
- * Captures the ManagedSlot (stable lifetime), not a transient handler.
- * Session resets funnel through sessionManager.applySessionReset, which always
- * reconciles the session map and then notifies every observer
- * via its onSessionReset hook — so a reset with no observer still re-keys.
- */
-/** @internal Exported for the SDK delegation contract test. */
-export function createCommandContextActions(slot: ManagedSlot, sessionManager: PimoteSessionManager): ExtensionCommandContextActions {
-  return {
-    // Delegate to the SDK's native settle-aware primitive (0.80.7+): it resolves
-    // only when the session is genuinely idle (no active run, retry,
-    // auto-compaction, or queued continuation), which is exactly the boundary we
-    // want. Previously reimplemented by watching for a terminal agent_end, but
-    // that resolved one step early (before settlement / through a queued
-    // continuation).
-    waitForIdle: () => slot.session.waitForIdle(),
-    newSession: async (options) => {
-      const result = await slot.runtime.newSession(options);
-      if (!result.cancelled) await sessionManager.applySessionReset(slot);
-      return { cancelled: result.cancelled };
-    },
-    fork: async (entryId) => {
-      const result = await slot.runtime.fork(entryId);
-      if (!result.cancelled) await sessionManager.applySessionReset(slot);
-      return { cancelled: result.cancelled };
-    },
-    navigateTree: async (targetId, options) => {
-      const result = await slot.session.navigateTree(targetId, options);
-      if (!result.cancelled) await sessionManager.applySessionReset(slot);
-      return { cancelled: result.cancelled };
-    },
-    switchSession: async (sessionPath) => {
-      const result = await slot.runtime.switchSession(sessionPath);
-      if (!result.cancelled) await sessionManager.applySessionReset(slot);
-      return { cancelled: result.cancelled };
-    },
-    reload: () => slot.session.reload(),
-  };
-}
+/** Keep the legacy ws-handler import path for command-context tests and consumers. */
+export { createCommandContextActions };
 
 /** Client ID → WsHandler lookup for targeted cross-client notifications. */
 export type ClientRegistry = Map<string, WsHandler>;
@@ -399,6 +362,7 @@ export class WsHandler {
   private pendingLoginInputs = new Map<string, { resolve: (v: string) => void; reject: (e: unknown) => void }>();
   /** AbortController for the in-flight login flow this connection initiated, if any. */
   private loginAbort: AbortController | null = null;
+  private readonly folderConnectionId = randomUUID();
   readonly clientId: string;
 
   constructor(
@@ -428,7 +392,7 @@ export class WsHandler {
       // it, and `repin` replaces it. A start failure is contained here — no
       // unhandled rejection — and retried by the next folder command.
       try {
-        void this.folderListing.pin(this.clientId).catch(() => {});
+        void this.folderListing.pin(this.folderConnectionId).catch(() => {});
       } catch {
         // No pending pin: the next folder command retries initialization.
       }
@@ -469,7 +433,7 @@ export class WsHandler {
           // explicit token passes through, and `repin` replaces the pin and
           // serves the window under its fresh token.
           const result = await folderListing.query({
-            connectionId: this.clientId,
+            connectionId: this.folderConnectionId,
             token: command.orderToken,
             repin: command.repin,
             offset: command.offset,
@@ -1513,7 +1477,6 @@ export class WsHandler {
 
       case 'new_session': {
         const result = await slot.runtime.newSession();
-        if (!result.cancelled) await this.sessionManager.applySessionReset(slot);
         this.sendResponse(id, true, { success: !result.cancelled });
         break;
       }
@@ -1582,9 +1545,6 @@ export class WsHandler {
           break;
         }
         const forkResult = await slot.runtime.fork(command.entryId);
-        if (!forkResult.cancelled) {
-          await this.sessionManager.applySessionReset(slot);
-        }
         const forkData: { cancelled: boolean; selectedText?: string } = { cancelled: forkResult.cancelled };
         if (forkResult.selectedText !== undefined) {
           forkData.selectedText = forkResult.selectedText;
@@ -1650,21 +1610,6 @@ export class WsHandler {
     }
   }
 
-  /** Bind extensions on a slot that has never bound them. Idempotent via
-   *  `sessionState.extensionsBound`. Normally first-observer work; the
-   *  call_bind reopen path also calls it with zero observers — the UI bridge
-   *  parks requests no observer will deliver, and voice mode (the only
-   *  zero-observer caller) rejects UI bridge calls outright. */
-  private async ensureExtensionsBound(slot: ManagedSlot, sessionId: string): Promise<void> {
-    if (slot.sessionState.extensionsBound) return;
-    const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
-      isVoiceModeActive: () => this.voiceOrchestrator?.isCallActive(sessionId) ?? false,
-    });
-    const commandContextActions = createCommandContextActions(slot, this.sessionManager);
-    await slot.session.bindExtensions({ uiContext, commandContextActions });
-    slot.sessionState.extensionsBound = true;
-  }
-
   /** Dispatch slash commands owned by Pimote before pi can queue them as text. */
   private async dispatchPimoteSlashCommand(id: string, sessionId: string, slot: ManagedSlot, message: string): Promise<boolean> {
     const session = slot.session;
@@ -1672,7 +1617,6 @@ export class WsHandler {
 
     if (trimmed === '/new') {
       const result = await slot.runtime.newSession();
-      if (!result.cancelled) await this.sessionManager.applySessionReset(slot);
       this.sendResponse(id, true, { success: !result.cancelled });
       return true;
     }
@@ -1746,7 +1690,7 @@ export class WsHandler {
     this.sendResponse(id, true, { outcome } satisfies PromptResponseData);
   }
 
-  /** Attach this client as an observer and bind extensions on first attach. */
+  /** Attach this client as an observer. Session startup is manager-owned. */
   async claimSession(sessionId: string, slot: ManagedSlot): Promise<void> {
     const observer: SessionObserver = {
       ws: this.ws as unknown as EventSocket,
@@ -1764,7 +1708,6 @@ export class WsHandler {
 
     // Note: do NOT touch `idleSince`. Idleness is an agent-level concept driven by
     // agent_start/agent_settled — attaching an observer does not extend its clock.
-    await this.ensureExtensionsBound(slot, sessionId);
     if (!this.isCurrentConnection()) {
       if (slot.observers.get(this.clientId)?.ws === observer.ws) this.sessionManager.detachObserver(sessionId, this.clientId);
       throw new Error('WebSocket is no longer connected');
@@ -1803,14 +1746,7 @@ export class WsHandler {
     this.subscribedSessions.add(newId);
     if (this.viewedSessionId === oldId) this.viewedSessionId = newId;
 
-    // The first observer performs slot-wide reset work. SessionManager captures
-    // that position before awaiting callbacks, so a disconnect during the first
-    // bind cannot make a later observer bind the rebuilt session again.
     const isFirstObserver = firstObserver ?? slot.observers.keys().next().value === this.clientId;
-    const performsSlotReset = isFirstObserver && !slot.sessionState.extensionsBound;
-    if (performsSlotReset) {
-      await this.ensureExtensionsBound(slot, newId);
-    }
 
     this.sendEvent({
       type: 'session_replaced',
@@ -1867,10 +1803,6 @@ export class WsHandler {
     const openedId = await this.sessionManager.openSession(record.folderPath, record.sessionFilePath);
     const slot = this.sessionManager.getSlot(openedId);
     if (!slot) return null;
-    // The voice extension subscribes to `pimote:voice:activate` when
-    // extensions bind — normally first-observer work. With no observer
-    // coming, bind here so the orchestrator's activation finds a listener.
-    await this.ensureExtensionsBound(slot, openedId);
     return slot;
   }
 
@@ -2310,6 +2242,6 @@ export class WsHandler {
     // Release this connection's folder-order pins. Release is final in the
     // listing service: a folder command racing this close can no longer
     // attach owned pins to the connection.
-    this.folderListing?.releaseConnection(this.clientId);
+    this.folderListing?.releaseConnection(this.folderConnectionId);
   }
 }

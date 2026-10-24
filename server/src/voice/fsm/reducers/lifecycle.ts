@@ -20,7 +20,7 @@ export interface LifecycleConfig {
 
 export interface LifecycleResult {
   next: LifecycleState;
-  /** Set to true if the activate path applied the interpreter model. */
+  /** Set to true when interpreter model application completed successfully. */
   interpreterAppliedNow: boolean;
   actions: Action[];
 }
@@ -39,6 +39,11 @@ export interface LifecycleResult {
  */
 export function reduceLifecycle(prev: LifecycleState, event: Event, ctx: { interpreterApplied: boolean; config: LifecycleConfig }): LifecycleResult {
   switch (event.type) {
+    case 'interpreter_model_applied':
+      // The shell emits this only after pi.setModel returns true. Keep the
+      // runtime success bit even if teardown completed while setModel awaited.
+      return { next: prev, interpreterAppliedNow: true, actions: [] };
+
     case 'eb:activate': {
       if (prev.kind !== 'dormant') {
         // Re-activation while already active or activating is a no-op
@@ -66,7 +71,7 @@ export function reduceLifecycle(prev: LifecycleState, event: Event, ctx: { inter
           wsUrl: event.msg.speechmuxWsUrl,
           pendingFrames: [],
         },
-        interpreterAppliedNow: !ctx.interpreterApplied,
+        interpreterAppliedNow: false,
         actions,
       };
     }

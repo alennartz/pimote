@@ -28,6 +28,7 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => ({
       isStreaming: false,
       messages: [],
       subscribe: () => () => {},
+      bindExtensions: vi.fn(async () => {}),
       setSteeringMode: () => {},
       setFollowUpMode: () => {},
     } as unknown as AgentSession;
@@ -36,7 +37,8 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => ({
   },
   createAgentSessionRuntime: async (factory: CreateAgentSessionRuntimeFactory, args: Parameters<CreateAgentSessionRuntimeFactory>[0]) => {
     mock.factory = factory;
-    return await factory(args);
+    const created = await factory(args);
+    return { ...created, setRebindSession: vi.fn(), dispose: vi.fn(async () => {}) };
   },
 }));
 

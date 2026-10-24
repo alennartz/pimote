@@ -40,7 +40,7 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
     createAgentSessionFromServices: async () => ({ session }),
     createAgentSessionRuntime: async (factory: any, options: any) => {
       await factory({ cwd: options.cwd, agentDir: '/agent', sessionManager: options.sessionManager, sessionStartEvent: undefined });
-      return { session, dispose: vi.fn(async () => {}) };
+      return { session, dispose: vi.fn(async () => {}), setRebindSession: vi.fn() };
     },
   };
 });

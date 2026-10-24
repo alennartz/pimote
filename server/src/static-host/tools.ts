@@ -63,6 +63,23 @@ export interface ToolDeps {
   emitNavigate: (url: string) => void;
 }
 
+/** Serialize mutations that share one process-scoped static-host registry. */
+const staticHostMutationQueues = new WeakMap<StaticHostRegistry, Promise<unknown>>();
+
+/**
+ * Run one complete static-host mutation after earlier mutations for this
+ * registry. A rejected operation does not poison the queue for later work.
+ */
+export function withStaticHostMutation<T>(registry: StaticHostRegistry, operation: () => Promise<T>): Promise<T> {
+  const previous = staticHostMutationQueues.get(registry) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
+  const settled = current.finally(() => {
+    if (staticHostMutationQueues.get(registry) === settled) staticHostMutationQueues.delete(registry);
+  });
+  staticHostMutationQueues.set(registry, settled);
+  return settled;
+}
+
 /**
  * Validates and normalises a slug.
  *
@@ -100,14 +117,8 @@ export function resolveSlugCollision(slug: string, registry: StaticHostRegistry)
  * Throws on validation failure (invalid slug, missing folder, no index.html).
  * On success: updates the in-memory list for the session, atomically rewrites
  * the persistence file, calls `registry.register(...)`, and emits the panel
- * snapshot.
- *
- * Concurrency assumption: pi serializes tool calls within a single session,
- * so the read-modify-write sequence on `store` here is safe. If that ever
- * changes (parallel tool execution per session), this body must be revisited
- * — the existing read/write pair would race and the registry/disk could
- * desync. Re-derive entries from `registry.listForSession(sessionId)` after
- * `registry.register`, or add a per-session lock.
+ * snapshot. The complete read-modify-write, registry, and emission transaction
+ * runs under the process-wide registry mutation queue.
  */
 export async function executeRegisterTool(input: RegisterToolInput, deps: ToolDeps): Promise<RegisterToolOutput> {
   const validSlug = validateSlug(input.slug);
@@ -144,53 +155,54 @@ export async function executeRegisterTool(input: RegisterToolInput, deps: ToolDe
     throw new Error(`index.html is not a file: ${indexPath}`);
   }
 
-  const resolved = resolveSlugCollision(validSlug, deps.registry);
   const cardMetadata: StaticHostStoreEntry['cardMetadata'] = {
     title: input.title,
     ...(input.tag !== undefined ? { tag: input.tag } : {}),
     ...(input.color !== undefined ? { color: input.color } : {}),
   };
 
-  const existing = (await deps.store.read(deps.sessionId)) ?? { version: 1 as const, entries: [] };
-  const entries: StaticHostStoreEntry[] = [...existing.entries, { slug: resolved, folderPath: input.folder, cardMetadata }];
-  const file: StaticHostStoreFile = { version: 1, entries };
-  await deps.store.write(deps.sessionId, file);
+  return withStaticHostMutation(deps.registry, async () => {
+    const resolved = resolveSlugCollision(validSlug, deps.registry);
+    const existing = (await deps.store.read(deps.sessionId)) ?? { version: 1 as const, entries: [] };
+    const entries: StaticHostStoreEntry[] = [...existing.entries, { slug: resolved, folderPath: input.folder, cardMetadata }];
+    const file: StaticHostStoreFile = { version: 1, entries };
+    await deps.store.write(deps.sessionId, file);
 
-  deps.registry.register({
-    slug: resolved,
-    folderPath: input.folder,
-    sessionId: deps.sessionId,
-    cardMetadata,
+    deps.registry.register({
+      slug: resolved,
+      folderPath: input.folder,
+      sessionId: deps.sessionId,
+      cardMetadata,
+    });
+
+    deps.emitPanelCards();
+
+    const url = `/s/${resolved}/`;
+    deps.emitNavigate(url);
+
+    return { slug: resolved, url };
   });
-
-  deps.emitPanelCards();
-
-  const url = `/s/${resolved}/`;
-  deps.emitNavigate(url);
-
-  return { slug: resolved, url };
 }
 
 /**
  * Execute the `pimote_static_host_remove` tool body. Returns `{ removed: false }`
- * when the slug is not owned by this session.
- *
- * Concurrency assumption: same as `executeRegisterTool` — relies on pi's
- * per-session serialization of tool calls. If that changes, this body must
- * be revisited.
+ * when the slug is not owned by this session. Lookup, persistence, registry,
+ * and panel emission run as one process-wide registry transaction.
  */
 export async function executeRemoveTool(input: RemoveToolInput, deps: ToolDeps): Promise<RemoveToolOutput> {
-  const existing = deps.registry.lookup(input.slug);
-  if (!existing || existing.sessionId !== deps.sessionId) {
-    return { removed: false };
-  }
+  return withStaticHostMutation(deps.registry, async () => {
+    const existing = deps.registry.lookup(input.slug);
+    if (!existing || existing.sessionId !== deps.sessionId) {
+      return { removed: false };
+    }
 
-  const file = (await deps.store.read(deps.sessionId)) ?? { version: 1 as const, entries: [] };
-  const entries = file.entries.filter((e) => e.slug !== input.slug);
-  await deps.store.write(deps.sessionId, { version: 1, entries });
+    const file = (await deps.store.read(deps.sessionId)) ?? { version: 1 as const, entries: [] };
+    const entries = file.entries.filter((e) => e.slug !== input.slug);
+    await deps.store.write(deps.sessionId, { version: 1, entries });
 
-  deps.registry.unregister(input.slug);
-  deps.emitPanelCards();
+    deps.registry.unregister(input.slug);
+    deps.emitPanelCards();
 
-  return { removed: true };
+    return { removed: true };
+  });
 }

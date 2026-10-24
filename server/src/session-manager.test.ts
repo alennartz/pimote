@@ -66,28 +66,30 @@ function createFakeSlot(
   }> = {},
 ): ManagedSlot {
   const id = overrides.id ?? 'test-session-' + String(++fakeSlotSequence);
+  const mockSession = {
+    dispose: vi.fn(),
+    bindExtensions: vi.fn(async () => {}),
+    subscribe: () => () => {},
+    messages: [],
+    sessionId: id,
+  } as any;
+
   const sessionState: SessionState = {
     id,
-    eventBuffer: { replay: () => [], currentCursor: 0, onEvent: () => {} } as any,
+    eventBuffer: { replay: () => [], currentCursor: 0, onEvent: () => {}, invalidateReplay: vi.fn() } as any,
     status: overrides.status ?? 'idle',
     needsAttention: overrides.needsAttention ?? false,
     idleSince: overrides.idleSince === undefined ? Date.now() : overrides.idleSince,
     unsubscribe: overrides.unsubscribe ?? vi.fn(),
     pendingUiResponses: new Map(),
     extensionsBound: false,
+    sessionIdentity: mockSession,
     panelState: new Map(),
     downloads: [],
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
     treeNavigationInProgress: overrides.treeNavigationInProgress ?? false,
   };
-
-  const mockSession = {
-    dispose: vi.fn(),
-    subscribe: () => () => {},
-    messages: [],
-    sessionId: id,
-  } as any;
 
   const slot: ManagedSlot = {
     runtime: { session: mockSession } as any,
@@ -146,6 +148,118 @@ describe('session settings fan-out', () => {
       autoCompactionEnabled: true,
     };
     expect(sendEvent.mock.calls.filter(([e]) => e.type === 'session_settings_changed')).toEqual([[settings], [settings]]);
+  });
+});
+
+describe('session panel EventBus boundary', () => {
+  function createPanelEventBus(): { on: (channel: string, handler: (data: unknown) => void) => () => void; emit: (channel: string, data: unknown) => void } {
+    const handlers = new Map<string, Set<(data: unknown) => void>>();
+    return {
+      on(channel, handler) {
+        let set = handlers.get(channel);
+        if (!set) {
+          set = new Set();
+          handlers.set(channel, set);
+        }
+        set.add(handler);
+        return () => set!.delete(handler);
+      },
+      emit(channel, data) {
+        for (const handler of handlers.get(channel) ?? []) handler(data);
+      },
+    };
+  }
+
+  function createPanelSession(): any {
+    return {
+      sessionId: 'panel-test',
+      isStreaming: false,
+      messages: [],
+      sessionManager: { getBranch: () => [] },
+      subscribe: vi.fn(() => vi.fn()),
+    };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not schedule a timer for malformed bus data, then processes a valid update', () => {
+    const eventBus = createPanelEventBus();
+    const sendEvent = vi.fn();
+    const state = createSessionState(createPanelSession(), eventBus as any, createTestConfig(), { sendEvent, notify: vi.fn(async () => {}) }, { slot: null }, '/home/user/project');
+
+    eventBus.emit('pimote:panels', { type: 'cards', namespace: 'agents', cards: [null] });
+    expect(state.panelThrottleTimer).toBeNull();
+    vi.advanceTimersByTime(200);
+    expect(sendEvent).not.toHaveBeenCalled();
+
+    eventBus.emit('pimote:panels', { type: 'cards', namespace: 'agents', cards: [{ id: 'valid', header: { title: 'Valid' } }] });
+    expect(state.panelThrottleTimer).not.toBeNull();
+    vi.advanceTimersByTime(200);
+
+    expect(sendEvent).toHaveBeenCalledExactlyOnceWith({
+      type: 'panel_update',
+      sessionId: 'panel-test',
+      cards: [{ id: 'agents:valid', header: { title: 'Valid' } }],
+    });
+  });
+
+  it('keeps a pending valid timer when a malformed update arrives', () => {
+    const eventBus = createPanelEventBus();
+    const sendEvent = vi.fn();
+    const state = createSessionState(createPanelSession(), eventBus as any, createTestConfig(), { sendEvent, notify: vi.fn(async () => {}) }, { slot: null }, '/home/user/project');
+
+    eventBus.emit('pimote:panels', { type: 'cards', namespace: 'agents', cards: [{ id: 'valid', header: { title: 'Valid' } }] });
+    const pendingTimer = state.panelThrottleTimer;
+    expect(pendingTimer).not.toBeNull();
+
+    eventBus.emit('pimote:panels', { type: 'cards', namespace: 'agents', cards: null });
+    expect(state.panelThrottleTimer).toBe(pendingTimer);
+
+    vi.advanceTimersByTime(200);
+    expect(sendEvent).toHaveBeenCalledExactlyOnceWith({
+      type: 'panel_update',
+      sessionId: 'panel-test',
+      cards: [{ id: 'agents:valid', header: { title: 'Valid' } }],
+    });
+  });
+
+  it('contains send failures and leaves the throttle usable for the next update', () => {
+    const eventBus = createPanelEventBus();
+    const sendEvent = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error('send failed');
+      })
+      .mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const state = createSessionState(
+        createPanelSession(),
+        eventBus as any,
+        createTestConfig(),
+        { sendEvent, notify: vi.fn(async () => {}) },
+        { slot: null },
+        '/home/user/project',
+      );
+
+      eventBus.emit('pimote:panels', { type: 'cards', namespace: 'agents', cards: [{ id: 'first', header: { title: 'First' } }] });
+      vi.advanceTimersByTime(200);
+      expect(state.panelThrottleTimer).toBeNull();
+
+      eventBus.emit('pimote:panels', { type: 'cards', namespace: 'agents', cards: [{ id: 'second', header: { title: 'Second' } }] });
+      vi.advanceTimersByTime(200);
+
+      expect(sendEvent).toHaveBeenCalledTimes(2);
+      expect(errorLog).toHaveBeenCalledWith('[SessionManager] Panel update error:', expect.any(Error));
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 });
 

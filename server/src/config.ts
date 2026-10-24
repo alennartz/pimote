@@ -154,8 +154,8 @@ export async function loadConfig(): Promise<PimoteConfig> {
     defaultProvider: typeof obj.defaultProvider === 'string' ? obj.defaultProvider : undefined,
     defaultModel: typeof obj.defaultModel === 'string' ? obj.defaultModel : undefined,
     defaultThinkingLevel: typeof obj.defaultThinkingLevel === 'string' ? obj.defaultThinkingLevel : undefined,
-    defaultInterpreterModel: typeof obj.defaultInterpreterModel === 'string' ? obj.defaultInterpreterModel : undefined,
-    defaultWorkerModel: typeof obj.defaultWorkerModel === 'string' ? obj.defaultWorkerModel : undefined,
+    defaultInterpreterModel: normalizeModelRef(obj.defaultInterpreterModel),
+    defaultWorkerModel: normalizeModelRef(obj.defaultWorkerModel),
     voice: parseVoiceConfig(obj.voice),
     vapidPublicKey: typeof obj.vapidPublicKey === 'string' ? obj.vapidPublicKey : undefined,
     vapidPrivateKey: typeof obj.vapidPrivateKey === 'string' ? obj.vapidPrivateKey : undefined,
@@ -163,6 +163,18 @@ export async function loadConfig(): Promise<PimoteConfig> {
     updateCheck: typeof obj.updateCheck === 'boolean' ? obj.updateCheck : undefined,
     tagSnippets: Array.isArray(obj.tagSnippets) ? obj.tagSnippets.filter((s): s is string => typeof s === 'string') : undefined,
   };
+}
+
+function normalizeModelRef(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+
+  const ref = value as Record<string, unknown>;
+  if (typeof ref.provider !== 'string' || ref.provider.length === 0 || typeof ref.modelId !== 'string' || ref.modelId.length === 0) {
+    return undefined;
+  }
+
+  return `${ref.provider}/${ref.modelId}`;
 }
 
 function parseVoiceConfig(v: unknown): VoiceConfig | undefined {

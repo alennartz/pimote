@@ -287,6 +287,47 @@ describe('EventBuffer', () => {
   });
 
   describe('replay', () => {
+    it('invalidates the previous end cursor at a replay barrier and replays later events incrementally', () => {
+      const buffer = new EventBuffer(10);
+      const live: PimoteSessionEvent[] = [];
+
+      buffer.onEvent(makeSdkEvent('agent_end'), SESSION_ID, (event) => live.push(event));
+      const previousEnd = buffer.currentCursor;
+
+      buffer.invalidateReplay();
+      const barrierCursor = buffer.currentCursor;
+
+      expect(barrierCursor).toBe(previousEnd + 1);
+      expect(live).toHaveLength(1);
+      expect(buffer.replay(previousEnd)).toBeNull();
+      expect(buffer.replay(barrierCursor)).toEqual([]);
+
+      buffer.onEvent(makeSdkEvent('turn_start'), SESSION_ID, (event) => live.push(event));
+
+      expect(buffer.currentCursor).toBe(barrierCursor + 1);
+      expect(live.map((event) => event.cursor)).toEqual([previousEnd, barrierCursor + 1]);
+      expect(buffer.replay(previousEnd)).toBeNull();
+      expect(buffer.replay(barrierCursor)).toEqual([live[1]]);
+    });
+
+    it('keeps base cursor semantics when invalidating an empty buffer', () => {
+      const baseCursor = 5_000;
+      const buffer = new EventBuffer(10, undefined, baseCursor);
+      const sendLive = vi.fn();
+
+      buffer.invalidateReplay();
+
+      expect(buffer.currentCursor).toBe(baseCursor + 1);
+      expect(sendLive).not.toHaveBeenCalled();
+      expect(buffer.replay(baseCursor)).toBeNull();
+      expect(buffer.replay(baseCursor + 1)).toEqual([]);
+
+      buffer.onEvent(makeSdkEvent('agent_start'), SESSION_ID, sendLive);
+      expect(buffer.replay(baseCursor)).toBeNull();
+      expect(buffer.replay(baseCursor + 1)).toHaveLength(1);
+      expect(buffer.currentCursor).toBe(baseCursor + 2);
+    });
+
     it('returns correct subset when replaying from a mid-point cursor', () => {
       const buffer = new EventBuffer(100);
       const sendLive = vi.fn();

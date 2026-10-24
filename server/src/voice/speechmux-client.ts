@@ -118,13 +118,19 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
       for (const listener of listeners) listener(frame);
     });
 
+    const notifyDisconnect = () => {
+      if (!opened || disconnectNotified) return;
+      disconnectNotified = true;
+      for (const listener of disconnectListeners) listener();
+    };
+
     const connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       const cleanup = () => {
         clearTimeout(timer);
         ws.off('open', onOpen);
-        ws.off('error', onError);
+        ws.off('close', onConnectClose);
       };
       const onOpen = () => {
         if (settled) return;
@@ -134,10 +140,20 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
         resolve();
       };
       const onError = (err: Error) => {
+        if (opened) {
+          console.error('[voice] speechmux WebSocket error:', err);
+          return;
+        }
         if (settled) return;
         settled = true;
         cleanup();
         reject(err);
+      };
+      const onConnectClose = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error('SpeechmuxClient: socket closed before opening'));
       };
       const timer = setTimeout(() => {
         if (settled) return;
@@ -150,15 +166,10 @@ export function createDefaultSpeechmuxClientFactory(): SpeechmuxClientFactory {
         }
         reject(new Error(`SpeechmuxClient: connect timeout after ${connectTimeoutMs}ms (${wsUrl})`));
       }, connectTimeoutMs);
+      ws.on('error', onError);
       ws.once('open', onOpen);
-      ws.once('error', onError);
+      ws.once('close', onConnectClose);
     });
-
-    const notifyDisconnect = () => {
-      if (!opened || disconnectNotified) return;
-      disconnectNotified = true;
-      for (const listener of disconnectListeners) listener();
-    };
 
     ws.on('close', () => {
       closed = true;

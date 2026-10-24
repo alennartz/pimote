@@ -4,7 +4,7 @@ import type { Card } from '../../../shared/dist/index.js';
 import { jsonToolResult } from '../tool-result.js';
 import type { StaticHostRegistry } from './registry.js';
 import type { StaticHostStore } from './store.js';
-import { executeRegisterTool, executeRemoveTool, resolveSlugCollision, RegisterToolOutputSchema, RemoveToolOutputSchema, type ToolDeps } from './tools.js';
+import { executeRegisterTool, executeRemoveTool, resolveSlugCollision, withStaticHostMutation, RegisterToolOutputSchema, RemoveToolOutputSchema, type ToolDeps } from './tools.js';
 import type { StaticHostStoreEntry } from './store.js';
 import {
   STATIC_HOST_TOOL_DESCRIPTION,
@@ -139,42 +139,48 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
 
     pi.on('session_start', async (_ev: unknown, ctx: ExtensionContext) => {
       const sessionId = ctx.sessionManager.getSessionId();
-      const file = await store.read(sessionId);
-      if (!file) return;
-      // Replay persisted entries, re-suffixing any slug already taken (another
-      // session persisted the same slug, or this session reloaded earlier this
-      // boot). Re-suffixing keeps the bundle reachable; the old behaviour left a
-      // phantom entry in the file that the remove tool could never match (its
-      // registry lookup failed) and that got re-appended on every future write.
-      const replayed: StaticHostStoreEntry[] = [];
-      let mutated = false;
-      for (const entry of file.entries) {
-        let slug = entry.slug;
-        if (registry.has(slug)) {
-          slug = resolveSlugCollision(slug, registry);
-          mutated = true;
+      await withStaticHostMutation(registry, async () => {
+        const file = await store.read(sessionId);
+        if (!file) return;
+        // Replay persisted entries, re-suffixing any slug already taken (another
+        // session persisted the same slug, or this session reloaded earlier this
+        // boot). Re-suffixing keeps the bundle reachable; the old behaviour left a
+        // phantom entry in the file that the remove tool could never match (its
+        // registry lookup failed) and that got re-appended on every future write.
+        const replayed: StaticHostStoreEntry[] = [];
+        let mutated = false;
+        for (const entry of file.entries) {
+          let slug = entry.slug;
+          if (registry.has(slug)) {
+            slug = resolveSlugCollision(slug, registry);
+            mutated = true;
+          }
+          try {
+            registry.register({ slug, folderPath: entry.folderPath, sessionId, cardMetadata: entry.cardMetadata });
+            replayed.push(slug === entry.slug ? entry : { ...entry, slug });
+          } catch (err) {
+            // Couldn't register even after re-suffixing — drop it from the file so
+            // it doesn't linger as a phantom on the next write.
+            mutated = true;
+            console.warn(`[static-host] session_start: dropping unregisterable entry ${entry.slug} for session ${sessionId}`, err);
+          }
         }
-        try {
-          registry.register({ slug, folderPath: entry.folderPath, sessionId, cardMetadata: entry.cardMetadata });
-          replayed.push(slug === entry.slug ? entry : { ...entry, slug });
-        } catch (err) {
-          // Couldn't register even after re-suffixing — drop it from the file so
-          // it doesn't linger as a phantom on the next write.
-          mutated = true;
-          console.warn(`[static-host] session_start: dropping unregisterable entry ${entry.slug} for session ${sessionId}`, err);
+        // Persist the reconciled list only if something changed, so the common
+        // conflict-free replay performs no write.
+        if (mutated) {
+          await store.write(sessionId, { version: 1, entries: replayed });
         }
-      }
-      // Persist the reconciled list only if something changed, so the common
-      // conflict-free replay performs no write.
-      if (mutated) {
-        await store.write(sessionId, { version: 1, entries: replayed });
-      }
-      emitPanelCards(pi, sessionId);
+        emitPanelCards(pi, sessionId);
+      });
     });
 
     pi.on('session_shutdown', async (_ev: unknown, ctx: ExtensionContext) => {
       const sessionId = ctx.sessionManager.getSessionId();
-      if (!opts.retainOnShutdown) registry.unregisterAllForSession(sessionId);
+      if (!opts.retainOnShutdown) {
+        await withStaticHostMutation(registry, async () => {
+          registry.unregisterAllForSession(sessionId);
+        });
+      }
     });
   };
 }

@@ -818,6 +818,13 @@ export class SessionRegistry {
         rebuilt.restoreMode = session.restoreMode;
         rebuilt.isRestoring = session.isRestoring;
         rebuilt.folder = session.folder;
+        rebuilt.contextUsage = session.contextUsage;
+        rebuilt.lifetimeCostUsd = session.lifetimeCostUsd;
+        if (session.usageBreakdown !== undefined) {
+          rebuilt.usageBreakdown = session.usageBreakdown;
+        }
+        rebuilt.gitBranch = session.gitBranch;
+        rebuilt.pendingSteeringMessages = [...session.pendingSteeringMessages];
         // Don't carry over panelCards — server will send panel_update if panels are active.
         // Carrying over stale cards causes ghost panels after agent teardown + reconnect.
         // widgetCards get the same treatment: unlike panel cards there is no server-side

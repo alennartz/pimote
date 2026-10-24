@@ -108,11 +108,15 @@ export async function main(options: StartOptions = {}) {
   const fileDownloads = await bootstrapFileDownloads({ storeDir: PIMOTE_FILE_DOWNLOAD_DIR, validSessionIds });
   const managerContextBinding = new ManagerContextBinding();
   const managerExtensionFactory: ExtensionFactory = (pi) => createManagerExtension(managerContextBinding.get())(pi);
+  // Voice is constructed after the session manager. Keep the predicate live so
+  // replacement sessions read their current slot session ID.
+  const voiceOrchestratorRef: { current: ReturnType<typeof buildVoiceOrchestrator> } = { current: null };
   const sessionManager = await PimoteSessionManager.create(config, pushNotificationService, {
     staticHostFactory,
     fileDownloadFactory: fileDownloads.extensionFactory,
     managerExtensionFactory,
     pimoteDocsFactory: createPimoteDocsExtension(),
+    isVoiceModeActive: (slot) => voiceOrchestratorRef.current?.orchestrator.isCallActive(slot.sessionState.id) ?? false,
   });
 
   // The folder listing service: ordering, search, and windowing over the
@@ -331,6 +335,7 @@ export async function main(options: StartOptions = {}) {
       get: (clientId) => clientRegistryRef.current.get(clientId),
     },
   });
+  voiceOrchestratorRef.current = voiceBoot;
 
   if (!voiceBoot) {
     console.log('[voice] dormant: voice config absent (set voice.speechmuxSignalUrl and voice.speechmuxLlmWsUrl to enable)');

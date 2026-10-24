@@ -18,7 +18,7 @@ async function flush() {
   for (let n = 0; n < 20; n++) await Promise.resolve();
 }
 
-function harness() {
+function harness(options: { defaultInterpreterModel?: string } = {}) {
   type Handler = (event: any, ctx: ExtensionContext) => unknown;
   const handlers = new Map<string, Set<Handler>>();
   const busHandlers = new Map<string, (data: unknown) => void>();
@@ -28,12 +28,13 @@ function harness() {
   const pendingRuns = new Set<ReturnType<typeof deferred>>();
   const calls: { text: string; options: unknown; start: () => Promise<void> }[] = [];
   const status = { idle: true };
+  const modelFind = vi.fn((provider: string, id: string): { provider: string; id: string } | undefined => ({ provider, id }));
   const ctx = {
     isIdle: () => status.idle,
     abort: () => {
       void session.abort();
     },
-    modelRegistry: { find: () => ({ provider: 'test', id: 'voice' }) },
+    modelRegistry: { find: modelFind },
   } as unknown as ExtensionContext;
   const emit = async (name: string, event: unknown = {}) => {
     for (const handler of [...(handlers.get(name) ?? [])]) await handler(event, ctx);
@@ -104,7 +105,7 @@ function harness() {
     },
   } as unknown as ExtensionAPI;
   createVoiceExtension({
-    defaultInterpreterModel: 'test/voice',
+    defaultInterpreterModel: options.defaultInterpreterModel ?? 'test/voice',
     defaultWorkerModel: 'test/worker',
     speechmuxClientFactory: async () => client,
     getSession: () => session,
@@ -119,8 +120,8 @@ function harness() {
     await emit('agent_settled');
     await flush();
   };
-  const activate = async () => {
-    await emit('before_agent_start', { systemPromptOptions: { sections: {} } });
+  const activate = async (captureContext = true) => {
+    if (captureContext) await emit('before_agent_start', { systemPromptOptions: { sections: {} } });
     pi.events.emit('pimote:voice:activate', { type: 'pimote:voice:activate', sessionId: 'session', speechmuxWsUrl: 'ws://test' });
     await flush();
   };
@@ -130,7 +131,9 @@ function harness() {
     calls,
     client,
     pi,
+    modelFind,
     emit,
+    sessionStart: (reason: string) => emit('session_start', { type: 'session_start', reason }),
     settle,
     activate,
     frame: (frame: IncomingFrame) => {
@@ -256,6 +259,97 @@ describe('speak tool contract', () => {
     await flush();
     await h.emit('before_agent_start', event);
     expect(sections).toEqual({ other: 'base instructions' });
+  });
+});
+
+describe('interpreter model lifecycle', () => {
+  it.each(['new', 'resume', 'fork'])('captures context on session_start (%s) before activation', async (reason) => {
+    const h = harness();
+    await h.sessionStart(reason);
+    await h.activate(false);
+    expect(h.pi.setModel).toHaveBeenCalledTimes(1);
+    expect(h.modelFind).toHaveBeenCalledWith('test', 'voice');
+    h.deactivate();
+  });
+
+  it('preserves model ids containing slashes after the provider separator', async () => {
+    const h = harness({ defaultInterpreterModel: 'test/model/with/slashes' });
+    await h.sessionStart('new');
+    await h.activate(false);
+    expect(h.modelFind).toHaveBeenCalledWith('test', 'model/with/slashes');
+    expect(h.pi.setModel).toHaveBeenCalledTimes(1);
+    h.deactivate();
+  });
+
+  it('rejects model refs with an empty provider or model id', async () => {
+    for (const modelRef of ['test/', '/voice']) {
+      const h = harness({ defaultInterpreterModel: modelRef });
+      await h.sessionStart('new');
+      await h.activate(false);
+      expect(h.modelFind).not.toHaveBeenCalled();
+      expect(h.pi.setModel).not.toHaveBeenCalled();
+      h.deactivate();
+      await flush();
+    }
+  });
+
+  it('retries model application after a false result on the next call', async () => {
+    const h = harness();
+    vi.mocked(h.pi.setModel).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await h.activate();
+    expect(h.pi.setModel).toHaveBeenCalledTimes(1);
+    h.deactivate();
+    await flush();
+    await h.activate();
+    expect(h.pi.setModel).toHaveBeenCalledTimes(2);
+    h.deactivate();
+  });
+
+  it('retries model application after a thrown error on the next call', async () => {
+    const h = harness();
+    vi.mocked(h.pi.setModel).mockRejectedValueOnce(new Error('missing auth')).mockResolvedValueOnce(true);
+    await h.activate();
+    expect(h.pi.setModel).toHaveBeenCalledTimes(1);
+    h.deactivate();
+    await flush();
+    await h.activate();
+    expect(h.pi.setModel).toHaveBeenCalledTimes(2);
+    h.deactivate();
+  });
+
+  it('retries when no context exists, then applies after a later hook captures it', async () => {
+    const h = harness();
+    await h.activate(false);
+    expect(h.pi.setModel).not.toHaveBeenCalled();
+    h.deactivate();
+    await flush();
+    await h.activate();
+    expect(h.pi.setModel).toHaveBeenCalledTimes(1);
+    h.deactivate();
+  });
+
+  it('retries when the configured model is missing', async () => {
+    const h = harness();
+    h.modelFind.mockReturnValueOnce(undefined).mockReturnValueOnce({ provider: 'test', id: 'voice' });
+    await h.activate();
+    expect(h.pi.setModel).not.toHaveBeenCalled();
+    h.deactivate();
+    await flush();
+    await h.activate();
+    expect(h.pi.setModel).toHaveBeenCalledTimes(1);
+    h.deactivate();
+  });
+
+  it('does not overwrite an intentional model change on a later bind', async () => {
+    const h = harness();
+    await h.activate();
+    expect(h.pi.setModel).toHaveBeenCalledTimes(1);
+    await h.pi.setModel({ provider: 'test', id: 'worker' });
+    h.deactivate();
+    await flush();
+    await h.activate();
+    expect(h.pi.setModel).toHaveBeenCalledTimes(2);
+    h.deactivate();
   });
 });
 

@@ -36,6 +36,7 @@ function createMockSlot(): { slot: ManagedSlot; sent: PimoteEvent[] } {
       unsubscribe: () => {},
       pendingUiResponses: new Map(),
       extensionsBound: false,
+      sessionIdentity: {} as any,
       panelState: new Map(),
       downloads: [],
       panelListenerUnsubs: [],

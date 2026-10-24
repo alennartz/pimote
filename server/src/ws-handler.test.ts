@@ -8,7 +8,7 @@ import { sendSlotEvent, waitForSlotUiResponse, type PimoteSessionManager, type M
 import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderRegistry } from './folder-registry.js';
-import type { FolderListingService } from './folder-listing.js';
+import { FolderListing, type FolderListingService } from './folder-listing.js';
 import type { FolderCreator } from './folder-sources/index.js';
 import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
@@ -60,6 +60,7 @@ function createMockEventBuffer(opts?: { replayResult?: PimoteSessionEvent[] | nu
     currentCursor: maxCursor,
     onEvent: () => {},
     expectPromptEcho: () => {},
+    invalidateReplay: vi.fn(),
   } as unknown as EventBuffer;
 }
 
@@ -112,6 +113,7 @@ function createMockSlot(
     unsubscribe: overrides.unsubscribe ?? (() => {}),
     pendingUiResponses: new Map(),
     extensionsBound: overrides.extensionsBound ?? false,
+    sessionIdentity: mockSession,
     panelState: overrides.panelState ?? new Map(),
     downloads: overrides.downloads ?? [],
     panelListenerUnsubs: [],
@@ -121,9 +123,13 @@ function createMockSlot(
   };
 
   const observer: SessionObserver | null = overrides.connectedClientId != null ? { ws: null as any, clientId: overrides.connectedClientId, cursor: 0, onSessionReset: null } : null;
+  const runtime: any = { session: mockSession, rebind: undefined };
+  runtime.setRebindSession = (callback: () => Promise<void>) => {
+    runtime.rebind = callback;
+  };
 
   const slot: ManagedSlot = {
-    runtime: { session: mockSession } as any,
+    runtime,
     folderPath: overrides.folderPath ?? '/home/user/project',
     eventBusRef: { current: overrides.eventBus ?? null },
     observers: observer ? new Map([[observer.clientId, observer]]) : new Map(),
@@ -137,8 +143,20 @@ function createMockSlot(
 }
 
 function createMockSessionManager(sessions: Map<string, ManagedSlot> = new Map()): PimoteSessionManager {
+  const bindStartup = async (slot: ManagedSlot): Promise<void> => {
+    if (slot.sessionState.extensionsBound) return;
+    await slot.session.bindExtensions({ commandContextActions: createCommandContextActions(slot, mockManager as unknown as PimoteSessionManager) });
+    slot.sessionState.extensionsBound = true;
+    slot.runtime.setRebindSession(async () => (mockManager.applySessionReset as (slot: ManagedSlot) => Promise<void>)(slot));
+  };
   const mockManager = {
-    getSession: (id: string) => sessions.get(id),
+    getSession: (id: string) => {
+      const slot = sessions.get(id);
+      if (slot && !(slot.runtime as any).rebind) {
+        slot.runtime.setRebindSession(async () => (mockManager.applySessionReset as (slot: ManagedSlot) => Promise<void>)(slot));
+      }
+      return slot;
+    },
     getSlot: (id: string) => sessions.get(id) ?? null,
     getAllSessions: () => Array.from(sessions.values()),
     openSession: async () => 'new-session-id',
@@ -157,7 +175,9 @@ function createMockSessionManager(sessions: Map<string, ManagedSlot> = new Map()
     getLastKnownGitBranch: () => null,
     onSlotEvicted: undefined as undefined | ((sessionId: string) => void),
     attachObserver: async (id: string, observer: SessionObserver) => {
-      sessions.get(id)?.observers.set(observer.clientId, observer);
+      const slot = sessions.get(id);
+      slot?.observers.set(observer.clientId, observer);
+      if (slot) await bindStartup(slot);
     },
     detachObserver: (id: string, clientId: string) => {
       sessions.get(id)?.observers.delete(clientId);
@@ -167,6 +187,7 @@ function createMockSessionManager(sessions: Map<string, ManagedSlot> = new Map()
       const oldId = slot.sessionState.id;
       const observers = [...slot.observers.values()];
       if (newId === oldId) {
+        slot.sessionState.eventBuffer.invalidateReplay?.();
         for (const observer of observers) {
           await observer.onSessionReset?.(slot, { kind: 'unchanged' });
         }
@@ -328,6 +349,16 @@ function folderRow(path: string, overrides: Partial<FolderInfo> = {}): FolderInf
     externalProcessCount: 0,
     ...overrides,
   };
+}
+
+function createRealFolderListing(rows: FolderInfo[], listRows: () => Promise<FolderInfo[]> = async () => rows): FolderListing {
+  return new FolderListing({
+    listRows,
+    enrichRows: async () => {},
+    sessionSummaries: { listMany: async () => new Map() },
+    archivedLookup: () => new Map(),
+    listLiveSessions: () => [],
+  });
 }
 
 /** Let queued promise chains (fire-and-forget broadcasts) settle. */
@@ -1944,6 +1975,7 @@ describe('WsHandler', () => {
       // Wire the runtime to support newSession
       (slot.runtime as any).newSession = async () => {
         mockAgentSession.sessionId = 'new-session';
+        await (slot.runtime as any).rebind?.();
         return { cancelled: false };
       };
 
@@ -2021,6 +2053,7 @@ describe('WsHandler', () => {
       const slot = createMockSlot({ id: 'orphan-old', session: mockAgentSession, connectedClientId: null });
       (slot.runtime as any).newSession = async () => {
         mockAgentSession.sessionId = 'orphan-new';
+        await (slot.runtime as any).rebind?.();
         return { cancelled: false };
       };
       const sessions = new Map([['orphan-old', slot]]);
@@ -2455,6 +2488,133 @@ describe('WsHandler', () => {
         success: true,
         data: { cancelled: false, editorText: 'Use this summary as the next prompt' },
       });
+    });
+
+    it('resyncs a disconnected observer after navigation instead of replaying lifecycle-only events', async () => {
+      const oldEntry = {
+        type: 'message',
+        id: 'entry-old',
+        timestamp: '2026-04-11T12:00:00.000Z',
+        message: { role: 'user', content: [{ type: 'text', text: 'old branch' }] },
+      };
+      const currentEntry = {
+        type: 'message',
+        id: 'entry-current',
+        timestamp: '2026-04-11T12:01:00.000Z',
+        message: { role: 'user', content: [{ type: 'text', text: 'current branch' }] },
+      };
+      let branchEntries = [oldEntry];
+      const session = createMockSlot({
+        id: 'session-tree-reconnect',
+        eventBuffer: new EventBuffer(100),
+        session: {
+          subscribe: () => () => {},
+          dispose: () => {},
+          messages: [oldEntry.message],
+          model: null,
+          thinkingLevel: 'default',
+          getAvailableThinkingLevels: () => [],
+          isStreaming: false,
+          state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 'session-tree-reconnect',
+          autoCompactionEnabled: false,
+          bindExtensions: async () => {},
+          modelRuntime: { getAvailable: async () => [] },
+          clearQueue: () => ({ steering: [], followUp: [] }),
+          navigateTree: vi.fn(async () => {
+            branchEntries = [currentEntry];
+            session.session.messages = [currentEntry.message];
+            return { cancelled: false };
+          }),
+          sessionManager: {
+            buildContextEntries: () => branchEntries,
+            getBranch: () => branchEntries,
+            getCwd: () => '/home/user/project',
+          },
+        } as any,
+      });
+      const sessions = new Map([['session-tree-reconnect', session]]);
+      const clientRegistry: ClientRegistry = new Map();
+      const live = createTestHandler('client-tree-live', { sessions, clientRegistry });
+      const offline = createTestHandler('client-tree-offline', { sessions, clientRegistry });
+
+      await live.handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/project', sessionId: 'session-tree-reconnect', id: 'req-live-claim' }));
+      expect(findEvents(live.sent, 'full_resync')).toEqual([
+        expect.objectContaining({
+          messages: [expect.objectContaining({ entryId: 'entry-old', content: [{ type: 'text', text: 'old branch' }] })],
+        }),
+      ]);
+
+      await offline.handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-tree-reconnect',
+          lastCursor: session.sessionState.eventBuffer.currentCursor,
+          id: 'req-offline-claim',
+        }),
+      );
+
+      // Seed a real pre-navigation cursor, then disconnect only the second observer.
+      session.sessionState.eventBuffer.onEvent({ type: 'agent_start' } as IncomingSdkEvent, 'session-tree-reconnect', (event) => sendSlotEvent(session, event));
+      live.sent.length = 0;
+      offline.sent.length = 0;
+      const offlineCursorBeforeNavigation = session.observers.get('client-tree-offline')!.cursor;
+      offline.handler.cleanup();
+      expect(session.observers.has('client-tree-offline')).toBe(false);
+
+      await live.handler.handleMessage(
+        JSON.stringify({
+          type: 'navigate_tree',
+          sessionId: 'session-tree-reconnect',
+          targetId: 'entry-target',
+          id: 'req-navigate-tree',
+        }),
+      );
+
+      // The connected observer receives each lifecycle event and one reset snapshot.
+      expect(findEvents(live.sent, 'tree_navigation_start')).toHaveLength(1);
+      expect(findEvents(live.sent, 'tree_navigation_end')).toHaveLength(1);
+      expect(findEvents(live.sent, 'full_resync')).toHaveLength(1);
+      expect((findEvents(live.sent, 'full_resync')[0] as any).messages).toEqual([
+        expect.objectContaining({ entryId: 'entry-current', content: [{ type: 'text', text: 'current branch' }] }),
+      ]);
+
+      const reconnect = createTestHandler('client-tree-reconnect', { sessions, clientRegistry });
+      await reconnect.handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-tree-reconnect',
+          lastCursor: offlineCursorBeforeNavigation,
+          id: 'req-reconnect',
+        }),
+      );
+
+      const restoreEvents = findEvents(reconnect.sent, 'session_restore');
+      expect(restoreEvents).toHaveLength(2);
+      expect(restoreEvents).toEqual([
+        expect.objectContaining({ mode: 'full_resync_cursor_stale', status: 'started' }),
+        expect.objectContaining({ mode: 'full_resync_cursor_stale', status: 'completed' }),
+      ]);
+      const fullResync = findEvents(reconnect.sent, 'full_resync');
+      expect(fullResync).toHaveLength(1);
+      expect((fullResync[0] as any).messages).toEqual([
+        expect.objectContaining({
+          role: 'user',
+          entryId: 'entry-current',
+          content: [{ type: 'text', text: 'current branch' }],
+        }),
+      ]);
+      expect(findEvents(reconnect.sent, 'buffered_events')).toHaveLength(0);
+      expect(findEvents(reconnect.sent, 'tree_navigation_start')).toHaveLength(0);
+      expect(findEvents(reconnect.sent, 'tree_navigation_end')).toHaveLength(0);
+      expect(findResponse(reconnect.sent, 'req-reconnect')).toMatchObject({ success: true });
+      expect(findEvents(live.sent, 'tree_navigation_start')).toHaveLength(1);
+      expect(findEvents(live.sent, 'tree_navigation_end')).toHaveLength(1);
+      expect(findEvents(live.sent, 'full_resync')).toHaveLength(1);
     });
 
     it('emits lifecycle events for cancelled navigation and skips full_resync', async () => {
@@ -3033,6 +3193,7 @@ describe('WsHandler', () => {
     it('triggers session_replaced when fork changes the session ID', async () => {
       const forkFn = vi.fn().mockImplementation(async () => {
         mockSession.sessionId = 'forked-session-new';
+        await (slot.runtime as any).rebind?.();
         return { cancelled: false, selectedText: 'text from fork' };
       });
 
@@ -3733,7 +3894,10 @@ describe('WsHandler', () => {
 
       await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'req-win', offset: 10, limit: 5, query: 'x', includeArchived: true, orderToken: 'tok-1' }));
 
-      expect(query).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'client-1', token: 'tok-1', offset: 10, limit: 5, query: 'x', includeArchived: true }));
+      const folderConnectionId = query.mock.calls[0]?.[0]?.connectionId as string;
+      expect(folderConnectionId).toEqual(expect.any(String));
+      expect(folderConnectionId).not.toBe('client-1');
+      expect(query).toHaveBeenCalledWith(expect.objectContaining({ connectionId: folderConnectionId, token: 'tok-1', offset: 10, limit: 5, query: 'x', includeArchived: true }));
       const data = findResponse(sent, 'req-win')!.data as { folders: FolderInfo[]; roots: string[]; total: number; orderToken: string; more: boolean };
       expect(data.folders).toEqual([folderRow('/w/a')]);
       expect(data.roots).toEqual(['/w']);
@@ -3778,7 +3942,10 @@ describe('WsHandler', () => {
       const repoIndex = { roots: ['/w'], list: async () => [] } as unknown as RepoIndex;
       const folderRegistry = { list: async () => [] } as unknown as FolderRegistry;
       const { handler, sent } = createTestHandler('client-open', { folderListing, repoIndex, folderRegistry });
-      expect(pin).toHaveBeenCalledWith('client-open');
+      expect(pin).toHaveBeenCalledOnce();
+      const folderConnectionId = pin.mock.calls[0]?.[0] as string;
+      expect(folderConnectionId).toEqual(expect.any(String));
+      expect(folderConnectionId).not.toBe('client-open');
       const early = handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'early' }));
       // Early commands await the pending open-time pin.
       expect(findResponse(sent, 'early')).toBeUndefined();
@@ -3791,7 +3958,78 @@ describe('WsHandler', () => {
       await handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'refresh', repin: true }));
       expect(findResponse(sent, 'refresh')!.data).toMatchObject({ orderToken: 'refreshed' });
       handler.cleanup();
-      expect(releaseConnection).toHaveBeenCalledWith('client-open');
+      expect(releaseConnection).toHaveBeenCalledWith(folderConnectionId);
+    });
+
+    it('keeps the reconnecting handler token stable across continuation pages', async () => {
+      const rows = [folderRow('/w/a'), folderRow('/w/b')];
+      const folderListing = createRealFolderListing(rows);
+      const repoIndex = { roots: ['/w'], list: async () => [] } as unknown as RepoIndex;
+      const folderRegistry = { list: async () => rows } as unknown as FolderRegistry;
+      const first = createTestHandler('reconnect-client', { repoIndex, folderRegistry, folderListing });
+
+      await first.handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'first-page', limit: 1 }));
+      const firstToken = (findResponse(first.sent, 'first-page')!.data as { orderToken: string }).orderToken;
+      first.handler.cleanup();
+
+      const reconnect = createTestHandler('reconnect-client', {
+        clientRegistry: first.clientRegistry,
+        repoIndex,
+        folderRegistry,
+        folderListing,
+      });
+      await reconnect.handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'reconnected-page', limit: 1 }));
+      const reconnectToken = (findResponse(reconnect.sent, 'reconnected-page')!.data as { orderToken: string }).orderToken;
+      expect(reconnectToken).not.toBe(firstToken);
+
+      await reconnect.handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'continuation', orderToken: reconnectToken, offset: 1, limit: 1 }));
+      const continuationToken = (findResponse(reconnect.sent, 'continuation')!.data as { orderToken: string }).orderToken;
+      expect(continuationToken).toBe(reconnectToken);
+    });
+
+    it('does not let takeover cleanup orphan a replacement pin or adopt an old token', async () => {
+      const rows = [folderRow('/w/a'), folderRow('/w/b')];
+      let deferPins = false;
+      let releaseRows!: () => void;
+      const rowsReady = new Promise<void>((resolve) => {
+        releaseRows = resolve;
+      });
+      const listRows = async () => {
+        if (deferPins) await rowsReady;
+        return rows;
+      };
+      const folderListing = createRealFolderListing(rows, listRows);
+      const repoIndex = { roots: ['/w'], list: async () => [] } as unknown as RepoIndex;
+      const folderRegistry = { list: async () => rows } as unknown as FolderRegistry;
+      const old = createTestHandler('takeover-client', { repoIndex, folderRegistry, folderListing });
+
+      await old.handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'old-page', limit: 1 }));
+      const oldToken = (findResponse(old.sent, 'old-page')!.data as { orderToken: string }).orderToken;
+      deferPins = true;
+
+      const replacement = createTestHandler('takeover-client', {
+        clientRegistry: old.clientRegistry,
+        repoIndex,
+        folderRegistry,
+        folderListing,
+      });
+      // Model the server's construction-before-takeover order: the test seam
+      // registers handlers eagerly, so restore the old owner until takeover.
+      old.clientRegistry.set('takeover-client', old.handler);
+      takeOverClientSlot(old.clientRegistry, 'takeover-client', replacement.handler);
+      releaseRows();
+
+      await replacement.handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'replacement-page', limit: 1 }));
+      const replacementToken = (findResponse(replacement.sent, 'replacement-page')!.data as { orderToken: string }).orderToken;
+      expect(replacementToken).not.toBe(oldToken);
+      await replacement.handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'replacement-continuation', orderToken: replacementToken, offset: 1, limit: 1 }));
+      expect((findResponse(replacement.sent, 'replacement-continuation')!.data as { orderToken: string }).orderToken).toBe(replacementToken);
+
+      await replacement.handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'old-token', orderToken: oldToken, limit: 1 }));
+      const afterOldToken = (findResponse(replacement.sent, 'old-token')!.data as { orderToken: string }).orderToken;
+      expect(afterOldToken).not.toBe(oldToken);
+      await replacement.handler.handleMessage(JSON.stringify({ type: 'list_folders', id: 'after-old-token', orderToken: afterOldToken, offset: 1, limit: 1 }));
+      expect((findResponse(replacement.sent, 'after-old-token')!.data as { orderToken: string }).orderToken).toBe(afterOldToken);
     });
 
     it('reports listing service failures as error responses', async () => {
@@ -4502,6 +4740,7 @@ describe('panel resync requests', () => {
     const slot = createMockSlot({ id: 'old-session', session: mockAgentSession, connectedClientId: null, eventBus: bus });
     (slot.runtime as any).newSession = async () => {
       mockAgentSession.sessionId = 'new-session';
+      await (slot.runtime as any).rebind?.();
       return { cancelled: false };
     };
 
@@ -4605,14 +4844,14 @@ describe('call_bind — dormant session reopen', () => {
     (sessionManager as any).openSession = async (folderPath: string, sessionFilePath?: string) => {
       expect(folderPath).toBe('/home/user/project');
       expect(sessionFilePath).toBe('/tmp/session-1.jsonl');
-      sessions.set(
-        'session-1',
-        createMockSlot({
-          id: 'session-1',
-          folderPath,
-          session: stubVoiceSession(bindExtensions, sessionFilePath),
-        }),
-      );
+      const slot = createMockSlot({
+        id: 'session-1',
+        folderPath,
+        session: stubVoiceSession(bindExtensions, sessionFilePath),
+      });
+      sessions.set('session-1', slot);
+      await slot.session.bindExtensions({});
+      slot.sessionState.extensionsBound = true;
       return 'session-1';
     };
 

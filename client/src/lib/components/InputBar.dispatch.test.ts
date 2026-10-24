@@ -37,6 +37,12 @@ async function submit(text: string) {
   return textarea;
 }
 
+async function typeInto(textarea: HTMLTextAreaElement, text: string) {
+  textarea.value = text;
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  await tick();
+}
+
 function respond(data: unknown, success = true) {
   const sent: PimoteCommand[] = [];
   vi.spyOn(connection, 'send').mockImplementation(async (command) => {
@@ -147,6 +153,125 @@ describe('prompt dispatch outcome', () => {
     respond({ tree: [], currentLeafId: null });
     await submit('/tree');
     expect(treeDialogStore.state).toMatchObject({ open: true, sessionId: 's1', tree: [], currentLeafId: null });
+  });
+});
+
+describe('compact dispatch outcome', () => {
+  it('clears an unchanged draft on success and captures the originating session and instructions', async () => {
+    const session = setupSession(false);
+    let release!: (response: PimoteResponse) => void;
+    const send = vi.spyOn(connection, 'send').mockImplementation((command) => {
+      expect(command).toEqual({
+        type: 'compact',
+        sessionId: 's1',
+        customInstructions: 'focus on file diffs',
+      });
+      return new Promise<PimoteResponse>((resolve) => {
+        release = resolve;
+      });
+    });
+    const textarea = await submit('  /compact focus on file diffs  ');
+
+    expect(session.draftText).toBe('  /compact focus on file diffs  ');
+    expect(send).toHaveBeenCalledTimes(1);
+    release({ id: 'r', success: true });
+    for (let i = 0; i < 4; i++) await tick();
+
+    expect(textarea.value).toBe('');
+    expect(session.draftText).toBe('');
+  });
+
+  it('keeps a newer draft typed in the originating session', async () => {
+    const session = setupSession(false);
+    let release!: (response: PimoteResponse) => void;
+    vi.spyOn(connection, 'send').mockImplementation(
+      () =>
+        new Promise<PimoteResponse>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const textarea = await submit('/compact old instructions');
+    await typeInto(textarea, '/compact newer instructions');
+
+    release({ id: 'r', success: true });
+    for (let i = 0; i < 4; i++) await tick();
+
+    expect(textarea.value).toBe('/compact newer instructions');
+    expect(session.draftText).toBe('/compact newer instructions');
+  });
+
+  it('clears the unchanged originating draft without touching another viewed session', async () => {
+    const session = setupSession(false);
+    sessionRegistry.addSession('s2', '/workspace/s2', 's2');
+    const other = sessionRegistry.sessions['s2']!;
+    other.draftText = 's2 draft';
+    let release!: (response: PimoteResponse) => void;
+    vi.spyOn(connection, 'send').mockImplementation(
+      () =>
+        new Promise<PimoteResponse>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const textarea = await submit('/compact old instructions');
+
+    sessionRegistry.switchTo('s2');
+    await tick();
+    expect(textarea.value).toBe('s2 draft');
+    release({ id: 'r', success: true });
+    for (let i = 0; i < 4; i++) await tick();
+
+    expect(session.draftText).toBe('');
+    expect(other.draftText).toBe('s2 draft');
+    expect(textarea.value).toBe('s2 draft');
+
+    sessionRegistry.switchTo('s1');
+    await tick();
+    expect(textarea.value).toBe('');
+  });
+
+  it('keeps the draft when the compact response is rejected', async () => {
+    const session = setupSession(false);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(connection, 'send').mockResolvedValue({ id: 'r', success: false, error: 'rejected' });
+    const textarea = await submit('/compact old instructions');
+
+    expect(textarea.value).toBe('/compact old instructions');
+    expect(session.draftText).toBe('/compact old instructions');
+    expect(error).toHaveBeenCalledWith('Compact rejected:', 'rejected');
+  });
+
+  it('keeps the draft when compact dispatch throws', async () => {
+    const session = setupSession(false);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(connection, 'send').mockRejectedValue(new Error('offline'));
+    const textarea = await submit('/compact old instructions');
+
+    expect(textarea.value).toBe('/compact old instructions');
+    expect(session.draftText).toBe('/compact old instructions');
+  });
+
+  it('keeps both drafts when a compact response fails after switching sessions', async () => {
+    const session = setupSession(false);
+    sessionRegistry.addSession('s2', '/workspace/s2', 's2');
+    const other = sessionRegistry.sessions['s2']!;
+    other.draftText = 's2 draft';
+    let release!: (response: PimoteResponse) => void;
+    vi.spyOn(connection, 'send').mockImplementation(
+      () =>
+        new Promise<PimoteResponse>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const textarea = await submit('/compact old instructions');
+
+    sessionRegistry.switchTo('s2');
+    await tick();
+    release({ id: 'r', success: false, error: 'rejected' });
+    for (let i = 0; i < 4; i++) await tick();
+
+    expect(session.draftText).toBe('/compact old instructions');
+    expect(other.draftText).toBe('s2 draft');
+    expect(textarea.value).toBe('s2 draft');
   });
 });
 

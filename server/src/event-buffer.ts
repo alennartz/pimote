@@ -30,6 +30,8 @@ export class EventBuffer {
   private count = 0;
   private hasBufferedEvent = false;
   private _cursor: number;
+  /** Cursors below this floor cannot be replayed after a session reset. */
+  private replayFloor: number;
   private pendingPromptEcho: string | undefined;
 
   constructor(
@@ -46,6 +48,7 @@ export class EventBuffer {
   ) {
     this.buffer = new Array(capacity);
     this._cursor = baseCursor;
+    this.replayFloor = baseCursor;
   }
 
   get currentCursor(): number {
@@ -60,6 +63,17 @@ export class EventBuffer {
    */
   expectPromptEcho(clientMessageId: string): void {
     this.pendingPromptEcho = clientMessageId;
+  }
+
+  /**
+   * Invalidate replay positions held before a session reset without emitting an
+   * artificial event. The cursor advances once so a client at the previous end
+   * cannot be mistaken for caught up, and the new cursor becomes the first
+   * valid replay position.
+   */
+  invalidateReplay(): void {
+    this._cursor++;
+    this.replayFloor = this._cursor;
   }
 
   /**
@@ -80,7 +94,7 @@ export class EventBuffer {
    * Returns empty array if client is caught up.
    */
   replay(fromCursor: number): PimoteSessionEvent[] | null {
-    if (fromCursor < this.baseCursor || fromCursor > this._cursor) {
+    if (fromCursor < this.baseCursor || fromCursor < this.replayFloor || fromCursor > this._cursor) {
       return null;
     }
     if (fromCursor === this._cursor) {

@@ -39,6 +39,7 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
     setThinkingLevel: vi.fn(() => undefined),
     setSteeringMode: vi.fn(() => undefined),
     setFollowUpMode: vi.fn(() => undefined),
+    bindExtensions: vi.fn(async () => undefined),
   };
 
   return {
@@ -76,6 +77,8 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       return {
         ...created,
         session: fakeSession,
+        setRebindSession: vi.fn(),
+        dispose: vi.fn(async () => undefined),
       };
     }),
     SessionManager: {

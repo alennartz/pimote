@@ -844,11 +844,20 @@ describe('SessionRegistry', () => {
       expect(session.isStreaming).toBe(false);
     });
 
-    it('full_resync replaces canonical session state and resets transient runtime fields', () => {
+    it('full_resync replaces canonical session state, preserves client metadata, and resets transient runtime fields', () => {
       registry.addSession('s1', '/path', 'proj');
       const before = registry.sessions['s1'];
       before.draftText = 'keep my unsent text';
       before.needsAttention = true;
+      before.restoreMode = 'full_resync_cursor_stale';
+      before.isRestoring = true;
+      before.contextUsage = { percent: 42, contextWindow: 128000 };
+      before.lifetimeCostUsd = 12.34;
+      before.usageBreakdown = {
+        tokens: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, total: 100 },
+        cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+      };
+      before.gitBranch = 'feature/resync';
       const folderRow: FolderInfo = {
         path: '/path',
         name: 'proj',
@@ -903,11 +912,22 @@ describe('SessionRegistry', () => {
       expect(session.messages).toEqual(messages);
       expect(session.firstMessage).toBe('Hello');
       expect(session.draftText).toBe('keep my unsent text');
+      expect(session.restoreMode).toBe('full_resync_cursor_stale');
+      expect(session.isRestoring).toBe(true);
+      expect(session.contextUsage).toEqual({ percent: 42, contextWindow: 128000 });
+      expect(session.lifetimeCostUsd).toBe(12.34);
+      expect(session.usageBreakdown).toEqual({
+        tokens: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, total: 100 },
+        cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+      });
+      expect(session.gitBranch).toBe('feature/resync');
       // The folder pointer is client-owned linkage — the server-authoritative
       // rebuild must carry it, same class as the draft.
       expect(session.folder).toBe(folderRow);
       expect(session.needsAttention).toBe(false);
-      expect(session.pendingSteeringMessages).toEqual([]);
+      expect(session.pendingSteeringMessages).toEqual(['pending']);
+      before.pendingSteeringMessages.push('stale mutation');
+      expect(session.pendingSteeringMessages).toEqual(['pending']);
       expect(session.conflictingProcesses).toEqual([]);
       expect(session.bashExecutions).toEqual({});
       expect(session.lastBotActivityTimestamp).toBeNull();
@@ -938,6 +958,94 @@ describe('SessionRegistry', () => {
       const session = registry.sessions['s1'];
       expect(session.panelCards).toEqual([]);
       expect(session.widgetCards).toEqual({});
+    });
+
+    it('full_resync preserves cleared metadata and a queue snapshot, then later snapshots replace them', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.updateMeta('s1', { gitBranch: null, contextUsage: null, lifetimeCostUsd: 0 });
+      registry.sessions.s1.pendingSteeringMessages = ['queued before reconnect'];
+
+      registry.handleEvent({
+        type: 'full_resync',
+        sessionId: 's1',
+        state: {
+          model: null,
+          thinkingLevel: 'off',
+          isStreaming: false,
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 's1',
+          autoCompactionEnabled: false,
+          messageCount: 0,
+        },
+        messages: [],
+      });
+
+      let session = registry.sessions.s1;
+      expect(session.contextUsage).toBeNull();
+      expect(session.lifetimeCostUsd).toBe(0);
+      expect(session.gitBranch).toBeNull();
+      expect(session).not.toHaveProperty('usageBreakdown');
+      expect(session.pendingSteeringMessages).toEqual(['queued before reconnect']);
+
+      const breakdown = {
+        tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
+        cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4 },
+      };
+      registry.updateMeta('s1', {
+        gitBranch: 'feature/reconnected',
+        contextUsage: { percent: 18, contextWindow: 64000 },
+        lifetimeCostUsd: 8.5,
+        usageBreakdown: breakdown,
+      });
+      registry.handleEvent(makeSessionEvent('queue_update', 's1', { steering: ['authoritative queue'], followUp: [] }));
+
+      session = registry.sessions.s1;
+      expect(session.gitBranch).toBe('feature/reconnected');
+      expect(session.contextUsage).toEqual({ percent: 18, contextWindow: 64000 });
+      expect(session.lifetimeCostUsd).toBe(8.5);
+      expect(session.usageBreakdown).toEqual(breakdown);
+      expect(session.pendingSteeringMessages).toEqual(['authoritative queue']);
+
+      registry.updateMeta('s1', { gitBranch: null, contextUsage: null, lifetimeCostUsd: 0 });
+      registry.handleEvent(makeSessionEvent('queue_update', 's1', { steering: [], followUp: ['follow-up'] }));
+      session = registry.sessions.s1;
+      expect(session.gitBranch).toBeNull();
+      expect(session.contextUsage).toBeNull();
+      expect(session.lifetimeCostUsd).toBe(0);
+      expect(session).not.toHaveProperty('usageBreakdown');
+      expect(session.pendingSteeringMessages).toEqual([]);
+    });
+
+    it('full_resync during restore keeps the same session identity and viewed navigation', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const toViewed = vi.fn();
+      registry.setViewNavigator({ toViewed });
+      registry.switchTo('s1');
+      registry.clearViewNavigation();
+      registry.handleEvent(makeSessionEvent('session_restore', 's1', { mode: 'full_resync_cursor_stale', status: 'started' }));
+
+      registry.handleEvent({
+        type: 'full_resync',
+        sessionId: 's1',
+        state: {
+          model: null,
+          thinkingLevel: 'off',
+          isStreaming: false,
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 's1',
+          autoCompactionEnabled: false,
+          messageCount: 0,
+        },
+        messages: [],
+      });
+
+      expect(registry.viewedSessionId).toBe('s1');
+      expect(registry.sessions.s1.sessionId).toBe('s1');
+      expect(registry.sessions.s1.restoreMode).toBe('full_resync_cursor_stale');
+      expect(registry.sessions.s1.isRestoring).toBe(true);
+      expect(toViewed).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1241,7 +1349,7 @@ describe('SessionRegistry', () => {
       expect(session.pendingSteeringMessages).toEqual([]);
     });
 
-    it('full_resync clears pendingSteeringMessages as transient runtime state', () => {
+    it('full_resync carries the latest pendingSteeringMessages snapshot', () => {
       registry.addSession('s1', '/path', 'proj');
       const session = registry.sessions['s1'];
       session.pendingSteeringMessages.push('pending message');
@@ -1262,7 +1370,7 @@ describe('SessionRegistry', () => {
         messages: [],
       });
 
-      expect(registry.sessions['s1'].pendingSteeringMessages).toEqual([]);
+      expect(registry.sessions['s1'].pendingSteeringMessages).toEqual(['pending message']);
     });
   });
 
@@ -1531,6 +1639,13 @@ describe('SessionRegistry', () => {
       old.thinkingLevel = 'high';
       old.autoCompactionEnabled = true;
       old.gitBranch = 'main';
+      old.contextUsage = { percent: 77, contextWindow: 64000 };
+      old.lifetimeCostUsd = 9.87;
+      old.usageBreakdown = {
+        tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
+        cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4 },
+      };
+      old.pendingSteeringMessages = ['must not revive'];
       old.messages = [makeUserMessage('hello'), makeAssistantMessage('hi')];
       old.messageKeys = ['msg-0', 'msg-1'];
       old.firstMessage = 'hello';
@@ -1559,12 +1674,58 @@ describe('SessionRegistry', () => {
       expect(newSession.streamingMessage).toBeNull();
       expect(newSession.draftText).toBe('');
       expect(newSession.pendingSteeringMessages).toEqual([]);
+      expect(newSession.contextUsage).toBeNull();
+      expect(newSession.lifetimeCostUsd).toBe(0);
+      expect(newSession).not.toHaveProperty('usageBreakdown');
       expect(newSession.downloads).toEqual([]);
       // Preserved from old session
       expect(newSession.model).toEqual({ provider: 'test', id: 'model-1', name: 'Test Model' });
       expect(newSession.thinkingLevel).toBe('high');
       expect(newSession.autoCompactionEnabled).toBe(true);
       expect(newSession.gitBranch).toBe('main');
+    });
+
+    it('replacement followed by resync keeps new usage and queue clean and ignores removed-id events', () => {
+      registry.addSession('old-id', '/home/user/project', 'project');
+      const old = registry.sessions['old-id'];
+      old.contextUsage = { percent: 91, contextWindow: 32000 };
+      old.lifetimeCostUsd = 4.56;
+      old.usageBreakdown = {
+        tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
+        cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4 },
+      };
+      old.pendingSteeringMessages = ['removed queue'];
+      old.gitBranch = 'preserve branch';
+
+      registry.replaceSession('old-id', 'new-id', '/home/user/project', 'project');
+      registry.handleEvent({
+        type: 'full_resync',
+        sessionId: 'new-id',
+        state: {
+          model: null,
+          thinkingLevel: 'off',
+          isStreaming: false,
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 'new-id',
+          autoCompactionEnabled: false,
+          messageCount: 0,
+        },
+        messages: [],
+      });
+
+      expect(registry.sessions['new-id'].contextUsage).toBeNull();
+      expect(registry.sessions['new-id'].lifetimeCostUsd).toBe(0);
+      expect(registry.sessions['new-id']).not.toHaveProperty('usageBreakdown');
+      expect(registry.sessions['new-id'].pendingSteeringMessages).toEqual([]);
+      expect(registry.sessions['new-id'].gitBranch).toBe('preserve branch');
+
+      registry.handleEvent(makeSessionEvent('queue_update', 'old-id', { steering: ['stale'], followUp: [] }));
+      registry.handleEvent(makeSessionEvent('full_resync', 'old-id', { messages: [] }));
+      registry.updateMeta('old-id', { gitBranch: 'stale', contextUsage: { percent: 1, contextWindow: 1 }, lifetimeCostUsd: 1 });
+      expect(registry.sessions['old-id']).toBeUndefined();
+      expect(registry.sessions['new-id'].pendingSteeringMessages).toEqual([]);
+      expect(registry.sessions['new-id'].lifetimeCostUsd).toBe(0);
     });
 
     it('replaceSession updates viewedSessionId when old session was viewed', () => {

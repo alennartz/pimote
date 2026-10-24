@@ -382,26 +382,35 @@
     // Intercept `/compact` — triggers manual context compaction with optional
     // custom instructions (e.g. `/compact focus on file diffs and decisions`).
     if (/^\/compact(?:\s|$)/.test(text)) {
+      const originatingSessionId = sessionRegistry.viewed?.sessionId;
+      if (!originatingSessionId) return;
+      const submittedDraft = inputText;
       const customInstructions = text.slice('/compact'.length).trim() || undefined;
       try {
-        await connection.send({
+        const response = await connection.send({
           type: 'compact',
-          sessionId: sessionRegistry.viewed!.sessionId,
+          sessionId: originatingSessionId,
           customInstructions,
         });
+        if (!response.success) {
+          console.error('Compact rejected:', response.error);
+          return;
+        }
+
+        const originatingSession = sessionRegistry.sessions[originatingSessionId];
+        if (originatingSession?.draftText === submittedDraft) {
+          originatingSession.draftText = '';
+        }
+        if (!originatingSession || sessionRegistry.viewedSessionId !== originatingSessionId || inputText !== submittedDraft) return;
+
+        inputText = '';
+        autocompleteVisible = false;
+        selectedCommand = null;
+        if (textareaEl) textareaEl.style.height = 'auto';
+        restoreTextareaFocus(focusSnapshot);
       } catch (e) {
         console.error('Failed to compact:', e);
       }
-      inputText = '';
-      autocompleteVisible = false;
-      selectedCommand = null;
-      if (sessionRegistry.viewed) {
-        sessionRegistry.viewed.draftText = '';
-      }
-      if (textareaEl) {
-        textareaEl.style.height = 'auto';
-      }
-      restoreTextareaFocus(focusSnapshot);
       return;
     }
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -311,5 +312,222 @@ describe('createServer — server_capabilities advertisement', () => {
   it('advertises voice enabled when a voice orchestrator is wired', async () => {
     const port = await startServer({ callHolder: new Map() });
     await expect(awaitCapabilities(port)).resolves.toEqual({ type: 'server_capabilities', voice: true });
+  });
+});
+
+describe('createServer — malformed WebSocket frames', () => {
+  let server: PimoteServer;
+  let error: ReturnType<typeof vi.spyOn>;
+
+  afterEach(async () => {
+    error?.mockRestore();
+    await server?.close();
+  });
+
+  function awaitOpen(ws: WebSocket): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('timed out waiting for WebSocket open')), 2000);
+      ws.once('open', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      ws.once('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+  }
+
+  function awaitClose(ws: WebSocket): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('timed out waiting for WebSocket close')), 2000);
+      ws.once('close', (code) => {
+        clearTimeout(timer);
+        resolve(code);
+      });
+      ws.once('error', () => {
+        // The malformed frame is written through the client socket. The ws
+        // client can report the resulting peer close as an error as well.
+      });
+    });
+  }
+
+  it('handles an unmasked frame, cleans up the client, and accepts another connection', async () => {
+    error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const releaseConnection = vi.fn();
+    const folderListing = { releaseConnection } as unknown as FolderListingService;
+    server = await createServer(
+      { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0 },
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      undefined,
+      new InMemoryStaticHostRegistry(),
+      makeDownloads(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      folderListing,
+    );
+    await server.start(0);
+    const port = (server.httpServer.address() as AddressInfo).port;
+    const clientId = 'malformed-client';
+    const malformed = new WebSocket(`ws://127.0.0.1:${port}/ws?clientId=${clientId}`);
+    await awaitOpen(malformed);
+    expect(server.clientRegistry.has(clientId)).toBe(true);
+
+    const close = awaitClose(malformed);
+    const socket = (malformed as unknown as { _socket?: { write(data: Buffer): void } })._socket;
+    expect(socket).toBeDefined();
+    socket!.write(Buffer.from([0x81, 0x01, 0x78]));
+    await expect(close).resolves.toBe(1002);
+
+    expect(error.mock.calls.some(([, err]) => (err as { code?: string })?.code === 'WS_ERR_EXPECTED_MASK')).toBe(true);
+    expect(server.clientRegistry.has(clientId)).toBe(false);
+    expect(releaseConnection).toHaveBeenCalledTimes(1);
+    const [releasedOwner] = releaseConnection.mock.calls[0] ?? [];
+    expect(releasedOwner).toEqual(expect.any(String));
+    expect(releasedOwner).not.toBe(clientId);
+
+    const healthy = new WebSocket(`ws://127.0.0.1:${port}/ws?clientId=healthy-client`);
+    const capabilities = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('timed out waiting for capabilities')), 2000);
+      healthy.once('message', (raw) => {
+        clearTimeout(timer);
+        expect((JSON.parse(String(raw)) as PimoteEvent).type).toBe('server_capabilities');
+        resolve();
+      });
+      healthy.once('error', reject);
+    });
+    await awaitOpen(healthy);
+    await capabilities;
+    healthy.close();
+  });
+
+  it('installs the error listener before the version-mismatch early return', async () => {
+    error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const clientDir = mkdtempSync(join(tmpdir(), 'pimote-ws-'));
+    mkdirSync(join(clientDir, '_app'), { recursive: true });
+    writeFileSync(join(clientDir, '_app', 'version.json'), JSON.stringify({ version: 'server-version' }));
+    const previousClientDir = process.env.CLIENT_DIR;
+    process.env.CLIENT_DIR = clientDir;
+    try {
+      server = await createServer(
+        { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0 },
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        undefined,
+        new InMemoryStaticHostRegistry(),
+        makeDownloads(),
+      );
+      await server.start(0);
+    } finally {
+      if (previousClientDir === undefined) delete process.env.CLIENT_DIR;
+      else process.env.CLIENT_DIR = previousClientDir;
+      rmSync(clientDir, { recursive: true, force: true });
+    }
+
+    const fakeWs = Object.assign(new EventEmitter(), {
+      close: vi.fn(),
+      send: vi.fn((_payload: string, callback?: () => void) => callback?.()),
+    });
+    const on = vi.spyOn(fakeWs, 'on');
+    server.wss.emit('connection', fakeWs as any, { url: '/ws?version=client-version' } as any);
+
+    expect(on.mock.calls[0]?.[0]).toBe('error');
+    expect(on.mock.calls[1]?.[0]).toBe('pong');
+    expect(() => fakeWs.emit('error', Object.assign(new Error('malformed'), { code: 'WS_ERR_EXPECTED_MASK' }))).not.toThrow();
+    expect(fakeWs.close).toHaveBeenCalled();
+  });
+});
+
+describe('createServer — control document frame policy', () => {
+  let server: PimoteServer;
+  let clientRoot: string;
+  let previousClientDir: string | undefined;
+  let staticHostRegistry: InMemoryStaticHostRegistry;
+
+  const indexHtml = '<!doctype html><html><body>pwa index</body></html>';
+  const customHtml = '<!doctype html><html><body>custom document</body></html>';
+  const bundleHtml = '<!doctype html><html><body>agent bundle</body></html>';
+
+  beforeEach(async () => {
+    clientRoot = mkdtempSync(join(tmpdir(), 'pimote-frame-policy-'));
+    mkdirSync(join(clientRoot, 'bundle'), { recursive: true });
+    writeFileSync(join(clientRoot, 'index.html'), indexHtml);
+    writeFileSync(join(clientRoot, 'custom.html'), customHtml);
+    writeFileSync(join(clientRoot, 'bundle', 'index.html'), bundleHtml);
+
+    previousClientDir = process.env.CLIENT_DIR;
+    process.env.CLIENT_DIR = clientRoot;
+
+    staticHostRegistry = new InMemoryStaticHostRegistry();
+    staticHostRegistry.register({
+      slug: 'demo',
+      folderPath: join(clientRoot, 'bundle'),
+      sessionId: 'session',
+      cardMetadata: { title: 'Demo' },
+    });
+
+    server = await createServer(
+      { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0 },
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      undefined,
+      staticHostRegistry,
+      makeDownloads(),
+    );
+    await server.start(0);
+  });
+
+  afterEach(async () => {
+    await server?.close();
+    if (previousClientDir === undefined) delete process.env.CLIENT_DIR;
+    else process.env.CLIENT_DIR = previousClientDir;
+    rmSync(clientRoot, { recursive: true, force: true });
+  });
+
+  function baseUrl(): string {
+    const port = (server.httpServer.address() as AddressInfo).port;
+    return `http://127.0.0.1:${port}`;
+  }
+
+  it('sets frame-ancestors on control documents and preserves their content', async () => {
+    const responses = [
+      ['/', indexHtml],
+      ['/index.html', indexHtml],
+      ['/custom.html', customHtml],
+      ['/some/client/route', indexHtml],
+    ] as const;
+
+    for (const [path, expectedBody] of responses) {
+      const response = await fetch(`${baseUrl()}${path}`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-security-policy')).toBe("frame-ancestors 'none'");
+      await expect(response.text()).resolves.toBe(expectedBody);
+    }
+  });
+
+  it('sets frame-ancestors on the SPA fallback 404', async () => {
+    rmSync(join(clientRoot, 'index.html'));
+
+    const response = await fetch(`${baseUrl()}/missing/client/route`);
+    expect(response.status).toBe(404);
+    expect(response.headers.get('content-security-policy')).toBe("frame-ancestors 'none'");
+    await expect(response.text()).resolves.toBe(JSON.stringify({ error: 'not found' }));
+  });
+
+  it('keeps static-host bundle serving and its WebSocket-blocking CSP unchanged', async () => {
+    const response = await fetch(`${baseUrl()}/s/demo/`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-security-policy')).toBe('connect-src http: https:');
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    await expect(response.text()).resolves.toBe(bundleHtml);
   });
 });

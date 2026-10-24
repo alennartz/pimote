@@ -47,6 +47,31 @@ describe('voice FSM — activation steers rather than aborts (M7)', () => {
   });
 });
 
+describe('voice FSM — interpreter model success owns applied state', () => {
+  it('requests the model on activation, then marks it applied only after success', () => {
+    let state = initialState();
+    const activation = step(state, {
+      type: 'eb:activate',
+      msg: { type: 'pimote:voice:activate', sessionId: 'sess-1', speechmuxWsUrl: 'ws://x' },
+    });
+    state = activation.next;
+    expect(activation.actions).toContainEqual({ kind: 'set_interpreter_model', modelSlug: 'p/m' });
+    expect(state.interpreterApplied).toBe(false);
+
+    const success = step(state, { type: 'interpreter_model_applied' });
+    state = success.next;
+    expect(success.actions).toEqual([]);
+    expect(state.interpreterApplied).toBe(true);
+
+    state = step(state, { type: 'eb:deactivate' }).next;
+    const rebound = step(state, {
+      type: 'eb:activate',
+      msg: { type: 'pimote:voice:activate', sessionId: 'sess-2', speechmuxWsUrl: 'ws://y' },
+    });
+    expect(rebound.actions.some((action) => action.kind === 'set_interpreter_model')).toBe(false);
+  });
+});
+
 describe('voice FSM — turn_end/agent_end routed through the buffer (M2)', () => {
   it('sdk:turn_end while active passes a floor_released send_frame', () => {
     const state = activate('s');

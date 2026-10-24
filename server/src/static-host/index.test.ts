@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStaticHostRegistry } from './registry.js';
 import { FileStaticHostStore } from './store.js';
+import type { StaticHostStore } from './store.js';
 import { createStaticHostExtension } from './index.js';
 import { validateSlug } from './tools.js';
 import type { Card } from '../../../shared/dist/index.js';
@@ -71,6 +72,16 @@ function makeFakePi(): FakePi {
     },
   };
   return fake;
+}
+
+function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function makeCtx(sessionId: string) {
@@ -220,6 +231,34 @@ describe('createStaticHostExtension', () => {
     const handler = pi.handlers.get('session_start');
     await handler!({ type: 'session_start', reason: 'new' }, makeCtx('sess-fresh'));
     expect(registry.listForSession('sess-fresh')).toEqual([]);
+  });
+
+  it('serializes session replay with shutdown so shutdown leaves no active registration', async () => {
+    const lifecycleRegistry = new InMemoryStaticHostRegistry();
+    const lifecyclePi = makeFakePi();
+    const readStarted = deferred();
+    const releaseRead = deferred();
+    const lifecycleStore: StaticHostStore = {
+      async read(sessionId) {
+        readStarted.resolve();
+        await releaseRead.promise;
+        return {
+          version: 1,
+          entries: [{ slug: 'lifecycle', folderPath: '/bundle', cardMetadata: { title: sessionId } }],
+        };
+      },
+      async write() {},
+      async remove() {},
+    };
+    await createStaticHostExtension({ registry: lifecycleRegistry, store: lifecycleStore })(lifecyclePi.api);
+
+    const replay = lifecyclePi.handlers.get('session_start')!({ type: 'session_start', reason: 'startup' }, makeCtx('sess-lifecycle'));
+    await readStarted.promise;
+    const shutdown = lifecyclePi.handlers.get('session_shutdown')!({ type: 'session_shutdown', reason: 'quit' }, makeCtx('sess-lifecycle'));
+    releaseRead.resolve();
+    await Promise.all([replay, shutdown]);
+
+    expect(lifecycleRegistry.has('lifecycle')).toBe(false);
   });
 
   it('on session_start, re-suffixes a slug already taken and rewrites the file (no phantom)', async () => {

@@ -39,6 +39,8 @@ async function loadClientVersion(): Promise<string | null> {
   }
 }
 
+const CONTROL_DOCUMENT_CSP = "frame-ancestors 'none'";
+
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -73,7 +75,10 @@ async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, 
       const ext = extname(filePath);
       const mime = MIME_TYPES[ext] || 'application/octet-stream';
       let content: Buffer | string = await readFile(filePath);
-      const headers: Record<string, string> = { 'Content-Type': mime };
+      const headers: Record<string, string> = {
+        'Content-Type': mime,
+        'Content-Security-Policy': CONTROL_DOCUMENT_CSP,
+      };
 
       if (urlPath === '/pwa/manifest.json') {
         content = applyAppNameToManifest(content.toString('utf-8'), appName);
@@ -106,10 +111,16 @@ async function serveFallback(res: http.ServerResponse, appName: string): Promise
   try {
     const indexPath = join(clientDir(), 'index.html');
     const content = await readFile(indexPath, 'utf-8');
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Security-Policy': CONTROL_DOCUMENT_CSP,
+    });
     res.end(applyAppNameToHtml(content, appName));
   } catch {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.writeHead(404, {
+      'Content-Type': 'application/json',
+      'Content-Security-Policy': CONTROL_DOCUMENT_CSP,
+    });
     res.end(JSON.stringify({ error: 'not found' }));
   }
 }
@@ -254,6 +265,9 @@ export async function createServer(
   });
 
   wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
+    ws.on('error', (err) => {
+      console.error('[pimote] WebSocket error:', err);
+    });
     heartbeat.track(ws);
 
     let url: URL;

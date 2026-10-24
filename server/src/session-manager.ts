@@ -10,7 +10,7 @@ import {
   getAgentDir,
   SessionManager as PiSessionManager,
 } from '@earendil-works/pi-coding-agent';
-import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory } from '@earendil-works/pi-coding-agent';
+import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
 import { QUEUE_KINDS, QueueOwnership, type QueueTexts } from './queue-ownership.js';
@@ -18,7 +18,9 @@ import { extractMessageEntryIds, rendererRegisteredVisibility } from './message-
 import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, DownloadUpdateEvent, SessionSettingsChangedEvent } from '../../shared/dist/index.js';
 import type { PushNotificationPayload, PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
-import type { PanelMessage } from './panel-state.js';
+import { createExtensionUIBridge } from './extension-ui-bridge.js';
+import { sendSlotEvent } from './session-slot.js';
+export { sendSlotEvent, waitForSlotUiResponse, resolveSlotPendingUi, resolveAllSlotPendingUi, replaySlotPendingUiRequests } from './session-slot.js';
 import { askActivity } from '@pimote/sdk/activity';
 import { getGitBranch } from './git-branch.js';
 import { LoginOrchestrator } from './login-orchestrator.js';
@@ -41,6 +43,8 @@ export interface SessionManagerOptions {
   /** Included only when canonical session cwd equals canonical managerRoot.
    * Manager sessions use the ordinary persisted session and slot lifecycle. */
   managerExtensionFactory?: ExtensionFactory;
+  /** Returns whether the current slot is owned by an active voice call. */
+  isVoiceModeActive?: (slot: ManagedSlot) => boolean;
 }
 
 export interface PendingUiEntry {
@@ -81,6 +85,8 @@ export interface SessionState {
   downloadListenerUnsub?: () => void;
   panelListenerUnsubs: (() => void)[];
   panelThrottleTimer: ReturnType<typeof setTimeout> | null;
+  /** The concrete AgentSession this state subscribes to. Session IDs can repeat across replacements. */
+  sessionIdentity: AgentSession;
   /** True while a tree navigation + optional summarization is in progress. */
   treeNavigationInProgress: boolean;
   /** True from bash admission through extension interception/native execution. */
@@ -103,20 +109,6 @@ export interface ManagedSlot {
 }
 
 // ---- Slot-based helpers (operate on ManagedSlot) ----
-
-/** Send one session event to every live observer. */
-export function sendSlotEvent(slot: ManagedSlot, event: PimoteEvent, options?: { exceptClientId?: string }): void {
-  for (const observer of slot.observers.values()) {
-    if (observer.clientId === options?.exceptClientId) continue;
-    if (!observer.ws || observer.ws.readyState !== 1) continue;
-    try {
-      observer.ws.send(JSON.stringify(event));
-      if ('cursor' in event && typeof event.cursor === 'number') observer.cursor = event.cursor;
-    } catch {
-      // WebSocket send failed — ignore (client disconnecting)
-    }
-  }
-}
 
 /** Dependencies for routing one extension download update to its owning client. */
 export interface DownloadEventBus {
@@ -207,39 +199,35 @@ export function requestSlotPanelResync(slot: ManagedSlot, reason: 'claim' | 'res
   slot.eventBusRef.current?.emit('pimote:panels:sync', { reason });
 }
 
-/** Create a pending promise for a UI dialog response. Stores the request event for replay on reconnect. */
-export function waitForSlotUiResponse(slot: ManagedSlot, requestId: string, requestEvent: PimoteEvent): Promise<unknown> {
-  return new Promise<unknown>((resolve) => {
-    slot.sessionState.pendingUiResponses.set(requestId, { resolve, event: requestEvent });
-  });
-}
-
-/** Resolve a specific pending UI response by requestId. */
-export function resolveSlotPendingUi(slot: ManagedSlot, requestId: string, value: unknown): boolean {
-  const pending = slot.sessionState.pendingUiResponses.get(requestId);
-  if (!pending) return false;
-  slot.sessionState.pendingUiResponses.delete(requestId);
-  pending.resolve(value);
-  return true;
-}
-
-/** Resolve all pending UI responses with undefined. Used on abort, session close, or session reset. */
-export function resolveAllSlotPendingUi(slot: ManagedSlot): void {
-  const requestIds = [...slot.sessionState.pendingUiResponses.keys()];
-  for (const [, pending] of slot.sessionState.pendingUiResponses) {
-    pending.resolve(undefined);
-  }
-  slot.sessionState.pendingUiResponses.clear();
-  for (const requestId of requestIds) {
-    sendSlotEvent(slot, { type: 'extension_ui_resolved', sessionId: slot.sessionState.id, requestId });
-  }
-}
-
-/** Re-send all pending UI request events to the current client. Called on reconnect to recover lost dialogs. */
-export function replaySlotPendingUiRequests(slot: ManagedSlot, send: (event: PimoteEvent) => void): void {
-  for (const [, pending] of slot.sessionState.pendingUiResponses) {
-    send(pending.event);
-  }
+/**
+ * Create command-context actions for extension commands.
+ *
+ * Runtime replacement methods invoke the manager's rebind callback inside Pi's
+ * replacement seam before Pi runs any optional withSession callback.
+ */
+/** @internal Exported for the SDK delegation contract test. */
+export function createCommandContextActions(slot: ManagedSlot, sessionManager: PimoteSessionManager): ExtensionCommandContextActions {
+  return {
+    waitForIdle: () => slot.session.waitForIdle(),
+    newSession: async (options) => {
+      const result = await slot.runtime.newSession(options);
+      return { cancelled: result.cancelled };
+    },
+    fork: async (entryId, options) => {
+      const result = await slot.runtime.fork(entryId, options);
+      return { cancelled: result.cancelled };
+    },
+    navigateTree: async (targetId, options) => {
+      const result = await slot.session.navigateTree(targetId, options);
+      if (!result.cancelled) await sessionManager.applySessionReset(slot);
+      return { cancelled: result.cancelled };
+    },
+    switchSession: async (sessionPath, options) => {
+      const result = await slot.runtime.switchSession(sessionPath, options);
+      return { cancelled: result.cancelled };
+    },
+    reload: () => slot.session.reload(),
+  };
 }
 
 // ---- Slot-based session state lifecycle helpers ----
@@ -276,6 +264,7 @@ export function createSessionState(
     unsubscribe: () => {},
     pendingUiResponses: new Map(),
     extensionsBound: false,
+    sessionIdentity: session,
     panelState: new Map(),
     downloads: [],
     downloadListenerUnsub: undefined,
@@ -401,8 +390,7 @@ function setupSlotPanelListeners(eventBus: EventBusController, state: SessionSta
     eventBus.emit('pimote:detect:response', { detected: true });
   });
   const unsub2 = eventBus.on('pimote:panels', (data) => {
-    applyPanelMessage(state.panelState, data as PanelMessage);
-    scheduleSlotPanelPush(state, sessionId, sendEvent);
+    if (applyPanelMessage(state.panelState, data)) scheduleSlotPanelPush(state, sessionId, sendEvent);
   });
   const unsub3 = eventBus.on('pimote:navigate', (data) => {
     const url = (data as { url?: unknown } | null | undefined)?.url;
@@ -417,8 +405,12 @@ function scheduleSlotPanelPush(state: SessionState, sessionId: string, sendEvent
   if (state.panelThrottleTimer !== null) return;
   state.panelThrottleTimer = setTimeout(() => {
     state.panelThrottleTimer = null;
-    const cards = getMergedPanelCards(state.panelState);
-    sendEvent({ type: 'panel_update', sessionId, cards });
+    try {
+      const cards = getMergedPanelCards(state.panelState);
+      sendEvent({ type: 'panel_update', sessionId, cards });
+    } catch (error) {
+      console.error('[SessionManager] Panel update error:', error);
+    }
   }, 200);
 }
 
@@ -449,6 +441,8 @@ export class PimoteSessionManager {
    *  callers use this seam so metadata and live-slot transitions cannot cross
    *  each other halfway through an operation. */
   private readonly sessionOperationLocks = new Map<string, Promise<unknown>>();
+  /** Coalesce asynchronous extension startup per concrete AgentSession. */
+  private readonly extensionBindFlights = new WeakMap<AgentSession, Promise<void>>();
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
   private gitBranchCheckHandle: ReturnType<typeof setInterval> | null = null;
   private lastKnownGitBranchBySession = new Map<string, string | null>();
@@ -469,6 +463,7 @@ export class PimoteSessionManager {
   private readonly fileDownloadFactory?: ExtensionFactory;
   private readonly managerExtensionFactory?: ExtensionFactory;
   private readonly pimoteDocsFactory?: ExtensionFactory;
+  private readonly isVoiceModeActive?: (slot: ManagedSlot) => boolean;
 
   private constructor(
     private readonly config: PimoteConfig,
@@ -482,6 +477,7 @@ export class PimoteSessionManager {
     this.fileDownloadFactory = options.fileDownloadFactory;
     this.managerExtensionFactory = options.managerExtensionFactory;
     this.pimoteDocsFactory = options.pimoteDocsFactory;
+    this.isVoiceModeActive = options.isVoiceModeActive;
   }
 
   /** Initialize the one process-lifetime Pi model/auth runtime before serving sessions. */
@@ -533,8 +529,14 @@ export class PimoteSessionManager {
     if (!sessionFilePath) {
       return this.doOpenSession(folderPath);
     }
+    const inFlight = this.inFlightOpens.get(sessionFilePath);
+    if (inFlight) return inFlight;
     const alreadyOpenId = this.findSlotIdBySessionFile(sessionFilePath);
-    if (alreadyOpenId) return alreadyOpenId;
+    if (alreadyOpenId) {
+      const slot = this.sessions.get(alreadyOpenId);
+      if (slot) await this.ensureExtensionsBound(slot);
+      return alreadyOpenId;
+    }
     return singleFlight(this.inFlightOpens, sessionFilePath, () => this.doOpenSession(folderPath, sessionFilePath));
   }
 
@@ -557,6 +559,51 @@ export class PimoteSessionManager {
       if (slot.session.sessionFile === sessionFilePath) return sid;
     }
     return undefined;
+  }
+
+  /** Find the current map key for one slot by object identity. */
+  private findMapKeyForSlot(slot: ManagedSlot): string | undefined {
+    for (const [sessionId, candidate] of this.sessions) {
+      if (candidate === slot) return sessionId;
+    }
+    return undefined;
+  }
+
+  /**
+   * Bind one concrete AgentSession exactly once. The flight is keyed by object
+   * identity because a replacement can reuse its predecessor's session ID.
+   */
+  private async ensureExtensionsBound(slot: ManagedSlot): Promise<void> {
+    if (this.findMapKeyForSlot(slot) === undefined) throw new Error('Session slot is no longer live');
+    const session = slot.session;
+    const state = slot.sessionState;
+    if (state.extensionsBound && state.sessionIdentity === session) return;
+
+    const existing = this.extensionBindFlights.get(session);
+    if (existing) {
+      await existing;
+      if (slot.session === session && slot.sessionState === state && state.extensionsBound && state.sessionIdentity === session) return;
+      return this.ensureExtensionsBound(slot);
+    }
+
+    const bind = Promise.resolve().then(async () => {
+      const uiContext = createExtensionUIBridge(slot, this.pushNotificationService, {
+        isVoiceModeActive: () => this.isVoiceModeActive?.(slot) ?? false,
+      });
+      const commandContextActions = createCommandContextActions(slot, this);
+      await session.bindExtensions({ uiContext, commandContextActions });
+      // A session_start handler can synchronously trigger a replacement. Do
+      // not mark the old state as bound after that replacement wins the slot.
+      if (this.findMapKeyForSlot(slot) === undefined || slot.session !== session || slot.sessionState !== state) return;
+      state.extensionsBound = true;
+      state.sessionIdentity = session;
+    });
+    this.extensionBindFlights.set(session, bind);
+    try {
+      await bind;
+    } finally {
+      if (this.extensionBindFlights.get(session) === bind) this.extensionBindFlights.delete(session);
+    }
   }
 
   private async doOpenSession(folderPath: string, sessionFilePath?: string): Promise<string> {
@@ -656,40 +703,62 @@ export class PimoteSessionManager {
 
     // Create the slot object. Use a slotRef so createSessionState callbacks can reference the slot.
     const slotRef: { slot: ManagedSlot | null } = { slot: null };
-
-    const sessionState = createSessionState(
-      session,
-      eventBusRef.current!,
-      this.config,
-      {
-        onStatusChange: (sid, fp) => this.onStatusChange?.(sid, fp),
-        onSessionIdle: (sid, s) => this.handleSessionIdle(sid, s),
-        sendEvent: (e) => sendSlotEvent(slot, e),
-        notify: (payload) => this.pushNotificationService.notify(payload),
-      },
-      slotRef,
-      effectiveFolderPath,
-    );
-
-    const slot: ManagedSlot = {
-      runtime,
-      folderPath: effectiveFolderPath,
-      eventBusRef,
-      observers: new Map(),
-      sessionState,
-      get session() {
-        return this.runtime.session;
-      },
-    };
-    slotRef.slot = slot;
-
-    this.sessions.set(sessionId, slot);
+    let slot!: ManagedSlot;
     try {
-      this.lastKnownGitBranchBySession.set(sessionId, await getGitBranch(effectiveFolderPath));
-      return sessionId;
+      const sessionState = createSessionState(
+        session,
+        eventBusRef.current!,
+        this.config,
+        {
+          onStatusChange: (sid, fp) => this.onStatusChange?.(sid, fp),
+          onSessionIdle: (sid, s) => this.handleSessionIdle(sid, s),
+          sendEvent: (e) => sendSlotEvent(slot, e),
+          notify: (payload) => this.pushNotificationService.notify(payload),
+        },
+        slotRef,
+        effectiveFolderPath,
+      );
+
+      slot = {
+        runtime,
+        folderPath: effectiveFolderPath,
+        eventBusRef,
+        observers: new Map(),
+        sessionState,
+        get session() {
+          return this.runtime.session;
+        },
+      };
+      slotRef.slot = slot;
     } catch (error) {
       try {
-        await this.closeSession(sessionId);
+        await runtime.dispose();
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Session state creation and cleanup failed', { cause: cleanupError });
+      }
+      throw error;
+    }
+
+    // Publish the live slot before startup so extension session_start handlers
+    // can resolve it through manager-owned buses. Failure rolls back through
+    // the same runtime disposal path as an ordinary close.
+    this.sessions.set(sessionId, slot);
+    try {
+      runtime.setRebindSession(async () => {
+        await this.handleRuntimeSessionReplacement(slot);
+      });
+      await this.ensureExtensionsBound(slot);
+      const liveSessionId = slot.sessionState.id;
+      this.lastKnownGitBranchBySession.set(liveSessionId, await getGitBranch(slot.folderPath));
+      return liveSessionId;
+    } catch (error) {
+      try {
+        const liveSessionId = this.findMapKeyForSlot(slot);
+        if (liveSessionId !== undefined) {
+          await this.closeSession(liveSessionId);
+        } else {
+          await slot.runtime.dispose();
+        }
       } catch (cleanupError) {
         throw new AggregateError([error, cleanupError], 'Session opening and cleanup failed', { cause: cleanupError });
       }
@@ -762,11 +831,19 @@ export class PimoteSessionManager {
     slot.eventBusRef.current?.clear();
 
     const folderPath = slot.folderPath;
-    await slot.runtime.dispose();
-    this.sessions.delete(sessionId);
-    this.lastKnownGitBranchBySession.delete(sessionId);
+    let disposeError: unknown;
+    try {
+      await slot.runtime.dispose();
+    } catch (error) {
+      disposeError = error;
+    }
+    if (this.sessions.get(sessionId) === slot) {
+      this.sessions.delete(sessionId);
+      this.lastKnownGitBranchBySession.delete(sessionId);
+    }
 
     this.onSessionClosed?.(sessionId, folderPath);
+    if (disposeError !== undefined) throw disposeError;
   }
 
   /** Re-key a slot in the session map after session replacement. */
@@ -787,48 +864,77 @@ export class PimoteSessionManager {
     return this.lastKnownGitBranchBySession.get(sessionId) ?? null;
   }
 
-  /** The single "session was replaced" business operation. Reconciles the session
-   *  map (rebuild state, evict any collision, re-key) ALWAYS, so a reset triggered
-   *  with no live observer can never leave the map keyed under a stale ID. Then
-   *  notifies every observer. All reset entry points (newSession/fork/navigateTree/
-   *  switchSession, via WS commands or extension command-context) funnel here. */
-  async applySessionReset(slot: ManagedSlot): Promise<void> {
-    const newId = slot.runtime.session.sessionId;
+  /** Reconcile a runtime replacement before observers are notified. */
+  private async reconcileSessionReplacement(slot: ManagedSlot): Promise<{
+    observers: SessionObserver[];
+    outcome: SessionResetOutcome;
+    needsBinding: boolean;
+  }> {
+    const newSession = slot.runtime.session;
+    const newId = newSession.sessionId;
     const oldId = slot.sessionState.id;
     const observers = [...slot.observers.values()];
+    const sessionChanged = slot.sessionState.sessionIdentity !== newSession;
 
-    // navigateTree stays in the same file — same session ID, nothing to re-key.
-    if (newId === oldId) {
-      for (let index = 0; index < observers.length; index++) {
-        const observer = observers[index];
-        await observer.onSessionReset?.(slot, { kind: 'unchanged' }, index === 0);
-      }
-      return;
+    // navigateTree keeps the same AgentSession. It still emits the historical
+    // unchanged reset notification, but it does not rebuild or bind anything.
+    if (newId === oldId && !sessionChanged) {
+      slot.sessionState.eventBuffer.invalidateReplay();
+      return { observers, outcome: { kind: 'unchanged' }, needsBinding: false };
     }
 
-    // Rebuild session state (tears down old, creates new from runtime.session).
-    // Refreshes slot.folderPath from the new session header cwd (fork-from can
-    // change cwd, e.g. the worktree extension), so read folderPath after this.
+    // Rebuild state for every concrete AgentSession replacement, even when its
+    // generated session ID happens to be unchanged.
     this.rebuildSessionState(slot);
 
     // Collision: another live slot already holds newId. This happens when an
-    // extension calls ctx.switchSession(path) onto a session file already open in
-    // a different slot (the new ID is the target file's existing ID, not a fresh
-    // one like fork's). Without eviction, reKeySession would overwrite the
-    // occupant's map entry and orphan its runtime — two runtimes on one file.
-    // Treat it as a takeover: notify the occupant's owner, then dispose it.
+    // extension switches onto a session file that another slot already owns.
     const occupant = this.sessions.get(newId);
     if (occupant && occupant !== slot) {
       this.onSlotEvicted?.(newId);
       await this.closeSession(newId);
     }
 
-    this.reKeySession(slot, oldId, newId);
+    if (newId !== oldId) this.reKeySession(slot, oldId, newId);
 
+    const outcome: SessionResetOutcome = newId === oldId ? { kind: 'unchanged' } : { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath };
+    return { observers, outcome, needsBinding: true };
+  }
+
+  private async notifySessionReset(slot: ManagedSlot, observers: SessionObserver[], outcome: SessionResetOutcome): Promise<void> {
     for (let index = 0; index < observers.length; index++) {
       const observer = observers[index];
-      await observer.onSessionReset?.(slot, { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath }, index === 0);
+      await observer.onSessionReset?.(slot, outcome, index === 0);
     }
+  }
+
+  /** Rebind, reconcile, and notify one runtime replacement. Pi invokes this
+   * callback before a replacement operation's optional withSession callback. */
+  private async handleRuntimeSessionReplacement(slot: ManagedSlot): Promise<void> {
+    try {
+      const { observers, outcome, needsBinding } = await this.reconcileSessionReplacement(slot);
+      if (needsBinding) await this.ensureExtensionsBound(slot);
+      await this.notifySessionReset(slot, observers, outcome);
+    } catch (error) {
+      const currentId = this.findMapKeyForSlot(slot);
+      if (currentId !== undefined) {
+        try {
+          await this.closeSession(currentId);
+        } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], 'Session replacement and cleanup failed', { cause: cleanupError });
+        }
+      }
+      throw error;
+    }
+  }
+
+  /** The single reset business operation for same-session navigation.
+   * Runtime replacements arrive through handleRuntimeSessionReplacement above,
+   * so this method does not duplicate their observer notifications. */
+  async applySessionReset(slot: ManagedSlot): Promise<void> {
+    const { observers, outcome, needsBinding } = await this.reconcileSessionReplacement(slot);
+    if (needsBinding) await this.ensureExtensionsBound(slot);
+    await this.notifySessionReset(slot, observers, outcome);
   }
 
   /** Rebuild a slot's SessionState after session replacement.

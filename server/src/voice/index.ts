@@ -180,13 +180,24 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
             console.warn('[voice] set_interpreter_model: no ExtensionContext yet');
             return;
           }
-          const [provider, modelId] = action.modelSlug.split('/');
+          const separator = action.modelSlug.indexOf('/');
+          if (separator <= 0 || separator === action.modelSlug.length - 1) {
+            console.warn(`[voice] set_interpreter_model: malformed model ${action.modelSlug}`);
+            return;
+          }
+          const provider = action.modelSlug.slice(0, separator);
+          const modelId = action.modelSlug.slice(separator + 1);
           const model = lastCtx.modelRegistry.find(provider, modelId);
           if (!model) {
             console.warn(`[voice] set_interpreter_model: no model ${action.modelSlug}`);
             return;
           }
-          await pi.setModel(model);
+          const applied = await pi.setModel(model);
+          if (!applied) {
+            console.warn(`[voice] set_interpreter_model: pi.setModel returned false for ${action.modelSlug}`);
+            return;
+          }
+          await dispatch({ type: 'interpreter_model_applied' });
           return;
         }
 
@@ -382,6 +393,12 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         await dispatch({ type: 'eb:deactivate', msg: { type: 'pimote:voice:deactivate', sessionId: state.lifecycle.sessionId } });
       }
       lastCtx = null;
+    });
+
+    pi.on('session_start', (_event, ctx) => {
+      // Activation can follow session_start directly during call_bind reopen.
+      // Capture the context here, but leave model application to activation.
+      lastCtx = ctx;
     });
 
     pi.on('before_agent_start', (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {

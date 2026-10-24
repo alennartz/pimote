@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,15 +9,138 @@ const fs = vi.hoisted(() => ({
   mkdir: vi.fn(),
   rename: vi.fn(),
 }));
+const webpush = vi.hoisted(() => ({
+  generateVAPIDKeys: vi.fn(() => ({ publicKey: 'generated-public', privateKey: 'generated-private' })),
+}));
 
 vi.mock('node:fs/promises', () => fs);
+vi.mock('web-push', () => ({ default: webpush }));
 
-import { CONFIG_PATH, loadConfig, managerRootPlacementError } from './config.js';
+import { CONFIG_PATH, ensureVapidKeys, loadConfig, managerRootPlacementError, type PimoteConfig } from './config.js';
 import { PIMOTE_STATE_DIR } from './paths.js';
 
 function configJson(fields: Record<string, unknown>): string {
   return JSON.stringify({ roots: ['/workspace'], ...fields });
 }
+
+function documentedVoiceConfig(): Record<string, unknown> {
+  const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+  const voiceJson = readme
+    .split('```json\n')
+    .map((block) => block.split('\n```', 1)[0])
+    .find((block) => block.includes('"defaultInterpreterModel"'));
+  if (!voiceJson) throw new Error('README voice configuration example not found');
+  return JSON.parse(voiceJson) as Record<string, unknown>;
+}
+
+describe('loadConfig — voice model references', () => {
+  beforeEach(() => {
+    fs.readFile.mockReset();
+  });
+
+  it('preserves string references verbatim, including an empty string', async () => {
+    fs.readFile.mockResolvedValue(configJson({ defaultInterpreterModel: '', defaultWorkerModel: 'worker/custom model' }));
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      defaultInterpreterModel: '',
+      defaultWorkerModel: 'worker/custom model',
+    });
+  });
+
+  it('normalizes both documented object references from README', async () => {
+    fs.readFile.mockResolvedValue(JSON.stringify(documentedVoiceConfig()));
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      defaultInterpreterModel: 'anthropic/claude-sonnet-4-5',
+      defaultWorkerModel: 'anthropic/claude-sonnet-4-5',
+    });
+  });
+
+  it('supports mixed string and object references while preserving provider defaults', async () => {
+    fs.readFile.mockResolvedValue(
+      configJson({
+        defaultProvider: 'openai',
+        defaultModel: 'gpt-4o',
+        defaultInterpreterModel: { provider: 'anthropic', modelId: 'claude-sonnet-4-5' },
+        defaultWorkerModel: 'custom/worker',
+      }),
+    );
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      defaultProvider: 'openai',
+      defaultModel: 'gpt-4o',
+      defaultInterpreterModel: 'anthropic/claude-sonnet-4-5',
+      defaultWorkerModel: 'custom/worker',
+    });
+  });
+
+  it('leaves missing references undefined', async () => {
+    fs.readFile.mockResolvedValue(configJson({ defaultProvider: 'openai', defaultModel: 'gpt-4o' }));
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      defaultProvider: 'openai',
+      defaultModel: 'gpt-4o',
+      defaultInterpreterModel: undefined,
+      defaultWorkerModel: undefined,
+    });
+  });
+
+  it.each([
+    ['null', null],
+    ['an array', ['anthropic', 'claude-sonnet-4-5']],
+    ['an empty object', {}],
+    ['a missing provider', { modelId: 'claude-sonnet-4-5' }],
+    ['a missing model ID', { provider: 'anthropic' }],
+    ['an empty provider', { provider: '', modelId: 'claude-sonnet-4-5' }],
+    ['an empty model ID', { provider: 'anthropic', modelId: '' }],
+    ['a non-string provider', { provider: 7, modelId: 'claude-sonnet-4-5' }],
+    ['a non-string model ID', { provider: 'anthropic', modelId: 7 }],
+    ['a number', 7],
+  ])('maps %s to an absent value for both model fields', async (_label, value) => {
+    fs.readFile.mockResolvedValue(configJson({ defaultInterpreterModel: value, defaultWorkerModel: value }));
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      defaultInterpreterModel: undefined,
+      defaultWorkerModel: undefined,
+    });
+  });
+});
+
+describe('ensureVapidKeys', () => {
+  beforeEach(() => {
+    fs.readFile.mockReset();
+    fs.writeFile.mockReset();
+    fs.mkdir.mockReset();
+    fs.rename.mockReset();
+    webpush.generateVAPIDKeys.mockClear();
+  });
+
+  it('retains raw object model references when persisting generated keys', async () => {
+    const raw = configJson({
+      defaultInterpreterModel: { provider: 'anthropic', modelId: 'claude-sonnet-4-5' },
+      defaultWorkerModel: 'custom/worker',
+    });
+    fs.readFile.mockResolvedValue(raw);
+
+    const config: PimoteConfig = {
+      roots: ['/workspace'],
+      managerRoot: '/workspace/manager',
+      idleTimeout: 1,
+      bufferSize: 1,
+      port: 3000,
+    };
+
+    await ensureVapidKeys(config);
+
+    const serialized = fs.writeFile.mock.calls[0]?.[1] as string;
+    expect(JSON.parse(serialized)).toMatchObject({
+      defaultInterpreterModel: { provider: 'anthropic', modelId: 'claude-sonnet-4-5' },
+      defaultWorkerModel: 'custom/worker',
+      vapidPublicKey: 'generated-public',
+      vapidPrivateKey: 'generated-private',
+    });
+  });
+});
 
 describe('loadConfig — managerRoot', () => {
   beforeEach(() => {
