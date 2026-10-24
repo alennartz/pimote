@@ -4,7 +4,6 @@
   import type { PimoteEvent, PimoteTreeNode } from '@pimote/shared';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
-  import { setEditorText } from '$lib/stores/input-bar.svelte.js';
   import { treeDialogStore, type TreeFilterMode } from '$lib/stores/tree-dialog.svelte.js';
   import { formatRelativeTime } from '$lib/format-relative-time.js';
   import { buildTreeRows, findTreePath } from '$lib/tree-dialog-utils.js';
@@ -325,7 +324,7 @@
       }
 
       if (typeof result.editorText === 'string' && result.editorText.length > 0) {
-        setEditorText(sessionId, result.editorText);
+        sessionRegistry.setDraftText(sessionId, result.editorText);
       }
 
       treeDialogStore.closeDialog();

@@ -502,6 +502,13 @@ export class SessionRegistry {
     };
   }
 
+  /** Save draft text for a session and notify a mounted composer, if any. */
+  setDraftText(sessionId: string, text: string): void {
+    const session = this.sessions[sessionId];
+    if (session) session.draftText = text;
+    setEditorText(sessionId, text);
+  }
+
   /** Route an incoming event to the correct session's state */
   /** Prepend recovered queued messages to a session's draft and show it in the composer. */
   restoreQueuedDrafts(sessionId: string, queued: string[]): void {
@@ -509,9 +516,9 @@ export class SessionRegistry {
     // Read the current snapshot and draft only when restoring.
     const session = this.sessions[sessionId];
     if (!session || queued.length === 0) return;
-    const text = [...queued, ...(session.draftText ? [session.draftText] : [])].join('\n');
-    session.draftText = text;
-    setEditorText(sessionId, text);
+    const recovered = queued.join('\n');
+    const text = recovered && session.draftText ? `${recovered}\n${session.draftText}` : recovered || session.draftText;
+    this.setDraftText(sessionId, text);
   }
 
   handleEvent(event: PimoteEvent): void {

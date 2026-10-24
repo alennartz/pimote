@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { PimoteEvent, PimoteAgentMessage, FolderInfo } from '@pimote/shared';
+import type { PimoteEvent, PimoteAgentMessage, FolderInfo, PimoteResponse } from '@pimote/shared';
 import { SessionRegistry, routeNotificationIntent, sessionRegistry, openExistingSession, openNewSession, newSessionInProject, closeSession } from './session-registry.svelte.js';
 import { connection } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
+import { editorTextRequest } from './input-bar.svelte.js';
 
 function makeSessionEvent(type: string, sessionId: string, extra: Record<string, any> = {}): PimoteEvent {
   return { type, sessionId, cursor: 0, ...extra } as any;
@@ -1239,6 +1240,22 @@ describe('SessionRegistry', () => {
       expect(registry.sessions['s1'].pendingSteeringMessages).toEqual([]);
     });
 
+    it('setDraftText persists and signals text for an unmounted background session', () => {
+      registry.addSession('s1', '/path/one', 'one');
+      registry.addSession('s2', '/path/two', 'two');
+      registry.switchTo('s1');
+      const beforeSeq = editorTextRequest.seq;
+
+      registry.setDraftText('s2', 'background text');
+
+      expect(registry.sessions.s2.draftText).toBe('background text');
+      expect(registry.sessions.s1.draftText).toBe('');
+      expect(editorTextRequest).toMatchObject({ sessionId: 's2', text: 'background text', seq: beforeSeq + 1 });
+      editorTextRequest.sessionId = '';
+      editorTextRequest.text = '';
+      editorTextRequest.seq = 0;
+    });
+
     it('queue_update replaces optimistic pending messages with the authoritative steering snapshot', () => {
       registry.addSession('s1', '/path', 'proj');
       const session = registry.sessions.s1;
@@ -1286,6 +1303,16 @@ describe('SessionRegistry', () => {
       registry.handleEvent(makeSessionEvent('queued_drafts_restored', 's1', { steering: [], followUp: [] }));
 
       expect(session.draftText).toBe('keep draft');
+    });
+
+    it('queued_drafts_restored adds one joining newline before the latest draft', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const session = registry.sessions.s1;
+      session.draftText = 'latest draft';
+
+      registry.handleEvent(makeSessionEvent('queued_drafts_restored', 's1', { steering: ['recovered'], followUp: [] }));
+
+      expect(session.draftText).toBe('recovered\nlatest draft');
     });
 
     it('consumed message_end does not remove an identical message left in the authoritative queue', () => {
@@ -2023,10 +2050,10 @@ describe('session_opened lifecycle push', () => {
   it('keeps a conflict banner sent after the response-owned initial snapshot', async () => {
     let resolveState!: (value: any) => void;
     let resolveMessages!: (value: any) => void;
-    const stateSnapshot = new Promise((resolve) => {
+    const stateSnapshot = new Promise<PimoteResponse>((resolve) => {
       resolveState = resolve;
     });
-    const messagesSnapshot = new Promise((resolve) => {
+    const messagesSnapshot = new Promise<PimoteResponse>((resolve) => {
       resolveMessages = resolve;
     });
     const send = vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => {

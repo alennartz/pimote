@@ -211,6 +211,13 @@
     outline: none;
   }
 
+  /* Every row shares one centered column, so the question and options align. */
+  .inline-select-panel > * {
+    max-width: 768px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
   .panel-header {
     display: flex;
     align-items: center;
@@ -290,8 +297,6 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    max-width: 768px;
-    margin: 0 auto;
   }
 
   .select-option {

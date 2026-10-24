@@ -6,7 +6,6 @@
   import type { BashExecutionState, PerSessionState } from '$lib/stores/session-registry.svelte.js';
   import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { setEditorText } from '$lib/stores/input-bar.svelte.js';
   import { needsDraftPrompt, applyDraftChoice, type DraftChoice } from '$lib/draft-policy.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -89,10 +88,10 @@
       const choice = await promptDraftChoice();
       const nextText = applyDraftChoice(currentDraft, selectedText!, choice);
       if (nextText !== null) {
-        setEditorText(newSessionId, nextText);
+        sessionRegistry.setDraftText(newSessionId, nextText);
       }
     } else if (selectedText) {
-      setEditorText(newSessionId, selectedText);
+      sessionRegistry.setDraftText(newSessionId, selectedText);
     }
   }
 
@@ -331,7 +330,7 @@
   }
 
   .message-list-inner {
-    max-width: 768px;
+    max-width: 884px;
     margin: 0 auto;
     padding: 16px 16px 24px;
   }

@@ -1,7 +1,6 @@
 <script lang="ts">
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { setEditorText } from '$lib/stores/input-bar.svelte.js';
   import Undo2 from '@lucide/svelte/icons/undo-2';
 
   let loading = $state(false);
@@ -21,7 +20,7 @@
       if (res.success && res.data) {
         const { steering } = res.data as { steering: string[]; followUp: string[] };
         if (steering.length > 0) {
-          setEditorText(session.sessionId, steering.join('\n'));
+          sessionRegistry.restoreQueuedDrafts(session.sessionId, steering);
         }
         session.pendingSteeringMessages = [];
       }

@@ -432,6 +432,7 @@
   }
 
   .assistant-meta {
+    position: relative;
     display: flex;
     flex-shrink: 0;
     align-items: flex-start;
@@ -439,9 +440,12 @@
   }
 
   .assistant-cost {
+    position: absolute;
+    top: 16px;
+    right: calc(100% + 10px);
     order: 0;
     flex-shrink: 0;
-    margin-top: 8px;
+    transform: translateY(-50%);
   }
 
   .aborted-cost {
@@ -756,7 +760,9 @@
     }
 
     .assistant-cost {
+      position: static;
       order: 1;
+      transform: none;
       margin-top: 0;
       margin-bottom: 0;
     }

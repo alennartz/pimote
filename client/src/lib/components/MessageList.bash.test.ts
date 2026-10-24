@@ -24,6 +24,33 @@ afterEach(() => {
 });
 
 describe('MessageList native bash display boundary', () => {
+  it('persists forked message text in the replacement session draft', async () => {
+    const session = setupSession();
+    session.messages = [{ role: 'user', entryId: 'entry-1', content: [{ type: 'text', text: 'Fork point' }] }];
+    session.messageKeys = ['msg-1'];
+    vi.spyOn(connection, 'send').mockImplementation(async (command) => {
+      if (command.type !== 'fork') throw new Error(`unexpected command: ${command.type}`);
+      sessionRegistry.replaceSession('s1', 's2', '/workspace/project', 'project');
+      return { id: 'fork-1', success: true, data: { cancelled: false, selectedText: 'forked message' } } as never;
+    });
+
+    const view = render();
+    const userIcon = view.target.querySelector<HTMLButtonElement>('button.user-icon');
+    expect(userIcon).not.toBeNull();
+    userIcon!.click();
+    await tick();
+
+    const fork = view.target.querySelector<HTMLButtonElement>('button[title="Fork from this message"]');
+    expect(fork).not.toBeNull();
+    fork!.click();
+    await Promise.resolve();
+    await tick();
+
+    expect(sessionRegistry.viewedSessionId).toBe('s2');
+    expect(sessionRegistry.sessions.s2.draftText).toBe('forked message');
+    view.destroy();
+  });
+
   it('renders a running bash entry after persisted chat and cancels it without aborting the model', async () => {
     const session = setupSession();
     session.messages = [{ role: 'user', content: [{ type: 'text', text: 'Inspect the project' }] }];

@@ -118,4 +118,68 @@ describe('InputBar editor text request replay', () => {
     expect(messageTextarea(target).value).toBe('live text');
     destroy();
   });
+
+  it('persists ordinary typing in the viewed session draft', async () => {
+    const session = setupSession();
+    const { target, destroy } = render();
+    await tick();
+
+    const textarea = messageTextarea(target);
+    textarea.value = 'typed text';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+
+    expect(session.draftText).toBe('typed text');
+    destroy();
+  });
+
+  it('restores each session draft when switching views', async () => {
+    const first = setupSession('s1');
+    first.draftText = 'first draft';
+    sessionRegistry.addSession('s2', '/workspace/s2', 's2');
+    sessionRegistry.sessions.s2.draftText = 'second draft';
+    const { target, destroy } = render();
+    await tick();
+
+    expect(messageTextarea(target).value).toBe('first draft');
+    sessionRegistry.switchTo('s2');
+    await tick();
+    expect(messageTextarea(target).value).toBe('second draft');
+    sessionRegistry.switchTo('s1');
+    await tick();
+    expect(messageTextarea(target).value).toBe('first draft');
+    destroy();
+  });
+
+  it('keeps injected text in the target draft while switching away and back', async () => {
+    const session = setupSession('s1');
+    sessionRegistry.addSession('s2', '/workspace/s2', 's2');
+    const { target, destroy } = render();
+    await tick();
+
+    sessionRegistry.setDraftText('s1', 'injected text');
+    await tick();
+    expect(messageTextarea(target).value).toBe('injected text');
+
+    sessionRegistry.switchTo('s2');
+    await tick();
+    sessionRegistry.switchTo('s1');
+    await tick();
+
+    expect(session.draftText).toBe('injected text');
+    expect(messageTextarea(target).value).toBe('injected text');
+    destroy();
+  });
+
+  it('restores injected text when the composer mounts after the injection', async () => {
+    const session = setupSession('s1');
+    sessionRegistry.setDraftText('s1', 'injected while unmounted');
+
+    const { target, destroy } = render();
+    await tick();
+
+    expect(session.draftText).toBe('injected while unmounted');
+    expect(messageTextarea(target).value).toBe('injected while unmounted');
+    destroy();
+  });
 });

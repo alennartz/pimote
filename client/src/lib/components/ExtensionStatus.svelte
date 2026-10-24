@@ -3,7 +3,6 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
-  import { setEditorText } from '$lib/stores/input-bar.svelte.js';
   import { widgetLinesToCard } from '$lib/widget-cards.js';
   import type { ExtensionUiRequestEvent } from '@pimote/shared';
   import Convert from 'ansi-to-html';
@@ -90,12 +89,7 @@
         const text = (req.text as string) ?? '';
         const targetSessionId = req.sessionId as string | undefined;
         if (targetSessionId) {
-          const session = sessionRegistry.sessions[targetSessionId];
-          if (session) {
-            session.draftText = text;
-          }
-          // Fire reactive signal so InputBar updates if this is the viewed session
-          setEditorText(targetSessionId, text);
+          sessionRegistry.setDraftText(targetSessionId, text);
         }
       } else if (req.method === 'setTitle') {
         const title = (req.title as string) ?? '';
