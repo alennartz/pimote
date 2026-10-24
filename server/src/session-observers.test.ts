@@ -34,6 +34,8 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
     SessionManager: { create: () => ({ getCwd: () => '/project' }) },
     createEventBus: () => eventBus,
     createCodemodeExtension: () => () => {},
+    createToolSearchExtension: () => () => {},
+    createMcpExtension: () => () => {},
     createAgentSessionServices: async () => ({ eventBus }),
     createAgentSessionFromServices: async () => ({ session }),
     createAgentSessionRuntime: async (factory: any, options: any) => {

@@ -6,7 +6,7 @@ import { SessionManager as PiSessionManager } from '@earendil-works/pi-coding-ag
 import type { PushNotificationService } from './push-notification.js';
 import type { PimoteConfig } from './config.js';
 
-const { modelRuntime, modelRuntimeCreate, runtimeArgs, serviceArgs, openedSessionManagers, gitBranchSpy } = vi.hoisted(() => {
+const { modelRuntime, modelRuntimeCreate, runtimeArgs, serviceArgs, openedSessionManagers, gitBranchSpy, piExtensionFactories } = vi.hoisted(() => {
   const modelRuntime = { getAvailable: vi.fn(async () => []) };
   return {
     modelRuntime,
@@ -15,6 +15,11 @@ const { modelRuntime, modelRuntimeCreate, runtimeArgs, serviceArgs, openedSessio
     serviceArgs: [] as Array<{ modelRuntime?: unknown; resourceLoaderOptions?: { extensionFactories?: unknown[] } }>,
     openedSessionManagers: [] as Array<{ getCwd(): string }>,
     gitBranchSpy: vi.fn(() => 'main'),
+    piExtensionFactories: {
+      codemode: () => {},
+      toolSearch: () => {},
+      mcp: () => {},
+    },
   };
 });
 
@@ -39,7 +44,9 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
   return {
     ModelRuntime: { create: modelRuntimeCreate },
     getAgentDir: vi.fn(() => '/agent-dir'),
-    createCodemodeExtension: () => () => {},
+    createCodemodeExtension: () => piExtensionFactories.codemode,
+    createToolSearchExtension: () => piExtensionFactories.toolSearch,
+    createMcpExtension: () => piExtensionFactories.mcp,
     createEventBus: vi.fn(() => ({
       on: vi.fn(() => () => {}),
       emit: vi.fn(() => undefined),
@@ -111,10 +118,26 @@ function createTestConfig(overrides: Partial<PimoteConfig> = {}): PimoteConfig {
 }
 
 describe('PimoteSessionManager.openSession', () => {
+  it('registers Pi discovery extensions for every runtime', async () => {
+    runtimeArgs.length = 0;
+    serviceArgs.length = 0;
+
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
+    await manager.openSession('/home/user/project');
+
+    expect(serviceArgs[0]?.resourceLoaderOptions?.extensionFactories).toEqual([
+      piExtensionFactories.codemode,
+      piExtensionFactories.toolSearch,
+      piExtensionFactories.mcp,
+      expect.any(Function),
+    ]);
+  });
+
   it('uses the reopened session cwd instead of the requested folder path when opening a session file', async () => {
     runtimeArgs.length = 0;
     serviceArgs.length = 0;
     openedSessionManagers.length = 0;
+    modelRuntimeCreate.mockClear();
     gitBranchSpy.mockClear();
 
     const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
@@ -194,7 +217,21 @@ describe('PimoteSessionManager.openSession', () => {
 
     expect(serviceArgs).toHaveLength(2);
     expect(serviceArgs.map((args) => args.modelRuntime)).toEqual([modelRuntime, modelRuntime]);
-    expect(serviceArgs[0]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory, expect.any(Function), expect.any(Function)]);
-    expect(serviceArgs[1]?.resourceLoaderOptions?.extensionFactories).toEqual([staticHostFactory, fileDownloadFactory, expect.any(Function), expect.any(Function)]);
+    expect(serviceArgs[0]?.resourceLoaderOptions?.extensionFactories).toEqual([
+      staticHostFactory,
+      fileDownloadFactory,
+      piExtensionFactories.codemode,
+      piExtensionFactories.toolSearch,
+      piExtensionFactories.mcp,
+      expect.any(Function),
+    ]);
+    expect(serviceArgs[1]?.resourceLoaderOptions?.extensionFactories).toEqual([
+      staticHostFactory,
+      fileDownloadFactory,
+      piExtensionFactories.codemode,
+      piExtensionFactories.toolSearch,
+      piExtensionFactories.mcp,
+      expect.any(Function),
+    ]);
   });
 });

@@ -3,6 +3,8 @@ import {
   createAgentSessionServices,
   createAgentSessionFromServices,
   createCodemodeExtension,
+  createMcpExtension,
+  createToolSearchExtension,
   createEventBus,
   ModelRuntime,
   getAgentDir,
@@ -583,9 +585,13 @@ export class PimoteSessionManager {
         ...(staticHostFactory ? [staticHostFactory] : []),
         ...(fileDownloadFactory ? [fileDownloadFactory] : []),
         ...(managerExtensionFactory && (await loadManagerExtension({ cwd }, this.config)) ? [managerExtensionFactory] : []),
-        // pi's codemode builtin. SDK sessions skip pi's built-in extensions, so
-        // register it here. It stays inactive until defaultTools enables it.
+        // SDK sessions skip pi's built-in extensions, so register Pi's
+        // codemode, tool-search, and MCP extensions here. Codemode and
+        // tool-search stay inactive until settings or MCP exposure activates
+        // them; MCP reads Pi's mcp.json configuration at session start.
         createCodemodeExtension(),
+        createToolSearchExtension(),
+        createMcpExtension(),
         createSettingsWatchExtension(),
       ];
       const eventBus = createEventBus();
