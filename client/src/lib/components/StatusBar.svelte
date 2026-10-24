@@ -19,6 +19,8 @@
   import CallButton from './CallButton.svelte';
   import { serverCapabilities } from '$lib/stores/server-capabilities.svelte.js';
   import DownloadInbox from './DownloadInbox.svelte';
+  import { panelStore } from '$lib/stores/panel-store.svelte.js';
+  import PanelRight from '@lucide/svelte/icons/panel-right';
 
   let restoreLabel = $derived(sessionRegistry.viewed?.isRestoring ? getRestoreModeLabel(sessionRegistry.viewed.restoreMode) : null);
   let connectionLabel = $derived(restoreLabel ?? connection.phaseLabel);
@@ -185,5 +187,23 @@
       </span>
       <span class="text-xs">{connectionLabel}</span>
     </div>
+
+    <!-- Sidepane toggle (widgets) -->
+    {#if panelStore.hasCards}
+      <Separator orientation="vertical" class="mx-0.5 h-4" />
+      <button
+        type="button"
+        class="text-muted-foreground hover:text-foreground hover:bg-accent relative flex size-7 shrink-0 items-center justify-center rounded-md transition-colors"
+        title={panelStore.collapsed ? 'Show widgets' : 'Hide widgets'}
+        aria-label={panelStore.collapsed ? 'Show widgets' : 'Hide widgets'}
+        aria-pressed={!panelStore.collapsed}
+        onclick={() => panelStore.toggleCollapsed()}
+      >
+        <PanelRight class="size-4" />
+        <span class="bg-primary text-primary-foreground absolute -top-1 -right-1 min-w-4 rounded-full px-1 text-center text-[10px] leading-4 font-medium">
+          {panelStore.cards.length}
+        </span>
+      </button>
+    {/if}
   </div>
 </div>

@@ -51,6 +51,42 @@ describe('PanelStore', () => {
     });
   });
 
+  describe('sidepane collapse', () => {
+    it('starts expanded', () => {
+      expect(store.collapsed).toBe(false);
+    });
+
+    it('opens a collapsed pane when cards arrive for an empty list', () => {
+      store.toggleCollapsed();
+      expect(store.collapsed).toBe(true);
+      store.handlePanelUpdate([makeCard('c1', 'Card')]);
+      expect(store.collapsed).toBe(false);
+    });
+
+    it('keeps a collapsed pane collapsed when the card count grows from one or more', () => {
+      store.handlePanelUpdate([makeCard('c1', 'Card')]);
+      store.toggleCollapsed();
+      store.handlePanelUpdate([makeCard('c1', 'Card'), makeCard('c2', 'Card 2')]);
+      expect(store.collapsed).toBe(true);
+    });
+
+    it('reopens on a return from zero to one or more cards', () => {
+      store.handlePanelUpdate([makeCard('c1', 'Card')]);
+      store.toggleCollapsed();
+      store.handlePanelUpdate([]);
+      expect(store.collapsed).toBe(true);
+      store.handlePanelUpdate([makeCard('c2', 'Card 2')]);
+      expect(store.collapsed).toBe(false);
+    });
+
+    it('toggleCollapsed flips the flag', () => {
+      store.toggleCollapsed();
+      expect(store.collapsed).toBe(true);
+      store.toggleCollapsed();
+      expect(store.collapsed).toBe(false);
+    });
+  });
+
   describe('reset', () => {
     it('clears all cards', () => {
       store.handlePanelUpdate([makeCard('c1', 'Card 1'), makeCard('c2', 'Card 2')]);

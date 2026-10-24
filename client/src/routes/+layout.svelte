@@ -322,8 +322,8 @@
   </div>
 
   <!-- Desktop panel (flex sibling of main content) -->
-  {#if panelStore.hasCards}
-    <div class="hidden md:flex">
+  {#if panelStore.hasCards && !panelStore.collapsed}
+    <div class="hidden md:flex md:flex-col">
       <Panel />
     </div>
   {/if}
@@ -332,7 +332,7 @@
   {#if panelStore.hasCards && panelOpen}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="fixed inset-0 z-30 bg-black/50 md:hidden" onclick={() => (panelOpen = false)} onkeydown={(e) => e.key === 'Escape' && (panelOpen = false)}></div>
-    <div class="fixed inset-y-0 right-0 z-40 md:hidden">
+    <div class="fixed inset-y-0 right-0 z-40 flex flex-col md:hidden">
       <Panel />
     </div>
   {/if}
