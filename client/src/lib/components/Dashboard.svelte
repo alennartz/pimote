@@ -19,25 +19,11 @@
 
   let search = $state('');
   let scrollElement = $state<HTMLDivElement | null>(null);
-  // Toolbar box mode: search (default) or manager. Pure input routing — the
-  // toggle opens nothing; the session opens on send (owner ruling). Old
-  // manager sessions surface in the toolbar's dropdown while in manager mode.
   let managerMode = $state(false);
-  // One draft shared by the toolbar box and the manager area's composer.
   let managerDraft = $state('');
-  // Busy state while one submit is in flight: both composers disable their
-  // send affordances; the shared operation guards re-entry against doubles.
   let managerBusy = $state(false);
   let mobile = $derived(isMobileViewport());
-  /** Manager controls wait for a usable root fact and connected readiness. */
   let managerReady = $derived(connection.ready && connection.managerRoot !== null);
-
-  // --- Manager area: one shared submit operation ----------------------------
-  //
-  // Every manager-area entry control routes through here. The continue-or-
-  // open-new decision and the prompt/open/navigate sequence live in
-  // `submitManagerMessage`; this wiring supplies the ordinary session seams.
-  // A rejected submit keeps the shared draft.
 
   const managerPorts: ManagerSubmitPorts = {
     openManagerSession: async (managerRoot) => {
@@ -70,12 +56,6 @@
       const sent = await submitManagerMessage(
         {
           viewed: viewed ? { sessionId: viewed.sessionId } : undefined,
-          // A viewed manager session continues; placeholders and code sessions
-          // do not count as manager identity. Lexical equality is deliberate:
-          // the canonical identity fact lives with the server (attachment
-          // rule), and no folder row ever points at the manager root, so a
-          // manager session opened through this UI always carries the
-          // canonical path (review finding 7 disposition; see DR-059).
           viewedIsManager: viewed != null && !isPlaceholderSessionId(viewed.sessionId) && viewed.folderPath === managerRoot,
           managerRoot,
           text,
@@ -88,22 +68,12 @@
     }
   }
 
-  // Continue starts expanded — the header keeps the open count visible and
-  // lets the user fold it away. It is not rendered on mobile at all: there,
-  // active sessions surface under their folder's half-open expander instead.
   let continueOpen = $state(true);
-
-  // --- Continue: swipe-to-close/archive -------------------------------------
-  //
-  // A swiped-away card is replaced in the grid by a lingering ghost with an
-  // Undo affordance (5s). The ghost records the session it sat after, so the
-  // list reconstructs with the ghost where the card used to be.
 
   interface ContinueGhost {
     id: string;
     label: string;
     displayName: string;
-    /** Session id this ghost should render before (its old position), if that session still exists. */
     anchorSessionId: string | null;
     undo: () => void;
   }
@@ -168,7 +138,6 @@
   }
 
   async function closeFromHome(sessionId: string): Promise<SwipeActionOutcome> {
-    // Capture metadata up front — the registry entry disappears on session_closed.
     const session = sessionRegistry.sessions[sessionId];
     const folderPath = session?.folderPath ?? '';
     const displayName = (session ? getSessionDisplayName(session) : null) ?? 'Session';
@@ -204,7 +173,6 @@
       console.error('Failed to archive session:', e);
       return 'stay';
     }
-    // Archived sessions leave the Continue list — the card goes with it.
     closeSession(sessionId);
     addGhost({
       label: 'Session archived',
@@ -218,9 +186,6 @@
     return 'collapse';
   }
 
-  // Seed the folder list per connection. The store owns the freshness policy:
-  // a warm cache serves remounts (server events keep it current), reconnects
-  // refetch via the disconnect invalidation.
   $effect(() => {
     if (connection.status === 'connected') {
       untrack(() => {
@@ -257,7 +222,6 @@
 <div class="flex min-h-0 flex-1">
   <div class="flex min-h-0 flex-1 flex-col overflow-y-auto" bind:this={scrollElement} onscroll={closeOpenSwipeCard}>
     <div class="mx-auto flex w-full max-w-2xl flex-col gap-10 px-5 pt-12 pb-28 md:max-w-4xl md:pt-16">
-      <!-- Brand -->
       <div class="flex flex-col items-center gap-1.5">
         <div class="flex items-center gap-2.5">
           <img src="/pwa/icon-512.png" alt="" class="border-border size-9 rounded-xl border object-cover" />
@@ -265,13 +229,8 @@
         </div>
       </div>
 
-      <!-- One box: search by default; the leading button toggles it into the
-         manager (AI) mode. Same structure on mobile and desktop — only the
-         touch/typography sizing differs. -->
       <HomeToolbar bind:search bind:managerMode bind:managerDraft {managerReady} busy={managerBusy} onSubmitManager={submitManagerDraft} />
 
-      <!-- Continue: open sessions as cards. Desktop only — mobile drops the
-         section completely rather than nesting an expander under the toolbar. -->
       {#if !mobile && (sessionRegistry.activeSessions.length > 0 || ghosts.length > 0)}
         <section>
           <div class="text-muted-foreground mb-3 flex items-center gap-2">
@@ -339,7 +298,6 @@
         </section>
       {/if}
 
-      <!-- Folders: header + list actions live with the list itself -->
       <section>
         <FolderList {search} {scrollElement} />
       </section>

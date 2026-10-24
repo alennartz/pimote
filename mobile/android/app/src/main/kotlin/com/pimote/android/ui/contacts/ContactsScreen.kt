@@ -80,14 +80,6 @@ class ContactsViewModel(private val container: AppContainer) : ViewModel() {
     }
 }
 
-/**
- * Pre-flattened row entries for the grouped contacts list. We materialize
- * project headers and their session children into a single linear list so
- * the LazyColumn can render with one [items] call and stable per-row keys
- * via [handleId]. Each row carries the index of the group it belongs to
- * so the renderer can decide whether to draw a top divider on the header
- * (omitted on the very first group).
- */
 private sealed interface ContactsRow {
     val handleId: String
     val groupIndex: Int
@@ -149,22 +141,12 @@ fun ContactsScreen(viewModel: ContactsViewModel, onEditSettings: () -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     var refreshing by remember { mutableStateOf(false) }
     var loadingHandleId by remember { mutableStateOf<String?>(null) }
-    // Clear the per-row loading spinner when the call leaves Idle (the call is
-    // in flight and InCallActivity is launching) or when it terminates. The
-    // tap-time clear-immediately path produces no observable spinner because
-    // both writes happen before recomposition; deriving the clear from the
-    // controller's state gives the spinner a real lifetime.
     LaunchedEffect(callState) {
         if (callState !is CallState.Idle) {
             loadingHandleId = null
         }
     }
 
-    // Recompute the row list only when projects/sessions change, not on every
-    // recomposition. Mirror the PWA: group sessions under their parent project
-    // by recency, drop empty projects. The relative-time strings are computed
-    // at composition time from System.currentTimeMillis(); they don't auto-tick
-    // (PWA parity).
     val rows = remember(projects, sessions) {
         val labelByPath = PhoneAccountRules.disambiguateFolderLabels(
             (projects.map { it.folderPath } + sessions.map { it.folderPath }).distinct(),
@@ -173,9 +155,6 @@ fun ContactsScreen(viewModel: ContactsViewModel, onEditSettings: () -> Unit) {
         flattenGroups(groups, labelByPath, System.currentTimeMillis())
     }
 
-    // Note: `handleId` here is the SOURCE_ID encoded into the URI on placeCall.
-    // It identifies the target session/project; it's not a PhoneAccount handle.
-    // (We have exactly one PhoneAccount; see DR-019.)
 
     Scaffold(
         topBar = {
@@ -248,10 +227,6 @@ fun ContactsScreen(viewModel: ContactsViewModel, onEditSettings: () -> Unit) {
                         val onCall: () -> Unit = onCall@{
                             if (context == null) return@onCall
                             loadingHandleId = handleId
-                            // Single source of truth for placing a pimote call lives
-                            // in CallByPimoteUri.placeCall. Don't clear loadingHandleId
-                            // on success — dispatch is async; LaunchedEffect(callState)
-                            // above clears the spinner once the controller leaves Idle.
                             val dispatched = CallByPimoteUri.placeCall(
                                 context = context,
                                 pimoteUri = "$PIMOTE_URI_SCHEME:$handleId",

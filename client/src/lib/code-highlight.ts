@@ -1,24 +1,5 @@
-/**
- * Shared streaming code-highlight engine.
- *
- * Two surfaces consume this: `smd-renderer.ts` (markdown fenced code) and
- * `WriteFileBlock.svelte` (the `write` tool view). Both re-run highlight.js
- * over the full code buffer on each delta and replace the code element's
- * contents — the established whole-buffer re-highlight approach (see the
- * brainstorm). This module owns two pieces:
- *
- *   - `highlightToHtml(text, language)` — a pure transform from a complete
- *     code string to hljs HTML markup. Used directly when the caller just
- *     wants markup, and internally by the scheduler.
- *   - `createIncrementalHighlighter()` — a stateful, time-budgeted throttle
- *     that re-highlights a target element at most once per `intervalMs`
- *     (trailing edge), plus a forced `flush()` for the guaranteed final pass.
- *
- * Built on the single shared `hljs` instance from `syntax-highlighter.ts`.
- */
 import { hljs } from './syntax-highlighter.js';
 
-/** HTML-escape a string for safe insertion as text content via innerHTML. */
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -37,7 +18,7 @@ export function highlightToHtml(text: string, language: string | null): string {
     try {
       return hljs.highlight(text, { language }).value;
     } catch {
-      // Fall through to the escaped plain-text fallback.
+      return escapeHtml(text);
     }
   }
   return escapeHtml(text);
@@ -88,8 +69,6 @@ export function createIncrementalHighlighter(opts?: { intervalMs?: number }): In
   return {
     schedule(el: HTMLElement, text: string, language: string | null) {
       pending = { el, text, language };
-      // Trailing-edge throttle: do not reset an in-flight timer; repeated
-      // schedules within the window only overwrite the pending values.
       if (timer === null) {
         timer = setTimeout(() => {
           timer = null;

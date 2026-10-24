@@ -16,10 +16,6 @@
 
   let { sessionDisplayName, folderPath, startedAt, micMuted, agentState, remoteAudioLevel }: Props = $props();
 
-  // Tick once per second so the duration display stays current. Only run
-  // the interval while the call has actually started — during binding /
-  // connecting the duration is fixed at 00:00 and ticking is wasted work.
-  // (review finding #7)
   let now = $state(Date.now());
   $effect(() => {
     if (startedAt === null) return;
@@ -33,7 +29,6 @@
   let elapsedMs = $derived(startedAt ? now - startedAt : 0);
   let durationText = $derived(formatCallDuration(elapsedMs));
 
-  // Folder label: basename of folderPath if available.
   let folderLabel = $derived.by(() => {
     if (!folderPath) return 'session';
     const trimmed = folderPath.replace(/\/+$/, '');

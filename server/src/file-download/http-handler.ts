@@ -45,15 +45,11 @@ function closeResponse(res: http.ServerResponse): void {
 
 async function streamDownload(res: http.ServerResponse, source: OpenedDownloadSource): Promise<void> {
   await new Promise<void>((resolve) => {
-    // The descriptor was opened and validated before headers were sent. Stream
-    // from that descriptor instead of reopening a mutable path.
     const stream = source.handle.createReadStream({ autoClose: false });
     let settled = false;
     const settle = () => {
       if (settled) return;
       settled = true;
-      // autoClose is disabled so the FileHandle wrapper can be closed exactly
-      // once here, including response-abort and stream-error paths.
       void source.handle
         .close()
         .catch(() => undefined)

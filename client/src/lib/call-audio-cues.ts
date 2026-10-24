@@ -1,13 +1,3 @@
-// Audio cues for the calling-mode UI.
-//
-// Three short beeps confirm gesture-driven actions:
-//   - playMuteOn        : higher-pitched short beep (mic just muted)
-//   - playMuteOff       : lower-pitched short beep (mic just unmuted)
-//   - playAbortConfirm  : distinct double-beep (agent abort)
-//
-// Hang-up has no cue — the call audio dropping is its own confirmation.
-//
-// We synthesise the cues with `OscillatorNode`s so there are no asset files.
 // The `AudioContext` is lazy-initialised on first use because some browsers
 // require a user gesture before instantiating one. Every cue here is invoked
 // from a tap/swipe handler, so that requirement is met by construction.
@@ -42,7 +32,6 @@ export function createCallAudioCues(audioContextFactory?: () => AudioContext): C
     return ctx;
   };
 
-  /** Play a single envelope-shaped beep and return when scheduled. */
   const beep = (frequencyHz: number, durationMs: number, startOffsetMs = 0): void => {
     const c = ensureCtx();
     const osc = c.createOscillator();
@@ -52,7 +41,6 @@ export function createCallAudioCues(audioContextFactory?: () => AudioContext): C
 
     const start = c.currentTime + startOffsetMs / 1000;
     const end = start + durationMs / 1000;
-    // Short attack/decay envelope so the beep doesn't click.
     gain.gain.setValueAtTime(0, start);
     gain.gain.linearRampToValueAtTime(0.4, start + 0.005);
     gain.gain.linearRampToValueAtTime(0, end);
@@ -70,13 +58,11 @@ export function createCallAudioCues(audioContextFactory?: () => AudioContext): C
       beep(440, 80);
     },
     playAbortConfirm(): void {
-      // Two beeps, ~120ms apart, to differentiate from the single mute cue.
       beep(660, 80, 0);
       beep(660, 80, 120);
     },
     dispose(): void {
       if (ctx) {
-        // close() returns a promise; we don't await it — fire and forget.
         void ctx.close().catch(() => {});
         ctx = null;
       }

@@ -8,7 +8,7 @@ import type { EventBus } from '@earendil-works/pi-coding-agent';
  * for sessions already past the idle-reap threshold — the poll is invisible
  * until it matters.
  *
- * Fails open: no responder, or any responder answering `active: false`, means
+ * Fails open: no responder, or no responder answering `active: true`, means
  * no background work and the caller may reap. When several extensions answer,
  * responses are OR-ed — any assertion of live work holds the session.
  */

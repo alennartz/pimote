@@ -1,13 +1,3 @@
-/**
- * App display name branding.
- *
- * A single config value (`appName` in the pimote config) drives every place the
- * app's name surfaces: the served PWA manifest (installed app name), the HTML
- * shell's meta tags (iOS installed name and the client's title fallbacks), and
- * the browser tab title. The server rewrites the built static assets on the way
- * out, so hosts only set `appName` — no client rebuild required.
- */
-
 export const DEFAULT_APP_NAME = 'Pimote';
 
 /** The configured app name, trimmed; falls back to the default when absent or blank. */
@@ -30,7 +20,6 @@ export function setMetaContent(html: string, metaName: string, content: string):
   return html.replace(tagPattern, () => updated);
 }
 
-/** Meta tags in the HTML shell that carry the app name. */
 const BRANDED_META_NAMES = ['application-name', 'apple-mobile-web-app-title'] as const;
 
 /** Rewrite every branded value in the HTML shell to the configured app name. */

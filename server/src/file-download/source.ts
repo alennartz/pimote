@@ -23,7 +23,6 @@ export interface OpenedDownloadSource extends ValidatedDownloadSource {
   handle: FileHandle;
 }
 
-/** Resolve a registered source path lexically; relative paths join the root. */
 function resolveSourcePath(input: ValidateDownloadSourceInput): string {
   if (typeof input.sourcePath !== 'string' || typeof input.workspaceRoot !== 'string' || input.workspaceRoot.length === 0) {
     throw new Error('download source and workspace root must be paths');

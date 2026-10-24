@@ -9,7 +9,6 @@ export interface FileDownloadBootstrap {
   extensionFactory: ExtensionFactory;
 }
 
-/** Injectable side effects keep boot-time GC and ownership wiring testable. */
 export interface FileDownloadBootstrapDependencies {
   createStore(storeDir: string): SessionJsonStore<DownloadStoreDocument>;
   gc(args: { storeDir: string; validSessionIds: Set<string> }): Promise<void>;

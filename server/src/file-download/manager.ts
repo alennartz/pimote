@@ -175,8 +175,6 @@ export function createDownloadManager(options: CreateDownloadManagerOptions): Do
       detachedSessions.delete(sessionId);
       await serializeSession(sessionId, async () => {
         const entries = entriesFrom(await options.store.read(sessionId));
-        // A shutdown or newer activation may have happened while storage was
-        // loading. Do not resurrect a session after that lifecycle changed.
         if (lifecycleVersions.get(sessionId) !== lifecycleVersion) return;
         replaceActiveEntries(sessionId, entries);
         if (!detachedSessions.has(sessionId)) publishersBySession.set(sessionId, publish);
@@ -202,8 +200,6 @@ export function createDownloadManager(options: CreateDownloadManagerOptions): Do
         const entries = entriesFrom(await options.store.read(input.sessionId));
         const entry: DownloadStoreEntry = {
           id: nextOpaqueId(entries),
-          // Keep the lexical path that the agent supplied. The route reopens
-          // it at click time, resolving relative paths against this root.
           sourcePath: input.path,
           workspaceRoot: input.workspaceRoot,
           filename: source.filename,
@@ -241,8 +237,6 @@ export function createDownloadManager(options: CreateDownloadManagerOptions): Do
       const sessionId = activeSessionById.get(id);
       if (!sessionId || reservedClaimIds.has(id)) return Promise.resolve(undefined);
 
-      // Reserve before the first await so a competing request cannot enter the
-      // per-session queue with the same capability.
       reservedClaimIds.add(id);
       return serializeSession(sessionId, async () => {
         try {

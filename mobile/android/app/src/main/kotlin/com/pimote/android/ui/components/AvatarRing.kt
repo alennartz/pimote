@@ -71,7 +71,6 @@ fun AvatarRing(
             modifier = Modifier.size(120.dp),
             contentAlignment = Alignment.Center,
         ) {
-            // Filled circle background.
             Canvas(modifier = Modifier.size(120.dp)) {
                 drawCircle(color = colors.surfacePlus)
             }

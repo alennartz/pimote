@@ -88,7 +88,6 @@ fun PimoteButton(
         label = "pimote-button-scale",
     )
 
-    // 16% ink overlay drawn on top of the button content while pressed.
     val pressOverlay = colors.ink.copy(alpha = 0.16f)
     Button(
         onClick = onClick,
@@ -116,10 +115,6 @@ fun PimoteButton(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(spacing.s),
         ) {
-            // Reserve the 16dp leading slot whenever the caller might toggle
-            // `isLoading`, so the button width stays stable across the toggle.
-            // When neither a leading icon nor a spinner is shown, render an
-            // invisible placeholder so the layout still allocates the slot.
             Box(modifier = Modifier.size(16.dp), contentAlignment = Alignment.Center) {
                 if (isLoading) {
                     CircularProgressIndicator(

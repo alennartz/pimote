@@ -44,7 +44,6 @@ fun ContactRow(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
-    // 100ms background flash to surfacePlus on press, fading back when released.
     val flashColor by animateColorAsState(
         targetValue = if (pressed) PimoteTheme.colors.surfacePlus else Color.Transparent,
         animationSpec = tween(durationMillis = 100),

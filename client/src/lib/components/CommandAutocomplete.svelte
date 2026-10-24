@@ -16,20 +16,15 @@
 
   let { items, query, visible, mode, sessionId, commandName, onselect, ondismiss }: Props = $props();
 
-  // Command mode: fuzzy-filtered items
   let filteredCommands = $derived.by(() => {
     if (mode !== 'command') return [];
     return fuzzyFilter(items, query, (item) => item.name).slice(0, 10);
   });
 
-  // Server-fetched completion items for the two server-backed modes (args and
-  // fileRefs). Both modes run the same debounced-fetch-with-stale-discard
-  // operation, differing only in the request payload, so they share one effect.
   let serverItems: AutocompleteResponseItem[] = $state([]);
   let serverDebounceTimer: ReturnType<typeof setTimeout> | undefined;
   let serverRequestSeq = 0;
 
-  // Fetch server completions on query change in args / fileRefs modes
   $effect(() => {
     if ((mode !== 'args' && mode !== 'fileRefs') || !visible) return;
     const currentMode = mode;
@@ -53,7 +48,6 @@
               commandName: currentCommandName,
               prefix: currentQuery,
             }));
-        // Discard stale responses — a newer request has been sent
         if (seq !== serverRequestSeq) return;
         if (res.success && res.data) {
           const result = (res.data as { items: AutocompleteResponseItem[] | null }).items;
@@ -70,7 +64,6 @@
     return () => clearTimeout(serverDebounceTimer);
   });
 
-  // The display list depends on the mode
   let displayItems = $derived.by(() => {
     if (mode === 'command') {
       return filteredCommands.map((c) => ({
@@ -85,15 +78,12 @@
     }));
   });
 
-  // Highlight index, reset when list changes
   let highlightIndex = $state(0);
   $effect(() => {
-    // Re-run whenever the display items change
     displayItems;
     highlightIndex = 0;
   });
 
-  // Keep scrolled into view
   let listEl: HTMLDivElement | undefined = $state();
   $effect(() => {
     if (!listEl) return;

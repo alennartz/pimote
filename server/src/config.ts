@@ -55,14 +55,11 @@ export interface PimoteConfig {
 export const CONFIG_PATH = PIMOTE_CONFIG_PATH;
 
 const DEFAULTS = {
-  idleTimeout: 1_800_000, // 30 minutes
+  idleTimeout: 1_800_000,
   bufferSize: 1000,
   port: 3000,
 } as const;
 
-/** Default manager root: a dedicated directory inside pimote's state dir. Never `~` — seeding the
- *  manager persona AGENTS.md into the home directory would load it as ancestor context for every
- *  pi session under home (review finding 1). */
 const DEFAULT_MANAGER_ROOT = join(PIMOTE_STATE_DIR, 'manager');
 
 /** Expand a leading `~`/`~/` to the home directory; any other value passes through unchanged. */
@@ -72,7 +69,6 @@ export function expandHomePath(value: string, home: string): string {
   return value;
 }
 
-/** True when `path` is a strict descendant of `dir` (canonical containment). */
 function isWithin(path: string, dir: string): boolean {
   const rel = relative(dir, path);
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
@@ -139,12 +135,10 @@ export async function loadConfig(): Promise<PimoteConfig> {
 
   const obj = parsed as Record<string, unknown>;
 
-  // Validate roots
   if (!Array.isArray(obj.roots) || obj.roots.length === 0 || !obj.roots.every((r): r is string => typeof r === 'string')) {
     throw new Error(`Config "roots" must be a non-empty array of strings in ${CONFIG_PATH}`);
   }
 
-  // Validate managerRoot — string-based like roots; deliberately no filesystem-existence checks.
   if (obj.managerRoot !== undefined && (typeof obj.managerRoot !== 'string' || obj.managerRoot.length === 0)) {
     throw new Error(`Config "managerRoot" must be a non-empty string in ${CONFIG_PATH}`);
   }
@@ -152,7 +146,6 @@ export async function loadConfig(): Promise<PimoteConfig> {
   return {
     roots: obj.roots,
     managerRoot: expandHomePath(typeof obj.managerRoot === 'string' ? obj.managerRoot : DEFAULT_MANAGER_ROOT, homedir()),
-    // Deprecated legacy key read-compat: `projectSourcesDir` is superseded by `folderSourcesDir` (will be retired).
     folderSourcesDir: typeof obj.folderSourcesDir === 'string' ? obj.folderSourcesDir : typeof obj.projectSourcesDir === 'string' ? obj.projectSourcesDir : undefined,
     idleTimeout: typeof obj.idleTimeout === 'number' ? obj.idleTimeout : DEFAULTS.idleTimeout,
     bufferSize: typeof obj.bufferSize === 'number' ? obj.bufferSize : DEFAULTS.bufferSize,
@@ -192,20 +185,18 @@ export async function ensureVapidKeys(config: PimoteConfig): Promise<PimoteConfi
   config.vapidPublicKey = keys.publicKey;
   config.vapidPrivateKey = keys.privateKey;
 
-  // Read existing file to preserve all fields, then merge in new keys
   let existing: Record<string, unknown> = {};
   try {
     const raw = await readFile(CONFIG_PATH, 'utf-8');
     existing = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    // If file doesn't exist or can't be parsed, start fresh
+  } catch (error) {
+    void error;
   }
 
   existing.vapidPublicKey = keys.publicKey;
   existing.vapidPrivateKey = keys.privateKey;
 
   await mkdir(dirname(CONFIG_PATH), { recursive: true });
-  // Atomic write (tmp + rename) so a crash mid-write can't corrupt the config.
   const tmpPath = CONFIG_PATH + '.tmp';
   await writeFile(tmpPath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
   await rename(tmpPath, CONFIG_PATH);

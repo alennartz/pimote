@@ -45,8 +45,6 @@ fun buildSessionProjectGroups(
         SessionProjectGroup(
             project = p,
             sessions = sorted,
-            // Empty groups: empty string sorts as epoch 0 via parseTimestamp,
-            // pushing them below any group with real sessions.
             lastModified = sorted.firstOrNull()?.modified ?: "",
         )
     }

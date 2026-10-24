@@ -25,9 +25,6 @@ export function createFileDownloadExtension(options: CreateFileDownloadExtension
   function toolContext(ctx: ExtensionContext): FileDownloadToolContext {
     return {
       manager,
-      // Resolve both values at execution time. Session replacement can happen
-      // after the extension factory was created, and the pi context is the
-      // authoritative owner/cwd for each lifecycle or tool invocation.
       sessionId: ctx.sessionManager.getSessionId(),
       workspaceRoot: ctx.cwd,
     };

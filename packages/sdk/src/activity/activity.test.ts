@@ -3,8 +3,6 @@ import { answerActivity } from './answer.js';
 import { askActivity } from './ask.js';
 import type { EventBus, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
-// --- Helpers ---
-
 function createMockEventBus(): EventBus & { handlers: Map<string, Set<(data: unknown) => void>> } {
   const handlers = new Map<string, Set<(data: unknown) => void>>();
   return {
@@ -33,14 +31,11 @@ function createMockExtensionAPI(eventBus: EventBus): ExtensionAPI {
   return { events: eventBus } as unknown as ExtensionAPI;
 }
 
-/** Install a raw pimote-side responder (no SDK helper) answering the given flag. */
 function installRawResponder(eventBus: EventBus, active: boolean): void {
   eventBus.on('pimote:activity:request', () => {
     eventBus.emit('pimote:activity:response', { active });
   });
 }
-
-// --- Tests ---
 
 describe('@pimote/activity askActivity', () => {
   let eventBus: ReturnType<typeof createMockEventBus>;
@@ -88,7 +83,6 @@ describe('@pimote/activity answerActivity', () => {
     answerActivity(pi, () => true);
     expect(askActivity(eventBus)).toBe(true);
 
-    // Fresh bus with an inactive responder.
     const idleBus = createMockEventBus();
     answerActivity(createMockExtensionAPI(idleBus), () => false);
     expect(askActivity(idleBus)).toBe(false);

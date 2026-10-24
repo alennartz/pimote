@@ -1,35 +1,3 @@
-// ============================================================================
-// Pimote Wire Protocol Types
-// All WebSocket messages between client and server.
-// Self-contained — no imports from the pi SDK.
-//
-// KEEP IN SYNC WITH: mobile/android/app/src/main/kotlin/com/pimote/android/protocol/Protocol.kt
-//
-// MIRROR NOTE: Android already speaks the folder vocabulary (FolderInfo /
-// list_folders); the TS side's project names were the stale half of that drift,
-// and the wire rename realigns the two surfaces. The Kotlin mirror is a
-// hand-written subset — do not edit Kotlin from TS-side changes: field
-// additions are safe via ignoreUnknownKeys; renames are not.
-//
-// The native Android client hand-mirrors a subset of these types as Kotlin
-// data classes. Any change to the following types MUST be reflected on the
-// Kotlin side (no codegen):
-//   - CallBindCommand / CallEndCommand / CallBindResponse
-//   - CallReadyEvent / CallEndedEvent / CallStatusEvent / CallEndReason / CallStatus
-//   - CallBindErrorCode
-//   - OpenSessionCommand / OpenSessionResponseData
-//   - ListSessionsCommand
-//   - FolderInfo / SessionInfo
-//   - SessionOpenedEvent / SessionRenamedEvent / SessionArchivedEvent /
-//     SessionDeletedEvent / SessionReplacedEvent / SessionStateChangedEvent /
-//     FoldersChangedEvent
-// The Kotlin file's header carries the same list — keep the two in lockstep.
-// ============================================================================
-
-// ----------------------------------------------------------------------------
-// Shared Data Types
-// ----------------------------------------------------------------------------
-
 /** A git repository as discovered by the server's repo index. */
 export interface RepoInfo {
   path: string;
@@ -96,7 +64,6 @@ export interface FolderInfo {
    *  via the session tier (narrows the lazily-loaded session list to just these);
    *  absent on folder-tier matches (all sessions shown). */
   matchedSessionIds?: string[];
-  // Session/git chip fields, unchanged from the pre-rename project row.
   activeSessionCount: number;
   externalProcessCount: number;
 }
@@ -135,10 +102,6 @@ export interface SessionState {
   autoCompactionEnabled: boolean;
   messageCount: number;
 }
-
-// ----------------------------------------------------------------------------
-// Simplified AgentMessage (JSON-serializable, no pi SDK dependency)
-// ----------------------------------------------------------------------------
 
 export interface PimoteMessageContent {
   type: 'text' | 'thinking' | 'tool_call' | 'tool_result';
@@ -250,10 +213,6 @@ export interface PimoteAgentMessage {
   [key: string]: unknown;
 }
 
-// ----------------------------------------------------------------------------
-// Panel / Card Types
-// ----------------------------------------------------------------------------
-
 export type CardColor = 'accent' | 'success' | 'warning' | 'error' | 'muted';
 export type BodySectionStyle = 'text' | 'code' | 'secondary';
 
@@ -280,10 +239,6 @@ export interface Card {
   href?: string;
 }
 
-// ----------------------------------------------------------------------------
-// Tree navigation types
-// ----------------------------------------------------------------------------
-
 /** Session tree node transferred over the wire (preview-only, no full message content). */
 export interface PimoteTreeNode {
   id: string;
@@ -299,18 +254,12 @@ export interface PimoteTreeNode {
   children: PimoteTreeNode[];
 }
 
-// ----------------------------------------------------------------------------
-// Client → Server Commands
-// ----------------------------------------------------------------------------
-
 interface CommandBase {
   /** Correlation ID for request/response matching */
   id?: string;
   /** Target session (required for session-scoped commands) */
   sessionId?: string;
 }
-
-// -- Session control commands --
 
 export interface PromptCommand extends CommandBase {
   type: 'prompt';
@@ -500,8 +449,6 @@ export interface CompleteFileRefsCommand extends CommandBase {
   prefix: string;
 }
 
-// -- Command / autocomplete response shapes --
-
 export interface CommandInfo {
   name: string;
   description: string;
@@ -550,8 +497,6 @@ export interface SetTreeLabelCommand extends CommandBase {
   /** Empty string or undefined clears the label. */
   label?: string;
 }
-
-// -- Folder management commands --
 
 export interface CreateFolderCommand extends CommandBase {
   type: 'create_folder';
@@ -671,8 +616,6 @@ export interface CreatePersonaFolderResponseData {
   folderPath: string;
 }
 
-// -- Server-level commands --
-
 export interface ListSessionsCommand extends CommandBase {
   type: 'list_sessions';
   folderPath: string;
@@ -738,8 +681,6 @@ export interface ViewSessionCommand extends CommandBase {
   sessionId: string;
 }
 
-// -- File editing commands --
-
 export interface FileGetCommand extends CommandBase {
   type: 'file_get';
   /** Absolute path, a `~`-prefixed path (the server expands a leading `~`/`~/` to its home directory), or a relative path (resolved against the server's working directory). */
@@ -766,8 +707,6 @@ export interface FilePutResponseData {
   path: string;
 }
 
-// -- Push notification commands --
-
 export interface RegisterPushCommand extends CommandBase {
   type: 'register_push';
   subscription: {
@@ -781,8 +720,6 @@ export interface UnregisterPushCommand extends CommandBase {
   endpoint: string;
 }
 
-// -- Session conflict commands --
-
 export interface KillConflictingProcessesCommand extends CommandBase {
   type: 'kill_conflicting_processes';
   sessionId: string;
@@ -793,8 +730,6 @@ export interface KillConflictingSessionsCommand extends CommandBase {
   type: 'kill_conflicting_sessions';
   sessionIds: string[];
 }
-
-// -- Voice call commands --
 
 /** Bind a voice call to a session. When the session is not live in server
  *  memory but a disk record exists, the server reopens it for the call: no
@@ -824,7 +759,6 @@ export type CallBindErrorCode = 'call_bind_failed_session_not_found' | 'call_bin
 /** Reason code returned when an extension attempts a UI bridge call during a voice call. */
 export const UI_BRIDGE_DISABLED_IN_VOICE_MODE = 'ui_bridge_disabled_in_voice_mode';
 
-// -- Provider login commands --
 //
 // Interactive OAuth provider login (`/login` equivalent). These commands are
 // global — login is not session-scoped, so they carry no `sessionId`. They do
@@ -880,8 +814,6 @@ export interface LogoutResponseData {
   ok: boolean;
 }
 
-// -- Extension UI commands --
-
 export interface ExtensionUiResponseCommand extends CommandBase {
   type: 'extension_ui_response';
   requestId: string;
@@ -890,10 +822,7 @@ export interface ExtensionUiResponseCommand extends CommandBase {
   cancelled?: boolean;
 }
 
-// -- Discriminated union --
-
 export type PimoteCommand =
-  // Session control
   | PromptCommand
   | SteerCommand
   | FollowUpCommand
@@ -921,7 +850,6 @@ export type PimoteCommand =
   | ForkCommand
   | NavigateTreeCommand
   | SetTreeLabelCommand
-  // Folder management
   | CreateFolderCommand
   | ListFoldersCommand
   | ListReposCommand
@@ -930,7 +858,6 @@ export type PimoteCommand =
   | CreateHubCommand
   | AddHubMemberCommand
   | RemoveHubMemberCommand
-  // Server-level
   | RenameSessionCommand
   | ListSessionsCommand
   | OpenSessionCommand
@@ -941,27 +868,18 @@ export type PimoteCommand =
   | ViewSessionCommand
   | FileGetCommand
   | FilePutCommand
-  // Push notifications
   | RegisterPushCommand
   | UnregisterPushCommand
-  // Session conflict
   | KillConflictingProcessesCommand
   | KillConflictingSessionsCommand
-  // Extension UI
   | ExtensionUiResponseCommand
-  // Voice
   | CallBindCommand
   | CallEndCommand
-  // Provider login
   | LoginListCommand
   | LoginBeginCommand
   | LoginInputCommand
   | LoginCancelCommand
   | LogoutCommand;
-
-// ----------------------------------------------------------------------------
-// Server → Client Events
-// ----------------------------------------------------------------------------
 
 interface SessionEventBase {
   /** Which session produced this event */
@@ -979,8 +897,6 @@ interface EphemeralSessionEventBase {
   /** ISO 8601 server-side timestamp */
   timestamp?: string;
 }
-
-// -- Agent lifecycle events --
 
 export interface AgentStartEvent extends SessionEventBase {
   type: 'agent_start';
@@ -1028,8 +944,6 @@ export interface TurnStartEvent extends SessionEventBase {
 export interface TurnEndEvent extends SessionEventBase {
   type: 'turn_end';
 }
-
-// -- Message streaming events --
 
 export interface MessageStartEvent extends SessionEventBase {
   type: 'message_start';
@@ -1084,8 +998,6 @@ export interface CustomEntryEvent extends SessionEventBase {
   message: PimoteAgentMessage;
 }
 
-// -- Tool execution events --
-
 export interface ToolExecutionStartEvent extends SessionEventBase {
   type: 'tool_execution_start';
   toolName: string;
@@ -1117,8 +1029,6 @@ export interface BashExecutionUpdateEvent extends EphemeralSessionEventBase {
   delta: string;
 }
 
-// -- Auto-compaction events --
-
 export interface AutoCompactionStartEvent extends SessionEventBase {
   type: 'auto_compaction_start';
   reason: 'manual' | 'threshold' | 'overflow';
@@ -1131,8 +1041,6 @@ export interface AutoCompactionEndEvent extends SessionEventBase {
   willRetry: boolean;
   errorMessage?: string;
 }
-
-// -- Auto-retry events --
 
 export interface AutoRetryStartEvent extends SessionEventBase {
   type: 'auto_retry_start';
@@ -1148,8 +1056,6 @@ export interface AutoRetryEndEvent extends SessionEventBase {
   attempt: number;
   finalError?: string;
 }
-
-// -- Extension error --
 
 export interface ExtensionErrorEvent extends SessionEventBase {
   type: 'extension_error';
@@ -1199,15 +1105,11 @@ export interface QueuedDraftsRestoredEvent {
   followUp: string[];
 }
 
-// -- Session conflict events --
-
 export interface SessionConflictEvent {
   type: 'session_conflict';
   sessionId: string;
   processes: Array<{ pid: number; command: string }>;
 }
-
-// -- Extension UI request events --
 
 export interface ExtensionUiResolvedEvent {
   type: 'extension_ui_resolved';
@@ -1223,8 +1125,6 @@ export interface ExtensionUiRequestEvent {
   /** Method-specific fields (e.g., prompt text, options, etc.) */
   [key: string]: unknown;
 }
-
-// -- Server-level events --
 
 export interface SessionOpenedEvent {
   type: 'session_opened';
@@ -1311,8 +1211,6 @@ export interface ConnectionRestoredEvent {
   sessionId: string;
 }
 
-// -- Folder management events --
-
 /** Broadcast after a folder registry/discovery mutation — a delta over the
  *  windowed listing (created/updated rows, removed paths), never the full list. */
 export interface FoldersChangedEvent {
@@ -1349,15 +1247,11 @@ export interface FullResyncEvent {
   runningToolCallIds?: string[];
 }
 
-// -- Panel events --
-
 export interface PanelUpdateEvent {
   type: 'panel_update';
   sessionId: string;
   cards: Card[];
 }
-
-// -- File download events --
 
 export type DownloadUpdateCause = 'offered' | 'restored' | 'consumed' | 'revoked';
 
@@ -1409,8 +1303,6 @@ export interface NavigateEvent {
   url: string;
 }
 
-// -- Voice events --
-
 /**
  * Success response to a CallBindCommand. Carries the per-call WebRTC
  * signalling endpoint the client should connect to. The PWA obtains
@@ -1452,8 +1344,6 @@ export interface CallStatusEvent {
   status: CallStatus;
 }
 
-// -- Voice persisted custom entries --
-
 /**
  * Custom entry customType appended by the voice extension when it observes a
  * speechmux rollback/abort frame. The payload records the user-heard watermark
@@ -1467,8 +1357,6 @@ export interface VoiceInterruptEntryData {
   heard_text: string;
   kind: 'abort' | 'rollback';
 }
-
-// -- Provider login events --
 
 /**
  * A single step in an interactive login flow, server → client. Rendered
@@ -1491,8 +1379,6 @@ export interface LoginStepEvent {
   step: LoginStep;
 }
 
-// -- Server capabilities --
-
 /**
  * Advertised once when a client WebSocket connection opens (every connection,
  * including reconnects, gets a fresh copy). Features the server has not
@@ -1503,8 +1389,6 @@ export interface ServerCapabilitiesEvent {
   /** Voice calling is configured (speechmux signalling + LLM WS URLs). */
   voice: boolean;
 }
-
-// -- Version mismatch --
 
 export interface UpdateStatus {
   currentVersion: string;
@@ -1521,19 +1405,12 @@ export interface VersionMismatchEvent {
   serverVersion: string;
 }
 
-// -- Discriminated union --
-
 export type PimoteEvent =
-  // Session events
   | PimoteSessionEvent
-  // Extension UI
   | ExtensionUiRequestEvent
   | ExtensionUiResolvedEvent
-  // Session conflict
   | SessionConflictEvent
-  // Queued drafts
   | QueuedDraftsRestoredEvent
-  // Server-level
   | SessionOpenedEvent
   | SessionSuggestedEvent
   | SessionClosedEvent
@@ -1549,27 +1426,17 @@ export type PimoteEvent =
   | SessionRestoreEvent
   | BufferedEventsEvent
   | FullResyncEvent
-  // Panel
   | PanelUpdateEvent
-  // File downloads
   | DownloadUpdateEvent
-  // Navigation
   | NavigateEvent
-  // Voice
   | CallBindResponse
   | CallReadyEvent
   | CallEndedEvent
   | CallStatusEvent
-  // Provider login
   | LoginStepEvent
-  // Version
   | VersionMismatchEvent
   | ServerCapabilitiesEvent
   | UpdateAvailableEvent;
-
-// ----------------------------------------------------------------------------
-// Server → Client Responses (request/response pattern)
-// ----------------------------------------------------------------------------
 
 export interface PimoteResponse<T = unknown> {
   /** Matches the `id` from the originating PimoteCommand */
@@ -1578,10 +1445,6 @@ export interface PimoteResponse<T = unknown> {
   data?: T;
   error?: string;
 }
-
-// ----------------------------------------------------------------------------
-// Top-level WebSocket message (everything on the wire is one of these)
-// ----------------------------------------------------------------------------
 
 export type PimoteServerMessage = PimoteEvent | PimoteResponse;
 

@@ -85,7 +85,6 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
 
     if (signal) {
       if (signal.aborted) {
-        // Resolve and dismiss the request so every observer drops its copy.
         dismissDialog(requestId, fallback);
         return fallback;
       }
@@ -102,22 +101,16 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
     try {
       const result = await Promise.race(racers);
 
-      // If timeout or abort won the race, resolve and dismiss the pending
-      // request so it won't be replayed on reconnect or remain open elsewhere.
       dismissDialog(requestId, result);
 
       return result;
     } finally {
-      // Clear the timeout timer (keeps the event loop from staying alive / firing
-      // pointlessly) and detach the abort listener if the response won the race.
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
       if (signal && abortListener) signal.removeEventListener('abort', abortListener);
     }
   }
 
   const ui: ExtensionUIContext = {
-    // ---- Dialog methods (send + wait for response) ----
-
     async select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined> {
       if (isVoice()) throw voiceDisabledError();
       const requestId = crypto.randomUUID();
@@ -150,8 +143,6 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
       return waitForSlotUiResponse(slot, requestId, event) as Promise<string | undefined>;
     },
 
-    // ---- Fire-and-forget methods ----
-
     notify(message: string, type?: 'info' | 'warning' | 'error'): void {
       const requestId = crypto.randomUUID();
       sendRequest(requestId, { method: 'notify', message, notifyType: type });
@@ -172,7 +163,6 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
           placement: options?.placement,
         });
       }
-      // If content is a function (TUI component factory), no-op — can't bridge to web
     },
 
     setTitle(title: string): void {
@@ -185,52 +175,29 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
       sendRequest(requestId, { method: 'setEditorText', text });
     },
 
-    // ---- No-op methods (TUI-only, can't bridge to web) ----
-
     custom() {
       return Promise.resolve(undefined as never);
     },
 
-    setWorkingMessage(): void {
-      // no-op
-    },
+    setWorkingMessage(): void {},
 
-    setWorkingVisible(): void {
-      // TODO(pimote-bridge): forward to client so extensions can hide/show the working indicator row.
-      // Web client renders its own streaming UI; no-op is safe but loses extension control.
-    },
+    setWorkingVisible(): void {},
 
-    setWorkingIndicator(): void {
-      // TODO(pimote-bridge): forward custom working-indicator frames/colors to client renderer.
-      // Web client renders its own spinner; no-op is safe but loses extension control.
-    },
+    setWorkingIndicator(): void {},
 
-    setHiddenThinkingLabel(): void {
-      // no-op
-    },
+    setHiddenThinkingLabel(): void {},
 
-    addAutocompleteProvider(): void {
-      // TODO(pimote-bridge): wire extension autocomplete factory into the client autocomplete stack.
-      // Today the client only has built-in slash/path completion; extension providers are dropped.
-    },
+    addAutocompleteProvider(): void {},
 
     getEditorComponent(): undefined {
-      // TODO(pimote-bridge): decide whether to surface a stub EditorFactory for chained extension editors.
-      // Web client has no TUI editor component to wrap, so undefined is the honest answer.
       return undefined;
     },
 
-    setFooter(): void {
-      // no-op
-    },
+    setFooter(): void {},
 
-    setHeader(): void {
-      // no-op
-    },
+    setHeader(): void {},
 
-    setEditorComponent(): void {
-      // no-op
-    },
+    setEditorComponent(): void {},
 
     onTerminalInput(): () => void {
       return () => {};
@@ -240,9 +207,7 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
       return '';
     },
 
-    pasteToEditor(): void {
-      // no-op
-    },
+    pasteToEditor(): void {},
 
     get theme() {
       return null!;
@@ -264,9 +229,7 @@ export function createExtensionUIBridge(slot: ManagedSlot, pushNotificationServi
       return false;
     },
 
-    setToolsExpanded(): void {
-      // no-op
-    },
+    setToolsExpanded(): void {},
   };
 
   return ui;

@@ -38,8 +38,8 @@
     if (captureTarget && pointerId !== null && captureTarget.hasPointerCapture?.(pointerId)) {
       try {
         captureTarget.releasePointerCapture(pointerId);
-      } catch {
-        /* ignore */
+      } catch (error) {
+        void error;
       }
     }
     captureTarget = null;
@@ -51,15 +51,14 @@
   function onPointerDown(ev: PointerEvent) {
     if (!ev.isPrimary) return;
     if (activePointerId !== null && activePointerId !== ev.pointerId) {
-      // Concurrent secondary pointer — cancel the in-flight gesture.
       clearGesture(activePointerId);
       return;
     }
     const target = ev.target as Element;
     try {
       target.setPointerCapture(ev.pointerId);
-    } catch {
-      /* ignore */
+    } catch (error) {
+      void error;
     }
     captureTarget = target;
     activePointerId = ev.pointerId;
@@ -117,8 +116,6 @@
     }
   }
 
-  // Cosmetic: hints follow the finger. Swipe up → hints move up; swipe
-  // down → hints move down. Same sign as `dragDy` (positive = down).
   let chevronOffset = $derived(Math.max(-32, Math.min(32, dragDy * 0.4)));
 
   let muted = $derived(voiceCallStore.state.micMuted);
@@ -135,7 +132,6 @@
   onpointerup={onPointerUp}
   onpointercancel={onPointerCancel}
 >
-  <!-- Top hint: hang up (swipe up) -->
   <div class="flex flex-col items-center gap-0.5 text-rose-400/90" style:transform="translateY({chevronOffset}px)">
     <ChevronUp class="-mb-1 size-5 animate-pulse" aria-hidden="true" />
     <div class="flex items-center gap-1.5 rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-medium tracking-wide">
@@ -144,7 +140,6 @@
     </div>
   </div>
 
-  <!-- Center: the only direct tap target — big mic button -->
   <div
     class="relative flex size-16 items-center justify-center rounded-full border-2 transition-colors {muted
       ? 'border-amber-500/60 bg-amber-500/15 text-amber-300'
@@ -159,7 +154,6 @@
     {/if}
   </div>
 
-  <!-- Bottom hint: abort (swipe down) -->
   <div class="flex flex-col items-center gap-0.5 text-amber-400/90" style:transform="translateY({chevronOffset}px)">
     <div class="flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-medium tracking-wide">
       <OctagonX class="size-3.5" aria-hidden="true" />

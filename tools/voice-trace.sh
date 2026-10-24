@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# voice-trace.sh — tail the merged voice/call diagnostic stream from both
-# pimote and speechmux systemd-user units, color-coded by source.
-#
-# Usage:
-#   ./tools/voice-trace.sh             # follow live
-#   ./tools/voice-trace.sh --since "10 minutes ago"
-#
-# Filters to lines containing `voice_trace` (server-side speechmux + pimote)
-# or `[voice]` / `[voice_trace]` (pimote server) so you only see the
-# diagnostic fire hose, not generic noise.
 
 set -euo pipefail
 
@@ -18,7 +8,6 @@ if [[ "${1:-}" == "--since" ]]; then
   shift 2
 fi
 
-# ANSI color helpers.
 GREEN=$'\e[32m'
 BLUE=$'\e[34m'
 YELLOW=$'\e[33m'

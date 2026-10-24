@@ -66,7 +66,6 @@ fun StatusPill(
     var collapsed by remember { mutableStateOf(false) }
     var expandTrigger by remember { mutableIntStateOf(0) }
 
-    // Auto-collapse 3s after entering Connected (or after a tap-to-expand).
     LaunchedEffect(state, expandTrigger) {
         collapsed = false
         if (state == StatusPillState.Connected) {
@@ -86,9 +85,6 @@ fun StatusPill(
         modifier = modifier,
     ) { isCollapsed ->
         if (isCollapsed) {
-            // Collapsed dot: take the full width of whatever the caller gave us and
-            // align the tappable target to the trailing edge so the dot sits near the
-            // app bar's trailing area regardless of the parent's arrangement.
             Box(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.CenterEnd,

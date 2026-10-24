@@ -3,8 +3,6 @@ import { detect } from './detect.js';
 import type { Card } from './types.js';
 import type { EventBus, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
-// --- Helpers ---
-
 function createMockEventBus(): EventBus & { handlers: Map<string, Set<(data: unknown) => void>> } {
   const handlers = new Map<string, Set<(data: unknown) => void>>();
   return {
@@ -33,7 +31,6 @@ function createMockExtensionAPI(eventBus: EventBus): ExtensionAPI {
   return { events: eventBus } as unknown as ExtensionAPI;
 }
 
-/** Simulate pimote server detection listener on the EventBus */
 function installDetectionListener(eventBus: EventBus): void {
   eventBus.on('pimote:detect:request', () => {
     eventBus.emit('pimote:detect:response', { detected: true });
@@ -43,8 +40,6 @@ function installDetectionListener(eventBus: EventBus): void {
 function makeCard(id: string, title: string): Card {
   return { id, header: { title } };
 }
-
-// --- Tests ---
 
 describe('@pimote/panels detect', () => {
   let eventBus: ReturnType<typeof createMockEventBus>;
@@ -78,14 +73,12 @@ describe('@pimote/panels detect', () => {
       expect(handle2).not.toBeNull();
       expect(handle1).not.toBe(handle2);
 
-      // handle1 should be deactivated — no events emitted
       const received: unknown[] = [];
       eventBus.on('pimote:panels', (data) => received.push(data));
 
       handle1!.updateCards([makeCard('c1', 'Card 1')]);
       expect(received).toHaveLength(0);
 
-      // handle2 should be active
       handle2!.updateCards([makeCard('c1', 'Card 1')]);
       expect(received).toHaveLength(1);
     });

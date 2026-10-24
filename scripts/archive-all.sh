@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Archive all pimote sessions.
-# Reads existing metadata, finds all session .jsonl files for configured roots,
-# and marks every session as archived in the metadata file.
-#
-# Usage: ./scripts/archive-all.sh [--dry-run]
 
 set -euo pipefail
 
@@ -26,11 +21,9 @@ from datetime import datetime, timezone
 metadata_file, config_file, session_base, dry_run_str = sys.argv[1:5]
 dry_run = dry_run_str == "true"
 
-# Load config roots
 with open(config_file) as f:
     roots = json.load(f)["roots"]
 
-# Load existing metadata
 if os.path.isfile(metadata_file):
     with open(metadata_file) as f:
         metadata = json.load(f)
@@ -40,7 +33,6 @@ else:
 sessions = metadata.setdefault("sessions", {})
 now = datetime.now(timezone.utc).isoformat()
 
-# For each root, find subdirectories (project folders) and their session dirs
 new_count = 0
 skip_count = 0
 

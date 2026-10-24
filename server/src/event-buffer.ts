@@ -3,11 +3,6 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { PimoteSessionEvent } from '../../shared/dist/index.js';
 import { mapAgentMessage, mapAgentMessageUsage, mapCustomEntry, type CustomEntryVisibility } from './message-mapper.js';
 
-/**
- * Tree-navigation lifecycle events are synthesized by the ws-handler (they are
- * NOT part of the SDK's AgentSessionEvent union) and fed through the same
- * buffer so reconnect replay sees the navigation boundary.
- */
 export interface TreeNavigationStartEvent {
   type: 'tree_navigation_start';
   targetId: string;
@@ -17,14 +12,6 @@ export interface TreeNavigationEndEvent {
   type: 'tree_navigation_end';
 }
 
-/**
- * Everything EventBuffer.onEvent accepts: the real SDK session-event union plus
- * synthetic events Pimote injects at the boundary. The native SDK event union
- * already owns `bash_execution_update`; do not maintain a shadow copy here.
- * Typing against the real union means the mapper's per-event field access is
- * compiler-checked, so any upstream event rename/field change surfaces here
- * instead of silently falling through to a mismapped event.
- */
 export type IncomingSdkEvent = AgentSessionEvent | TreeNavigationStartEvent | TreeNavigationEndEvent;
 
 interface BufferEntry {
@@ -33,23 +20,16 @@ interface BufferEntry {
 }
 
 /**
- * Event buffer for reconnect replay with coalescing.
- *
- * All events are forwarded live via sendLive(). For the replay buffer,
- * streaming deltas (message_update, tool_execution_update) are coalesced
- * into their corresponding start events rather than stored individually.
+ * Forward mapped events live and buffer non-streaming events for reconnect replay.
+ * Streaming updates are live-only and are not stored in the replay buffer.
  */
 export class EventBuffer {
   private readonly buffer: (BufferEntry | undefined)[];
-  private head = 0; // index of oldest entry
-  private tail = 0; // index of next write position
+  private head = 0;
+  private tail = 0;
   private count = 0;
-  /** Whether any replayable event has ever been inserted. A cursor can advance
-   * solely through live-only deltas; that history is caught up rather than
-   * considered stale. */
   private hasBufferedEvent = false;
   private _cursor: number;
-  /** Sender id for the next user message: the echo of a prompt that just started a run. */
   private pendingPromptEcho: string | undefined;
 
   constructor(
@@ -83,20 +63,15 @@ export class EventBuffer {
   }
 
   /**
-   * Process an SDK event: assign cursor, map to PimoteSessionEvent, forward live, and buffer (coalesced).
+   * Map and forward an SDK or tree-navigation event. Buffer non-streaming events.
    */
   onEvent(sdkEvent: IncomingSdkEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void, getLastMessage?: () => AgentMessage | undefined): void {
-    // Native bash output is live-only. Keep it outside the replay cursor
-    // stream so high-volume deltas cannot create gaps for reconnecting
-    // observers.
     const cursor = sdkEvent.type === 'bash_execution_update' ? this._cursor : ++this._cursor;
 
     const pimoteEvent = this.mapEvent(sdkEvent, sessionId, cursor, getLastMessage);
-    // Some SDK events have no Pimote wire representation. mapEvent returns null
-    // for them, so we drop them rather than emitting a bogus client event.
     if (!pimoteEvent) return;
     sendLive(pimoteEvent);
-    this.coalesceAndBuffer(pimoteEvent);
+    this.bufferIfReplayable(pimoteEvent);
   }
 
   /**
@@ -105,8 +80,6 @@ export class EventBuffer {
    * Returns empty array if client is caught up.
    */
   replay(fromCursor: number): PimoteSessionEvent[] | null {
-    // A cursor outside this buffer's range came from an earlier buffer for the
-    // same session id. Its position means nothing here.
     if (fromCursor < this.baseCursor || fromCursor > this._cursor) {
       return null;
     }
@@ -115,10 +88,6 @@ export class EventBuffer {
     }
 
     if (this.count === 0) {
-      // A history made solely of live-only events is still caught up: there is
-      // no replayable boundary the client could have missed. Once a replayable
-      // event has been inserted, count cannot return to zero, so an empty
-      // buffer here remains a genuine stale-cursor condition.
       return this.hasBufferedEvent ? null : [];
     }
 
@@ -127,8 +96,6 @@ export class EventBuffer {
       return null;
     }
 
-    // If fromCursor is older than the oldest buffered cursor - 1,
-    // we can't guarantee complete replay
     if (fromCursor < oldestEntry.cursor - 1) {
       return null;
     }
@@ -146,8 +113,6 @@ export class EventBuffer {
     return events;
   }
 
-  // ---- Private helpers ----
-
   private mapEvent(sdkEvent: IncomingSdkEvent, sessionId: string, cursor: number, getLastMessage?: () => AgentMessage | undefined): PimoteSessionEvent | null {
     const base = { sessionId, cursor, timestamp: new Date().toISOString() };
 
@@ -156,9 +121,6 @@ export class EventBuffer {
         return { ...base, type: 'agent_start' };
 
       case 'agent_end':
-        // The real agent_end carries { messages, willRetry } — there is no `error`
-        // field on it. Error text reaches the client via the failed assistant
-        // message (message_end), not here.
         if (sdkEvent.willRetry) return { ...base, type: 'agent_end', willRetry: true };
         return { ...base, type: 'agent_end', ...(this.getMessageEntryIds ? { messageEntryIds: this.getMessageEntryIds() } : {}) };
 
@@ -169,7 +131,6 @@ export class EventBuffer {
         return { ...base, type: 'turn_end' };
 
       case 'message_start': {
-        // The role lives on the event's message, not a top-level `role` field.
         const usage = sdkEvent.message.role === 'assistant' ? mapAgentMessageUsage(sdkEvent.message) : undefined;
         return {
           ...base,
@@ -184,7 +145,6 @@ export class EventBuffer {
         const ame = sdkEvent.assistantMessageEvent;
         const contentIndex = 'contentIndex' in ame ? ame.contentIndex : 0;
 
-        // Determine content type from the sub-event
         let contentType: 'text' | 'thinking' | 'tool_call' = 'text';
         if (ame.type.startsWith('thinking_')) {
           contentType = 'thinking';
@@ -192,7 +152,6 @@ export class EventBuffer {
           contentType = 'tool_call';
         }
 
-        // Determine subtype from the sub-event suffix
         let subtype: 'start' | 'delta' | 'end' = 'delta';
         if (ame.type.endsWith('_start')) {
           subtype = 'start';
@@ -215,17 +174,11 @@ export class EventBuffer {
           ...(usage ? { usage } : {}),
         };
 
-        // Extract tool call metadata on toolcall_start from the partial message.
-        // Include initial arguments as the text value so the client can render
-        // the path / language / body incrementally instead of waiting for the
-        // first delta (which may arrive much later).
         if (contentType === 'tool_call' && subtype === 'start' && 'partial' in ame) {
           const block = ame.partial.content[contentIndex];
           if (block && block.type === 'toolCall') {
             result.toolCallId = block.id;
             result.toolName = block.name;
-            // Serialize initial arguments so the client's streaming parser
-            // and path-extraction regex have something to work with immediately.
             if (typeof block.arguments === 'object' && block.arguments !== null) {
               result.content.text = JSON.stringify(block.arguments);
             }
@@ -283,8 +236,6 @@ export class EventBuffer {
           ...(sdkEvent.durationMs !== undefined ? { durationMs: sdkEvent.durationMs } : {}),
         };
 
-      // The SDK emits `compaction_start` / `compaction_end`; pimote's wire
-      // contract with the client names these `auto_compaction_*`.
       case 'compaction_start':
         return {
           ...base,
@@ -340,12 +291,6 @@ export class EventBuffer {
         this.pendingPromptEcho = undefined;
         return { ...base, type: 'agent_settled', ...(sdkEvent.aborted ? { aborted: true } : {}) };
 
-      // Custom entries with a registered renderer become display-only
-      // custom messages (same visibility rule as mapContextEntries, so live
-      // events and resyncs agree). Everything else on this list is a real SDK
-      // event with no Pimote wire representation — dropped rather than
-      // mis-emitted. Pi 0.81's summarization retry lifecycle remains
-      // server-local until the client protocol gains retry variants.
       case 'entry_appended':
         if (sdkEvent.entry.type !== 'custom' || !this.isCustomEntryVisible?.(sdkEvent.entry.customType)) {
           return null;
@@ -372,8 +317,6 @@ export class EventBuffer {
         };
 
       default: {
-        // Exhaustiveness guard: if the SDK adds a new AgentSessionEvent member,
-        // this line fails to compile until it's handled above.
         const _exhaustive: never = sdkEvent;
         void _exhaustive;
         return null;
@@ -381,13 +324,11 @@ export class EventBuffer {
     }
   }
 
-  private coalesceAndBuffer(event: PimoteSessionEvent): void {
+  private bufferIfReplayable(event: PimoteSessionEvent): void {
     switch (event.type) {
       case 'message_update':
       case 'tool_execution_update':
       case 'bash_execution_update':
-        // Streaming deltas are forwarded live but not stored in the replay buffer.
-        // Only start/end bookends are buffered — reconnect replays the finalized state.
         break;
 
       default:
@@ -405,7 +346,6 @@ export class EventBuffer {
     if (this.count < this.capacity) {
       this.count++;
     } else {
-      // Overflow: oldest entry dropped, advance head
       this.head = (this.head + 1) % this.capacity;
     }
   }

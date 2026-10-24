@@ -110,9 +110,6 @@ fun SetupScreen(viewModel: SetupViewModel, onConnected: () -> Unit) {
     var origin by rememberSaveable { mutableStateOf(current?.pimoteOrigin ?: "") }
     var accessClientId by rememberSaveable { mutableStateOf(current?.accessClientId ?: "") }
     var accessClientSecret by rememberSaveable { mutableStateOf(current?.accessClientSecret ?: "") }
-    // `current` is a StateFlow that starts at null on cold start and only emits the persisted
-    // config after disk I/O completes. Seed fields once the value arrives, but only if the
-    // user hasn't started typing yet (field still blank).
     LaunchedEffect(current) {
         val persistedOrigin = current?.pimoteOrigin
         if (!persistedOrigin.isNullOrBlank() && origin.isBlank()) origin = persistedOrigin
@@ -216,7 +213,6 @@ fun SetupScreen(viewModel: SetupViewModel, onConnected: () -> Unit) {
                 },
             )
 
-            // If the user is already connected, offer a one-tap continue.
             if (wsState is WsState.Connected && current != null && !inFlight) {
                 PimoteButton(
                     label = "Continue to contacts",

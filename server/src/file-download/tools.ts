@@ -42,9 +42,6 @@ export async function executeSendFileTool(input: SendFileToolInput, context: Fil
     path: input.path,
   });
 
-  // The href is deliberately withheld from the agent. It is a one-shot
-  // capability intended for the client-side user-approval flow, while the
-  // agent only needs the server-derived presentation metadata.
   const { id, filename, sizeBytes } = offered;
   return { id, filename, sizeBytes };
 }
