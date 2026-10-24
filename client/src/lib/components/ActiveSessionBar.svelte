@@ -9,7 +9,7 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { sessionRegistry, switchToSession, closeSession, newSessionInProject } from '$lib/stores/session-registry.svelte.js';
+  import { sessionRegistry, switchToSession, closeSession, removeSessionOptimistically, newSessionInProject } from '$lib/stores/session-registry.svelte.js';
   import { getExtensionUiQueue } from '$lib/stores/extension-ui-queue.svelte.js';
   import { getSessionPillSwipeHintShown, setSessionPillSwipeHintShown } from '$lib/stores/persistence.js';
   import { getSessionChipLabel, getSessionDisplayName } from '$lib/session-summary.js';
@@ -124,22 +124,27 @@
     switchToSession(sessionId);
   }
 
-  async function archiveAndCloseSession(sessionId: string) {
+  function archiveAndCloseSession(sessionId: string) {
     const session = sessionRegistry.sessions[sessionId];
     if (!session) return;
     mobileActionsSessionId = null;
+    // Remove the chip before the archive request settles. The server still
+    // archives the persisted session and closes its runtime asynchronously.
+    if (!removeSessionOptimistically(sessionId)) return;
 
-    try {
-      await connection.send({
+    void connection
+      .send({
         type: 'archive_session',
         folderPath: session.folderPath,
         sessionIds: [sessionId],
         archived: true,
+      })
+      .then((response) => {
+        if (!response.success) console.error('Failed to archive session:', response.error);
+      })
+      .catch((e) => {
+        console.error('Failed to archive session:', e);
       });
-      closeSession(sessionId);
-    } catch (e) {
-      console.error('Failed to archive session:', e);
-    }
   }
 
   function closeFromTray(sessionId: string) {

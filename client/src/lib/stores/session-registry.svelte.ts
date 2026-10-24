@@ -1483,13 +1483,17 @@ export async function routeNotificationIntent(intent: AppNotificationIntent): Pr
   // bounce the view the user is already on.
 }
 
-/** Drop every client-side trace of a session: registry entry, wire
- *  subscription, and cached commands. Used when the session is gone
- *  server-side (`session_not_found`) so no orphan lingers. */
-function dropSession(sessionId: string): void {
+/** Remove every client-side trace of a session before its server command settles. */
+function removeSessionLocally(sessionId: string): void {
   sessionRegistry.removeSession(sessionId);
   connection.removeSubscribedSession(sessionId);
   commandStore.removeSession(sessionId);
+}
+
+/** Drop every client-side trace of a session that is gone server-side
+ *  (`session_not_found`) so no orphan lingers. */
+function dropSession(sessionId: string): void {
+  removeSessionLocally(sessionId);
 }
 
 /** Open a session by id. `folderPath` may be unknown for a deep link — the
@@ -1734,8 +1738,16 @@ export async function abortSession(sessionId: string): Promise<void> {
   }
 }
 
-/** Close a session — sends close_session command; the session_closed event handler cleans up the registry */
+/** Remove a session from the client before its server command settles. */
+export function removeSessionOptimistically(sessionId: string): boolean {
+  if (!sessionRegistry.sessions[sessionId]) return false;
+  removeSessionLocally(sessionId);
+  return true;
+}
+
+/** Close a session optimistically, then let the server finish the close. */
 export function closeSession(sessionId: string): void {
+  if (!removeSessionOptimistically(sessionId)) return;
   connection.send({ type: 'close_session', sessionId }).catch(() => {});
 }
 
