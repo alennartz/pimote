@@ -84,20 +84,33 @@
 
   onMount(() => {
     if (!host) return;
+    const editorHost = host;
 
     editorView = new EditorView({
       state: EditorState.create({
         doc: value,
         extensions: buildExtensions(language),
       }),
-      parent: host,
+      parent: editorHost,
     });
+
+    // CodeMirror handles Escape itself when an editor panel is open. Its
+    // keymaps prevent the default action but do not stop the event from
+    // reaching bits-ui's document-level Escape listener. Stop propagation only
+    // after CodeMirror marks the actual event handled.
+    const stopHandledEditorEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && event.defaultPrevented) {
+        event.stopPropagation();
+      }
+    };
+    editorHost.addEventListener('keydown', stopHandledEditorEscape);
 
     if (autofocus) {
       editorView.focus();
     }
 
     return () => {
+      editorHost.removeEventListener('keydown', stopHandledEditorEscape);
       editorView?.destroy();
       editorView = null;
     };

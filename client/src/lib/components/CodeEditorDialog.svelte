@@ -29,6 +29,7 @@
     editorView = $bindable(null),
     toolbar = null,
     onclose,
+    oninteractoutside = null,
     onsave,
     onkeydowncapture = null,
   }: {
@@ -54,8 +55,10 @@
     editorView?: EditorView | null;
     /** Row between header and body, e.g. the tag-wrap toolbar. */
     toolbar?: Snippet | null;
-    /** Every close affordance routes here; the consumer owns veto and confirm semantics. */
+    /** Every explicit close affordance and unhandled Escape route here; the consumer owns veto and confirm semantics. */
     onclose: () => void;
+    /** Outside interaction policy. Defaults to the explicit close policy. */
+    oninteractoutside?: (() => void) | null;
     onsave: () => void;
     /** Capture-phase keydown listener on the dialog, ahead of CodeMirror's own bindings. */
     onkeydowncapture?: ((event: KeyboardEvent) => void) | null;
@@ -93,10 +96,16 @@
     return () => el.removeEventListener('keydown', handler, { capture: true });
   });
 
-  /** Esc and overlay-click route through `onclose` so the consumer can veto the close. */
+  /** Explicit Esc routes through `onclose` so the consumer can veto the close. */
   function onDismissAttempt(event: Event): void {
     event.preventDefault();
     onclose();
+  }
+
+  /** Outside interaction has a separate policy from explicit close affordances. */
+  function onInteractOutside(event: Event): void {
+    event.preventDefault();
+    (oninteractoutside ?? onclose)();
   }
 
   function onOpenChange(next: boolean): void {
@@ -109,7 +118,7 @@
     showCloseButton={false}
     bind:ref={contentEl}
     onEscapeKeydown={onDismissAttempt}
-    onInteractOutside={onDismissAttempt}
+    {onInteractOutside}
     class="top-0 left-0 flex h-dvh w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 sm:top-1/2 sm:left-1/2 sm:h-[min(92dvh,960px)] sm:w-[min(96vw,1280px)] sm:max-w-[min(96vw,1280px)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl"
   >
     <form

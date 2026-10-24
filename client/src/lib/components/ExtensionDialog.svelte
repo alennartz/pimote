@@ -12,6 +12,7 @@
 
   let dialogOpen = $state(false);
   let inputValue = $state('');
+  let confirmDiscardOpen = $state(false);
 
   // Filter to only show dialogs for the currently viewed session
   let current = $derived.by(() => {
@@ -38,10 +39,14 @@
     if (current) {
       inputValue = getExtensionDialogInitialValue(current);
       dialogOpen = true;
-    } else {
-      dialogOpen = false;
+      confirmDiscardOpen = false;
+      return;
     }
+    dialogOpen = false;
+    confirmDiscardOpen = false;
   });
+
+  let editorDirty = $derived(current?.method === 'editor' && inputValue !== getExtensionDialogInitialValue(current));
 
   function sendResponse(data: { value?: string; confirmed?: boolean; cancelled?: boolean }) {
     if (!current) return;
@@ -49,13 +54,28 @@
   }
 
   function handleCancel() {
+    if (current?.method === 'editor' && editorDirty) {
+      confirmDiscardOpen = true;
+      return;
+    }
     sendResponse({ cancelled: true });
+  }
+
+  function handleEditorInteractOutside() {
+    if (!editorDirty) {
+      sendResponse({ cancelled: true });
+    }
   }
 
   function handleOpenChange(open: boolean) {
     if (!open && current) {
       handleCancel();
     }
+  }
+
+  function discardAndCancel() {
+    confirmDiscardOpen = false;
+    sendResponse({ cancelled: true });
   }
 
   function handleInputSubmit() {
@@ -102,6 +122,20 @@
     language={editorLanguage?.id ?? null}
     bind:value={inputValue}
     onclose={handleCancel}
+    oninteractoutside={handleEditorInteractOutside}
     onsave={handleEditorSubmit}
   />
 {/if}
+
+<Dialog.Root bind:open={confirmDiscardOpen}>
+  <Dialog.Content showCloseButton={false}>
+    <Dialog.Header>
+      <Dialog.Title>Discard unsaved changes?</Dialog.Title>
+      <Dialog.Description>Your edits have not been saved.</Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Button variant="outline" onclick={() => (confirmDiscardOpen = false)}>Keep editing</Button>
+      <Button variant="destructive" onclick={discardAndCancel}>Discard</Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
