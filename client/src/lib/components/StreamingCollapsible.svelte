@@ -4,16 +4,18 @@
     streaming = false,
     maxCollapsedLines = 10,
     accent = 'default',
+    boundWhileStreaming = false,
   }: {
     text: string;
     streaming?: boolean;
     maxCollapsedLines?: number;
     accent?: 'default' | 'purple';
+    /** Keep the expanded live view bounded before the line cutoff is reached. */
+    boundWhileStreaming?: boolean;
   } = $props();
 
-  // Auto-expand while streaming, auto-collapse when it settles (ThinkingBlock /
-  // WriteFileBlock pattern). Writable $derived: resets to `streaming` whenever it
-  // changes, but stays put under manual toggles once streaming has stopped.
+  // Auto-expand while streaming so users can follow live output. Tool results
+  // opt into the streaming bound; argument views keep their existing behavior.
   let expanded = $derived(streaming);
   let contentEl: HTMLPreElement | undefined = $state();
 
@@ -33,7 +35,7 @@
 </script>
 
 <div class="streaming-collapsible" class:accent-purple={accent === 'purple'}>
-  <pre class="collapsible-text" class:scrollable={expanded && needsCollapse} bind:this={contentEl}>{displayText}</pre>
+  <pre class="collapsible-text" class:scrollable={(boundWhileStreaming && streaming) || (expanded && needsCollapse)} bind:this={contentEl}>{displayText}</pre>
   {#if needsCollapse}
     <button class="collapsible-toggle" onclick={() => (expanded = !expanded)}>
       {expanded ? 'Show less' : `Show more… (${lineCount} lines)`}

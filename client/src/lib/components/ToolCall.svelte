@@ -328,7 +328,7 @@
       {#if resultText}
         <div class="tool-section">
           <div class="tool-section-label">{inProgress ? 'Output (streaming)' : 'Result'}</div>
-          <StreamingCollapsible text={resultText} streaming={inProgress} />
+          <StreamingCollapsible text={resultText} streaming={inProgress} boundWhileStreaming />
         </div>
       {/if}
     </div>
