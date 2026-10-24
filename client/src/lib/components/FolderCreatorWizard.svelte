@@ -50,6 +50,8 @@
 
 <script lang="ts">
   import { connection } from '$lib/stores/connection.svelte.js';
+  import { openNewSession } from '$lib/stores/session-registry.svelte.js';
+  import { isSessionOpenCancelledResponse } from '$lib/session-open-response.js';
   import { folderStore } from '$lib/stores/folder-store.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
@@ -160,9 +162,9 @@
         folderPath = (response.data as { folderPath: string }).folderPath;
         createdFolderPath = folderPath;
       }
-      const openResponse = await connection.send({ type: 'open_session', folderPath });
+      const openResponse = await openNewSession(folderPath);
       if (!openResponse.success) {
-        error = openResponse.error ?? 'Failed to open session';
+        if (!isSessionOpenCancelledResponse(openResponse)) error = openResponse.error ?? 'Failed to open session';
         return;
       }
       creating = false;

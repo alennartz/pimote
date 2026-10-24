@@ -50,7 +50,6 @@ const model: Model<'openai-completions'> = {
 
 function makeManagerContext(): ManagerToolContext {
   return {
-    notifySessionSuggested: vi.fn(),
     sessions: {
       getAllSessions: vi.fn(() => []),
       listDiskSessions: vi.fn(async () => []),

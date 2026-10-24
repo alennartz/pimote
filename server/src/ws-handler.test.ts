@@ -311,7 +311,22 @@ function createTestHandler(
 describe('observer-targeted push', () => {
   it('rejects stale and closed sockets', () => {
     const { handler, ws, sent } = createTestHandler('observer');
-    const event = { type: 'session_suggested' as const, sessionId: 'target', folderPath: '/target' };
+    const event = {
+      type: 'session_opened' as const,
+      sessionId: 'target',
+      folder: {
+        path: '/target',
+        name: 'target',
+        nature: 'code' as const,
+        shortcutCount: 0,
+        favorite: false,
+        archived: false,
+        tags: [],
+        missing: false,
+        activeSessionCount: 0,
+        externalProcessCount: 0,
+      },
+    };
     handler.sendToObserver(createMockWs().ws, event);
     expect(sent).toEqual([]);
     ws.readyState = 3;
@@ -4257,7 +4272,7 @@ describe('WsHandler', () => {
   });
 
   describe('session folder resolution (session events)', () => {
-    it('serves the registry FolderInfo row (persona metadata + curation) in session_opened', async () => {
+    it('serves the registry FolderInfo row (persona metadata + curation) in the open response', async () => {
       const row = folderRow('/home/user/projects/agent', {
         nature: 'persona',
         persona: { name: 'Helper', description: 'helps' },
@@ -4274,23 +4289,76 @@ describe('WsHandler', () => {
 
       await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/projects/agent', id: 'req-open-listed' }));
 
-      expect(findResponse(sent, 'req-open-listed')).toMatchObject({ success: true, data: { sessionId: 'new-session-id' } });
-      const opened = findEvents(sent, 'session_opened');
-      expect(opened).toHaveLength(1);
-      expect((opened[0] as any).folder).toMatchObject({
-        path: '/home/user/projects/agent',
-        name: 'agent',
-        nature: 'persona',
-        persona: { name: 'Helper', description: 'helps' },
-        shortcutCount: 2,
-        favorite: true,
-        archived: true,
-        tags: ['t'],
-        userTags: ['t'],
-        missing: false,
-        activeSessionCount: 1,
-        externalProcessCount: 0,
+      expect(findEvents(sent, 'session_opened')).toEqual([]);
+      expect(findResponse(sent, 'req-open-listed')).toMatchObject({
+        success: true,
+        data: {
+          sessionId: 'new-session-id',
+          folderPath: '/home/user/projects/agent',
+          folder: {
+            path: '/home/user/projects/agent',
+            name: 'agent',
+            nature: 'persona',
+            persona: { name: 'Helper', description: 'helps' },
+            shortcutCount: 2,
+            favorite: true,
+            archived: true,
+            tags: ['t'],
+            userTags: ['t'],
+            missing: false,
+            activeSessionCount: 1,
+            externalProcessCount: 0,
+          },
+        },
       });
+    });
+
+    it('broadcasts new-session availability to every connected client', async () => {
+      const row = folderRow('/home/user/projects/agent', { favorite: true });
+      const folderRegistry = { list: async () => [row] } as unknown as FolderRegistry;
+      const sessions = new Map<string, ManagedSlot>([['new-session-id', createMockSlot({ id: 'new-session-id', folderPath: '/home/user/projects/agent' })]]);
+      const clientRegistry: ClientRegistry = new Map();
+      const first = createTestHandler('client-1', { sessions, folderRegistry, clientRegistry });
+      const second = createTestHandler('client-2', { sessions, folderRegistry, clientRegistry });
+      first.sent.length = 0;
+      second.sent.length = 0;
+
+      await first.handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/projects/agent', id: 'req-open-broadcast' }));
+
+      expect(findEvents(first.sent, 'session_opened')).toEqual([]);
+      expect(findEvents(second.sent, 'session_opened')).toHaveLength(1);
+      expect(findResponse(first.sent, 'req-open-broadcast')).toMatchObject({
+        success: true,
+        data: { sessionId: 'new-session-id', folderPath: '/home/user/projects/agent', folder: row },
+      });
+    });
+
+    it('sends the new-session response before a conflict push', async () => {
+      const sessions = new Map<string, ManagedSlot>([['new-session-id', createMockSlot({ id: 'new-session-id', folderPath: '/home/user/projects/agent' })]]);
+      const { handler, ws, sent } = createTestHandler('client-1', { sessions });
+      const order: string[] = [];
+      const send = ws.send.bind(ws);
+      ws.send = (raw: string) => {
+        const message = JSON.parse(raw) as { id?: string; type?: string };
+        order.push(message.id ? 'response' : (message.type ?? 'unknown'));
+        send(raw);
+      };
+      (handler as any).sendConflictEventIfNeeded = async (sessionId: string) => {
+        order.push('conflict-start');
+        handler.sendToClient({
+          type: 'session_conflict',
+          sessionId,
+          processes: [{ pid: 1234, command: 'pi' }],
+        });
+      };
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: '/home/user/projects/agent', id: 'req-open-conflict' }));
+
+      expect(order.indexOf('response')).toBeGreaterThanOrEqual(0);
+      expect(order.indexOf('conflict-start')).toBeGreaterThanOrEqual(0);
+      expect(order.indexOf('response')).toBeLessThan(order.indexOf('conflict-start'));
+      expect(findResponse(sent, 'req-open-conflict')).toMatchObject({ success: true, data: { sessionId: 'new-session-id' } });
+      expect(findEvents(sent, 'session_conflict')).toContainEqual(expect.objectContaining({ sessionId: 'new-session-id', processes: [{ pid: 1234, command: 'pi' }] }));
     });
 
     it('classifies an unlisted cwd on the fly and never lists or curates it', async () => {
@@ -4304,20 +4372,26 @@ describe('WsHandler', () => {
 
         await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: dir, id: 'req-open-persona' }));
 
-        const opened = findEvents(sent, 'session_opened');
-        expect(opened).toHaveLength(1);
-        expect((opened[0] as any).folder).toMatchObject({
-          path: dir,
-          name: basename(dir),
-          nature: 'persona',
-          persona: { name: 'Sidekick', description: 'runs errands' },
-          shortcutCount: 0,
-          favorite: false,
-          archived: false,
-          tags: [],
-          missing: false,
-          activeSessionCount: 1,
-          externalProcessCount: 0,
+        expect(findEvents(sent, 'session_opened')).toEqual([]);
+        expect(findResponse(sent, 'req-open-persona')).toMatchObject({
+          success: true,
+          data: {
+            sessionId: 'new-session-id',
+            folderPath: dir,
+            folder: {
+              path: dir,
+              name: basename(dir),
+              nature: 'persona',
+              persona: { name: 'Sidekick', description: 'runs errands' },
+              shortcutCount: 0,
+              favorite: false,
+              archived: false,
+              tags: [],
+              missing: false,
+              activeSessionCount: 1,
+              externalProcessCount: 0,
+            },
+          },
         });
         // Opening a session in an unlisted cwd neither lists nor curates it.
         expect(update).not.toHaveBeenCalled();
@@ -4335,19 +4409,25 @@ describe('WsHandler', () => {
 
         await handler.handleMessage(JSON.stringify({ type: 'open_session', folderPath: dir, id: 'req-open-code' }));
 
-        const opened = findEvents(sent, 'session_opened');
-        expect((opened[0] as any).folder).toMatchObject({
-          path: dir,
-          name: basename(dir),
-          nature: 'code',
-          shortcutCount: 0,
-          favorite: false,
-          archived: false,
-          tags: [],
-          missing: false,
-          activeSessionCount: 1,
+        expect(findEvents(sent, 'session_opened')).toEqual([]);
+        expect(findResponse(sent, 'req-open-code')).toMatchObject({
+          success: true,
+          data: {
+            sessionId: 'new-session-id',
+            folderPath: dir,
+            folder: {
+              path: dir,
+              name: basename(dir),
+              nature: 'code',
+              shortcutCount: 0,
+              favorite: false,
+              archived: false,
+              tags: [],
+              missing: false,
+              activeSessionCount: 1,
+            },
+          },
         });
-        expect((opened[0] as any).folder.persona).toBeUndefined();
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -4357,14 +4437,25 @@ describe('WsHandler', () => {
       const row = folderRow('/home/user/projects/agent', { favorite: true, tags: ['kept'] });
       const folderRegistry = { list: async () => [row] } as unknown as FolderRegistry;
       const sessions = new Map<string, ManagedSlot>([['new-session-id', createMockSlot({ id: 'new-session-id', folderPath: '/home/user/projects/agent' })]]);
-      const { handler, sent } = createTestHandler('client-1', { sessions, folderRegistry });
+      const clientRegistry: ClientRegistry = new Map();
+      const requester = createTestHandler('client-1', { sessions, folderRegistry, clientRegistry });
+      const other = createTestHandler('client-2', { sessions, folderRegistry, clientRegistry });
+      requester.sent.length = 0;
+      other.sent.length = 0;
 
-      await handler.handleMessage(JSON.stringify({ type: 'takeover_folder', folderPath: '/home/user/projects/agent', id: 'req-takeover' }));
+      await requester.handler.handleMessage(JSON.stringify({ type: 'takeover_folder', folderPath: '/home/user/projects/agent', id: 'req-takeover' }));
 
-      expect(findResponse(sent, 'req-takeover')).toMatchObject({ success: true, data: { sessionId: 'new-session-id' } });
-      const opened = findEvents(sent, 'session_opened');
-      expect(opened).toHaveLength(1);
-      expect((opened[0] as any).folder).toMatchObject({ path: '/home/user/projects/agent', favorite: true, tags: ['kept'], activeSessionCount: 1 });
+      expect(findEvents(requester.sent, 'session_opened')).toEqual([]);
+      expect(findEvents(other.sent, 'session_opened')).toHaveLength(1);
+      expect(findResponse(requester.sent, 'req-takeover')).toMatchObject({
+        success: true,
+        data: {
+          sessionId: 'new-session-id',
+          folderPath: '/home/user/projects/agent',
+          folder: { path: '/home/user/projects/agent', favorite: true, tags: ['kept'], activeSessionCount: 1 },
+          killedProcesses: 0,
+        },
+      });
     });
   });
 

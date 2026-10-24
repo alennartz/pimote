@@ -340,6 +340,21 @@ describe('folder rows', () => {
     expect(connection.send).toHaveBeenCalledWith({ type: 'open_session', folderPath: '/w/alpha' });
   });
 
+  it('does not log the expected placeholder cancellation for a new session', async () => {
+    vi.mocked(connection.send).mockImplementation(async (command: any) => {
+      if (command.type === 'open_session') return { id: '1', success: false, error: 'session_open_cancelled' };
+      return { id: '1', success: true, data: {} };
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    destroy = render();
+    await tick();
+
+    (target.querySelector('button[title="New session in alpha"]') as HTMLElement).click();
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith({ type: 'open_session', folderPath: '/w/alpha' }));
+    expect(error).not.toHaveBeenCalledWith('Failed to create new session:', 'session_open_cancelled');
+    error.mockRestore();
+  });
+
   it('swallows the release click that follows a long-press, then behaves normally', async () => {
     destroy = render();
     await tick();
@@ -378,6 +393,21 @@ describe('folder rows', () => {
 });
 
 describe('missing rows', () => {
+  it('does not show the expected placeholder cancellation as an open error', async () => {
+    vi.mocked(connection.send).mockImplementation(async (command: any) => {
+      if (command.type === 'open_session') return { id: '1', success: false, error: 'session_open_cancelled' };
+      return { id: '1', success: true, data: {} };
+    });
+    const missingFolder = makeFolder({ path: '/w/gone', name: 'gone', missing: true });
+    folderStore.folders = [missingFolder];
+    destroy = render();
+    await tick();
+
+    nameButton(missingFolder.path).click();
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith({ type: 'open_session', folderPath: '/w/gone' }));
+    expect(shows('session_open_cancelled')).toBe(false);
+  });
+
   it('a missing folder offers open-with-materialization instead of expanding', async () => {
     const missingFolder = makeFolder({ path: '/w/gone', name: 'gone', missing: true });
     folderStore.folders = [missingFolder];

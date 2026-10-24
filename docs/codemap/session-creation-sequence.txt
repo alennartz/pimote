@@ -101,7 +101,7 @@ On Client:
 │  └─ sessionId₂ → PerSessionState { ... }               │
 │                                                         │
 │  viewedSessionId: string | null                         │
-│  pendingNewSession: string | null                       │
+│  pendingNewSessionRequests: Map<placeholderId, request> │
 └─────────────────────────────────────────────────────────┘
 
 UI Representation:

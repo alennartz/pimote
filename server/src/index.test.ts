@@ -526,11 +526,18 @@ describe('main — manager toolset port wiring', () => {
     ]);
   });
 
-  it('wires openSession: start_session opens through the session manager and prompts the firstMessage', async () => {
+  it('wires openSession: start_session broadcasts before prompting the firstMessage', async () => {
     mocks.folderRegistry.list.mockResolvedValue([alphaFolder]);
     mocks.sessionManager.openSession.mockResolvedValue('sess-9');
-    const prompt = vi.fn(async () => undefined);
+    const order: string[] = [];
+    const prompt = vi.fn(async () => {
+      order.push('prompt');
+    });
     mocks.sessionManager.getSession.mockReturnValue({ session: { sessionFile: '/sessions/sess-9.jsonl', prompt }, folderPath: '/workspace/alpha' });
+    const firstClient = vi.fn(() => order.push('first-client'));
+    const secondClient = vi.fn(() => order.push('second-client'));
+    mocks.server.clientRegistry.set('first', { sendToClient: firstClient });
+    mocks.server.clientRegistry.set('second', { sendToClient: secondClient });
 
     const tools = await registeredManagerTools();
     const withMessage = await toolNamed(tools, 'pimote_start_session').execute(
@@ -540,42 +547,28 @@ describe('main — manager toolset port wiring', () => {
       undefined,
       {},
     );
-    const withoutMessage = await toolNamed(tools, 'pimote_start_session').execute('call-2', { folderPath: '/workspace/alpha' }, undefined, undefined, {});
 
-    expect(mocks.sessionManager.openSession).toHaveBeenNthCalledWith(1, '/workspace/alpha');
-    expect(mocks.sessionManager.openSession).toHaveBeenNthCalledWith(2, '/workspace/alpha');
-    expect(prompt).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledWith('do the thing');
+    expect(order.slice(-3)).toEqual(['first-client', 'second-client', 'prompt']);
+    expect(firstClient).toHaveBeenCalledWith(expect.objectContaining({ type: 'session_opened', sessionId: 'sess-9', folder: alphaFolder }));
+    expect(secondClient).toHaveBeenCalledWith(expect.objectContaining({ type: 'session_opened', sessionId: 'sess-9', folder: alphaFolder }));
     expect(withMessage.structuredContent).toEqual({ sessionId: 'sess-9', folderPath: '/workspace/alpha', firstMessageSent: true });
-    expect(withoutMessage.structuredContent).toEqual({ sessionId: 'sess-9', folderPath: '/workspace/alpha', firstMessageSent: false });
-    // Action tools have no renderer metadata: details stays empty.
-    expect(withMessage.details).toBeUndefined();
+    expect(tools).toHaveLength(8);
   });
 
-  it('suggests only to current manager observers with the target slot folder', async () => {
+  it('broadcasts an already-open manager resume to every client', async () => {
     mocks.folderRegistry.list.mockResolvedValue([alphaFolder]);
-    mocks.sessionManager.openSession.mockResolvedValue('target');
-    const observerSocket = {};
-    const observerSend = vi.fn();
-    const unrelatedSend = vi.fn();
-    mocks.server.clientRegistry.set('observer', { sendToObserver: observerSend });
-    mocks.server.clientRegistry.set('unrelated', { sendToObserver: unrelatedSend });
-    mocks.sessionManager.getSession.mockImplementation((id: string) => {
-      if (id === 'manager')
-        return {
-          observers: new Map([
-            ['observer', { ws: observerSocket }],
-            ['disconnected', { ws: {} }],
-          ]),
-        };
-      if (id === 'target') return { folderPath: '/effective/target' };
-      return undefined;
-    });
-    await toolNamed(await registeredManagerTools(), 'pimote_start_session').execute('call', { folderPath: '/workspace/alpha' }, undefined, undefined, {
-      sessionManager: { getSessionId: () => 'manager' },
-    });
-    expect(observerSend).toHaveBeenCalledWith(observerSocket, { type: 'session_suggested', sessionId: 'target', folderPath: '/effective/target' });
-    expect(unrelatedSend).not.toHaveBeenCalled();
+    mocks.sessionManager.getSession.mockReturnValue({ session: {}, folderPath: '/workspace/alpha' });
+    const firstClient = vi.fn();
+    const secondClient = vi.fn();
+    mocks.server.clientRegistry.set('first', { sendToClient: firstClient });
+    mocks.server.clientRegistry.set('second', { sendToClient: secondClient });
+
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_resume_session').execute('call-1', { sessionId: 'sess-9' }, undefined, undefined, {});
+
+    expect(result.structuredContent).toEqual({ sessionId: 'sess-9', folderPath: '/workspace/alpha', outcome: 'already_open' });
+    expect(firstClient).toHaveBeenCalledWith(expect.objectContaining({ type: 'session_opened', sessionId: 'sess-9', folder: alphaFolder }));
+    expect(secondClient).toHaveBeenCalledWith(expect.objectContaining({ type: 'session_opened', sessionId: 'sess-9', folder: alphaFolder }));
   });
 
   it('wires openSession for a persona folder', async () => {

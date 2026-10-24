@@ -439,7 +439,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       exposure: 'direct',
       promptSnippet: 'Begin a new conversation instead of reopening saved history.',
       description:
-        'Creates a new session in a known folder and suggests it to manager observers, returning sessionId, folderPath, and firstMessageSent. ' +
+        'Creates a new session in a known folder, returning sessionId, folderPath, and firstMessageSent. ' +
         'firstMessageSent confirms a nonblank message dispatch was requested, not that the background run completed.',
       parameters: Type.Object({
         folderPath: Type.String({ description: 'Absolute canonical path of the known folder for the new session.' }),
@@ -450,15 +450,13 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         folderPath: Type.String(),
         firstMessageSent: Type.Boolean(),
       }),
-      execute: async (_callId, params, _signal, _onUpdate, ctx): Promise<JsonToolResult> => {
-        const managerSessionId = ctx.sessionManager?.getSessionId();
+      execute: async (_callId, params, _signal, _onUpdate): Promise<JsonToolResult> => {
         const folders = await context.folders.list();
         if (!folders.some((folder) => folder.path === params.folderPath)) {
           return errorToolResult(`unknown folder: ${params.folderPath} — use pimote_find_folders to see known folders`);
         }
         const firstMessage = params.firstMessage?.trim() || undefined;
         const sessionId = await context.sessions.openSession(params.folderPath, firstMessage);
-        if (managerSessionId) context.notifySessionSuggested(managerSessionId, sessionId);
         return jsonToolResult({ sessionId, folderPath: params.folderPath, firstMessageSent: firstMessage !== undefined });
       },
     });
@@ -470,16 +468,14 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       promptSnippet: 'Reopen a saved conversation while preserving its history and identity.',
       promptGuidelines: ['For an existing conversation, use pimote_resume_session instead of pimote_start_session.'],
       description:
-        'Reopens the original saved session, clears its archive flag when needed, and suggests found sessions to manager observers. ' +
+        'Reopens the original saved session and clears its archive flag when needed. ' +
         'Returns sessionId, folderPath when found, and outcome: resumed, already_open, or not_found, without creating a replacement.',
       parameters: Type.Object({
         sessionId: Type.String({ description: 'Existing session identifier to resume.' }),
       }),
       outputSchema: SessionResumeOutcomeSchema,
-      execute: async (_callId, params, _signal, _onUpdate, ctx): Promise<JsonToolResult> => {
-        const managerSessionId = ctx.sessionManager?.getSessionId();
+      execute: async (_callId, params, _signal, _onUpdate): Promise<JsonToolResult> => {
         const result: SessionResumeOutcome = await context.sessions.resumeSession(params.sessionId);
-        if (managerSessionId && result.outcome !== 'not_found') context.notifySessionSuggested(managerSessionId, result.sessionId);
         return jsonToolResult(result);
       },
     });

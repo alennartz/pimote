@@ -276,6 +276,37 @@ describe('FolderCreatorWizard — boundaries and failures', () => {
 });
 
 describe('FolderCreatorWizard — flows end in a session', () => {
+  it('suppresses expected cancellation and retries the created folder without recreating it', async () => {
+    let createCount = 0;
+    let openCount = 0;
+    vi.mocked(connection.send).mockImplementation(async (command: any) => {
+      if (command.type === 'create_folder') {
+        createCount += 1;
+        return { id: '1', success: true, data: { folderPath: '/roots/beta' } };
+      }
+      if (command.type === 'open_session') {
+        openCount += 1;
+        if (openCount === 1) return { id: '1', success: false, error: 'session_open_cancelled' };
+      }
+      return { id: '1', success: true, data: {} };
+    });
+    destroy = render();
+    await tick();
+
+    kindButton('code').click();
+    await tick();
+    fillName('beta');
+    button('Next').click();
+    await tick();
+    button('Create').click();
+    await vi.waitFor(() => expect(openCount).toBe(1));
+    expect(shows('session_open_cancelled')).toBe(false);
+
+    button('Create').click();
+    await vi.waitFor(() => expect(openCount).toBe(2));
+    expect(createCount).toBe(1);
+  });
+
   it('the code flow seeds the text as the AGENTS.md body, then opens the session', async () => {
     destroy = render();
     await tick();

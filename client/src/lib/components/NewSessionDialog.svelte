@@ -1,5 +1,7 @@
 <script lang="ts">
   import { connection } from '$lib/stores/connection.svelte.js';
+  import { openNewSession } from '$lib/stores/session-registry.svelte.js';
+  import { isSessionOpenCancelledResponse } from '$lib/session-open-response.js';
   import { folderStore } from '$lib/stores/folder-store.svelte.js';
   import { untrack } from 'svelte';
   import type { FolderInfo } from '@pimote/shared';
@@ -72,11 +74,8 @@
 
   async function newSession(folderPath: string): Promise<void> {
     handleOpenChange(false);
-    try {
-      await connection.send({ type: 'open_session', folderPath });
-    } catch (e) {
-      console.error('Failed to create new session:', e);
-    }
+    const response = await openNewSession(folderPath);
+    if (!response.success && !isSessionOpenCancelledResponse(response)) console.error('Failed to create new session:', response.error);
   }
 </script>
 

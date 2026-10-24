@@ -142,15 +142,6 @@ export async function main(options: StartOptions = {}) {
   const runManagerSessionOperation = <T>(sessionId: string, operation: () => Promise<T>): Promise<T> => sessionManager.withSessionOperation(sessionId, operation);
 
   const managerContext: ManagerToolContext = {
-    notifySessionSuggested: (managerSessionId, targetSessionId) => {
-      const managerSlot = sessionManager.getSession(managerSessionId);
-      const targetSlot = sessionManager.getSession(targetSessionId);
-      if (!managerSlot || !targetSlot) return;
-      const event = { type: 'session_suggested' as const, sessionId: targetSessionId, folderPath: targetSlot.folderPath };
-      for (const [clientId, observer] of managerSlot.observers) {
-        managerClientRegistryRef.current.get(clientId)?.sendToObserver(observer.ws, event);
-      }
-    },
     sessions: {
       getAllSessions: () =>
         sessionManager.getAllSessions().map((slot) => ({
@@ -180,6 +171,10 @@ export async function main(options: StartOptions = {}) {
       openSession: async (folderPath, firstMessage) => {
         await repoIndex.runOpenHooks(folderPath);
         const sessionId = await sessionManager.openSession(folderPath);
+        const slot = sessionManager.getSession(sessionId);
+        // Publish availability before dispatching the optional prompt. Every
+        // connected client can attach while the first run is still starting.
+        await WsHandler.broadcastSessionOpened(sessionId, slot?.folderPath ?? folderPath, sessionManager, folderRegistry, managerClientRegistryRef.current);
         const message = firstMessage?.trim();
         if (message) {
           sessionManager
@@ -235,6 +230,7 @@ export async function main(options: StartOptions = {}) {
           const knownFolderPaths = (await folderRegistry.list()).map((folder) => folder.path);
           const existing = sessionManager.getSession(sessionId);
           if (existing && !existing.session.sessionFile) {
+            await WsHandler.broadcastSessionOpened(sessionId, existing.folderPath, sessionManager, folderRegistry, managerClientRegistryRef.current);
             return { sessionId, folderPath: existing.folderPath, outcome: 'already_open' };
           }
           const resolved = existing?.session.sessionFile
@@ -244,6 +240,7 @@ export async function main(options: StartOptions = {}) {
 
           const archived = sessionMetadataStore.isArchived(resolved.sessionFilePath);
           if (existing && !archived) {
+            await WsHandler.broadcastSessionOpened(sessionId, existing.folderPath, sessionManager, folderRegistry, managerClientRegistryRef.current);
             return { sessionId, folderPath: existing.folderPath, outcome: 'already_open' };
           }
 
@@ -300,7 +297,10 @@ export async function main(options: StartOptions = {}) {
               handler.sendToClient({ type: 'session_archived', sessionId, folderPath, archived: false });
             }
           }
-          if (slot) WsHandler.broadcastSidebarUpdate(openedId, folderPath, sessionManager, managerClientRegistryRef.current);
+          if (slot) {
+            await WsHandler.broadcastSessionOpened(openedId, folderPath, sessionManager, folderRegistry, managerClientRegistryRef.current);
+            WsHandler.broadcastSidebarUpdate(openedId, folderPath, sessionManager, managerClientRegistryRef.current);
+          }
           return { sessionId, folderPath, outcome: 'resumed' };
         }),
     },

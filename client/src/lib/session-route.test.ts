@@ -68,7 +68,49 @@ describe('decideSessionRoute', () => {
       viewNavigationPending: false,
     });
 
-    expect(decision).toEqual({ action: 'fallback', sessionId: 's-first' });
+    expect(decision).toEqual({ action: 'fallback', sessionId: null });
+  });
+
+  it('falls back home without loading a missing placeholder when its folder is known', () => {
+    const decision = decideSessionRoute({
+      sessionId: 'pending-uuid',
+      inRegistry: false,
+      folderPath: '/repos/proj',
+      loadAttempted: false,
+      activeSessionIds: ['s-first'],
+      urlChanged: true,
+      viewNavigationPending: false,
+    });
+
+    expect(decision).toEqual({ action: 'fallback', sessionId: null });
+  });
+
+  it('adopts a live placeholder before applying the missing-placeholder fallback', () => {
+    const decision = decideSessionRoute({
+      sessionId: 'pending-uuid',
+      inRegistry: true,
+      folderPath: '/repos/proj',
+      loadAttempted: false,
+      activeSessionIds: ['pending-uuid'],
+      urlChanged: true,
+      viewNavigationPending: false,
+    });
+
+    expect(decision).toEqual({ action: 'adopt' });
+  });
+
+  it('lets back and forward navigation outrank a pending registry marker', () => {
+    const decision = decideSessionRoute({
+      sessionId: 'pending-uuid',
+      inRegistry: false,
+      folderPath: '/repos/proj',
+      loadAttempted: false,
+      activeSessionIds: ['s-first'],
+      urlChanged: true,
+      viewNavigationPending: true,
+    });
+
+    expect(decision).toEqual({ action: 'fallback', sessionId: null });
   });
 
   it('falls back to the first active session after a failed load — no retry loop, no eager home', () => {

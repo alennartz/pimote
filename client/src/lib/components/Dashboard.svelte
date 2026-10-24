@@ -10,7 +10,7 @@
   import type { SwipeActionOutcome } from '$lib/components/swipe-action.js';
   import { folderStore } from '$lib/stores/folder-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { closeSession, openExistingSession, sessionRegistry, switchToSession } from '$lib/stores/session-registry.svelte.js';
+  import { closeSession, openExistingSession, openNewSession, sessionRegistry, switchToSession } from '$lib/stores/session-registry.svelte.js';
   import { getSessionDisplayName } from '$lib/session-summary.js';
   import { formatRelativeTime } from '$lib/format-relative-time.js';
   import Archive from '@lucide/svelte/icons/archive';
@@ -27,14 +27,9 @@
 
   const managerPorts: ManagerSubmitPorts = {
     openManagerSession: async (managerRoot) => {
-      try {
-        const response = await connection.send({ type: 'open_session', folderPath: managerRoot });
-        const sessionId = (response.data as { sessionId?: string } | undefined)?.sessionId;
-        return { success: response.success, ...(sessionId !== undefined ? { sessionId } : {}) };
-      } catch (e) {
-        console.error('Failed to open manager session:', e);
-        return { success: false };
-      }
+      const response = await openNewSession(managerRoot);
+      const sessionId = (response.data as { sessionId?: string } | undefined)?.sessionId;
+      return { success: response.success, ...(sessionId !== undefined ? { sessionId } : {}) };
     },
     prompt: async (sessionId, message) => {
       try {

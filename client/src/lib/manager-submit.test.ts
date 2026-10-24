@@ -41,7 +41,7 @@ describe('submitManagerMessage — open-new', () => {
   });
 
   it('does not prompt or navigate when the open is refused', async () => {
-    const ports = makePorts({ openManagerSession: vi.fn(async () => ({ success: false })) });
+    const ports = makePorts({ openManagerSession: vi.fn(async () => ({ success: false, error: 'session_open_cancelled' })) });
 
     await expect(submitManagerMessage(openNewInput, ports)).resolves.toBe(false);
     expect(ports.prompt).not.toHaveBeenCalled();

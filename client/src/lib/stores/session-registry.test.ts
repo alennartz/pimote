@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { PimoteEvent, PimoteAgentMessage, FolderInfo } from '@pimote/shared';
-import { SessionRegistry, routeNotificationIntent, sessionRegistry, openExistingSession } from './session-registry.svelte.js';
+import { SessionRegistry, routeNotificationIntent, sessionRegistry, openExistingSession, openNewSession, newSessionInProject, closeSession } from './session-registry.svelte.js';
 import { connection } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
 
@@ -1995,57 +1995,415 @@ describe('session_commands_changed', () => {
 // deep-link open: the server searches its folders and reports the folder back,
 // and the client records it on the session and the subscription map.
 
-describe('session_suggested', () => {
-  const emit = (sessionId: string) => {
-    for (const listener of (connection as any).listeners) listener({ type: 'session_suggested', sessionId, folderPath: '/repos/target' });
+describe('session_opened lifecycle push', () => {
+  const folder = {
+    path: '/repos/target',
+    name: 'target',
+    nature: 'code' as const,
+    shortcutCount: 0,
+    favorite: false,
+    archived: false,
+    tags: [],
+    missing: false,
+    activeSessionCount: 1,
+    externalProcessCount: 0,
+  };
+  const emit = (sessionId = 'opened-target') => {
+    for (const listener of (connection as any).listeners) listener({ type: 'session_opened', sessionId, folder });
   };
 
   afterEach(() => {
     vi.restoreAllMocks();
-    for (const id of ['suggested-target', 'pending-suggestion']) {
+    for (const id of ['opened-target', 'pending-placeholder', 'response-conflict']) {
       sessionRegistry.removeSession(id);
       connection.removeSubscribedSession(id);
     }
-    sessionRegistry.pendingNewSession = null;
   });
 
-  it('attaches once without navigating or consuming a pending placeholder', async () => {
-    let resolveOpen!: (value: any) => void;
-    const send = vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => {
-      if (cmd.type === 'open_session')
-        return new Promise((resolve) => {
-          resolveOpen = resolve;
-        });
-      return { id: 'test', success: false };
+  it('keeps a conflict banner sent after the response-owned initial snapshot', async () => {
+    let resolveState!: (value: any) => void;
+    let resolveMessages!: (value: any) => void;
+    const stateSnapshot = new Promise((resolve) => {
+      resolveState = resolve;
     });
-    sessionRegistry.addSession('pending-suggestion', '/repos/new', 'new');
-    sessionRegistry.pendingNewSession = 'pending-suggestion';
-    sessionRegistry.switchTo('pending-suggestion');
-    emit('suggested-target');
-    emit('suggested-target');
-    expect(send.mock.calls.filter(([cmd]) => cmd.type === 'open_session')).toHaveLength(1);
-    expect(sessionRegistry.viewedSessionId).toBe('pending-suggestion');
-    expect(sessionRegistry.pendingNewSession).toBe('pending-suggestion');
-    expect(connection.subscribedSessions.get('suggested-target')).toBe('/repos/target');
-    resolveOpen({ id: 'test', success: true });
+    const messagesSnapshot = new Promise((resolve) => {
+      resolveMessages = resolve;
+    });
+    const send = vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => {
+      if (cmd.type === 'open_session') {
+        return {
+          id: 'open',
+          success: true,
+          data: {
+            sessionId: 'response-conflict',
+            folderPath: '/repos/conflicted',
+            folder: { ...folder, path: '/repos/conflicted', name: 'conflicted' },
+          },
+        };
+      }
+      if (cmd.type === 'get_state') return stateSnapshot;
+      if (cmd.type === 'get_messages') return messagesSnapshot;
+      if (cmd.type === 'get_session_meta') return { id: 'meta', success: true, data: { meta: { gitBranch: null, contextUsage: null, lifetimeCostUsd: 0 } } };
+      if (cmd.type === 'get_commands') return { id: 'commands', success: true, data: { commands: [] } };
+      return { id: cmd.id ?? 'snapshot', success: false };
+    });
+
+    const response = await openNewSession('/repos/conflicted');
+    expect(response).toMatchObject({ success: true, data: { sessionId: 'response-conflict' } });
+    expect(send.mock.calls.some(([cmd]) => cmd.type === 'get_state')).toBe(true);
+    expect(send.mock.calls.some(([cmd]) => cmd.type === 'get_messages')).toBe(true);
+
+    for (const listener of (connection as any).listeners) {
+      listener({
+        type: 'session_conflict',
+        sessionId: 'response-conflict',
+        processes: [{ pid: 1234, command: 'pi' }],
+      });
+    }
+
+    resolveState({
+      id: 'state',
+      success: true,
+      data: { state: { model: null, thinkingLevel: 'off', availableThinkingLevels: [], isStreaming: false, isCompacting: false, autoCompactionEnabled: false, messageCount: 0 } },
+    });
+    resolveMessages({ id: 'messages', success: true, data: { messages: [] } });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    emit('suggested-target');
+
+    expect(sessionRegistry.sessions['response-conflict'].conflictingProcesses).toEqual([{ pid: 1234, command: 'pi' }]);
     expect(send.mock.calls.filter(([cmd]) => cmd.type === 'open_session')).toHaveLength(1);
-    expect(send.mock.calls.some(([cmd]) => cmd.type === 'view_session')).toBe(false);
-    expect(sessionRegistry.sessions['suggested-target'].restorable).toBe(true);
   });
 
-  it('keeps drafts and transcripts for subscribed targets', () => {
-    sessionRegistry.addSession('suggested-target', '/repos/target', 'target');
-    const target = sessionRegistry.sessions['suggested-target'];
+  it('attaches once without navigating or consuming a placeholder', async () => {
+    const send = vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => {
+      if (cmd.type === 'open_session') return { id: 'open', success: true, data: { sessionId: 'opened-target', folderPath: '/repos/target' } };
+      return { id: cmd.id ?? 'resource', success: false };
+    });
+    sessionRegistry.addSession('pending-placeholder', '/repos/new', 'new');
+    sessionRegistry.switchTo('pending-placeholder');
+    emit();
+    emit();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(send.mock.calls.filter(([cmd]) => cmd.type === 'open_session')).toHaveLength(1);
+    expect(sessionRegistry.viewedSessionId).toBe('pending-placeholder');
+    expect(connection.subscribedSessions.get('opened-target')).toBe('/repos/target');
+    expect(send.mock.calls.some(([cmd]) => cmd.type === 'view_session')).toBe(false);
+  });
+
+  it('keeps drafts and transcripts for an already attached target', () => {
+    sessionRegistry.addSession('opened-target', '/repos/target', 'target');
+    const target = sessionRegistry.sessions['opened-target'];
     target.draftText = 'unsent';
     target.messages = [makeUserMessage('history')];
-    connection.addSubscribedSession('suggested-target', '/repos/target');
+    connection.addSubscribedSession('opened-target', '/repos/target');
     const send = vi.spyOn(connection, 'send');
-    emit('suggested-target');
+    emit();
     expect(send).not.toHaveBeenCalled();
     expect(target.draftText).toBe('unsent');
     expect(target.messages).toEqual([makeUserMessage('history')]);
+  });
+});
+
+describe('parallel new sessions', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const id of Object.keys(sessionRegistry.sessions)) {
+      if (id.startsWith('parallel-') || id.startsWith('pending-') || id.startsWith('late-') || id.startsWith('failed-') || id === 'manager-target') {
+        sessionRegistry.removeSession(id);
+        connection.removeSubscribedSession(id);
+      }
+    }
+    sessionRegistry.goHome();
+  });
+
+  it('reconciles parallel responses independently and preserves the viewed request', async () => {
+    const resolvers: Array<(value: any) => void> = [];
+    vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => {
+      if (cmd.type === 'open_session') return new Promise((resolve) => resolvers.push(resolve));
+      return { id: cmd.id ?? 'resource', success: false };
+    });
+    const first = openNewSession('/repos/same');
+    const second = openNewSession('/repos/same');
+    expect(Object.keys(sessionRegistry.sessions).filter((id) => id.startsWith('pending-'))).toHaveLength(2);
+    resolvers[1]({ id: 'second', success: true, data: { sessionId: 'parallel-2', folderPath: '/repos/same' } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolvers[0]({ id: 'first', success: true, data: { sessionId: 'parallel-1', folderPath: '/repos/same' } });
+    await Promise.all([first, second]);
+    expect(sessionRegistry.sessions['parallel-1']).toBeDefined();
+    expect(sessionRegistry.sessions['parallel-2']).toBeDefined();
+    expect(sessionRegistry.viewedSessionId).toBe('parallel-2');
+  });
+
+  it('attaches a same-folder manager push before a slow local open settles', async () => {
+    let resolveLocal!: (value: any) => void;
+    let openCalls = 0;
+    const send = vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => {
+      if (cmd.type === 'open_session') {
+        openCalls += 1;
+        if (openCalls === 1) return new Promise((resolve) => (resolveLocal = resolve));
+        return { id: `open-${openCalls}`, success: true, data: { sessionId: 'manager-target', folderPath: '/repos/target' } };
+      }
+      return { id: cmd.id ?? 'resource', success: false };
+    });
+    const local = openNewSession('/repos/target');
+    for (const listener of (connection as any).listeners) {
+      listener({
+        type: 'session_opened',
+        sessionId: 'manager-target',
+        folder: {
+          path: '/repos/target',
+          name: 'target',
+          nature: 'code',
+          shortcutCount: 0,
+          favorite: false,
+          archived: false,
+          tags: [],
+          missing: false,
+          activeSessionCount: 1,
+          externalProcessCount: 0,
+        },
+      });
+    }
+    expect(openCalls).toBe(2);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session', sessionId: 'manager-target' }));
+    resolveLocal({ id: 'local-open', success: true, data: { sessionId: 'parallel-local', folderPath: '/repos/target' } });
+    await local;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(openCalls).toBe(2);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session', sessionId: 'manager-target' }));
+  });
+
+  it('restores the pre-open view after a rejected response without choosing another active session', async () => {
+    sessionRegistry.addSession('failure-other', '/repos/other', 'other');
+    sessionRegistry.addSession('failure-previous', '/repos/previous', 'previous');
+    sessionRegistry.switchTo('failure-previous');
+    const toViewed = vi.fn();
+    sessionRegistry.setViewNavigator({ toViewed });
+    toViewed.mockClear();
+
+    const send = vi.spyOn(connection, 'send').mockResolvedValue({ id: 'open-failure', success: false, error: 'rejected' });
+    const opening = openNewSession('/repos/new');
+    const placeholder = Object.keys(sessionRegistry.sessions).find((id) => id.startsWith('pending-'))!;
+
+    await expect(opening).resolves.toMatchObject({ success: false, error: 'rejected' });
+
+    expect(sessionRegistry.sessions[placeholder]).toBeUndefined();
+    expect(sessionRegistry.viewedSessionId).toBe('failure-previous');
+    expect(toViewed).toHaveBeenLastCalledWith('failure-previous', { replace: true });
+    expect(send).toHaveBeenCalledWith({ type: 'open_session', folderPath: '/repos/new' });
+
+    sessionRegistry.removeSession('failure-previous');
+    sessionRegistry.removeSession('failure-other');
+    sessionRegistry.goHome();
+  });
+
+  it('restores the pre-open view after a connection error and returns the caller-facing error', async () => {
+    sessionRegistry.addSession('failed-connection-other', '/repos/other', 'other');
+    sessionRegistry.addSession('failed-connection-previous', '/repos/previous', 'previous');
+    sessionRegistry.switchTo('failed-connection-previous');
+    const toViewed = vi.fn();
+    sessionRegistry.setViewNavigator({ toViewed });
+    toViewed.mockClear();
+
+    vi.spyOn(connection, 'send').mockRejectedValue(new Error('socket closed'));
+    const opening = openNewSession('/repos/new');
+    const placeholder = Object.keys(sessionRegistry.sessions).find((id) => id.startsWith('pending-'))!;
+
+    await expect(opening).resolves.toMatchObject({ success: false, error: 'socket closed' });
+
+    expect(sessionRegistry.sessions[placeholder]).toBeUndefined();
+    expect(sessionRegistry.viewedSessionId).toBe('failed-connection-previous');
+    expect(toViewed).toHaveBeenLastCalledWith('failed-connection-previous', { replace: true });
+  });
+
+  it('restores the pre-open view when success has no real session id', async () => {
+    sessionRegistry.addSession('failed-no-id-other', '/repos/other', 'other');
+    sessionRegistry.addSession('failed-no-id-previous', '/repos/previous', 'previous');
+    sessionRegistry.switchTo('failed-no-id-previous');
+    const toViewed = vi.fn();
+    sessionRegistry.setViewNavigator({ toViewed });
+    toViewed.mockClear();
+
+    vi.spyOn(connection, 'send').mockResolvedValue({ id: 'open-no-id', success: true, data: {} });
+    const opening = openNewSession('/repos/new');
+    const placeholder = Object.keys(sessionRegistry.sessions).find((id) => id.startsWith('pending-'))!;
+
+    await expect(opening).resolves.toMatchObject({ success: true, data: {} });
+
+    expect(sessionRegistry.sessions[placeholder]).toBeUndefined();
+    expect(sessionRegistry.viewedSessionId).toBe('failed-no-id-previous');
+    expect(toViewed).toHaveBeenLastCalledWith('failed-no-id-previous', { replace: true });
+  });
+
+  it('keeps another parallel placeholder viewed when an earlier request fails', async () => {
+    const resolvers: Array<(value: any) => void> = [];
+    vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => {
+      if (cmd.type === 'open_session') return new Promise((resolve) => resolvers.push(resolve));
+      return { id: cmd.id ?? 'resource', success: false };
+    });
+
+    const first = openNewSession('/repos/first');
+    const firstPlaceholder = Object.keys(sessionRegistry.sessions).find((id) => id.startsWith('pending-'))!;
+    const second = openNewSession('/repos/second');
+    const secondPlaceholder = Object.keys(sessionRegistry.sessions).find((id) => id.startsWith('pending-') && id !== firstPlaceholder)!;
+
+    resolvers[0]({ id: 'first-failure', success: false, error: 'first rejected' });
+    await expect(first).resolves.toMatchObject({ success: false, error: 'first rejected' });
+    expect(sessionRegistry.sessions[firstPlaceholder]).toBeUndefined();
+    expect(sessionRegistry.sessions[secondPlaceholder]).toBeDefined();
+    expect(sessionRegistry.viewedSessionId).toBe(secondPlaceholder);
+
+    resolvers[1]({ id: 'second-failure', success: false, error: 'second rejected' });
+    await expect(second).resolves.toMatchObject({ success: false, error: 'second rejected' });
+    expect(sessionRegistry.viewedSessionId).toBeNull();
+  });
+
+  it('does not override deliberate home navigation after failure', async () => {
+    sessionRegistry.addSession('failed-home-previous', '/repos/previous', 'previous');
+    sessionRegistry.switchTo('failed-home-previous');
+    const toViewed = vi.fn();
+    sessionRegistry.setViewNavigator({ toViewed });
+    toViewed.mockClear();
+
+    vi.spyOn(connection, 'send').mockResolvedValue({ id: 'home-failure', success: false, error: 'rejected' });
+    const opening = openNewSession('/repos/new');
+    const placeholder = Object.keys(sessionRegistry.sessions).find((id) => id.startsWith('pending-'))!;
+    sessionRegistry.goHome();
+    toViewed.mockClear();
+
+    await expect(opening).resolves.toMatchObject({ success: false, error: 'rejected' });
+
+    expect(sessionRegistry.sessions[placeholder]).toBeUndefined();
+    expect(sessionRegistry.viewedSessionId).toBeNull();
+    expect(toViewed).not.toHaveBeenCalled();
+  });
+
+  it('does not override deliberate navigation to another session after failure', async () => {
+    sessionRegistry.addSession('failed-other-previous', '/repos/previous', 'previous');
+    sessionRegistry.addSession('failed-other-target', '/repos/target', 'target');
+    sessionRegistry.switchTo('failed-other-previous');
+    const toViewed = vi.fn();
+    sessionRegistry.setViewNavigator({ toViewed });
+    toViewed.mockClear();
+
+    vi.spyOn(connection, 'send').mockResolvedValue({ id: 'other-failure', success: false, error: 'rejected' });
+    const opening = openNewSession('/repos/new');
+    const placeholder = Object.keys(sessionRegistry.sessions).find((id) => id.startsWith('pending-'))!;
+    sessionRegistry.switchTo('failed-other-target');
+    toViewed.mockClear();
+
+    await expect(opening).resolves.toMatchObject({ success: false, error: 'rejected' });
+
+    expect(sessionRegistry.sessions[placeholder]).toBeUndefined();
+    expect(sessionRegistry.viewedSessionId).toBe('failed-other-target');
+    expect(toViewed).not.toHaveBeenCalled();
+  });
+
+  it('goes home when the captured previous session is gone', async () => {
+    sessionRegistry.addSession('failed-missing-other', '/repos/other', 'other');
+    sessionRegistry.addSession('failed-missing-previous', '/repos/previous', 'previous');
+    sessionRegistry.switchTo('failed-missing-previous');
+    const toViewed = vi.fn();
+    sessionRegistry.setViewNavigator({ toViewed });
+    toViewed.mockClear();
+
+    vi.spyOn(connection, 'send').mockResolvedValue({ id: 'missing-failure', success: false, error: 'rejected' });
+    const opening = openNewSession('/repos/new');
+    const placeholder = Object.keys(sessionRegistry.sessions).find((id) => id.startsWith('pending-'))!;
+    sessionRegistry.removeSession('failed-missing-previous');
+    toViewed.mockClear();
+
+    await expect(opening).resolves.toMatchObject({ success: false, error: 'rejected' });
+
+    expect(sessionRegistry.sessions[placeholder]).toBeUndefined();
+    expect(sessionRegistry.viewedSessionId).toBeNull();
+    expect(toViewed).toHaveBeenLastCalledWith(null, { replace: true });
+  });
+
+  it('goes home when the open began from the dashboard', async () => {
+    sessionRegistry.addSession('failed-dashboard-other', '/repos/other', 'other');
+    sessionRegistry.goHome();
+    const toViewed = vi.fn();
+    sessionRegistry.setViewNavigator({ toViewed });
+    toViewed.mockClear();
+
+    vi.spyOn(connection, 'send').mockResolvedValue({ id: 'dashboard-failure', success: false, error: 'rejected' });
+    const opening = openNewSession('/repos/new');
+    const placeholder = Object.keys(sessionRegistry.sessions).find((id) => id.startsWith('pending-'))!;
+
+    await expect(opening).resolves.toMatchObject({ success: false, error: 'rejected' });
+
+    expect(sessionRegistry.sessions[placeholder]).toBeUndefined();
+    expect(sessionRegistry.viewedSessionId).toBeNull();
+    expect(toViewed).toHaveBeenLastCalledWith(null, { replace: true });
+  });
+
+  it('returns a rejected open through newSessionInProject', async () => {
+    sessionRegistry.addSession('failed-caller', '/repos/caller', 'caller');
+    sessionRegistry.switchTo('failed-caller');
+    vi.spyOn(connection, 'send').mockResolvedValue({ id: 'caller-failure', success: false, error: 'caller rejected' });
+
+    await expect(newSessionInProject('failed-caller')).resolves.toMatchObject({ success: false, error: 'caller rejected' });
+    expect(sessionRegistry.viewedSessionId).toBe('failed-caller');
+  });
+
+  it('closes a real session after a cancelled placeholder resolves late', async () => {
+    let resolveOpen!: (value: any) => void;
+    const send = vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => {
+      if (cmd.type === 'open_session') return new Promise((resolve) => (resolveOpen = resolve));
+      return { id: cmd.id ?? 'resource', success: false };
+    });
+    const opening = openNewSession('/repos/late');
+    const placeholder = Object.keys(sessionRegistry.sessions).find((id) => id.startsWith('pending-'))!;
+    closeSession(placeholder);
+    resolveOpen({ id: 'late-open', success: true, data: { sessionId: 'late-1', folderPath: '/repos/late' } });
+    await expect(opening).resolves.toMatchObject({ success: false, error: 'session_open_cancelled' });
+    expect(sessionRegistry.sessions['late-1']).toBeUndefined();
+    for (const listener of (connection as any).listeners) {
+      listener({
+        type: 'session_opened',
+        sessionId: 'late-1',
+        folder: {
+          path: '/repos/late',
+          name: 'late',
+          nature: 'code',
+          shortcutCount: 0,
+          favorite: false,
+          archived: false,
+          tags: [],
+          missing: false,
+          activeSessionCount: 1,
+          externalProcessCount: 0,
+        },
+      });
+    }
+    expect(sessionRegistry.sessions['late-1']).toBeUndefined();
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'close_session', sessionId: 'late-1' }));
+    expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'close_session', sessionId: placeholder }));
+
+    for (const listener of (connection as any).listeners) listener({ type: 'session_closed', sessionId: 'late-1' });
+    for (const listener of (connection as any).listeners) {
+      listener({
+        type: 'session_opened',
+        sessionId: 'late-1',
+        folder: {
+          path: '/repos/late',
+          name: 'late',
+          nature: 'code',
+          shortcutCount: 0,
+          favorite: false,
+          archived: false,
+          tags: [],
+          missing: false,
+          activeSessionCount: 1,
+          externalProcessCount: 0,
+        },
+      });
+    }
+    expect(sessionRegistry.sessions['late-1']).toBeDefined();
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session', sessionId: 'late-1' }));
+    resolveOpen({ id: 'legitimate-open', success: true, data: { sessionId: 'late-1', folderPath: '/repos/late' } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sessionRegistry.sessions['late-1'].restorable).toBe(true);
   });
 });
 
@@ -2259,17 +2617,186 @@ class FakeWebSocket {
   onmessage: ((ev: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  sent: string[] = [];
 
   static instances: FakeWebSocket[] = [];
 
   constructor(public url: string) {
     FakeWebSocket.instances.push(this);
   }
-  send(_data: string): void {}
+  send(data: string): void {
+    this.sent.push(data);
+  }
   close(): void {
     this.readyState = FakeWebSocket.CLOSING;
   }
 }
+
+describe('reconnect restore attachment cache', () => {
+  const sessionIds = ['cache-hydrated', 'cache-reconnect', 'cache-transient', 'cache-not-found', 'cache-removed', 'cache-queued'];
+  const folder = {
+    path: '/repos/cache',
+    name: 'cache',
+    nature: 'code' as const,
+    shortcutCount: 0,
+    favorite: false,
+    archived: false,
+    tags: [],
+    missing: false,
+    activeSessionCount: 1,
+    externalProcessCount: 0,
+  };
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const commands = (ws: FakeWebSocket): Array<Record<string, any>> => ws.sent.map((raw) => JSON.parse(raw));
+  const openCommands = (ws: FakeWebSocket) => commands(ws).filter((command) => command.type === 'open_session');
+  const respondToOpen = (ws: FakeWebSocket, response: { success: boolean; error?: string; data?: unknown }): void => {
+    const open = openCommands(ws)[0];
+    if (!open) throw new Error('no open_session command');
+    ws.onmessage!({ data: JSON.stringify({ id: open.id, ...response }) });
+  };
+  const emitOpened = (ws: FakeWebSocket, sessionId: string): void => {
+    ws.onmessage!({ data: JSON.stringify({ type: 'session_opened', sessionId, folder }) });
+  };
+
+  beforeEach(() => {
+    connection.disconnect();
+    FakeWebSocket.instances.length = 0;
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('location', { protocol: 'http:', host: 'localhost', href: 'http://localhost/' });
+    vi.stubGlobal('navigator', {});
+    for (const sessionId of sessionIds) {
+      sessionRegistry.removeSession(sessionId);
+      connection.removeSubscribedSession(sessionId);
+    }
+  });
+
+  afterEach(() => {
+    const ws = FakeWebSocket.instances.at(-1);
+    connection.disconnect();
+    if (ws?.onclose) {
+      ws.readyState = FakeWebSocket.CLOSED;
+      ws.onclose();
+    }
+    for (const sessionId of sessionIds) {
+      sessionRegistry.removeSession(sessionId);
+      connection.removeSubscribedSession(sessionId);
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it('caches a hydrated restore before duplicate manager lifecycle pushes', async () => {
+    const sessionId = 'cache-hydrated';
+    sessionRegistry.addSession(sessionId, folder.path, folder.name);
+    connection.addSubscribedSession(sessionId, folder.path);
+
+    connection.connect();
+    const ws = FakeWebSocket.instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    respondToOpen(ws, { success: true, data: { sessionId, folderPath: folder.path, restoreMode: 'full_resync_no_cursor' } });
+    await flush();
+
+    emitOpened(ws, sessionId);
+    emitOpened(ws, sessionId);
+    await flush();
+
+    expect(openCommands(ws)).toHaveLength(1);
+    expect(commands(ws).filter((command) => command.type === 'get_state' || command.type === 'get_messages')).toHaveLength(0);
+  });
+
+  it('sends a restore again after disconnect clears the attachment cache', async () => {
+    const sessionId = 'cache-reconnect';
+    sessionRegistry.addSession(sessionId, folder.path, folder.name);
+    connection.addSubscribedSession(sessionId, folder.path);
+
+    connection.connect();
+    const first = FakeWebSocket.instances.at(-1)!;
+    first.readyState = FakeWebSocket.OPEN;
+    first.onopen!();
+    respondToOpen(first, { success: true, data: { sessionId, folderPath: folder.path } });
+    await flush();
+
+    first.readyState = FakeWebSocket.CLOSED;
+    first.onclose!();
+    connection.connect();
+    const second = FakeWebSocket.instances.at(-1)!;
+    second.readyState = FakeWebSocket.OPEN;
+    second.onopen!();
+    respondToOpen(second, { success: true, data: { sessionId, folderPath: folder.path } });
+    await flush();
+    emitOpened(second, sessionId);
+    emitOpened(second, sessionId);
+    await flush();
+
+    expect(openCommands(second)).toHaveLength(1);
+  });
+
+  it.each([
+    ['cache-transient', 'internal_error'],
+    ['cache-not-found', 'session_not_found'],
+  ] as const)('does not cache a %s restore failure (%s)', async (sessionId, error) => {
+    sessionRegistry.addSession(sessionId, folder.path, folder.name);
+    connection.addSubscribedSession(sessionId, folder.path);
+
+    connection.connect();
+    const ws = FakeWebSocket.instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    respondToOpen(ws, { success: false, error });
+    await flush();
+
+    emitOpened(ws, sessionId);
+    await flush();
+
+    expect(openCommands(ws)).toHaveLength(2);
+  });
+
+  it('does not cache a restore response that arrives after local removal', async () => {
+    const sessionId = 'cache-removed';
+    sessionRegistry.addSession(sessionId, folder.path, folder.name);
+    connection.addSubscribedSession(sessionId, folder.path);
+
+    connection.connect();
+    const ws = FakeWebSocket.instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    sessionRegistry.removeSession(sessionId);
+    connection.removeSubscribedSession(sessionId);
+    respondToOpen(ws, { success: true, data: { sessionId, folderPath: folder.path } });
+    await flush();
+
+    expect(sessionRegistry.sessions[sessionId]).toBeUndefined();
+    expect(connection.subscribedSessions.has(sessionId)).toBe(false);
+
+    emitOpened(ws, sessionId);
+    await flush();
+
+    expect(openCommands(ws)).toHaveLength(2);
+  });
+
+  it('does not repopulate the cache when success is queued before socket drop', async () => {
+    const sessionId = 'cache-queued';
+    sessionRegistry.addSession(sessionId, folder.path, folder.name);
+    connection.addSubscribedSession(sessionId, folder.path);
+
+    connection.connect();
+    const first = FakeWebSocket.instances.at(-1)!;
+    first.readyState = FakeWebSocket.OPEN;
+    first.onopen!();
+    respondToOpen(first, { success: true, data: { sessionId, folderPath: folder.path } });
+    first.readyState = FakeWebSocket.CLOSED;
+    first.onclose!();
+    await flush();
+
+    connection.connect();
+    const second = FakeWebSocket.instances.at(-1)!;
+    second.readyState = FakeWebSocket.OPEN;
+    second.onopen!();
+    emitOpened(second, sessionId);
+
+    expect(openCommands(second)).toHaveLength(2);
+  });
+});
 
 describe('routeNotificationIntent', () => {
   beforeEach(() => {

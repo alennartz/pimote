@@ -219,6 +219,39 @@ async function buildFallbackFolder(folderPath: string): Promise<FolderInfo> {
   };
 }
 
+async function resolveFolderInfoForSession(
+  folderPath: string,
+  sessionManager: PimoteSessionManager,
+  folderRegistry: FolderRegistry | undefined,
+  fallbackOnError = false,
+): Promise<FolderInfo> {
+  const listed = folderRegistry ? (await folderRegistry.list()).find((folder) => folder.path === folderPath) : undefined;
+  let folder: FolderInfo;
+  if (listed) {
+    folder = listed;
+  } else {
+    try {
+      folder = await buildFallbackFolder(folderPath);
+    } catch (error) {
+      if (!fallbackOnError) throw error;
+      folder = {
+        path: folderPath,
+        name: basename(folderPath),
+        nature: 'code',
+        shortcutCount: 0,
+        favorite: false,
+        archived: false,
+        tags: [],
+        missing: false,
+        activeSessionCount: 0,
+        externalProcessCount: 0,
+      };
+    }
+  }
+  enrichActiveSessionCounts([folder], sessionManager.getAllSessions());
+  return folder;
+}
+
 /** The canonical folder key containing an edited file — folder rows are keyed
  *  by canonical path, and a file path is not a folder key. Falls back to the
  *  lexical containing directory when canonicalization fails. */
@@ -636,17 +669,11 @@ export class WsHandler {
             const sessionId = await this.sessionManager.openSession(command.folderPath);
             const newSlot = this.sessionManager.getSession(sessionId)!;
             await this.claimSession(sessionId, newSlot);
-            this.viewedSessionId = sessionId;
-
-            this.sendEvent({
-              type: 'session_opened',
-              sessionId,
-              folder: await this.resolveFolderInfo(newSlot.folderPath),
-            });
+            const folder = await WsHandler.broadcastSessionOpened(sessionId, newSlot.folderPath, this.sessionManager, this.folderRegistry, this.clientRegistry, this.clientId);
 
             WsHandler.broadcastSidebarUpdate(sessionId, newSlot.folderPath, this.sessionManager, this.clientRegistry);
+            this.sendResponse(id, true, { sessionId, folderPath: newSlot.folderPath, folder });
             await this.sendConflictEventIfNeeded(sessionId, newSlot.folderPath);
-            this.sendResponse(id, true, { sessionId });
             break;
           }
 
@@ -856,16 +883,22 @@ export class WsHandler {
 
           const takeoverSlot = this.sessionManager.getSession(takeoverSessionId)!;
           await this.claimSession(takeoverSessionId, takeoverSlot);
-          this.viewedSessionId = takeoverSessionId;
-
-          this.sendEvent({
-            type: 'session_opened',
-            sessionId: takeoverSessionId,
-            folder: await this.resolveFolderInfo(takeoverSlot.folderPath),
-          });
+          const folder = await WsHandler.broadcastSessionOpened(
+            takeoverSessionId,
+            takeoverSlot.folderPath,
+            this.sessionManager,
+            this.folderRegistry,
+            this.clientRegistry,
+            this.clientId,
+          );
 
           WsHandler.broadcastSidebarUpdate(takeoverSessionId, takeoverSlot.folderPath, this.sessionManager, this.clientRegistry);
-          this.sendResponse(id, true, { sessionId: takeoverSessionId, killedProcesses: killedCount });
+          this.sendResponse(id, true, {
+            sessionId: takeoverSessionId,
+            folderPath: takeoverSlot.folderPath,
+            folder,
+            killedProcesses: killedCount,
+          });
           break;
         }
 
@@ -1820,10 +1853,7 @@ export class WsHandler {
   }
 
   private async resolveFolderInfo(folderPath: string): Promise<FolderInfo> {
-    const listed = this.folderRegistry ? (await this.folderRegistry.list()).find((folder) => folder.path === folderPath) : undefined;
-    const folder: FolderInfo = listed ?? (await buildFallbackFolder(folderPath));
-    enrichActiveSessionCounts([folder], this.sessionManager.getAllSessions());
-    return folder;
+    return resolveFolderInfoForSession(folderPath, this.sessionManager, this.folderRegistry);
   }
 
   private async sendConflictEventIfNeeded(sessionId: string, folderPath: string): Promise<void> {
@@ -2119,6 +2149,26 @@ export class WsHandler {
   /** Send an event to this client (public for broadcast use). */
   sendToClient(event: PimoteEvent): void {
     this.sendEvent(event);
+  }
+
+  /** Broadcast session availability to every connected client except the
+   *  optional requester. A new UI open or takeover owns its response and must
+   *  not receive a duplicate lifecycle push; manager callers omit the exclusion. */
+  static async broadcastSessionOpened(
+    sessionId: string,
+    folderPath: string,
+    sessionManager: PimoteSessionManager,
+    folderRegistry: FolderRegistry | undefined,
+    clientRegistry: ClientRegistry,
+    excludeClientId?: string,
+  ): Promise<FolderInfo> {
+    const folder = await resolveFolderInfoForSession(folderPath, sessionManager, folderRegistry, true);
+    const event: PimoteEvent = { type: 'session_opened', sessionId, folder };
+    for (const [clientId, handler] of clientRegistry) {
+      if (clientId === excludeClientId) continue;
+      handler.sendToClient(event);
+    }
+    return folder;
   }
 
   /** Broadcast the `folders_changed` delta to ALL connected clients. Each

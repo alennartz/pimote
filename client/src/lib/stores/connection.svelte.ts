@@ -216,6 +216,9 @@ export class ConnectionStore {
           ...(lastCursor !== undefined ? { lastCursor } : {}),
         })
           .then((response) => {
+            // A response can already be queued when this socket drops. Never
+            // let that stale continuation mutate the current connection state.
+            if (this.ws !== ws) return;
             if (!response.success) {
               if (response.error === 'session_archived') {
                 if (this.phase === 'syncing') {

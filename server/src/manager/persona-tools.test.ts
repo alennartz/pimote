@@ -55,7 +55,6 @@ function makePorts(overrides: Partial<ManagerToolContext> = {}): ManagerToolCont
     repos: { invalidateListing: vi.fn() },
     creators: { create: vi.fn(async () => ({ folderPath: '/unused' })) },
     notifyFoldersChanged: vi.fn(),
-    notifySessionSuggested: vi.fn(),
     config: { roots: ['/tmp'], managerRoot: '/srv/manager-home', idleTimeout: 1_000, bufferSize: 10, port: 3000 },
     ...overrides,
   };

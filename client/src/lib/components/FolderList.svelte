@@ -5,7 +5,8 @@
   import type { FolderInfo, SessionInfo } from '@pimote/shared';
   import { folderStore } from '$lib/stores/folder-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { openNewSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { isSessionOpenCancelledResponse } from '$lib/session-open-response.js';
   import { AGENT_INSTRUCTIONS_PATH, fileEditorStore } from '$lib/stores/file-editor.svelte.js';
   import SessionItem from './SessionItem.svelte';
   import HubMembersDialog from './HubMembersDialog.svelte';
@@ -291,23 +292,17 @@
   async function attemptOpen(folderPath: string) {
     openError = '';
     try {
-      const response = await connection.send({ type: 'open_session', folderPath });
-      if (!response.success) openError = response.error ?? 'Failed to open folder';
+      const response = await openNewSession(folderPath);
+      if (!response.success && !isSessionOpenCancelledResponse(response)) openError = response.error ?? 'Failed to open folder';
     } catch (e) {
       openError = e instanceof Error ? e.message : 'Failed to open folder';
     }
   }
 
   async function newSession(folderPath: string) {
-    try {
-      onSessionSelect?.();
-      await connection.send({
-        type: 'open_session',
-        folderPath,
-      });
-    } catch (e) {
-      console.error('Failed to create new session:', e);
-    }
+    onSessionSelect?.();
+    const response = await openNewSession(folderPath);
+    if (!response.success && !isSessionOpenCancelledResponse(response)) console.error('Failed to create new session:', response.error);
   }
 
   async function archiveAll() {

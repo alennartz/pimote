@@ -102,6 +102,21 @@ afterEach(async () => {
 });
 
 describe('folder picker', () => {
+  it('does not log the expected placeholder cancellation', async () => {
+    vi.mocked(connection.send).mockImplementation(async (command: any) => {
+      if (command.type === 'open_session') return { id: '1', success: false, error: 'session_open_cancelled' };
+      return { id: '1', success: true, data: {} };
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    destroy = render();
+    await tick();
+
+    rowButton('alpha').click();
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith({ type: 'open_session', folderPath: '/w/alpha' }));
+    expect(error).not.toHaveBeenCalledWith('Failed to create new session:', 'session_open_cancelled');
+    error.mockRestore();
+  });
+
   it('lists discovered folders and opens a session on selection', async () => {
     destroy = render();
     await tick();

@@ -8,6 +8,7 @@
 
 import type {
   PimoteEvent,
+  PimoteResponse,
   PimoteAgentMessage,
   PimoteMessageContent,
   PimoteUsage,
@@ -62,6 +63,23 @@ import { summarizeAssistantRowUsage, type ToolResultUsageIndex } from '../assist
 export const MAX_BASH_LIVE_OUTPUT_BYTES = 256 * 1024;
 
 const bashTextEncoder = new TextEncoder();
+
+interface PendingNewSessionRequest {
+  folderPath: string;
+  previousViewedSessionId: string | null;
+  cancelled: boolean;
+}
+
+// New-session requests are independent. A singleton pending id cannot reconcile
+// parallel opens or preserve the session that each caller is viewing.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- request reconciliation registry, not reactive UI state
+const pendingNewSessionRequests = new Map<string, PendingNewSessionRequest>();
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- cancellation bookkeeping, not reactive UI state
+const cancelledNewSessionIds = new Set<string>();
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- in-flight lifecycle attachment registry, not reactive UI state
+const lifecycleAttachmentPromises = new Map<string, Promise<boolean>>();
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- attachment deduplication bookkeeping, not reactive UI state
+const attachedSessionIds = new Set<string>();
 
 function utf8ByteLength(value: string): number {
   return bashTextEncoder.encode(value).byteLength;
@@ -301,8 +319,6 @@ export class SessionRegistry {
 
   sessions: Record<string, PerSessionState> = $state({});
   viewedSessionId: string | null = $state(null);
-  /** Temporary ID of an optimistic "new session" placeholder awaiting server confirmation. */
-  pendingNewSession: string | null = $state(null);
   private _nextMessageKey: number = 0;
   // Byte accounting lives outside the reactive execution object so the public
   // state shape stays focused on rendering and existing callers remain stable.
@@ -956,7 +972,7 @@ export class SessionRegistry {
     panelStore.handlePanelUpdate(this.combinedPanelCards(this.viewed));
   }
 
-  /** Add a session to the registry. If it already exists (e.g. takeover placeholder), resets it. */
+  /** Add a session to the registry. If it already exists, resets it. Lifecycle pushes upsert separately. */
   addSession(sessionId: string, folderPath: string, projectName: string): void {
     this.clearBashOutputBytes(sessionId);
     this.sessions[sessionId] = this.createSessionState(sessionId, folderPath, projectName);
@@ -990,16 +1006,28 @@ export class SessionRegistry {
     session.folder = this.folderObjectResolver ? this.folderObjectResolver(folder) : folder;
   }
 
-  /** Remove a session from the registry */
-  removeSession(sessionId: string): void {
+  private removeSessionEntry(sessionId: string): boolean {
     this.clearBashOutputBytes(sessionId);
     // A session removal has no download_update event to reconcile against;
     // explicitly drop any queued one-shot actions owned by that session.
     downloadUi.clearSession(sessionId);
-    const wasViewed = this.viewedSessionId === sessionId;
+    if (!this.sessions[sessionId]) return false;
     // Reassign rather than delete to reliably trigger Svelte 5 $state reactivity
     const { [sessionId]: _, ...rest } = this.sessions;
     this.sessions = rest;
+    return true;
+  }
+
+  /** Remove a session from the registry without changing the current view. */
+  removeSessionQuietly(sessionId: string): void {
+    this.removeSessionEntry(sessionId);
+    this.persistSessions();
+  }
+
+  /** Remove a session from the registry. */
+  removeSession(sessionId: string): void {
+    const wasViewed = this.viewedSessionId === sessionId;
+    this.removeSessionEntry(sessionId);
     if (wasViewed) {
       // Switch to another active session if one exists, otherwise go to landing
       const remaining = this.activeSessions.map((session) => session.sessionId);
@@ -1043,21 +1071,21 @@ export class SessionRegistry {
   }
 
   /** Switch viewed session, clears needsAttention for target */
-  switchTo(sessionId: string): void {
+  switchTo(sessionId: string, opts?: { replace?: boolean }): void {
     this.viewedSessionId = sessionId;
     const session = this.sessions[sessionId];
     if (session) {
       session.needsAttention = false;
     }
     this.syncViewedPanelStore();
-    this.navigateToViewed(false);
+    this.navigateToViewed(opts?.replace ?? false);
   }
 
   /** Leave the conversation view and return to the dashboard (viewedSessionId = null). */
-  goHome(): void {
+  goHome(opts?: { replace?: boolean }): void {
     this.viewedSessionId = null;
     this.syncViewedPanelStore();
-    this.navigateToViewed(false);
+    this.navigateToViewed(opts?.replace ?? false);
   }
 
   /**
@@ -1492,6 +1520,8 @@ export async function routeNotificationIntent(intent: AppNotificationIntent): Pr
 
 /** Remove every client-side trace of a session before its server command settles. */
 function removeSessionLocally(sessionId: string): void {
+  attachedSessionIds.delete(sessionId);
+  lifecycleAttachmentPromises.delete(sessionId);
   sessionRegistry.removeSession(sessionId);
   connection.removeSubscribedSession(sessionId);
   commandStore.removeSession(sessionId);
@@ -1504,60 +1534,35 @@ function dropSession(sessionId: string): void {
 }
 
 /** Open a session by id. `folderPath` may be unknown for a deep link — the
- *  server then resolves the folder and reports it in the response. */
+ *  server then resolves the folder and reports it in the response. Explicit
+ *  opens preserve the original request semantics and always ask the server. */
 export async function openExistingSession(sessionId: string, folderPath: string | undefined, opts?: { switchTo?: boolean }): Promise<boolean> {
   const projectName = folderPath ? folderPath.split('/').pop() || 'Unknown' : 'Unknown';
   const shouldSwitch = opts?.switchTo !== false;
   const alreadyTracked = !!sessionRegistry.sessions[sessionId];
-
-  if (!alreadyTracked) {
-    sessionRegistry.addSession(sessionId, folderPath ?? '', projectName);
-  }
+  if (!alreadyTracked) sessionRegistry.addSession(sessionId, folderPath ?? '', projectName);
   connection.addSubscribedSession(sessionId, folderPath ?? '');
-
-  if (shouldSwitch) {
-    sessionRegistry.switchTo(sessionId);
-  }
+  if (shouldSwitch) sessionRegistry.switchTo(sessionId);
 
   try {
-    const response = await connection.send({
-      type: 'open_session',
-      folderPath,
-      sessionId,
-    });
-
+    const response = await connection.send({ type: 'open_session', folderPath, sessionId });
     if (!response.success) {
-      // The server has no trace of the session (never persisted, pruned idle
-      // slot). Definitive: drop the orphan even when it was already tracked,
-      // otherwise it lingers with no model list and a dead composer.
       if (response.error === 'session_archived') {
         connection.removeSubscribedSession(sessionId);
-        if (alreadyTracked) {
-          sessionRegistry.setRestorable(sessionId, false);
-        } else {
-          dropSession(sessionId);
-        }
+        if (alreadyTracked) sessionRegistry.setRestorable(sessionId, false);
+        else dropSession(sessionId);
         return false;
       }
       if (isSessionNotFoundError(response.error)) {
         dropSession(sessionId);
         return false;
       }
-      // Only tear down registry state for a session WE just added here. If the
-      // session was already open (takeover/notification-adopt path), a transient
-      // failure must not wipe the user's tab, draft, or pending steering — the
-      // reconnect cycle retries restores.
-      if (!alreadyTracked) {
-        dropSession(sessionId);
-      }
+      // A transient failure must not wipe a pre-existing tab. Only tear down
+      // state that this attachment created.
+      if (!alreadyTracked) dropSession(sessionId);
       return false;
     }
 
-    // A folderless deep-link open: the server resolved the folder and reports
-    // it back — record it so later commands (rename, archive, share) carry the
-    // right folder. The folder row rides the same response: restores emit no
-    // session_opened, so this is the wire moment that rebinds the folder
-    // object (nature, hub facts) the chip glyph reads.
     sessionRegistry.setRestorable(sessionId, true);
     const data = response.data as { folderPath?: string; folder?: FolderInfo } | undefined;
     const resolvedFolder = data?.folderPath ?? folderPath;
@@ -1566,63 +1571,198 @@ export async function openExistingSession(sessionId: string, folderPath: string 
       connection.addSubscribedSession(sessionId, resolvedFolder);
     }
     if (data?.folder) sessionRegistry.bindSessionFolder(sessionId, data.folder);
-
+    cancelledNewSessionIds.delete(sessionId);
     await refreshSessionMetaAndCommands(sessionId);
-    if (shouldSwitch) {
-      connection.send({ type: 'view_session', sessionId }).catch(() => {});
-    }
+    if (shouldSwitch) connection.send({ type: 'view_session', sessionId }).catch(() => {});
+    attachedSessionIds.add(sessionId);
     return true;
   } catch (err) {
     console.error('[SessionRegistry] Failed to open existing session:', err);
-    if (!alreadyTracked) {
-      dropSession(sessionId);
-    }
+    if (!alreadyTracked) dropSession(sessionId);
     return false;
   }
 }
 
-const suggestedSessionOpens = new Map<string, Promise<boolean>>(); // eslint-disable-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
-
-function attachSuggestedSession(sessionId: string, folderPath: string): void {
-  if (suggestedSessionOpens.has(sessionId)) return;
-  if (sessionRegistry.sessions[sessionId]?.restorable && connection.subscribedSessions.has(sessionId)) return;
+/** Attach one lifecycle push in the background. Attachments dedupe by real
+ * session ID; explicit opens do not use this cache. */
+function attachOpenedSessionInBackground(sessionId: string, folderPath: string): void {
+  if (attachedSessionIds.has(sessionId) || lifecycleAttachmentPromises.has(sessionId)) return;
   const opening = openExistingSession(sessionId, folderPath, { switchTo: false });
-  suggestedSessionOpens.set(sessionId, opening);
-  void opening.finally(() => {
-    if (suggestedSessionOpens.get(sessionId) === opening) suggestedSessionOpens.delete(sessionId);
-  });
+  lifecycleAttachmentPromises.set(sessionId, opening);
+  void opening.then(
+    (attached) => {
+      if (lifecycleAttachmentPromises.get(sessionId) !== opening) return;
+      lifecycleAttachmentPromises.delete(sessionId);
+      if (attached) attachedSessionIds.add(sessionId);
+    },
+    () => {
+      if (lifecycleAttachmentPromises.get(sessionId) === opening) lifecycleAttachmentPromises.delete(sessionId);
+    },
+  );
 }
+
+/** Attach a lifecycle push in the background. It never changes the viewed
+ *  session and never reconciles an optimistic placeholder. */
+function attachOpenedSession(event: SessionOpenedEvent): void {
+  const sessionId = event.sessionId;
+  if (sessionId.startsWith('pending-') || cancelledNewSessionIds.has(sessionId)) return;
+  const folder = event.folder;
+  const folderPath = folder?.path ?? '';
+  const existing = sessionRegistry.sessions[sessionId];
+  if (!existing) {
+    sessionRegistry.addSession(sessionId, folderPath, folder?.name ?? 'Unknown');
+  } else if (folderPath && existing.folderPath !== folderPath) {
+    sessionRegistry.setSessionFolder(sessionId, folderPath);
+  }
+  if (folder) sessionRegistry.bindSessionFolder(sessionId, folder);
+  connection.addSubscribedSession(sessionId, folderPath);
+  attachOpenedSessionInBackground(sessionId, folderPath);
+}
+
+/** Remove a failed optimistic placeholder without changing a deliberate view.
+ * When the placeholder still owns the view, restore the view captured before
+ * this request. Missing history intentionally falls back to the dashboard. */
+function cleanupFailedNewSession(placeholderId: string, request: PendingNewSessionRequest): void {
+  const placeholderWasViewed = sessionRegistry.viewedSessionId === placeholderId;
+  if (sessionRegistry.sessions[placeholderId]) sessionRegistry.removeSessionQuietly(placeholderId);
+  if (!placeholderWasViewed || request.cancelled) return;
+
+  const previousId = request.previousViewedSessionId;
+  if (previousId !== null && sessionRegistry.sessions[previousId]) {
+    sessionRegistry.switchTo(previousId, { replace: true });
+  } else {
+    sessionRegistry.goHome({ replace: true });
+  }
+}
+
+async function reconcileNewSessionResponse(tempId: string, response: PimoteResponse): Promise<PimoteResponse> {
+  const request = pendingNewSessionRequests.get(tempId);
+  if (!request) return response;
+  pendingNewSessionRequests.delete(tempId);
+  const placeholder = sessionRegistry.sessions[tempId];
+
+  if (!response.success) {
+    cleanupFailedNewSession(tempId, request);
+    return response;
+  }
+
+  const data = response.data as { sessionId?: string; folderPath?: string; folder?: FolderInfo } | undefined;
+  const realId = data?.sessionId;
+  if (!realId) {
+    cleanupFailedNewSession(tempId, request);
+    return response;
+  }
+
+  // A closed placeholder owns this request. The server can still finish the
+  // open, so close the real session after the response instead of sending a
+  // meaningless close_session for pending-*.
+  if (request.cancelled) {
+    cancelledNewSessionIds.add(realId);
+    if (sessionRegistry.sessions[realId]) removeSessionLocally(realId);
+    if (placeholder) sessionRegistry.removeSessionQuietly(tempId);
+    connection.send({ type: 'close_session', sessionId: realId }).catch(() => {});
+    return { ...response, success: false, error: 'session_open_cancelled' };
+  }
+
+  const folderPath = data?.folderPath ?? data?.folder?.path ?? request.folderPath;
+  const folder = data?.folder;
+  const projectName = folder?.name ?? folderPath.split('/').pop() ?? 'Unknown';
+  const realState = sessionRegistry.sessions[realId];
+  if (!realState) sessionRegistry.addSession(realId, folderPath, projectName);
+  if (folderPath) sessionRegistry.setSessionFolder(realId, folderPath);
+  if (folder) sessionRegistry.bindSessionFolder(realId, folder);
+  connection.addSubscribedSession(realId, folderPath);
+
+  // A lifecycle push can create and attach this real session before the
+  // command response. Preserve all transcript/meta state and avoid a second
+  // attachment or data fetch. Without a push, fetch the initial snapshot.
+  const lifecycleAttachment = lifecycleAttachmentPromises.get(realId);
+  const fetchInitialSnapshot = () => {
+    if (attachedSessionIds.has(realId) || !sessionRegistry.sessions[realId]) return;
+    attachedSessionIds.add(realId);
+    void fetchFullSessionData(realId);
+  };
+  if (lifecycleAttachment) {
+    void lifecycleAttachment.then((attached) => {
+      if (!attached) fetchInitialSnapshot();
+    });
+  } else {
+    fetchInitialSnapshot();
+  }
+
+  const placeholderWasViewed = sessionRegistry.viewedSessionId === tempId;
+  if (placeholder) sessionRegistry.removeSessionQuietly(tempId);
+  if (placeholderWasViewed) {
+    sessionRegistry.switchTo(realId);
+    connection.send({ type: 'view_session', sessionId: realId }).catch(() => {});
+  }
+  return response;
+}
+
+/** Start a new session and return the server response. Each call owns one
+ * placeholder and one continuation, so parallel opens can resolve in any order. */
+export async function openNewSession(folderPath: string): Promise<PimoteResponse> {
+  const placeholderId = `pending-${crypto.randomUUID()}`;
+  const projectName = folderPath.split('/').pop() || 'Unknown';
+  const previousViewedSessionId = sessionRegistry.viewedSessionId;
+  sessionRegistry.addSession(placeholderId, folderPath, projectName);
+  sessionRegistry.switchTo(placeholderId);
+  const request: PendingNewSessionRequest = {
+    folderPath,
+    previousViewedSessionId,
+    cancelled: false,
+  };
+  pendingNewSessionRequests.set(placeholderId, request);
+
+  try {
+    const response = await connection.send({ type: 'open_session', folderPath });
+    return await reconcileNewSessionResponse(placeholderId, response);
+  } catch (error) {
+    const current = pendingNewSessionRequests.get(placeholderId);
+    if (current) {
+      pendingNewSessionRequests.delete(placeholderId);
+      cleanupFailedNewSession(placeholderId, current);
+    }
+    return {
+      id: '',
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/** Cancel one optimistic open. The wire request cannot be withdrawn, but its
+ *  continuation will close the real session if the server later succeeds. */
+function cancelNewSession(placeholderId: string): boolean {
+  const request = pendingNewSessionRequests.get(placeholderId);
+  if (!request) return false;
+  request.cancelled = true;
+  if (sessionRegistry.sessions[placeholderId]) sessionRegistry.removeSession(placeholderId);
+  connection.removeSubscribedSession(placeholderId);
+  commandStore.removeSession(placeholderId);
+  return true;
+}
+
+// A socket drop invalidates lifecycle attachment state. Reconnect restore
+// commands rebuild server ownership; a later push must not trust stale cache.
+connection.onDisconnect(() => {
+  attachedSessionIds.clear();
+  lifecycleAttachmentPromises.clear();
+  cancelledNewSessionIds.clear();
+});
 
 // Subscribe to connection events and route to the registry
 connection.onEvent((event) => {
   switch (event.type) {
-    case 'session_suggested': {
-      attachSuggestedSession(event.sessionId, event.folderPath);
-      break;
-    }
     case 'session_opened': {
-      const folder = (event as SessionOpenedEvent).folder;
-      const projectName = folder?.name ?? 'Unknown';
-
-      // Reconcile optimistic session: replace the temp placeholder with the real ID
-      const pendingId = sessionRegistry.pendingNewSession;
-      if (pendingId && sessionRegistry.sessions[pendingId]) {
-        sessionRegistry.pendingNewSession = null;
-        sessionRegistry.replaceSession(pendingId, event.sessionId, folder?.path ?? '', projectName);
-      } else {
-        sessionRegistry.addSession(event.sessionId, folder?.path ?? '', projectName);
-        sessionRegistry.switchTo(event.sessionId);
-      }
-
-      if (folder) sessionRegistry.bindSessionFolder(event.sessionId, folder);
-      connection.addSubscribedSession(event.sessionId, folder?.path ?? '');
-      fetchFullSessionData(event.sessionId);
+      attachOpenedSession(event as SessionOpenedEvent);
       break;
     }
     case 'session_closed': {
-      sessionRegistry.removeSession(event.sessionId);
-      connection.removeSubscribedSession(event.sessionId);
-      commandStore.removeSession(event.sessionId);
+      removeSessionLocally(event.sessionId);
+      // The ordered close push is authoritative. A later legitimate session
+      // with this identity can now attach normally.
+      cancelledNewSessionIds.delete(event.sessionId);
       break;
     }
     case 'session_replaced': {
@@ -1657,8 +1797,12 @@ connection.onEvent((event) => {
 // session_opened event, so without this a restarted client keeps the hydrated
 // folder-less state and the session chip falls back to the code-nature glyph.
 connection.onSessionRestored = (sessionId, data) => {
+  // A restore can finish after local removal or archive. Only cache the
+  // attachment while the session remains both tracked and subscribed.
+  if (!sessionRegistry.sessions[sessionId] || !connection.subscribedSessions.has(sessionId)) return;
   if (data.folderPath) sessionRegistry.setSessionFolder(sessionId, data.folderPath);
   if (data.folder) sessionRegistry.bindSessionFolder(sessionId, data.folder);
+  attachedSessionIds.add(sessionId);
 };
 
 // When restoring/opening is rejected because the session is gone server-side
@@ -1748,6 +1892,7 @@ export async function abortSession(sessionId: string): Promise<void> {
 /** Remove a session from the client before its server command settles. */
 export function removeSessionOptimistically(sessionId: string): boolean {
   if (!sessionRegistry.sessions[sessionId]) return false;
+  if (cancelNewSession(sessionId)) return true;
   removeSessionLocally(sessionId);
   return true;
 }
@@ -1755,41 +1900,15 @@ export function removeSessionOptimistically(sessionId: string): boolean {
 /** Close a session optimistically, then let the server finish the close. */
 export function closeSession(sessionId: string): void {
   if (!removeSessionOptimistically(sessionId)) return;
+  // cancelNewSession handled its own continuation and must never send a
+  // close_session for the temporary placeholder id.
+  if (pendingNewSessionRequests.has(sessionId)) return;
   connection.send({ type: 'close_session', sessionId }).catch(() => {});
 }
 
-/** Open a new session in the same project as the given session */
-export function newSessionInProject(sessionId: string): void {
+/** Open a new session in the same project as the given session. */
+export function newSessionInProject(sessionId: string): Promise<PimoteResponse | undefined> {
   const session = sessionRegistry.sessions[sessionId];
-  if (!session) return;
-  // Guard: ignore if there's already a pending optimistic session
-  if (sessionRegistry.pendingNewSession) return;
-
-  // Optimistic UI: create a placeholder session and switch to it immediately
-  // so the user sees an empty chat window without waiting for the server.
-  const tempId = `pending-${crypto.randomUUID()}`;
-  sessionRegistry.addSession(tempId, session.folderPath, session.projectName);
-  sessionRegistry.switchTo(tempId);
-  sessionRegistry.pendingNewSession = tempId;
-
-  connection
-    .send({ type: 'open_session', folderPath: session.folderPath })
-    .then((response) => {
-      if (!response.success) {
-        // Server rejected — clean up the placeholder
-        if (sessionRegistry.pendingNewSession === tempId) {
-          sessionRegistry.pendingNewSession = null;
-        }
-        sessionRegistry.removeSession(tempId);
-      }
-      // On success the session_opened event (which arrives before this response)
-      // has already reconciled the placeholder — nothing more to do here.
-    })
-    .catch(() => {
-      // WebSocket error — clean up the placeholder
-      if (sessionRegistry.pendingNewSession === tempId) {
-        sessionRegistry.pendingNewSession = null;
-      }
-      sessionRegistry.removeSession(tempId);
-    });
+  if (!session) return Promise.resolve(undefined);
+  return openNewSession(session.folderPath);
 }

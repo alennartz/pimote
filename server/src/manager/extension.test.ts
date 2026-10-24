@@ -73,7 +73,6 @@ function spyPorts() {
     repos: { invalidateListing: vi.fn() },
     creators: { create: vi.fn(async () => ({ folderPath: '/w/created' })) },
     notifyFoldersChanged: vi.fn(),
-    notifySessionSuggested: vi.fn(),
   };
 }
 
@@ -460,47 +459,6 @@ describe('pimote_find_sessions', () => {
 
     expect(result.isError ?? false).toBe(false);
     expect(result.structuredContent.sessions).toHaveLength(1);
-  });
-});
-
-describe('manager session suggestions', () => {
-  const executionContext = { sessionManager: { getSessionId: () => 'executing-manager' } };
-
-  it('notifies after start with the execution-time manager identity', async () => {
-    const ports = spyPorts();
-    ports.folders.list.mockResolvedValue([makeFolder('/w/code')]);
-    ports.sessions.openSession.mockImplementation(async () => {
-      expect(ports.notifySessionSuggested).not.toHaveBeenCalled();
-      return 'target';
-    });
-    await toolNamed(register(ports), 'pimote_start_session').execute('call', { folderPath: '/w/code' }, undefined, undefined, executionContext);
-    expect(ports.notifySessionSuggested).toHaveBeenCalledWith('executing-manager', 'target');
-  });
-
-  it('does not notify for unknown folders or rejected starts', async () => {
-    const ports = spyPorts();
-    const tool = toolNamed(register(ports), 'pimote_start_session');
-    await tool.execute('call', { folderPath: '/unknown' }, undefined, undefined, executionContext);
-    ports.folders.list.mockResolvedValue([makeFolder('/w/code')]);
-    ports.sessions.openSession.mockRejectedValue(new Error('failed'));
-    await expect(tool.execute('call', { folderPath: '/w/code' }, undefined, undefined, executionContext)).rejects.toThrow('failed');
-    expect(ports.notifySessionSuggested).not.toHaveBeenCalled();
-  });
-
-  it.each(['resumed', 'already_open'] as const)('notifies for %s', async (outcome) => {
-    const ports = spyPorts();
-    ports.sessions.resumeSession.mockResolvedValue({ sessionId: 'target', outcome, folderPath: '/w/code' });
-    await toolNamed(register(ports), 'pimote_resume_session').execute('call', { sessionId: 'target' }, undefined, undefined, executionContext);
-    expect(ports.notifySessionSuggested).toHaveBeenCalledWith('executing-manager', 'target');
-  });
-
-  it('does not notify for missing sessions or rejected resumes', async () => {
-    const ports = spyPorts();
-    const tool = toolNamed(register(ports), 'pimote_resume_session');
-    await tool.execute('call', { sessionId: 'missing' }, undefined, undefined, executionContext);
-    ports.sessions.resumeSession.mockRejectedValue(new Error('failed'));
-    await expect(tool.execute('call', { sessionId: 'target' }, undefined, undefined, executionContext)).rejects.toThrow('failed');
-    expect(ports.notifySessionSuggested).not.toHaveBeenCalled();
   });
 });
 

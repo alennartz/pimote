@@ -50,8 +50,8 @@ export function decideSessionRoute(input: {
   // Optimistic placeholders (pending-*) are client-local fictions the server
   // can never resolve — fall back instead of asking. They are not fallback
   // targets either (below).
-  if (!input.loadAttempted && !input.sessionId.startsWith('pending-')) return { action: 'load', folderPath: input.folderPath };
-  if (input.folderPath && !input.loadAttempted) return { action: 'load', folderPath: input.folderPath };
+  if (input.sessionId.startsWith('pending-')) return { action: 'fallback', sessionId: null };
+  if (!input.loadAttempted) return { action: 'load', folderPath: input.folderPath };
 
   // Optimistic placeholders (pending-*) are not real sessions to fall back onto.
   const fallback = [...input.activeSessionIds].find((id) => !id.startsWith('pending-')) ?? null;

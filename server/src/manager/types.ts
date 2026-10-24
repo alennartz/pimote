@@ -154,7 +154,6 @@ export interface ManagerToolContext {
    *  (code folders, plain personas): registry-routed mutations broadcast
    *  through the registry's own onChange channel. */
   notifyFoldersChanged(changedPaths: string[]): void;
-  notifySessionSuggested(managerSessionId: string, targetSessionId: string): void;
   config: PimoteConfig;
 }
 

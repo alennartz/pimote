@@ -1126,16 +1126,12 @@ export interface ExtensionUiRequestEvent {
   [key: string]: unknown;
 }
 
+/** Broadcast when a live session becomes available to clients. This covers
+ * new UI or manager creation, manager resume, and takeover. */
 export interface SessionOpenedEvent {
   type: 'session_opened';
   sessionId: string;
   folder: FolderInfo;
-}
-
-export interface SessionSuggestedEvent {
-  type: 'session_suggested';
-  sessionId: string;
-  folderPath: string;
 }
 
 export interface SessionClosedEvent {
@@ -1412,7 +1408,6 @@ export type PimoteEvent =
   | SessionConflictEvent
   | QueuedDraftsRestoredEvent
   | SessionOpenedEvent
-  | SessionSuggestedEvent
   | SessionClosedEvent
   | SessionDeletedEvent
   | SessionRenamedEvent
