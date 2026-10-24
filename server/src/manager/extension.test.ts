@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Value } from 'typebox/value';
 import type { FolderInfo } from '../../../shared/dist/index.js';
 import { createManagerExtension } from './extension.js';
+import * as spillModule from './spill.js';
 import type { DiskSessionRecord, ManagerSessionSummary, ManagerToolContext, SessionResumeOutcome } from './types.js';
 
 // Spill files land in a per-process temp dir: the guard's real fs behavior
@@ -121,6 +122,38 @@ describe('createManagerExtension()', () => {
   it('registers exactly the pinned pimote toolset on the extension API', () => {
     const toolDefs = register(spyPorts());
     expect(toolDefs.map((def) => def.name).sort()).toEqual([...MANAGER_TOOL_NAMES].sort());
+  });
+
+  it('exposes every manager tool directly with a concise planner cue and named routing rules', () => {
+    for (const tool of register(spyPorts())) {
+      expect(tool.exposure).toBe('direct');
+      expect(tool.promptSnippet).not.toMatch(/[\r\n]/);
+      expect(tool.promptSnippet).not.toContain(tool.name);
+      const words = tool.promptSnippet.trim().split(/\s+/);
+      expect(words.length).toBeGreaterThanOrEqual(5);
+      expect(words.length).toBeLessThanOrEqual(15);
+      for (const rule of tool.promptGuidelines ?? []) {
+        expect(rule).toMatch(/^(For|When|Before|After|If)\b/);
+        expect(rule).toMatch(/\bpimote_\w+\b/);
+        expect(rule).not.toMatch(/\b(?:folderPath|includeArchived|limit)\b|\b(?:open|fresh):/);
+      }
+    }
+  });
+
+  it.each(['pimote_find_folders', 'pimote_find_sessions'])('keeps removed arguments absent from %s', (name) => {
+    const schema = toolNamed(register(spyPorts()), name).parameters;
+    expect(schema.properties).not.toHaveProperty('fresh');
+    expect(schema.properties).not.toHaveProperty('limit');
+  });
+
+  it.each([
+    ['pimote_find_folders', 'folders'],
+    ['pimote_find_sessions', 'sessions'],
+  ])('declares byte-sized spill pointers on %s', (name, rowsKey) => {
+    const schema = toolNamed(register(spyPorts()), name).outputSchema;
+    const spill = { file: '/tmp/rows.jsonl', rows: 1, bytes: 10, hint: 'Search with jq.' };
+    expect(Value.Check(schema, { [rowsKey]: [], spill })).toBe(true);
+    expect(Value.Check(schema, { [rowsKey]: [], spill: { ...spill, bytes: -1 } })).toBe(false);
   });
 
   it('routes each listing tool through the injected context ports', async () => {
@@ -349,6 +382,51 @@ describe('pimote_find_sessions', () => {
     expect(rows[0].needsAttention).toBe(true);
   });
 
+  it.each([{}, { open: false }])('includes open and closed sessions with filters %j', async (filters) => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
+    ports.sessions.listDiskSessions.mockResolvedValue([makeRecord({ id: 'live' }), makeRecord({ id: 'closed' })]);
+    ports.sessions.getAllSessions.mockReturnValue([{ sessionId: 'live', folderPath: '/w/alpha', status: 'idle', needsAttention: false }]);
+
+    const result = (await listTool(ports).execute('c', filters, undefined, undefined, {})) as ToolResult;
+
+    expect(result.structuredContent.sessions.map((row: any) => [row.id, row.open])).toEqual([
+      ['live', true],
+      ['closed', false],
+    ]);
+  });
+
+  it.each(['', '   ', '\n\t'])('normalizes optional blank folderPath %j before validation without changing other filters', async (folderPath) => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha'), makePersonaFolder('/w/ada')]);
+    ports.sessions.listDiskSessions.mockImplementation(async (path) => [makeRecord({ id: path, firstMessage: 'login work' })]);
+    const tool = listTool(ports);
+    const args = Object.freeze({ folderPath, query: 'login', open: false, includeArchived: true });
+
+    const prepared = tool.prepareArguments(args);
+
+    expect(prepared).toEqual({ query: 'login', open: false, includeArchived: true });
+    expect(prepared).not.toHaveProperty('folderPath');
+    expect(args.folderPath).toBe(folderPath);
+    expect(Value.Check(tool.parameters, prepared)).toBe(true);
+    const result = (await tool.execute('c', prepared, undefined, undefined, {})) as ToolResult;
+    expect(result.isError ?? false).toBe(false);
+    expect(result.structuredContent.sessions).toHaveLength(2);
+    expect(ports.sessions.listDiskSessions).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves a nonblank folderPath and false filters during argument preparation', () => {
+    const tool = listTool(spyPorts());
+    const args = Object.freeze({ folderPath: '/w/alpha', open: false, includeArchived: false });
+    expect(tool.prepareArguments(args)).toBe(args);
+  });
+
+  it.each([{ folderPath: null }, { folderPath: 42 }, { folderPath: [] }, { folderPath: {} }])('preserves invalid folderPath arguments %j for schema validation', (args) => {
+    const tool = listTool(spyPorts());
+    expect(tool.prepareArguments(args)).toBe(args);
+    expect(Value.Check(tool.parameters, args)).toBe(false);
+  });
+
   it('searches only the given folderPath when provided, including persona folders', async () => {
     const ports = spyPorts();
     ports.folders.list.mockResolvedValue([makeFolder('/w/alpha'), makePersonaFolder('/w/personas/ada')]);
@@ -453,6 +531,16 @@ describe('pimote_start_session', () => {
     expect(result.structuredContent.firstMessageSent).toBe(false);
   });
 
+  it.each(['', '   '])('does not request first-message dispatch for blank text %j', async (firstMessage) => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha')]);
+
+    const result = (await startTool(ports).execute('c', { folderPath: '/w/alpha', firstMessage }, undefined, undefined, {})) as ToolResult;
+
+    expect(ports.sessions.openSession).toHaveBeenCalledWith('/w/alpha', undefined);
+    expect(result.structuredContent.firstMessageSent).toBe(false);
+  });
+
   it('opens a session in a persona folder', async () => {
     const ports = spyPorts();
     ports.folders.list.mockResolvedValue([makePersonaFolder('/w/personas/ada')]);
@@ -523,6 +611,34 @@ describe('pimote_resume_session', () => {
 });
 
 describe('pimote_create_folder', () => {
+  it.each([
+    { kind: 'code' },
+    { kind: 'code', description: '', memberPaths: [] },
+    { kind: 'persona', description: 'helpful agent' },
+    { kind: 'persona', description: 'helpful agent', memberPaths: [] },
+    { kind: 'code-hub', memberPaths: ['/w/api'] },
+    { kind: 'persona-hub', description: 'crew lead', memberPaths: ['/w/ada'] },
+  ])('accepts conditional creation arguments %j', (params) => {
+    const schema = toolNamed(register(spyPorts()), 'pimote_create_folder').parameters;
+    expect(schema.type).toBe('object');
+    expect(Value.Check(schema, { name: 'new-folder', parentPath: '/tmp', ...params })).toBe(true);
+  });
+
+  it.each([
+    { kind: 'persona' },
+    { kind: 'persona', description: '' },
+    { kind: 'persona', description: ' \n\t ' },
+    { kind: 'code-hub' },
+    { kind: 'code-hub', memberPaths: [] },
+    { kind: 'persona-hub', memberPaths: ['/w/ada'] },
+    { kind: 'persona-hub', description: '', memberPaths: ['/w/ada'] },
+    { kind: 'persona-hub', description: 'crew lead' },
+    { kind: 'persona-hub', description: 'crew lead', memberPaths: [] },
+  ])('rejects incomplete creation arguments in the schema %j', (params) => {
+    const schema = toolNamed(register(spyPorts()), 'pimote_create_folder').parameters;
+    expect(Value.Check(schema, { name: 'new-folder', parentPath: '/tmp', ...params })).toBe(false);
+  });
+
   /** Sandbox with a real scan root so parentPath resolution runs for real. */
   async function makeSandbox() {
     const root = await mkdtemp(join(tmpdir(), 'create-folder-'));
@@ -582,13 +698,39 @@ describe('pimote_create_folder', () => {
     }
   });
 
-  it('routes persona-hub with description and personaText (empty prompt folds to empty text)', async () => {
+  it('routes persona-hub with description and defaults an omitted prompt to empty personaText', async () => {
     const sandbox = await makeSandbox();
     try {
       const result = await sandbox.run({ kind: 'persona-hub', name: 'crew', parentPath: sandbox.root, description: 'crew lead', memberPaths: ['/w/rusty'] });
 
       expect(result.isError ?? false).toBe(false);
       expect(sandbox.ports.folders.createHub).toHaveBeenCalledWith({ name: 'crew', root: sandbox.root, memberPaths: ['/w/rusty'], description: 'crew lead', personaText: '' });
+    } finally {
+      await sandbox.cleanup();
+    }
+  });
+
+  it('passes the persona-hub prompt directly without adding the plain-persona template', async () => {
+    const sandbox = await makeSandbox();
+    try {
+      const prompt = 'You are the crew lead.';
+      const result = await sandbox.run({
+        kind: 'persona-hub',
+        name: 'crew',
+        parentPath: sandbox.root,
+        description: 'crew lead',
+        prompt,
+        memberPaths: ['/w/rusty'],
+      });
+
+      expect(result.isError ?? false).toBe(false);
+      expect(sandbox.ports.folders.createHub).toHaveBeenCalledWith({
+        name: 'crew',
+        root: sandbox.root,
+        memberPaths: ['/w/rusty'],
+        description: 'crew lead',
+        personaText: prompt,
+      });
     } finally {
       await sandbox.cleanup();
     }
@@ -669,6 +811,34 @@ describe('pimote_update_folder', () => {
     expect(ports.folders.update).toHaveBeenCalledWith({ folderPath: '/w/app', archived: false });
   });
 
+  it('preserves false curation flags and omits empty tag edits', async () => {
+    const ports = spyPorts();
+    const result = (await toolNamed(register(ports), 'pimote_update_folder').execute(
+      'c',
+      { folderPath: '/w/app', favorite: false, archived: false, addTags: [], removeTags: [] },
+      undefined,
+      undefined,
+      {},
+    )) as ToolResult;
+
+    expect(ports.folders.update).toHaveBeenCalledWith({ folderPath: '/w/app', favorite: false, archived: false });
+    expect(result.structuredContent).toEqual({ folderPath: '/w/app' });
+  });
+
+  it('rejects empty tag arrays without any curation flags', async () => {
+    const ports = spyPorts();
+    const result = (await toolNamed(register(ports), 'pimote_update_folder').execute(
+      'c',
+      { folderPath: '/w/app', addTags: [], removeTags: [] },
+      undefined,
+      undefined,
+      {},
+    )) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(ports.folders.update).not.toHaveBeenCalled();
+  });
+
   it('rejects an empty patch and surfaces registry validation errors', async () => {
     const ports = spyPorts();
     const tool = toolNamed(register(ports), 'pimote_update_folder');
@@ -713,9 +883,9 @@ describe('pimote_update_hub_members', () => {
     ]);
   });
 
-  it('rejects an empty batch', async () => {
+  it.each([{}, { add: [] }, { remove: [] }, { add: [], remove: [] }])('rejects an omitted or empty membership batch %j', async (batch) => {
     const ports = spyPorts();
-    const result = (await toolNamed(register(ports), 'pimote_update_hub_members').execute('c', { hubPath: '/w/hub' }, undefined, undefined, {})) as ToolResult;
+    const result = (await toolNamed(register(ports), 'pimote_update_hub_members').execute('c', { hubPath: '/w/hub', ...batch }, undefined, undefined, {})) as ToolResult;
 
     expect(result.isError).toBe(true);
     expect(result.structuredContent.error).toContain('nothing to update');
@@ -763,7 +933,9 @@ describe('list tool spill guard', () => {
     expect(spill.rows).toBe(30 - inline.length);
     expect(spill.hint).toContain('jq');
     expect(spill.hint).toContain(spill.file);
-    const lines = (await readFile(spill.file, 'utf8')).trim().split('\n');
+    const contents = await readFile(spill.file, 'utf8');
+    expect(spill).toHaveProperty('bytes', Buffer.byteLength(contents));
+    const lines = contents.trim().split('\n');
     expect(lines).toHaveLength(spill.rows);
     // The remainder continues exactly where the inline prefix stopped.
     expect(JSON.parse(lines[0]).path).toBe(`/w/bulk-${inline.length}`);
@@ -786,6 +958,34 @@ describe('list tool spill guard', () => {
     const lines = (await readFile(view.spill!.file, 'utf8')).trim().split('\n');
     expect(JSON.parse(lines[0]).id).toBe(`s${view.sessions.length}`);
     expect(result.details).toEqual({ totalRows: 60, inlineRows: view.sessions.length, spill: { file: view.spill!.file, rows: view.spill!.rows } });
+  });
+
+  it.each([
+    ['pimote_find_folders', 'folders'],
+    ['pimote_find_sessions', 'sessions'],
+  ])('keeps spill failure warnings out of the full structured payload for %s', async (name, rowsKey) => {
+    const ports = spyPorts();
+    ports.folders.list.mockResolvedValue([makeFolder('/w/alpha'), makeFolder('/w/beta')]);
+    ports.sessions.listDiskSessions.mockImplementation(async (folderPath) => [makeRecord({ id: folderPath })]);
+    const warning = 'Remaining rows could not be saved.';
+    const spill = vi.spyOn(spillModule, 'spillRows').mockImplementationOnce(async (_tool, rows) => ({ rows: rows.slice(0, 1), warning }));
+    try {
+      const tool = toolNamed(register(ports), name);
+      const result = (await tool.execute('c', {}, undefined, undefined, {})) as ToolResult;
+      const view = JSON.parse(result.content[0].text);
+
+      expect(result.isError ?? false).toBe(false);
+      expect(result.structuredContent[rowsKey]).toHaveLength(2);
+      expect(result.structuredContent).not.toHaveProperty('warning');
+      expect(result.structuredContent).not.toHaveProperty('spill');
+      expect(view[rowsKey]).toHaveLength(1);
+      expect(view.warning).toBe(warning);
+      expect(view.spill).toBeUndefined();
+      expect(result.details).toEqual({ totalRows: 2, inlineRows: 1, warning });
+      expect(Value.Check(tool.outputSchema, view)).toBe(true);
+    } finally {
+      spill.mockRestore();
+    }
   });
 
   it('keeps a single oversized row inline with no spill file', async () => {

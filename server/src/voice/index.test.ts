@@ -1,6 +1,8 @@
-import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createVoiceExtension } from './index.js';
+import { Value } from 'typebox/value';
+import { createVoiceExtension, renderInterpreterPrompt } from './index.js';
+import { VOICE_PROMPT_SECTION } from './prompt-section.js';
 import type { IncomingFrame, SpeechmuxClient } from './speechmux-client.js';
 import { VOICE_CALL_STARTED_SENTINEL } from './state-machine.js';
 
@@ -147,9 +149,114 @@ function harness() {
   };
 }
 
+function registeredSpeak(h: ReturnType<typeof harness>) {
+  const tool = vi.mocked(h.pi.registerTool).mock.calls.find(([definition]) => definition.name === 'speak')?.[0];
+  if (!tool) throw new Error('speak was not registered');
+  return tool;
+}
+
+function executeSpeak(h: ReturnType<typeof harness>) {
+  return registeredSpeak(h).execute('speak-call', { text: 'Hello' }, undefined, undefined, {} as ExtensionToolContext);
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe('speak tool contract', () => {
+  it('limits speech to top-level model calls and keeps routing in the voice prompt section', () => {
+    const h = harness();
+    const tool = registeredSpeak(h);
+    expect(h.pi.registerTool).toHaveBeenCalledTimes(1);
+    expect(tool.exposure).toBe('model-only');
+    expect(tool.promptSnippet).not.toMatch(/\bspeak\b|[()]/);
+    expect(tool.promptSnippet!.split(/\s+/).length).toBeGreaterThanOrEqual(5);
+    expect(tool.promptSnippet!.split(/\s+/).length).toBeLessThanOrEqual(15);
+    expect(tool.promptGuidelines ?? []).toEqual([]);
+    expect(tool.description).toContain('call-state acceptance, not confirmed playback');
+    expect(tool.description).toContain('top-level assistant streaming');
+  });
+
+  it('returns a current-state error when no call is active', async () => {
+    const h = harness();
+    const result = await executeSpeak(h);
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({ spoken: false });
+    expect(result.content).toEqual([{ type: 'text', text: 'No active voice call. Reply in text until another call starts.' }]);
+    expect(Value.Check(registeredSpeak(h).outputSchema!, result.structuredContent)).toBe(true);
+    expect(h.client.send).not.toHaveBeenCalled();
+  });
+
+  it('accepts an activating call without confirming or producing audio', async () => {
+    const h = harness();
+    const modelSetup = deferred();
+    vi.mocked(h.pi.setModel).mockImplementation(() => modelSetup.promise.then(() => true));
+    await h.activate();
+    const result = await executeSpeak(h);
+    expect(result.structuredContent).toEqual({ spoken: true });
+    expect(result.isError).not.toBe(true);
+    expect(h.client.send).not.toHaveBeenCalled();
+    h.deactivate();
+    modelSetup.resolve();
+    await flush();
+  });
+
+  it('streams audio from top-level assistant events rather than tool execution', async () => {
+    const h = harness();
+    await h.ready();
+    vi.mocked(h.client.send).mockClear();
+    const result = await executeSpeak(h);
+    expect(result.structuredContent).toEqual({ spoken: true });
+    expect(result.isError).not.toBe(true);
+    expect(Value.Check(registeredSpeak(h).outputSchema!, result.structuredContent)).toBe(true);
+    expect(h.client.send).not.toHaveBeenCalled();
+
+    await h.emit('message_start', { message: { role: 'assistant' } });
+    await h.emit('message_update', {
+      assistantMessageEvent: {
+        type: 'toolcall_end',
+        contentIndex: 0,
+        toolCall: { id: 'speak-call', name: 'speak', arguments: { text: 'Hello' } },
+      },
+    });
+    await flush();
+    expect(vi.mocked(h.client.send).mock.calls.map(([frame]) => frame)).toEqual([
+      { type: 'token', text: 'Hello', speak_id: 'speak-call' },
+      { type: 'end', speak_id: 'speak-call' },
+    ]);
+    h.deactivate();
+  });
+
+  it('accepts speech again when another call starts in the same session', async () => {
+    const h = harness();
+    await h.ready();
+    expect((await executeSpeak(h)).structuredContent).toEqual({ spoken: true });
+    h.deactivate();
+    await flush();
+    expect((await executeSpeak(h)).structuredContent).toEqual({ spoken: false });
+    await h.activate();
+    expect((await executeSpeak(h)).structuredContent).toEqual({ spoken: true });
+    h.deactivate();
+  });
+
+  it('removes voice routing when the call ends without changing other prompt sections', async () => {
+    const h = harness();
+    const sections: Record<string, string> = { other: 'base instructions' };
+    const event = { systemPromptOptions: { sections } };
+    await h.emit('before_agent_start', event);
+    expect(sections).toEqual({ other: 'base instructions' });
+    await h.activate();
+    await h.emit('before_agent_start', event);
+    expect(sections).toEqual({
+      other: 'base instructions',
+      [VOICE_PROMPT_SECTION]: renderInterpreterPrompt({ workerModel: 'test/worker' }),
+    });
+    h.deactivate();
+    await flush();
+    await h.emit('before_agent_start', event);
+    expect(sections).toEqual({ other: 'base instructions' });
+  });
 });
 
 describe('voice-owned utterance submission', () => {

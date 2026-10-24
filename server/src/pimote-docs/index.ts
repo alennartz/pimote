@@ -24,7 +24,7 @@ export const PIMOTE_DOC_FILES: ReadonlyArray<{ path: string; purpose: string }> 
   },
   {
     path: 'docs/shipped/static-reports.md',
-    purpose: 'Design guide for HTML reports hosted with pimote_static_host. Read it before you author a report bundle.',
+    purpose: 'Layout and visual design for HTML reports hosted with pimote_static_host.',
   },
   {
     path: 'packages/sdk/README.md',

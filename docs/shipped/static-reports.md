@@ -1,14 +1,6 @@
 # Static report design guide
 
-Design guide for HTML report bundles hosted with `pimote_static_host` and opened in the user's browser, on a phone or a desktop. Read it before you author any report-style bundle. Follow it so the result reads as a designed document, not a dumped markdown page.
-
-## When NOT to build one
-
-Short answers belong in the chat as normal markdown. These include a sentence, a paragraph, a quick snippet, or a yes or no with brief justification. The trigger for a report is length and structure, roughly 300+ words or multiple sections. The topic never triggers it.
-
-## The report replaces the long answer
-
-Keep the chat message to a one-to-three sentence summary of the key takeaways plus the hosted card. Never paste the full report content into the chat as well.
+Design HTML reports for comfortable browser reading on phones and desktops.
 
 ## Self-contained rendering
 
@@ -39,8 +31,4 @@ Do not merely shrink a desktop page. Adapt the layout and controls to the availa
 
 On narrow screens, stack side-by-side layouts. Collapse or simplify navigation. Make controls easy to tap. Reflow dense content, such as tables and code, so it stays usable. On wide screens, use the space for readable content widths and helpful side-by-side comparisons.
 
-Before you host, check both widths. Confirm there is no horizontal page scroll, no text below 14px, and no essential action or information hidden behind hover.
-
-## Hosting
-
-Write the bundle to a folder. Then call `pimote_static_host` with the folder's absolute path, a short slug, and a title. Call `pimote_static_host_remove` when a bundle is no longer needed.
+Check the report at both widths. Confirm there is no horizontal page scroll and no text below 14px. Keep essential actions and information available without hover.

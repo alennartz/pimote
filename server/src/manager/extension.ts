@@ -1,7 +1,7 @@
 import type { ExtensionFactory, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { realpath } from 'node:fs/promises';
 import { sep } from 'node:path';
-import { Type } from 'typebox';
+import { Type, type Static } from 'typebox';
 import { enrichActiveSessionCounts, isValidFolderName } from '../folder-registry.js';
 import { errorToolResult, jsonToolResult, type JsonToolResult } from '../tool-result.js';
 import { spillRows } from './spill.js';
@@ -31,9 +31,9 @@ import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext, Sessi
  *   a new session.
  *
  * Reads carry three cross-cutting policies:
- * - Spill guard (DR-071): list results past a 16KB serialized budget keep
- *   their first rows inline; the rest spills to a JSONL file the payload
- *   points at with a jq/grep hint (`spill.ts`).
+ * - Spill guard (DR-071): list results target a 16KB serialized-row prefix,
+ *   retaining an oversized first row. The remainder spills to a JSONL file
+ *   with a jq/grep hint, or a warning reports unavailable overflow.
  * - Interruption (DR-072): list tools race pi's turn-abort signal against
  *   the ports — callers reject at once; shared walks and cache fills always
  *   complete for the next reader. Mutations complete once started.
@@ -149,7 +149,10 @@ function applyFolderDefaults(folder: FolderInfo): FolderInfo {
 const SessionRowSchema = Type.Object({
   id: Type.String(),
   name: Type.Optional(Type.String()),
-  firstMessage: Type.String(),
+  firstMessage: Type.String({
+    maxLength: FIRST_MESSAGE_EXCERPT_LENGTH + 1,
+    description: `Whitespace-collapsed first-message excerpt, at most ${FIRST_MESSAGE_EXCERPT_LENGTH} characters plus an ellipsis when shortened.`,
+  }),
   modified: Type.String(),
   folderPath: Type.String(),
   open: Type.Boolean(),
@@ -181,6 +184,7 @@ interface SessionRow {
 const SpillInfoSchema = Type.Object({
   file: Type.String({ description: 'Absolute path of the spill file holding the remaining rows (one JSON object per line).' }),
   rows: Type.Integer({ description: 'Number of rows in the spill file.' }),
+  bytes: Type.Integer({ minimum: 0, description: 'UTF-8 byte size of the spill file.' }),
   hint: Type.String({ description: 'How to search the spill file with jq/grep.' }),
 });
 
@@ -261,25 +265,39 @@ function filterByQuery(rows: FolderInfo[], query: string): FolderInfo[] {
   return rows.filter((row) => [row.persona?.name ?? row.name, row.name, row.path, ...row.tags].some((text) => text.toLowerCase().includes(query)));
 }
 
+const FindSessionsParametersSchema = Type.Object({
+  query: Type.Optional(Type.String({ description: 'Case-insensitive substring of session name or first message, default no text filter, with blank equivalent to omission.' })),
+  folderPath: Type.Optional(Type.String({ description: 'Canonical path of a known code or persona folder, default all known folders, with blank equivalent to omission.' })),
+  open: Type.Optional(Type.Boolean({ default: false, description: 'true keeps only sessions held by live slots, false applies no open-state filter, default false.' })),
+  includeArchived: Type.Optional(Type.Boolean({ default: false, description: 'Include archived sessions, default false.' })),
+});
+
 export function createManagerExtension(context: ManagerToolContext): ExtensionFactory {
   return (pi: ExtensionAPI) => {
     pi.registerTool({
       name: 'pimote_find_folders',
       label: 'Find folders',
-      description: 'Find known folders — code, persona, and hub — by query across name, path, tags, and persona name, with curation state and live session counts.',
-      promptGuidelines: ['Filter pimote_find_folders with query, nature, and hub instead of scanning full listings.'],
+      exposure: 'direct',
+      promptSnippet: 'Locate folders and hub members by their identity or curation.',
+      promptGuidelines: ['When the target is known, narrow pimote_find_folders or pimote_find_sessions instead of requesting broad listings.'],
+      description:
+        'Returns folders with known identities, curation, git facts, hub membership, and live session counts. ' +
+        'It keeps a model-facing prefix and adds spill for saved JSONL rows, or warning if saving fails. ' +
+        'The serialized-row prefix targets 16KB but retains an oversized first row, while structuredContent always carries every row.',
       parameters: Type.Object({
         query: Type.Optional(
-          Type.String({
-            description: 'Case-insensitive substring matched against folder name, path, tags, and persona name. ' + 'Session content search lives in pimote_find_sessions.',
-          }),
+          Type.String({ description: 'Case-insensitive substring of folder name, path, tags, or persona name, default no text filter, with blank equivalent to omission.' }),
         ),
-        nature: Type.Optional(Type.Union([Type.Literal('code'), Type.Literal('persona')], { description: 'Restrict rows to this base nature (hub rows keep their base nature).' })),
-        hub: Type.Optional(Type.Boolean({ description: 'true: only hub rows. false: exclude hub rows. Omit: both.' })),
-        includeArchived: Type.Optional(Type.Boolean({ description: 'true: include folders flagged archived. Default false.' })),
+        nature: Type.Optional(Type.Union([Type.Literal('code'), Type.Literal('persona')], { description: 'Base nature filter for all folder shapes, default code and persona.' })),
+        hub: Type.Optional(Type.Boolean({ description: 'true selects hubs, false excludes hubs, omission includes both.' })),
+        includeArchived: Type.Optional(Type.Boolean({ default: false, description: 'Include archived folders, default false.' })),
       }),
       annotations: { readOnlyHint: true },
-      outputSchema: Type.Object({ folders: Type.Array(FolderInfoSchema), spill: Type.Optional(SpillInfoSchema) }),
+      outputSchema: Type.Object({
+        folders: Type.Array(FolderInfoSchema),
+        spill: Type.Optional(SpillInfoSchema),
+        warning: Type.Optional(Type.String({ description: 'Model-facing warning when overflow could not be saved.' })),
+      }),
       execute: async (_callId, params, signal): Promise<JsonToolResult> => {
         signal?.throwIfAborted();
         let folders: FolderInfo[];
@@ -308,11 +326,12 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         return jsonToolResult(
           { folders: rows },
           {
-            modelView: { folders: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) },
+            modelView: { folders: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}), ...(outcome.warning ? { warning: outcome.warning } : {}) },
             details: {
               totalRows: rows.length,
               inlineRows: outcome.rows.length,
               ...(outcome.spill ? { spill: { file: outcome.spill.file, rows: outcome.spill.rows } } : {}),
+              ...(outcome.warning ? { warning: outcome.warning } : {}),
             },
           },
         );
@@ -322,19 +341,26 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_find_sessions',
       label: 'Find sessions',
-      description: 'Find sessions across all folders, open and closed, newest first, filtered by query, folder, open, and archived state.',
-      promptGuidelines: [
-        'Prefer filtered pimote_find_sessions calls: pass folderPath and query first; use open: true for what is running now.',
-        'Pass includeArchived only when you need archived history.',
-      ],
-      parameters: Type.Object({
-        query: Type.Optional(Type.String({ description: 'Case-insensitive substring matched against session name and first message. Omit to list all.' })),
-        folderPath: Type.Optional(Type.String({ description: 'Restrict the view to this folder path (must be a known folder — code or persona).' })),
-        open: Type.Optional(Type.Boolean({ description: 'True: keep only sessions a live slot currently holds.' })),
-        includeArchived: Type.Optional(Type.Boolean({ description: 'true: include sessions flagged archived. Default false.' })),
-      }),
+      exposure: 'direct',
+      promptSnippet: 'Locate saved conversations or inspect currently open session activity.',
+      promptGuidelines: ['For conversation text or session activity, use pimote_find_sessions instead of pimote_find_folders.'],
+      description:
+        'Returns sessions from known folders, combining saved history and live state, sorted newest first. ' +
+        'It keeps a model-facing prefix and adds spill for saved JSONL rows, or warning if saving fails. ' +
+        'The serialized-row prefix targets 16KB but retains an oversized first row, while structuredContent always carries every row.',
+      parameters: FindSessionsParametersSchema,
+      prepareArguments: (args) => {
+        const params = args as Static<typeof FindSessionsParametersSchema>;
+        if (typeof params?.folderPath !== 'string' || params.folderPath.trim() !== '') return params;
+        const { folderPath: _folderPath, ...filters } = params;
+        return filters;
+      },
       annotations: { readOnlyHint: true },
-      outputSchema: Type.Object({ sessions: Type.Array(SessionRowSchema), spill: Type.Optional(SpillInfoSchema) }),
+      outputSchema: Type.Object({
+        sessions: Type.Array(SessionRowSchema),
+        spill: Type.Optional(SpillInfoSchema),
+        warning: Type.Optional(Type.String({ description: 'Model-facing warning when overflow could not be saved.' })),
+      }),
       execute: async (_callId, params, signal): Promise<JsonToolResult> => {
         signal?.throwIfAborted();
         const query = params.query?.trim().toLowerCase() || undefined;
@@ -395,11 +421,12 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         return jsonToolResult(
           { sessions: rows },
           {
-            modelView: { sessions: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}) },
+            modelView: { sessions: outcome.rows, ...(outcome.spill ? { spill: outcome.spill } : {}), ...(outcome.warning ? { warning: outcome.warning } : {}) },
             details: {
               totalRows: rows.length,
               inlineRows: outcome.rows.length,
               ...(outcome.spill ? { spill: { file: outcome.spill.file, rows: outcome.spill.rows } } : {}),
+              ...(outcome.warning ? { warning: outcome.warning } : {}),
             },
           },
         );
@@ -409,10 +436,14 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_start_session',
       label: 'Start session',
-      description: 'Start a new agent session in a known folder, optionally tasked with a first message that runs in the background.',
+      exposure: 'direct',
+      promptSnippet: 'Begin a new conversation instead of reopening saved history.',
+      description:
+        'Creates a new session in a known folder and suggests it to manager observers, returning sessionId, folderPath, and firstMessageSent. ' +
+        'firstMessageSent confirms a nonblank message dispatch was requested, not that the background run completed.',
       parameters: Type.Object({
-        folderPath: Type.String({ description: 'Absolute canonical path of the folder to start the session in (must be a known folder).' }),
-        firstMessage: Type.Optional(Type.String({ description: 'Optional first user message, sent to the new session right away.' })),
+        folderPath: Type.String({ description: 'Absolute canonical path of the known folder for the new session.' }),
+        firstMessage: Type.Optional(Type.String({ description: 'Initial user message dispatched in the background, omitted or blank for no dispatch.' })),
       }),
       outputSchema: Type.Object({
         sessionId: Type.String(),
@@ -435,11 +466,14 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_resume_session',
       label: 'Resume session',
+      exposure: 'direct',
+      promptSnippet: 'Reopen a saved conversation while preserving its history and identity.',
+      promptGuidelines: ['For an existing conversation, use pimote_resume_session instead of pimote_start_session.'],
       description:
-        'Resume one existing session by id. If the record is archived, clear its archive flag and reopen the original persisted session. Never create a new session; use pimote_find_sessions with includeArchived to find archived ids.',
-      promptGuidelines: ['Use this for an existing session id; use pimote_start_session only when a new conversation is wanted.'],
+        'Reopens the original saved session, clears its archive flag when needed, and suggests found sessions to manager observers. ' +
+        'Returns sessionId, folderPath when found, and outcome: resumed, already_open, or not_found, without creating a replacement.',
       parameters: Type.Object({
-        sessionId: Type.String({ description: 'The existing session id to resume. This operation preserves the original session and does not create a replacement.' }),
+        sessionId: Type.String({ description: 'Existing session identifier to resume.' }),
       }),
       outputSchema: SessionResumeOutcomeSchema,
       execute: async (_callId, params, _signal, _onUpdate, ctx): Promise<JsonToolResult> => {
@@ -453,9 +487,13 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_archive_sessions',
       label: 'Archive sessions',
-      description: 'Archive sessions by id, evicting any open session, and return a per-id outcome.',
+      exposure: 'direct',
+      promptSnippet: 'Hide unwanted conversations without deleting their saved history.',
+      description:
+        'Archives saved records without deletion and closes any live runtimes and their observers. ' +
+        'Returns results with sessionId and outcome for each request: archived, open_slot_evicted, or not_found.',
       parameters: Type.Object({
-        sessionIds: Type.Array(Type.String(), { minItems: 1, description: 'Session ids to archive.' }),
+        sessionIds: Type.Array(Type.String(), { minItems: 1, description: 'One or more session identifiers to archive.' }),
       }),
       outputSchema: Type.Object({
         results: Type.Array(SessionArchiveOutcomeSchema),
@@ -466,18 +504,49 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_create_folder',
       label: 'Create folder',
-      description: 'Create one of the four folder shapes — code, persona, code-hub, persona-hub — at a chosen path inside a scan root.',
-      parameters: Type.Object({
-        kind: Type.Union([Type.Literal('code'), Type.Literal('persona'), Type.Literal('code-hub'), Type.Literal('persona-hub')], {
-          description: 'Which of the four wizard shapes to create.',
-        }),
-        name: Type.String({ description: 'New folder basename — one nonempty segment, not "." or "..".' }),
-        parentPath: Type.String({ description: 'Absolute path of the existing folder to create under; must be inside a scan root (a parent equal to a scan root is valid).' }),
-        memberPaths: Type.Optional(Type.Array(Type.String(), { description: 'Hub kinds only: canonical paths of discovered member folders (any nature).' })),
-        description: Type.Optional(Type.String({ description: 'Persona kinds only (required for them): written to the AGENTS.md front matter.' })),
-        prompt: Type.Optional(Type.String({ description: 'Persona kinds only: caller persona prompt, folded into the shipped template.' })),
-        body: Type.Optional(Type.String({ description: 'Code kinds only: seeded AGENTS.md body; a stub is written even when empty.' })),
-      }),
+      exposure: 'direct',
+      promptSnippet: 'Build a code folder, persona, or hub for new work.',
+      promptGuidelines: ['For hub creation or membership changes, use pimote_find_folders before pimote_create_folder or pimote_update_hub_members.'],
+      description:
+        'Creates the selected folder kind, returning canonical folderPath, invalidating discovery, and broadcasting the change. ' +
+        'It seeds AGENTS.md, initializes code folders and hubs with git, and adds memory.md for persona kinds. ' +
+        'Hub kinds also create member symlinks and a member .gitignore, leaving member directories unchanged.',
+      parameters: Type.Object(
+        {
+          kind: Type.Union([Type.Literal('code'), Type.Literal('persona'), Type.Literal('code-hub'), Type.Literal('persona-hub')], {
+            description: 'Folder shape to create.',
+          }),
+          name: Type.String({ description: 'New folder basename: one nonempty segment other than "." or "..", with no existing destination.' }),
+          parentPath: Type.String({
+            description: 'Absolute path of an existing scan root or skipped folder within one, outside included folders and their descendants.',
+          }),
+          memberPaths: Type.Optional(
+            Type.Array(Type.String(), {
+              description: 'Hub-only canonical paths of known code or persona folders, required and nonempty, with unique basenames and no containment with the hub.',
+            }),
+          ),
+          description: Type.Optional(Type.String({ description: 'Persona-only nonblank description written to AGENTS.md front matter, required for both persona kinds.' })),
+          prompt: Type.Optional(
+            Type.String({
+              description:
+                'Persona-only prompt, prepended to the shipped template for persona folders and used directly for persona hubs, with omission or blank adding no caller text.',
+            }),
+          ),
+          body: Type.Optional(Type.String({ description: 'Code-only AGENTS.md text, default empty, with a stub written even when omitted or blank.' })),
+        },
+        {
+          allOf: [
+            {
+              if: Type.Object({ kind: Type.Union([Type.Literal('persona'), Type.Literal('persona-hub')]) }),
+              then: Type.Object({ description: Type.String({ pattern: '\\S' }) }),
+            },
+            {
+              if: Type.Object({ kind: Type.Union([Type.Literal('code-hub'), Type.Literal('persona-hub')]) }),
+              then: Type.Object({ memberPaths: Type.Array(Type.String(), { minItems: 1 }) }),
+            },
+          ],
+        },
+      ),
       outputSchema: FolderPathResultSchema,
       execute: async (_callId, params): Promise<JsonToolResult> => {
         const kind: CreateFolderKind = params.kind;
@@ -551,15 +620,25 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_update_folder',
       label: 'Update folder',
-      description: 'Apply curation — favorite, archived, tags — to one folder by canonical path.',
+      exposure: 'direct',
+      promptSnippet: 'Change folder favorites, archive state, or tags without moving folders.',
+      description:
+        'Persists folder curation and broadcasts the change, returning folderPath without moving or deleting the directory. ' +
+        'Tag removals follow additions, and patches without flags or nonempty tag arrays return an error.',
       parameters: Type.Object({
-        folderPath: Type.String({ description: 'Canonical path of the folder to curate.' }),
-        favorite: Type.Optional(Type.Boolean()),
+        folderPath: Type.String({ description: 'Canonical path of the known folder to curate.' }),
+        favorite: Type.Optional(Type.Boolean({ description: 'Favorite flag: true marks the folder, false clears the flag, and omission preserves its current value.' })),
         archived: Type.Optional(
-          Type.Boolean({ description: 'true archives the row (hidden from the default dashboard view); false restores it. The folder stays on disk either way.' }),
+          Type.Boolean({ description: 'Archive flag: true hides the folder from default listings, false restores it, and omission preserves its current value.' }),
         ),
-        addTags: Type.Optional(Type.Array(Type.String(), { description: 'Tags to add.' })),
-        removeTags: Type.Optional(Type.Array(Type.String(), { description: 'User tags to remove.' })),
+        addTags: Type.Optional(
+          Type.Array(Type.String(), { description: 'User tags to add, trimmed with blanks ignored, default none, with an empty array leaving current tags unchanged.' }),
+        ),
+        removeTags: Type.Optional(
+          Type.Array(Type.String(), {
+            description: 'Exact user tags to remove, not source or inherited tags, default none, with an empty array leaving current tags unchanged.',
+          }),
+        ),
       }),
       outputSchema: FolderPathResultSchema,
       execute: async (_callId, params): Promise<JsonToolResult> => {
@@ -585,11 +664,22 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
     pi.registerTool({
       name: 'pimote_update_hub_members',
       label: 'Update hub members',
-      description: 'Add and remove hub members in one batched call, returning a per-member outcome.',
+      exposure: 'direct',
+      promptSnippet: 'Change hub membership while keeping member folders in their homes.',
+      description:
+        "Removes members before adding members, updating hub symlinks, managed AGENTS.md lines, and the hub's existing .gitignore without changing member directories. " +
+        'Returns independent results with memberPath, action, outcome (added, removed, or error), and error text when present, broadcasting each successful change. ' +
+        'A batch with no additions or removals returns an error.',
       parameters: Type.Object({
-        hubPath: Type.String({ description: 'Canonical path of the hub folder.' }),
-        add: Type.Optional(Type.Array(Type.String(), { description: 'Canonical paths of discovered folders to add as members.' })),
-        remove: Type.Optional(Type.Array(Type.String(), { description: 'Canonical member paths to remove.' })),
+        hubPath: Type.String({ description: 'Canonical path of a known hub folder.' }),
+        add: Type.Optional(
+          Type.Array(Type.String(), {
+            description: 'Canonical paths of known folders to add, with no hub containment or basename collisions, default none, with empty arrays adding nothing.',
+          }),
+        ),
+        remove: Type.Optional(
+          Type.Array(Type.String(), { description: 'Canonical member paths to remove, including missing targets, default none, with an empty array removing nothing.' }),
+        ),
       }),
       outputSchema: Type.Object({ results: Type.Array(MemberOutcomeSchema) }),
       execute: async (_callId, params): Promise<JsonToolResult> => {

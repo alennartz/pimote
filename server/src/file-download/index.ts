@@ -3,7 +3,13 @@ import { Type } from 'typebox';
 import type { DownloadManager, DownloadUpdateEvent } from './manager.js';
 import { executeCancelFileSendTool, executeSendFileTool, CancelFileSendToolOutputSchema, SendFileToolOutputSchema, type FileDownloadToolContext } from './tools.js';
 import { jsonToolResult } from '../tool-result.js';
-import { FILE_DOWNLOAD_TOOL_DESCRIPTION } from './prompt.js';
+import {
+  FILE_DOWNLOAD_TOOL_DESCRIPTION,
+  FILE_DOWNLOAD_TOOL_GUIDELINES,
+  FILE_DOWNLOAD_TOOL_SNIPPET,
+  CANCEL_FILE_SEND_TOOL_DESCRIPTION,
+  CANCEL_FILE_SEND_TOOL_SNIPPET,
+} from './prompt.js';
 
 export interface CreateFileDownloadExtensionOptions {
   manager: DownloadManager;
@@ -36,8 +42,11 @@ export function createFileDownloadExtension(options: CreateFileDownloadExtension
       name: 'pimote_send_file',
       label: 'Offer file download',
       description: FILE_DOWNLOAD_TOOL_DESCRIPTION,
+      promptSnippet: FILE_DOWNLOAD_TOOL_SNIPPET,
+      promptGuidelines: FILE_DOWNLOAD_TOOL_GUIDELINES,
+      exposure: 'direct',
       parameters: Type.Object({
-        path: Type.String({ description: 'Path to the file, relative to the current working directory or absolute; it must be readable by the server.' }),
+        path: Type.String({ description: 'Regular-file path, absolute or relative to the current working directory.' }),
       }),
       outputSchema: SendFileToolOutputSchema,
       execute: async (_callId, input, _signal, _onUpdate, ctx) => {
@@ -49,9 +58,12 @@ export function createFileDownloadExtension(options: CreateFileDownloadExtension
     pi.registerTool({
       name: 'pimote_cancel_file_send',
       label: 'Cancel offered file download',
-      description: 'Cancel a pending file download offer by its registration id before the user downloads it.',
+      description: CANCEL_FILE_SEND_TOOL_DESCRIPTION,
+      promptSnippet: CANCEL_FILE_SEND_TOOL_SNIPPET,
+      promptGuidelines: [],
+      exposure: 'direct',
       parameters: Type.Object({
-        id: Type.String({ description: 'Opaque id returned by pimote_send_file.' }),
+        id: Type.String({ description: 'Opaque offer id returned by pimote_send_file.' }),
       }),
       annotations: { idempotentHint: true },
       outputSchema: CancelFileSendToolOutputSchema,

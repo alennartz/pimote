@@ -6,7 +6,13 @@ import type { StaticHostRegistry } from './registry.js';
 import type { StaticHostStore } from './store.js';
 import { executeRegisterTool, executeRemoveTool, resolveSlugCollision, RegisterToolOutputSchema, RemoveToolOutputSchema, type ToolDeps } from './tools.js';
 import type { StaticHostStoreEntry } from './store.js';
-import { STATIC_HOST_TOOL_DESCRIPTION } from './prompt.js';
+import {
+  STATIC_HOST_TOOL_DESCRIPTION,
+  STATIC_HOST_TOOL_GUIDELINES,
+  STATIC_HOST_TOOL_SNIPPET,
+  STATIC_HOST_REMOVE_TOOL_DESCRIPTION,
+  STATIC_HOST_REMOVE_TOOL_SNIPPET,
+} from './prompt.js';
 
 export { InMemoryStaticHostRegistry } from './registry.js';
 export type { StaticHostRegistry, StaticHostRegistration, StaticHostCardMetadata } from './registry.js';
@@ -86,14 +92,22 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
       name: 'pimote_static_host',
       label: 'Host static bundle',
       description: STATIC_HOST_TOOL_DESCRIPTION,
+      promptSnippet: STATIC_HOST_TOOL_SNIPPET,
+      promptGuidelines: STATIC_HOST_TOOL_GUIDELINES,
+      exposure: 'direct',
       parameters: Type.Object({
-        slug: Type.String({ description: 'Short URL slug, lowercase [a-z0-9-]+ with no leading/trailing dash.' }),
-        folder: Type.String({ description: 'Absolute path to the folder containing the bundle (must contain index.html).' }),
+        slug: Type.String({
+          description: 'Requested URL identifier of 1–64 characters, using lowercase letters, digits, and single separating hyphens.',
+          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$',
+          minLength: 1,
+          maxLength: 64,
+        }),
+        folder: Type.String({ description: 'Absolute path to a bundle directory containing index.html.' }),
         title: Type.String({ description: 'Title displayed on the panel card.' }),
-        tag: Type.Optional(Type.String({ description: 'Optional short tag shown next to the title.' })),
+        tag: Type.Optional(Type.String({ description: 'Short tag beside the title, with no tag displayed when omitted or empty.' })),
         color: Type.Optional(
           Type.Union([Type.Literal('accent'), Type.Literal('success'), Type.Literal('warning'), Type.Literal('error'), Type.Literal('muted')], {
-            description: 'Optional card color.',
+            description: 'Card border color override, with no override and an ordinary border when omitted.',
           }),
         ),
       }),
@@ -108,9 +122,12 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
     pi.registerTool({
       name: 'pimote_static_host_remove',
       label: 'Remove hosted bundle',
-      description: 'Unregister a previously hosted static bundle by slug.',
+      description: STATIC_HOST_REMOVE_TOOL_DESCRIPTION,
+      promptSnippet: STATIC_HOST_REMOVE_TOOL_SNIPPET,
+      promptGuidelines: [],
+      exposure: 'direct',
       parameters: Type.Object({
-        slug: Type.String({ description: 'Slug of the bundle to remove.' }),
+        slug: Type.String({ description: 'Resolved slug returned by pimote_static_host.' }),
       }),
       annotations: { destructiveHint: true },
       outputSchema: RemoveToolOutputSchema,

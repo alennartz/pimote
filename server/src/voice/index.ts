@@ -342,8 +342,10 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     pi.registerTool({
       name: 'speak',
       label: 'Speak',
-      description: 'Speak text to the user via text-to-speech. This is the only way to produce audible output during a voice call. Keep messages short and TTS-friendly.',
-      promptSnippet: 'speak(text) — speak text to the user (voice-mode only).',
+      description:
+        'Returns {spoken}, indicating active or activating call-state acceptance, not confirmed playback. Audio comes from top-level assistant streaming rather than execution. Without a call, returns spoken: false with an error.',
+      promptSnippet: 'Deliver spoken replies while a voice call is in progress.',
+      exposure: 'model-only',
       parameters: Type.Object({
         text: Type.String({ description: 'The text to speak to the user.' }),
       }),
@@ -356,7 +358,7 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
           content: [
             {
               type: 'text',
-              text: 'Voice call has ended. The user is now in text mode — do NOT call speak() again. Reply with normal assistant text. Any further speak() calls in this session will be rejected.',
+              text: 'No active voice call. Reply in text until another call starts.',
             },
           ],
           details: undefined,

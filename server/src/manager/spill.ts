@@ -1,3 +1,4 @@
+import { truncateTail } from '@earendil-works/pi-coding-agent';
 import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PIMOTE_TOOL_SPILL_DIR } from '../paths.js';
@@ -13,10 +14,7 @@ import { PIMOTE_TOOL_SPILL_DIR } from '../paths.js';
  * are the wrong unit.
  */
 
-/** Inline budget: 16KB of serialized rows (~4k tokens). Above it, the guard
- *  spills. Sits below pi's 50KB tool-output ceiling and above every normal
- *  call: the default session page (~7KB) and today's full folder listing
- *  (~10KB) stay inline; a limit=100 session query (~41KB) spills. */
+/** Target inline budget for serialized rows. An oversized first row stays inline. */
 export const SPILL_INLINE_BYTES = 16 * 1024;
 
 /** Spill files older than this are pruned (best-effort) on the next spill. */
@@ -28,6 +26,8 @@ export interface SpillInfo {
   file: string;
   /** Rows in the spill file. */
   rows: number;
+  /** UTF-8 bytes in the spill file. */
+  bytes: number;
   /** Instruction for searching the file with CLI tools. */
   hint: string;
 }
@@ -37,6 +37,7 @@ export interface SpillInfo {
 export interface SpillOutcome<T> {
   rows: T[];
   spill?: SpillInfo;
+  warning?: string;
 }
 
 /** Pack rows under the inline budget and spill the rest to a JSONL file.
@@ -67,8 +68,20 @@ export async function spillRows<T>(tool: string, rows: readonly T[], signal?: Ab
   const spilled = serialized.slice(cut);
   const file = join(PIMOTE_TOOL_SPILL_DIR, `${tool}-${stamp()}.jsonl`);
   signal?.throwIfAborted();
-  await mkdir(PIMOTE_TOOL_SPILL_DIR, { recursive: true });
-  await writeFile(file, `${spilled.join('\n')}\n`);
+  const contents = `${spilled.join('\n')}\n`;
+  const bytes = Buffer.byteLength(contents);
+  try {
+    await mkdir(PIMOTE_TOOL_SPILL_DIR, { recursive: true });
+    await writeFile(file, contents);
+  } catch (error) {
+    signal?.throwIfAborted();
+    await unlink(file).catch(() => {});
+    const reason = truncateTail(error instanceof Error ? error.message : String(error), { maxLines: 3, maxBytes: 512 });
+    return {
+      rows: rows.slice(0, cut),
+      warning: `Full output is unavailable because the spill file could not be saved: ${reason.content}${reason.truncated ? ' (error truncated)' : ''}. ${spilled.length} rows are omitted from this view. Use tighter filters to retrieve them.`,
+    };
+  }
   await pruneOldSpills();
 
   return {
@@ -76,10 +89,11 @@ export async function spillRows<T>(tool: string, rows: readonly T[], signal?: Ab
     spill: {
       file,
       rows: spilled.length,
+      bytes,
       hint:
-        `The result exceeded ${SPILL_INLINE_BYTES} bytes, so ${spilled.length} of ${rows.length} rows spilled to ${file} ` +
-        `(JSONL, one row per line, same order). Search it with jq or grep — e.g. ` +
-        `jq -c 'select(.name // .id | test("PATTERN"; "i"))' ${file} — instead of re-calling this tool with a larger limit.`,
+        `${spilled.length} of ${rows.length} rows were saved to ${file} (${bytes} bytes, ${spilled.length} lines). ` +
+        `The file contains JSONL rows in result order. Search it with jq or grep, for example: ` +
+        `jq -c 'select(.name // .id | test("PATTERN"; "i"))' ${file}.`,
     },
   };
 }

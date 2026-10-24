@@ -1,19 +1,24 @@
-// Always-on description for `pimote_static_host`. Keep the long-answer
-// admonition here so it can influence whether the tool is called; defer report
-// design and layout instructions to `docs/shipped/static-reports.md`, listed in
-// the `pimote-docs` system-prompt section.
+export const STATIC_HOST_TOOL_SNIPPET = 'Publish HTML reports for browser reading instead of chat.';
 
-export const STATIC_HOST_TOOL_DESCRIPTION: string = [
-  "Host a static HTML/asset bundle from a local folder so the user can view it in their browser. Returns a URL and creates a tappable card in the user's session.",
-  '',
-  '**Use this by default for long answers; do not ask permission first.** If the answer you are about to give is roughly 300+ words, spans more than a few paragraphs, or needs headings or sections, do not deliver it as a long markdown chat response: build and host an HTML report instead. Also use it for information that benefits from visual layout or interaction, such as comparisons, charts, diffs, code walkthroughs, or navigable data.',
-  '',
-  'Keep the chat reply to a short summary plus the card. The report replaces the long answer; do not paste a full copy into chat. Short answers stay in chat.',
-  '',
-  'Before authoring a report bundle, read the static report design guide listed in the `<pimote-docs>` section of your system prompt.',
-  '',
-  '**No secrets.** Bundle files are served verbatim. Do not include API keys, tokens, credentials, or calls to services requiring authentication.',
-  '',
-  '**Workflow.** Create a folder containing at least `index.html`, then call this tool with its absolute path, a short lowercase slug, and a card title. The user opens the hosted report from the session card.',
-  '**Live serving.** Pimote serves files directly from the registered folder. Changes to source files appear at the hosted URL without rehosting the bundle.',
-].join('\n');
+export const STATIC_HOST_TOOL_GUIDELINES = [
+  'For answers of roughly 300+ words, several paragraphs, or multiple sections, use pimote_static_host instead of long chat.',
+  'For visual or interactive answers, including compact reports, use pimote_static_host instead of chat.',
+  'For brief, unstructured text answers, use chat instead of pimote_static_host.',
+  'For reports routed to pimote_static_host, proceed without a separate permission request.',
+  'After pimote_static_host publishes a report, keep chat to a one-to-three-sentence summary plus the card.',
+  'Before authoring a pimote_static_host report, read the static report design guide listed in the <pimote-docs> section.',
+  'Before using pimote_static_host, keep bundle files free of secrets and calls to services that require authentication.',
+];
+
+export const STATIC_HOST_TOOL_DESCRIPTION = [
+  'Serve a local HTML/asset bundle verbatim, with source edits visible without rehosting, and return {slug,url}.',
+  'Slug collisions change the returned slug.',
+  'Registration creates a session card and requests immediate browser navigation.',
+].join(' ');
+
+export const STATIC_HOST_REMOVE_TOOL_SNIPPET = 'Stop serving a hosted bundle that is no longer needed.';
+
+export const STATIC_HOST_REMOVE_TOOL_DESCRIPTION = [
+  'Unregister a hosted bundle owned by this session and remove its card, leaving source files intact.',
+  'Returns {removed}, with false for unknown slugs or bundles owned by another session.',
+].join(' ');

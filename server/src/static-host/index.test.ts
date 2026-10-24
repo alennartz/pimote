@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { Value } from 'typebox/value';
+import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStaticHostRegistry } from './registry.js';
 import { FileStaticHostStore } from './store.js';
 import { createStaticHostExtension } from './index.js';
+import { validateSlug } from './tools.js';
 import type { Card } from '../../../shared/dist/index.js';
 
 // --- Fake ExtensionAPI ----------------------------------------------------
@@ -14,7 +16,15 @@ import type { Card } from '../../../shared/dist/index.js';
 // can drive it directly.
 
 interface FakePi {
-  toolDefs: Array<{ name: string; execute: (...args: any[]) => any; description?: string }>;
+  toolDefs: Array<{
+    name: string;
+    execute: (...args: any[]) => any;
+    description?: string;
+    promptSnippet?: string;
+    promptGuidelines?: string[];
+    exposure?: string;
+    parameters: any;
+  }>;
   handlers: Map<string, (event: any, ctx: any) => any>;
   emitted: Array<{ type: string; payload: unknown }>;
   api: any;
@@ -118,15 +128,76 @@ describe('createStaticHostExtension', () => {
     expect(names).toEqual(['pimote_static_host', 'pimote_static_host_remove']);
   });
 
-  it('keeps the long-answer trigger always-on and defers layout detail to the docs', () => {
-    const tool = pi.toolDefs.find((t) => t.name === 'pimote_static_host');
-    const description = tool!.description as string;
-    expect(description).toMatch(/300\+ words/i);
-    expect(description).toMatch(/do not ask permission/i);
-    expect(description).toMatch(/static report design guide.*pimote-docs/i);
-    expect(description).toMatch(/secret/i);
-    expect(description.trim().split(/\s+/).length).toBeLessThan(250);
-    expect(description).not.toMatch(/1440px|line-height|prefers-color-scheme/i);
+  it('exposes both tools directly with concise planner snippets and caller descriptions', () => {
+    for (const tool of pi.toolDefs) {
+      expect(tool.exposure).toBe('direct');
+      const snippet = tool.promptSnippet ?? '';
+      expect(snippet.trim().split(/\s+/).length).toBeGreaterThanOrEqual(5);
+      expect(snippet.trim().split(/\s+/).length).toBeLessThanOrEqual(15);
+      expect(snippet).not.toMatch(/[\r\n]/);
+      expect(snippet).not.toContain(tool.name);
+      const description = tool.description ?? '';
+      expect(description.trim()).not.toBe('');
+      expect(description.split(/[.!?]\s+/).length).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it('keeps report routing and ordering in named condition-first guidelines', () => {
+    const tool = pi.toolDefs.find((t) => t.name === 'pimote_static_host')!;
+    const guidelines = tool.promptGuidelines ?? [];
+    const guidance = guidelines.join('\n');
+    expect(guidance).toMatch(/roughly 300\+ words.*several paragraphs.*multiple sections/);
+    expect(guidance).toMatch(/visual or interactive answers, including compact reports/);
+    expect(guidance).toMatch(/brief, unstructured text answers, use chat/);
+    expect(guidance).toMatch(/without a separate permission request/);
+    expect(guidance).toMatch(/one-to-three-sentence summary plus the card/);
+    expect(guidance).toMatch(/Before authoring.*read the static report design guide.*<pimote-docs>/);
+    expect(guidance).toMatch(/Before using.*free of secrets.*require authentication/);
+    for (const guideline of guidelines) {
+      expect(guideline).toMatch(/^(For|Before|After) /);
+      expect(guideline).toContain('pimote_static_host');
+      expect(guideline.split(/[.!?]\s+/)).toHaveLength(1);
+    }
+    expect(tool.description).not.toMatch(/300\+|permission|summary|design guide|secrets|1440px|line-height|prefers-color-scheme/i);
+  });
+
+  it('describes hosting results, collisions, live serving, cards, and immediate navigation', () => {
+    const tool = pi.toolDefs.find((t) => t.name === 'pimote_static_host')!;
+    expect(tool.description).toContain('{slug,url}');
+    expect(tool.description).toMatch(/collisions change the returned slug/);
+    expect(tool.description).toMatch(/verbatim.*source edits visible without rehosting/);
+    expect(tool.description).toMatch(/session card.*immediate browser navigation/);
+  });
+
+  it('describes removal results and preserves the returned slug as the removal identifier', () => {
+    const tool = pi.toolDefs.find((t) => t.name === 'pimote_static_host_remove')!;
+    expect(tool.description).toContain('{removed}');
+    expect(tool.description).toMatch(/source files intact/);
+    expect(tool.description).toMatch(/false for unknown slugs.*another session/);
+    expect(tool.parameters.properties.slug.description).toMatch(/Resolved slug returned by pimote_static_host/);
+    expect(Value.Check(tool.parameters, { slug: `${'a'.repeat(64)}-2` })).toBe(true);
+    expect(tool.promptGuidelines).toEqual([]);
+  });
+
+  it('states tag and color defaults without rejecting an empty tag', () => {
+    const tool = pi.toolDefs.find((t) => t.name === 'pimote_static_host')!;
+    expect(tool.parameters.properties.tag.description).toMatch(/no tag displayed when omitted or empty/);
+    expect(tool.parameters.properties.color.description).toMatch(/no override and an ordinary border when omitted/);
+    expect(Value.Check(tool.parameters, { slug: 'report', folder: '/bundle', title: 'Report' })).toBe(true);
+    expect(Value.Check(tool.parameters, { slug: 'report', folder: '/bundle', title: 'Report', tag: '' })).toBe(true);
+  });
+
+  it('declares slug validation that matches the runtime grammar and length limits', () => {
+    const tool = pi.toolDefs.find((t) => t.name === 'pimote_static_host')!;
+    expect(tool.parameters.properties.slug).toMatchObject({
+      description: expect.stringContaining('1–64 characters'),
+      pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$',
+      minLength: 1,
+      maxLength: 64,
+    });
+    for (const slug of ['a', 'demo-1', 'abc-def-2', 'a'.repeat(64), '', '-demo', 'demo-', 'demo--1', 'UPPER', 'has space', 'a'.repeat(65)]) {
+      expect(Value.Check(tool.parameters, { slug, folder: '/bundle', title: 'Report' }), slug).toBe(validateSlug(slug) !== null);
+    }
   });
 
   it('on session_start, replays persisted entries into the registry and emits panel cards', async () => {
@@ -216,6 +287,8 @@ describe('createStaticHostExtension', () => {
     expect(cards.some((c) => c.header.title === 'Demo')).toBe(true);
     const demoCard = cards.find((c) => c.header.title === 'Demo')!;
     expect(demoCard.href).toBe('/s/demo/');
+    expect(demoCard.header).not.toHaveProperty('tag');
+    expect(demoCard).not.toHaveProperty('color');
   });
 
   it('the remove tool unregisters, persists, and re-emits the panel snapshot', async () => {
@@ -231,6 +304,7 @@ describe('createStaticHostExtension', () => {
     expect(registry.has('demo')).toBe(false);
     expect((await store.read('sess-1'))?.entries).toEqual([]);
     expect(panelCards().every((c) => c.header.title !== 'Demo')).toBe(true);
+    expect(await readFile(join(folder, 'index.html'), 'utf-8')).toBe('<h1>hi</h1>');
   });
 
   it('on session_shutdown, releases all registrations owned by the session', async () => {

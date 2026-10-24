@@ -3,7 +3,15 @@ import { createFileDownloadExtension } from './index.js';
 import type { DownloadManager, DownloadUpdateEvent } from './manager.js';
 
 interface FakePi {
-  toolDefs: Array<{ name: string; description?: string; execute: (...args: any[]) => Promise<unknown> }>;
+  toolDefs: Array<{
+    name: string;
+    description?: string;
+    promptSnippet?: string;
+    promptGuidelines?: string[];
+    exposure?: string;
+    parameters: any;
+    execute: (...args: any[]) => Promise<unknown>;
+  }>;
   handlers: Map<string, (event: unknown, ctx: any) => unknown>;
   emitted: Array<{ type: string; payload: unknown }>;
   api: any;
@@ -57,14 +65,50 @@ describe('createFileDownloadExtension', () => {
     expect(pi.toolDefs.map((tool) => tool.name).sort()).toEqual(['pimote_cancel_file_send', 'pimote_send_file']);
   });
 
-  it('describes explicit user approval and warns that the source stays available', async () => {
+  it('exposes both tools directly with concise planner snippets and caller descriptions', async () => {
     const pi = makePi();
-    const factory = createFileDownloadExtension({ manager: makeManager() });
-    await factory(pi.api);
-    const tool = pi.toolDefs.find((candidate) => candidate.name === 'pimote_send_file');
-    expect(tool?.description).toMatch(/download/i);
-    expect(tool?.description).toMatch(/user|click|approval/i);
-    expect(tool?.description).toMatch(/remain|available/i);
+    await createFileDownloadExtension({ manager: makeManager() })(pi.api);
+    for (const tool of pi.toolDefs) {
+      expect(tool.exposure).toBe('direct');
+      const snippet = tool.promptSnippet ?? '';
+      expect(snippet.trim().split(/\s+/).length).toBeGreaterThanOrEqual(5);
+      expect(snippet.trim().split(/\s+/).length).toBeLessThanOrEqual(15);
+      expect(snippet).not.toMatch(/[\r\n]/);
+      expect(snippet).not.toContain(tool.name);
+      const description = tool.description ?? '';
+      expect(description.trim()).not.toBe('');
+      expect(description.split(/[.!?]\s+/).length).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it('describes user action, live reads, metadata without a URL, and no click wait', async () => {
+    const pi = makePi();
+    await createFileDownloadExtension({ manager: makeManager() })(pi.api);
+    const tool = pi.toolDefs.find((candidate) => candidate.name === 'pimote_send_file')!;
+    expect(tool.description).toMatch(/one-shot native browser download.*explicit user click or approval/);
+    expect(tool.description).toContain('{id,filename,sizeBytes}');
+    expect(tool.description).toMatch(/not a URL.*without waiting for a click/);
+    expect(tool.description).toMatch(/reads the live source file when the user acts/);
+    expect(tool.description).not.toMatch(/keep.*available|current working directory|absolute/);
+    expect(tool.parameters.properties.path.description).toMatch(/absolute or relative to the current working directory/);
+  });
+
+  it('puts source preservation in a named condition-first planner guideline', async () => {
+    const pi = makePi();
+    await createFileDownloadExtension({ manager: makeManager() })(pi.api);
+    const tool = pi.toolDefs.find((candidate) => candidate.name === 'pimote_send_file')!;
+    expect(tool.promptGuidelines).toHaveLength(1);
+    expect(tool.promptGuidelines?.[0]).toMatch(/^For pending pimote_send_file offers, keep their source files available and unchanged\.$/);
+  });
+
+  it('describes false cancellation results for unavailable or other-session offers', async () => {
+    const pi = makePi();
+    await createFileDownloadExtension({ manager: makeManager() })(pi.api);
+    const tool = pi.toolDefs.find((candidate) => candidate.name === 'pimote_cancel_file_send')!;
+    expect(tool.description).toContain('{cancelled}');
+    expect(tool.description).toMatch(/false for unknown, consumed, previously cancelled, or other-session offers/);
+    expect(tool.parameters.properties.id.description).toMatch(/id returned by pimote_send_file/);
+    expect(tool.promptGuidelines).toEqual([]);
   });
 
   it('activates the owning session on session_start and publishes a restored snapshot event', async () => {
