@@ -14,3 +14,11 @@ export function pushSharedImages(images: string[]) {
   sharedImagesRequest.images = images;
   sharedImagesRequest.seq++;
 }
+
+/** Consume the pending Web Share payload once a composer is eligible to receive it. */
+export function consumeSharedImages(): string[] {
+  if (sharedImagesRequest.images.length === 0) return [];
+  const images = [...sharedImagesRequest.images];
+  sharedImagesRequest.images = [];
+  return images;
+}

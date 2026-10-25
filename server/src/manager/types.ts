@@ -108,6 +108,10 @@ export interface FolderRegistryPort {
    *  races the listing (cold-walk discovery included) and rejects on abort
    *  while shared work completes for the next reader (DR-072). */
   list(signal?: AbortSignal): Promise<FolderInfo[]>;
+  /** Identity rows and warm status only. This path never waits on git probes. */
+  listLazy?(signal?: AbortSignal): Promise<FolderInfo[]>;
+  /** Deliver requested git facts later through the folder delta channel. */
+  requestStatusRefresh?(rows: ReadonlyArray<FolderInfo>): Promise<void>;
   update(patch: FolderUpdatePatch): Promise<void>;
   createHub(input: { name: string; root: string; memberPaths: string[]; body?: string; description?: string; personaText?: string }): Promise<{ path: string }>;
   addMember(hubPath: string, memberPath: string): Promise<void>;

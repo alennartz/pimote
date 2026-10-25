@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   createAgentSessionRuntime,
   createAgentSessionServices,
@@ -108,6 +109,300 @@ export interface ManagedSlot {
   get session(): AgentSession;
 }
 
+/** Lifecycle operation admitted by the slot guard. */
+export type SlotLifecycleKind = 'reset' | 'close';
+
+/** Error returned when a second lifecycle operation races the first one. */
+export class SessionLifecycleError extends Error {
+  readonly code = 'session_reset_in_progress';
+
+  constructor() {
+    super('session_reset_in_progress');
+    this.name = 'SessionLifecycleError';
+  }
+}
+
+type SlotLifecyclePhase = 'preparing' | 'binding' | 'post' | 'closing';
+type SlotLifecycleFrameKind = 'wrapper' | 'runtime';
+
+interface SlotLifecycleFrame {
+  kind: SlotLifecycleFrameKind;
+  parent?: SlotLifecycleFrame;
+  child?: SlotLifecycleFrame;
+  childSettled?: Promise<void>;
+  resolveChildSettled?: () => void;
+  phase?: SlotLifecyclePhase;
+  done: boolean;
+}
+
+interface SlotLifecycleState {
+  active?: {
+    kind: SlotLifecycleKind;
+    owner: symbol;
+    phase: SlotLifecyclePhase;
+    rootFrame?: SlotLifecycleFrame;
+  };
+  /** True after pi has invalidated the outgoing session during a reset. */
+  resetStarted: boolean;
+}
+
+interface SlotLifecycleContext {
+  slot: ManagedSlot;
+  owner: symbol;
+  frame?: SlotLifecycleFrame;
+}
+
+export interface SlotLifecycleOptions {
+  allowPreparingNested?: boolean;
+}
+
+const slotLifecycleStates = new WeakMap<ManagedSlot, SlotLifecycleState>();
+const slotLifecycleContext = new AsyncLocalStorage<SlotLifecycleContext>();
+
+function lifecycleStateFor(slot: ManagedSlot): SlotLifecycleState {
+  let state = slotLifecycleStates.get(slot);
+  if (!state) {
+    state = { resetStarted: false };
+    slotLifecycleStates.set(slot, state);
+  }
+  return state;
+}
+
+function sameLifecycleOwner(slot: ManagedSlot, active: NonNullable<SlotLifecycleState['active']> | undefined): boolean {
+  const context = slotLifecycleContext.getStore();
+  return active !== undefined && context?.slot === slot && context.owner === active.owner;
+}
+
+/** Return true while the current async call owns this slot's lifecycle guard. */
+export function isSlotLifecycleOwner(slot: ManagedSlot): boolean {
+  return sameLifecycleOwner(slot, lifecycleStateFor(slot).active);
+}
+
+/** True for a reentrant call made from an admitted runtime callback. */
+export function isNestedSlotLifecycle(slot: ManagedSlot): boolean {
+  const context = slotLifecycleContext.getStore();
+  return isSlotLifecycleOwner(slot) && context?.frame?.kind === 'runtime';
+}
+
+function isSafeNestedPhase(phase: SlotLifecyclePhase): boolean {
+  return phase === 'binding' || phase === 'post';
+}
+
+function phaseForFrame(slot: ManagedSlot, frame: SlotLifecycleFrame | undefined): SlotLifecyclePhase {
+  let current = frame;
+  while (current) {
+    if (current.kind === 'runtime') return current.phase ?? 'preparing';
+    current = current.parent;
+  }
+  return lifecycleStateFor(slot).active?.phase ?? 'preparing';
+}
+
+function maybeReleaseSlot(slot: ManagedSlot): void {
+  const state = lifecycleStateFor(slot);
+  const active = state.active;
+  if (!active || active.rootFrame) return;
+  state.active = undefined;
+  state.resetStarted = false;
+}
+
+function releaseLifecycleFrame(slot: ManagedSlot, frame: SlotLifecycleFrame): void {
+  const state = lifecycleStateFor(slot);
+  frame.done = true;
+  let current: SlotLifecycleFrame | undefined = frame;
+  while (current && current.done && !current.child) {
+    const parent: SlotLifecycleFrame | undefined = current.parent;
+    if (parent) {
+      if (parent.child === current) {
+        parent.child = undefined;
+        parent.resolveChildSettled?.();
+        parent.childSettled = undefined;
+        parent.resolveChildSettled = undefined;
+      }
+    } else if (state.active?.rootFrame === current) {
+      state.active.rootFrame = undefined;
+    }
+    current = parent;
+  }
+  maybeReleaseSlot(slot);
+}
+
+function attachLifecycleFrame(slot: ManagedSlot, active: NonNullable<SlotLifecycleState['active']>, frame: SlotLifecycleFrame): void {
+  if (frame.parent) {
+    frame.parent.child = frame;
+    frame.parent.childSettled = new Promise<void>((resolve) => {
+      frame.parent!.resolveChildSettled = resolve;
+    });
+  } else {
+    active.rootFrame = frame;
+  }
+}
+
+function waitForLifecycleChildren(frame: SlotLifecycleFrame | undefined): Promise<void> {
+  return frame?.childSettled ?? Promise.resolve();
+}
+
+function setSlotLifecyclePhase(slot: ManagedSlot, phase: SlotLifecyclePhase): SlotLifecyclePhase | undefined {
+  const active = lifecycleStateFor(slot).active;
+  if (!active) return undefined;
+  const previous = active.phase;
+  active.phase = phase;
+  return previous;
+}
+
+/**
+ * Admit a WebSocket or extension lifecycle entry point. Runtime methods use
+ * `runSlotRuntime` below for the finer-grained replacement admission.
+ */
+export async function runSlotLifecycle<T>(slot: ManagedSlot, kind: SlotLifecycleKind, operation: () => Promise<T>, options: SlotLifecycleOptions = {}): Promise<T> {
+  const state = lifecycleStateFor(slot);
+  const active = state.active;
+  const context = slotLifecycleContext.getStore();
+  let owner: symbol;
+  let parent: SlotLifecycleFrame | undefined;
+
+  if (!active) {
+    owner = Symbol('slot-lifecycle');
+    state.active = {
+      kind,
+      owner,
+      phase: kind === 'reset' ? 'preparing' : 'closing',
+    };
+    if (kind === 'reset') state.resetStarted = false;
+  } else {
+    owner = active.owner;
+    if (!sameLifecycleOwner(slot, active) || (active.kind === 'close' && kind === 'reset')) throw new SessionLifecycleError();
+    parent = context?.slot === slot && context.owner === owner ? context.frame : undefined;
+    if (kind === 'reset' && active.kind === 'reset' && parent && !isSafeNestedPhase(phaseForFrame(slot, parent)) && !options.allowPreparingNested) {
+      throw new SessionLifecycleError();
+    }
+    if (parent?.done || parent?.child) throw new SessionLifecycleError();
+  }
+
+  const current = state.active!;
+  const frame: SlotLifecycleFrame = { kind: 'wrapper', parent, done: false };
+  attachLifecycleFrame(slot, current, frame);
+  return slotLifecycleContext.run({ slot, owner, frame }, async () => {
+    try {
+      return await operation();
+    } finally {
+      releaseLifecycleFrame(slot, frame);
+    }
+  });
+}
+
+/** Admit one runtime replacement or disposal at the slot boundary. */
+async function runSlotRuntime<T>(slot: ManagedSlot, kind: SlotLifecycleKind, operation: () => Promise<T>): Promise<T> {
+  const state = lifecycleStateFor(slot);
+  let active = state.active;
+  const context = slotLifecycleContext.getStore();
+  let owner: symbol;
+  let parent: SlotLifecycleFrame | undefined;
+
+  if (!active) {
+    owner = Symbol('slot-lifecycle');
+    active = {
+      kind,
+      owner,
+      phase: kind === 'reset' ? 'preparing' : 'closing',
+    };
+    state.active = active;
+    if (kind === 'reset') state.resetStarted = false;
+  } else {
+    owner = active.owner;
+    if (!sameLifecycleOwner(slot, active) || (active.kind === 'close' && kind === 'reset')) throw new SessionLifecycleError();
+    parent = context?.slot === slot && context.owner === owner ? context.frame : undefined;
+    if (kind === 'reset') {
+      const rootWrapperDelegation = parent?.kind === 'wrapper' && parent.parent === undefined;
+      if (parent && !rootWrapperDelegation && !isSafeNestedPhase(phaseForFrame(slot, parent))) {
+        throw new SessionLifecycleError();
+      }
+      if (parent?.done || parent?.child) throw new SessionLifecycleError();
+    } else if (parent?.done || parent?.child) {
+      throw new SessionLifecycleError();
+    }
+  }
+
+  const current = state.active!;
+  const frame: SlotLifecycleFrame = { kind: 'runtime', parent, phase: kind === 'reset' ? 'preparing' : 'closing', done: false };
+  attachLifecycleFrame(slot, current, frame);
+  return slotLifecycleContext.run({ slot, owner, frame }, async () => {
+    try {
+      return await operation();
+    } finally {
+      releaseLifecycleFrame(slot, frame);
+    }
+  });
+}
+
+/** Mark the current runtime frame after Pi applies its replacement. */
+function markCurrentRuntimePhase(slot: ManagedSlot, phase: SlotLifecyclePhase): void {
+  const state = lifecycleStateFor(slot);
+  const active = state.active;
+  const context = slotLifecycleContext.getStore();
+  if (!active || context?.slot !== slot || context.owner !== active.owner) {
+    setSlotLifecyclePhase(slot, phase);
+    return;
+  }
+  let frame = context.frame;
+  while (frame && frame.kind !== 'runtime') frame = frame.parent;
+  if (frame) {
+    frame.phase = phase;
+  } else {
+    active.phase = phase;
+  }
+}
+
+/** Mark the point where Pi has applied a replacement and starts rebinding. */
+function markRuntimeReplacementApplied(slot: ManagedSlot): void {
+  markCurrentRuntimePhase(slot, 'binding');
+}
+
+/**
+ * Wrap runtime replacement methods at the slot boundary. Pi's runtime has no
+ * admission serialization, so every dynamic call must pass this proxy before
+ * it can tear down the current session or start a factory.
+ */
+function guardSlotRuntime(slot: ManagedSlot, runtime: AgentSessionRuntime, onResetFailure: (slot: ManagedSlot) => Promise<void>): AgentSessionRuntime {
+  const hasInvalidationHook = typeof runtime.setBeforeSessionInvalidate === 'function';
+  runtime.setBeforeSessionInvalidate?.(() => {
+    const state = lifecycleStateFor(slot);
+    if (state.active?.kind === 'reset') {
+      markCurrentRuntimePhase(slot, 'preparing');
+      state.resetStarted = true;
+    }
+  });
+
+  const resetMethods = new Set(['newSession', 'fork', 'switchSession', 'importFromJsonl']);
+  const closeMethods = new Set(['dispose']);
+  return new Proxy(runtime, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function' || typeof property !== 'string' || (!resetMethods.has(property) && !closeMethods.has(property))) {
+        return value;
+      }
+      const kind: SlotLifecycleKind = closeMethods.has(property) ? 'close' : 'reset';
+      return (...args: unknown[]) =>
+        runSlotRuntime(slot, kind, async () => {
+          const state = lifecycleStateFor(slot);
+          if (kind === 'reset' && !hasInvalidationHook) state.resetStarted = true;
+          try {
+            return await Reflect.apply(value, target, args);
+          } catch (error) {
+            if (kind === 'reset' && state.resetStarted) {
+              try {
+                await waitForLifecycleChildren(slotLifecycleContext.getStore()?.frame);
+                await onResetFailure(slot);
+              } catch (cleanupError) {
+                throw new AggregateError([error, cleanupError], 'Session reset and cleanup failed', { cause: cleanupError });
+              }
+            }
+            throw error;
+          }
+        });
+    },
+  });
+}
+
 // ---- Slot-based helpers (operate on ManagedSlot) ----
 
 /** Dependencies for routing one extension download update to its owning client. */
@@ -210,20 +505,21 @@ export function createCommandContextActions(slot: ManagedSlot, sessionManager: P
   return {
     waitForIdle: () => slot.session.waitForIdle(),
     newSession: async (options) => {
-      const result = await slot.runtime.newSession(options);
+      const result = await runSlotLifecycle(slot, 'reset', () => slot.runtime.newSession(options));
       return { cancelled: result.cancelled };
     },
     fork: async (entryId, options) => {
-      const result = await slot.runtime.fork(entryId, options);
+      const result = await runSlotLifecycle(slot, 'reset', () => slot.runtime.fork(entryId, options));
       return { cancelled: result.cancelled };
     },
-    navigateTree: async (targetId, options) => {
-      const result = await slot.session.navigateTree(targetId, options);
-      if (!result.cancelled) await sessionManager.applySessionReset(slot);
-      return { cancelled: result.cancelled };
-    },
+    navigateTree: async (targetId, options) =>
+      runSlotLifecycle(slot, 'reset', async () => {
+        const result = await slot.session.navigateTree(targetId, options);
+        if (!result.cancelled) await sessionManager.applySessionReset(slot);
+        return { cancelled: result.cancelled };
+      }),
     switchSession: async (sessionPath, options) => {
-      const result = await slot.runtime.switchSession(sessionPath, options);
+      const result = await runSlotLifecycle(slot, 'reset', () => slot.runtime.switchSession(sessionPath, options));
       return { cancelled: result.cancelled };
     },
     reload: () => slot.session.reload(),
@@ -573,6 +869,12 @@ export class PimoteSessionManager {
    * Bind one concrete AgentSession exactly once. The flight is keyed by object
    * identity because a replacement can reuse its predecessor's session ID.
    */
+  private async cleanupFailedReset(slot: ManagedSlot): Promise<void> {
+    const currentId = this.findMapKeyForSlot(slot);
+    if (currentId === undefined) return;
+    await this.closeSession(currentId);
+  }
+
   private async ensureExtensionsBound(slot: ManagedSlot): Promise<void> {
     if (this.findMapKeyForSlot(slot) === undefined) throw new Error('Session slot is no longer live');
     const session = slot.session;
@@ -622,45 +924,64 @@ export class PimoteSessionManager {
       // Bind this explicit per-runtime holder before session_start is emitted
       // by bindExtensions; replacement runtimes get a fresh holder/factory.
       const voiceSessionRef: { current: AgentSession | null } = { current: null };
-      const voiceExtensionFactory = this.buildVoiceExtensionFactory(() => {
-        if (!voiceSessionRef.current) throw new Error('Voice session is not bound yet');
-        return voiceSessionRef.current;
-      });
-      const extensionFactories = [
-        ...(voiceExtensionFactory ? [voiceExtensionFactory] : []),
-        ...(pimoteDocsFactory ? [pimoteDocsFactory] : []),
-        ...(staticHostFactory ? [staticHostFactory] : []),
-        ...(fileDownloadFactory ? [fileDownloadFactory] : []),
-        ...(managerExtensionFactory && (await loadManagerExtension({ cwd }, this.config)) ? [managerExtensionFactory] : []),
-        // SDK sessions skip pi's built-in extensions, so register Pi's
-        // codemode, tool-search, and MCP extensions here. Codemode and
-        // tool-search stay inactive until settings or MCP exposure activates
-        // them; MCP reads Pi's mcp.json configuration at session start.
-        createCodemodeExtension(),
-        createToolSearchExtension(),
-        createMcpExtension(),
-        createSettingsWatchExtension(),
-      ];
-      const eventBus = createEventBus();
-      eventBusRef.current = eventBus;
+      const previousEventBus = eventBusRef.current;
+      let createdSession: AgentSession | undefined;
+      try {
+        const voiceExtensionFactory = this.buildVoiceExtensionFactory(() => {
+          if (!voiceSessionRef.current) throw new Error('Voice session is not bound yet');
+          return voiceSessionRef.current;
+        });
+        const extensionFactories = [
+          ...(voiceExtensionFactory ? [voiceExtensionFactory] : []),
+          ...(pimoteDocsFactory ? [pimoteDocsFactory] : []),
+          ...(staticHostFactory ? [staticHostFactory] : []),
+          ...(fileDownloadFactory ? [fileDownloadFactory] : []),
+          ...(managerExtensionFactory && (await loadManagerExtension({ cwd }, this.config)) ? [managerExtensionFactory] : []),
+          // SDK sessions skip pi's built-in extensions, so register Pi's
+          // codemode, tool-search, and MCP extensions here. Codemode and
+          // tool-search stay inactive until settings or MCP exposure activates
+          // them; MCP reads Pi's mcp.json configuration at session start.
+          createCodemodeExtension(),
+          createToolSearchExtension(),
+          createMcpExtension(),
+          createSettingsWatchExtension(),
+        ];
+        const eventBus = createEventBus();
+        eventBusRef.current = eventBus;
 
-      const services = await createAgentSessionServices({
-        cwd,
-        agentDir,
-        modelRuntime: sharedModelRuntime,
-        resourceLoaderOptions: {
-          eventBus,
-          ...(extensionFactories.length ? { extensionFactories } : {}),
-        },
-      });
+        const services = await createAgentSessionServices({
+          cwd,
+          agentDir,
+          modelRuntime: sharedModelRuntime,
+          resourceLoaderOptions: {
+            eventBus,
+            ...(extensionFactories.length ? { extensionFactories } : {}),
+          },
+        });
 
-      const result = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent });
-      voiceSessionRef.current = result.session;
-      return {
-        ...result,
-        services,
-        diagnostics: services.diagnostics,
-      };
+        const result = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent });
+        createdSession = result.session;
+        voiceSessionRef.current = result.session;
+        return {
+          ...result,
+          services,
+          diagnostics: services.diagnostics,
+        };
+      } catch (error) {
+        // AgentSessionRuntime does not own a result until its factory resolves.
+        // Dispose a session created before a later factory step failed so a
+        // replacement cannot leave extension listeners and MCP resources live.
+        eventBusRef.current?.clear();
+        if (previousEventBus && previousEventBus !== eventBusRef.current) previousEventBus.clear();
+        if (createdSession) {
+          try {
+            createdSession.dispose();
+          } catch (cleanupError) {
+            throw new AggregateError([error, cleanupError], 'Session runtime factory and cleanup failed', { cause: cleanupError });
+          }
+        }
+        throw error;
+      }
     };
 
     const runtime = await createAgentSessionRuntime(factory, {
@@ -729,6 +1050,7 @@ export class PimoteSessionManager {
           return this.runtime.session;
         },
       };
+      slot.runtime = guardSlotRuntime(slot, runtime, (failedSlot) => this.cleanupFailedReset(failedSlot));
       slotRef.slot = slot;
     } catch (error) {
       try {
@@ -819,31 +1141,33 @@ export class PimoteSessionManager {
     const slot = this.sessions.get(sessionId);
     if (!slot) return;
 
-    if (this.onBeforeSessionClose) {
-      try {
-        await this.onBeforeSessionClose(sessionId, slot.folderPath);
-      } catch (err) {
-        console.warn('[pimote] onBeforeSessionClose threw:', err);
+    await runSlotLifecycle(slot, 'close', async () => {
+      if (this.onBeforeSessionClose) {
+        try {
+          await this.onBeforeSessionClose(sessionId, slot.folderPath);
+        } catch (err) {
+          console.warn('[pimote] onBeforeSessionClose threw:', err);
+        }
       }
-    }
 
-    teardownSessionState(slot.sessionState);
-    slot.eventBusRef.current?.clear();
+      teardownSessionState(slot.sessionState);
+      slot.eventBusRef.current?.clear();
 
-    const folderPath = slot.folderPath;
-    let disposeError: unknown;
-    try {
-      await slot.runtime.dispose();
-    } catch (error) {
-      disposeError = error;
-    }
-    if (this.sessions.get(sessionId) === slot) {
-      this.sessions.delete(sessionId);
-      this.lastKnownGitBranchBySession.delete(sessionId);
-    }
+      const folderPath = slot.folderPath;
+      let disposeError: unknown;
+      try {
+        await slot.runtime.dispose();
+      } catch (error) {
+        disposeError = error;
+      }
+      if (this.sessions.get(sessionId) === slot) {
+        this.sessions.delete(sessionId);
+        this.lastKnownGitBranchBySession.delete(sessionId);
+      }
 
-    this.onSessionClosed?.(sessionId, folderPath);
-    if (disposeError !== undefined) throw disposeError;
+      this.onSessionClosed?.(sessionId, folderPath);
+      if (disposeError !== undefined) throw disposeError;
+    });
   }
 
   /** Re-key a slot in the session map after session replacement. */
@@ -911,30 +1235,48 @@ export class PimoteSessionManager {
   /** Rebind, reconcile, and notify one runtime replacement. Pi invokes this
    * callback before a replacement operation's optional withSession callback. */
   private async handleRuntimeSessionReplacement(slot: ManagedSlot): Promise<void> {
-    try {
-      const { observers, outcome, needsBinding } = await this.reconcileSessionReplacement(slot);
-      if (needsBinding) await this.ensureExtensionsBound(slot);
-      await this.notifySessionReset(slot, observers, outcome);
-    } catch (error) {
-      const currentId = this.findMapKeyForSlot(slot);
-      if (currentId !== undefined) {
-        try {
-          await this.closeSession(currentId);
-        } catch (cleanupError) {
-          throw new AggregateError([error, cleanupError], 'Session replacement and cleanup failed', { cause: cleanupError });
+    markRuntimeReplacementApplied(slot);
+    await runSlotLifecycle(slot, 'reset', async () => {
+      markRuntimeReplacementApplied(slot);
+      try {
+        const { observers, outcome, needsBinding } = await this.reconcileSessionReplacement(slot);
+        if (needsBinding) await this.ensureExtensionsBound(slot);
+        await this.notifySessionReset(slot, observers, outcome);
+      } catch (error) {
+        const currentId = this.findMapKeyForSlot(slot);
+        if (currentId !== undefined) {
+          try {
+            await this.closeSession(currentId);
+          } catch (cleanupError) {
+            throw new AggregateError([error, cleanupError], 'Session replacement and cleanup failed', { cause: cleanupError });
+          }
         }
+        throw error;
+      } finally {
+        markCurrentRuntimePhase(slot, 'post');
       }
-      throw error;
-    }
+    });
   }
 
   /** The single reset business operation for same-session navigation.
    * Runtime replacements arrive through handleRuntimeSessionReplacement above,
    * so this method does not duplicate their observer notifications. */
   async applySessionReset(slot: ManagedSlot): Promise<void> {
-    const { observers, outcome, needsBinding } = await this.reconcileSessionReplacement(slot);
-    if (needsBinding) await this.ensureExtensionsBound(slot);
-    await this.notifySessionReset(slot, observers, outcome);
+    await runSlotLifecycle(
+      slot,
+      'reset',
+      async () => {
+        const previousPhase = setSlotLifecyclePhase(slot, 'binding');
+        try {
+          const { observers, outcome, needsBinding } = await this.reconcileSessionReplacement(slot);
+          if (needsBinding) await this.ensureExtensionsBound(slot);
+          await this.notifySessionReset(slot, observers, outcome);
+        } finally {
+          setSlotLifecyclePhase(slot, previousPhase ?? 'post');
+        }
+      },
+      { allowPreparingNested: true },
+    );
   }
 
   /** Rebuild a slot's SessionState after session replacement.
@@ -971,9 +1313,12 @@ export class PimoteSessionManager {
     slot.observers.set(observer.clientId, observer);
   }
 
-  /** Detach one observer from a live session. */
-  detachObserver(sessionId: string, clientId: string): void {
-    this.sessions.get(sessionId)?.observers.delete(clientId);
+  /** Detach one observer from a live session when it still owns this socket. */
+  detachObserver(sessionId: string, clientId: string, ws?: EventSocket): void {
+    const slot = this.sessions.get(sessionId);
+    const observer = slot?.observers.get(clientId);
+    if (!slot || !observer || (ws !== undefined && observer.ws !== ws)) return;
+    slot.observers.delete(clientId);
   }
 
   /** Alias for getSession that returns null (not undefined) for consumers

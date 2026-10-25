@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { seededMemberLine, injectMemberLine, removeMemberLine } from './hub-agents-md.js';
+import { seededMemberLine, injectMemberLine, managedMemberNature, removeMemberLine } from './hub-agents-md.js';
 
 // The managed-block markers the mutator owns (plan: 0.15-2 dashboard folder UX).
 const OPEN = '<!-- pimote:members (managed block) -->';
@@ -60,6 +60,27 @@ describe('injectMemberLine', () => {
 
     expect(blockInner(out)).toContain(first);
     expect(blockInner(out)).toContain(second);
+  });
+});
+
+describe('managedMemberNature', () => {
+  it('recognizes only exact seeded lines inside the managed block', () => {
+    const code = seededMemberLine('repo-a', 'code');
+    const persona = seededMemberLine('ada', 'persona');
+    const doc = injectMemberLine(injectMemberLine(userDoc, code), persona);
+
+    expect(managedMemberNature(doc, 'repo-a')).toBe('code');
+    expect(managedMemberNature(doc, 'ada')).toBe('persona');
+    expect(managedMemberNature(doc, 'other')).toBeUndefined();
+    expect(managedMemberNature(`${doc}\n${code}\n`, 'repo-a')).toBe('code');
+  });
+
+  it('does not authorize prose or lines outside the managed block', () => {
+    const code = seededMemberLine('repo-a', 'code');
+    const prose = `${code}\n${userDoc}`;
+
+    expect(managedMemberNature(prose, 'repo-a')).toBeUndefined();
+    expect(managedMemberNature(userDoc.replace(`${OPEN}\n${CLOSE}`, `${OPEN}\n- repo-a (code): user note.\n${CLOSE}`), 'repo-a')).toBeUndefined();
   });
 });
 

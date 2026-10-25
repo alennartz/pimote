@@ -35,8 +35,10 @@ const mocks = vi.hoisted(() => {
     isArchived: vi.fn(() => false),
     setArchived: vi.fn(async () => undefined),
   };
+  const folderList = vi.fn(async () => []);
   const folderRegistry = {
-    list: vi.fn(async () => []),
+    list: folderList,
+    listLazy: vi.fn(async (...args: unknown[]) => folderList(...args)),
   };
   const server = {
     clientRegistry: new Map(),
@@ -101,6 +103,8 @@ vi.mock('./session-manager.js', () => ({
   PimoteSessionManager: {
     create: mocks.sessionManagerCreate,
   },
+  runSlotLifecycle: async (_slot: unknown, _kind: unknown, operation: () => Promise<unknown>) => operation(),
+  isNestedSlotLifecycle: () => false,
 }));
 vi.mock('./folder-registry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./folder-registry.js')>();

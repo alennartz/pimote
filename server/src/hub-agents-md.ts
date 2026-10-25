@@ -1,4 +1,5 @@
 import { codeFolderAgentsMd, personaAgentsMd } from './folder-seeding.js';
+import type { FolderNature } from './folder-model/index.js';
 
 /**
  * The hub AGENTS.md managed-content mutator (plan: 0.15-2 dashboard folder
@@ -62,6 +63,22 @@ export function injectMemberLine(markdown: string, line: string): string {
   const closeAt = block.innerStart + block.inner.length;
   const separator = closeAt > 0 && markdown.charAt(closeAt - 1) === '\n' ? '' : '\n';
   return `${markdown.slice(0, closeAt)}${separator}${line}\n${markdown.slice(closeAt)}`;
+}
+
+/**
+ * Return the nature of an exact seeded member line inside the managed block.
+ *
+ * This is the provenance seam for member links whose targets are absent. It
+ * checks only the byte strings this module seeds. User prose and .gitignore
+ * entries never authorize membership.
+ */
+export function managedMemberNature(markdown: string, name: string): FolderNature | undefined {
+  const block = managedBlock(markdown);
+  if (block === null) return undefined;
+  for (const nature of ['code', 'persona'] as const) {
+    if (wholeLineOffset(block.inner, seededMemberLine(name, nature)) !== -1) return nature;
+  }
+  return undefined;
 }
 
 /** Delete `line` byte-exact; no-op when the markers or the line are gone. */

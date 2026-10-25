@@ -67,6 +67,12 @@
   let activeSide = $state<SwipeSide | null>(null);
   let armedSide = $state<SwipeSide | null>(null);
   let suppressClick = $state(false);
+  // Pointerup can reset phase and dx before the browser dispatches click.
+  // Keep a separate token for that gesture click. Capture whether the token
+  // existed when the next gesture starts so a gesture with no click cannot
+  // steal the next real tap.
+  let pendingGestureClick = false;
+  let gestureHadPendingClick = false;
 
   let mq: MediaQueryList | null = null;
   let start: SwipeSample | null = null;
@@ -104,6 +110,7 @@
   function onPointerDown(e: PointerEvent) {
     if (phase === 'exiting' || phase === 'done' || suppressClick) return;
     if (!isMobile() || e.button !== 0) return;
+    gestureHadPendingClick = pendingGestureClick;
     start = { x: e.clientX, y: e.clientY, t: e.timeStamp };
     baseDx = dx;
     axisLocked = false;
@@ -168,30 +175,49 @@
     pushSample(end);
     const velocity = swipeVelocity(samples);
     const moved = swipeMoved(start, end);
+    const hadPendingClick = gestureHadPendingClick;
+    gestureHadPendingClick = false;
     start = null;
     samples = [];
     phase = 'idle';
 
     if (!moved) {
-      if (dx !== 0) closeTray(); // tap on an open card closes it instead of navigating
+      if (dx !== 0) {
+        closeTray(); // tap on an open card closes it instead of navigating
+        pendingGestureClick = true;
+      } else if (hadPendingClick) {
+        // The previous gesture did not produce a click. Do not consume this
+        // tap's click, which is the next real activation.
+        pendingGestureClick = false;
+      }
       return;
     }
 
     const release = swipeRelease(raw, Math.abs(velocity));
     if (release.kind === 'fire' && actionFor(release.side)) {
+      // A fast action can settle before the browser emits this gesture's
+      // click. Keep the click tied to this gesture, not to suppressClick.
+      pendingGestureClick = true;
       void fire(release.side);
     } else if (release.kind === 'open' && actionFor(release.side)) {
+      pendingGestureClick = false;
       snapTo(release.side === 'left' ? -SWIPE_DEFAULTS.revealWidthPx : SWIPE_DEFAULTS.revealWidthPx);
     } else {
+      // snapTo(0) clears the evidence that this gesture moved. Preserve it
+      // until the following click, if the browser dispatches one.
+      pendingGestureClick = true;
       snapTo(0);
     }
   }
 
   function onPointerCancel() {
     if (phase !== 'dragging') return;
+    const hadPendingClick = gestureHadPendingClick;
+    gestureHadPendingClick = false;
     start = null;
     samples = [];
     phase = 'idle';
+    if (hadPendingClick) pendingGestureClick = false;
     if (Math.abs(dx) >= SWIPE_DEFAULTS.openThresholdPx) snapTo(dx < 0 ? -SWIPE_DEFAULTS.revealWidthPx : SWIPE_DEFAULTS.revealWidthPx);
     else snapTo(0);
   }
@@ -258,6 +284,12 @@
   // Click interception: drags must not navigate, an open card's body tap must
   // only close the tray, and an exiting card must not react at all.
   function onClickCapture(e: MouseEvent) {
+    if (pendingGestureClick) {
+      pendingGestureClick = false;
+      e.stopPropagation();
+      e.preventDefault();
+      return;
+    }
     if (phase !== 'idle' || suppressClick) {
       e.stopPropagation();
       e.preventDefault();

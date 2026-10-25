@@ -150,4 +150,16 @@ describe('session observer lifecycle', () => {
     expect(slot.observers.has('client-a')).toBe(false);
     expect(slot.observers.get('client-b')).toBe(second);
   });
+
+  it('does not detach a replacement observer when an old socket asks to detach', async () => {
+    const first = observer('client-a');
+    const replacement = observer('client-a');
+    const { manager, slot } = await managedSession();
+    await manager.attachObserver('session-1', first);
+    await manager.attachObserver('session-1', replacement);
+
+    manager.detachObserver('session-1', 'client-a', first.ws);
+
+    expect(slot.observers.get('client-a')).toBe(replacement);
+  });
 });

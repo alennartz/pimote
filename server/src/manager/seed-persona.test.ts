@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { seedPersonaFolder, MEMORY_STUB } from './seed.js';
@@ -24,6 +24,16 @@ describe('seedPersonaFolder', () => {
 
     expect(canonical).toBe(await realpath(join(rootDir, 'ada')));
     expect(await readFile(join(canonical, 'AGENTS.md'), 'utf8')).toContain('You are Ada.');
+  });
+
+  it('returns the canonical path when the root is a symlink alias', async () => {
+    const aliasRoot = join(tempDir, 'root-alias');
+    await symlink(rootDir, aliasRoot);
+
+    const canonical = await seedPersonaFolder(aliasRoot, 'ada', 'Research assistant', 'You are Ada.');
+
+    expect(canonical).toBe(join(rootDir, 'ada'));
+    expect(canonical).toBe(await realpath(join(aliasRoot, 'ada')));
   });
 
   it('seeds AGENTS.md with a persona marker carrying name and description, body personaText', async () => {

@@ -6,6 +6,7 @@ import InputBar from './InputBar.svelte';
 import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 import { connection } from '$lib/stores/connection.svelte.js';
 import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
+import { pushSharedImages, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
 
 // The composer settles its optimistic transcript entry and pending-steer pill
 // from the dispatch outcome the server reports (started | queued | handled).
@@ -22,11 +23,15 @@ function setupSession(streaming: boolean) {
   return session;
 }
 
-async function submit(text: string) {
+async function submit(text: string, images: string[] = []) {
   const target = document.createElement('div');
   document.body.appendChild(target);
   mounted.push(mount(InputBar, { target }));
   await tick();
+  if (images.length > 0) {
+    pushSharedImages(images);
+    await tick();
+  }
   const textarea = target.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')!;
   textarea.value = text;
   textarea.dispatchEvent(new Event('input', { bubbles: true }));
@@ -64,6 +69,8 @@ afterEach(async () => {
   sessionRegistry.viewedSessionId = null;
   connection.ready = false;
   treeDialogStore.closeDialog();
+  sharedImagesRequest.images = [];
+  sharedImagesRequest.seq = 0;
 });
 
 describe('prompt dispatch outcome', () => {
@@ -315,5 +322,67 @@ describe('steer dispatch outcome', () => {
     const textarea = await submit('turn left');
     expect(session.pendingSteeringMessages).toEqual([]);
     expect(textarea.value).toBe('turn left');
+  });
+
+  it('sends staged images with a text steer and clears them after dispatch', async () => {
+    const session = setupSession(true);
+    const image = 'data:image/png;base64,AAA';
+    const sent = respond({ outcome: 'queued' });
+    const textarea = await submit('turn left', [image]);
+    expect(sent[0]).toMatchObject({ type: 'steer', sessionId: 's1', message: 'turn left', images: [image] });
+    expect(textarea.value).toBe('');
+    expect(document.querySelectorAll('img[alt="Staged"]')).toHaveLength(0);
+    expect(session.pendingSteeringMessages).toEqual(['turn left']);
+  });
+
+  it('keeps image-only steering disabled', async () => {
+    setupSession(true);
+    const image = 'data:image/png;base64,AAA';
+    const send = vi.spyOn(connection, 'send');
+    const textarea = await submit('', [image]);
+    const button = document.querySelector<HTMLButtonElement>('button[title="Steer"]')!;
+    expect(button.disabled).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+    expect(textarea.value).toBe('');
+    expect(document.querySelectorAll('img[alt="Staged"]')).toHaveLength(1);
+  });
+
+  it('restores staged images when a steer is rejected', async () => {
+    setupSession(true);
+    const image = 'data:image/png;base64,AAA';
+    respond(undefined, false);
+    const textarea = await submit('turn left', [image]);
+    expect(textarea.value).toBe('turn left');
+    expect(document.querySelectorAll('img[alt="Staged"]')).toHaveLength(1);
+  });
+
+  it('restores staged images when steer dispatch loses the connection', async () => {
+    setupSession(true);
+    const image = 'data:image/png;base64,AAA';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(connection, 'send').mockRejectedValue(new Error('offline'));
+    const textarea = await submit('turn left', [image]);
+    expect(textarea.value).toBe('turn left');
+    expect(document.querySelectorAll('img[alt="Staged"]')).toHaveLength(1);
+  });
+
+  it('keeps staged images when a streaming slash command is handled', async () => {
+    setupSession(true);
+    const image = 'data:image/png;base64,AAA';
+    const sent = respond(undefined);
+    const textarea = await submit('/tree', [image]);
+    expect(sent[0]).toMatchObject({ type: 'prompt', sessionId: 's1', message: '/tree' });
+    expect(sent[0]).not.toHaveProperty('images');
+    expect(textarea.value).toBe('');
+    expect(document.querySelectorAll('img[alt="Staged"]')).toHaveLength(1);
+  });
+
+  it('restores slash text without duplicating retained images after failure', async () => {
+    setupSession(true);
+    const image = 'data:image/png;base64,AAA';
+    respond(undefined, false);
+    const textarea = await submit('/tree', [image]);
+    expect(textarea.value).toBe('/tree');
+    expect(document.querySelectorAll('img[alt="Staged"]')).toHaveLength(1);
   });
 });

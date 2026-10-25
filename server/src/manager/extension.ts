@@ -265,6 +265,10 @@ function filterByQuery(rows: FolderInfo[], query: string): FolderInfo[] {
   return rows.filter((row) => [row.persona?.name ?? row.name, row.name, row.path, ...row.tags].some((text) => text.toLowerCase().includes(query)));
 }
 
+async function listFolderRows(context: ManagerToolContext, signal?: AbortSignal): Promise<FolderInfo[]> {
+  return (await context.folders.listLazy?.(signal)) ?? context.folders.list(signal);
+}
+
 const FindSessionsParametersSchema = Type.Object({
   query: Type.Optional(Type.String({ description: 'Case-insensitive substring of session name or first message, default no text filter, with blank equivalent to omission.' })),
   folderPath: Type.Optional(Type.String({ description: 'Canonical path of a known code or persona folder, default all known folders, with blank equivalent to omission.' })),
@@ -302,7 +306,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         signal?.throwIfAborted();
         let folders: FolderInfo[];
         try {
-          folders = await context.folders.list(signal);
+          folders = await listFolderRows(context, signal);
         } catch (error) {
           // An abort propagates as a throw: pi records cancellation, not a
           // tool failure the model would answer.
@@ -319,6 +323,9 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         const query = params.query?.trim().toLowerCase() || undefined;
         if (query !== undefined) rows = filterByQuery(rows, query);
         const outcome = await spillRows('pimote_find_folders', rows, signal);
+        // Return identity rows now; git facts arrive through the shared folder
+        // delta channel and never delay this manager response.
+        void Promise.resolve(context.folders.requestStatusRefresh?.(rows)).catch(() => {});
         // Channel split (DR-073): the guard bounds only the model-facing view;
         // structuredContent carries every row for codemode scripts, details
         // carries renderer metadata for the list view: row counts, plus the
@@ -366,7 +373,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         const query = params.query?.trim().toLowerCase() || undefined;
         let folders: FolderInfo[];
         try {
-          folders = await context.folders.list(signal);
+          folders = await listFolderRows(context, signal);
         } catch (error) {
           // An abort propagates as a throw: pi records cancellation, not a
           // tool failure the model would answer.
@@ -451,7 +458,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         firstMessageSent: Type.Boolean(),
       }),
       execute: async (_callId, params, _signal, _onUpdate): Promise<JsonToolResult> => {
-        const folders = await context.folders.list();
+        const folders = await listFolderRows(context);
         if (!folders.some((folder) => folder.path === params.folderPath)) {
           return errorToolResult(`unknown folder: ${params.folderPath} — use pimote_find_folders to see known folders`);
         }

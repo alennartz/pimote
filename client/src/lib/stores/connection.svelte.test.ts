@@ -63,6 +63,8 @@ describe('ConnectionStore — definitive restore rejections', () => {
     });
     let detailAtCallback: string | null | undefined;
     c.onSessionNotFound = onSessionNotFound;
+    const onSessionRestoreFailed = vi.fn();
+    c.onSessionRestoreFailed = onSessionRestoreFailed;
     c.addSubscribedSession('s-ghost', '/proj');
 
     c.connect();
@@ -75,8 +77,10 @@ describe('ConnectionStore — definitive restore rejections', () => {
     await flush();
 
     expect(onSessionNotFound).toHaveBeenCalledWith('s-ghost');
+    expect(onSessionRestoreFailed).not.toHaveBeenCalled();
     expect(detailAtCallback).toBe('Session not found');
     expect(c.subscribedSessions.has('s-ghost')).toBe(false);
+    expect(ws.sent.map((raw) => JSON.parse(raw)).some((command) => command.type === 'detach_session')).toBe(false);
     // The dropped session must not block the connection from becoming ready.
     expect(c.phase).toBe('ready');
     expect(c.ready).toBe(true);
@@ -109,15 +113,20 @@ describe('ConnectionStore — definitive restore rejections', () => {
     await flush();
     expect(c.subscribedSessions.has('archived')).toBe(false);
     expect(c.subscribedSessions.has('retained')).toBe(true);
+    expect(ws.sent.map((raw) => JSON.parse(raw)).some((cmd) => cmd.type === 'detach_session')).toBe(false);
     expect(deleted).not.toHaveBeenCalled();
     expect(c.ready).toBe(true);
     c.disconnect();
   });
 
-  it('other restore failures keep the session for the next reconnect cycle', async () => {
+  it('non-definitive restore failures detach, remove locally, and show a small failure notice', async () => {
     const c = new ConnectionStore();
     const onSessionNotFound = vi.fn();
+    const onSessionRestoreFailed = vi.fn();
+    const events: any[] = [];
     c.onSessionNotFound = onSessionNotFound;
+    c.onSessionRestoreFailed = onSessionRestoreFailed;
+    c.onEvent((event) => events.push(event));
     c.addSubscribedSession('s-flaky', '/proj');
 
     c.connect();
@@ -130,7 +139,38 @@ describe('ConnectionStore — definitive restore rejections', () => {
     await flush();
 
     expect(onSessionNotFound).not.toHaveBeenCalled();
-    expect(c.subscribedSessions.has('s-flaky')).toBe(true);
+    expect(onSessionRestoreFailed).toHaveBeenCalledWith('s-flaky');
+    expect(c.subscribedSessions.has('s-flaky')).toBe(false);
+    expect(ws.sent.map((raw) => JSON.parse(raw)).some((command) => command.type === 'detach_session' && command.sessionId === 's-flaky')).toBe(true);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'extension_ui_request', sessionId: 's-flaky', method: 'notify', message: 'Session restore failed', notifyType: 'error' }),
+    );
+
+    c.disconnect();
+  });
+
+  it('keeps local cleanup when the socket rejects the detach command', async () => {
+    const c = new ConnectionStore();
+    const onSessionRestoreFailed = vi.fn();
+    c.onSessionRestoreFailed = onSessionRestoreFailed;
+    c.addSubscribedSession('s-detach-fails', '/proj');
+
+    c.connect();
+    const ws = instances.at(-1)!;
+    const send = ws.send.bind(ws);
+    ws.send = (raw: string) => {
+      if (JSON.parse(raw).type === 'detach_session') throw new Error('socket closed');
+      send(raw);
+    };
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    await flush();
+
+    respondTo(ws, 'internal_error');
+    await flush();
+
+    expect(onSessionRestoreFailed).toHaveBeenCalledWith('s-detach-fails');
+    expect(c.subscribedSessions.has('s-detach-fails')).toBe(false);
 
     c.disconnect();
   });

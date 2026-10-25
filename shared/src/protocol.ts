@@ -290,6 +290,7 @@ export interface PromptResponseData {
 export interface SteerCommand extends CommandBase {
   type: 'steer';
   message: string;
+  images?: string[];
 }
 
 export interface FollowUpCommand extends CommandBase {
@@ -654,6 +655,12 @@ export interface OpenSessionResponseData {
   folder?: FolderInfo;
 }
 
+/** Detach this WebSocket's observer from a live session without closing the runtime. */
+export interface DetachSessionCommand extends CommandBase {
+  type: 'detach_session';
+  sessionId: string;
+}
+
 export interface CloseSessionCommand extends CommandBase {
   type: 'close_session';
 }
@@ -861,6 +868,7 @@ export type PimoteCommand =
   | RenameSessionCommand
   | ListSessionsCommand
   | OpenSessionCommand
+  | DetachSessionCommand
   | CloseSessionCommand
   | DeleteSessionCommand
   | ArchiveSessionCommand

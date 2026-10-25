@@ -79,6 +79,7 @@ function gitRunner(cwd: string): (args: string[]) => Promise<string | null> {
   const env = { ...process.env };
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
+  env.GIT_OPTIONAL_LOCKS = '0';
 
   return async (args: string[]): Promise<string | null> => {
     try {
@@ -196,6 +197,11 @@ function factFingerprints(input: {
       dirty: status?.dirty ?? entry.dirty,
       ahead: status?.ahead ?? entry.ahead,
       behind: status?.behind ?? entry.behind,
+      // A first requested probe is a real delivery even when its neutral
+      // values happen to match the identity placeholder. Full background
+      // refreshes pass a status map that omits first probes, so they remain
+      // silent until a known fact moves.
+      probed: status !== undefined,
     };
   }
   for (const hub of input.sourceHubs) {
@@ -294,6 +300,12 @@ export class RepoIndex {
   private sourceHubs: { entries: HubSourceEntry[]; at: number } | null = null;
   private personaSources: PersonaSourceEntry[] = [];
   private readonly statusCache = new Map<string, RepoStatus>();
+  /** One probe per path at a time, shared by window, refresh, and requested
+   *  delivery callers. Git commands stay bounded even when those paths race. */
+  private readonly statusProbeInFlight = new Map<string, Promise<RepoStatus>>();
+  private readonly requestedStatusInFlight = new Map<string, Promise<void>>();
+  private activeGitProbes = 0;
+  private readonly gitProbeWaiters: Array<() => void> = [];
   private listingPromise: Promise<ListingStamp> | null = null;
   private refreshInFlight: Promise<void> | null = null;
   private onRefreshed: ((change: { changedPaths: string[]; removedPaths: string[] }) => void) | null = null;
@@ -343,9 +355,37 @@ export class RepoIndex {
    * must never wait on a whole-set git-probe pass. Discovery staleness only:
    * git-status staleness is `enrichStatus`'s business, per served row.
    */
-  async listLazy(): Promise<RepoInfo[]> {
-    const stamp = await this.currentStamp(false);
+  async listLazy(signal?: AbortSignal): Promise<RepoInfo[]> {
+    const stamp = await this.currentStamp(false, signal);
     return stamp.entries.map((entry) => (entry.missing ? entry : this.withCachedStatus(entry)));
+  }
+
+  /**
+   * Request git facts for exactly these paths without blocking the caller.
+   * Completion uses the same refresh notification seam as stale listing
+   * refreshes, so clients receive one narrow delta for initial and changed
+   * facts. Concurrent requests share both the path job and the git probe.
+   */
+  requestStatusRefresh(paths: Iterable<string>): Promise<void> {
+    const wanted = new Set(paths);
+    const jobs: Promise<void>[] = [];
+    for (const path of wanted) {
+      const existing = this.requestedStatusInFlight.get(path);
+      if (existing) {
+        jobs.push(existing);
+        continue;
+      }
+      const job = this.refreshRequestedStatus(path).finally(() => {
+        if (this.requestedStatusInFlight.get(path) === job) this.requestedStatusInFlight.delete(path);
+      });
+      this.requestedStatusInFlight.set(path, job);
+      jobs.push(job);
+    }
+    return Promise.all(jobs)
+      .then(() => undefined)
+      .catch((error) => {
+        console.warn('[repo-index] requested status refresh failed', error);
+      });
   }
 
   /**
@@ -399,7 +439,7 @@ export class RepoIndex {
     const cached = this.listing;
     if (cached) {
       const statusesDue = refreshWhenStatusesExpire && cached.entries.some((entry) => this.statusExpired(entry));
-      if (this.now() - cached.at >= this.ttlMs || statusesDue) this.kickRefresh();
+      if (this.now() - cached.at >= this.ttlMs || statusesDue) this.kickRefresh(refreshWhenStatusesExpire);
       return cached;
     }
     // Cold path: join or start the walk — but never serve a walk whose stamp
@@ -468,7 +508,7 @@ export class RepoIndex {
    * not row movement, while real git movement lands on previously probed
    * entries and still diffs.
    */
-  private kickRefresh(): void {
+  private kickRefresh(probeStatuses: boolean): void {
     if (this.refreshInFlight) return;
     const before = this.currentFacts();
     const probedBefore = new Set(this.statusCache.keys());
@@ -476,7 +516,7 @@ export class RepoIndex {
       try {
         if (!this.listing || this.now() - this.listing.at >= this.ttlMs) await this.discover();
         const listing = this.listing;
-        if (listing) await mapWithConcurrency(listing.entries, GIT_PROBE_CONCURRENCY, (entry) => this.refreshStatus(entry));
+        if (probeStatuses && listing) await mapWithConcurrency(listing.entries, GIT_PROBE_CONCURRENCY, (entry) => this.refreshStatus(entry));
       } catch (error) {
         console.warn('[repo-index] background refresh failed', error);
       } finally {
@@ -486,12 +526,31 @@ export class RepoIndex {
     })();
   }
 
+  /** Probe one requested path and deliver only its status movement. */
+  private async refreshRequestedStatus(path: string): Promise<void> {
+    const stamp = await this.currentStamp(false);
+    const entry = stamp.entries.find((candidate) => candidate.path === path);
+    if (!entry || entry.missing) return;
+
+    const before = this.currentFacts().get(path);
+    if (this.statusExpired(entry)) await this.probeStatus(path);
+    this.notifyRequestedStatus(path, before);
+  }
+
+  private notifyRequestedStatus(path: string, before: string | undefined): void {
+    const after = this.currentFacts().get(path);
+    if (before === after) return;
+
+    const changedPaths = new Set([path, ...dependentHubPaths(path, this.listing?.tree ?? null, this.sourceHubs?.entries ?? [])]);
+    this.onRefreshed?.({ changedPaths: [...changedPaths].sort(), removedPaths: [] });
+  }
+
   /**
    * Report the refresh's change targets when the served facts moved: added and
-   *  changed paths, physically removed paths, and hubs whose rows move with a
-   *  member. An unchanged refresh stays silent. Status facts join the diff by
-   *  default (git movement is a real row change); callers whose snapshot spans
-   *  a status-cache clear pass NO_STATUS_FACTS on both sides.
+   * changed paths, physically removed paths, and hubs whose rows move with a
+   * member. An unchanged refresh stays silent. Status facts join the diff by
+   * default (git movement is a real row change); callers whose snapshot spans
+   * a status-cache clear pass NO_STATUS_FACTS on both sides.
    */
   private notifyRefreshed(before: Map<string, string>, statuses: ReadonlyMap<string, RepoStatus> = this.statusCache): void {
     const { changedPaths, removedPaths } = diffFacts(before, this.currentFacts(statuses));
@@ -741,10 +800,36 @@ export class RepoIndex {
     return { ...base, branch: status.branch, dirty: status.dirty, ahead: status.ahead, behind: status.behind };
   }
 
-  private async probeStatus(path: string): Promise<RepoStatus> {
-    const status = await readGitStatus(path);
-    const entry: RepoStatus = { ...status, at: this.now() };
-    this.statusCache.set(path, entry);
-    return entry;
+  private probeStatus(path: string): Promise<RepoStatus> {
+    const existing = this.statusProbeInFlight.get(path);
+    if (existing) return existing;
+
+    const probe = this.runGitProbe(path).finally(() => {
+      if (this.statusProbeInFlight.get(path) === probe) this.statusProbeInFlight.delete(path);
+    });
+    this.statusProbeInFlight.set(path, probe);
+    return probe;
+  }
+
+  private async runGitProbe(path: string): Promise<RepoStatus> {
+    await this.acquireGitProbeSlot();
+    try {
+      const status = await readGitStatus(path);
+      const entry: RepoStatus = { ...status, at: this.now() };
+      this.statusCache.set(path, entry);
+      return entry;
+    } finally {
+      const next = this.gitProbeWaiters.shift();
+      if (next) next();
+      else this.activeGitProbes -= 1;
+    }
+  }
+
+  private async acquireGitProbeSlot(): Promise<void> {
+    if (this.activeGitProbes < GIT_PROBE_CONCURRENCY) {
+      this.activeGitProbes += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.gitProbeWaiters.push(resolve));
   }
 }

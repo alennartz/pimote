@@ -10,6 +10,7 @@ const harness = vi.hoisted(() => {
   let sequence = 0;
   let nextSessionId: string | undefined;
   let nextBind: (() => Promise<void>) | undefined;
+  let nextBindAction: ((bindings: any) => Promise<void>) | undefined;
 
   const makeSession = (sessionId: string, sessionManager: any): any => {
     const session: any = {
@@ -34,6 +35,11 @@ const harness = vi.hoisted(() => {
           nextBind = undefined;
           await gate();
         }
+        if (nextBindAction) {
+          const action = nextBindAction;
+          nextBindAction = undefined;
+          await action(bindings);
+        }
       }),
       createReplacedSessionContext: () => ({ session }),
     };
@@ -54,24 +60,44 @@ const harness = vi.hoisted(() => {
     gateNextBind: (gate: () => Promise<void>) => {
       nextBind = gate;
     },
+    runNextBindAction: (action: (bindings: any) => Promise<void>) => {
+      nextBindAction = action;
+    },
+    clearPending: () => {
+      nextBind = undefined;
+      nextBindAction = undefined;
+    },
     createAgentSessionRuntime: vi.fn(async (factory: CreateAgentSessionRuntimeFactory, options: any) => {
       const created = await factory({ ...options, agentDir: '/agent', sessionStartEvent: { type: 'session_start', reason: 'startup' } });
       const runtime: any = {
         session: created.session,
         services: created.services,
         dispose: vi.fn(async () => {}),
+        setBeforeSessionInvalidate: vi.fn((callback: () => void) => {
+          runtime.beforeSessionInvalidate = callback;
+        }),
+        beforeSessionInvalidate: undefined,
+        beforeReplacementAction: undefined,
+        failNextSession: undefined,
         setRebindSession: vi.fn((callback: () => Promise<void>) => {
           runtime.rebind = callback;
         }),
         rebind: undefined,
-        newSession: async (replacementOptions?: { withSession?: (ctx: unknown) => Promise<void> }) => {
+        newSession: vi.fn(async (replacementOptions?: { withSession?: (ctx: unknown) => Promise<void> }) => {
+          runtime.beforeSessionInvalidate?.();
+          await runtime.beforeReplacementAction?.();
+          if (runtime.failNextSession) {
+            const failure = runtime.failNextSession;
+            runtime.failNextSession = undefined;
+            throw failure;
+          }
           const id = nextSessionId ?? `session-${++sequence}`;
           nextSessionId = undefined;
           runtime.session = makeSession(id, options.sessionManager);
           await runtime.rebind?.();
           await replacementOptions?.withSession?.(runtime.session.createReplacedSessionContext());
           return { cancelled: false };
-        },
+        }),
       };
       runtimes.push(runtime);
       return runtime;
@@ -110,6 +136,7 @@ beforeEach(() => {
   harness.modelRuntimeCreate.mockClear();
   harness.createAgentSessionRuntime.mockClear();
   harness.nextSessionId();
+  harness.clearPending();
 });
 
 describe('manager-owned extension startup', () => {
@@ -178,6 +205,90 @@ describe('manager-owned extension startup', () => {
     expect(slot.session).not.toBe(firstSession);
     expect(manager.getSlot(id)).toBe(slot);
     expect(harness.bindCalls).toHaveLength(2);
+  });
+
+  it('rejects a concurrent guarded runtime replacement before a second factory starts', async () => {
+    const manager = await PimoteSessionManager.create(config, push);
+    await manager.openSession('/project');
+    const actions = harness.bindCalls[0].bindings.commandContextActions;
+    const runtime = harness.runtimes[0];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    harness.gateNextBind(async () => gate);
+
+    const first = actions.newSession();
+    await vi.waitFor(() => expect(harness.bindCalls).toHaveLength(2));
+    const second = actions.newSession();
+
+    await expect(second).rejects.toThrow('session_reset_in_progress');
+    expect(runtime.newSession).toHaveBeenCalledOnce();
+    release();
+    await first;
+    await manager.dispose();
+  });
+
+  it('rejects a nested reset from the pre-apply runtime phase', async () => {
+    const manager = await PimoteSessionManager.create(config, push);
+    await manager.openSession('/project');
+    const actions = harness.bindCalls[0].bindings.commandContextActions;
+    const runtime = harness.runtimes[0];
+    runtime.beforeReplacementAction = async () => {
+      await expect(actions.newSession()).rejects.toThrow('session_reset_in_progress');
+    };
+
+    await actions.newSession();
+
+    expect(runtime.newSession).toHaveBeenCalledOnce();
+    await manager.dispose();
+  });
+
+  it('rejects a direct root-runtime nested reset before apply', async () => {
+    const manager = await PimoteSessionManager.create(config, push);
+    const id = await manager.openSession('/project');
+    const slot = manager.getSlot(id)!;
+    const runtime = harness.runtimes[0];
+    runtime.beforeReplacementAction = async () => {
+      await expect(slot.runtime.newSession()).rejects.toThrow('session_reset_in_progress');
+    };
+
+    await slot.runtime.newSession();
+
+    expect(runtime.newSession).toHaveBeenCalledOnce();
+    await manager.dispose();
+  });
+
+  it('closes the slot when replacement setup fails before the rebind callback', async () => {
+    const manager = await PimoteSessionManager.create(config, push);
+    const id = await manager.openSession('/project');
+    const runtime = harness.runtimes[0];
+    const failure = new Error('replacement setup failed');
+    runtime.failNextSession = failure;
+
+    await expect(harness.bindCalls[0].bindings.commandContextActions.newSession()).rejects.toBe(failure);
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(manager.getSlot(id)).toBeNull();
+  });
+
+  it('allows one nested extension reset and rejects a same-context sibling', async () => {
+    const manager = await PimoteSessionManager.create(config, push);
+    await manager.openSession('/project');
+    const actions = harness.bindCalls[0].bindings.commandContextActions;
+    const runtime = harness.runtimes[0];
+
+    harness.runNextBindAction(async (bindings: any) => {
+      const first = bindings.commandContextActions.newSession();
+      const second = bindings.commandContextActions.newSession();
+      await expect(second).rejects.toThrow('session_reset_in_progress');
+      await first;
+    });
+
+    await actions.newSession();
+
+    expect(runtime.newSession).toHaveBeenCalledTimes(2);
+    expect(harness.bindCalls).toHaveLength(3);
+    await manager.dispose();
   });
 
   it('invalidates same-session navigation replay without rebuilding or rebinding', async () => {

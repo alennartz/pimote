@@ -179,7 +179,9 @@ function createMockSessionManager(sessions: Map<string, ManagedSlot> = new Map()
       slot?.observers.set(observer.clientId, observer);
       if (slot) await bindStartup(slot);
     },
-    detachObserver: (id: string, clientId: string) => {
+    detachObserver: (id: string, clientId: string, ws?: SessionObserver['ws']) => {
+      const observer = sessions.get(id)?.observers.get(clientId);
+      if (!observer || (ws !== undefined && observer.ws !== ws)) return;
       sessions.get(id)?.observers.delete(clientId);
     },
     applySessionReset: async (slot: ManagedSlot) => {
@@ -286,6 +288,16 @@ function createTestHandler(
   const sessionRecords = opts?.sessionRecords ?? createMockSessionRecords();
   const pushService = createMockPushService();
   const sessionMetadataStore = opts?.sessionMetadataStore ?? createMockSessionMetadataStore();
+  const folderRegistry = opts?.folderRegistry;
+  if (folderRegistry) {
+    const registry = folderRegistry as unknown as {
+      list: () => Promise<FolderInfo[]>;
+      listLazy?: () => Promise<FolderInfo[]>;
+      requestStatusRefresh?: (rows: ReadonlyArray<FolderInfo>) => Promise<void>;
+    };
+    registry.listLazy ??= registry.list;
+    registry.requestStatusRefresh ??= async () => {};
+  }
 
   const handler = new WsHandler(
     '/srv/manager-home',
@@ -394,7 +406,9 @@ describe('observer command boundary', () => {
       ctx.sessionManager.attachObserver = async (id, observer) => {
         sessions.get(id)!.observers.set(observer.clientId, observer);
       };
-      ctx.sessionManager.detachObserver = (id, clientId) => {
+      ctx.sessionManager.detachObserver = (id, clientId, ws) => {
+        const observer = sessions.get(id)?.observers.get(clientId);
+        if (!observer || (ws !== undefined && observer.ws !== ws)) return;
         sessions.get(id)?.observers.delete(clientId);
       };
     }
@@ -414,6 +428,59 @@ describe('observer command boundary', () => {
     expect(findEvents(second.sent, 'session_closed')).toEqual([]);
     first.handler.cleanup();
     expect([...slot.observers.keys()]).toEqual(['b']);
+  });
+
+  it('treats detach_session as a pre-attach no-op', async () => {
+    const { slot, first } = pair();
+
+    await first.handler.handleMessage(JSON.stringify({ type: 'detach_session', sessionId: 'session-1', id: 'detach-before-attach' }));
+
+    expect(findResponse(first.sent, 'detach-before-attach')).toMatchObject({ success: true });
+    expect(slot.observers.size).toBe(0);
+  });
+
+  it('detaches only this socket without closing the shared runtime', async () => {
+    const { slot, sessions, first, second } = pair();
+    await open(first);
+    await open(second);
+
+    await first.handler.handleMessage(JSON.stringify({ type: 'detach_session', sessionId: 'session-1', id: 'detach-after-attach' }));
+
+    expect(findResponse(first.sent, 'detach-after-attach')).toMatchObject({ success: true });
+    expect(slot.observers.has('a')).toBe(false);
+    expect(slot.observers.get('b')).toBeDefined();
+    expect(sessions.get('session-1')).toBe(slot);
+    expect(findEvents(first.sent, 'session_closed')).toEqual([]);
+    expect(findEvents(second.sent, 'session_closed')).toEqual([]);
+  });
+
+  it('does not let a stale socket detach its replacement observer', async () => {
+    const slot = createMockSlot({ id: 'session-1', eventBuffer: createMockEventBuffer({ replayResult: [] }) });
+    const sessions = new Map([['session-1', slot]]);
+    const clientRegistry: ClientRegistry = new Map();
+    const first = createTestHandler('same-client', { sessions, clientRegistry });
+    await open(first);
+    const replacement = createTestHandler('same-client', { sessions, clientRegistry });
+    await open(replacement);
+
+    await first.handler.handleMessage(JSON.stringify({ type: 'detach_session', sessionId: 'session-1', id: 'stale-detach' }));
+
+    expect(findResponse(first.sent, 'stale-detach')).toMatchObject({ success: true });
+    expect(slot.observers.get('same-client')?.ws).toBe(replacement.ws);
+  });
+
+  it('keeps detach cleanup when its response socket fails', async () => {
+    const { slot, first } = pair();
+    await open(first);
+    const send = first.ws.send.bind(first.ws);
+    first.ws.send = (raw: string) => {
+      if (JSON.parse(raw).id === 'detach-socket-fails') throw new Error('socket closed');
+      send(raw);
+    };
+
+    await expect(first.handler.handleMessage(JSON.stringify({ type: 'detach_session', sessionId: 'session-1', id: 'detach-socket-fails' }))).resolves.toBeUndefined();
+
+    expect(slot.observers.has('a')).toBe(false);
   });
 
   it('replays independently and resyncs only the observer past buffer eviction', async () => {
@@ -524,10 +591,13 @@ describe('observer command boundary', () => {
     (slot.session as any).prompt = prompt;
     await open(first);
 
-    await first.handler.handleMessage(JSON.stringify({ type: 'steer', sessionId: 'session-1', message: 'consumed by a handler', id: 's' }));
+    await first.handler.handleMessage(JSON.stringify({ type: 'steer', sessionId: 'session-1', message: 'consumed by a handler', images: ['data:image/png;base64,AAA'], id: 's' }));
 
     expect(findResponse(first.sent, 's')).toMatchObject({ success: true, data: { outcome: 'handled' } });
-    expect(prompt).toHaveBeenCalledWith('consumed by a handler', expect.objectContaining({ streamingBehavior: 'steer' }));
+    expect(prompt).toHaveBeenCalledWith(
+      'consumed by a handler',
+      expect.objectContaining({ streamingBehavior: 'steer', images: [expect.objectContaining({ mimeType: 'image/png', data: 'AAA' })] }),
+    );
     expect(cancel).toHaveBeenCalledOnce();
   });
 
@@ -803,6 +873,47 @@ describe('WsHandler', () => {
   });
 
   describe('open_session — same client ID (live restore)', () => {
+    it('leaves no observer when restore fails before claimSession', async () => {
+      const session = createMockSlot({ id: 'session-1', eventBuffer: createMockEventBuffer({ replayResult: [] }) });
+      session.sessionState.eventBuffer.replay = () => {
+        throw new Error('restore failed before attach');
+      };
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', sessionId: 'session-1', lastCursor: 0, id: 'restore-before-attach' }));
+
+      expect(findResponse(sent, 'restore-before-attach')).toMatchObject({ success: false, error: 'restore failed before attach' });
+      expect(session.observers.size).toBe(0);
+      await handler.handleMessage(JSON.stringify({ type: 'detach_session', sessionId: 'session-1', id: 'detach-before-attach' }));
+      expect(findResponse(sent, 'detach-before-attach')).toMatchObject({ success: true });
+      expect(sessions.get('session-1')).toBe(session);
+    });
+
+    it('detaches an observer left behind when restore fails after claimSession', async () => {
+      const session = createMockSlot({ id: 'session-1', eventBuffer: createMockEventBuffer({ replayResult: [] }) });
+      const sessions = new Map([['session-1', session]]);
+      const { handler, ws, sent } = createTestHandler('client-1', { sessions });
+      vi.spyOn(handler, 'claimSession').mockImplementation(async (_sessionId, slot) => {
+        slot.observers.set('client-1', {
+          ws,
+          clientId: 'client-1',
+          cursor: 0,
+          onSessionReset: null,
+        });
+        throw new Error('restore failed after attach');
+      });
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', sessionId: 'session-1', id: 'restore-after-attach' }));
+
+      expect(findResponse(sent, 'restore-after-attach')).toMatchObject({ success: false, error: 'restore failed after attach' });
+      expect(session.observers.has('client-1')).toBe(true);
+      await handler.handleMessage(JSON.stringify({ type: 'detach_session', sessionId: 'session-1', id: 'detach-after-failure' }));
+      expect(findResponse(sent, 'detach-after-failure')).toMatchObject({ success: true });
+      expect(session.observers.has('client-1')).toBe(false);
+      expect(sessions.get('session-1')).toBe(session);
+    });
+
     it('replays buffered events for incremental replay when lastCursor is provided', async () => {
       const bufferedEvents: PimoteSessionEvent[] = [
         { type: 'agent_start', sessionId: 'session-1', cursor: 5 },
@@ -910,6 +1021,56 @@ describe('WsHandler', () => {
         nature: 'persona',
         shortcutCount: 2,
       });
+    });
+
+    it('returns the session response before a requested status refresh settles', async () => {
+      let releaseRefresh!: () => void;
+      const pendingRefresh = new Promise<void>((resolve) => {
+        releaseRefresh = resolve;
+      });
+      const row = folderRow('/home/user/project');
+      const fullList = vi.fn(async () => {
+        throw new Error('full folder listing must not run');
+      });
+      const lazyList = vi.fn(async () => [row]);
+      const requestStatusRefresh = vi.fn(() => pendingRefresh);
+      const folderRegistry = { list: fullList, listLazy: lazyList, requestStatusRefresh } as unknown as FolderRegistry;
+      const session = createMockSlot({ id: 'session-1', folderPath: row.path, eventBuffer: createMockEventBuffer({ replayResult: [] }) });
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions, folderRegistry });
+
+      const command = handler.handleMessage(JSON.stringify({ type: 'open_session', sessionId: 'session-1', folderPath: row.path, id: 'req-async-status' }));
+      for (let attempt = 0; attempt < 12; attempt += 1) await Promise.resolve();
+
+      expect(requestStatusRefresh).toHaveBeenCalledOnce();
+      expect(findResponse(sent, 'req-async-status')).toMatchObject({ success: true });
+      expect(fullList).not.toHaveBeenCalled();
+
+      releaseRefresh();
+      await command;
+    });
+
+    it('recovers after a requested status refresh rejects', async () => {
+      const row = folderRow('/home/user/project');
+      const requestStatusRefresh = vi.fn().mockRejectedValueOnce(new Error('status unavailable')).mockResolvedValue(undefined);
+      const folderRegistry = {
+        list: async () => {
+          throw new Error('full folder listing must not run');
+        },
+        listLazy: async () => [row],
+        requestStatusRefresh,
+      } as unknown as FolderRegistry;
+      const session = createMockSlot({ id: 'session-1', folderPath: row.path, eventBuffer: createMockEventBuffer({ replayResult: [] }) });
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions, folderRegistry });
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', sessionId: 'session-1', folderPath: row.path, id: 'req-status-fail' }));
+      await Promise.resolve();
+      expect(findResponse(sent, 'req-status-fail')).toMatchObject({ success: true });
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', sessionId: 'session-1', folderPath: row.path, id: 'req-status-retry' }));
+      expect(findResponse(sent, 'req-status-retry')).toMatchObject({ success: true });
+      expect(requestStatusRefresh).toHaveBeenCalledTimes(2);
     });
 
     it('sends full_resync when cursor is too old', async () => {
@@ -1114,6 +1275,8 @@ describe('WsHandler', () => {
       } as SessionRecords;
       const folderRegistry = {
         list: async () => [folderRow('/home/user/alpha'), folderRow('/home/user/beta', { archived: true })],
+        listLazy: async () => [folderRow('/home/user/alpha'), folderRow('/home/user/beta', { archived: true })],
+        requestStatusRefresh: async () => {},
       } as unknown as FolderRegistry;
       const sessionMetadataStore = createMockSessionMetadataStore(['/tmp/session-deep.jsonl']);
 
@@ -1148,6 +1311,8 @@ describe('WsHandler', () => {
       const sessionManager = createMockSessionManager(new Map());
       const folderRegistry = {
         list: async () => [folderRow('/home/user/alpha'), folderRow('/home/user/beta')],
+        listLazy: async () => [folderRow('/home/user/alpha'), folderRow('/home/user/beta')],
+        requestStatusRefresh: async () => {},
       } as unknown as FolderRegistry;
 
       const clientRegistry: ClientRegistry = new Map();
@@ -2784,7 +2949,7 @@ describe('WsHandler', () => {
       expect(findResponse(sent, 'req-navigate-second')).toEqual({
         id: 'req-navigate-second',
         success: false,
-        error: 'Tree navigation already in progress',
+        error: 'session_reset_in_progress',
       });
 
       expect(findEvents(sent, 'tree_navigation_start')).toHaveLength(1);
@@ -4192,6 +4357,76 @@ describe('WsHandler', () => {
     });
   });
 
+  describe('folders_changed queue', () => {
+    it('keeps broadcasts ordered when async delta enrichment would complete in reverse', async () => {
+      let releaseFirst!: () => void;
+      let releaseSecond!: () => void;
+      const firstEnrichment = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const secondEnrichment = new Promise<void>((resolve) => {
+        releaseSecond = resolve;
+      });
+      const firstDelta = { type: 'folders_changed' as const, changed: [folderRow('/w/first')], removedPaths: [], epoch: 1 };
+      const secondDelta = { type: 'folders_changed' as const, changed: [folderRow('/w/second')], removedPaths: [], epoch: 2 };
+      const buildDelta = vi.fn(async (changedPaths: string[]) => {
+        if (changedPaths[0] === '/w/first') {
+          await firstEnrichment;
+          return firstDelta;
+        }
+        await secondEnrichment;
+        return secondDelta;
+      });
+      const folderListing = { buildDelta } as unknown as FolderListingService;
+      const clientRegistry: ClientRegistry = new Map();
+      const client = createTestHandler('ordered', { clientRegistry });
+      client.sent.length = 0;
+
+      WsHandler.broadcastFoldersChanged(folderListing, ['/w/first'], [], clientRegistry);
+      WsHandler.broadcastFoldersChanged(folderListing, ['/w/second'], [], clientRegistry);
+      await Promise.resolve();
+      expect(buildDelta).toHaveBeenCalledTimes(1);
+
+      // The second operation cannot start while the first enrichment is
+      // pending, so a reversed completion cannot publish a newer epoch first.
+      releaseFirst();
+      await flushPromises();
+      expect(client.sent).toEqual([firstDelta]);
+      expect(buildDelta).toHaveBeenCalledTimes(2);
+
+      releaseSecond();
+      await flushPromises();
+      expect(client.sent).toEqual([firstDelta, secondDelta]);
+      expect(buildDelta.mock.calls.map(([paths]) => paths)).toEqual([['/w/first'], ['/w/second']]);
+    });
+
+    it('keeps the queue ordered across a failed retry and recovers for the next broadcast', async () => {
+      const calls: string[] = [];
+      const secondDelta = { type: 'folders_changed' as const, changed: [folderRow('/w/second')], removedPaths: [], epoch: 2 };
+      const buildDelta = vi.fn(async (changedPaths: string[]) => {
+        const path = changedPaths[0]!;
+        calls.push(path);
+        if (path === '/w/first') throw new Error('first build failed');
+        return secondDelta;
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const folderListing = { buildDelta } as unknown as FolderListingService;
+      const clientRegistry: ClientRegistry = new Map();
+      const client = createTestHandler('retry', { clientRegistry });
+      client.sent.length = 0;
+
+      WsHandler.broadcastFoldersChanged(folderListing, ['/w/first'], [], clientRegistry);
+      WsHandler.broadcastFoldersChanged(folderListing, ['/w/second'], [], clientRegistry);
+      await flushPromises();
+
+      expect(calls).toEqual(['/w/first', '/w/first', '/w/second']);
+      expect(buildDelta).toHaveBeenCalledTimes(3);
+      expect(client.sent).toEqual([secondDelta]);
+      expect(warn).toHaveBeenCalledWith('[WsHandler] folders_changed delta failed:', 'first build failed');
+      warn.mockRestore();
+    });
+  });
+
   describe('create_folder', () => {
     it('rejects empty name', async () => {
       const sessionRecords = createMockSessionRecords();
@@ -4245,7 +4480,11 @@ describe('WsHandler', () => {
       const buildDelta = vi.fn(async () => ({ type: 'folders_changed' as const, changed: [folderRow('/home/user/projects/new')], removedPaths: [], epoch: 1 }));
       const folderListing = { buildDelta } as unknown as FolderListingService;
       const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate, invalidateListing } as unknown as RepoIndex;
-      const folderRegistry = { list: async () => [folderRow('/home/user/projects/new')] } as unknown as FolderRegistry;
+      const folderRegistry = {
+        list: async () => [folderRow('/home/user/projects/new')],
+        listLazy: async () => [folderRow('/home/user/projects/new')],
+        requestStatusRefresh: async () => {},
+      } as unknown as FolderRegistry;
       const creators = [
         {
           describe: () => ({ paramSchema: { root: {}, name: {} } }),
@@ -4268,6 +4507,29 @@ describe('WsHandler', () => {
       expect(buildDelta).toHaveBeenCalledWith(['/home/user/projects/new'], []);
       expect(findEvents(a.sent, 'folders_changed')).toHaveLength(1);
       expect(findEvents(b.sent, 'folders_changed')).toHaveLength(1);
+    });
+  });
+
+  describe('AGENTS.md ownership', () => {
+    it('resolves ownership with lazy rows without running the full listing', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'pimote-agents-owner-'));
+      try {
+        const row = folderRow(dir);
+        const fullList = vi.fn(async () => {
+          throw new Error('full folder listing must not run');
+        });
+        const lazyList = vi.fn(async () => [row]);
+        const folderRegistry = { list: fullList, listLazy: lazyList, requestStatusRefresh: async () => {} } as unknown as FolderRegistry;
+        const { handler, sent } = createTestHandler('client-1', { folderRegistry });
+
+        await handler.handleMessage(JSON.stringify({ type: 'file_put', path: join(dir, 'AGENTS.md'), content: '# instructions\n', id: 'req-agents-owner' }));
+
+        expect(findResponse(sent, 'req-agents-owner')).toMatchObject({ success: true });
+        expect(lazyList).toHaveBeenCalledOnce();
+        expect(fullList).not.toHaveBeenCalled();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 
@@ -4889,6 +5151,15 @@ describe('call_bind — dormant session reopen', () => {
     folderRegistry?: FolderRegistry;
   }) {
     const sessionManager = createMockSessionManager(args.sessions);
+    if (args.folderRegistry) {
+      const registry = args.folderRegistry as unknown as {
+        list: () => Promise<FolderInfo[]>;
+        listLazy?: () => Promise<FolderInfo[]>;
+        requestStatusRefresh?: (rows: ReadonlyArray<FolderInfo>) => Promise<void>;
+      };
+      registry.listLazy ??= registry.list;
+      registry.requestStatusRefresh ??= async () => {};
+    }
     const bus = { on: vi.fn(() => () => {}), emit: vi.fn(), clear: vi.fn() };
     const orchestrator = new VoiceOrchestrator({
       config: { voice: { speechmuxSignalUrl: SIGNAL_URL, speechmuxLlmWsUrl: 'wss://speechmux.test/llm' } } as any,

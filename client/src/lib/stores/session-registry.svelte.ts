@@ -1820,6 +1820,13 @@ connection.onSessionNotFound = (sessionId) => {
   dropSession(sessionId);
 };
 
+// A non-definitive reconnect failure still leaves this client without a valid
+// observer. The connection store sends the socket-scoped detach first, then
+// this callback removes only the local session entry.
+connection.onSessionRestoreFailed = (sessionId) => {
+  dropSession(sessionId);
+};
+
 connection.onSessionArchived = (sessionId) => {
   sessionRegistry.setRestorable(sessionId, false);
 };

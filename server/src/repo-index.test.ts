@@ -450,6 +450,91 @@ describe('RepoIndex lazy status enrichment (window path)', () => {
     expect(rows.find((r) => r.path === a)?.dirty).toBe(true);
     expect(rows.find((r) => r.path === b)?.dirty).toBe(false);
   });
+
+  it('keeps stale lazy listing refreshes identity-only', async () => {
+    const a = join(tempDir, 'a');
+    const b = join(tempDir, 'b');
+    await initRepo(a);
+    await initRepo(b);
+    const index = makeIndex([tempDir], { ttlMs: 100 });
+
+    await index.listLazy();
+    clock = 200;
+    const rows = await index.listLazy();
+    await index.whenRefreshed();
+
+    expect(rows.every((row) => row.branch === null)).toBe(true);
+    expect((await index.listLazy()).every((row) => row.branch === null)).toBe(true);
+  });
+
+  it('delivers requested initial facts without probing unrelated rows', async () => {
+    const a = join(tempDir, 'a');
+    const b = join(tempDir, 'b');
+    await initRepo(a);
+    await initRepo(b);
+    await writeFile(join(a, 'notes.txt'), 'dirty a');
+
+    const index = makeIndex();
+    await index.listLazy();
+    const onRefreshed = vi.fn();
+    index.setOnRefreshed(onRefreshed);
+
+    await index.requestStatusRefresh([a]);
+
+    expect(onRefreshed).toHaveBeenCalledTimes(1);
+    expect(onRefreshed).toHaveBeenLastCalledWith({ changedPaths: [a], removedPaths: [] });
+    const rows = await index.listLazy();
+    expect(rows.find((row) => row.path === a)?.dirty).toBe(true);
+    expect(rows.find((row) => row.path === b)?.branch).toBeNull();
+  });
+
+  it('delivers changed facts after a requested status TTL expires', async () => {
+    const repo = join(tempDir, 'repo');
+    await initRepo(repo);
+    const index = makeIndex([tempDir], { statusTtlMs: 100 });
+    await index.listLazy();
+    const onRefreshed = vi.fn();
+    index.setOnRefreshed(onRefreshed);
+
+    await index.requestStatusRefresh([repo]);
+    expect(onRefreshed).toHaveBeenCalledTimes(1);
+    await writeFile(join(repo, 'notes.txt'), 'dirty');
+    clock = 200;
+    await index.requestStatusRefresh([repo]);
+
+    expect(onRefreshed).toHaveBeenCalledTimes(2);
+    expect(onRefreshed).toHaveBeenLastCalledWith({ changedPaths: [repo], removedPaths: [] });
+  });
+
+  it('includes dependent hubs in requested status delivery', async () => {
+    const hub = join(tempDir, 'hub');
+    const member = join(externalDir, 'member');
+    await initRepo(hub);
+    await initRepo(member);
+    await symlink(member, join(hub, 'member'));
+
+    const index = makeIndex();
+    await index.listLazy();
+    const onRefreshed = vi.fn();
+    index.setOnRefreshed(onRefreshed);
+
+    await index.requestStatusRefresh([member]);
+
+    expect(onRefreshed).toHaveBeenCalledWith({ changedPaths: [hub, member].sort(), removedPaths: [] });
+  });
+
+  it('deduplicates concurrent requested probes and delivery', async () => {
+    const repo = join(tempDir, 'repo');
+    await initRepo(repo);
+    const index = makeIndex();
+    await index.listLazy();
+    const onRefreshed = vi.fn();
+    index.setOnRefreshed(onRefreshed);
+
+    await Promise.all([index.requestStatusRefresh([repo]), index.requestStatusRefresh([repo])]);
+
+    expect(onRefreshed).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('RepoIndex.list() — TTL cache', () => {

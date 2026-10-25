@@ -10,6 +10,7 @@ export async function getGitBranch(cwd: string): Promise<string | null> {
   const env = { ...process.env };
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
+  env.GIT_OPTIONAL_LOCKS = '0';
 
   const runGit = async (args: string[]): Promise<string | null> => {
     try {

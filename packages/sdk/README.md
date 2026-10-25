@@ -162,7 +162,7 @@ The discovery seam. `list()` is called on cache miss and must return the current
 
 ### `FolderCreator`
 
-The creation seam. `describe()` returns the human-readable form for the creation UI — a `label` plus a `paramSchema` mapping param names to `'string' | 'string[]'`. `create(params)` receives the user-supplied params, makes the folder, and returns its `{ path }`.
+The creation seam. `describe()` returns the human-readable form for the creation UI — a `label` plus a `paramSchema` mapping param names to `'string' | 'string[]'`. `create(params)` receives the user-supplied params, makes the folder, and returns its `{ path }`. Pimote resolves that path to the folder's canonical filesystem identity before seeding, broadcasting, or opening a session, so a creator can return the lexical path it used to reach the folder. The path must name the successfully created folder.
 
 ### Entry shapes
 

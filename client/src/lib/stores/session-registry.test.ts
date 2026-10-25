@@ -2000,6 +2000,29 @@ describe('SessionRegistry', () => {
   });
 });
 
+describe('reconnect restore cleanup', () => {
+  afterEach(() => {
+    sessionRegistry.removeSession('restore-failed');
+    sessionRegistry.removeSession('restore-retained');
+    connection.removeSubscribedSession('restore-failed');
+    connection.removeSubscribedSession('restore-retained');
+  });
+
+  it('removes only the failed session locally after a non-definitive restore failure', () => {
+    sessionRegistry.addSession('restore-failed', '/repos/failing', 'failing');
+    sessionRegistry.addSession('restore-retained', '/repos/retained', 'retained');
+    connection.addSubscribedSession('restore-failed', '/repos/failing');
+    connection.addSubscribedSession('restore-retained', '/repos/retained');
+
+    connection.onSessionRestoreFailed?.('restore-failed');
+
+    expect(sessionRegistry.sessions['restore-failed']).toBeUndefined();
+    expect(connection.subscribedSessions.has('restore-failed')).toBe(false);
+    expect(sessionRegistry.sessions['restore-retained']).toBeDefined();
+    expect(connection.subscribedSessions.has('restore-retained')).toBe(true);
+  });
+});
+
 describe('session_commands_changed', () => {
   it('replaces the cached commands after a resource reload', () => {
     const sessionId = 'commands-refresh';

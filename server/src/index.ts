@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig, ensureVapidKeys, expandHomePath, managerRootPlacementError } from './config.js';
 import { closeSessionForObservers, WsHandler } from './ws-handler.js';
 import { createServer } from './server.js';
-import { PimoteSessionManager } from './session-manager.js';
+import { PimoteSessionManager, runSlotLifecycle } from './session-manager.js';
 import { SessionRecords, resolveSessionAcrossFolders } from './session-records.js';
 import { SessionSummaryIndex } from './session-summaries.js';
 import { FolderListing } from './folder-listing.js';
@@ -190,7 +190,7 @@ export async function main(options: StartOptions = {}) {
       // lingers as an open one. Broadcast mirrors the WS flow so connected
       // dashboards update immediately.
       archiveSessions: async (sessionIds: string[]): Promise<SessionArchiveOutcome[]> => {
-        const knownFolderPaths = (await folderRegistry.list()).map((folder) => folder.path);
+        const knownFolderPaths = (await folderRegistry.listLazy()).map((folder) => folder.path);
         return Promise.all(
           sessionIds.map((sessionId) =>
             runManagerSessionOperation(sessionId, async (): Promise<SessionArchiveOutcome> => {
@@ -204,10 +204,15 @@ export async function main(options: StartOptions = {}) {
 
               // Mark the record before runtime disposal closes the slot. A
               // concurrent open then sees session_archived instead of attaching
-              // to a runtime that is already closing.
-              await sessionMetadataStore.setArchived(resolved.sessionFilePath, true);
+              // to a runtime that is already closing. Admit the close first so
+              // a reset in progress cannot leave a half-archived record.
               if (slot) {
-                await closeSessionForObservers(sessionManager, managerClientRegistryRef.current, sessionId, slot, 'archived');
+                await runSlotLifecycle(slot, 'close', async () => {
+                  await sessionMetadataStore.setArchived(resolved.sessionFilePath, true);
+                  await closeSessionForObservers(sessionManager, managerClientRegistryRef.current, sessionId, slot, 'archived');
+                });
+              } else {
+                await sessionMetadataStore.setArchived(resolved.sessionFilePath, true);
               }
               // Session activity: targeted metadata invalidation for the folder —
               // covers archive runs without a live slot — and no folder delta.
@@ -227,7 +232,7 @@ export async function main(options: StartOptions = {}) {
        *  live; a failure therefore leaves the record archived and closed. */
       resumeSession: async (sessionId: string): Promise<SessionResumeOutcome> =>
         runManagerSessionOperation(sessionId, async (): Promise<SessionResumeOutcome> => {
-          const knownFolderPaths = (await folderRegistry.list()).map((folder) => folder.path);
+          const knownFolderPaths = (await folderRegistry.listLazy()).map((folder) => folder.path);
           const existing = sessionManager.getSession(sessionId);
           if (existing && !existing.session.sessionFile) {
             await WsHandler.broadcastSessionOpened(sessionId, existing.folderPath, sessionManager, folderRegistry, managerClientRegistryRef.current);

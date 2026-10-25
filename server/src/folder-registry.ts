@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import type { Dirent } from 'node:fs';
+import type { Dirent, Stats } from 'node:fs';
 import { lstat, mkdir, readFile, readdir, readlink, rename, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
 import type { FolderInfo, FolderMemberInfo, RepoInfo } from '../../shared/dist/index.js';
-import type { FolderEntry, FolderOccurrence, SparseTree } from './folder-model/index.js';
+import type { FolderEntry, FolderNature, FolderOccurrence, SparseTree } from './folder-model/index.js';
 import type { FolderRegistryPort, FolderUpdatePatch } from './manager/types.js';
-import { hubAgentsMarkdown, injectMemberLine, removeMemberLine, seededMemberLine } from './hub-agents-md.js';
+import { hubAgentsMarkdown, injectMemberLine, managedMemberNature, removeMemberLine, seededMemberLine } from './hub-agents-md.js';
 import { MEMORY_STUB } from './folder-seeding.js';
 import { materializeHubFolder, memberIgnoreLine } from './folder-sources/materialize.js';
 import type { HubSourceEntry } from './folder-sources/index.js';
@@ -188,11 +188,14 @@ function collectScanEntries(tree: SparseTree): Map<string, ScanRow> {
   return byPath;
 }
 
-/** One hub-side member symlink: its name in the hub and its resolved target. */
+/** One hub-side member symlink: its name, target, nature, and liveness. */
 interface HubLink {
   name: string;
-  /** `realpath` when the target resolves, the resolved lexical target when it dangles. */
+  /** Canonical target path when present, lexical absolute path when dangling. */
   target: string;
+  nature: FolderNature;
+  /** Whether the target currently resolves to a directory. */
+  missing: boolean;
 }
 
 /** Whether `target` lies inside directory `dir` — the scanner's shortcut rule. */
@@ -209,12 +212,87 @@ function isManageableHub(row: FolderInfo): boolean {
 }
 
 /**
- * The hub symlink inventory for each given path (plan: 0.15-2 dashboard
- * folder UX). Paths that are absent or not directories are skipped (no map
- * entry). Targets equal to or inside the hub are skipped, the same rule the
- * scanner uses for shortcuts. Links sort by name.
+ * Resolve the canonical directory for a candidate folder path. A missing,
+ * dangling, or non-directory path is not a folder-model entry.
  */
-async function readHubLinks(paths: Iterable<string>): Promise<Map<string, HubLink[]>> {
+async function canonicalDirectory(path: string): Promise<string | null> {
+  try {
+    if (!(await stat(path)).isDirectory()) return null;
+    return await realpath(path);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve every known folder-model entry to its canonical path. Scan entries
+ * win over source fallbacks, while source paths still cover valid external
+ * folders. Existence is checked again so stale source rows cannot authorize a
+ * dangling link.
+ */
+async function resolveKnownFolderNatures(
+  tree: SparseTree,
+  repos: ReadonlyArray<RepoInfo>,
+  sourceHubs: ReadonlyArray<HubSourceEntry>,
+  personas: ReadonlyArray<PersonaSourceEntry>,
+): Promise<Map<string, FolderNature>> {
+  const candidates = new Map<string, FolderNature>();
+  for (const [path, row] of collectScanEntries(tree)) candidates.set(path, row.entry.nature);
+  for (const persona of personas) if (!candidates.has(persona.path)) candidates.set(persona.path, 'persona');
+  for (const repo of repos) if (!candidates.has(repo.path)) candidates.set(repo.path, 'code');
+  for (const hub of sourceHubs) if (!candidates.has(hub.path)) candidates.set(hub.path, 'code');
+
+  const resolved = new Map<string, FolderNature>();
+  const entries = await Promise.all(
+    [...candidates].map(async ([path, nature]) => {
+      const canonical = await canonicalDirectory(path);
+      return canonical ? ([canonical, nature] as const) : null;
+    }),
+  );
+  for (const entry of entries) {
+    if (entry && !resolved.has(entry[0])) resolved.set(entry[0], entry[1]);
+  }
+  return resolved;
+}
+
+/**
+ * Validate one add/create target and return its nature. Existing directories
+ * must already be known folder-model identities, including source-listed
+ * entries outside configured roots. Missing paths are valid only when
+ * discovery already knows their identity, such as a source promise. Existing
+ * regular files and other non-folders never pass through the identity
+ * fallback.
+ */
+async function candidateFolderNature(path: string, known: ReadonlyMap<string, FolderNature>): Promise<FolderNature | undefined> {
+  let stats: Stats;
+  try {
+    stats = await stat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return undefined;
+    return known.get(path);
+  }
+  if (!stats.isDirectory()) return undefined;
+  const canonical = await realpath(path).catch(() => null);
+  return (canonical ? known.get(canonical) : undefined) ?? known.get(path);
+}
+
+/**
+ * The hub symlink inventory for each given path (plan: 0.15-2 dashboard
+ * folder UX). Existing directory targets must be known folder-model entries,
+ * including source-listed folders outside the configured roots. A dangling
+ * target needs provenance: an exact seeded member line in the hub's managed
+ * block. Existing files never become members, even when a managed line names
+ * them. AGENTS.md is reserved for instructions and is never a member link.
+ * Targets equal to or inside the hub are skipped, the same rule the scanner
+ * uses for shortcuts. Links sort by name. Empty inventories are retained only
+ * for source hubs and rows that already carried shortcut occurrences; probing
+ * plain folders does not turn them into hubs.
+ */
+async function readHubLinks(
+  paths: Iterable<string>,
+  knownFolders: ReadonlyMap<string, FolderNature>,
+  retainEmptyPaths: ReadonlySet<string> = new Set(),
+): Promise<Map<string, HubLink[]>> {
   const inventory = new Map<string, HubLink[]>();
   for (const path of paths) {
     let entries: Dirent[];
@@ -226,21 +304,46 @@ async function readHubLinks(paths: Iterable<string>): Promise<Map<string, HubLin
       continue;
     }
     const hubCanonical = await realpath(path).catch(() => path);
+    const agentsMarkdown = await readTextIfPresent(join(path, 'AGENTS.md')).catch(() => null);
     const links: HubLink[] = [];
     for (const entry of entries) {
-      if (!entry.isSymbolicLink()) continue;
+      // AGENTS.md is hub instructions, never a member link. In particular,
+      // do not unlink it if a user stores it as a symlink.
+      if (!entry.isSymbolicLink() || entry.name === 'AGENTS.md') continue;
       try {
         const lexical = resolve(path, await readlink(join(path, entry.name)));
-        const target = await realpath(lexical).catch(() => lexical);
+        let targetStats: Stats;
+        try {
+          targetStats = await stat(lexical);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') continue;
+          // An absent target is a member only when the exact line this module
+          // seeded proves it. The lexical path is retained for removal and
+          // for the missing member row.
+          const nature = managedMemberNature(agentsMarkdown ?? '', entry.name);
+          if (nature === undefined || lexical === hubCanonical || isInside(lexical, hubCanonical)) continue;
+          links.push({ name: entry.name, target: lexical, nature, missing: true });
+          continue;
+        }
+        // A target that exists but is not a directory is never a member. This
+        // check must happen before any nature or provenance fallback.
+        if (!targetStats.isDirectory()) continue;
+        const target = await realpath(lexical);
         if (target === hubCanonical || isInside(target, hubCanonical)) continue;
-        links.push({ name: entry.name, target });
+        // Live targets need a known folder-model identity. Managed provenance
+        // is reserved for the absent-target fallback below.
+        const nature = knownFolders.get(target);
+        if (nature === undefined) continue;
+        links.push({ name: entry.name, target, nature, missing: false });
       } catch {
         // A link removed or replaced mid-probe (ENOENT, EINVAL): skip the
         // link, never the view.
       }
     }
-    links.sort((a, b) => a.name.localeCompare(b.name));
-    inventory.set(path, links);
+    if (links.length > 0 || retainEmptyPaths.has(path)) {
+      links.sort((a, b) => a.name.localeCompare(b.name));
+      inventory.set(path, links);
+    }
   }
   return inventory;
 }
@@ -332,17 +435,30 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
     const isHub = hub !== undefined || (scan?.shortcutCount !== undefined && scan.shortcutCount > 0) || memberLinks !== undefined;
     // `repos` carries git facts for the code members only — persona members
     // have none. A code member absent from the index still gets the missing
-    // placeholder (a dangling link target resolves lexically).
+    // placeholder.
+    const memberNature = new Map(memberLinks?.map((link) => [link.target, link.nature] as const));
+    const memberMissing = new Map(memberLinks?.map((link) => [link.target, link.missing] as const));
     const memberRepos: RepoInfo[] | undefined =
       memberPaths !== undefined
         ? memberPaths
-            .filter((memberPath) => natures.get(memberPath) !== 'persona')
-            .map((memberPath) => ({ ...(byPath.get(memberPath) ?? missingRepo(memberPath)), tags: repoTags(memberPath) }))
+            .filter((memberPath) => (memberNature.get(memberPath) ?? natures.get(memberPath)) !== 'persona')
+            .map((memberPath) => {
+              const knownRepo = byPath.get(memberPath);
+              const linkMissing = memberMissing.get(memberPath);
+              const base = knownRepo
+                ? linkMissing === true
+                  ? { ...knownRepo, missing: true }
+                  : knownRepo
+                : linkMissing === false
+                  ? { path: memberPath, name: basename(memberPath), branch: null, dirty: false, ahead: 0, behind: 0 }
+                  : missingRepo(memberPath);
+              return { ...base, tags: repoTags(memberPath) };
+            })
         : undefined;
     const folderMembers: FolderMemberInfo[] | undefined = memberLinks?.map((link) => ({
       path: link.target,
       name: link.name,
-      nature: natures.get(link.target) ?? 'code',
+      nature: link.nature,
     }));
     // Hub rows implicitly inherit their members' tags.
     const memberTagUnion = memberRepos ? unionTags(...memberRepos.map((member) => member.tags)) : undefined;
@@ -356,7 +472,9 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
       name: scan?.entry.name ?? hub?.name ?? repo?.name ?? basename(path),
       nature,
       ...(scan?.entry.persona ? { persona: scan.entry.persona } : sourcePersona ? { persona: sourcePersona.persona } : {}),
-      shortcutCount: scan?.shortcutCount ?? hub?.memberPaths.length ?? 0,
+      // A probed inventory is authoritative, including an empty filtered
+      // inventory. Fall back to scan/source promises only when unprobed.
+      shortcutCount: memberLinks ? memberLinks.length : (scan?.shortcutCount ?? hub?.memberPaths.length ?? 0),
       favorite: override?.favorite ?? false,
       archived: override?.archived ?? false,
       // Effective tags: own user ∪ source-contributed, plus inherited member
@@ -439,8 +557,14 @@ export class FolderRegistry implements FolderRegistryPort {
    * status, never blocked on git probes. Git facts fill in per served row
    * through `enrichRows`.
    */
-  async listLazy(): Promise<FolderInfo[]> {
-    return sortFolders(await this.viewOver(await this.tree.tree(), await this.repos.listLazy()));
+  async listLazy(signal?: AbortSignal): Promise<FolderInfo[]> {
+    return sortFolders(await this.viewOver(await this.tree.tree(signal), await this.repos.listLazy(signal)));
+  }
+
+  /** Request git facts for exactly these rows without delaying the caller. */
+  requestStatusRefresh(rows: ReadonlyArray<FolderInfo>): Promise<void> {
+    const paths = rows.flatMap((row) => [...(row.repo ? [row.repo.path] : []), ...(row.repos ?? []).map((repo) => repo.path)]);
+    return this.repos.requestStatusRefresh(paths);
   }
 
   /**
@@ -467,13 +591,19 @@ export class FolderRegistry implements FolderRegistryPort {
   private async viewOver(tree: SparseTree, repos: RepoInfo[]): Promise<FolderInfo[]> {
     const [doc, sourceHubs, personas] = await Promise.all([this.document(), this.repos.listSourceHubs(), this.repos.listSourcePersonas()]);
     const absent = await resolveAbsentPaths(repos, sourceHubMetadata(sourceHubs).keys());
-    // The hub-link probe runs over source hubs and scanned rows with
-    // shortcuts — the rows whose symlink inventory can carry members.
-    const probePaths = new Set(sourceHubMetadata(sourceHubs).keys());
+    // Probe every included scan row. A hub whose member targets all vanished
+    // has no shortcut occurrences left, but its managed lines still establish
+    // membership for the dangling links. `readHubLinks` omits empty probes, so
+    // ordinary folders do not become hubs.
+    const sourceHubPaths = new Set(sourceHubMetadata(sourceHubs).keys());
+    const probePaths = new Set(sourceHubPaths);
+    const retainEmptyPaths = new Set(sourceHubPaths);
     for (const [path, row] of collectScanEntries(tree)) {
-      if (row.shortcutCount > 0) probePaths.add(path);
+      probePaths.add(path);
+      if (row.shortcutCount > 0) retainEmptyPaths.add(path);
     }
-    const hubLinks = await readHubLinks(probePaths);
+    const knownFolders = await resolveKnownFolderNatures(tree, repos, sourceHubs, personas);
+    const hubLinks = await readHubLinks(probePaths, knownFolders, retainEmptyPaths);
     return mergedFolders({ doc, tree, repos, sourceHubs, personas, absent, hubLinks });
   }
 
@@ -498,13 +628,24 @@ export class FolderRegistry implements FolderRegistryPort {
       }
       doc.overrides[patch.folderPath] = override;
 
-      const [sourceHubs, tree] = await Promise.all([this.repos.listSourceHubs(), this.tree.tree()]);
+      const [sourceHubs, tree, repos, personas] = await Promise.all([this.repos.listSourceHubs(), this.tree.tree(), this.repos.listLazy(), this.repos.listSourcePersonas()]);
       const hubs = sourceHubMetadata(sourceHubs);
       const scanned = collectScanEntries(tree);
-      const probePaths = [...scanned.entries()].filter(([, row]) => row.shortcutCount > 0).map(([path]) => path);
-      const inventory = await readHubLinks(probePaths);
+      // Probe source hubs too: an on-disk inventory, including an empty
+      // filtered inventory, supersedes a stale source member promise.
+      // Keep this probe set aligned with viewOver: a hub with only dangling
+      // managed members must still contribute its inventory to change targets.
+      const sourceHubPaths = new Set(sourceHubs.map((hub) => hub.path));
+      const probePaths = new Set(sourceHubPaths);
+      const retainEmptyPaths = new Set(sourceHubPaths);
+      for (const [path, row] of scanned) {
+        probePaths.add(path);
+        if (row.shortcutCount > 0) retainEmptyPaths.add(path);
+      }
+      const knownFolders = await resolveKnownFolderNatures(tree, repos, sourceHubs, personas);
+      const inventory = await readHubLinks(probePaths, knownFolders, retainEmptyPaths);
       for (const [path, links] of inventory) {
-        if (links.length > 0) hubs.set(path, { name: basename(path), memberPaths: links.map((link) => link.target) });
+        hubs.set(path, { name: basename(path), memberPaths: links.map((link) => link.target) });
       }
       const change = updateChangeTargets(patch, hubs);
       await this.persist(doc);
@@ -524,9 +665,12 @@ export class FolderRegistry implements FolderRegistryPort {
     return this.serialized(async () => {
       const { name, root } = input;
       if (!isValidFolderName(name)) throw new Error(`Invalid folder name: ${name}`);
-      const natures = await this.discoveredNatures();
+      const discovered = await this.discoveredNatures();
+      const natures = new Map<string, FolderNature>();
       for (const memberPath of input.memberPaths) {
-        if (!natures.has(memberPath)) throw new Error(`Unknown folder: ${memberPath}`);
+        const nature = await candidateFolderNature(memberPath, discovered);
+        if (nature === undefined) throw new Error(`Unknown folder: ${memberPath}`);
+        natures.set(memberPath, nature);
       }
       const memberPaths = [...input.memberPaths];
       // Two members with the same basename collide on one symlink target inside
@@ -534,6 +678,7 @@ export class FolderRegistry implements FolderRegistryPort {
       const seen = new Set<string>();
       for (const memberPath of memberPaths) {
         const base = basename(memberPath);
+        if (base === 'AGENTS.md') throw new Error(`Reserved member name: ${base}`);
         if (seen.has(base)) throw new Error(`Duplicate member name: ${base}`);
         seen.add(base);
       }
@@ -594,9 +739,10 @@ export class FolderRegistry implements FolderRegistryPort {
       if (!isManageableHub(hub)) throw new Error(`Not a hub folder: ${hubPath}`);
       if (memberPath === hubPath) throw new Error(`A hub cannot be its own member: ${memberPath}`);
       if (isInside(memberPath, hubPath) || isInside(hubPath, memberPath)) throw new Error(`A hub member cannot contain or live inside the hub: ${memberPath}`);
-      const nature = (await this.discoveredNatures()).get(memberPath);
+      const nature = await candidateFolderNature(memberPath, await this.discoveredNatures());
       if (nature === undefined) throw new Error(`Unknown folder: ${memberPath}`);
       const name = basename(memberPath);
+      if (name === 'AGENTS.md') throw new Error(`Reserved member name: ${name}`);
       const linkPath = join(hubPath, name);
       if (await linkOrPathExists(linkPath)) throw new Error(`Duplicate member name: ${name}`);
 
@@ -632,11 +778,12 @@ export class FolderRegistry implements FolderRegistryPort {
   }
 
   /**
-   * Remove a hub member (plan: 0.15-2 dashboard folder UX). Works by path
-   * even when the member folder is missing — the symlink and the seeded line
-   * are removed regardless. Unlinks the hub-side symlink ONLY, never touches
-   * the member folder, and removes the member's seeded line if present
-   * byte-exact. Broadcasts a folders_changed delta like the other mutations.
+   * Remove a hub member (plan: 0.15-2 dashboard folder UX). The member link
+   * must be in the current hub inventory: live links resolve to known folder
+   * identities, and dangling links need an exact managed seed line. Unlinks
+   * the hub-side symlink ONLY, never touches the member folder, and removes
+   * the member's seeded line if present byte-exact. Broadcasts a folders_changed
+   * delta like the other mutations.
    */
   async removeMember(hubPath: string, memberPath: string): Promise<void> {
     return this.serialized(async () => {
@@ -645,16 +792,20 @@ export class FolderRegistry implements FolderRegistryPort {
       const hub = (await this.listLazy()).find((folder) => folder.path === hubPath);
       if (!hub) throw new Error(`Unknown hub folder: ${hubPath}`);
       if (!isManageableHub(hub)) throw new Error(`Not a hub folder: ${hubPath}`);
-      // Membership is the symlink inventory (DR-064): a dangling link still
-      // matches through its lexically resolved target.
-      const link = (await readHubLinks([hubPath])).get(hubPath)?.find((candidate) => candidate.target === memberPath);
+      // Membership is the same symlink inventory used by views. It retains
+      // managed dangling links, while excluding files and unprovenance links.
+      const knownFolders = await this.knownFolderNatures();
+      const requestedTarget = (await canonicalDirectory(memberPath)) ?? resolve(memberPath);
+      const link = (await readHubLinks([hubPath], knownFolders)).get(hubPath)?.find((candidate) => candidate.target === requestedTarget);
       if (!link) throw new Error(`Not a member of ${basename(hubPath)}: ${memberPath}`);
 
       // Unlink the hub-side symlink ONLY — the member folder is never touched.
-      if (link) await unlink(join(hubPath, link.name));
-      // A missing member has no nature on disk: try both seeded lines — both
-      // are exact strings this module's mutator seeded.
-      const name = link?.name ?? basename(memberPath);
+      // readHubLinks excludes AGENTS.md, so instruction symlinks are never
+      // mistaken for member links.
+      await unlink(join(hubPath, link.name));
+      // Try both seeded lines — both are exact strings this module's mutator
+      // may have seeded before the member's nature changed.
+      const name = link.name;
       const agentsPath = join(hubPath, 'AGENTS.md');
       const content = await readTextIfPresent(agentsPath);
       if (content !== null) {
@@ -674,7 +825,13 @@ export class FolderRegistry implements FolderRegistryPort {
 
   /** Everything list() shows — every path update() accepts. */
   private async knownFolderPaths(): Promise<Set<string>> {
-    return new Set((await this.list()).map((folder) => folder.path));
+    return new Set((await this.listLazy()).map((folder) => folder.path));
+  }
+
+  /** Resolve the current folder-model entries used by membership validation. */
+  private async knownFolderNatures(): Promise<Map<string, FolderNature>> {
+    const [tree, repos, sourceHubs, personas] = await Promise.all([this.tree.tree(), this.repos.listLazy(), this.repos.listSourceHubs(), this.repos.listSourcePersonas()]);
+    return resolveKnownFolderNatures(tree, repos, sourceHubs, personas);
   }
 
   /** Canonical path → nature over every discovered folder-model entry

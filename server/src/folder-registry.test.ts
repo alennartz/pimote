@@ -165,6 +165,16 @@ describe('FolderRegistry.update()', () => {
     await expect(registry.update({ folderPath: join(tempDir, 'ghost'), favorite: true })).rejects.toThrow();
   });
 
+  it('validates updates with identity rows without probing git status', async () => {
+    const registry = makeRegistry();
+
+    await registry.update({ folderPath: repoA, favorite: true });
+
+    const row = (await registry.listLazy()).find((folder) => folder.path === repoA);
+    expect(row?.repo?.branch).toBeNull();
+    expect(row?.repo?.dirty).toBe(false);
+  });
+
   it('accepts source-listed and registry paths', async () => {
     const sourceRepo = join(rootDir, 'src-repo');
     const index = makeIndex();

@@ -78,5 +78,11 @@ export interface FolderCreator {
   readonly id: string;
   /** Human-readable description for the creation UI. */
   describe(): FolderCreatorDescriptor;
+  /**
+   * Make the folder and return its path. Pimote resolves the path to its
+   * canonical filesystem identity before seeding, broadcasting, or opening a
+   * session, so a creator can return the lexical path it used to reach the
+   * folder. The path must name the successfully created folder.
+   */
   create(params: Record<string, unknown>): Promise<{ path: string }>;
 }

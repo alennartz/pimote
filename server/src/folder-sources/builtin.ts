@@ -1,4 +1,4 @@
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isValidFolderName } from '../folder-registry.js';
 import type { FolderCreator } from '@pimote/sdk/folders';
@@ -13,7 +13,8 @@ function isMissing(err: unknown): boolean {
  * `{ root, name }` — mkdir under `root` and `git init` it. Registered
  * in-process alongside user-authored creators; backs the dashboard's
  * create-folder flow (root + name → mkdir + git init). Rejects when the
- * target folder already exists, creating nothing.
+ * target folder already exists, creating nothing. Returns the new folder's
+ * canonical filesystem identity.
  */
 export function createBuiltinCreator(): FolderCreator {
   return {
@@ -52,7 +53,9 @@ export function createBuiltinCreator(): FolderCreator {
 
       await mkdir(target, { recursive: true });
       await gitInitDir(target);
-      return { path: target };
+      // Folder-model identity is canonical, even when the configured root
+      // reaches the new folder through a symlink alias.
+      return { path: await realpath(target) };
     },
   };
 }

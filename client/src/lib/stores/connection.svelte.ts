@@ -121,6 +121,9 @@ export class ConnectionStore {
   /** Called when an archived session rejects a restore or is archived live. */
   onSessionArchived: ((sessionId: string) => void) | null = null;
 
+  /** Called when a reconnect restore fails without a definitive server reason. */
+  onSessionRestoreFailed: ((sessionId: string) => void) | null = null;
+
   /** Called after connection restore when a notification-driven adopt should begin. */
   onPendingAdopt: ((sessionId: string, folderPath: string, options: { openDownloads?: boolean }) => void) | null = null;
 
@@ -144,6 +147,17 @@ export class ConnectionStore {
         cb();
       } catch (e) {
         console.error('[ConnectionStore] Disconnect listener error:', e);
+      }
+    }
+  }
+
+  /** Deliver a local event through the same seam as server events. */
+  private emitEvent(event: PimoteEvent): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch (e) {
+        console.error('[ConnectionStore] Event listener error:', e);
       }
     }
   }
@@ -236,11 +250,32 @@ export class ConnectionStore {
                 this.removeSubscribedSession(sessionId);
                 this.onSessionNotFound?.(sessionId);
               } else {
-                // Don't fabricate session_closed — a failed restore is not a
-                // server-initiated close.  The session stays in the registry
-                // with its last-known state and will be retried on the next
-                // reconnect cycle.
-                console.warn(`[ConnectionStore] Failed to restore session ${sessionId}: ${response.error ?? 'unknown error'}`);
+                // A restore can fail after the server attached this socket, or
+                // before attachment during resync. Detach is idempotent and
+                // socket-scoped, so it handles both paths without touching the
+                // runtime or another observer using the same client id.
+                const error = response.error ?? 'unknown error';
+                console.warn(`[ConnectionStore] Failed to restore session ${sessionId}: ${error}`);
+                if (this.phase === 'syncing') {
+                  this.syncDetail = 'Session restore failed';
+                }
+                try {
+                  void this.send({ type: 'detach_session', sessionId }).catch((detachError) => {
+                    console.warn(`[ConnectionStore] Failed to detach session ${sessionId}:`, detachError);
+                  });
+                } catch (detachError) {
+                  console.warn(`[ConnectionStore] Failed to detach session ${sessionId}:`, detachError);
+                }
+                this.removeSubscribedSession(sessionId);
+                this.onSessionRestoreFailed?.(sessionId);
+                this.emitEvent({
+                  type: 'extension_ui_request',
+                  sessionId,
+                  requestId: `session-restore-failed-${sessionId}-${Date.now()}`,
+                  method: 'notify',
+                  message: 'Session restore failed',
+                  notifyType: 'error',
+                });
               }
               return;
             }
@@ -342,13 +377,7 @@ export class ConnectionStore {
       }
 
       // Notify listeners
-      for (const listener of this.listeners) {
-        try {
-          listener(event);
-        } catch (e) {
-          console.error('[ConnectionStore] Event listener error:', e);
-        }
-      }
+      this.emitEvent(event);
     };
 
     this.ws.onclose = () => {

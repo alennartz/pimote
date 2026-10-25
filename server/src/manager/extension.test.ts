@@ -222,6 +222,23 @@ describe('pimote_find_folders', () => {
     expect(bare).toMatchObject({ shortcutCount: 0, favorite: false, archived: false, tags: [], missing: false, activeSessionCount: 0, externalProcessCount: 0 });
   });
 
+  it('returns lazy rows before requested git refresh settles', async () => {
+    const ports = spyPorts();
+    let resolveRefresh!: () => void;
+    const refresh = new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    (ports.folders as any).listLazy = vi.fn(async () => [makeFolder('/w/alpha')]);
+    (ports.folders as any).requestStatusRefresh = vi.fn(() => refresh);
+
+    const response = (await toolNamed(register(ports), 'pimote_find_folders').execute('c', {}, undefined, undefined, {})) as ToolResult;
+
+    expect(response.structuredContent.folders).toHaveLength(1);
+    expect((ports.folders as any).requestStatusRefresh).toHaveBeenCalledTimes(1);
+    resolveRefresh();
+    await refresh;
+  });
+
   it('enriches live session counts from the session port', async () => {
     const ports = spyPorts();
     ports.folders.list.mockResolvedValue([makeFolder('/w/alpha'), makeFolder('/w/beta')]);

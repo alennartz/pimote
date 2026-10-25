@@ -129,6 +129,18 @@ async function drag(fromX: number, toX: number) {
   await tick();
 }
 
+/** Full body tap: pointerdown → pointerup → the browser's click. */
+function tapRow(x = 150) {
+  dispatchPointer('pointerdown', x);
+  dispatchPointer('pointerup', x);
+  rowButton().click();
+}
+
+/** Drag far enough to reveal the right-side tray without firing it. */
+async function openRightTray() {
+  await drag(100, 170);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   sessionRegistry.addSession(openSession.id, folderPath, 'alpha');
@@ -244,6 +256,85 @@ describe('session row swipe gestures', () => {
 });
 
 describe('session row click', () => {
+  it('uses the first body tap to close an open tray, then activates on the next tap', async () => {
+    render(archivedSession);
+    await tick();
+    await openRightTray();
+
+    const order: string[] = [];
+    (connection.send as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: { type: string }) => {
+      order.push(cmd.type);
+      return { success: true, data: {} };
+    });
+
+    tapRow();
+    await tick();
+
+    expect(order).toEqual([]);
+    expect(surface().style.transform).toBe('translateX(0px)');
+
+    tapRow();
+    await vi.waitFor(() => expect(order).toContain('open_session'));
+    expect(order.slice(0, 2)).toEqual(['archive_session', 'open_session']);
+  });
+
+  it('does not steal the next tap when a tray-closing gesture produced no click', async () => {
+    render(archivedSession);
+    await tick();
+    await openRightTray();
+
+    // Some pointer sequences end without a browser click. The next real tap
+    // must still activate the row instead of being consumed as stale state.
+    dispatchPointer('pointerdown', 150);
+    dispatchPointer('pointerup', 150);
+    await tick();
+
+    const order: string[] = [];
+    (connection.send as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: { type: string }) => {
+      order.push(cmd.type);
+      return { success: true, data: {} };
+    });
+
+    tapRow();
+
+    await vi.waitFor(() => expect(order).toContain('open_session'));
+    expect(order.slice(0, 2)).toEqual(['archive_session', 'open_session']);
+  });
+
+  it('fires a tray action immediately when its button is tapped', async () => {
+    render(idleSession);
+    await tick();
+    await openRightTray();
+
+    const archive = Array.from(target.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Archive');
+    expect(archive).toBeInstanceOf(HTMLButtonElement);
+    archive!.click();
+
+    expect(connection.send).toHaveBeenCalledWith({
+      type: 'archive_session',
+      folderPath,
+      sessionIds: [idleSession.id],
+      archived: true,
+    });
+  });
+
+  it('suppresses a click after a drag snaps shut', async () => {
+    render(idleSession);
+    await tick();
+
+    // Move past tap suppression but not far enough to reveal the tray. The
+    // completed drag must not activate the row when the browser emits click.
+    dispatchPointer('pointerdown', 200);
+    dispatchPointer('pointermove', 192);
+    await tick();
+    dispatchPointer('pointerup', 192);
+    await tick();
+    rowButton().click();
+    await tick();
+
+    expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session' }));
+  });
+
   it('unarchives an archived session, then opens it', async () => {
     render(archivedSession);
     await tick();

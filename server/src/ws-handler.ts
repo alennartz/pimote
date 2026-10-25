@@ -30,6 +30,8 @@ import {
   requestSlotPanelResync,
   resolveAllSlotPendingUi,
   resolveSlotPendingUi,
+  runSlotLifecycle,
+  isNestedSlotLifecycle,
   sendSlotEvent,
 } from './session-manager.js';
 import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
@@ -225,7 +227,7 @@ async function resolveFolderInfoForSession(
   folderRegistry: FolderRegistry | undefined,
   fallbackOnError = false,
 ): Promise<FolderInfo> {
-  const listed = folderRegistry ? (await folderRegistry.list()).find((folder) => folder.path === folderPath) : undefined;
+  const listed = folderRegistry ? (await folderRegistry.listLazy()).find((folder) => folder.path === folderPath) : undefined;
   let folder: FolderInfo;
   if (listed) {
     folder = listed;
@@ -248,6 +250,7 @@ async function resolveFolderInfoForSession(
       };
     }
   }
+  if (listed && folderRegistry) void folderRegistry.requestStatusRefresh([folder]).catch(() => {});
   enrichActiveSessionCounts([folder], sessionManager.getAllSessions());
   return folder;
 }
@@ -379,12 +382,14 @@ export async function closeSessionForObservers(
   slot: ManagedSlot,
   reason?: SessionClosedEvent['reason'],
 ): Promise<void> {
-  const observerClientIds = slot.observers ? [...slot.observers.keys()] : [];
-  for (const clientId of observerClientIds) {
-    clientRegistry.get(clientId)?.sendSessionClosedEvent(sessionId, reason);
-  }
-  if (slot.sessionState) resolveAllSlotPendingUi(slot);
-  await sessionManager.closeSession(sessionId);
+  await runSlotLifecycle(slot, 'close', async () => {
+    const observerClientIds = slot.observers ? [...slot.observers.keys()] : [];
+    for (const clientId of observerClientIds) {
+      clientRegistry.get(clientId)?.sendSessionClosedEvent(sessionId, reason);
+    }
+    if (slot.sessionState) resolveAllSlotPendingUi(slot);
+    await sessionManager.closeSession(sessionId);
+  });
 }
 
 export class WsHandler {
@@ -488,7 +493,9 @@ export class WsHandler {
 
         case 'list_repos': {
           const { repoIndex } = this.requireFolderDeps();
-          this.sendResponse(id, true, { repos: await repoIndex.list() });
+          const repos = await repoIndex.listLazy();
+          this.sendResponse(id, true, { repos });
+          void repoIndex.requestStatusRefresh(repos.map((repo) => repo.path)).catch(() => {});
           break;
         }
 
@@ -730,6 +737,22 @@ export class WsHandler {
           break;
         }
 
+        case 'detach_session': {
+          const detachSessionId = command.sessionId;
+          if (!detachSessionId) {
+            this.sendResponse(id, false, undefined, 'sessionId is required');
+            break;
+          }
+
+          await this.sessionManager.withSessionOperation(detachSessionId, async () => {
+            this.sessionManager.detachObserver(detachSessionId, this.clientId, this.ws as unknown as EventSocket);
+          });
+          this.subscribedSessions.delete(detachSessionId);
+          if (this.viewedSessionId === detachSessionId) this.viewedSessionId = null;
+          this.sendResponse(id, true);
+          break;
+        }
+
         case 'close_session': {
           const closeSessionId = command.sessionId;
           if (!closeSessionId) {
@@ -819,10 +842,15 @@ export class WsHandler {
               if (command.archived) {
                 // Mark the record before runtime disposal closes the slot. A
                 // concurrent open then sees session_archived instead of attaching
-                // to a runtime that is already closing.
-                await this.sessionMetadataStore.setArchived(archiveSessionPath, true);
+                // to a runtime that is already closing. Admit the close first so
+                // a reset in progress cannot leave a half-archived record.
                 if (archiveSlot) {
-                  await this.closeSessionForObservers(archiveSessionId, archiveSlot, 'archived');
+                  await runSlotLifecycle(archiveSlot, 'close', async () => {
+                    await this.sessionMetadataStore.setArchived(archiveSessionPath, true);
+                    await this.closeSessionForObservers(archiveSessionId, archiveSlot, 'archived');
+                  });
+                } else {
+                  await this.sessionMetadataStore.setArchived(archiveSessionPath, true);
                 }
               } else {
                 await this.sessionMetadataStore.setArchived(archiveSessionPath, false);
@@ -1241,6 +1269,7 @@ export class WsHandler {
       case 'steer': {
         await this.dispatchInput(id, slot, {
           text: command.message,
+          images: command.images,
           behavior: 'steer',
           intent: slot.sessionState.queueOwnership.intend('steering', this.clientId, command.message),
         });
@@ -1509,7 +1538,7 @@ export class WsHandler {
       }
 
       case 'new_session': {
-        const result = await slot.runtime.newSession();
+        const result = await runSlotLifecycle(slot, 'reset', () => slot.runtime.newSession());
         this.sendResponse(id, true, { success: !result.cancelled });
         break;
       }
@@ -1577,7 +1606,7 @@ export class WsHandler {
           this.sendResponse(id, false, undefined, 'entryId is required');
           break;
         }
-        const forkResult = await slot.runtime.fork(command.entryId);
+        const forkResult = await runSlotLifecycle(slot, 'reset', () => slot.runtime.fork(command.entryId));
         const forkData: { cancelled: boolean; selectedText?: string } = { cancelled: forkResult.cancelled };
         if (forkResult.selectedText !== undefined) {
           forkData.selectedText = forkResult.selectedText;
@@ -1587,48 +1616,49 @@ export class WsHandler {
       }
 
       case 'navigate_tree': {
-        if (slot.sessionState.treeNavigationInProgress) {
-          this.sendResponse(id, false, undefined, 'Tree navigation already in progress');
-          break;
-        }
+        const data = await runSlotLifecycle(slot, 'reset', async () => {
+          if (slot.sessionState.treeNavigationInProgress && !isNestedSlotLifecycle(slot)) {
+            throw new Error('Tree navigation already in progress');
+          }
 
-        const options: {
-          summarize?: boolean;
-          customInstructions?: string;
-          replaceInstructions?: boolean;
-          label?: string;
-        } = {};
+          const options: {
+            summarize?: boolean;
+            customInstructions?: string;
+            replaceInstructions?: boolean;
+            label?: string;
+          } = {};
 
-        if (command.summarize !== undefined) options.summarize = command.summarize;
-        if (command.customInstructions !== undefined) options.customInstructions = command.customInstructions;
-        if (command.replaceInstructions !== undefined) options.replaceInstructions = command.replaceInstructions;
-        if (command.label !== undefined) options.label = command.label;
+          if (command.summarize !== undefined) options.summarize = command.summarize;
+          if (command.customInstructions !== undefined) options.customInstructions = command.customInstructions;
+          if (command.replaceInstructions !== undefined) options.replaceInstructions = command.replaceInstructions;
+          if (command.label !== undefined) options.label = command.label;
 
-        slot.sessionState.treeNavigationInProgress = true;
-        this.emitBufferedSessionEvent(slot, sessionId, {
-          type: 'tree_navigation_start',
-          targetId: command.targetId,
-          summarizing: !!command.summarize,
-        });
-
-        let result: { cancelled: boolean; editorText?: string };
-        try {
-          result = (await session.navigateTree(command.targetId, options)) as { cancelled: boolean; editorText?: string };
-        } finally {
-          slot.sessionState.treeNavigationInProgress = false;
+          slot.sessionState.treeNavigationInProgress = true;
           this.emitBufferedSessionEvent(slot, sessionId, {
-            type: 'tree_navigation_end',
+            type: 'tree_navigation_start',
+            targetId: command.targetId,
+            summarizing: !!command.summarize,
           });
-        }
 
-        if (!result.cancelled) {
-          await this.sessionManager.applySessionReset(slot);
-        }
+          let result: { cancelled: boolean; editorText?: string };
+          try {
+            result = (await session.navigateTree(command.targetId, options)) as { cancelled: boolean; editorText?: string };
+          } finally {
+            slot.sessionState.treeNavigationInProgress = false;
+            this.emitBufferedSessionEvent(slot, sessionId, {
+              type: 'tree_navigation_end',
+            });
+          }
 
-        const data: { cancelled: boolean; editorText?: string } = { cancelled: result.cancelled };
-        if (result.editorText !== undefined) {
-          data.editorText = result.editorText;
-        }
+          if (!result.cancelled) {
+            await this.sessionManager.applySessionReset(slot);
+          }
+
+          return {
+            cancelled: result.cancelled,
+            ...(result.editorText !== undefined ? { editorText: result.editorText } : {}),
+          };
+        });
 
         this.sendResponse(id, true, data);
         break;
@@ -1649,7 +1679,7 @@ export class WsHandler {
     const trimmed = message.trim();
 
     if (trimmed === '/new') {
-      const result = await slot.runtime.newSession();
+      const result = await runSlotLifecycle(slot, 'reset', () => slot.runtime.newSession());
       this.sendResponse(id, true, { success: !result.cancelled });
       return true;
     }
@@ -1734,7 +1764,7 @@ export class WsHandler {
     this.assertCurrentConnection();
     await this.sessionManager.attachObserver(sessionId, observer);
     if (!this.isCurrentConnection()) {
-      if (slot.observers.get(this.clientId)?.ws === observer.ws) this.sessionManager.detachObserver(sessionId, this.clientId);
+      if (slot.observers.get(this.clientId)?.ws === observer.ws) this.sessionManager.detachObserver(sessionId, this.clientId, observer.ws);
       throw new Error('WebSocket is no longer connected');
     }
     this.subscribedSessions.add(sessionId);
@@ -1742,7 +1772,7 @@ export class WsHandler {
     // Note: do NOT touch `idleSince`. Idleness is an agent-level concept driven by
     // agent_start/agent_settled — attaching an observer does not extend its clock.
     if (!this.isCurrentConnection()) {
-      if (slot.observers.get(this.clientId)?.ws === observer.ws) this.sessionManager.detachObserver(sessionId, this.clientId);
+      if (slot.observers.get(this.clientId)?.ws === observer.ws) this.sessionManager.detachObserver(sessionId, this.clientId, observer.ws);
       throw new Error('WebSocket is no longer connected');
     }
 
@@ -1844,9 +1874,10 @@ export class WsHandler {
       const sessionFilePath = await this.sessionRecords.resolveSessionPath(folderPath, sessionId);
       return sessionFilePath ? { folderPath, sessionFilePath } : undefined;
     }
+    const folders = this.folderRegistry ? await this.folderRegistry.listLazy() : [];
     return resolveSessionAcrossFolders(
       this.sessionRecords,
-      ((await this.folderRegistry?.list()) ?? []).map((folder) => folder.path),
+      folders.map((folder) => folder.path),
       this.managerRoot,
       sessionId,
     );
@@ -2176,23 +2207,40 @@ export class WsHandler {
    *  builds the delta (re-resolved rows + session-count enrichment + epoch
    *  bump) and this only sends it. Used after registry mutations (via the
    *  registry's onChange in server.ts), after create_folder (folder creation
-   *  isn't a registry mutation), and after a repo-index refresh. */
+   *  isn't a registry mutation), and after a repo-index refresh. The build,
+   *  retry, and send run as one server-wide queued operation. */
+  private static folderDeltaQueue: Promise<void> = Promise.resolve();
+
   static broadcastFoldersChanged(folderListing: FolderListingService | undefined, changedPaths: string[], removedPaths: string[], clientRegistry: ClientRegistry): void {
     if (!folderListing) return;
-    folderListing
-      .buildDelta(changedPaths, removedPaths)
-      .catch(() => {
-        // One immediate retry: a transient registry failure must not drop
-        // the delta outright — dropped deltas leave phantom rows that only a
-        // purge (manual refresh, reconnect) can clear.
-        return folderListing.buildDelta(changedPaths, removedPaths);
-      })
-      .then((event) => {
+    // Capture mutation targets before waiting behind an older delta. Mutation
+    // callbacks own these arrays and can reuse their storage after returning.
+    const queuedChangedPaths = [...changedPaths];
+    const queuedRemovedPaths = [...removedPaths];
+    WsHandler.folderDeltaQueue = WsHandler.folderDeltaQueue
+      .then(async () => {
+        let event: PimoteEvent;
+        try {
+          event = await folderListing.buildDelta(queuedChangedPaths, queuedRemovedPaths);
+        } catch {
+          // One immediate retry: a transient registry failure must not drop
+          // the delta outright — dropped deltas leave phantom rows that only a
+          // purge (manual refresh, reconnect) can clear.
+          try {
+            event = await folderListing.buildDelta(queuedChangedPaths, queuedRemovedPaths);
+          } catch (err) {
+            console.warn('[WsHandler] folders_changed delta failed:', err instanceof Error ? err.message : String(err));
+            return;
+          }
+        }
+
         for (const [, handler] of clientRegistry) {
           handler.sendToClient(event);
         }
       })
       .catch((err) => {
+        // Keep the server-wide queue usable if a send or an unexpected error
+        // escapes the build/retry path.
         console.warn('[WsHandler] folders_changed delta failed:', err instanceof Error ? err.message : String(err));
       });
   }
@@ -2267,7 +2315,7 @@ export class WsHandler {
    *  owns nothing. */
   private async resolveOwningFolderRow(filePath: string): Promise<string | undefined> {
     const folder = await resolveContainingFolder(filePath);
-    const rows = await this.folderRegistry?.list();
+    const rows = this.folderRegistry ? await this.folderRegistry.listLazy() : undefined;
     let owner: string | undefined;
     for (const row of rows ?? []) {
       const prefix = row.path.endsWith(sep) ? row.path : row.path + sep;
@@ -2285,7 +2333,7 @@ export class WsHandler {
     this.loginAbort?.abort();
     this.settlePendingLoginInputs('connection closed');
     for (const sid of this.subscribedSessions) {
-      this.sessionManager.detachObserver(sid, this.clientId);
+      this.sessionManager.detachObserver(sid, this.clientId, this.ws as unknown as EventSocket);
     }
     this.subscribedSessions.clear();
     this.viewedSessionId = null;

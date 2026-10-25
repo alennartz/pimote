@@ -324,6 +324,26 @@ describe('FolderCreatorWizard — flows end in a session', () => {
     await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session', folderPath: '/roots/beta' })));
   });
 
+  it('opens the canonical path returned by creation without rewriting it to the alias', async () => {
+    const canonicalPath = '/real-roots/beta';
+    vi.mocked(connection.send).mockImplementation(async (command: any) => {
+      if (command.type === 'create_folder') return { id: '1', success: true, data: { folderPath: canonicalPath } };
+      return { id: '1', success: true, data: {} };
+    });
+    destroy = render();
+    await tick();
+
+    kindButton('code').click();
+    await tick();
+    fillName('beta');
+    button('Next').click();
+    await tick();
+    button('Create').click();
+
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session', folderPath: canonicalPath })));
+    expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session', folderPath: '/roots/beta' }));
+  });
+
   it('the persona flow sends create_persona_folder carrying personaText, then opens the session', async () => {
     destroy = render();
     await tick();

@@ -9,7 +9,7 @@ import { FolderRegistry } from './folder-registry.js';
 import { RepoIndex } from './repo-index.js';
 import { scanFolderModel } from './folder-model/index.js';
 import type { FolderModelPort } from './manager/types.js';
-import { seededMemberLine } from './hub-agents-md.js';
+import { injectMemberLine, seededMemberLine } from './hub-agents-md.js';
 import { parsePersonaFrontMatter } from './folder-model/marker.js';
 import { MEMORY_STUB } from './manager/seed.js';
 
@@ -159,6 +159,21 @@ describe('FolderRegistry.addMember', () => {
     expect(await findSymlinkTo(hubPath, neverDiscovered)).toBeUndefined();
   });
 
+  it('rejects a known source path when it resolves to a regular file', async () => {
+    const sourceFile = join(tempDir, 'source-file.txt');
+    await writeFile(sourceFile, 'not a folder\n', 'utf8');
+    const index = makeIndex();
+    index.registerSource({
+      id: 'source-file',
+      list: async () => [{ kind: 'repo', path: sourceFile, name: 'source-file.txt', branch: null, dirty: false, ahead: 0, behind: 0 }],
+    });
+    const registry = new FolderRegistry(index, storeDir, makeTree());
+    const hubPath = await makeHub(registry);
+
+    await expect(registry.addMember(hubPath, sourceFile)).rejects.toThrow(/Unknown folder/);
+    expect(await findSymlinkTo(hubPath, sourceFile)).toBeUndefined();
+  });
+
   it('rejects a member whose basename collides with an existing member', async () => {
     const registry = makeRegistry();
     const hubPath = await makeHub(registry);
@@ -270,17 +285,63 @@ describe('FolderRegistry.removeMember', () => {
     expect(await readFile(join(personaPath, 'AGENTS.md'), 'utf8')).toContain('Body.');
   });
 
-  it('works by path even when the member folder is missing — symlink and seeded line go regardless', async () => {
+  it('keeps an established persona member when its target becomes dangling and removes it', async () => {
     const registry = makeRegistry();
     const hubPath = await makeHub(registry);
     const personaPath = await makePersona(join(rootDir, 'ada'));
     await registry.addMember(hubPath, personaPath);
     await rm(personaPath, { recursive: true, force: true });
 
-    await registry.removeMember(hubPath, personaPath);
+    const row = await findRow(registry, hubPath);
+    expect(row?.members).toEqual([
+      { path: personaPath, name: 'ada', nature: 'persona' },
+      { path: repoA, name: 'repo-a', nature: 'code' },
+    ]);
+    expect(await readHubAgents(hubPath)).toContain(seededMemberLine('ada', 'persona'));
 
+    await registry.removeMember(hubPath, personaPath);
     expect(await findSymlinkTo(hubPath, personaPath)).toBeUndefined();
     expect(await readHubAgents(hubPath)).not.toContain(seededMemberLine('ada', 'persona'));
+  });
+
+  it('uses an exact managed line to retain an otherwise unknown dangling member', async () => {
+    const registry = makeRegistry();
+    const hubPath = await makeHub(registry);
+    const ghost = join(tempDir, 'ghost-persona');
+    await symlink(ghost, join(hubPath, 'ghost-persona'));
+    const agentsPath = join(hubPath, 'AGENTS.md');
+    const agents = await readHubAgents(hubPath);
+    await writeFile(agentsPath, injectMemberLine(agents, seededMemberLine('ghost-persona', 'persona')), 'utf8');
+
+    const row = await findRow(registry, hubPath);
+    expect(row?.members).toContainEqual({ path: ghost, name: 'ghost-persona', nature: 'persona' });
+
+    await registry.removeMember(hubPath, ghost);
+    expect(await findSymlinkTo(hubPath, ghost)).toBeUndefined();
+  });
+
+  it('probes a hub when every established member target dangles, then removes the last member', async () => {
+    const registry = makeRegistry();
+    const hubPath = await makeHub(registry);
+    const personaPath = await makePersona(join(rootDir, 'ada'));
+    await registry.addMember(hubPath, personaPath);
+    await rm(repoA, { recursive: true, force: true });
+    await rm(personaPath, { recursive: true, force: true });
+
+    const before = await findRow(registry, hubPath);
+    expect(before?.members).toEqual([
+      { path: personaPath, name: 'ada', nature: 'persona' },
+      { path: repoA, name: 'repo-a', nature: 'code' },
+    ]);
+    expect(before?.repos).toContainEqual(expect.objectContaining({ path: repoA, missing: true }));
+
+    await registry.removeMember(hubPath, repoA);
+    const afterCode = await findRow(registry, hubPath);
+    expect(afterCode?.members).toEqual([{ path: personaPath, name: 'ada', nature: 'persona' }]);
+
+    await registry.removeMember(hubPath, personaPath);
+    const afterLast = await findRow(registry, hubPath);
+    expect(afterLast?.members).toBeUndefined();
   });
 
   it('leaves a seeded line the user rewrote alone — mangled user files are not regenerated', async () => {
@@ -339,9 +400,132 @@ describe('FolderInfo.members — hub rows', () => {
     expect(row?.members).toContainEqual({ path: repoA, name: basename(repoA), nature: 'code' });
     expect(row?.members).toContainEqual({ path: personaPath, name: basename(personaPath), nature: 'persona' });
   });
+
+  it('keeps a valid hand-built external folder member discovered through the hub', async () => {
+    const externalRepo = join(tempDir, 'external', 'repo-c');
+    await initRepo(externalRepo);
+    const registry = makeRegistry();
+    const hubPath = await makeHub(registry);
+    await symlink(externalRepo, join(hubPath, 'repo-c'));
+
+    const row = await findRow(registry, hubPath);
+    expect(row?.members).toContainEqual({ path: externalRepo, name: 'repo-c', nature: 'code' });
+
+    await registry.removeMember(hubPath, externalRepo);
+    expect(await findSymlinkTo(hubPath, externalRepo)).toBeUndefined();
+  });
+
+  it('keeps a valid source-listed external folder member and removes it normally', async () => {
+    const externalRepo = join(tempDir, 'external', 'repo-c');
+    await initRepo(externalRepo);
+    const index = makeIndex();
+    index.registerSource({
+      id: 'external',
+      list: async () => [{ kind: 'repo', path: externalRepo, name: 'repo-c', branch: null, dirty: false, ahead: 0, behind: 0 }],
+    });
+    const registry = new FolderRegistry(index, storeDir, makeTree());
+    const hubPath = await makeHub(registry);
+    await symlink(externalRepo, join(hubPath, 'repo-c'));
+
+    const row = await findRow(registry, hubPath);
+    expect(row?.members).toContainEqual({ path: externalRepo, name: 'repo-c', nature: 'code' });
+
+    await registry.removeMember(hubPath, externalRepo);
+    expect(await findSymlinkTo(hubPath, externalRepo)).toBeUndefined();
+  });
+
+  it('excludes symlinked instructions and dangling file links from members', async () => {
+    const registry = makeRegistry();
+    const hubPath = await makeHub(registry);
+    const instructions = join(tempDir, 'instructions.md');
+    await writeFile(instructions, '# Instructions\n', 'utf8');
+    await rm(join(hubPath, 'AGENTS.md'));
+    await symlink(instructions, join(hubPath, 'AGENTS.md'));
+    await symlink(join(tempDir, 'gone.txt'), join(hubPath, 'notes'));
+
+    const row = await findRow(registry, hubPath);
+    expect(row?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code' }]);
+
+    const beforeRefusedRemoval = await readFile(instructions, 'utf8');
+    await expect(registry.removeMember(hubPath, instructions)).rejects.toThrow(/Not a member/);
+    await expect(registry.removeMember(hubPath, join(tempDir, 'gone.txt'))).rejects.toThrow(/Not a member/);
+    expect(await readFile(instructions, 'utf8')).toBe(beforeRefusedRemoval);
+    expect(await readlink(join(hubPath, 'AGENTS.md'))).toBe(instructions);
+    expect(await readlink(join(hubPath, 'notes'))).toBe(join(tempDir, 'gone.txt'));
+  });
+
+  it('excludes an unknown directory target from members and removal validation', async () => {
+    const unknownDir = join(secondRoot, 'unlisted');
+    await mkdir(unknownDir, { recursive: true });
+    const registry = makeRegistry();
+    const hubPath = await makeHub(registry);
+    await symlink(unknownDir, join(hubPath, 'unlisted'));
+
+    const row = await findRow(registry, hubPath);
+    expect(row?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code' }]);
+    await expect(registry.removeMember(hubPath, unknownDir)).rejects.toThrow(/Not a member/);
+    expect(await readlink(join(hubPath, 'unlisted'))).toBe(unknownDir);
+  });
+
+  it('does not admit a source-listed folder that is missing on disk', async () => {
+    const missing = join(tempDir, 'missing-source-folder');
+    const index = makeIndex();
+    index.registerSource({
+      id: 'source',
+      list: async () => [{ kind: 'repo', path: missing, name: 'missing-source-folder', branch: null, dirty: false, ahead: 0, behind: 0 }],
+    });
+    const registry = new FolderRegistry(index, storeDir, makeTree());
+    const hubPath = await makeHub(registry);
+    await symlink(missing, join(hubPath, 'missing-source-folder'));
+
+    const row = await findRow(registry, hubPath);
+    expect(row?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code' }]);
+    await expect(registry.removeMember(hubPath, missing)).rejects.toThrow(/Not a member/);
+    expect(await readlink(join(hubPath, 'missing-source-folder'))).toBe(missing);
+  });
 });
 
 describe('FolderRegistry.createHub — widened membership and persona variant', () => {
+  it('rejects unknown missing and regular-file member paths', async () => {
+    const registry = makeRegistry();
+    const missing = join(tempDir, 'not-discovered');
+    const file = join(tempDir, 'member.txt');
+    await writeFile(file, 'not a folder\n', 'utf8');
+
+    await expect(registry.createHub({ name: 'missing', root: rootDir, memberPaths: [missing] })).rejects.toThrow(/Unknown folder/);
+    await expect(registry.createHub({ name: 'file', root: rootDir, memberPaths: [file] })).rejects.toThrow(/Unknown folder/);
+    await expect(findRow(registry, join(rootDir, 'missing'))).resolves.toBeUndefined();
+    await expect(findRow(registry, join(rootDir, 'file'))).resolves.toBeUndefined();
+  });
+
+  it('rejects a known source path when it resolves to a regular file', async () => {
+    const sourceFile = join(tempDir, 'source-file.txt');
+    await writeFile(sourceFile, 'not a folder\n', 'utf8');
+    const index = makeIndex();
+    index.registerSource({
+      id: 'source-file',
+      list: async () => [{ kind: 'repo', path: sourceFile, name: 'source-file.txt', branch: null, dirty: false, ahead: 0, behind: 0 }],
+    });
+    const registry = new FolderRegistry(index, storeDir, makeTree());
+
+    await expect(registry.createHub({ name: 'file', root: rootDir, memberPaths: [sourceFile] })).rejects.toThrow(/Unknown folder/);
+    await expect(findRow(registry, join(rootDir, 'file'))).resolves.toBeUndefined();
+  });
+
+  it('accepts a known source folder identity that is absent on disk', async () => {
+    const missing = join(tempDir, 'virtual-member');
+    const index = makeIndex();
+    index.registerSource({
+      id: 'source',
+      list: async () => [{ kind: 'repo', path: missing, name: 'virtual-member', branch: null, dirty: false, ahead: 0, behind: 0 }],
+    });
+    const registry = new FolderRegistry(index, storeDir, makeTree());
+
+    const row = await registry.createHub({ name: 'hub', root: rootDir, memberPaths: [missing] });
+
+    expect(await findSymlinkTo(row.path, missing)).toBeDefined();
+  });
+
   it('accepts persona folders as members — any discovered folder-model entry', async () => {
     const registry = makeRegistry();
     const personaPath = await makePersona(join(rootDir, 'ada'));

@@ -3,7 +3,7 @@
   import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection, isConnectionLossError } from '$lib/stores/connection.svelte.js';
   import { commandStore } from '$lib/stores/command-store.svelte.js';
-  import { editorTextRequest, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
+  import { consumeSharedImages, editorTextRequest, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
   import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
   import { loginStore } from '$lib/stores/login-store.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
@@ -84,15 +84,17 @@
     }
   });
 
-  // Pick up images from Web Share Target
+  // Pick up images from Web Share Target once a real session is viewed. The
+  // request stays global while this composer is absent or ineligible.
   let lastSharedSeq = 0;
   $effect(() => {
-    const { images, seq } = sharedImagesRequest;
-    if (seq !== lastSharedSeq) {
-      lastSharedSeq = seq;
-      if (images.length > 0) {
-        stagedImages = [...stagedImages, ...images];
-      }
+    const seq = sharedImagesRequest.seq;
+    if (seq === lastSharedSeq || noSession || isPending || !sessionRegistry.viewed) return;
+
+    lastSharedSeq = seq;
+    const images = consumeSharedImages();
+    if (images.length > 0) {
+      stagedImages = [...stagedImages, ...images];
     }
   });
 
@@ -273,12 +275,12 @@
     if (!canSend) return;
     const focusSnapshot = captureTextareaFocus();
 
-    function clearSubmittedComposer(sessionId: string): void {
+    function clearSubmittedComposer(sessionId: string, preserveImages = false): void {
       inputText = '';
       autocompleteVisible = false;
       selectedCommand = null;
       fileRefPrefix = null;
-      stagedImages = [];
+      if (!preserveImages) stagedImages = [];
       if (sessionRegistry.viewedSessionId === sessionId) {
         sessionRegistry.sessions[sessionId]!.draftText = '';
       }
@@ -287,18 +289,19 @@
       restoreTextareaFocus(focusSnapshot);
     }
 
-    function restoreSubmittedComposer(sessionId: string, draft: string, images: string[], clientMessageId?: string): void {
+    function restoreSubmittedComposer(sessionId: string, draft: string, images: string[], clientMessageId?: string, preserveImages = false): void {
       const session = sessionRegistry.sessions[sessionId];
       if (!session || session.draftText !== '') return;
       // A later optimistic prompt owns the empty composer. Do not put an older
       // failed submission back on top of it.
       if (clientMessageId && session.optimisticEntries.some((entry) => entry.clientMessageId !== clientMessageId)) return;
-      if (sessionRegistry.viewedSessionId === sessionId && (inputText !== '' || stagedImages.length > 0)) return;
+      const retainedImages = preserveImages && stagedImages.length === images.length && stagedImages.every((image, index) => image === images[index]);
+      if (sessionRegistry.viewedSessionId === sessionId && (inputText !== '' || (!preserveImages && stagedImages.length > 0) || (preserveImages && !retainedImages))) return;
 
       session.draftText = draft;
       if (sessionRegistry.viewedSessionId !== sessionId) return;
       inputText = draft;
-      stagedImages = [...images];
+      if (!preserveImages) stagedImages = [...images];
       tick().then(() => autoResize());
     }
 
@@ -415,7 +418,8 @@
     }
 
     if (sessionRegistry.viewed?.isStreaming) {
-      // Steer the current generation (text only, no images)
+      // Steer the current generation with text and staged images. Image-only
+      // steering stays disabled because this branch requires text.
       if (!text) return;
       const sessionId = sessionRegistry.viewed.sessionId;
       const submittedDraft = inputText;
@@ -426,7 +430,7 @@
       // queue_update: a command may run instead of queueing.
       const showPill = !isSlashCommand;
       if (showPill) sessionRegistry.viewed.pendingSteeringMessages.push(text);
-      clearSubmittedComposer(sessionId);
+      clearSubmittedComposer(sessionId, isSlashCommand);
       // Remove the pill when pi will not queue the text. A queued text needs
       // no cleanup: pi's queue_update snapshot already replaced the list.
       const dropPill = () => {
@@ -445,10 +449,11 @@
               type: 'steer',
               sessionId,
               message: text,
+              ...(submittedImages.length > 0 ? { images: submittedImages } : {}),
             });
         if (!dispatchResponse.success) {
           dropPill();
-          restoreSubmittedComposer(sessionId, submittedDraft, submittedImages);
+          restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, undefined, isSlashCommand);
           console.error(`${isSlashCommand ? 'Prompt' : 'Steer'} rejected:`, dispatchResponse.error);
         } else {
           const promptData = dispatchResponse.data as Record<string, unknown> | undefined;
@@ -460,7 +465,7 @@
         }
       } catch (e) {
         dropPill();
-        restoreSubmittedComposer(sessionId, submittedDraft, submittedImages);
+        restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, undefined, isSlashCommand);
         console.error('Failed to send steer:', e);
       }
     } else {
