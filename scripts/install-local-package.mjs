@@ -41,16 +41,28 @@ async function assertBuiltArtifacts() {
 }
 
 async function assertPatchedPi(piPackageRoot) {
-  const path = join(piPackageRoot, 'dist', 'core', 'agent-session.js');
-  const source = await readFile(path, 'utf8');
-  const markers = [
+  const sessionPath = join(piPackageRoot, 'dist', 'core', 'agent-session.js');
+  const sessionSource = await readFile(sessionPath, 'utf8');
+  const settlementMarkers = [
     'try {\n            this._isAgentRunActive = false;\n            this._cacheWarmer?.onAgentSettled();',
     'finally {\n            this._resolveIdleWaitIfIdle();',
     'catch (error) {\n                try {\n                    await this._emitAgentSettled();',
   ];
 
-  if (markers.some((marker) => !source.includes(marker))) {
-    throw new Error(`[pimote] Bundled Pi is not patched: ${path}`);
+  if (settlementMarkers.some((marker) => !sessionSource.includes(marker))) {
+    throw new Error(`[pimote] Bundled Pi is not patched: ${sessionPath}`);
+  }
+
+  const promptPath = join(piPackageRoot, 'dist', 'core', 'system-prompt.js');
+  const promptSource = await readFile(promptPath, 'utf8');
+  const preambleMarkers = [
+    'customSections.preamble ??',
+    'if (!SYSTEM_PROMPT_SECTION_NAME.test(name)) {',
+    'if (content && name !== "preamble")',
+  ];
+
+  if (preambleMarkers.some((marker) => !promptSource.includes(marker)) || promptSource.includes('|| name === "preamble"')) {
+    throw new Error(`[pimote] Bundled Pi preamble override is not patched: ${promptPath}`);
   }
 }
 

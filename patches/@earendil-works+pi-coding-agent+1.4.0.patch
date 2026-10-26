@@ -75,3 +75,33 @@ index 11ab140..98d8428 100644
              await this._emitAgentSettled();
          }
      }
+
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js
+@@ -69,7 +69,7 @@ export function buildSystemPromptSections(input) {
+     const options = normalizeBuildSystemPromptOptions(input);
+     const { customPrompt, selectedTools, hiddenTools, toolSnippets, toolGuidelines, promptGuidelines, appendSystemPrompt, sections: customSections, cwd, contextFiles, skills, } = options;
+     for (const name of Object.keys(customSections)) {
+-        if (!SYSTEM_PROMPT_SECTION_NAME.test(name) || name === "preamble") {
++        if (!SYSTEM_PROMPT_SECTION_NAME.test(name)) {
+             throw new Error(`Invalid system prompt section name: ${name}`);
+         }
+     }
+@@ -80,6 +80,7 @@ export function buildSystemPromptSections(input) {
+     }
+     else {
+         promptSections.preamble =
++            customSections.preamble ??
+             "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
+         const visibleTools = declaredTools.filter((name) => !!toolSnippets[name]);
+         const tools = visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets[name]}`).join("\n") : "(none)";
+@@ -109,7 +110,7 @@ export function buildSystemPromptSections(input) {
+     }
+     promptSections.cwd = cwd.replace(/\\/g, "/");
+     for (const [name, content] of Object.entries(customSections)) {
+-        if (content)
++        if (content && name !== "preamble")
+             promptSections[name] = content;
+     }
+     const sections = { preamble: promptSections.preamble };

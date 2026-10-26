@@ -54,10 +54,3 @@ logs:
 
 status:
 	$(SYSTEMCTL) status $(PIMOTE_SERVICE_NAME)
-
-# Optional local Pi patch hook. Keep this in your personal Makefile.local only
-# when ../my-pi is available.
-# build-server: patch-pi-preamble
-#
-# patch-pi-preamble:
-#	node ./scripts/patch-pi-preamble.mjs

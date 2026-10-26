@@ -67,6 +67,21 @@ jobs:
               throw new Error(`Bundled Pi is not patched: ${marker}`);
             }
           }
+
+          const promptPath = join(packageRoot, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'core', 'system-prompt.js');
+          const promptSource = await readFile(promptPath, 'utf8');
+          for (const marker of [
+            'customSections.preamble ??',
+            'if (!SYSTEM_PROMPT_SECTION_NAME.test(name)) {',
+            'if (content && name !== "preamble")',
+          ]) {
+            if (!promptSource.includes(marker)) {
+              throw new Error(`Bundled Pi preamble override is not patched: ${marker}`);
+            }
+          }
+          if (promptSource.includes('|| name === "preamble"')) {
+            throw new Error('Bundled Pi still rejects the preamble section');
+          }
           NODE
 
       - name: Publish
