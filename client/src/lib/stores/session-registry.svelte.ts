@@ -413,6 +413,18 @@ export class SessionRegistry {
     );
   }
 
+  /** Refresh server-derived metadata after persisted session state changes. */
+  private refreshSessionMeta(sessionId: string): void {
+    connection
+      .send({ type: 'get_session_meta', sessionId })
+      .then((res) => {
+        if (res.success && res.data) {
+          this.updateMeta(sessionId, (res.data as { meta: SessionMeta }).meta);
+        }
+      })
+      .catch(() => {});
+  }
+
   /** Add an optimistic user message so it renders immediately before the server round-trip.
    *  `clientMessageId` must match the prompt command's id. */
   addOptimisticUserMessage(sessionId: string, text: string, clientMessageId: string): void {
@@ -627,17 +639,16 @@ export class SessionRegistry {
         if (endEvent.messageEntryIds) {
           this.applyMessageEntryIds(session, endEvent.messageEntryIds);
         }
-        // Refresh meta (context usage changes after each turn, branch may change)
-        connection
-          .send({ type: 'get_session_meta', sessionId })
-          .then((res) => {
-            if (res.success && res.data) {
-              this.updateMeta(sessionId, (res.data as { meta: SessionMeta }).meta);
-            }
-          })
-          .catch(() => {});
+        // Refresh meta after the terminal attempt boundary.
+        this.refreshSessionMeta(sessionId);
         break;
       }
+
+      case 'turn_end':
+        // Pi emits turn_end after persisting the completed turn, while the
+        // session can still be working through a queued continuation.
+        this.refreshSessionMeta(sessionId);
+        break;
 
       case 'message_start': {
         const start = event as MessageStartEvent;
@@ -819,15 +830,8 @@ export class SessionRegistry {
 
       case 'auto_compaction_end':
         session.isCompacting = false;
-        // Context usage changes significantly after compaction
-        connection
-          .send({ type: 'get_session_meta', sessionId })
-          .then((res) => {
-            if (res.success && res.data) {
-              this.updateMeta(sessionId, (res.data as { meta: SessionMeta }).meta);
-            }
-          })
-          .catch(() => {});
+        // Context usage changes significantly after compaction.
+        this.refreshSessionMeta(sessionId);
         break;
 
       case 'full_resync': {

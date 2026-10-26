@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { PimoteSessionManager, sendSlotEvent, type EventSocket, type ManagedSlot, type SessionObserver } from './session-manager.js';
 import type { PimoteEvent } from '../../shared/dist/index.js';
 
+const runtimeDispose = vi.hoisted(() => vi.fn(async () => {}));
+
 function observer(clientId: string, cursor = 0): SessionObserver & { sent: string[] } {
   const sent: string[] = [];
   const ws: EventSocket = {
@@ -40,12 +42,13 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
     createAgentSessionFromServices: async () => ({ session }),
     createAgentSessionRuntime: async (factory: any, options: any) => {
       await factory({ cwd: options.cwd, agentDir: '/agent', sessionManager: options.sessionManager, sessionStartEvent: undefined });
-      return { session, dispose: vi.fn(async () => {}), setRebindSession: vi.fn() };
+      return { session, dispose: runtimeDispose, setRebindSession: vi.fn() };
     },
   };
 });
 
 async function managedSession() {
+  runtimeDispose.mockClear();
   const manager = await PimoteSessionManager.create({ bufferSize: 100 } as any, { notify: async () => {} } as any);
   const id = await manager.openSession('/project');
   return { manager, slot: manager.getSlot(id)! };
@@ -119,7 +122,7 @@ describe('session observer lifecycle', () => {
       manager.detachObserver('session-1', 'b');
       await vi.advanceTimersByTimeAsync(60_000);
       expect(manager.getSlot('session-1')).toBeNull();
-      expect(slot.runtime.dispose).toHaveBeenCalled();
+      expect(runtimeDispose).toHaveBeenCalledOnce();
     } finally {
       manager.stopIdleCheck();
       vi.useRealTimers();

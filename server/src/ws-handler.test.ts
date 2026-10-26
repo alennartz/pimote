@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { VoiceOrchestrator } from './voice-orchestrator.js';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { createCommandContextActions, mapTreeNodes, serializeTreeResponse, takeOverClientSlot, WsHandler, type ClientRegistry } from './ws-handler.js';
@@ -1994,7 +1994,8 @@ describe('WsHandler', () => {
       });
 
       const sessions = new Map([['session-1', session]]);
-      const { handler } = createTestHandler('client-1', { sessions });
+      const { handler, ws } = createTestHandler('client-1', { sessions });
+      session.observers.get('client-1')!.ws = ws;
       (handler as any).subscribedSessions.add('session-1');
 
       handler.cleanup();
@@ -4475,38 +4476,48 @@ describe('WsHandler', () => {
     });
 
     it('broadcasts a folders_changed delta naming the created folder and re-walks the listing without clearing warm git probes', async () => {
-      const invalidate = vi.fn();
-      const invalidateListing = vi.fn();
-      const buildDelta = vi.fn(async () => ({ type: 'folders_changed' as const, changed: [folderRow('/home/user/projects/new')], removedPaths: [], epoch: 1 }));
-      const folderListing = { buildDelta } as unknown as FolderListingService;
-      const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate, invalidateListing } as unknown as RepoIndex;
-      const folderRegistry = {
-        list: async () => [folderRow('/home/user/projects/new')],
-        listLazy: async () => [folderRow('/home/user/projects/new')],
-        requestStatusRefresh: async () => {},
-      } as unknown as FolderRegistry;
-      const creators = [
-        {
-          describe: () => ({ paramSchema: { root: {}, name: {} } }),
-          create: async ({ root, name }: { root: string; name: string }) => ({ path: `${root}/${name}` }),
-        } as unknown as FolderCreator,
-      ];
-      const clientRegistry: ClientRegistry = new Map();
-      const a = createTestHandler('A', { repoIndex, folderRegistry, creators, clientRegistry, folderListing });
-      const b = createTestHandler('B', { repoIndex, folderRegistry, creators, clientRegistry, folderListing });
-      a.sent.length = 0;
-      b.sent.length = 0;
+      const root = mkdtempSync(join(tmpdir(), 'pimote-create-folder-'));
+      const createdPath = join(root, 'new');
+      try {
+        const invalidate = vi.fn();
+        const invalidateListing = vi.fn();
+        const buildDelta = vi.fn(async () => ({ type: 'folders_changed' as const, changed: [folderRow(createdPath)], removedPaths: [], epoch: 1 }));
+        const folderListing = { buildDelta } as unknown as FolderListingService;
+        const repoIndex = { roots: [root], list: async () => [], invalidate, invalidateListing } as unknown as RepoIndex;
+        const folderRegistry = {
+          list: async () => [folderRow(createdPath)],
+          listLazy: async () => [folderRow(createdPath)],
+          requestStatusRefresh: async () => {},
+        } as unknown as FolderRegistry;
+        const creators = [
+          {
+            describe: () => ({ paramSchema: { root: {}, name: {} } }),
+            create: async ({ root: creatorRoot, name }: { root: string; name: string }) => {
+              const path = join(creatorRoot, name);
+              mkdirSync(path);
+              return { path };
+            },
+          } as unknown as FolderCreator,
+        ];
+        const clientRegistry: ClientRegistry = new Map();
+        const a = createTestHandler('A', { repoIndex, folderRegistry, creators, clientRegistry, folderListing });
+        const b = createTestHandler('B', { repoIndex, folderRegistry, creators, clientRegistry, folderListing });
+        a.sent.length = 0;
+        b.sent.length = 0;
 
-      await a.handler.handleMessage(JSON.stringify({ type: 'create_folder', root: '/home/user/projects', name: 'new', id: 'req-cp-5' }));
+        await a.handler.handleMessage(JSON.stringify({ type: 'create_folder', root, name: 'new', id: 'req-cp-5' }));
 
-      expect(findResponse(a.sent, 'req-cp-5')).toMatchObject({ success: true, data: { folderPath: '/home/user/projects/new' } });
-      expect(invalidateListing).toHaveBeenCalledOnce();
-      expect(invalidate).not.toHaveBeenCalled();
-      await flushPromises();
-      // The mutation site reports exactly the path it created.
-      expect(buildDelta).toHaveBeenCalledWith(['/home/user/projects/new'], []);
-      expect(findEvents(a.sent, 'folders_changed')).toHaveLength(1);
-      expect(findEvents(b.sent, 'folders_changed')).toHaveLength(1);
+        expect(findResponse(a.sent, 'req-cp-5')).toMatchObject({ success: true, data: { folderPath: createdPath } });
+        expect(invalidateListing).toHaveBeenCalledOnce();
+        expect(invalidate).not.toHaveBeenCalled();
+        await flushPromises();
+        // The mutation site reports exactly the path it created.
+        expect(buildDelta).toHaveBeenCalledWith([createdPath], []);
+        expect(findEvents(a.sent, 'folders_changed')).toHaveLength(1);
+        expect(findEvents(b.sent, 'folders_changed')).toHaveLength(1);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
   });
 

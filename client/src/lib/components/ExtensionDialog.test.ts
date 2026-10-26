@@ -33,6 +33,7 @@ vi.mock('$lib/stores/connection.svelte.js', () => ({
 vi.mock('$lib/stores/session-registry.svelte.js', () => ({ sessionRegistry: { viewedSessionId: 's1' } }));
 
 const { default: ExtensionDialog } = await import('./ExtensionDialog.svelte');
+await import('./ExtensionCodeEditor.svelte');
 
 let component: ReturnType<typeof mount> | undefined;
 let requestId = 0;

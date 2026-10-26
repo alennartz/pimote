@@ -415,6 +415,28 @@ describe('SessionRegistry', () => {
       expect(session.streamingKey).toBeNull();
     });
 
+    it('refreshes session metadata after each completed turn while the session remains working', async () => {
+      registry.addSession('s1', '/path', 'proj');
+      const send = vi
+        .spyOn(connection, 'send')
+        .mockResolvedValueOnce({ id: 'meta-1', success: true, data: { meta: { gitBranch: null, contextUsage: null, lifetimeCostUsd: 1.23 } } } as any)
+        .mockResolvedValueOnce({ id: 'meta-2', success: true, data: { meta: { gitBranch: null, contextUsage: null, lifetimeCostUsd: 2.34 } } } as any);
+
+      try {
+        registry.handleEvent(makeSessionEvent('agent_start', 's1'));
+        registry.handleEvent(makeSessionEvent('turn_end', 's1'));
+        expect(registry.sessions['s1'].status).toBe('working');
+        await vi.waitFor(() => expect(registry.sessions['s1'].lifetimeCostUsd).toBe(1.23));
+
+        registry.handleEvent(makeSessionEvent('turn_end', 's1'));
+        expect(registry.sessions['s1'].status).toBe('working');
+        await vi.waitFor(() => expect(registry.sessions['s1'].lifetimeCostUsd).toBe(2.34));
+        expect(send).toHaveBeenCalledTimes(2);
+      } finally {
+        send.mockRestore();
+      }
+    });
+
     it('agent_end with willRetry stays working (retry is not a real end)', () => {
       // The SDK detected a retryable error and will re-run the prompt after
       // backoff (a fresh agent_start follows). The session must stay working

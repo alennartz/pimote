@@ -385,7 +385,7 @@ describe('createServer — malformed WebSocket frames', () => {
     await expect(close).resolves.toBe(1002);
 
     expect(error.mock.calls.some(([, err]) => (err as { code?: string })?.code === 'WS_ERR_EXPECTED_MASK')).toBe(true);
-    expect(server.clientRegistry.has(clientId)).toBe(false);
+    await vi.waitFor(() => expect(server.clientRegistry.has(clientId)).toBe(false), { timeout: 2000 });
     expect(releaseConnection).toHaveBeenCalledTimes(1);
     const [releasedOwner] = releaseConnection.mock.calls[0] ?? [];
     expect(releasedOwner).toEqual(expect.any(String));

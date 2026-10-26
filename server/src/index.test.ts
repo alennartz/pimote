@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => {
   const folderRegistry = {
     list: folderList,
     listLazy: vi.fn(async (...args: unknown[]) => folderList(...args)),
+    requestStatusRefresh: vi.fn(async () => undefined),
   };
   const server = {
     clientRegistry: new Map(),
@@ -178,6 +179,7 @@ function resetMocks(): void {
   mocks.sessionMetadataStore.isArchived.mockReset().mockReturnValue(false);
   mocks.sessionMetadataStore.setArchived.mockReset().mockResolvedValue(undefined);
   mocks.folderRegistry.list.mockReset().mockResolvedValue([]);
+  mocks.folderRegistry.requestStatusRefresh.mockReset().mockResolvedValue(undefined);
   mocks.sessionManagerCreate.mockReset().mockResolvedValue(mocks.sessionManager);
   mocks.realpath.mockReset().mockImplementation(async (path: string) => path);
   mocks.mkdir.mockReset().mockResolvedValue(undefined);

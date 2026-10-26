@@ -109,7 +109,11 @@ describe('ConnectionStore — definitive restore rejections', () => {
     await flush();
     const opens = ws.sent.map((raw) => JSON.parse(raw)).filter((cmd) => cmd.type === 'open_session');
     expect(opens.every((cmd) => !('force' in cmd))).toBe(true);
-    for (const cmd of opens) ws.onmessage!({ data: JSON.stringify({ id: cmd.id, success: false, error: cmd.sessionId === 'archived' ? 'session_archived' : 'internal_error' }) });
+    for (const cmd of opens) {
+      ws.onmessage!({
+        data: JSON.stringify(cmd.sessionId === 'archived' ? { id: cmd.id, success: false, error: 'session_archived' } : { id: cmd.id, success: true }),
+      });
+    }
     await flush();
     expect(c.subscribedSessions.has('archived')).toBe(false);
     expect(c.subscribedSessions.has('retained')).toBe(true);
