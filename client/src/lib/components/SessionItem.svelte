@@ -85,11 +85,9 @@
 
   // --- Swipe actions (mobile) ------------------------------------------------
   //
-  // Unlike the Continue grid, a project row outlives both actions: closing
-  // keeps the session file listed (and drops it from the half-open filter via
-  // session events), archiving flips its badge. So both resolve 'stay' — the
-  // card springs back and list reactivity handles any removal (the cell's
-  // out:slide plays on unmount).
+  // A folder row outlives both actions: closing keeps the session file listed
+  // (and drops it from the half-open filter via session events), while archiving
+  // flips its badge. Both resolve 'stay', so list reactivity handles removal.
 
   async function swipeClose(): Promise<SwipeActionOutcome> {
     try {
