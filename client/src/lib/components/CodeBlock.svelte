@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
-   * Renders a `write` tool's file body — or a `codemode` tool's script source —
-   * inside collapsible, copyable chrome, in one of two modes:
+   * Renders source content inside collapsible, copyable chrome, in one of
+   * two modes. ToolCall uses it for write files, codemode scripts, and bash
+   * commands.
    *
    *   - `code`     — syntax-highlighted `<pre><code>` via `code-highlight.ts`
    *                  (throttled while `streaming`, flushed when it ends).
@@ -10,10 +11,10 @@
    *
    * Owns the collapse + copy chrome and the auto-expand-while-streaming
    * behavior for both modes. Rather than re-clamping the moment streaming ends,
-   * a settled block stays expanded until it first fully scrolls out of view. In
-   * both modes the
-   * copy button copies `content` verbatim (raw source, never rendered text),
-   * and a show-more/collapse wrapper bounds long files.
+   * a settled block stays expanded until it first fully scrolls out of view.
+   * In both modes, the copy button copies `content` verbatim (raw source,
+   * never rendered text),
+   * and a show-more/collapse wrapper bounds long content.
    */
   import { createIncrementalHighlighter } from '$lib/code-highlight.js';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
@@ -25,9 +26,9 @@
     mode,
     language,
     streaming = false,
-    copyLabel = 'Copy file contents',
+    copyLabel = 'Copy contents',
   }: {
-    /** File body or script source (streaming or finalized). */
+    /** Source content (streaming or finalized). */
     content: string;
     /** Render strategy. */
     mode: 'code' | 'markdown';
@@ -127,32 +128,32 @@
   }
 </script>
 
-<div class="write-file-block" data-mode={mode} bind:this={rootEl}>
+<div class="code-block" data-mode={mode} bind:this={rootEl}>
   <button type="button" class="code-copy-btn" class:copied aria-label={copyLabel} title={copyLabel} onclick={copy}>
     {copied ? 'Copied' : copyLabel}
   </button>
 
   {#if mode === 'code'}
-    <pre class="wfb-body wfb-code" class:clamped class:scrollable bind:this={bodyEl}><code class="hljs" bind:this={codeEl}></code></pre>
+    <pre class="code-block-body code-block-code" class:clamped class:scrollable bind:this={bodyEl}><code class="hljs" bind:this={codeEl}></code></pre>
   {:else}
-    <div class="wfb-body wfb-markdown" class:clamped class:scrollable bind:this={bodyEl}>
+    <div class="code-block-body code-block-markdown" class:clamped class:scrollable bind:this={bodyEl}>
       <TextBlock text={content} {streaming} />
     </div>
   {/if}
 
   {#if needsCollapse}
-    <button class="wfb-toggle" onclick={() => (expanded = !expanded)}>
+    <button class="code-block-toggle" onclick={() => (expanded = !expanded)}>
       {expanded ? 'Show less' : `Show more… (${lineCount} lines)`}
     </button>
   {/if}
 </div>
 
 <style>
-  .write-file-block {
+  .code-block {
     position: relative;
   }
 
-  .wfb-body {
+  .code-block-body {
     margin: 0;
     border-radius: 8px;
     background: var(--surface-sunken);
@@ -161,13 +162,13 @@
     padding-right: 56px;
   }
 
-  .wfb-code {
+  .code-block-code {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     white-space: pre;
   }
 
-  .wfb-code code {
+  .code-block-code code {
     background: none;
     padding: 0;
     border-radius: 0;
@@ -179,12 +180,12 @@
     white-space: pre;
   }
 
-  .wfb-body.clamped {
+  .code-block-body.clamped {
     max-height: calc(20 * 1.5 * 0.875em + 24px);
     overflow: hidden;
   }
 
-  .wfb-body.scrollable {
+  .code-block-body.scrollable {
     max-height: 400px;
     overflow-y: auto;
   }
@@ -220,7 +221,7 @@
     background: var(--secondary);
   }
 
-  .wfb-toggle {
+  .code-block-toggle {
     display: inline-block;
     margin-top: 4px;
     padding: 0;
@@ -234,7 +235,7 @@
     opacity: 0.8;
   }
 
-  .wfb-toggle:hover {
+  .code-block-toggle:hover {
     opacity: 1;
     color: var(--foreground);
   }

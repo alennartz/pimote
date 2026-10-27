@@ -43,7 +43,7 @@ assistant message streams back live (markdown renders progressively,
 with fenced code highlighting WHILE it streams; tool calls render with
 their args/results). Tool-call visualization is specialized: `edit`
 calls render as live per-edit diffs, and `write` calls render via
-`WriteFileBlock` — syntax-highlighted code for code paths, live
+`CodeBlock` — syntax-highlighted code for code paths, live
 rendered markdown for `.md`/`.markdown` paths, each with a raw-source
 copy button and a show-more/collapse wrapper. `agent_end` leaves the
 session idle. Prompt _composition_ includes TUI-style `@`-file-path

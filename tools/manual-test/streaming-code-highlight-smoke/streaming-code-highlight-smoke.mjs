@@ -2,7 +2,7 @@
 // PWA-side smoke for the streaming-code-highlight topic.
 //
 // Verifies the FINALIZED render contracts of the new `write` tool
-// visualization (ToolCall.svelte → WriteFileBlock.svelte) and the markdown
+// visualization (ToolCall.svelte → CodeBlock.svelte) and the markdown
 // rendering path, by fabricating pi sessions that contain *completed* `write`
 // tool calls and opening them in the PWA:
 //
@@ -324,22 +324,22 @@ async function main() {
     await abCmd(['find', 'role', 'button', 'click', '--name', FIRST_PROMPT]);
     await abCmd(['wait', '3000']);
 
-    // Expand every tool block so the WriteFileBlock bodies mount.
+    // Expand every tool block so the CodeBlock bodies mount.
     await abEval(`(() => { document.querySelectorAll('.tool-header').forEach(b => b.click()); return document.querySelectorAll('.tool-header').length; })()`);
     await abCmd(['wait', '1500']);
 
-    const toolCount = await abEval(`document.querySelectorAll('.write-file-block').length`);
-    assert(Number(toolCount) === WRITES.length, `all ${WRITES.length} write tool calls render a .write-file-block (got ${toolCount})`);
+    const toolCount = await abEval(`document.querySelectorAll('.code-block').length`);
+    assert(Number(toolCount) === WRITES.length, `all ${WRITES.length} write tool calls render a .code-block (got ${toolCount})`);
 
-    // Helper installed in the page: locate a write-file-block by the
-    // tool-detail path text of its enclosing tool-block.
+    // Helper installed in the page: locate a code block by the tool-detail
+    // path text of its enclosing tool block.
     const installFinder = `
-      window.__wfbFor = (pathText) => {
+      window.__codeBlockFor = (pathText) => {
         const blocks = Array.from(document.querySelectorAll('.tool-block'));
         for (const b of blocks) {
           const detail = b.querySelector('.tool-detail');
           if (detail && detail.textContent.includes(pathText)) {
-            return b.querySelector('.write-file-block');
+            return b.querySelector('.code-block');
           }
         }
         return null;
@@ -351,11 +351,11 @@ async function main() {
     // -----------------------------------------------------------------
     section('Test 1 + 4: code-mode routing + real hljs highlighting (.ts)');
     // -----------------------------------------------------------------
-    const codeMode = await abEval(`(() => { const w = window.__wfbFor('example.ts'); return w && w.getAttribute('data-mode'); })()`);
+    const codeMode = await abEval(`(() => { const w = window.__codeBlockFor('example.ts'); return w && w.getAttribute('data-mode'); })()`);
     assert(codeMode === 'code', `.ts write routes to code mode (data-mode=code, got ${JSON.stringify(codeMode)})`);
 
     const codeInfo = await abEval(
-      `(() => { const w = window.__wfbFor('example.ts'); if(!w) return null; const code = w.querySelector('pre.wfb-code code'); if(!code) return null; return { hasHljsClass: code.classList.contains('hljs'), spanCount: code.querySelectorAll('[class^=hljs-]').length, hasGreet: code.textContent.includes('greet'), hasArrow: code.textContent.includes('Hello, ') }; })()`,
+      `(() => { const w = window.__codeBlockFor('example.ts'); if(!w) return null; const code = w.querySelector('pre.code-block-code code'); if(!code) return null; return { hasHljsClass: code.classList.contains('hljs'), spanCount: code.querySelectorAll('[class^=hljs-]').length, hasGreet: code.textContent.includes('greet'), hasArrow: code.textContent.includes('Hello, ') }; })()`,
     );
     assert(codeInfo && codeInfo.hasHljsClass, 'code body <code> carries the hljs class');
     assert(codeInfo && codeInfo.spanCount > 0, `code body carries hljs-* span markup (got ${codeInfo?.spanCount} spans)`);
@@ -364,11 +364,11 @@ async function main() {
     // -----------------------------------------------------------------
     section('Test 1 + 5: markdown-mode routing + rendered markdown (.md)');
     // -----------------------------------------------------------------
-    const mdMode = await abEval(`(() => { const w = window.__wfbFor('README.md'); return w && w.getAttribute('data-mode'); })()`);
+    const mdMode = await abEval(`(() => { const w = window.__codeBlockFor('README.md'); return w && w.getAttribute('data-mode'); })()`);
     assert(mdMode === 'markdown', `.md write routes to markdown mode (data-mode=markdown, got ${JSON.stringify(mdMode)})`);
 
     const mdInfo = await abEval(
-      `(() => { const w = window.__wfbFor('README.md'); if(!w) return null; const body = w.querySelector('.wfb-markdown'); if(!body) return null; return { hasH1: !!body.querySelector('h1'), h1Text: body.querySelector('h1') && body.querySelector('h1').textContent.trim(), hasLi: body.querySelectorAll('li').length, literalHash: body.textContent.includes('# Streaming'), innerCodeHljs: !!body.querySelector('code.hljs') || body.querySelectorAll('[class^=hljs-]').length > 0, innerSpanCount: body.querySelectorAll('[class^=hljs-]').length }; })()`,
+      `(() => { const w = window.__codeBlockFor('README.md'); if(!w) return null; const body = w.querySelector('.code-block-markdown'); if(!body) return null; return { hasH1: !!body.querySelector('h1'), h1Text: body.querySelector('h1') && body.querySelector('h1').textContent.trim(), hasLi: body.querySelectorAll('li').length, literalHash: body.textContent.includes('# Streaming'), innerCodeHljs: !!body.querySelector('code.hljs') || body.querySelectorAll('[class^=hljs-]').length > 0, innerSpanCount: body.querySelectorAll('[class^=hljs-]').length }; })()`,
     );
     assert(mdInfo && mdInfo.hasH1, `markdown body renders the heading as <h1> (text: ${JSON.stringify(mdInfo?.h1Text)})`);
     assert(mdInfo && mdInfo.hasLi >= 2, `markdown body renders the list as <li> items (got ${mdInfo?.hasLi})`);
@@ -383,14 +383,14 @@ async function main() {
     await abEval(`(() => { window.__copied = null; navigator.clipboard.writeText = (t) => { window.__copied = t; return Promise.resolve(); }; return 'ok'; })()`);
 
     // Code mode copy.
-    await abEval(`(() => { const w = window.__wfbFor('example.ts'); w.querySelector('.code-copy-btn').click(); return 'ok'; })()`);
+    await abEval(`(() => { const w = window.__codeBlockFor('example.ts'); w.querySelector('.code-copy-btn').click(); return 'ok'; })()`);
     await abCmd(['wait', '300']);
     const copiedCode = await abEval(`window.__copied`);
     assert(copiedCode === SHORT_TS, 'code-mode copy yields the raw .ts source verbatim (byte-identical)');
 
     // Markdown mode copy — must be RAW markdown source, not rendered text.
     await abEval(`window.__copied = null`);
-    await abEval(`(() => { const w = window.__wfbFor('README.md'); w.querySelector('.code-copy-btn').click(); return 'ok'; })()`);
+    await abEval(`(() => { const w = window.__codeBlockFor('README.md'); w.querySelector('.code-copy-btn').click(); return 'ok'; })()`);
     await abCmd(['wait', '300']);
     const copiedMd = await abEval(`window.__copied`);
     assert(copiedMd === SHORT_MD, 'markdown-mode copy yields the raw .md source verbatim (NOT rendered text)');
@@ -403,7 +403,7 @@ async function main() {
     section('Test 3 (precondition b): collapse wrapper bounds long files in BOTH modes');
     // -----------------------------------------------------------------
     const longCode = await abEval(
-      `(() => { const w = window.__wfbFor('long.ts'); if(!w) return null; const toggle = w.querySelector('.wfb-toggle'); return { mode: w.getAttribute('data-mode'), hasToggle: !!toggle, toggleText: toggle && toggle.textContent.trim() }; })()`,
+      `(() => { const w = window.__codeBlockFor('long.ts'); if(!w) return null; const toggle = w.querySelector('.code-block-toggle'); return { mode: w.getAttribute('data-mode'), hasToggle: !!toggle, toggleText: toggle && toggle.textContent.trim() }; })()`,
     );
     assert(longCode && longCode.mode === 'code', 'long .ts write is in code mode');
     assert(
@@ -414,12 +414,12 @@ async function main() {
     // After expanding-all earlier, the long block may already be expanded.
     // Collapse it, then assert the body clamps.
     const clampCode = await abEval(
-      `(() => { const w = window.__wfbFor('long.ts'); const t = w.querySelector('.wfb-toggle'); if (w.querySelector('.wfb-body').classList.contains('scrollable')) { t.click(); } const body = w.querySelector('.wfb-body'); return { clamped: body.classList.contains('clamped') }; })()`,
+      `(() => { const w = window.__codeBlockFor('long.ts'); const t = w.querySelector('.code-block-toggle'); if (w.querySelector('.code-block-body').classList.contains('scrollable')) { t.click(); } const body = w.querySelector('.code-block-body'); return { clamped: body.classList.contains('clamped') }; })()`,
     );
     assert(clampCode && clampCode.clamped === true, 'long code write body is height-clamped when collapsed');
 
     const longMd = await abEval(
-      `(() => { const w = window.__wfbFor('notes.md'); if(!w) return null; const toggle = w.querySelector('.wfb-toggle'); return { mode: w.getAttribute('data-mode'), hasToggle: !!toggle, toggleText: toggle && toggle.textContent.trim() }; })()`,
+      `(() => { const w = window.__codeBlockFor('notes.md'); if(!w) return null; const toggle = w.querySelector('.code-block-toggle'); return { mode: w.getAttribute('data-mode'), hasToggle: !!toggle, toggleText: toggle && toggle.textContent.trim() }; })()`,
     );
     assert(longMd && longMd.mode === 'markdown', 'long .md write is in markdown mode');
     assert(
@@ -428,13 +428,13 @@ async function main() {
     );
 
     const clampMd = await abEval(
-      `(() => { const w = window.__wfbFor('notes.md'); const t = w.querySelector('.wfb-toggle'); if (w.querySelector('.wfb-body').classList.contains('scrollable')) { t.click(); } const body = w.querySelector('.wfb-body'); return { clamped: body.classList.contains('clamped') }; })()`,
+      `(() => { const w = window.__codeBlockFor('notes.md'); const t = w.querySelector('.code-block-toggle'); if (w.querySelector('.code-block-body').classList.contains('scrollable')) { t.click(); } const body = w.querySelector('.code-block-body'); return { clamped: body.classList.contains('clamped') }; })()`,
     );
     assert(clampMd && clampMd.clamped === true, 'long markdown write body is height-clamped when collapsed (collapse applies in markdown mode too)');
 
     // Coherence screenshot: expand all again and capture the rendered view.
     await abEval(
-      `(() => { document.querySelectorAll('.wfb-toggle').forEach(t => { const b = t.closest('.write-file-block').querySelector('.wfb-body'); if (b.classList.contains('clamped')) t.click(); }); return 'ok'; })()`,
+      `(() => { document.querySelectorAll('.code-block-toggle').forEach(t => { const b = t.closest('.code-block').querySelector('.code-block-body'); if (b.classList.contains('clamped')) t.click(); }); return 'ok'; })()`,
     );
     await abCmd(['wait', '500']);
     const shotPath = process.env.SCH_SHOT || join(sandboxHome, 'write-blocks.png');

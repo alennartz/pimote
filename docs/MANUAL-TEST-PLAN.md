@@ -716,7 +716,7 @@ Additionally, typing `/` as the first character triggers slash command autocompl
 ### TC-08.09 — `write` tool call renders as highlighted code / rendered markdown 🟠
 
 - **[P]** Agent invokes the `write` tool with a `path` and a `content` body
-- **[S]** Observe the ToolCall component (`WriteFileBlock`) while `content` streams in
+- **[S]** Observe the ToolCall component (`CodeBlock`) while `content` streams in
 - **[E]** A code-file path (e.g. `.ts`, `.py`) renders the body as a syntax-highlighted `<pre><code class="hljs">` block (real `hljs-*` spans), not raw JSON args
 - **[E]** A `.md`/`.markdown` path renders the body as _rendered_ markdown (headings, lists, inner fenced code highlighted) via the smd pipeline, not source text
 - **[E]** Code highlights _while it streams_ (throttled ~100ms), and markdown fenced code inside any message highlights mid-stream too, not only when the closing fence arrives

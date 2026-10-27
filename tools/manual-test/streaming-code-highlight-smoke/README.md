@@ -1,7 +1,7 @@
 # streaming-code-highlight-smoke
 
 PWA-side smoke for the `streaming-code-highlight` topic — the `write` tool
-visualization (`ToolCall.svelte` → `WriteFileBlock.svelte`) and the markdown
+visualization (`ToolCall.svelte` → `CodeBlock.svelte`) and the markdown
 rendering path.
 
 ## What it verifies

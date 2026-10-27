@@ -117,7 +117,7 @@
   --skill-foreground-hover: oklch(0.75 0.12 170);
   /* Bash execution border — brighter than --skill-accent; color-mix can't bridge the gap */
   --bash-accent: oklch(0.68 0.14 175);
-  /* Purple callouts: custom messages; also the streaming-collapsible accent */
+  /* Purple callouts: custom messages; also the bounded-output accent */
   --custom-accent: oklch(0.55 0.1 280);
   --custom-surface: oklch(0.2 0.02 270);
   --custom-foreground: oklch(0.7 0.1 280);

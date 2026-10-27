@@ -17,7 +17,7 @@ output.
 
 When the `write` path extension is `.md`/`.markdown`, render the extracted
 `content` stream through the smd markdown pipeline (`TextBlock`) — rendered
-output, not source. `WriteFileBlock.svelte` picks the mode from the
+output, not source. `CodeBlock.svelte` picks the mode from the
 path-inferred language (`markdown` → markdown mode, everything else → code
 mode).
 

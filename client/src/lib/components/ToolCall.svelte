@@ -1,12 +1,13 @@
 <script lang="ts">
   import type { PimoteMessageContent } from '@pimote/shared';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
-  import StreamingCollapsible from './StreamingCollapsible.svelte';
+  import BoundedOutput from './BoundedOutput.svelte';
   import EditDiffBlock from './EditDiffBlock.svelte';
-  import WriteFileBlock from './WriteFileBlock.svelte';
+  import CodeBlock from './CodeBlock.svelte';
   import { createEditDiffStreamer, type EditArgs, type EditEntry } from '$lib/edit-diff.js';
   import { createWriteContentStreamer, extractWriteContent } from '$lib/write-content.js';
   import { createCodemodeCodeStreamer, extractCodemodeCode } from '$lib/codemode-content.js';
+  import { createBashCommandStreamer, extractBashCommand } from '$lib/bash-content.js';
   import { inferLanguageFromPath } from '$lib/editor-language.js';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
@@ -56,6 +57,7 @@
   let isEdit = $derived(toolName === 'edit');
   let isWrite = $derived(toolName === 'write');
   let isCodemode = $derived(toolName === 'codemode');
+  let isBash = $derived(toolName === 'bash');
 
   // Streaming-diff state used only when isEdit.
   let streamer: ReturnType<typeof createEditDiffStreamer> | undefined = $state();
@@ -94,21 +96,21 @@
     streamingEntries = streamer.entries.map((e) => ({ oldText: e.oldText, newText: e.newText }));
   });
 
-  // Edit, write, and codemode tool sections render expanded while active
-  // (streaming or the result is still in progress). See the delayed-collapse
-  // effect below.
+  // Edit, write, codemode, and bash tool sections render expanded while
+  // active (streaming or the result is still in progress). See the
+  // delayed-collapse effect below.
   $effect(() => {
-    if (!isEdit && !isWrite && !isCodemode) return;
+    if (!isEdit && !isWrite && !isCodemode && !isBash) return;
     if (streaming || inProgress) {
       expanded = true;
     }
   });
 
-  // Once an edit/write section settles, keep it expanded and collapse it the
-  // first time it fully scrolls out of view, rather than snapping shut on
-  // completion.
+  // Once an edit/write/codemode/bash section settles, keep it expanded and
+  // collapse it the first time it fully scrolls out of view, rather than
+  // snapping shut on completion.
   $effect(() => {
-    if (!isEdit && !isWrite && !isCodemode) return;
+    if (!isEdit && !isWrite && !isCodemode && !isBash) return;
     if (streaming || inProgress) return;
     if (!expanded) return;
     if (!rootEl) return;
@@ -213,6 +215,40 @@
   let finalizedCode = $derived<string | undefined>(isCodemode && content.args ? extractCodemodeCode(content.args) : undefined);
   let codemodeCode = $derived(isCodemode ? (finalizedCode ?? streamingCode) : '');
 
+  // Streaming-command state used only when isBash. Keep the command source
+  // separate from the raw arguments JSON so it can be syntax-highlighted.
+  let bashStreamer: ReturnType<typeof createBashCommandStreamer> | undefined = $state();
+  let bashStreamerWritten = 0;
+  let streamingCommand = $state('');
+
+  $effect(() => {
+    if (!isBash) return;
+    if (!streaming) {
+      // Keep streamingCommand so the finalized-else-streamed fallback covers
+      // the tick between streaming ending and content.args arriving.
+      if (bashStreamer) {
+        bashStreamer.dispose();
+        bashStreamer = undefined;
+        bashStreamerWritten = 0;
+      }
+      return;
+    }
+    const text = content.text ?? '';
+    if (!text) return;
+    if (!bashStreamer) {
+      bashStreamer = createBashCommandStreamer();
+      bashStreamerWritten = 0;
+    }
+    if (text.length > bashStreamerWritten) {
+      bashStreamer.write(text.slice(bashStreamerWritten));
+      bashStreamerWritten = text.length;
+    }
+    streamingCommand = bashStreamer.command;
+  });
+
+  let finalizedCommand = $derived<string | undefined>(isBash && content.args ? extractBashCommand(content.args) : undefined);
+  let bashCommand = $derived(isBash ? (finalizedCommand ?? streamingCommand) : '');
+
   let finalizedEntries = $derived<ReadonlyArray<EditEntry> | undefined>(isEdit && content.args ? ((content.args as EditArgs).edits ?? []) : undefined);
   // Prefer the finalized view once args are available; fall back to the
   // last streamed entries otherwise. This keeps the diff visible across
@@ -312,23 +348,27 @@
         </div>
       {:else if isWrite && (writeBody !== '' || content.args)}
         <div class="tool-section">
-          <WriteFileBlock content={writeBody} mode={isMarkdown ? 'markdown' : 'code'} language={writeLanguage} streaming={streaming && !isCompleted} />
+          <CodeBlock content={writeBody} mode={isMarkdown ? 'markdown' : 'code'} language={writeLanguage} streaming={streaming && !isCompleted} copyLabel="Copy file contents" />
         </div>
       {:else if isCodemode && (codemodeCode !== '' || content.args)}
         <div class="tool-section">
-          <WriteFileBlock content={codemodeCode} mode="code" language="typescript" streaming={streaming && !isCompleted} copyLabel="Copy script" />
+          <CodeBlock content={codemodeCode} mode="code" language="typescript" streaming={streaming && !isCompleted} copyLabel="Copy script" />
+        </div>
+      {:else if isBash && (bashCommand !== '' || content.args)}
+        <div class="tool-section">
+          <CodeBlock content={bashCommand} mode="code" language="bash" streaming={streaming && !isCompleted} copyLabel="Copy command" />
         </div>
       {:else if argsText}
         <div class="tool-section">
           <div class="tool-section-label">Arguments</div>
-          <StreamingCollapsible text={argsText} streaming={streaming && !isCompleted} />
+          <BoundedOutput text={argsText} streaming={streaming && !isCompleted} />
         </div>
       {/if}
 
       {#if resultText}
         <div class="tool-section">
           <div class="tool-section-label">{inProgress ? 'Output (streaming)' : 'Result'}</div>
-          <StreamingCollapsible text={resultText} streaming={inProgress} boundWhileStreaming />
+          <BoundedOutput text={resultText} streaming={inProgress} bounded />
         </div>
       {/if}
     </div>

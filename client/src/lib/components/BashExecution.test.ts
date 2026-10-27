@@ -84,11 +84,20 @@ describe('BashExecution presentation contract', () => {
     const output = Array.from({ length: 100 }, (_, index) => `line ${index + 1}`).join('\n');
     const view = render(runningExecution({ output, status: 'complete', result: { output, exitCode: 0, cancelled: false, truncated: false } }));
 
-    const showMore = Array.from(view.target.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Show more');
+    const showMore = Array.from(view.target.querySelectorAll('button')).find((button) => button.textContent?.trim().startsWith('Show more'));
     expect(showMore).toBeDefined();
     showMore!.click();
     await tick();
     expect(Array.from(view.target.querySelectorAll('button')).some((button) => button.textContent?.trim() === 'Show less')).toBe(true);
+
+    view.destroy();
+  });
+
+  it('bounds a long single-line output in the shared output view', () => {
+    const output = 'A'.repeat(10_000);
+    const view = render(runningExecution({ output, status: 'complete', result: { output, exitCode: 0, cancelled: false, truncated: false } }));
+
+    expect(view.target.querySelector('pre.bounded-output-text')?.classList.contains('scrollable')).toBe(true);
 
     view.destroy();
   });

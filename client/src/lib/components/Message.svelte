@@ -4,7 +4,7 @@
   import TextBlock from './TextBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import ToolCall from './ToolCall.svelte';
-  import StreamingCollapsible from './StreamingCollapsible.svelte';
+  import BoundedOutput from './BoundedOutput.svelte';
   import BashExecution, { type FinalBashExecutionMessage } from './BashExecution.svelte';
   import TtsButton from './TtsButton.svelte';
   import CopyButton from './CopyButton.svelte';
@@ -262,7 +262,7 @@
           <span class="custom-label">[custom]</span>
         </div>
         <div class="custom-content">
-          <StreamingCollapsible text={customText} {streaming} accent="purple" />
+          <BoundedOutput text={customText} {streaming} accent="purple" />
         </div>
       {:else}
         <button class="custom-header" onclick={() => (customExpanded = !customExpanded)}>

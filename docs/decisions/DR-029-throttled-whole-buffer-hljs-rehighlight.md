@@ -24,7 +24,7 @@ the entire accumulated code buffer and replace the code element's contents,
 throttled to **at most one pass per ~100ms** (trailing edge) during the stream,
 with a **forced final flush** on completion. The shared engine lives in
 `code-highlight.ts` (`highlightToHtml` + a stateful `IncrementalHighlighter`)
-and is used by both `smd-renderer.ts` (fenced code) and `WriteFileBlock.svelte`
+and is used by both `smd-renderer.ts` (fenced code) and `CodeBlock.svelte`
 (the write view).
 
 Language comes from a real hint on both surfaces (the markdown fence
