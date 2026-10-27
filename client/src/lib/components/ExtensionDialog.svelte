@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { getExtensionUiQueue, INLINE_METHODS } from '$lib/stores/extension-ui-queue.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -37,7 +38,9 @@
 
   $effect(() => {
     if (current) {
-      inputValue = getExtensionDialogInitialValue(current);
+      // Draft reads stay untracked so typing does not trigger this initializer.
+      // A replayed request changes `current`, which performs the read again.
+      inputValue = untrack(() => (current?.method === 'editor' ? uiQueue.getEditorValue(current) : getExtensionDialogInitialValue(current)));
       dialogOpen = true;
       confirmDiscardOpen = false;
       return;
@@ -85,6 +88,16 @@
   function handleEditorSubmit() {
     sendResponse({ value: inputValue });
   }
+
+  function getEditorValue(): string {
+    return inputValue;
+  }
+
+  function setEditorValue(value: string): void {
+    inputValue = value;
+    const request = current;
+    if (request?.method === 'editor') uiQueue.setEditorValue(request, value);
+  }
 </script>
 
 <Dialog.Root open={dialogOpen} onOpenChange={handleOpenChange}>
@@ -120,7 +133,7 @@
     subtitle={(current.message as string | undefined) ?? null}
     badge={editorLanguage?.label ?? null}
     language={editorLanguage?.id ?? null}
-    bind:value={inputValue}
+    bind:value={getEditorValue, setEditorValue}
     onclose={handleCancel}
     oninteractoutside={handleEditorInteractOutside}
     onsave={handleEditorSubmit}

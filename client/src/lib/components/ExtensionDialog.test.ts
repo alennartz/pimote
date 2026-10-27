@@ -48,6 +48,10 @@ function request(prefill = '# Hello\n'): string {
   return id;
 }
 
+function replayRequest(requestId: string, prefill = '# Hello\n'): void {
+  emit({ type: 'extension_ui_request', sessionId: 's1', requestId, method: 'editor', title: 'Edit text', prefill });
+}
+
 async function openEditor(prefill = '# Hello\n'): Promise<EditorView> {
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -98,6 +102,57 @@ describe('ExtensionDialog editor close policy', () => {
 
     button('Save').click();
     await vi.waitFor(() => expect(state.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'extension_ui_response', value: 'edited' })));
+  });
+
+  it('preserves an edited value across restore replay and saves the draft', async () => {
+    const original = '# Hello\n';
+    const view = await openEditor(original);
+    const id = `editor-${requestId}`;
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: 'edited' } });
+    await tick();
+
+    emit({ type: 'session_restore', sessionId: 's1', mode: 'incremental_replay', status: 'started' });
+    await tick();
+    replayRequest(id, original);
+    await vi.waitFor(() => {
+      const element = document.querySelector('.cm-editor');
+      if (!element) throw new Error('replayed editor not mounted');
+      const replayed = EditorView.findFromDOM(element as HTMLElement);
+      if (replayed?.state.doc.toString() !== 'edited') throw new Error('draft not restored');
+    });
+
+    emit({ type: 'session_restore', sessionId: 's1', mode: 'incremental_replay', status: 'completed' });
+    await tick();
+    button('Save').click();
+    await vi.waitFor(() => expect(state.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'extension_ui_response', requestId: id, value: 'edited' })));
+  });
+
+  it('does not let a delayed old response erase edits after restore replay', async () => {
+    const original = '# Hello\n';
+    const view = await openEditor(original);
+    const id = `editor-${requestId}`;
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: 'edited before' } });
+    await tick();
+
+    let resolveSend!: (value: { success: boolean }) => void;
+    state.send.mockImplementationOnce(() => new Promise((resolve) => (resolveSend = resolve)));
+    button('Save').click();
+    await tick();
+
+    emit({ type: 'session_restore', sessionId: 's1', mode: 'incremental_replay', status: 'started' });
+    await tick();
+    replayRequest(id, original);
+    await vi.waitFor(() => {
+      if (!document.querySelector('.cm-editor')) throw new Error('replayed editor not mounted');
+    });
+    const replayed = EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement);
+    if (!replayed) throw new Error('replayed editor view not found');
+    replayed.dispatch({ changes: { from: 0, to: replayed.state.doc.length, insert: 'edited after' } });
+    await tick();
+    emit({ type: 'session_restore', sessionId: 's1', mode: 'incremental_replay', status: 'completed' });
+    resolveSend({ success: true });
+    await tick();
+    expect(EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)?.state.doc.toString()).toBe('edited after');
   });
 
   it('renders the discard confirmation above the editor modal', async () => {
