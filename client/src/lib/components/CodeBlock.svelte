@@ -155,9 +155,9 @@
 
   .code-block-body {
     margin: 0;
-    border-radius: 8px;
+    border-radius: 0;
     background: var(--surface-sunken);
-    border: 1px solid var(--border);
+    border: none;
     padding: 12px;
     padding-right: 56px;
   }

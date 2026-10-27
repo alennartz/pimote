@@ -347,15 +347,15 @@
           <EditDiffBlock entries={editEntries} />
         </div>
       {:else if isWrite && (writeBody !== '' || content.args)}
-        <div class="tool-section">
+        <div class="tool-section tool-section-code">
           <CodeBlock content={writeBody} mode={isMarkdown ? 'markdown' : 'code'} language={writeLanguage} streaming={streaming && !isCompleted} copyLabel="Copy file contents" />
         </div>
       {:else if isCodemode && (codemodeCode !== '' || content.args)}
-        <div class="tool-section">
+        <div class="tool-section tool-section-code">
           <CodeBlock content={codemodeCode} mode="code" language="typescript" streaming={streaming && !isCompleted} copyLabel="Copy script" />
         </div>
       {:else if isBash && (bashCommand !== '' || content.args)}
-        <div class="tool-section">
+        <div class="tool-section tool-section-code">
           <CodeBlock content={bashCommand} mode="code" language="bash" streaming={streaming && !isCompleted} copyLabel="Copy command" />
         </div>
       {:else if argsText}
@@ -437,6 +437,10 @@
 
   .tool-section {
     padding: 6px 12px;
+  }
+
+  .tool-section-code {
+    padding: 0;
   }
 
   .tool-section + .tool-section {
