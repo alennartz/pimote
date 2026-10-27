@@ -12,8 +12,8 @@ export const STATIC_HOST_TOOL_GUIDELINES = [
 
 export const STATIC_HOST_TOOL_DESCRIPTION = [
   'Serve a local HTML/asset bundle verbatim, with source edits visible without rehosting, and return {slug,url}.',
-  'Slug collisions change the returned slug.',
-  'Registration creates a session card and requests immediate browser navigation.',
+  'An already-hosted folder returns its existing slug and URL without another registration, with alreadyHosted and a message in the result.',
+  'Slug collisions change the returned slug for a different folder, while new registrations create a session card and request immediate browser navigation.',
 ].join(' ');
 
 export const STATIC_HOST_REMOVE_TOOL_SNIPPET = 'Stop serving a hosted bundle that is no longer needed.';

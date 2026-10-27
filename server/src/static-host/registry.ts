@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import type { CardColor } from '../../../shared/dist/index.js';
 
 /** Card metadata captured at registration time and replayed on every session load. */
@@ -24,7 +25,7 @@ export interface StaticHostRegistration {
  * `register()`.
  */
 export interface StaticHostRegistry {
-  /** Register a new bundle. Throws if `slug` is already present. */
+  /** Register a new bundle. Throws if its slug or folder is already present. */
   register(reg: StaticHostRegistration): void;
 
   /** Unregister by slug. No-op if absent. */
@@ -38,6 +39,9 @@ export interface StaticHostRegistry {
 
   /** Test if a slug is taken. Used by collision resolution. */
   has(slug: string): boolean;
+
+  /** Find the active registration serving this folder, if any. */
+  findByFolderPath(folderPath: string): StaticHostRegistration | undefined;
 
   /** Snapshot of all registrations for a session. */
   listForSession(sessionId: string): StaticHostRegistration[];
@@ -54,6 +58,10 @@ export class InMemoryStaticHostRegistry implements StaticHostRegistry {
   register(reg: StaticHostRegistration): void {
     if (this.bySlug.has(reg.slug)) {
       throw new Error(`static-host slug already registered: ${reg.slug}`);
+    }
+    const existingFolder = this.findByFolderPath(reg.folderPath);
+    if (existingFolder) {
+      throw new Error(`static-host folder already registered at slug ${existingFolder.slug}: ${reg.folderPath}`);
     }
     this.bySlug.set(reg.slug, reg);
     let set = this.bySession.get(reg.sessionId);
@@ -88,6 +96,14 @@ export class InMemoryStaticHostRegistry implements StaticHostRegistry {
 
   has(slug: string): boolean {
     return this.bySlug.has(slug);
+  }
+
+  findByFolderPath(folderPath: string): StaticHostRegistration | undefined {
+    const requestedPath = resolve(folderPath);
+    for (const entry of this.bySlug.values()) {
+      if (resolve(entry.folderPath) === requestedPath) return entry;
+    }
+    return undefined;
   }
 
   listForSession(sessionId: string): StaticHostRegistration[] {

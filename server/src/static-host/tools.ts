@@ -23,12 +23,18 @@ export interface RegisterToolOutput {
   slug: string;
   /** `/s/<resolved-slug>/`. */
   url: string;
+  /** Present and true when this request reused an active registration. */
+  alreadyHosted?: boolean;
+  /** Explains that the active bundle already serves live source files. */
+  message?: string;
 }
 
 /** TypeBox schema of {@link RegisterToolOutput} (the tool's outputSchema). */
 export const RegisterToolOutputSchema = Type.Object({
   slug: Type.String(),
   url: Type.String(),
+  alreadyHosted: Type.Optional(Type.Boolean({ description: 'True when this request reused an active registration instead of creating one.' })),
+  message: Type.Optional(Type.String({ description: 'Explains the existing slug and that live source updates need no rehosting.' })),
 });
 
 /** Input to the `pimote_static_host_remove` tool. */
@@ -115,10 +121,12 @@ export function resolveSlugCollision(slug: string, registry: StaticHostRegistry)
  * Execute the `pimote_static_host` tool body.
  *
  * Throws on validation failure (invalid slug, missing folder, no index.html).
- * On success: updates the in-memory list for the session, atomically rewrites
- * the persistence file, calls `registry.register(...)`, and emits the panel
- * snapshot. The complete read-modify-write, registry, and emission transaction
- * runs under the process-wide registry mutation queue.
+ * On success: if the folder is already actively hosted, returns its existing
+ * slug and URL without creating another registration. Otherwise it updates the
+ * in-memory list for the session, atomically rewrites the persistence file,
+ * calls `registry.register(...)`, and emits the panel snapshot. The complete
+ * read-modify-write, registry, and emission transaction runs under the
+ * process-wide registry mutation queue.
  */
 export async function executeRegisterTool(input: RegisterToolInput, deps: ToolDeps): Promise<RegisterToolOutput> {
   const validSlug = validateSlug(input.slug);
@@ -130,8 +138,8 @@ export async function executeRegisterTool(input: RegisterToolInput, deps: ToolDe
     throw new Error(`folder must be an absolute path: ${JSON.stringify(input.folder)}`);
   }
   // Normalize before stat/persist/register: a trailing slash or internal `..`
-  // segment would otherwise break the http-handler's containment check (which
-  // compares a resolved request path against `folderPath + path.sep`).
+  // segment would otherwise break the http-handler's containment and
+  // duplicate-folder checks.
   input.folder = resolve(input.folder);
 
   let folderStat;
@@ -162,6 +170,17 @@ export async function executeRegisterTool(input: RegisterToolInput, deps: ToolDe
   };
 
   return withStaticHostMutation(deps.registry, async () => {
+    const active = deps.registry.findByFolderPath(input.folder);
+    if (active) {
+      const url = `/s/${active.slug}/`;
+      return {
+        slug: active.slug,
+        url,
+        alreadyHosted: true,
+        message: `Already hosted at ${url}. The existing slug is "${active.slug}". The active bundle serves live source files and reflects edits on the next request, so no rehosting is needed.`,
+      };
+    }
+
     const resolved = resolveSlugCollision(validSlug, deps.registry);
     const existing = (await deps.store.read(deps.sessionId)) ?? { version: 1 as const, entries: [] };
     const entries: StaticHostStoreEntry[] = [...existing.entries, { slug: resolved, folderPath: input.folder, cardMetadata }];

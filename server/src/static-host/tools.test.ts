@@ -81,8 +81,8 @@ describe('resolveSlugCollision', () => {
 
   it('appends increasing suffixes until a free slug is found', () => {
     const r = new InMemoryStaticHostRegistry();
-    for (const s of ['demo', 'demo-2', 'demo-3']) {
-      r.register({ slug: s, folderPath: '/x', sessionId: 's', cardMetadata: { title: 'D' } });
+    for (const [index, s] of ['demo', 'demo-2', 'demo-3'].entries()) {
+      r.register({ slug: s, folderPath: `/x/${index}`, sessionId: 's', cardMetadata: { title: 'D' } });
     }
     expect(resolveSlugCollision('demo', r)).toBe('demo-4');
   });
@@ -126,6 +126,44 @@ describe('executeRegisterTool', () => {
     await executeRegisterTool({ slug: 'demo', folder, title: 'Demo', tag: 'beta', color: 'accent' }, deps);
     const file = await store.read('sess-1');
     expect(file?.entries).toEqual([{ slug: 'demo', folderPath: folder, cardMetadata: { title: 'Demo', tag: 'beta', color: 'accent' } }]);
+  });
+
+  it('reuses an active registration for the same folder without rehosting', async () => {
+    const folder = await makeBundle(root, 'demo');
+    const first = await executeRegisterTool({ slug: 'demo', folder, title: 'Demo' }, deps);
+    emitPanelCards.mockClear();
+    emitNavigate.mockClear();
+
+    const second = await executeRegisterTool({ slug: 'other-name', folder: join(folder, '..', 'demo'), title: 'Updated title' }, deps);
+
+    expect(second).toMatchObject({
+      slug: first.slug,
+      url: first.url,
+      alreadyHosted: true,
+      message: expect.stringContaining(`Already hosted at ${first.url}`),
+    });
+    expect(second.message).toContain('reflects edits on the next request');
+    expect(registry.listForSession('sess-1')).toHaveLength(1);
+    expect((await store.read('sess-1'))?.entries).toHaveLength(1);
+    expect(emitPanelCards).not.toHaveBeenCalled();
+    expect(emitNavigate).not.toHaveBeenCalled();
+  });
+
+  it('reuses an active registration across sessions', async () => {
+    const folder = await makeBundle(root, 'cross-session');
+    const first = await executeRegisterTool({ slug: 'first', folder, title: 'First' }, deps);
+    const otherPanel = vi.fn();
+    const otherNavigate = vi.fn();
+    const otherDeps: ToolDeps = { ...deps, sessionId: 'sess-2', emitPanelCards: otherPanel, emitNavigate: otherNavigate };
+
+    const second = await executeRegisterTool({ slug: 'second', folder, title: 'Second' }, otherDeps);
+
+    expect(second).toMatchObject({ slug: first.slug, url: first.url, alreadyHosted: true });
+    expect(await store.read('sess-2')).toBeUndefined();
+    expect(registry.listForSession('sess-1')).toHaveLength(1);
+    expect(registry.listForSession('sess-2')).toHaveLength(0);
+    expect(otherPanel).not.toHaveBeenCalled();
+    expect(otherNavigate).not.toHaveBeenCalled();
   });
 
   it('emits panel cards exactly once on a successful register', async () => {

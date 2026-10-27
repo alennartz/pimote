@@ -95,6 +95,7 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
       promptSnippet: STATIC_HOST_TOOL_SNIPPET,
       promptGuidelines: STATIC_HOST_TOOL_GUIDELINES,
       exposure: 'direct',
+      annotations: { idempotentHint: true },
       parameters: Type.Object({
         slug: Type.String({
           description: 'Requested URL identifier of 1–64 characters, using lowercase letters, digits, and single separating hyphens.',
@@ -142,14 +143,24 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
       await withStaticHostMutation(registry, async () => {
         const file = await store.read(sessionId);
         if (!file) return;
-        // Replay persisted entries, re-suffixing any slug already taken (another
-        // session persisted the same slug, or this session reloaded earlier this
-        // boot). Re-suffixing keeps the bundle reachable; the old behaviour left a
-        // phantom entry in the file that the remove tool could never match (its
-        // registry lookup failed) and that got re-appended on every future write.
+        // Replay persisted entries, re-suffixing any slug already taken by a
+        // different folder. An already-active folder is reused when this session
+        // already owns it, and dropped when another session owns it. This keeps
+        // old duplicate entries from creating another live copy.
         const replayed: StaticHostStoreEntry[] = [];
         let mutated = false;
         for (const entry of file.entries) {
+          const activeFolder = registry.findByFolderPath(entry.folderPath);
+          if (activeFolder) {
+            if (activeFolder.sessionId === sessionId && !replayed.some((replayedEntry) => replayedEntry.slug === activeFolder.slug)) {
+              replayed.push(activeFolder.slug === entry.slug ? entry : { ...entry, slug: activeFolder.slug });
+              if (activeFolder.slug !== entry.slug) mutated = true;
+            } else {
+              mutated = true;
+            }
+            continue;
+          }
+
           let slug = entry.slug;
           if (registry.has(slug)) {
             slug = resolveSlugCollision(slug, registry);

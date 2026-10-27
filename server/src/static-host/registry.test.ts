@@ -30,6 +30,19 @@ describe('InMemoryStaticHostRegistry', () => {
       expect(r.lookup('nope')).toBeUndefined();
     });
 
+    it('finds an active registration by folder path', () => {
+      const entry = reg({ slug: 'one', folderPath: '/tmp/report' });
+      r.register(entry);
+      expect(r.findByFolderPath('/tmp/report')).toEqual(entry);
+      expect(r.findByFolderPath('/tmp/report/../report')).toEqual(entry);
+      expect(r.findByFolderPath('/tmp/other')).toBeUndefined();
+    });
+
+    it('throws when registering a duplicate folder under another slug', () => {
+      r.register(reg({ slug: 'one', folderPath: '/tmp/report' }));
+      expect(() => r.register(reg({ slug: 'two', folderPath: '/tmp/report', sessionId: 'other' }))).toThrow(/folder already registered/);
+    });
+
     it('throws when registering a duplicate slug', () => {
       r.register(reg({ slug: 'dup' }));
       expect(() => r.register(reg({ slug: 'dup', sessionId: 'other' }))).toThrow();
@@ -58,9 +71,9 @@ describe('InMemoryStaticHostRegistry', () => {
 
   describe('unregisterAllForSession', () => {
     it('removes every registration owned by the given session', () => {
-      r.register(reg({ slug: 'a', sessionId: 's1' }));
-      r.register(reg({ slug: 'b', sessionId: 's1' }));
-      r.register(reg({ slug: 'c', sessionId: 's2' }));
+      r.register(reg({ slug: 'a', folderPath: '/tmp/a', sessionId: 's1' }));
+      r.register(reg({ slug: 'b', folderPath: '/tmp/b', sessionId: 's1' }));
+      r.register(reg({ slug: 'c', folderPath: '/tmp/c', sessionId: 's2' }));
 
       r.unregisterAllForSession('s1');
 
@@ -78,11 +91,11 @@ describe('InMemoryStaticHostRegistry', () => {
 
   describe('listForSession', () => {
     it('returns every registration owned by the session', () => {
-      const a = reg({ slug: 'a', sessionId: 's1' });
-      const b = reg({ slug: 'b', sessionId: 's1' });
+      const a = reg({ slug: 'a', folderPath: '/tmp/a', sessionId: 's1' });
+      const b = reg({ slug: 'b', folderPath: '/tmp/b', sessionId: 's1' });
       r.register(a);
       r.register(b);
-      r.register(reg({ slug: 'c', sessionId: 's2' }));
+      r.register(reg({ slug: 'c', folderPath: '/tmp/c', sessionId: 's2' }));
 
       const out = r.listForSession('s1');
       expect(out).toHaveLength(2);

@@ -175,6 +175,7 @@ describe('createStaticHostExtension', () => {
   it('describes hosting results, collisions, live serving, cards, and immediate navigation', () => {
     const tool = pi.toolDefs.find((t) => t.name === 'pimote_static_host')!;
     expect(tool.description).toContain('{slug,url}');
+    expect(tool.description).toMatch(/already-hosted folder returns its existing slug and URL/);
     expect(tool.description).toMatch(/collisions change the returned slug/);
     expect(tool.description).toMatch(/verbatim.*source edits visible without rehosting/);
     expect(tool.description).toMatch(/session card.*immediate browser navigation/);
@@ -233,6 +234,21 @@ describe('createStaticHostExtension', () => {
     expect(registry.listForSession('sess-fresh')).toEqual([]);
   });
 
+  it('replaying the same session twice does not create or erase its active registration', async () => {
+    const folder = await bundle('replay-twice');
+    await store.write('sess-X', {
+      version: 1,
+      entries: [{ slug: 'replay-twice', folderPath: folder, cardMetadata: { title: 'Replay twice' } }],
+    });
+    const handler = pi.handlers.get('session_start')!;
+
+    await handler({ type: 'session_start', reason: 'startup' }, makeCtx('sess-X'));
+    await handler({ type: 'session_start', reason: 'startup' }, makeCtx('sess-X'));
+
+    expect(registry.listForSession('sess-X').map((entry) => entry.slug)).toEqual(['replay-twice']);
+    expect((await store.read('sess-X'))?.entries.map((entry) => entry.slug)).toEqual(['replay-twice']);
+  });
+
   it('serializes session replay with shutdown so shutdown leaves no active registration', async () => {
     const lifecycleRegistry = new InMemoryStaticHostRegistry();
     const lifecyclePi = makeFakePi();
@@ -285,6 +301,22 @@ describe('createStaticHostExtension', () => {
     const removeTool = pi.toolDefs.find((t) => t.name === 'pimote_static_host_remove')!;
     const out = await removeTool.execute('c', { slug: 'taken-2' }, undefined, undefined, makeCtx('sess-X'));
     expect((out.structuredContent as { removed: boolean }).removed).toBe(true);
+  });
+
+  it('on session_start, drops persisted entries for folders already active under another slug', async () => {
+    const folder = await bundle('legacy-duplicates');
+    await store.write('sess-X', {
+      version: 1,
+      entries: [
+        { slug: 'legacy', folderPath: folder, cardMetadata: { title: 'Legacy' } },
+        { slug: 'legacy-2', folderPath: join(folder, '..', 'legacy-duplicates'), cardMetadata: { title: 'Legacy copy' } },
+      ],
+    });
+
+    await pi.handlers.get('session_start')!({ type: 'session_start', reason: 'startup' }, makeCtx('sess-X'));
+
+    expect(registry.listForSession('sess-X').map((entry) => entry.slug)).toEqual(['legacy']);
+    expect((await store.read('sess-X'))?.entries.map((entry) => entry.slug)).toEqual(['legacy']);
   });
 
   function navigateEvents(): Array<{ url: string }> {
