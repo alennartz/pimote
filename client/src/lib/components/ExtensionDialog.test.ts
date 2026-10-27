@@ -100,6 +100,18 @@ describe('ExtensionDialog editor close policy', () => {
     await vi.waitFor(() => expect(state.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'extension_ui_response', value: 'edited' })));
   });
 
+  it('renders the discard confirmation above the editor modal', async () => {
+    const view = await openEditor();
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: 'edited' } });
+    await tick();
+
+    button('Cancel').click();
+    await vi.waitFor(() => expect(confirmation()).not.toBeNull());
+
+    expect(confirmation()?.classList.contains('z-[60]')).toBe(true);
+    expect([...document.querySelectorAll<HTMLElement>('[data-slot="dialog-overlay"]')].some((overlay) => overlay.classList.contains('z-[60]'))).toBe(true);
+  });
+
   it('does not cancel dirty edits until Discard is confirmed', async () => {
     const view = await openEditor();
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: 'edited' } });

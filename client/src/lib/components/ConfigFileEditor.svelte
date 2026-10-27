@@ -114,7 +114,7 @@
 </CodeEditorDialog>
 
 <Dialog.Root bind:open={confirmDiscardOpen}>
-  <Dialog.Content showCloseButton={false}>
+  <Dialog.Content showCloseButton={false} overlayClass="z-[60]" class="z-[60]">
     <Dialog.Header>
       <Dialog.Title>Discard unsaved changes?</Dialog.Title>
       <Dialog.Description>Your edits have not been saved.</Dialog.Description>
