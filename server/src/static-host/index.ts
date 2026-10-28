@@ -107,8 +107,9 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
         title: Type.String({ description: 'Title displayed on the panel card.' }),
         tag: Type.Optional(Type.String({ description: 'Short tag beside the title, with no tag displayed when omitted or empty.' })),
         color: Type.Optional(
-          Type.Union([Type.Literal('accent'), Type.Literal('success'), Type.Literal('warning'), Type.Literal('error'), Type.Literal('muted')], {
-            description: 'Card border color override, with no override and an ordinary border when omitted.',
+          Type.Union([Type.Literal('accent'), Type.Literal('active'), Type.Literal('success'), Type.Literal('warning'), Type.Literal('error'), Type.Literal('muted')], {
+            description:
+              'Semantic card accent: active while work is in flight, success when settled without an error, warning for caution, error for failure, muted for low priority, or accent for general emphasis. Omit for an ordinary border.',
           }),
         ),
       }),

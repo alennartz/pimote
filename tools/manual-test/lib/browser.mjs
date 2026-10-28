@@ -211,10 +211,12 @@ export function makeBrowserHelpers({ session, log = () => {} }) {
 
   /** Favorite star rendered on the row? */
   async function starOnRow(path) {
-    return (await evalBrowser(`(() => {
+    return (
+      (await evalBrowser(`(() => {
       const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(path)} + '"]');
       return Boolean(s?.closest('.group')?.querySelector('svg.fill-yellow-500'));
-    })()`)) === true;
+    })()`)) === true
+    );
   }
 
   /** Reset the dashboard scroller to the top. */
@@ -253,7 +255,8 @@ export function makeBrowserHelpers({ session, log = () => {} }) {
    * Install after page load; only count request deltas after resetSent().
    */
   async function installSocketProbe() {
-    return (await evalBrowser(`(() => {
+    return (
+      (await evalBrowser(`(() => {
       if (window.__pmSocketProbe) return true;
       window.__pmSocketProbe = true;
       window.__pmSent = [];
@@ -270,7 +273,8 @@ export function makeBrowserHelpers({ session, log = () => {} }) {
         return origSend.call(this, data);
       };
       return true;
-    })()`)) === true;
+    })()`)) === true
+    );
   }
 
   /** Outbound messages matching an optional JS filter expression. */
@@ -306,7 +310,8 @@ export function makeBrowserHelpers({ session, log = () => {} }) {
 
   /** Force a reconnect: close the most recent live socket from the page. */
   async function closeLatestSocket() {
-    return (await evalBrowser(`(() => {
+    return (
+      (await evalBrowser(`(() => {
       const sockets = window.__pmSockets ?? [];
       const live = sockets.filter((s) => s.readyState === WebSocket.OPEN);
       const target = live.at(-1);
@@ -314,7 +319,8 @@ export function makeBrowserHelpers({ session, log = () => {} }) {
       window.__pmSocketsClosed = (window.__pmSocketsClosed ?? 0) + 1;
       target.close();
       return true;
-    })()`)) === true;
+    })()`)) === true
+    );
   }
 
   /** Number of distinct sockets the probe has seen open (reconnect counting). */

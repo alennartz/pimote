@@ -55,11 +55,7 @@ async function assertPatchedPi(piPackageRoot) {
 
   const promptPath = join(piPackageRoot, 'dist', 'core', 'system-prompt.js');
   const promptSource = await readFile(promptPath, 'utf8');
-  const preambleMarkers = [
-    'customSections.preamble ??',
-    'if (!SYSTEM_PROMPT_SECTION_NAME.test(name)) {',
-    'if (content && name !== "preamble")',
-  ];
+  const preambleMarkers = ['customSections.preamble ??', 'if (!SYSTEM_PROMPT_SECTION_NAME.test(name)) {', 'if (content && name !== "preamble")'];
 
   if (preambleMarkers.some((marker) => !promptSource.includes(marker)) || promptSource.includes('|| name === "preamble"')) {
     throw new Error(`[pimote] Bundled Pi preamble override is not patched: ${promptPath}`);

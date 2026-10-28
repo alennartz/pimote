@@ -107,7 +107,7 @@ describe('Panel State', () => {
     it('snapshots valid cards instead of retaining caller-owned references', () => {
       const card = {
         id: 'card',
-        color: 'accent' as const,
+        color: 'active' as const,
         header: { title: 'Card', tag: 'tag' },
         body: [{ content: 'body', style: 'code' as const }],
         footer: ['footer'],
@@ -125,7 +125,7 @@ describe('Panel State', () => {
       expect(panelState.get('agents')).toEqual([
         {
           id: 'card',
-          color: 'accent',
+          color: 'active',
           header: { title: 'Card', tag: 'tag' },
           body: [{ content: 'body', style: 'code' }],
           footer: ['footer'],

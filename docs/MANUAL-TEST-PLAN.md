@@ -1350,7 +1350,7 @@ The panel system allows pi extensions to push structured card data into the pimo
 
 - **[P]** Extension pushes cards with all optional fields (color, header.tag, body sections, footer)
 - **[E]** Card shows:
-  - Colored left border matching `card.color` (accent/success/warning/error/muted)
+  - Colored left border matching `card.color` (accent/active/success/warning/error/muted)
   - Header with title and tag badge
   - Body sections with correct styling: `text` (normal), `code` (monospace), `secondary` (muted)
   - Footer items joined with `·` separator

@@ -172,50 +172,24 @@ function fabricateSession({ cwd, promptLabel, scale = 1 }) {
 
   addEntry({ type: 'model_change', id: nextId(), parentId: previousId, timestamp: isoNow, provider: 'fabricated', modelId: 'gpt-5.3-codex' });
 
-  const assistantOneUsage = usage(
-    { input: 0.4, output: 0.2, cacheRead: 0.1, cacheWrite: 0.05, total: 0.8 },
-    { input: 1000, output: 500, cacheRead: 200, cacheWrite: 100 },
-    scale,
-    { cacheWrite1h: 50, reasoning: 120 },
-  );
-  const nestedOneUsage = usage(
-    { input: 0.05, output: 0.03, cacheRead: 0.01, cacheWrite: 0.01, total: 0.12 },
-    { input: 200, output: 80, cacheRead: 40, cacheWrite: 20 },
-    scale,
-  );
-  const assistantTwoUsage = usage(
-    { input: 0.3, output: 0.15, cacheRead: 0.04, cacheWrite: 0.02, total: 0.55 },
-    { input: 900, output: 300, cacheRead: 100, cacheWrite: 40 },
-    scale,
-  );
-  const nestedTwoUsage = usage(
-    { input: 0.02, output: 0.01, cacheRead: 0.01, cacheWrite: 0.005, total: 0.05 },
-    { input: 100, output: 40, cacheRead: 20, cacheWrite: 10 },
-    scale,
-  );
-  const unrelatedToolUsage = usage(
-    { input: 0.08, output: 0.04, cacheRead: 0.02, cacheWrite: 0.01, total: 0.1 },
-    { input: 50, output: 20, cacheRead: 10, cacheWrite: 5 },
-    scale,
-  );
-  const compactionUsage = usage(
-    { input: 0.01, output: 0.005, cacheRead: 0.003, cacheWrite: 0.002, total: 0.021 },
-    { input: 30, output: 20, cacheRead: 10, cacheWrite: 5 },
-    scale,
-  );
+  const assistantOneUsage = usage({ input: 0.4, output: 0.2, cacheRead: 0.1, cacheWrite: 0.05, total: 0.8 }, { input: 1000, output: 500, cacheRead: 200, cacheWrite: 100 }, scale, {
+    cacheWrite1h: 50,
+    reasoning: 120,
+  });
+  const nestedOneUsage = usage({ input: 0.05, output: 0.03, cacheRead: 0.01, cacheWrite: 0.01, total: 0.12 }, { input: 200, output: 80, cacheRead: 40, cacheWrite: 20 }, scale);
+  const assistantTwoUsage = usage({ input: 0.3, output: 0.15, cacheRead: 0.04, cacheWrite: 0.02, total: 0.55 }, { input: 900, output: 300, cacheRead: 100, cacheWrite: 40 }, scale);
+  const nestedTwoUsage = usage({ input: 0.02, output: 0.01, cacheRead: 0.01, cacheWrite: 0.005, total: 0.05 }, { input: 100, output: 40, cacheRead: 20, cacheWrite: 10 }, scale);
+  const unrelatedToolUsage = usage({ input: 0.08, output: 0.04, cacheRead: 0.02, cacheWrite: 0.01, total: 0.1 }, { input: 50, output: 20, cacheRead: 10, cacheWrite: 5 }, scale);
+  const compactionUsage = usage({ input: 0.01, output: 0.005, cacheRead: 0.003, cacheWrite: 0.002, total: 0.021 }, { input: 30, output: 20, cacheRead: 10, cacheWrite: 5 }, scale);
   const branchSummaryUsage = usage(
     { input: 0.004, output: 0.002, cacheRead: 0.001, cacheWrite: 0.001, total: 0.009 },
     { input: 20, output: 10, cacheRead: 5, cacheWrite: 2 },
     scale,
   );
-  const usageEntryUsage = usage(
-    { input: 0.003, output: 0.001, cacheRead: 0.002, cacheWrite: 0.001, total: 0.01 },
-    { input: 12, output: 8, cacheRead: 4, cacheWrite: 2 },
-    scale,
-  );
+  const usageEntryUsage = usage({ input: 0.003, output: 0.001, cacheRead: 0.002, cacheWrite: 0.001, total: 0.01 }, { input: 12, output: 8, cacheRead: 4, cacheWrite: 2 }, scale);
   usages.push(assistantOneUsage, nestedOneUsage, assistantTwoUsage, nestedTwoUsage, unrelatedToolUsage, compactionUsage, branchSummaryUsage, usageEntryUsage);
 
-  const userOneId = addEntry(
+  addEntry(
     makeSessionMessage({
       cwd,
       id: nextId(),
@@ -389,11 +363,7 @@ async function openSnapshot({ port, sessionId, folderPath, label }) {
     throw new Error(`open_session ${label} failed: ${opened.error ?? 'unknown error'}`);
   }
   const openedSessionId = opened.data?.sessionId ?? sessionId;
-  const fullResync = await probe.waitForEvent(
-    'full_resync',
-    (event) => event.sessionId === openedSessionId || event.sessionId === sessionId,
-    15_000,
-  );
+  const fullResync = await probe.waitForEvent('full_resync', (event) => event.sessionId === openedSessionId || event.sessionId === sessionId, 15_000);
   const metaResponse = await probe.send({ type: 'get_session_meta', sessionId: openedSessionId });
   if (!metaResponse.success) {
     probe.close();
@@ -499,13 +469,25 @@ async function main() {
     const pricedMeta = pricedWire.meta;
     const zeroMeta = zeroWire.meta;
     assert(typeof pricedMeta?.lifetimeCostUsd === 'number', `priced metadata carries Pi lifetimeCostUsd (got ${JSON.stringify(pricedMeta?.lifetimeCostUsd)})`);
-    assert(Math.abs((pricedMeta?.lifetimeCostUsd ?? 0) - expected.total) < 1e-9, `priced lifetime total includes every persisted usage entry (${expectedSessionDisplay}, got ${pricedMeta?.lifetimeCostUsd})`);
+    assert(
+      Math.abs((pricedMeta?.lifetimeCostUsd ?? 0) - expected.total) < 1e-9,
+      `priced lifetime total includes every persisted usage entry (${expectedSessionDisplay}, got ${pricedMeta?.lifetimeCostUsd})`,
+    );
     assert(pricedMeta?.usageBreakdown?.cost && !Object.hasOwn(pricedMeta.usageBreakdown.cost, 'total'), 'priced metadata exposes category costs without a second scalar total');
     for (const category of ['input', 'output', 'cacheRead', 'cacheWrite']) {
       const actual = pricedMeta?.usageBreakdown?.cost?.[category];
       assert(Math.abs((actual ?? 0) - expected[category]) < 1e-9, `priced ${category} cost includes assistant, tool, compaction, branch, and usage entries (got ${actual})`);
     }
-    assert(Math.abs((pricedMeta?.usageBreakdown?.cost?.input ?? 0) + (pricedMeta?.usageBreakdown?.cost?.output ?? 0) + (pricedMeta?.usageBreakdown?.cost?.cacheRead ?? 0) + (pricedMeta?.usageBreakdown?.cost?.cacheWrite ?? 0) - expectedKnownCost) < 1e-9, 'priced category rollup retains actual cache-read and cache-write costs');
+    assert(
+      Math.abs(
+        (pricedMeta?.usageBreakdown?.cost?.input ?? 0) +
+          (pricedMeta?.usageBreakdown?.cost?.output ?? 0) +
+          (pricedMeta?.usageBreakdown?.cost?.cacheRead ?? 0) +
+          (pricedMeta?.usageBreakdown?.cost?.cacheWrite ?? 0) -
+          expectedKnownCost,
+      ) < 1e-9,
+      'priced category rollup retains actual cache-read and cache-write costs',
+    );
     assert(expectedUnknown > 0.01, `priced scalar total leaves a positive Unknown remainder ($${expectedUnknown.toFixed(4)})`);
     assert(pricedMeta?.usageBreakdown?.tokens?.total === expected.tokens.total, `priced token total follows Pi session stats (${expected.tokens.total})`);
     assert(zeroMeta?.lifetimeCostUsd === 0, `zero-spend metadata reports lifetimeCostUsd 0 (got ${zeroMeta?.lifetimeCostUsd})`);
@@ -515,13 +497,12 @@ async function main() {
     const replayAssistants = replayMessages.filter((message) => message.role === 'assistant');
     const replayToolResults = replayMessages.filter((message) => message.role === 'toolResult');
     assert(replayAssistants.length === 2, `full resync replays two separate assistant rows (got ${replayAssistants.length})`);
-    assert(replayAssistants.every((message) => message.usage?.cost?.total > 0), 'full resync preserves final assistant usage');
+    assert(
+      replayAssistants.every((message) => message.usage?.cost?.total > 0),
+      'full resync preserves final assistant usage',
+    );
     const hasToolUsage = (messages, toolCallId, total) =>
-      messages.some(
-        (message) =>
-          message.content?.some((block) => block.type === 'tool_result' && block.toolCallId === toolCallId) &&
-          message.usage?.cost?.total === total,
-      );
+      messages.some((message) => message.content?.some((block) => block.type === 'tool_result' && block.toolCallId === toolCallId) && message.usage?.cost?.total === total);
     assert(hasToolUsage(replayToolResults, 'nested-lookup-1', 0.12), 'full resync preserves matching nested tool-result usage');
     assert(hasToolUsage(replayToolResults, 'nested-lookup-2', 0.05), 'full resync preserves the second nested tool-result usage');
 
@@ -536,18 +517,27 @@ async function main() {
 
     const pricedButtons = await browser.evalBrowser(visibleCurrencyButtonsExpression());
     const pricedButtonTexts = pricedButtons.map((button) => button.text);
-    assert(pricedButtons.every((button) => button.expanded === 'false'), 'cost figures render as collapsed accessible buttons');
+    assert(
+      pricedButtons.every((button) => button.expanded === 'false'),
+      'cost figures render as collapsed accessible buttons',
+    );
     assert(pricedButtonTexts.includes(expectedSessionDisplay), `session cost button shows authoritative ${expectedSessionDisplay} (got ${JSON.stringify(pricedButtonTexts)})`);
     for (const rowDisplay of expectedRowDisplays) {
       assert(pricedButtonTexts.includes(rowDisplay), `assistant row cost button shows ${rowDisplay} (got ${JSON.stringify(pricedButtonTexts)})`);
     }
-    assert(pricedButtons.every((button) => button.ariaLabel), 'cost buttons expose accessible context labels');
+    assert(
+      pricedButtons.every((button) => button.ariaLabel),
+      'cost buttons expose accessible context labels',
+    );
 
     assert((await browser.evalBrowser(clickCostExpression(expectedSessionDisplay))) === true, 'clicking the session cost button opens its popover');
     await browser.wait(200);
     let dialogs = await browser.evalBrowser(visibleDialogsExpression());
     const sessionDialog = dialogs.at(-1) ?? '';
-    assert(/Input/i.test(sessionDialog) && /Output/i.test(sessionDialog) && /Cache read/i.test(sessionDialog) && /Cache write/i.test(sessionDialog), 'session popover shows all four cost categories');
+    assert(
+      /Input/i.test(sessionDialog) && /Output/i.test(sessionDialog) && /Cache read/i.test(sessionDialog) && /Cache write/i.test(sessionDialog),
+      'session popover shows all four cost categories',
+    );
     assert(sessionDialog.includes('Unknown') && sessionDialog.includes(expectedSessionDisplay), 'session popover shows the positive Unknown remainder and authoritative total');
     assert(!/Tools/i.test(sessionDialog), 'session popover has no synthetic Tools category');
     assert(
@@ -581,14 +571,8 @@ async function main() {
     await browser.browser(['screenshot', join(sandboxHome, 'priced-costs.png')], { allowFailure: true });
 
     section('Live snapshots, terminal partial fallback, resync, and reload');
-    const partialOne = usage(
-      { input: 0.05, output: 0.02, cacheRead: 0.01, cacheWrite: 0.005, total: 0.11 },
-      { input: 100, output: 20, cacheRead: 10, cacheWrite: 5 },
-    );
-    const partialTwo = usage(
-      { input: 0.1, output: 0.08, cacheRead: 0.04, cacheWrite: 0.03, total: 0.25 },
-      { input: 200, output: 50, cacheRead: 20, cacheWrite: 10 },
-    );
+    const partialOne = usage({ input: 0.05, output: 0.02, cacheRead: 0.01, cacheWrite: 0.005, total: 0.11 }, { input: 100, output: 20, cacheRead: 10, cacheWrite: 5 });
+    const partialTwo = usage({ input: 0.1, output: 0.08, cacheRead: 0.04, cacheWrite: 0.03, total: 0.25 }, { input: 200, output: 50, cacheRead: 20, cacheWrite: 10 });
     const syntheticSessionId = pricedWire.openedSessionId;
     const partialStart = { type: 'message_start', sessionId: syntheticSessionId, role: 'assistant', usage: partialOne };
     const partialUpdate = {
@@ -603,7 +587,10 @@ async function main() {
     assert(injected?.ok === true, `captured the live PWA socket for partial snapshot injection (got ${JSON.stringify(injected)})`);
     await browser.wait(300);
     const streamingButtons = await browser.evalBrowser(visibleCurrencyButtonsExpression());
-    assert(streamingButtons.some((button) => button.text === '$0.25'), 'a newer partial usage snapshot replaces, rather than adds to, the previous snapshot');
+    assert(
+      streamingButtons.some((button) => button.text === '$0.25'),
+      'a newer partial usage snapshot replaces, rather than adds to, the previous snapshot',
+    );
 
     const terminal = {
       type: 'message_end',
@@ -613,7 +600,10 @@ async function main() {
     await browser.evalBrowser(dispatchBrowserEventsExpression([terminal]));
     await browser.wait(300);
     const fallbackButtons = await browser.evalBrowser(visibleCurrencyButtonsExpression());
-    assert(fallbackButtons.some((button) => button.text === '$0.25'), 'terminal partial-only usage remains visible as the active-view fallback');
+    assert(
+      fallbackButtons.some((button) => button.text === '$0.25'),
+      'terminal partial-only usage remains visible as the active-view fallback',
+    );
 
     const inFlightResync = {
       ...pricedWire.fullResync,
@@ -624,7 +614,10 @@ async function main() {
     await browser.evalBrowser(dispatchBrowserEventsExpression([inFlightResync]));
     await browser.wait(300);
     const inFlightButtons = await browser.evalBrowser(visibleCurrencyButtonsExpression());
-    assert(inFlightButtons.some((button) => button.text === '$0.25'), 'in-flight full resync restores the latest streaming usage snapshot');
+    assert(
+      inFlightButtons.some((button) => button.text === '$0.25'),
+      'in-flight full resync restores the latest streaming usage snapshot',
+    );
 
     const resyncEvent = { ...pricedWire.fullResync, sessionId: syntheticSessionId, streamingMessage: null };
     await browser.evalBrowser(dispatchBrowserEventsExpression([resyncEvent]));
@@ -637,8 +630,14 @@ async function main() {
     await browser.wait(2_000);
     await clickSessionRow(browser, 'priced prompt 1');
     const reloadedButtons = await browser.evalBrowser(visibleCurrencyButtonsExpression());
-    assert(reloadedButtons.some((button) => button.text === expectedSessionDisplay), 'reload preserves Pi complete-session total');
-    assert(reloadedButtons.some((button) => button.text === '$0.92') && reloadedButtons.some((button) => button.text === '$0.60'), 'reload preserves persisted assistant-row usage');
+    assert(
+      reloadedButtons.some((button) => button.text === expectedSessionDisplay),
+      'reload preserves Pi complete-session total',
+    );
+    assert(
+      reloadedButtons.some((button) => button.text === '$0.92') && reloadedButtons.some((button) => button.text === '$0.60'),
+      'reload preserves persisted assistant-row usage',
+    );
     assert(!reloadedButtons.some((button) => button.text === '$0.25'), 'reload does not restore the client-only partial fallback');
     await browser.browser(['screenshot', join(sandboxHome, 'reloaded-costs.png')], { allowFailure: true });
 

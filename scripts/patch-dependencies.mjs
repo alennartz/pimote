@@ -42,10 +42,7 @@ async function readInstalledVersion(name, targetRoot = packageRoot) {
   }
 }
 
-async function checkPatchTargets(
-  patchFiles,
-  { packageRoot: targetRoot = packageRoot } = {},
-) {
+async function checkPatchTargets(patchFiles, { packageRoot: targetRoot = packageRoot } = {}) {
   const missing = [];
   const mismatches = [];
   const applicable = [];

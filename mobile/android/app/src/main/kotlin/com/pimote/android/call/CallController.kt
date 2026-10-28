@@ -1,5 +1,6 @@
 package com.pimote.android.call
 
+import android.os.Build
 import com.pimote.android.net.WsClient
 import com.pimote.android.protocol.CallBindCommand
 import com.pimote.android.protocol.CallBindErrorCodes
@@ -234,7 +235,11 @@ class CallControllerImpl(
     // older releases.
     private val _legacySpeakerphoneOn = MutableStateFlow(false)
     override val isSpeakerphoneOn: StateFlow<Boolean> =
-        audioRouter?.speakerphoneOn ?: _legacySpeakerphoneOn.asStateFlow()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            audioRouter?.speakerphoneOn ?: _legacySpeakerphoneOn.asStateFlow()
+        } else {
+            _legacySpeakerphoneOn.asStateFlow()
+        }
 
     /**
      * Per-call state, held as an immutable record inside a single
@@ -270,7 +275,7 @@ class CallControllerImpl(
         // so the BT SCO link is engaged for the duration of the call and
         // released afterwards (clearing the comm device). On API 26–30 the
         // router is null and this collector is a no-op.
-        if (audioRouter != null) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && audioRouter != null) {
             scope.launch(Dispatchers.Unconfined) {
                 _state
                     .map { s -> s !is CallState.Idle && s !is CallState.Ended }
@@ -433,7 +438,7 @@ class CallControllerImpl(
     }
 
     override fun setSpeakerphone(enabled: Boolean) {
-        if (audioRouter != null) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && audioRouter != null) {
             audioRouter.setSpeakerphone(enabled)
         } else {
             // Pre-API-31 fallback: route via Telecom and mirror the request

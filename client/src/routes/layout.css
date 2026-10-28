@@ -40,6 +40,7 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --status-active: var(--chart-2);
 }
 
 .dark {
@@ -79,6 +80,7 @@
   --sidebar-ring: oklch(0.869 0.02 252.8);
 
   /* Pimote status tokens */
+  --status-active: var(--chart-2);
   --status-streaming: oklch(0.623 0.169 149.2);
   --status-connected: oklch(0.623 0.169 149.2);
   --status-error: oklch(0.396 0.133 25.7);
@@ -170,6 +172,7 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
+  --color-status-active: var(--status-active);
   --color-status-streaming: var(--status-streaming);
   --color-status-connected: var(--status-connected);
   --color-status-error: var(--status-error);

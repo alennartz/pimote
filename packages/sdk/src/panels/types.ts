@@ -1,4 +1,5 @@
-export type CardColor = 'accent' | 'success' | 'warning' | 'error' | 'muted';
+/** Semantic visual hint for a card's host-rendered status accent. */
+export type CardColor = 'accent' | 'active' | 'success' | 'warning' | 'error' | 'muted';
 export type BodySectionStyle = 'text' | 'code' | 'secondary';
 
 export interface BodySection {

@@ -5,6 +5,7 @@
 
   const colorMap: Record<CardColor, string> = {
     accent: 'border-l-primary',
+    active: 'border-l-status-active',
     success: 'border-l-green-500',
     warning: 'border-l-yellow-500',
     error: 'border-l-red-500',

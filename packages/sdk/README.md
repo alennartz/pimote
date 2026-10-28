@@ -79,7 +79,7 @@ interface PanelHandle {
 ```ts
 interface Card {
   id: string;
-  color?: 'accent' | 'success' | 'warning' | 'error' | 'muted';
+  color?: 'accent' | 'active' | 'success' | 'warning' | 'error' | 'muted';
   header: {
     title: string;
     tag?: string;
@@ -96,7 +96,7 @@ interface BodySection {
 ```
 
 - **`id`** — Unique identifier for the card within your namespace.
-- **`color`** — Optional color theme for the card.
+- **`color`** — Optional semantic status hint for the card's host-rendered accent. Use `active` while work is in flight, `success` for a settled card without an error, `warning` for caution or waiting, `error` for failure, `muted` for low-priority information, and `accent` for general emphasis. The host controls the exact color and rendering.
 - **`header.title`** — Card title, always visible.
 - **`header.tag`** — Optional short label displayed next to the title.
 - **`body`** — Optional content sections, each with a style (`text`, `code`, or `secondary`).

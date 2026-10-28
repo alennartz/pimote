@@ -194,9 +194,10 @@ describe('createStaticHostExtension', () => {
   it('states tag and color defaults without rejecting an empty tag', () => {
     const tool = pi.toolDefs.find((t) => t.name === 'pimote_static_host')!;
     expect(tool.parameters.properties.tag.description).toMatch(/no tag displayed when omitted or empty/);
-    expect(tool.parameters.properties.color.description).toMatch(/no override and an ordinary border when omitted/);
+    expect(tool.parameters.properties.color.description).toMatch(/Omit for an ordinary border/);
     expect(Value.Check(tool.parameters, { slug: 'report', folder: '/bundle', title: 'Report' })).toBe(true);
     expect(Value.Check(tool.parameters, { slug: 'report', folder: '/bundle', title: 'Report', tag: '' })).toBe(true);
+    expect(Value.Check(tool.parameters, { slug: 'report', folder: '/bundle', title: 'Report', color: 'active' })).toBe(true);
   });
 
   it('declares slug validation that matches the runtime grammar and length limits', () => {

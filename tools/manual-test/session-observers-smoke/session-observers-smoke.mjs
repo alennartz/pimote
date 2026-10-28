@@ -50,10 +50,6 @@ function pendingUiRequest(probe, sessionId) {
   return allEvents(probe, 'extension_ui_request').find((event) => event.sessionId === sessionId && event.method === 'confirm');
 }
 
-function bufferedEventList(probe) {
-  return allEvents(probe, 'buffered_events').flatMap((event) => event.events ?? []);
-}
-
 function makeDialogExtension() {
   // pi discovers global .js extensions beneath PI_CODING_AGENT_DIR/extensions.
   // A user_bash hook keeps this test deterministic and does not involve an LLM.
@@ -94,7 +90,7 @@ async function main() {
 
   // Copy the host's local model catalog when present. The session is seeded,
   // so no LLM call is required, but voice extension loading needs a model ref.
-  let modelAvailable = false;
+  let modelAvailable;
   try {
     const modelsPath = join(REAL_AGENT_DIR, 'models.json');
     const models = JSON.parse(await readFile(modelsPath, 'utf8'));
@@ -119,9 +115,7 @@ async function main() {
     bufferSize: 100,
     updateCheck: false,
     ...(modelAvailable ? { defaultProvider: 'jetson', defaultModel: 'qwen3.8-27b' } : {}),
-    ...(modelAvailable
-      ? { voice: { speechmuxSignalUrl: `ws://127.0.0.1:${speechmuxPort}/signal`, speechmuxLlmWsUrl: `ws://127.0.0.1:${speechmuxPort}/llm` } }
-      : {}),
+    ...(modelAvailable ? { voice: { speechmuxSignalUrl: `ws://127.0.0.1:${speechmuxPort}/signal`, speechmuxLlmWsUrl: `ws://127.0.0.1:${speechmuxPort}/llm` } } : {}),
   };
   await writeFile(configPath, JSON.stringify(config, null, 2));
   const logPath = join(sandboxHome, 'pimote.log');
@@ -177,8 +171,9 @@ async function main() {
     const queueSnapshots = [...allEvents(first, 'queue_update'), ...allEvents(second, 'queue_update')];
     const latestQueue = queueSnapshots.at(-1);
     const queueOrderOk = Boolean(
-      latestQueue?.steering?.includes('observer A queued send') && latestQueue?.steering?.includes('observer B queued send') &&
-        latestQueue.steering.indexOf('observer A queued send') < latestQueue.steering.indexOf('observer B queued send'),
+      latestQueue?.steering?.includes('observer A queued send') &&
+      latestQueue?.steering?.includes('observer B queued send') &&
+      latestQueue.steering.indexOf('observer A queued send') < latestQueue.steering.indexOf('observer B queued send'),
     );
     if (!queueOrderOk) log('queue snapshots:', JSON.stringify(queueSnapshots));
     assert(queueOrderOk, 'observer sends enter one queue in arrival order');
@@ -193,9 +188,15 @@ async function main() {
     await sleep(180);
     const bashResponse = await bashPromise;
     assert(bashResponse.success === true, 'native bash command completes successfully');
-    const liveUpdates = first.events.slice(beforeBash).map((entry) => entry.event).filter((event) => event.type === 'bash_execution_update');
+    const liveUpdates = first.events
+      .slice(beforeBash)
+      .map((entry) => entry.event)
+      .filter((event) => event.type === 'bash_execution_update');
     assert(liveUpdates.length > 0, 'the connected observer receives live bash deltas');
-    assert(liveUpdates.every((event) => !('cursor' in event)), 'live bash deltas omit replay cursors');
+    assert(
+      liveUpdates.every((event) => !('cursor' in event)),
+      'live bash deltas omit replay cursors',
+    );
     late = new WsProbe(port, `ownership-late-${randomUUID().slice(0, 8)}`);
     await late.open();
     const lateOpen = await openSession(late, sessionId, projectDir);
@@ -228,8 +229,7 @@ async function main() {
     section('Archive fan-out, unarchive, and explicit soft open');
     const archiveResponse = await first.send({ type: 'archive_session', sessionIds: [sessionId], folderPath: projectDir, archived: true });
     const archivedClosed = await waitFor(
-      () =>
-        [first, late].every((probe) => allEvents(probe, 'session_closed').some((event) => event.sessionId === sessionId && event.reason === 'archived')),
+      () => [first, late].every((probe) => allEvents(probe, 'session_closed').some((event) => event.sessionId === sessionId && event.reason === 'archived')),
       8_000,
     );
     assert(archiveResponse.success === true, 'archive succeeds for the shared session');
@@ -273,7 +273,9 @@ async function main() {
     await browserA.browser(['open', baseUrl]);
     await browserA.wait(2_500);
     await browserA.installSocketProbe();
-    await browserA.evalBrowser(`(() => { const path = ${JSON.stringify(projectDir)}; const row = document.querySelector('[data-folder-path="' + path + '"]'); row?.closest('button')?.click(); return Boolean(row); })()`);
+    await browserA.evalBrowser(
+      `(() => { const path = ${JSON.stringify(projectDir)}; const row = document.querySelector('[data-folder-path="' + path + '"]'); row?.closest('button')?.click(); return Boolean(row); })()`,
+    );
     await browserA.wait(1_000);
     const dashboardSnapA = await snapshotBrowserRefs(browserA.browser);
     log('browser A dashboard snapshot:', dashboardSnapA.slice(0, 1800));
@@ -306,7 +308,9 @@ async function main() {
     await browserB.browser(['open', baseUrl]);
     await browserB.wait(2_500);
     await browserB.installSocketProbe();
-    await browserB.evalBrowser(`(() => { const path = ${JSON.stringify(projectDir)}; const row = document.querySelector('[data-folder-path="' + path + '"]'); row?.closest('button')?.click(); return Boolean(row); })()`);
+    await browserB.evalBrowser(
+      `(() => { const path = ${JSON.stringify(projectDir)}; const row = document.querySelector('[data-folder-path="' + path + '"]'); row?.closest('button')?.click(); return Boolean(row); })()`,
+    );
     await browserB.wait(1_000);
     const dashboardSnapB = await snapshotBrowserRefs(browserB.browser);
     log('browser B dashboard snapshot:', dashboardSnapB.slice(0, 1800));
@@ -331,7 +335,9 @@ async function main() {
     }
     await sleep(500);
     await first.send({ type: 'archive_session', sessionIds: [sessionId], folderPath: projectDir, archived: true });
-    await browserA.evalBrowser(`localStorage.setItem('pimote:activeSessions', JSON.stringify([{sessionId:${JSON.stringify(sessionId)}, folderPath:${JSON.stringify(projectDir)}}])); true`);
+    await browserA.evalBrowser(
+      `localStorage.setItem('pimote:activeSessions', JSON.stringify([{sessionId:${JSON.stringify(sessionId)}, folderPath:${JSON.stringify(projectDir)}}])); true`,
+    );
     await browserA.browser(['open', baseUrl]);
     await sleep(1_500);
     const restoreEntry = await browserA.evalBrowser(`localStorage.getItem('pimote:activeSessions')`);
@@ -388,7 +394,9 @@ async function main() {
     if (speechmuxServer) await new Promise((resolve) => speechmuxServer.close(() => resolve()));
   }
 
-  console.log(`[session-observers] ${stats.failures === 0 ? 'all hard assertions passed' : `${stats.failures} hard assertion(s) failed`}; ${softFailuresCount()} environment-bounded`);
+  console.log(
+    `[session-observers] ${stats.failures === 0 ? 'all hard assertions passed' : `${stats.failures} hard assertion(s) failed`}; ${softFailuresCount()} environment-bounded`,
+  );
   process.exitCode = stats.failures > 0 ? 1 : 0;
 }
 

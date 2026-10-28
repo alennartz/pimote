@@ -10,7 +10,7 @@ function isRecord(value: unknown): value is UnknownRecord {
 }
 
 function isCardColor(value: unknown): value is NonNullable<Card['color']> {
-  return value === 'accent' || value === 'success' || value === 'warning' || value === 'error' || value === 'muted';
+  return value === 'accent' || value === 'active' || value === 'success' || value === 'warning' || value === 'error' || value === 'muted';
 }
 
 function isBodySectionStyle(value: unknown): value is NonNullable<Card['body']>[number]['style'] {

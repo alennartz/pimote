@@ -224,7 +224,11 @@ class AppContainer(private val appContext: Context) {
             factory,
             adm,
             httpClient = httpClient,
-            preferredInputDevice = callAudioRouter?.preferredInputDevice,
+            preferredInputDevice = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                callAudioRouter?.preferredInputDevice
+            } else {
+                null
+            },
         )
     }
 

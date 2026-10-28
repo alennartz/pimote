@@ -74,10 +74,12 @@ async function expectBootFailure({ port, sandboxHome, agentDir, configPath, logP
   const child = startPimote({ port, sandboxHome, agentDir, configPath, logPath });
   let exited = null;
   await Promise.race([
-    new Promise((resolve) => child.once('exit', (code) => {
-      exited = code;
-      resolve();
-    })),
+    new Promise((resolve) =>
+      child.once('exit', (code) => {
+        exited = code;
+        resolve();
+      }),
+    ),
     new Promise((resolve) => setTimeout(resolve, 15_000)),
   ]);
   if (exited === null) {
@@ -87,14 +89,8 @@ async function expectBootFailure({ port, sandboxHome, agentDir, configPath, logP
   }
   assert(exited !== 0, `${label}: boot fails with a non-zero exit (${exited})`);
   const logText = (await fileOrNull(logPath)) ?? '';
-  assert(
-    logText.includes('must not be or contain the home directory'),
-    `${label}: failure names the home-containment rule`,
-  );
-  assert(
-    logText.includes('Set managerRoot to a dedicated directory'),
-    `${label}: failure carries the fix guidance`,
-  );
+  assert(logText.includes('must not be or contain the home directory'), `${label}: failure names the home-containment rule`);
+  assert(logText.includes('Set managerRoot to a dedicated directory'), `${label}: failure carries the fix guidance`);
 }
 
 async function main() {
@@ -131,15 +127,9 @@ async function main() {
     const memorySeeded = await fileOrNull(join(managerRoot, 'memory.md'));
     assert(agentsSeeded !== null, 'default manager root AGENTS.md is created on first boot');
     assert(memorySeeded !== null, 'default manager root memory.md is created on first boot');
-    assert(
-      agentsSeeded?.includes('kind: persona') && /^name: manager$/m.test(agentsSeeded ?? ''),
-      'seed AGENTS.md is a persona marker named "manager"',
-    );
+    assert(agentsSeeded?.includes('kind: persona') && /^name: manager$/m.test(agentsSeeded ?? ''), 'seed AGENTS.md is a persona marker named "manager"');
     const descriptionLine = (agentsSeeded ?? '').split('\n').find((line) => line.startsWith('description: '));
-    assert(
-      Boolean(descriptionLine && descriptionLine.slice('description: '.length).trim().length > 0),
-      'seed AGENTS.md carries a nonempty one-line description',
-    );
+    assert(Boolean(descriptionLine && descriptionLine.slice('description: '.length).trim().length > 0), 'seed AGENTS.md carries a nonempty one-line description');
     assert((agentsSeeded ?? '').includes('memory.md'), 'seed AGENTS.md carries the maintain-memory.md indication');
     assert(!/pimote_/.test(agentsSeeded ?? ''), 'seed AGENTS.md lists no pimote tools (tools are injected)');
     assert((memorySeeded ?? '').trim().length > 0, 'memory.md stub is nonempty');
@@ -187,14 +177,8 @@ async function main() {
     const created = await probeA.send({ type: 'open_session', folderPath: managerRootC });
     assert(created.success === true && Boolean(created.data?.sessionId), 'open_session at the manager root creates a session (submission path)');
     const createdOpened = await probeA.waitForEvent('session_opened', (e) => e.sessionId === created.data?.sessionId);
-    assert(
-      createdOpened?.folder?.nature === 'persona' && createdOpened?.folder?.persona?.name === 'manager',
-      'manager root classifies as persona "manager" on the wire',
-    );
-    assert(
-      createdOpened?.folder?.persona?.description === 'user-owned manager persona',
-      'classification reflects the user-owned AGENTS.md, not the shipped seed',
-    );
+    assert(createdOpened?.folder?.nature === 'persona' && createdOpened?.folder?.persona?.name === 'manager', 'manager root classifies as persona "manager" on the wire');
+    assert(createdOpened?.folder?.persona?.description === 'user-owned manager persona', 'classification reflects the user-owned AGENTS.md, not the shipped seed');
     await probeA.send({ type: 'close_session', sessionId: created.data.sessionId }).catch(() => undefined);
 
     const open = await probeA.send({ type: 'open_session', sessionId: seededId });
@@ -228,10 +212,7 @@ async function main() {
     const reattach = await probeB.send({ type: 'open_session', sessionId: seededId, ...(lastCursor !== null ? { lastCursor } : {}) });
     assert(reattach.success === true, 'reconnecting client reattaches through the ordinary open_session flow');
     if (lastCursor !== null) {
-      assert(
-        reattach.data?.restoreMode === 'incremental_replay',
-        `reconnect replays from the client's cursor (got ${reattach.data?.restoreMode})`,
-      );
+      assert(reattach.data?.restoreMode === 'incremental_replay', `reconnect replays from the client's cursor (got ${reattach.data?.restoreMode})`);
       await probeB.waitForEvent('session_restore', (e) => e.mode === 'incremental_replay' && e.status === 'completed');
       const buffered = probeB.events.find((e) => e.event.type === 'buffered_events' && e.event.sessionId === seededId);
       assert(Boolean(buffered), 'reconnect delivers the buffered events since the cursor');
@@ -268,17 +249,11 @@ async function main() {
     const probeC = new WsProbe(port, 'ml-probe-c');
     await probeC.open();
     const sessionsAfter = await probeC.send({ type: 'list_sessions', folderPath: managerRootC });
-    assert(
-      sessionsAfter.success === true && sessionsAfter.data.sessions.some((s) => s.id === seededId),
-      'manager session record survives a full server restart',
-    );
+    assert(sessionsAfter.success === true && sessionsAfter.data.sessions.some((s) => s.id === seededId), 'manager session record survives a full server restart');
     const reopen = await probeC.send({ type: 'open_session', sessionId: seededId });
     assert(reopen.success === true && reopen.data?.sessionId === seededId, 'old manager session reopens after restart (behind-the-click journey)');
     const resync2 = await probeC.waitForEvent('full_resync', (e) => e.sessionId === seededId);
-    assert(
-      JSON.stringify(resync2?.messages ?? []).includes('Seeded manager answer.'),
-      'reopened session replays its persisted transcript',
-    );
+    assert(JSON.stringify(resync2?.messages ?? []).includes('Seeded manager answer.'), 'reopened session replays its persisted transcript');
     probeC.close();
     await stopPimote(child);
     child = null;
@@ -308,10 +283,7 @@ async function main() {
     const nestedMgrC = await realpath(nestedMgr);
     const nestedKeepC = await realpath(nestedKeep);
     assert(nestedListing.data.managerRoot === nestedMgrC, 'nested config boots and reports its managerRoot fact');
-    assert(
-      !nestedListing.data.folders.some((row) => row.path === nestedMgrC),
-      'manager-root entry is excluded from folder listing rows',
-    );
+    assert(!nestedListing.data.folders.some((row) => row.path === nestedMgrC), 'manager-root entry is excluded from folder listing rows');
     assert(
       nestedListing.data.folders.some((row) => row.path === nestedKeepC),
       'sibling folder inside the same scan root still lists',
