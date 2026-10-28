@@ -86,6 +86,7 @@ export { walkBack, isAbortedEmptyAssistant } from './walk-back.js';
 export type { WalkBackInput, ContentBlock, SpeakToolUseBlock, OtherBlock } from './walk-back.js';
 export type { VoiceExtensionState, VoiceActivateMessage, VoiceDeactivateMessage } from './state-machine.js';
 export { VOICE_CALL_STARTED_SENTINEL } from './state-machine.js';
+export { VOICE_CALL_ENDED_PROMPT, VOICE_PROMPT_SECTION } from './prompt-section.js';
 export { renderInterpreterPrompt, RAW_INTERPRETER_PROMPT } from './interpreter-prompt.js';
 export type { InterpreterPromptSubstitutions } from './interpreter-prompt.js';
 export type { SpeechmuxClient, SpeechmuxClientFactory, IncomingFrame, OutgoingFrame, SpeechmuxClientFactoryOptions } from './speechmux-client.js';
@@ -128,6 +129,14 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     // on open so we can unsubscribe when discarding the client.
     let detachClientListeners: (() => void) | null = null;
 
+    /** Keep the model-facing speak declaration scoped to the call lifecycle. */
+    const setSpeakToolActive = (active: boolean): void => {
+      const current = pi.getActiveTools();
+      const next = active ? [...new Set([...current, 'speak'])] : current.filter((name) => name !== 'speak');
+      if (next.length === current.length && next.every((name, index) => name === current[index])) return;
+      pi.setActiveTools(next);
+    };
+
     // ---- Reducer driver --------------------------------------------------
     // Synchronous core: reduce + write back state + trace. Returns the actions
     // to execute. Split out from `dispatch` so the `context` hook can run a
@@ -145,6 +154,7 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
       if (wasDormant !== isDormant) {
         callGeneration++;
         utterances.cancelPending();
+        setSpeakToolActive(!isDormant);
       }
       if (evtTrace || lifecycleBefore !== state.lifecycle.kind || actions.length > 0) {
         console.log(
@@ -357,6 +367,7 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
         'Returns {spoken}, indicating active or activating call-state acceptance, not confirmed playback. Audio comes from top-level assistant streaming rather than execution. Without a call, returns spoken: false with an error.',
       promptSnippet: 'Deliver spoken replies while a voice call is in progress.',
       exposure: 'model-only',
+      defaultActive: false,
       parameters: Type.Object({
         text: Type.String({ description: 'The text to speak to the user.' }),
       }),
@@ -388,6 +399,7 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     pi.on('session_before_fork', () => utterances.cancelPending());
     pi.on('session_before_tree', () => utterances.cancelPending());
     pi.on('session_shutdown', async () => {
+      setSpeakToolActive(false);
       utterances.cancelPending();
       if (state.lifecycle.kind !== 'dormant') {
         await dispatch({ type: 'eb:deactivate', msg: { type: 'pimote:voice:deactivate', sessionId: state.lifecycle.sessionId } });
@@ -396,6 +408,10 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     });
 
     pi.on('session_start', (_event, ctx) => {
+      // A resumed transcript can still carry an old speak declaration. Voice
+      // owns that declaration, so restore the dormant loadout before a new
+      // call bind adds it again.
+      setSpeakToolActive(false);
       // Activation can follow session_start directly during call_bind reopen.
       // Capture the context here, but leave model application to activation.
       lastCtx = ctx;
@@ -406,8 +422,9 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
       // Carry the interpreter prompt as a named prompt section (pi 0.87+).
       // pi diffs the desired sections against the transcript-replayed ones and
       // persists a SystemMessage delta, so voice-mode prompt state survives
-      // resume and branch navigation. Dormant removes the section so the
-      // base prompt returns unchanged after a call ends.
+      // resume and branch navigation. Dormant replaces the section with an
+      // explicit end state because prompt mutations are append-only for cache
+      // preservation.
       applyVoicePromptSection(event.systemPromptOptions.sections, state.lifecycle.kind, interpreterPrompt);
     });
 

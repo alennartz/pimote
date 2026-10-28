@@ -12,15 +12,16 @@ import type { LifecycleState } from './fsm/state.js';
 /** Prompt section name carrying the interpreter instructions while a call is bound. */
 export const VOICE_PROMPT_SECTION = 'voice';
 
+/** Replacement state for the voice section after a call ends. */
+export const VOICE_CALL_ENDED_PROMPT = 'The voice call has ended. Resume normal text interaction. Disregard all earlier voice-mode instructions and do not attempt to speak aloud.';
+
 /**
- * Mirror the call lifecycle into the desired prompt sections. `dormant`
- * removes the section (pi emits a `{ voice: null }` delta); `activating` and
- * `active` (re)assert it. Pure — mutates only the passed sections record.
+ * Mirror the call lifecycle into the desired prompt sections. Keep the named
+ * section after deactivation and replace its contents with an explicit end
+ * state. Pi records section changes as append-only system deltas, so replacing
+ * the section tells the model to stop following the earlier voice state
+ * without relying on a removal marker.
  */
 export function applyVoicePromptSection(sections: Record<string, string>, lifecycle: LifecycleState['kind'], interpreterPrompt: string): void {
-  if (lifecycle === 'dormant') {
-    delete sections[VOICE_PROMPT_SECTION];
-  } else {
-    sections[VOICE_PROMPT_SECTION] = interpreterPrompt;
-  }
+  sections[VOICE_PROMPT_SECTION] = lifecycle === 'dormant' ? VOICE_CALL_ENDED_PROMPT : interpreterPrompt;
 }

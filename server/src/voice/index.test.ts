@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from '@eare
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Value } from 'typebox/value';
 import { createVoiceExtension, renderInterpreterPrompt } from './index.js';
-import { VOICE_PROMPT_SECTION } from './prompt-section.js';
+import { VOICE_CALL_ENDED_PROMPT, VOICE_PROMPT_SECTION } from './prompt-section.js';
 import type { IncomingFrame, SpeechmuxClient } from './speechmux-client.js';
 import { VOICE_CALL_STARTED_SENTINEL } from './state-machine.js';
 
@@ -27,6 +27,7 @@ function harness(options: { defaultInterpreterModel?: string } = {}) {
   const idleWaiters = new Set<() => void>();
   const pendingRuns = new Set<ReturnType<typeof deferred>>();
   const calls: { text: string; options: unknown; start: () => Promise<void> }[] = [];
+  const activeTools = ['read', 'bash', 'edit', 'write'];
   const status = { idle: true };
   const modelFind = vi.fn((provider: string, id: string): { provider: string; id: string } | undefined => ({ provider, id }));
   const ctx = {
@@ -97,6 +98,10 @@ function harness(options: { defaultInterpreterModel?: string } = {}) {
       },
     },
     registerTool: vi.fn(),
+    getActiveTools: () => [...activeTools],
+    setActiveTools: vi.fn((toolNames: string[]) => {
+      activeTools.splice(0, activeTools.length, ...toolNames);
+    }),
     setModel: vi.fn(async () => true),
     sendMessage: vi.fn(),
     appendEntry: vi.fn(),
@@ -131,6 +136,7 @@ function harness(options: { defaultInterpreterModel?: string } = {}) {
     calls,
     client,
     pi,
+    activeTools,
     modelFind,
     emit,
     sessionStart: (reason: string) => emit('session_start', { type: 'session_start', reason }),
@@ -173,12 +179,30 @@ describe('speak tool contract', () => {
     const tool = registeredSpeak(h);
     expect(h.pi.registerTool).toHaveBeenCalledTimes(1);
     expect(tool.exposure).toBe('model-only');
+    expect(tool.defaultActive).toBe(false);
     expect(tool.promptSnippet).not.toMatch(/\bspeak\b|[()]/);
     expect(tool.promptSnippet!.split(/\s+/).length).toBeGreaterThanOrEqual(5);
     expect(tool.promptSnippet!.split(/\s+/).length).toBeLessThanOrEqual(15);
     expect(tool.promptGuidelines ?? []).toEqual([]);
     expect(tool.description).toContain('call-state acceptance, not confirmed playback');
     expect(tool.description).toContain('top-level assistant streaming');
+  });
+
+  it('adds speak only while a call is active', async () => {
+    const h = harness();
+    expect(h.activeTools).not.toContain('speak');
+    await h.activate();
+    expect(h.activeTools).toContain('speak');
+    h.deactivate();
+    await flush();
+    expect(h.activeTools).not.toContain('speak');
+  });
+
+  it('restores the dormant tool loadout when a session resumes', async () => {
+    const h = harness();
+    h.activeTools.push('speak');
+    await h.sessionStart('resume');
+    expect(h.activeTools).not.toContain('speak');
   });
 
   it('returns a current-state error when no call is active', async () => {
@@ -243,12 +267,12 @@ describe('speak tool contract', () => {
     h.deactivate();
   });
 
-  it('removes voice routing when the call ends without changing other prompt sections', async () => {
+  it('updates voice routing through the call lifecycle without changing other prompt sections', async () => {
     const h = harness();
     const sections: Record<string, string> = { other: 'base instructions' };
     const event = { systemPromptOptions: { sections } };
     await h.emit('before_agent_start', event);
-    expect(sections).toEqual({ other: 'base instructions' });
+    expect(sections).toEqual({ other: 'base instructions', [VOICE_PROMPT_SECTION]: VOICE_CALL_ENDED_PROMPT });
     await h.activate();
     await h.emit('before_agent_start', event);
     expect(sections).toEqual({
@@ -258,7 +282,7 @@ describe('speak tool contract', () => {
     h.deactivate();
     await flush();
     await h.emit('before_agent_start', event);
-    expect(sections).toEqual({ other: 'base instructions' });
+    expect(sections).toEqual({ other: 'base instructions', [VOICE_PROMPT_SECTION]: VOICE_CALL_ENDED_PROMPT });
   });
 });
 

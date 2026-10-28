@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyVoicePromptSection, VOICE_PROMPT_SECTION } from './prompt-section.js';
+import { applyVoicePromptSection, VOICE_CALL_ENDED_PROMPT, VOICE_PROMPT_SECTION } from './prompt-section.js';
 
 const PROMPT = 'You are a voice interpreter…';
 
@@ -16,16 +16,16 @@ describe('applyVoicePromptSection', () => {
     expect(sections[VOICE_PROMPT_SECTION]).toBe(PROMPT);
   });
 
-  it('removes the voice section when dormant', () => {
+  it('replaces voice instructions with the ended-call state when dormant', () => {
     const sections: Record<string, string> = { [VOICE_PROMPT_SECTION]: PROMPT };
     applyVoicePromptSection(sections, 'dormant', PROMPT);
-    expect(VOICE_PROMPT_SECTION in sections).toBe(false);
+    expect(sections).toEqual({ [VOICE_PROMPT_SECTION]: VOICE_CALL_ENDED_PROMPT });
   });
 
-  it('is a no-op when dormant with no section present', () => {
+  it('asserts the ended-call state when dormant with no prior section', () => {
     const sections: Record<string, string> = {};
     applyVoicePromptSection(sections, 'dormant', PROMPT);
-    expect(sections).toEqual({});
+    expect(sections).toEqual({ [VOICE_PROMPT_SECTION]: VOICE_CALL_ENDED_PROMPT });
   });
 
   it('leaves unrelated sections untouched', () => {
@@ -34,5 +34,6 @@ describe('applyVoicePromptSection', () => {
     expect(sections.preamble).toBe('base');
     applyVoicePromptSection(sections, 'dormant', PROMPT);
     expect(sections.preamble).toBe('base');
+    expect(sections[VOICE_PROMPT_SECTION]).toBe(VOICE_CALL_ENDED_PROMPT);
   });
 });
