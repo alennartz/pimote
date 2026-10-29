@@ -59,13 +59,15 @@ describe('startWebSocketHeartbeat', () => {
     heartbeat.stop();
   });
 
-  it('terminates a socket that misses its pong window', () => {
+  it('terminates a socket five seconds after a ping misses its pong', () => {
     const socket = createFakeSocket();
     const heartbeat = startWebSocketHeartbeat({ clients: clientSet(socket) }, 20_000);
     heartbeat.track(socket);
 
-    vi.advanceTimersByTime(20_000); // pinged, awaiting pong
-    vi.advanceTimersByTime(20_000); // no pong arrived — dead peer
+    vi.advanceTimersByTime(20_000); // pinged
+    vi.advanceTimersByTime(4_999);
+    expect(socket.terminated).toBe(false);
+    vi.advanceTimersByTime(1); // no pong arrived within the five-second window
 
     expect(socket.terminated).toBe(true);
     heartbeat.stop();
@@ -85,7 +87,7 @@ describe('startWebSocketHeartbeat', () => {
     heartbeat.stop();
   });
 
-  it('stops ticking after stop()', () => {
+  it('stops ticking and clears pending pong timeouts after stop()', () => {
     const socket = createFakeSocket();
     const heartbeat = startWebSocketHeartbeat({ clients: clientSet(socket) }, 20_000);
     heartbeat.track(socket);
@@ -95,5 +97,6 @@ describe('startWebSocketHeartbeat', () => {
     vi.advanceTimersByTime(60_000);
 
     expect(socket.pings).toBe(1);
+    expect(socket.terminated).toBe(false);
   });
 });

@@ -12,25 +12,38 @@ export interface WebSocketHeartbeat {
   stop(): void;
 }
 
+/** How long one ping may wait for its pong before the socket is terminated. */
+const PONG_TIMEOUT_MS = 5_000;
+
 /**
  * WebSocket liveness heartbeat.
  *
  * Some reverse-proxy paths silently drop idle WebSocket connections, and a
  * socket whose peer vanished without a close frame would otherwise linger
  * indefinitely, holding session observers open and blocking idle reaping.
- * Each interval every socket must prove reachability with one pong; a socket
- * that misses the window is terminated. Browsers answer pings at the protocol
- * level (no app code involved), so hidden or throttled tabs still stay alive.
+ * Each ping owns an independent five-second response window. Browsers answer
+ * pings at the protocol level (no app code involved), so hidden or throttled
+ * tabs still stay alive when the network path is healthy.
  */
 export function startWebSocketHeartbeat(server: HeartbeatServer, intervalMs: number): WebSocketHeartbeat {
-  const awaitingPong = new WeakSet<WebSocket>();
+  const pongTimeouts = new Map<WebSocket, ReturnType<typeof setTimeout>>();
+
+  const clearPongTimeout = (ws: WebSocket): void => {
+    const timeout = pongTimeouts.get(ws);
+    if (timeout === undefined) return;
+    clearTimeout(timeout);
+    pongTimeouts.delete(ws);
+  };
+
   const timer = setInterval(() => {
     for (const client of server.clients) {
-      if (awaitingPong.has(client)) {
+      const pongTimeout = setTimeout(() => {
+        if (pongTimeouts.get(client) !== pongTimeout) return;
+        pongTimeouts.delete(client);
         client.terminate();
-        continue;
-      }
-      awaitingPong.add(client);
+      }, PONG_TIMEOUT_MS);
+      pongTimeout.unref?.();
+      pongTimeouts.set(client, pongTimeout);
       client.ping();
     }
   }, intervalMs);
@@ -38,10 +51,13 @@ export function startWebSocketHeartbeat(server: HeartbeatServer, intervalMs: num
   timer.unref?.();
   return {
     track(ws) {
-      ws.on('pong', () => awaitingPong.delete(ws));
+      ws.on('pong', () => clearPongTimeout(ws));
+      ws.on('close', () => clearPongTimeout(ws));
     },
     stop() {
       clearInterval(timer);
+      for (const timeout of pongTimeouts.values()) clearTimeout(timeout);
+      pongTimeouts.clear();
     },
   };
 }
