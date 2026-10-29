@@ -24,6 +24,7 @@ Design HTML reports for comfortable browser reading on phones and desktops.
 - Real tables: proper `<th>`, zebra striping, and a horizontal scroll wrapper for wide tables on mobile.
 - Code: `<pre><code>` with a monospace stack and horizontal scroll on overflow. Use light syntax highlighting, with classed spans for keywords, strings, and comments, where it aids reading.
 - Charts: inline SVG or a small canvas rendering. Label the axes. Never rely on hover-only information, because mobile has no hover.
+- For lightweight static reports, use Chart.js for rendering simple charts on an HTML5 Canvas. For interactive data grids, choose Tabulator; it's pure JavaScript, lightweight, and includes built in search and filtering, and can dynamically load data from local server assets or external URLs.
 
 ## Adaptive display
 
