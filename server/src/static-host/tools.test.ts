@@ -205,13 +205,13 @@ describe('executeRegisterTool', () => {
     expect(registry.has('Bad Slug')).toBe(false);
   });
 
-  it('rejects when the folder does not exist', async () => {
-    await expect(executeRegisterTool({ slug: 'demo', folder: join(root, 'nope'), title: 'X' }, deps)).rejects.toBeDefined();
+  it('reports the filesystem code when the folder does not exist', async () => {
+    await expect(executeRegisterTool({ slug: 'demo', folder: join(root, 'nope'), title: 'X' }, deps)).rejects.toThrow(/ENOENT/);
   });
 
-  it('rejects when the folder has no index.html', async () => {
+  it('reports the filesystem code when the folder has no index.html', async () => {
     const folder = await makeBundle(root, 'noindex', { withIndex: false });
-    await expect(executeRegisterTool({ slug: 'demo', folder, title: 'X' }, deps)).rejects.toBeDefined();
+    await expect(executeRegisterTool({ slug: 'demo', folder, title: 'X' }, deps)).rejects.toThrow(/ENOENT/);
   });
 
   it('does not mutate registry/store/panel emission on validation failure', async () => {

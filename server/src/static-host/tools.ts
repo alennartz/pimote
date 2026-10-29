@@ -117,6 +117,19 @@ export function resolveSlugCollision(slug: string, registry: StaticHostRegistry)
   }
 }
 
+function statFailure(kind: 'folder' | 'index.html', path: string, error: unknown): never {
+  const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+  const detail = code ?? (error instanceof Error ? error.message : String(error));
+
+  if (kind === 'folder') {
+    if (code === 'ENOENT') throw new Error(`folder does not exist: ${path} (${code})`, { cause: error });
+    throw new Error(`folder cannot be accessed: ${path} (${detail})`, { cause: error });
+  }
+
+  if (code === 'ENOENT') throw new Error(`folder has no index.html: ${path} (${code})`, { cause: error });
+  throw new Error(`index.html cannot be accessed: ${path} (${detail})`, { cause: error });
+}
+
 /**
  * Execute the `pimote_static_host` tool body.
  *
@@ -145,8 +158,8 @@ export async function executeRegisterTool(input: RegisterToolInput, deps: ToolDe
   let folderStat;
   try {
     folderStat = await stat(input.folder);
-  } catch {
-    throw new Error(`folder does not exist: ${input.folder}`);
+  } catch (error) {
+    statFailure('folder', input.folder, error);
   }
   if (!folderStat.isDirectory()) {
     throw new Error(`folder is not a directory: ${input.folder}`);
@@ -156,8 +169,8 @@ export async function executeRegisterTool(input: RegisterToolInput, deps: ToolDe
   let indexStat;
   try {
     indexStat = await stat(indexPath);
-  } catch {
-    throw new Error(`folder has no index.html: ${input.folder}`);
+  } catch (error) {
+    statFailure('index.html', indexPath, error);
   }
   if (!indexStat.isFile()) {
     throw new Error(`index.html is not a file: ${indexPath}`);
