@@ -11,9 +11,9 @@ function setupSession() {
   return sessionRegistry.sessions.s1;
 }
 
-function render() {
+function render(readOnly = false) {
   const target = document.createElement('div');
-  const component = mount(MessageList, { target });
+  const component = mount(MessageList, { target, props: { readOnly } });
   return { target, destroy: () => unmount(component) };
 }
 
@@ -48,6 +48,22 @@ describe('MessageList native bash display boundary', () => {
 
     expect(sessionRegistry.viewedSessionId).toBe('s2');
     expect(sessionRegistry.sessions.s2.draftText).toBe('forked message');
+    view.destroy();
+  });
+
+  it('does not offer a fork action in a read-only transcript', async () => {
+    const session = setupSession();
+    session.messages = [{ role: 'user', entryId: 'entry-1', content: [{ type: 'text', text: 'Fork point' }] }];
+    session.messageKeys = ['msg-1'];
+    const send = vi.spyOn(connection, 'send');
+    const view = render(true);
+    await tick();
+
+    for (const button of view.target.querySelectorAll('button')) button.click();
+    await tick();
+    const fork = view.target.querySelector<HTMLButtonElement>('button[title="Fork from this message"]');
+    expect(fork).toBeNull();
+    expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'fork' }));
     view.destroy();
   });
 

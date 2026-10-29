@@ -4,6 +4,7 @@
   import { connection, isConnectionLossError } from '$lib/stores/connection.svelte.js';
   import { commandStore } from '$lib/stores/command-store.svelte.js';
   import { consumeSharedImages, editorTextRequest, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
+  import { getExtensionUiQueue } from '$lib/stores/extension-ui-queue.svelte.js';
   import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
   import { loginStore } from '$lib/stores/login-store.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
@@ -20,6 +21,10 @@
   let messageTextareaEl: HTMLTextAreaElement | undefined = $state();
   let bashTextareaEl: HTMLTextAreaElement | undefined = $state();
   let autocompleteRef: CommandAutocomplete | undefined = $state();
+  const uiQueue = getExtensionUiQueue();
+  let lastViewedSessionId: string | null | undefined;
+  let sessionBeforePending: string | null = null;
+  let pendingFocusOrigin: Element | null = null;
 
   // Image attachment state
   let stagedImages = $state<string[]>([]);
@@ -61,10 +66,30 @@
   // Restore draft text when switching sessions.
   // Tracks viewedSessionId; reads draftText untracked so keystrokes don't re-trigger.
   $effect(() => {
-    const _sessionId = sessionRegistry.viewedSessionId;
+    const sessionId = sessionRegistry.viewedSessionId;
+    const previousId = lastViewedSessionId;
+    lastViewedSessionId = sessionId;
     inputText = untrack(() => sessionRegistry.viewed?.draftText ?? '');
     stagedImages = [];
+    autocompleteVisible = false;
+    selectedCommand = null;
+    fileRefPrefix = null;
     tick().then(() => autoResize());
+
+    if (!sessionId) return;
+    if (sessionId.startsWith('pending-')) {
+      if (!previousId?.startsWith('pending-')) sessionBeforePending = previousId ?? null;
+      pendingFocusOrigin = document.activeElement;
+      return;
+    }
+
+    if (previousId == null) {
+      if (document.activeElement === document.body) focusOnSessionOpen(sessionId, document.activeElement);
+    } else if (untrack(() => !!sessionRegistry.sessions[previousId])) {
+      focusOnSessionOpen(sessionId, document.activeElement);
+    } else if (previousId.startsWith('pending-') && sessionId !== sessionBeforePending) {
+      focusOnSessionOpen(sessionId, pendingFocusOrigin);
+    }
   });
 
   // Initialize from the singleton's current seq: the request store outlives
@@ -228,6 +253,26 @@
     textareaEl?.focus({ preventScroll: true });
   }
 
+  function focusOnSessionOpen(sessionId: string, origin: Element | null) {
+    if (untrack(isMobileViewport)) return;
+    const focused = document.activeElement;
+    if (focused !== document.body && focused !== origin) return;
+
+    void tick().then(() => {
+      if (
+        sessionRegistry.viewedSessionId !== sessionId ||
+        untrack(isMobileViewport) ||
+        uiQueue.hasRequestForSession(sessionId) ||
+        treeDialogStore.state.open ||
+        loginStore.state.flow !== 'idle' ||
+        document.querySelector('[role="dialog"][aria-modal="true"]:not([data-state="closed"]), [role="alertdialog"][aria-modal="true"]:not([data-state="closed"]), dialog[open]')
+      )
+        return;
+      if (document.activeElement !== document.body && document.activeElement !== focused) return;
+      focusTextarea();
+    });
+  }
+
   function captureTextareaFocus() {
     const focused = document.activeElement;
     if (focused !== messageTextareaEl && focused !== bashTextareaEl) return null;
@@ -241,7 +286,7 @@
   function restoreTextareaFocus(snapshot: ReturnType<typeof captureTextareaFocus>) {
     if (!snapshot) return;
     void tick().then(() => {
-      if (!textareaEl || textareaEl === snapshot.element) return;
+      if (!textareaEl || textareaEl === snapshot.element || document.activeElement !== snapshot.element) return;
       focusTextarea();
       const position = Math.min(snapshot.cursorPosition, textareaEl.value.length);
       textareaEl.selectionStart = textareaEl.selectionEnd = position;
@@ -618,19 +663,16 @@
   function handleKeydown(e: KeyboardEvent) {
     // Intercept keys when autocomplete is visible
     if (autocompleteVisible && autocompleteRef) {
-      if (e.key === 'ArrowUp') {
+      if (e.key === 'ArrowUp' && autocompleteRef.moveUp()) {
         e.preventDefault();
-        autocompleteRef.moveUp();
         return;
       }
-      if (e.key === 'ArrowDown') {
+      if (e.key === 'ArrowDown' && autocompleteRef.moveDown()) {
         e.preventDefault();
-        autocompleteRef.moveDown();
         return;
       }
-      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+      if (!e.shiftKey && (e.key === 'Tab' || e.key === 'Enter') && autocompleteRef.accept()) {
         e.preventDefault();
-        autocompleteRef.accept();
         return;
       }
       if (e.key === 'Escape') {
@@ -720,6 +762,7 @@
       <textarea
         bind:this={messageTextareaEl}
         bind:value={inputText}
+        id={isBangCommand ? undefined : 'session-composer'}
         oninput={handleInput}
         onkeydown={handleKeydown}
         onclick={updateAutocomplete}
@@ -740,6 +783,7 @@
       <textarea
         bind:this={bashTextareaEl}
         bind:value={inputText}
+        id={isBangCommand ? 'session-composer' : undefined}
         oninput={handleInput}
         onkeydown={handleKeydown}
         onclick={updateAutocomplete}

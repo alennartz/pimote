@@ -101,7 +101,7 @@
   <!-- Tool results are displayed inline with their tool calls — skip standalone rendering -->
 {:else if message.role === 'user'}
   <div class="message user-message">
-    {#if entryId}
+    {#if entryId && onfork}
       <div class="user-icon-col">
         <button class="message-icon user-icon" onclick={() => (userMenuOpen = !userMenuOpen)}>
           <User size={16} />

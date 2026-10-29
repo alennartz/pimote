@@ -92,21 +92,23 @@
     el?.scrollIntoView({ block: 'nearest' });
   });
 
-  export function moveUp() {
-    if (displayItems.length === 0) return;
+  export function moveUp(): boolean {
+    if (displayItems.length === 0) return false;
     highlightIndex = highlightIndex <= 0 ? displayItems.length - 1 : highlightIndex - 1;
+    return true;
   }
 
-  export function moveDown() {
-    if (displayItems.length === 0) return;
+  export function moveDown(): boolean {
+    if (displayItems.length === 0) return false;
     highlightIndex = highlightIndex >= displayItems.length - 1 ? 0 : highlightIndex + 1;
+    return true;
   }
 
-  export function accept() {
+  export function accept(): boolean {
     const item = displayItems[highlightIndex];
-    if (item) {
-      onselect(item);
-    }
+    if (!item) return false;
+    onselect(item);
+    return true;
   }
 
   export function dismiss() {

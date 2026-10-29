@@ -52,6 +52,7 @@
   async function handleFork(entryId: string) {
     // Session-only affordance: forks act on the viewed regular session and
     // no-op for an explicit source (the manager has no forkable branch tree).
+    if (readOnly || source) return;
     const viewed = sessionRegistry.viewed;
     if (!viewed?.sessionId) return;
 
@@ -252,7 +253,7 @@
           <BashExecution execution={entry.execution} onCancel={readOnly ? undefined : () => handleBashCancel(entry.execution.id)} />
         {:else}
           {@const assistantRowUsage = getAssistantRowUsage(entry)}
-          <Message message={entry.message} streaming={entry.streaming} messageKey={entry.key} {assistantRowUsage} onfork={source ? undefined : handleFork} />
+          <Message message={entry.message} streaming={entry.streaming} messageKey={entry.key} {assistantRowUsage} onfork={source || readOnly ? undefined : handleFork} />
         {/if}
       {/each}
 

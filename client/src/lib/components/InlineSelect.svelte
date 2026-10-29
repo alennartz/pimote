@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { tick, untrack } from 'svelte';
   import { getExtensionUiQueue, INLINE_METHODS } from '$lib/stores/extension-ui-queue.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
   interface ParsedOption {
@@ -37,28 +39,60 @@
     }
   });
 
-  // Auto-focus the panel when it appears, so keyboard shortcuts work —
-  // unless the user is typing. Blurring an editable element collapses the
-  // mobile virtual keyboard, so the composer keeps focus there.
+  // Preserve the mobile keyboard, but put desktop focus on the first answer.
   $effect(() => {
-    if (current && panelEl) {
-      const active = document.activeElement;
-      const isEditing = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement || (active instanceof HTMLElement && active.isContentEditable);
-      if (!isEditing) {
-        panelEl.focus();
+    const request = current;
+    const panel = panelEl;
+    if (!request || !panel) return;
+    const mobile = untrack(isMobileViewport);
+    const active = document.activeElement;
+    const isEditing = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement || (active instanceof HTMLElement && active.isContentEditable);
+    if (mobile) {
+      if (!isEditing) panel.focus();
+      return;
+    }
+
+    void tick().then(() => {
+      if (panelEl !== panel || current?.sessionId !== request.sessionId || current?.requestId !== request.requestId) return;
+      if (document.activeElement !== active && document.activeElement !== document.body) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"], dialog[open]')) return;
+      (panel.querySelector<HTMLButtonElement>('[data-inline-answer]') ?? panel).focus();
+    });
+  });
+
+  let displayedRequest: { sessionId: string; requestId: string } | null = null;
+  let answeredRequest: { sessionId: string; requestId: string } | null = null;
+
+  $effect.pre(() => {
+    const next = current;
+    const previous = displayedRequest;
+    if (previous && (next?.sessionId !== previous.sessionId || next?.requestId !== previous.requestId)) {
+      const answeredHere = answeredRequest?.sessionId === previous.sessionId && answeredRequest.requestId === previous.requestId;
+      if (answeredHere) answeredRequest = null;
+      if (!next && sessionRegistry.viewedSessionId === previous.sessionId && !untrack(isMobileViewport) && (answeredHere || panelEl?.contains(document.activeElement))) {
+        void restoreComposerFocus(previous.sessionId, document.activeElement);
       }
     }
+    displayedRequest = next ? { sessionId: next.sessionId, requestId: next.requestId } : null;
   });
+
+  async function restoreComposerFocus(sessionId: string, previousFocus: Element | null): Promise<void> {
+    await tick();
+    if (sessionRegistry.viewedSessionId !== sessionId || uiQueue.all.some((request) => request.sessionId === sessionId) || untrack(isMobileViewport)) return;
+    if (document.activeElement !== previousFocus && document.activeElement !== document.body) return;
+    if (document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"], dialog[open]')) return;
+    const composer = document.getElementById('session-composer');
+    if (composer instanceof HTMLTextAreaElement && !composer.disabled) composer.focus();
+  }
 
   function toggleCollapsed(event: MouseEvent) {
     event.stopPropagation();
     collapsed = !collapsed;
-    // Keep focus on panel so keyboard shortcuts still work.
-    queueMicrotask(() => panelEl?.focus());
   }
 
   function sendResponse(data: { value?: string; confirmed?: boolean; cancelled?: boolean }) {
     if (!current) return;
+    answeredRequest = { sessionId: current.sessionId, requestId: current.requestId };
     uiQueue.sendResponse(current.requestId, current.sessionId, data);
   }
 
@@ -75,6 +109,8 @@
   }
 
   function handleKeydown(event: KeyboardEvent, normalizedOptions: { value: string; parsed: ParsedOption }[]) {
+    if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.altKey || event.metaKey) return;
+
     if (current?.method === 'select') {
       if (event.key >= '1' && event.key <= '9') {
         const idx = parseInt(event.key) - 1;
@@ -85,17 +121,17 @@
         }
       }
 
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const optionButtons = panelEl ? [...panelEl.querySelectorAll<HTMLButtonElement>('.select-option')] : [];
+      const focusedIndex = optionButtons.findIndex((button) => button === event.target);
+      if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && normalizedOptions.length > 0) {
         event.preventDefault();
-        if (event.key === 'ArrowDown') {
-          highlightIndex = Math.min(highlightIndex + 1, normalizedOptions.length - 1);
-        } else {
-          highlightIndex = Math.max(highlightIndex - 1, 0);
-        }
+        const index = focusedIndex >= 0 ? focusedIndex : highlightIndex;
+        highlightIndex = event.key === 'ArrowDown' ? Math.min(index + 1, normalizedOptions.length - 1) : Math.max(index - 1, 0);
+        optionButtons[highlightIndex]?.focus();
         return;
       }
 
-      if (event.key === 'Enter' && highlightIndex >= 0 && highlightIndex < normalizedOptions.length) {
+      if (event.key === 'Enter' && event.target === panelEl && highlightIndex >= 0 && highlightIndex < normalizedOptions.length) {
         event.preventDefault();
         handleSelect(normalizedOptions[highlightIndex]!.value);
         return;
@@ -130,7 +166,17 @@
       const value = typeof o === 'string' ? o : (o.value ?? o.label ?? String(o));
       return { value, parsed: parseOption(str) };
     })}
-    <div class="inline-select-panel" class:collapsed tabindex="0" role="listbox" bind:this={panelEl} onkeydown={(e) => handleKeydown(e, normalizedOptions)}>
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      class="inline-select-panel"
+      class:collapsed
+      tabindex="0"
+      role="group"
+      aria-label={current.title ?? 'Select'}
+      bind:this={panelEl}
+      onkeydown={(e) => handleKeydown(e, normalizedOptions)}
+    >
       <div class="panel-header">
         <span class="panel-title">
           {current.title ?? 'Select'}
@@ -150,7 +196,14 @@
         <div class="panel-options">
           {#each normalizedOptions as option, i (option.value)}
             {@const p = option.parsed}
-            <button class="select-option" class:highlighted={i === highlightIndex} onclick={() => handleSelect(option.value)} onmouseenter={() => (highlightIndex = i)}>
+            <button
+              class="select-option"
+              data-inline-answer
+              class:highlighted={i === highlightIndex}
+              onclick={() => handleSelect(option.value)}
+              onmouseenter={() => (highlightIndex = i)}
+              onfocus={() => (highlightIndex = i)}
+            >
               <span class="option-number">{i + 1}</span>
               <span class="option-body">
                 <span class="option-label">{p.label}</span>
@@ -173,7 +226,7 @@
       {/if}
     </div>
   {:else if current.method === 'confirm'}
-    <div class="inline-select-panel" class:collapsed tabindex="0" role="dialog" bind:this={panelEl} onkeydown={(e) => handleKeydown(e, [])}>
+    <div class="inline-select-panel" class:collapsed tabindex="0" role="dialog" aria-label={current.title ?? 'Confirm'} bind:this={panelEl} onkeydown={(e) => handleKeydown(e, [])}>
       <div class="panel-header">
         <span class="panel-title">{current.title ?? 'Confirm'}</span>
         <div class="panel-header-actions">
@@ -188,8 +241,8 @@
           <div class="panel-description">{current.message}</div>
         {/if}
         <div class="confirm-actions">
-          <Button variant="outline" onclick={() => handleConfirm(false)}>No</Button>
-          <Button onclick={() => handleConfirm(true)}>Yes</Button>
+          <Button variant="outline" data-inline-answer onclick={() => handleConfirm(false)}>No</Button>
+          <Button data-inline-answer onclick={() => handleConfirm(true)}>Yes</Button>
         </div>
         <div class="panel-hint">
           <span><kbd>Y</kbd> yes</span>
@@ -209,6 +262,11 @@
     background: var(--background);
     padding: 12px 16px;
     outline: none;
+  }
+
+  .inline-select-panel:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
   }
 
   /* Every row shares one centered column, so the question and options align. */
