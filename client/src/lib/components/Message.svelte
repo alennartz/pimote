@@ -17,6 +17,7 @@
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
   import { parseAssistantError } from '$lib/assistant-error.js';
   import CostBreakdownPopover from './CostBreakdownPopover.svelte';
+  import { observeFullyOffscreen } from '$lib/auto-collapse.js';
 
   const MAX_COLLAPSED_LINES = 10;
   const SKILL_COLLAPSED_LINES = 3;
@@ -36,6 +37,8 @@
   } = $props();
   let userMenuOpen = $state(false);
   let customExpanded = $state(false);
+  let customCollapsed = $state(false);
+  let customRootEl: HTMLDivElement | undefined = $state();
   let systemExpanded = $state(false);
   let skillExpanded = $state(false);
   let toolMenuOpen = $state(false);
@@ -95,6 +98,21 @@
   let customNeedsCollapse = $derived(customLines.length > MAX_COLLAPSED_LINES);
   let systemSections = $derived(message.role === 'system' ? ((message as PimoteAgentMessage).sections ?? {}) : {});
   let systemSectionNames = $derived(Object.keys(systemSections));
+
+  // Custom messages stay open while they stream. After streaming ends, keep
+  // the body open until it first scrolls fully out of view.
+  $effect(() => {
+    if (message.role === 'custom' && streaming) {
+      customExpanded = true;
+    }
+  });
+
+  $effect(() => {
+    if (message.role !== 'custom' || streaming || customCollapsed || !customRootEl) return;
+    return observeFullyOffscreen(customRootEl, () => {
+      customCollapsed = true;
+    });
+  });
 </script>
 
 {#if message.role === 'toolResult'}
@@ -256,40 +274,31 @@
 {:else if message.role === 'custom'}
   <!-- Custom message (extension-injected, e.g. subagent results) -->
   <div class="message custom-message">
-    <div class="custom-body">
-      {#if streaming}
-        <div class="custom-header">
-          <span class="custom-label">[custom]</span>
-        </div>
+    <div class="custom-body" bind:this={customRootEl}>
+      <button type="button" class="custom-header" aria-expanded={!customCollapsed} onclick={() => (customCollapsed = !customCollapsed)}>
+        <ChevronRight class="shrink-0 transition-transform duration-150 {!customCollapsed ? 'rotate-90' : ''}" size={14} />
+        <span class="custom-label">[{streaming ? 'custom' : 'customType' in message ? (message.customType ?? 'custom') : 'custom'}]</span>
+        {#if !streaming && customNeedsCollapse}
+          <span class="custom-line-count">{customLines.length} lines</span>
+        {/if}
+      </button>
+      {#if !customCollapsed}
         <div class="custom-content">
-          <BoundedOutput text={customText} {streaming} accent="purple" />
-        </div>
-      {:else}
-        <button class="custom-header" onclick={() => (customExpanded = !customExpanded)}>
-          {#if customNeedsCollapse}
-            {#if customExpanded}
-              <ChevronDown size={14} />
-            {:else}
-              <ChevronRight size={14} />
+          {#if streaming}
+            <BoundedOutput text={customText} {streaming} accent="purple" />
+          {:else}
+            <div
+              class="custom-text-container"
+              class:custom-text-collapsed={customNeedsCollapse && !customExpanded}
+              class:custom-text-expanded={customNeedsCollapse && customExpanded}
+            >
+              <TextBlock text={customText} />
+            </div>
+            {#if customNeedsCollapse && !customExpanded}
+              <button class="custom-toggle" onclick={() => (customExpanded = true)}> Show more… </button>
+            {:else if customNeedsCollapse && customExpanded}
+              <button class="custom-toggle" onclick={() => (customExpanded = false)}> Show less </button>
             {/if}
-          {/if}
-          <span class="custom-label">[{'customType' in message ? (message.customType ?? 'custom') : 'custom'}]</span>
-          {#if customNeedsCollapse}
-            <span class="custom-line-count">{customLines.length} lines</span>
-          {/if}
-        </button>
-        <div class="custom-content">
-          <div
-            class="custom-text-container"
-            class:custom-text-collapsed={customNeedsCollapse && !customExpanded}
-            class:custom-text-expanded={customNeedsCollapse && customExpanded}
-          >
-            <TextBlock text={customText} />
-          </div>
-          {#if customNeedsCollapse && !customExpanded}
-            <button class="custom-toggle" onclick={() => (customExpanded = true)}> Show more… </button>
-          {:else if customNeedsCollapse && customExpanded}
-            <button class="custom-toggle" onclick={() => (customExpanded = false)}> Show less </button>
           {/if}
         </div>
       {/if}
