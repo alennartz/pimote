@@ -19,30 +19,10 @@
   }
 </script>
 
-<button class="tool-btn" onclick={copy} {title} aria-label={title}>
+<button type="button" class="copy-button" onclick={copy} {title} aria-label={copied ? 'Copied' : title}>
   {#if copied}
     <Check size={14} />
   {:else}
     <Copy size={14} />
   {/if}
 </button>
-
-<style>
-  .tool-btn {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: none;
-    background: var(--secondary);
-    color: var(--foreground);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: background-color 0.15s;
-  }
-
-  .tool-btn:active {
-    background: color-mix(in oklch, var(--secondary) 90%, white);
-  }
-</style>

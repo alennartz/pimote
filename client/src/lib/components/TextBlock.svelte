@@ -148,8 +148,7 @@
 
   /* Copy button injected by smd-renderer for each code block. The wrapper is
      a non-scrolling positioning context so the button stays anchored when the
-     <pre> scrolls horizontally. Kept low-contrast so it doesn't clutter mobile,
-     but always tappable (no hover-only reveal). */
+     <pre> scrolls horizontally. */
   .markdown-content :global(.code-block-wrapper) {
     position: relative;
   }
@@ -164,29 +163,6 @@
     position: absolute;
     top: 6px;
     right: 6px;
-    padding: 3px 8px;
-    font-size: 0.7rem;
-    font-family: var(--font-mono, monospace);
-    font-variant-ligatures: none;
-    line-height: 1;
-    color: var(--muted-foreground);
-    background: color-mix(in oklch, var(--surface-hover) 85%, transparent);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
-    opacity: 0.55;
-    transition:
-      opacity 0.15s,
-      color 0.15s,
-      background-color 0.15s;
-  }
-
-  .markdown-content :global(.code-block-wrapper > .code-copy-btn:hover),
-  .markdown-content :global(.code-block-wrapper > .code-copy-btn:focus-visible),
-  .markdown-content :global(.code-block-wrapper > .code-copy-btn.copied) {
-    opacity: 1;
-    color: var(--foreground);
-    background: var(--secondary);
   }
 
   .markdown-content :global(pre code) {

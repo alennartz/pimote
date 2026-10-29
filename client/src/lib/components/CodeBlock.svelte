@@ -19,6 +19,8 @@
   import { createIncrementalHighlighter } from '$lib/code-highlight.js';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
   import TextBlock from './TextBlock.svelte';
+  import Copy from '@lucide/svelte/icons/copy';
+  import Check from '@lucide/svelte/icons/check';
   import '$lib/highlight-theme.css';
 
   let {
@@ -36,7 +38,7 @@
     language: string | null;
     /** Drives throttled highlight + auto-scroll while true. */
     streaming?: boolean;
-    /** Copy button label, aria-label, and title. */
+    /** Accessible name and tooltip for the copy button. */
     copyLabel?: string;
   } = $props();
 
@@ -129,8 +131,12 @@
 </script>
 
 <div class="code-block" data-mode={mode} bind:this={rootEl}>
-  <button type="button" class="code-copy-btn" class:copied aria-label={copyLabel} title={copyLabel} onclick={copy}>
-    {copied ? 'Copied' : copyLabel}
+  <button type="button" class="copy-button code-copy-btn" class:copied aria-label={copied ? 'Copied' : copyLabel} title={copyLabel} onclick={copy}>
+    {#if copied}
+      <Check size={14} />
+    {:else}
+      <Copy size={14} />
+    {/if}
   </button>
 
   {#if mode === 'code'}
@@ -190,35 +196,11 @@
     overflow-y: auto;
   }
 
-  /* The copy button mirrors the smd-renderer code copy button treatment. */
   .code-copy-btn {
     position: absolute;
     top: 6px;
     right: 6px;
     z-index: 1;
-    padding: 3px 8px;
-    font-size: 0.7rem;
-    font-family: var(--font-mono, monospace);
-    font-variant-ligatures: none;
-    line-height: 1;
-    color: var(--muted-foreground);
-    background: color-mix(in oklch, var(--surface-hover) 85%, transparent);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
-    opacity: 0.55;
-    transition:
-      opacity 0.15s,
-      color 0.15s,
-      background-color 0.15s;
-  }
-
-  .code-copy-btn:hover,
-  .code-copy-btn:focus-visible,
-  .code-copy-btn.copied {
-    opacity: 1;
-    color: var(--foreground);
-    background: var(--secondary);
   }
 
   .code-block-toggle {

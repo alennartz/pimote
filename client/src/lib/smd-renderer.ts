@@ -15,6 +15,7 @@
  */
 import * as smd from 'streaming-markdown';
 import { createIncrementalHighlighter } from './code-highlight.js';
+import { setCopyIcon } from './copy-icon.js';
 
 /**
  * Read the hljs language id from a code element's class list. smd applies the
@@ -68,21 +69,23 @@ function attachCopyButton(preEl: HTMLElement, codeEl: HTMLElement): void {
   preEl.classList.add('code-block-with-copy');
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'code-copy-btn';
+  btn.className = 'copy-button code-copy-btn';
   btn.setAttribute('aria-label', 'Copy code');
   btn.title = 'Copy code';
-  btn.textContent = 'Copy';
+  setCopyIcon(btn, false);
   let resetTimer: ReturnType<typeof setTimeout> | undefined;
   btn.addEventListener('click', async (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
     try {
       await navigator.clipboard.writeText(codeEl.textContent ?? '');
-      btn.textContent = 'Copied';
+      setCopyIcon(btn, true);
+      btn.setAttribute('aria-label', 'Copied');
       btn.classList.add('copied');
       if (resetTimer) clearTimeout(resetTimer);
       resetTimer = setTimeout(() => {
-        btn.textContent = 'Copy';
+        setCopyIcon(btn, false);
+        btn.setAttribute('aria-label', 'Copy code');
         btn.classList.remove('copied');
       }, 1200);
     } catch {

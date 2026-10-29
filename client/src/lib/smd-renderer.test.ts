@@ -144,6 +144,11 @@ describe('createRenderer', () => {
       // The content should still contain the source text
       expect(code!.textContent).toContain('const');
       expect(code!.textContent).toContain('42');
+
+      const copyButton = container.querySelector<HTMLButtonElement>('.code-copy-btn');
+      expect(copyButton?.classList.contains('copy-button')).toBe(true);
+      expect(copyButton?.textContent).toBe('');
+      expect(copyButton?.querySelector('.lucide-copy')).not.toBeNull();
     });
 
     it('applies highlighting with a language alias (ts → typescript)', () => {

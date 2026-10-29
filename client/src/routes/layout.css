@@ -206,6 +206,44 @@
   }
 }
 
+/* Shared copy affordance. Keep the quiet state translucent so code blocks stay
+   readable without adding another opaque control to the transcript. */
+.copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--surface-hover) 85%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.45;
+  transition:
+    opacity 0.15s,
+    color 0.15s,
+    background-color 0.15s;
+}
+
+.copy-button svg {
+  flex: none;
+}
+
+.copy-button:hover,
+.copy-button:focus-visible,
+.copy-button.copied {
+  opacity: 1;
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.copy-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
 @custom-variant data-open {
   &:where([data-state='open']),
   &:where([data-open]:not([data-open='false'])) {

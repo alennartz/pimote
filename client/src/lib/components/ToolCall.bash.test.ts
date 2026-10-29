@@ -31,7 +31,11 @@ describe('bash tool visualization', () => {
 
     const code = target.querySelector('pre > code');
     expect(code).not.toBeNull();
-    expect(target.querySelector('button[aria-label="Copy command"]')).not.toBeNull();
+    const copyButton = target.querySelector<HTMLButtonElement>('button[aria-label="Copy command"]');
+    expect(copyButton).not.toBeNull();
+    expect(copyButton?.classList.contains('copy-button')).toBe(true);
+    expect(copyButton?.textContent).toBe('');
+    expect(copyButton?.querySelector('.lucide-copy')).not.toBeNull();
     expect(code?.textContent).toBe('printf "hello\\n" && git status --short');
     expect(code?.innerHTML).toContain('hljs-');
   });
