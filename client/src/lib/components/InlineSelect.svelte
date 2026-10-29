@@ -39,12 +39,16 @@
     }
   });
 
-  // Move focus to the first answer when a question appears in every viewport.
+  // Focus the first answer unless the user is composing a non-empty draft.
   $effect(() => {
     const request = current;
     const panel = panelEl;
     if (!request || !panel) return;
     const active = document.activeElement;
+    const activeHasText =
+      ((active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) && active.value.trim().length > 0) ||
+      (active instanceof HTMLElement && active.isContentEditable && (active.textContent?.trim().length ?? 0) > 0);
+    if (activeHasText) return;
 
     void tick().then(() => {
       if (panelEl !== panel || current?.sessionId !== request.sessionId || current?.requestId !== request.requestId) return;

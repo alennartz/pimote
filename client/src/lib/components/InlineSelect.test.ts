@@ -228,9 +228,27 @@ describe('InlineSelect keyboard focus', () => {
     expect(document.activeElement).not.toBe(composer);
   });
 
-  it('focuses the question when the mobile composer contains text', async () => {
+  it('preserves focus on the composer when the mobile composer contains text', async () => {
     mobile = true;
     composer.value = 'draft text';
+    composer.focus();
+    enqueue(selectRequest);
+    await tick();
+    await tick();
+    expect(document.activeElement).toBe(composer);
+  });
+
+  it('preserves focus on a desktop composer when it contains text', async () => {
+    composer.value = 'draft text';
+    composer.focus();
+    enqueue(selectRequest);
+    await tick();
+    await tick();
+    expect(document.activeElement).toBe(composer);
+  });
+
+  it('focuses an empty mobile composer when a question arrives', async () => {
+    mobile = true;
     composer.focus();
     enqueue(selectRequest);
     await waitForFocusedButton('Option A');
