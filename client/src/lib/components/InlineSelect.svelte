@@ -39,18 +39,12 @@
     }
   });
 
-  // Preserve the mobile keyboard, but put desktop focus on the first answer.
+  // Move focus to the first answer when a question appears in every viewport.
   $effect(() => {
     const request = current;
     const panel = panelEl;
     if (!request || !panel) return;
-    const mobile = untrack(isMobileViewport);
     const active = document.activeElement;
-    const isEditing = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement || (active instanceof HTMLElement && active.isContentEditable);
-    if (mobile) {
-      if (!isEditing) panel.focus();
-      return;
-    }
 
     void tick().then(() => {
       if (panelEl !== panel || current?.sessionId !== request.sessionId || current?.requestId !== request.requestId) return;
