@@ -14,7 +14,7 @@
   import { updateStore } from '$lib/stores/update.svelte.js';
   import { getContextDisplay, getContextTone } from '$lib/session-summary.js';
   import CostBreakdownPopover from './CostBreakdownPopover.svelte';
-  import Settings from '@lucide/svelte/icons/settings';
+  import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import X from '@lucide/svelte/icons/x';
 
   let open = $state(false);
@@ -55,14 +55,8 @@
 <Dialog.Root bind:open>
   <Dialog.Trigger>
     {#snippet child({ props })}
-      <Button
-        {...props}
-        variant="ghost"
-        size="icon"
-        class="border-border bg-background text-muted-foreground hover:text-foreground hover:bg-accent size-10 rounded-full border shadow-md md:size-14"
-        title="Session settings"
-      >
-        <Settings class="size-5 md:size-7" />
+      <Button {...props} variant="ghost" size="icon-sm" class="text-muted-foreground hover:text-foreground" title="Session settings">
+        <SlidersHorizontal class="size-4" />
         <span class="sr-only">Open session settings</span>
       </Button>
     {/snippet}

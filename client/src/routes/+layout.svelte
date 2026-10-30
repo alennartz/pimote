@@ -246,14 +246,6 @@
     <!-- Mobile header -->
     <header class="border-border flex min-h-12 shrink-0 items-center gap-2 border-b px-3 pt-[max(env(safe-area-inset-top),0.25rem)] md:hidden">
       {#if sessionRegistry.viewedSessionId}
-        <div class="relative shrink-0">
-          <SessionSettingsDialog />
-          {#if updateStore.showMarker}
-            <span class="bg-primary pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full" aria-hidden="true"></span>
-          {/if}
-        </div>
-      {/if}
-      {#if sessionRegistry.viewedSessionId}
         <button
           class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors"
           title="Back to dashboard"
@@ -309,6 +301,15 @@
           </span>
         </button>
       {/if}
+
+      {#if sessionRegistry.viewedSessionId}
+        <div class="relative">
+          <SessionSettingsDialog />
+          {#if updateStore.showMarker}
+            <span class="bg-primary pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full" aria-hidden="true"></span>
+          {/if}
+        </div>
+      {/if}
     </header>
 
     <!-- Page content -->
@@ -333,15 +334,6 @@
     <div class="fixed inset-0 z-30 bg-black/50 md:hidden" onclick={() => (panelOpen = false)} onkeydown={(e) => e.key === 'Escape' && (panelOpen = false)}></div>
     <div class="fixed inset-y-0 right-0 z-40 flex flex-col md:hidden">
       <Panel />
-    </div>
-  {/if}
-
-  {#if sessionRegistry.viewedSessionId}
-    <div class="fixed bottom-6 left-6 z-40 hidden md:block">
-      <SessionSettingsDialog />
-      {#if updateStore.showMarker}
-        <span class="bg-primary pointer-events-none absolute -top-1 -right-1 size-2.5 rounded-full" aria-hidden="true"></span>
-      {/if}
     </div>
   {/if}
 
