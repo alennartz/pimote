@@ -3,22 +3,20 @@ import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createJiti } from 'jiti';
-import type { FolderCreator, FolderSource } from '@pimote/sdk/folders';
+import type { FolderSource } from '@pimote/sdk/folders';
 import { LEGACY_PIMOTE_PROJECT_SOURCES_DIR, PIMOTE_FOLDER_SOURCES_DIR } from '../paths.js';
 
-/** Source/creator modules: regular files with these extensions; everything else is ignored. */
+/** Source modules: regular files with these extensions; everything else is ignored. */
 const MODULE_EXTENSIONS = ['.js', '.mjs', '.cjs', '.ts'];
 
-/** Sources and creators collected from one scan of the sources directory. */
+/** Sources collected from one scan of the sources directory. */
 export interface LoadedFolderSources {
   sources: FolderSource[];
-  creators: FolderCreator[];
 }
 
-/** Module contract: a module may export `sources` / `creators` arrays. */
+/** Module contract: a module may export a `sources` array. */
 interface SourceModule {
   sources?: unknown;
-  creators?: unknown;
 }
 
 /** Sources-directory pair the effective directory is resolved from; injectable for tests. */
@@ -69,10 +67,11 @@ export function sdkRuntimeAliases(): Record<string, string> {
 }
 
 /**
- * Dynamic-import every JS/TS module in `dir` and collect its `sources` and
- * `creators` exports (arrays of FolderSource / FolderCreator). Failures are
- * isolated per module: a module that fails to load or evaluate is logged and
- * skipped, and the scan continues. A missing directory yields an empty result.
+ * Dynamic-import every JS/TS module in `dir` and collect its `sources` export.
+ * Folder creation is a Pimote core capability, not an external registration
+ * seam. Failures are isolated per module: a module that fails to load or
+ * evaluate is logged and skipped, and the scan continues. A missing directory
+ * yields an empty result.
  */
 export async function loadFolderSources(dir: string): Promise<LoadedFolderSources> {
   let entries: Dirent[];
@@ -80,7 +79,7 @@ export async function loadFolderSources(dir: string): Promise<LoadedFolderSource
     entries = await readdir(dir, { withFileTypes: true });
   } catch (err) {
     if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { sources: [], creators: [] };
+      return { sources: [] };
     }
     throw err;
   }
@@ -90,7 +89,6 @@ export async function loadFolderSources(dir: string): Promise<LoadedFolderSource
   const jiti = createJiti(import.meta.url, { moduleCache: false, alias: sdkRuntimeAliases() });
 
   const sources: FolderSource[] = [];
-  const creators: FolderCreator[] = [];
 
   for (const entry of entries) {
     if (!entry.isFile()) continue;
@@ -100,11 +98,10 @@ export async function loadFolderSources(dir: string): Promise<LoadedFolderSource
     try {
       const mod = (await jiti.import(fileUrl)) as SourceModule;
       if (Array.isArray(mod.sources)) sources.push(...(mod.sources as FolderSource[]));
-      if (Array.isArray(mod.creators)) creators.push(...(mod.creators as FolderCreator[]));
     } catch (err) {
       console.warn(`[folder-sources] skipping module ${entry.name}:`, err);
     }
   }
 
-  return { sources, creators };
+  return { sources };
 }

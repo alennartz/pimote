@@ -18,9 +18,6 @@ export interface RepoInfo {
   tags?: string[];
 }
 
-/** Human-readable parameter type for a creator form field. */
-export type FolderCreatorParamType = 'string' | 'string[]';
-
 /** A repo entry contributed to the discovery index (feeds single-repo folders). */
 export interface RepoSourceEntry extends RepoInfo {
   kind: 'repo';
@@ -61,28 +58,4 @@ export interface FolderSource {
    * A thrown error aborts the open and surfaces the message to the user.
    */
   onFolderOpen?(folderPath: string): Promise<void>;
-}
-
-/** Human-readable description of a creator's form, for the creation UI. */
-export interface FolderCreatorDescriptor {
-  label: string;
-  paramSchema: Record<string, FolderCreatorParamType>;
-}
-
-/**
- * Extensible creation seam: a creator makes a new folder from
- * user-supplied params. Built in: mkdir + git init. User-authored creators
- * are dynamic-imported from the configured folder-sources directory.
- */
-export interface FolderCreator {
-  readonly id: string;
-  /** Human-readable description for the creation UI. */
-  describe(): FolderCreatorDescriptor;
-  /**
-   * Make the folder and return its path. Pimote resolves the path to its
-   * canonical filesystem identity before seeding, broadcasting, or opening a
-   * session, so a creator can return the lexical path it used to reach the
-   * folder. The path must name the successfully created folder.
-   */
-  create(params: Record<string, unknown>): Promise<{ path: string }>;
 }

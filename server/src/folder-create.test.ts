@@ -2,26 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { mkdir, readFile, realpath, rm, symlink, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { FolderCreator } from '@pimote/sdk/folders';
 import type { FolderInfo } from '../../shared/dist/index.js';
 import { FolderListing } from './folder-listing.js';
-import { createCodeFolderViaCreators } from './folder-create.js';
+import { createCodeFolder } from './folder-create.js';
 import { SessionRecords } from './session-records.js';
 import { SessionSummaryIndex, sessionDirFor } from './session-summaries.js';
-
-function creatorThatReturnsItsReachPath(): FolderCreator {
-  return {
-    id: 'alias-creator',
-    describe: () => ({ label: 'Alias creator', paramSchema: { root: 'string', name: 'string' } }),
-    create: async (params) => {
-      const root = String(params.root);
-      const name = String(params.name);
-      const path = join(root, name);
-      await mkdir(path);
-      return { path };
-    },
-  };
-}
 
 function row(path: string): FolderInfo {
   return {
@@ -38,8 +23,8 @@ function row(path: string): FolderInfo {
   };
 }
 
-describe('createCodeFolderViaCreators()', () => {
-  it('canonicalizes a custom creator path reached through a root alias', async () => {
+describe('createCodeFolder()', () => {
+  it('canonicalizes the built-in folder path reached through a root alias', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'folder-create-test-'));
     try {
       const actualRoot = join(tempDir, 'root');
@@ -47,7 +32,7 @@ describe('createCodeFolderViaCreators()', () => {
       await mkdir(actualRoot);
       await symlink(actualRoot, aliasRoot);
 
-      const created = await createCodeFolderViaCreators([creatorThatReturnsItsReachPath()], aliasRoot, 'custom', 'Created by the test.');
+      const created = await createCodeFolder(aliasRoot, 'custom', 'Created by the test.');
       const canonical = await realpath(join(aliasRoot, 'custom'));
 
       expect(created.folderPath).toBe(canonical);
@@ -58,7 +43,7 @@ describe('createCodeFolderViaCreators()', () => {
     }
   });
 
-  it('hands canonical creator output to the delta boundary', async () => {
+  it('hands the canonical core-created path to the delta boundary', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'folder-delta-test-'));
     try {
       const actualRoot = join(tempDir, 'root');
@@ -66,7 +51,7 @@ describe('createCodeFolderViaCreators()', () => {
       await mkdir(actualRoot);
       await symlink(actualRoot, aliasRoot);
 
-      const created = await createCodeFolderViaCreators([creatorThatReturnsItsReachPath()], aliasRoot, 'custom');
+      const created = await createCodeFolder(aliasRoot, 'custom');
       const canonical = await realpath(join(aliasRoot, 'custom'));
       const listing = new FolderListing({
         listRows: async () => [row(canonical)],
@@ -94,7 +79,7 @@ describe('createCodeFolderViaCreators()', () => {
       await mkdir(actualRoot);
       await symlink(actualRoot, aliasRoot);
 
-      const created = await createCodeFolderViaCreators([creatorThatReturnsItsReachPath()], aliasRoot, 'custom');
+      const created = await createCodeFolder(aliasRoot, 'custom');
       const aliasPath = join(aliasRoot, 'custom');
       const canonicalPath = await realpath(aliasPath);
       const sessionDir = sessionDirFor(canonicalPath, agentDir);

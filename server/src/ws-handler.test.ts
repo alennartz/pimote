@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { VoiceOrchestrator } from './voice-orchestrator.js';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { createCommandContextActions, mapTreeNodes, serializeTreeResponse, takeOverClientSlot, WsHandler, type ClientRegistry } from './ws-handler.js';
@@ -9,7 +9,6 @@ import type { SessionRecords } from './session-records.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderRegistry } from './folder-registry.js';
 import { FolderListing, type FolderListingService } from './folder-listing.js';
-import type { FolderCreator } from './folder-sources/index.js';
 import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
 import { QueueOwnership } from './queue-ownership.js';
@@ -277,7 +276,6 @@ function createTestHandler(
     sessionMetadataStore?: ReturnType<typeof createMockSessionMetadataStore>;
     repoIndex?: RepoIndex;
     folderRegistry?: FolderRegistry;
-    creators?: FolderCreator[];
     folderListing?: FolderListingService;
   },
 ): TestContext {
@@ -311,14 +309,23 @@ function createTestHandler(
     undefined,
     opts?.repoIndex,
     opts?.folderRegistry,
-    opts?.creators ?? [], // creators
-    opts?.folderListing, // folderListing
+    opts?.folderListing,
   );
 
   clientRegistry.set(clientId, handler);
 
   return { handler, ws, sent, sessions, sessionManager, clientRegistry, sessionMetadataStore };
 }
+
+describe('global settings wire command', () => {
+  it('returns a session-independent manifest using the request response envelope', async () => {
+    const { handler, sent } = createTestHandler('settings-client');
+    await handler.handleMessage(JSON.stringify({ type: 'get_global_settings', id: 'settings-request' }));
+    const response = sent.find((event) => 'id' in event && event.id === 'settings-request') as PimoteResponse;
+    expect(response.success).toBe(true);
+    expect((response.data as { files: unknown[] }).files).toEqual(expect.any(Array));
+  });
+});
 
 describe('observer-targeted push', () => {
   it('rejects stale and closed sockets', () => {
@@ -4489,19 +4496,9 @@ describe('WsHandler', () => {
           listLazy: async () => [folderRow(createdPath)],
           requestStatusRefresh: async () => {},
         } as unknown as FolderRegistry;
-        const creators = [
-          {
-            describe: () => ({ paramSchema: { root: {}, name: {} } }),
-            create: async ({ root: creatorRoot, name }: { root: string; name: string }) => {
-              const path = join(creatorRoot, name);
-              mkdirSync(path);
-              return { path };
-            },
-          } as unknown as FolderCreator,
-        ];
         const clientRegistry: ClientRegistry = new Map();
-        const a = createTestHandler('A', { repoIndex, folderRegistry, creators, clientRegistry, folderListing });
-        const b = createTestHandler('B', { repoIndex, folderRegistry, creators, clientRegistry, folderListing });
+        const a = createTestHandler('A', { repoIndex, folderRegistry, clientRegistry, folderListing });
+        const b = createTestHandler('B', { repoIndex, folderRegistry, clientRegistry, folderListing });
         a.sent.length = 0;
         b.sent.length = 0;
 

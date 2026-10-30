@@ -21,7 +21,7 @@ async function writeModule(name: string, code: string): Promise<void> {
 }
 
 describe('loadFolderSources()', () => {
-  it('collects sources and creators from every module in the directory', async () => {
+  it('collects sources and ignores external creator exports', async () => {
     await writeModule(
       'a.mjs',
       [
@@ -31,10 +31,9 @@ describe('loadFolderSources()', () => {
     );
     await writeModule(`b.mjs`, `export const sources = [{ id: 'source-b', list: async () => [] }];`);
 
-    const { sources, creators } = await loadFolderSources(sourcesDir);
+    const { sources } = await loadFolderSources(sourcesDir);
 
     expect(sources.map((s) => s.id).sort()).toEqual(['source-a', 'source-b']);
-    expect(creators.map((c) => c.id)).toEqual(['creator-a']);
   });
 
   it('skips a module that throws while loading and continues with the rest', async () => {
@@ -60,17 +59,15 @@ describe('loadFolderSources()', () => {
     await writeModule('README.txt', 'not a module');
     await writeModule('notes.json', '{ "not": "a module" }');
 
-    const { sources, creators } = await loadFolderSources(sourcesDir);
+    const { sources } = await loadFolderSources(sourcesDir);
 
     expect(sources).toEqual([]);
-    expect(creators).toEqual([]);
   });
 
   it('returns empty results for a missing directory', async () => {
-    const { sources, creators } = await loadFolderSources(join(sourcesDir, 'does-not-exist'));
+    const { sources } = await loadFolderSources(join(sourcesDir, 'does-not-exist'));
 
     expect(sources).toEqual([]);
-    expect(creators).toEqual([]);
   });
 
   it('resolves @pimote/sdk imports inside user modules to the runtime copy', async () => {

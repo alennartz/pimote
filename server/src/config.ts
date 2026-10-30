@@ -50,6 +50,8 @@ export interface PimoteConfig {
   updateCheck?: boolean;
   /** User-defined wrap-tag snippet palette for the AGENTS.md editor toolbar. */
   tagSnippets?: string[];
+  /** Settings paths relative to the native config directory. */
+  settingsFiles?: string[];
 }
 
 export const CONFIG_PATH = PIMOTE_CONFIG_PATH;

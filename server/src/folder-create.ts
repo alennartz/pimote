@@ -1,15 +1,14 @@
 import { realpath } from 'node:fs/promises';
-import type { FolderCreator } from '@pimote/sdk/folders';
+import { createBuiltinCreator } from './folder-sources/builtin.js';
 import { seedCodeFolderAgents } from './manager/seed.js';
 
 /**
  * Code-folder creation routing shared by the ws-handler `create_folder`
  * command and the manager's `pimote_create_folder` tool (DR-062).
  *
- * Routes through the first registered creator whose param schema accepts
- * `{ root, name }` — the built-in creator (mkdir + git init), or a
- * user-authored one taking its slot — then resolves the created path to its
- * canonical identity and seeds the new folder's AGENTS.md.
+ * Pimote core owns code-folder creation. The built-in creator makes the
+ * directory and initializes git. This boundary resolves the created path to
+ * its canonical identity and seeds the new folder's AGENTS.md.
  *
  * The seed is best-effort after a successful creation: the creator owns
  * folder existence and may write its own AGENTS.md — a seed failure must not
@@ -17,18 +16,10 @@ import { seedCodeFolderAgents } from './manager/seed.js';
  * `folders_changed` broadcast stay the caller's contract (each surface pairs
  * them the way its command twin does).
  */
-export async function createCodeFolderViaCreators(creators: readonly FolderCreator[], root: string, name: string, body?: string): Promise<{ folderPath: string }> {
-  const creator = creators.find((candidate) => {
-    const schema = candidate.describe().paramSchema;
-    return 'root' in schema && 'name' in schema;
-  });
-  if (!creator) {
-    throw new Error('No folder creator available');
-  }
-  const created = await creator.create({ root, name });
-  // Creator modules can return the lexical path they used to reach the new
-  // folder. Resolve it before any seed, broadcast, or session open so every
-  // downstream folder identity matches traversal's canonical path.
+export async function createCodeFolder(root: string, name: string, body?: string): Promise<{ folderPath: string }> {
+  const created = await createBuiltinCreator().create({ root, name });
+  // Resolve the lexical path before any seed, broadcast, or session open so
+  // every downstream folder identity matches traversal's canonical path.
   const folderPath = await realpath(created.path);
   await seedCodeFolderAgents(folderPath, name, body ?? '').catch((err) => {
     console.warn('[pimote] AGENTS.md seed skipped:', err instanceof Error ? err.message : String(err));

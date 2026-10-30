@@ -15,9 +15,7 @@ import { RepoIndex } from './repo-index.js';
 import { FolderRegistry } from './folder-registry.js';
 import type { FolderModelPort } from './folder-registry.js';
 import { loadFolderSources, resolveSourcesDir } from './folder-sources/index.js';
-import { createCodeFolderViaCreators } from './folder-create.js';
-import { createBuiltinCreator } from './folder-sources/builtin.js';
-import type { FolderCreator } from './folder-sources/index.js';
+import { createCodeFolder } from './folder-create.js';
 import { seedManagerRoot } from './manager/index.js';
 import type { ManagerToolContext, SessionArchiveOutcome, SessionResumeOutcome } from './manager/index.js';
 import { createManagerExtension } from './manager/index.js';
@@ -68,8 +66,8 @@ export async function main(options: StartOptions = {}) {
   // user-registered sources, the folder-tree port sharing its cached
   // discovery walk (one TTL stale-while-revalidate walk feeds tree and repo
   // consumers; manager tree consumers accept trees up to one TTL old), the
-  // persistent curation layer above them, and the built-in creator backing
-  // the dashboard's create-folder flow.
+  // persistent curation layer above them, and the core creator backing the
+  // dashboard's create-folder flow.
   // The manager root is never a folder row (owner ruling, review finding 10):
   // post-detection exclusion at listing assembly, not a discovery carve-out —
   // discovery may see the entry; listings and trees never surface it.
@@ -81,7 +79,6 @@ export async function main(options: StartOptions = {}) {
   const folderTree: FolderModelPort = {
     tree: () => repoIndex.tree(),
   };
-  const creators: FolderCreator[] = [createBuiltinCreator(), ...loadedSources.creators];
   const folderRegistry = new FolderRegistry(repoIndex, PIMOTE_REGISTRY_STORE_DIR, folderTree);
 
   // Initialize push notification service
@@ -311,11 +308,10 @@ export async function main(options: StartOptions = {}) {
     },
     folders: folderRegistry,
     repos: repoIndex,
-    // The creators seam (DR-062): the same routing the ws-handler
-    // `create_folder` command uses — creator selection by { root, name }
-    // schema shape plus the best-effort AGENTS.md seed.
+    // Code-folder creation stays in Pimote core. The manager and WebSocket
+    // surfaces share this operation and its best-effort AGENTS.md seed.
     creators: {
-      create: (input) => createCodeFolderViaCreators(creators, input.root, input.name, input.body),
+      create: (input) => createCodeFolder(input.root, input.name, input.body),
     },
     // Folder-change fan-out for manager folder creations (`pimote_create_persona`):
     // the same delta channel the ws-handler `create_folder` flow uses. The tool
@@ -371,7 +367,6 @@ export async function main(options: StartOptions = {}) {
     updateChecker,
     repoIndex,
     folderRegistry,
-    creators,
     folderListing,
   );
   clientRegistryRef.current = server.clientRegistry;

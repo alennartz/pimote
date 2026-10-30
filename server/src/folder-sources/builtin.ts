@@ -1,22 +1,26 @@
 import { mkdir, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isValidFolderName } from '../folder-registry.js';
-import type { FolderCreator } from '@pimote/sdk/folders';
 import { gitInitDir } from './git-init.js';
+
+export interface BuiltinCodeFolderCreator {
+  readonly id: string;
+  describe(): { label: string; paramSchema: Record<string, 'string' | 'string[]'> };
+  create(params: Record<string, unknown>): Promise<{ path: string }>;
+}
 
 function isMissing(err: unknown): boolean {
   return err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT';
 }
 
 /**
- * The built-in FolderCreator: makes a new single-repo folder from
- * `{ root, name }` — mkdir under `root` and `git init` it. Registered
- * in-process alongside user-authored creators; backs the dashboard's
- * create-folder flow (root + name → mkdir + git init). Rejects when the
- * target folder already exists, creating nothing. Returns the new folder's
- * canonical filesystem identity.
+ * The built-in folder creator makes a new single-repo folder from
+ * `{ root, name }` — mkdir under `root` and `git init` it. It backs the
+ * dashboard's core create-folder flow (root + name → mkdir + git init).
+ * It rejects an existing target and returns the new folder's canonical
+ * filesystem identity.
  */
-export function createBuiltinCreator(): FolderCreator {
+export function createBuiltinCreator(): BuiltinCodeFolderCreator {
   return {
     id: 'builtin-folder',
 

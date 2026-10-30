@@ -57,7 +57,7 @@ function callButton(): Element | null {
 }
 
 function dispatchCapabilities(voice: boolean): void {
-  for (const listener of eventListeners) listener({ type: 'server_capabilities', voice });
+  for (const listener of eventListeners) listener({ type: 'server_capabilities', voice, tagSnippets: [] });
 }
 
 afterEach(() => {

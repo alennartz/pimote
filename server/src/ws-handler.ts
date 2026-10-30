@@ -40,10 +40,9 @@ import { resolveSessionAcrossFolders, type SessionRecordLocation, type SessionRe
 import type { RepoIndex } from './repo-index.js';
 import { enrichActiveSessionCounts, isValidFolderName, type FolderRegistry } from './folder-registry.js';
 import { seedPersonaFolder } from './manager/seed.js';
-import { createCodeFolderViaCreators } from './folder-create.js';
+import { createCodeFolder } from './folder-create.js';
 import type { FolderListingService } from './folder-listing.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
-import type { FolderCreator } from './folder-sources/index.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
@@ -415,7 +414,6 @@ export class WsHandler {
     private readonly voiceOrchestrator?: VoiceOrchestrator,
     private readonly repoIndex?: RepoIndex,
     private readonly folderRegistry?: FolderRegistry,
-    private readonly creators?: FolderCreator[],
     private readonly folderListing?: FolderListingService,
   ) {
     this.clientId = clientId;
@@ -593,7 +591,7 @@ export class WsHandler {
           // matches { root, name } — built-in or user-authored — plus the
           // best-effort AGENTS.md seed); see folder-create.ts (DR-062).
           try {
-            const created = await createCodeFolderViaCreators(deps.creators, root, name, command.body);
+            const created = await createCodeFolder(root, name, command.body);
             // Otherwise the 30s listing TTL hides the new repo from the index.
             // Listing-only: the new folder's first probe fills its own slot;
             // untouched repos keep warm git probes.
@@ -1044,6 +1042,9 @@ export class WsHandler {
         }
 
         // ---- File editing commands ----
+        case 'get_global_settings': {
+          throw new Error('not implemented');
+        }
         case 'file_get': {
           this.sendResponse(id, true, await readEditableFile(command.path));
           break;
@@ -2249,13 +2250,12 @@ export class WsHandler {
   private requireFolderDeps(): {
     repoIndex: RepoIndex;
     folderRegistry: FolderRegistry;
-    creators: FolderCreator[];
     folderListing?: FolderListingService;
   } {
-    if (!this.repoIndex || !this.folderRegistry || !this.creators) {
+    if (!this.repoIndex || !this.folderRegistry) {
       throw new Error('Folder management is not available on this connection');
     }
-    return { repoIndex: this.repoIndex, folderRegistry: this.folderRegistry, creators: this.creators, folderListing: this.folderListing };
+    return { repoIndex: this.repoIndex, folderRegistry: this.folderRegistry, folderListing: this.folderListing };
   }
 
   /** Broadcast a session_state_changed event to ALL connected clients. */

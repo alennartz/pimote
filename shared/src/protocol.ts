@@ -689,6 +689,19 @@ export interface ViewSessionCommand extends CommandBase {
   sessionId: string;
 }
 
+export interface GlobalSettingsFile {
+  path: string;
+  label: string;
+}
+
+export interface GetGlobalSettingsCommand extends CommandBase {
+  type: 'get_global_settings';
+}
+
+export interface GetGlobalSettingsResponseData {
+  files: GlobalSettingsFile[];
+}
+
 export interface FileGetCommand extends CommandBase {
   type: 'file_get';
   /** Absolute path, a `~`-prefixed path (the server expands a leading `~`/`~/` to its home directory), or a relative path (resolved against the server's working directory). */
@@ -875,6 +888,7 @@ export type PimoteCommand =
   | ArchiveSessionCommand
   | TakeoverFolderCommand
   | ViewSessionCommand
+  | GetGlobalSettingsCommand
   | FileGetCommand
   | FilePutCommand
   | RegisterPushCommand
@@ -1393,6 +1407,8 @@ export interface ServerCapabilitiesEvent {
   type: 'server_capabilities';
   /** Voice calling is configured (speechmux signalling + LLM WS URLs). */
   voice: boolean;
+  /** Validated Markdown wrap-tag palette. */
+  tagSnippets: string[];
 }
 
 export interface UpdateStatus {

@@ -13,7 +13,6 @@ import { startWebSocketHeartbeat } from './ws-heartbeat.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderRegistry } from './folder-registry.js';
 import type { FolderListingService } from './folder-listing.js';
-import type { FolderCreator } from './folder-sources/index.js';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { serveStaticHostRoute, type StaticHostRegistry } from './static-host/index.js';
 import { applyAppNameToHtml, applyAppNameToManifest, resolveAppName } from './branding.js';
@@ -145,7 +144,6 @@ export async function createServer(
   updateChecker?: UpdateChecker,
   repoIndex?: RepoIndex,
   folderRegistry?: FolderRegistry,
-  creators?: FolderCreator[],
   folderListing?: FolderListingService,
 ): Promise<PimoteServer> {
   const appName = resolveAppName(config);
@@ -304,7 +302,6 @@ export async function createServer(
       voiceOrchestrator,
       repoIndex,
       folderRegistry,
-      creators,
       folderListing,
     );
     takeOverClientSlot(clientRegistry, clientId, handler);
@@ -316,6 +313,7 @@ export async function createServer(
     const capabilities: ServerCapabilitiesEvent = {
       type: 'server_capabilities',
       voice: voiceOrchestrator !== undefined,
+      tagSnippets: [],
     };
     handler.sendToClient(capabilities);
 

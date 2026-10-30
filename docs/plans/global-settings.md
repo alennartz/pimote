@@ -114,3 +114,73 @@ The store exposes operations equivalent to `loadManifest()`, `select(path)`, `ed
 
 - **DR-051** (generic file-edit seam for server-side files, last-write-wins) — superseded only for the native Pimote configuration target because dynamic safe reload requires server validation before writing. All other files retain the generic command and last-write-wins contract. The new decision keeps the existing wire shape and generic behavior elsewhere.
 - **DR-052** (tag snippet palette via client-side lenient parse of config.json) — superseded because the server-owned configuration workflow now provides validated `tagSnippets` capability data and the client no longer parses a hard-coded path.
+
+## Tests
+
+**Pre-test-write commit:** `506df5312a4e7a47195c53baff086c5fe9555f2f`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — `get_global_settings`, manifest response, global settings file identity, and server capability tag snippets.
+- `server/src/config.ts` — `settingsFiles` configuration field.
+- `server/src/config-runtime.ts` — native configuration validation, reload, write, and capability interfaces.
+- `server/src/global-settings.ts` — global settings manifest catalog interface.
+- `server/src/pimote-extensions/types.ts` — extension host, package discovery, registry, and diagnostic interfaces.
+- `server/src/pimote-extensions/index.ts` — extension host factory seam.
+- `server/src/folder-sources/builtin.ts` — core built-in folder creator contract after removing the public creator seam.
+- `server/src/folder-sources/index.ts` — folder-source exports without `FolderCreator`.
+- `server/src/folder-sources/loader.ts` — source-only loading boundary.
+- `server/src/folder-create.ts` — core folder creation boundary using the built-in creator contract.
+- `server/src/manager/types.ts` and `server/src/manager/index.ts` — internal core code-folder creation port without the removed external creator vocabulary.
+- `server/src/index.ts`, `server/src/server.ts`, and `server/src/ws-handler.ts` — structural wiring for core folder creation, capabilities, and the new command stub.
+- `packages/sdk/src/pimote/index.ts` — `PimoteExtension` and `PimoteExtensionContext` types.
+- `packages/sdk/src/folders/types.ts`, `packages/sdk/src/folders/index.ts`, and `packages/sdk/src/index.ts` — public SDK surface with the removed creator seam and new Pimote extension types.
+- `packages/sdk/package.json` — `@pimote/sdk/pimote` export.
+- `client/src/lib/stores/global-settings.svelte.ts` — client global-settings store operations and per-file state shape.
+- `client/src/lib/components/GlobalSettingsDialog.svelte` — dialog renderer boundary.
+- `client/src/lib/components/global-settings-presentation.ts` — gear, language, toolbar, and responsive action presentation seam.
+
+### Test Files
+
+- `server/src/pimote-extensions/host.test.ts` — direct and package discovery, scope filtering, registration lifecycle, diagnostics, and serialized reload behavior.
+- `server/src/global-settings.test.ts` — manifest ordering, path resolution, canonical deduplication, labels, missing files, and snapshot isolation.
+- `server/src/config-runtime.test.ts` — native-config validation, dynamic reload policy, startup-only preservation, symlink identity, ordinary writes, and capabilities.
+- `server/src/ws-handler.test.ts` — session-independent manifest command envelope.
+- `client/src/lib/stores/global-settings.svelte.test.ts` — manifest snapshots, lazy reads, independent drafts, saves, missing-file creation, errors, and close-discard behavior.
+- `client/src/lib/components/global-settings-presentation.test.ts` — home gear placement, conversation omission, Markdown controls, path language, and responsive actions.
+
+### Behaviors Covered
+
+#### Pimote extension SDK and host
+
+- A Pimote extension receives folder-source and settings-file registration handles plus a shutdown lifecycle hook.
+- Direct JavaScript/TypeScript modules and extension directories load in deterministic discovery order.
+- Relative settings registrations resolve from their entry module, and missing targets remain registered.
+- Only user-scoped Pi package `pimote.extensions` entries load. Pi-only entries and project-scoped packages do not load.
+- Reload awaits shutdown, invalidates old registrations, replaces the registry even after module failures, reports isolated diagnostics, and serializes concurrent reloads.
+- The public SDK exports no `FolderCreator` seam. Built-in folder creation remains a Pimote core boundary.
+
+#### Global settings catalog and protocol
+
+- The manifest orders effective built-ins, config-listed files, and extension registrations.
+- Existing canonical targets deduplicate by first occurrence, while declared missing files remain visible.
+- Config-relative, leading-`~`, absolute, and extension-resolved paths produce stable identities without client path reconstruction.
+- Basename labels expand with parent segments only when collisions require it.
+- Each snapshot is independent, and `get_global_settings` uses the standard request/response envelope without a session target.
+
+#### Native configuration runtime and capabilities
+
+- Invalid native configuration candidates fail before disk or live state changes.
+- `settingsFiles` and `tagSnippets` reload dynamically, model defaults apply to future consumers, idle timeout applies to the next idle check, and buffer size applies to new buffers.
+- Roots, manager root, port, VAPID keys, and active voice transport remain startup-only.
+- Symlink aliases identify the native target, while Pi-native and third-party files keep generic write behavior.
+- Capabilities expose the validated Markdown snippet palette.
+
+#### Client global settings experience
+
+- Opening a dialog keeps one server manifest snapshot until the next opening and lazy-loads inactive files.
+- Each tab preserves its own draft and dirty marker across selection, saves complete contents per file, and marks a missing file created after success.
+- Load and save errors preserve safe drafts, while a dirty tab cannot overwrite content after a failed load.
+- Closing with any dirty tab requests one discard confirmation; keeping edits preserves them, and discarding closes without writes.
+- The home gear is large at desktop bottom-left, small at mobile top-left, and absent from conversation surfaces.
+- Markdown paths expose server capability snippets only; JSON and plain-text paths do not. Desktop actions stay in the footer, and mobile actions move to the header.

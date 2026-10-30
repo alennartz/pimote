@@ -4,7 +4,7 @@ export type {
   FolderRegistryPort,
   FolderUpdatePatch,
   RepoIndexPort,
-  FolderCreatorsPort,
+  CodeFolderCreationPort,
   CodeFolderCreateInput,
   ManagedSessionSummary,
   DiskSessionRecord,

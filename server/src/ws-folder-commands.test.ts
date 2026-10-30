@@ -3,7 +3,6 @@ import { mkdtemp, mkdir, readFile, realpath, rm, symlink } from 'node:fs/promise
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
-import { createBuiltinCreator } from './folder-sources/builtin.js';
 import type { FolderRegistry } from './folder-registry.js';
 import type { RepoIndex } from './repo-index.js';
 import type { PimoteResponse } from '../../shared/dist/index.js';
@@ -54,7 +53,6 @@ function createHandler(roots: string[]): TestContext {
     undefined,
     repoIndex as unknown as RepoIndex,
     folderRegistry as unknown as FolderRegistry,
-    [createBuiltinCreator()],
     undefined,
   );
   return { handler, sent, folderRegistry };

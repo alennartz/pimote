@@ -1,1 +1,1 @@
-export type { FolderSource, FolderCreator, FolderCreatorDescriptor, FolderCreatorParamType, SourceEntry, RepoSourceEntry, HubSourceEntry, RepoInfo } from './types.js';
+export type { FolderSource, SourceEntry, RepoSourceEntry, HubSourceEntry, RepoInfo } from './types.js';

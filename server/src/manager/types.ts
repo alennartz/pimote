@@ -118,7 +118,7 @@ export interface FolderRegistryPort {
   removeMember(hubPath: string, memberPath: string): Promise<void>;
 }
 
-/** Input for the creators seam (`pimote_create_folder`, kind `code`). */
+/** Input for core code-folder creation (`pimote_create_folder`, kind `code`). */
 export interface CodeFolderCreateInput {
   /** Existing folder the code folder is created under (validated by the
    * caller against the scan roots before the seam is invoked). */
@@ -129,12 +129,11 @@ export interface CodeFolderCreateInput {
 }
 
 /**
- * Narrow creators seam for manager tools: one code-folder creation routed
- * through the registered FolderCreator (the built-in creator, or a
- * user-authored one taking its slot) plus the AGENTS.md seed — the same
- * routing the ws-handler `create_folder` command uses.
+ * Narrow core port for manager tools: one code-folder creation through
+ * Pimote's built-in creator plus the AGENTS.md seed. This is the same core
+ * operation used by the ws-handler `create_folder` command.
  */
-export interface FolderCreatorsPort {
+export interface CodeFolderCreationPort {
   create(input: CodeFolderCreateInput): Promise<{ folderPath: string }>;
 }
 
@@ -151,7 +150,7 @@ export interface ManagerToolContext {
   sessions: SessionManagerPort;
   folders: FolderRegistryPort;
   repos: RepoIndexPort;
-  creators: FolderCreatorsPort;
+  creators: CodeFolderCreationPort;
   /** Broadcast a `folders_changed` delta to every connected client — the same
    *  channel the ws-handler `create_folder` flow uses. Paired with
    *  `repos.invalidateListing()` after a creation that bypasses the registry

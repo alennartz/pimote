@@ -130,7 +130,6 @@ describe('createServer — folders_changed broadcast wiring', () => {
       undefined,
       repoIndex,
       folderRegistry,
-      undefined,
       folderListing,
     );
     await server.start(0);
@@ -179,7 +178,6 @@ describe('createServer — session metadata invalidation', () => {
       undefined,
       new InMemoryStaticHostRegistry(),
       makeDownloads(),
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -306,12 +304,12 @@ describe('createServer — server_capabilities advertisement', () => {
 
   it('advertises voice disabled when no voice orchestrator is wired', async () => {
     const port = await startServer(undefined);
-    await expect(awaitCapabilities(port)).resolves.toEqual({ type: 'server_capabilities', voice: false });
+    await expect(awaitCapabilities(port)).resolves.toEqual({ type: 'server_capabilities', voice: false, tagSnippets: [] });
   });
 
   it('advertises voice enabled when a voice orchestrator is wired', async () => {
     const port = await startServer({ callHolder: new Map() });
-    await expect(awaitCapabilities(port)).resolves.toEqual({ type: 'server_capabilities', voice: true });
+    await expect(awaitCapabilities(port)).resolves.toEqual({ type: 'server_capabilities', voice: true, tagSnippets: [] });
   });
 });
 
@@ -365,7 +363,6 @@ describe('createServer — malformed WebSocket frames', () => {
       undefined,
       new InMemoryStaticHostRegistry(),
       makeDownloads(),
-      undefined,
       undefined,
       undefined,
       undefined,

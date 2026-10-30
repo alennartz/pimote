@@ -236,7 +236,6 @@ describe('main — file download bootstrap wiring', () => {
       mocks.updateChecker,
       expect.anything(),
       expect.anything(),
-      expect.anything(),
       expect.anything(), // folderListing
     );
   });
@@ -260,7 +259,6 @@ describe('main — file download bootstrap wiring', () => {
       mocks.staticHostRegistry,
       mocks.downloadManager,
       undefined,
-      expect.anything(),
       expect.anything(),
       expect.anything(),
       expect.anything(), // folderListing
