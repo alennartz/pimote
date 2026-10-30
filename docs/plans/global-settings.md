@@ -197,3 +197,138 @@ The store exposes operations equivalent to `loadManifest()`, `select(path)`, `ed
 - Verify production capability broadcasts and dynamic configuration wiring into session, voice, idle-check, and buffer consumers. Contract tests cover the runtime policy through captured consumer adapters, not production wiring.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Complete native configuration validation
+
+Change `server/src/config.ts` to share candidate parsing between `loadConfig()` and `ConfigRuntime.validate()`. Keep existing defaults, home expansion, model-reference normalization, and manager-root validation. Validate optional `settingsFiles` and `tagSnippets` as string arrays without dropping invalid element types. Return `settingsFiles` in declared order. Keep native paths supplied by `server/src/paths.ts`, which already honors XDG configuration.
+
+Implement `validate()` in `server/src/config-runtime.ts` against this parser. Reject malformed JSON, non-object candidates, empty roots, and invalid configuration before any write. Keep parsing separate from disk access and runtime mutation.
+
+**Verify:** The validation and configured-order cases in `server/src/config-runtime.test.ts` pass. Existing configuration tests retain startup defaults and path behavior.
+**Status:** not started
+
+### Step 2: Implement the native configuration runtime
+
+Complete `ConfigRuntime` in `server/src/config-runtime.ts` behind its existing constructor, `snapshot()`, `apply()`, `isNativeConfig()`, `capabilities()`, and `putFile()` interface. Keep an independent effective snapshot rather than changing the caller's configuration object.
+
+Apply only the architecture's dynamic fields: settings files, tag snippets, future model defaults, idle timeout, and future buffer size. Preserve startup roots, manager root, listener port, VAPID values, and voice transport. Retain unspecified fields as startup configuration. Return independent snapshots so consumers cannot change live configuration.
+
+Reuse `resolveFilePath()` and `writeEditableFile()` from `server/src/file-edit.ts`. Compare resolved native identity and canonical existing targets so symlink aliases receive native validation. Validate native contents before the atomic write. Apply the validated candidate only after a successful write. Ordinary files keep generic writes without configuration parsing. Return the existing `{ path }` result.
+
+Produce `ServerCapabilitiesEvent` data with the validated snippet palette and voice availability. Production wiring will use the booted orchestrator as the authority for active voice availability.
+
+**Verify:** All `server/src/config-runtime.test.ts` cases pass, including unchanged disk/live state after invalid writes, symlink identity, captured consumer policies, and ordinary last-write-wins writes.
+**Status:** not started
+
+### Step 3: Implement the global settings catalog
+
+Complete `GlobalSettingsCatalog.snapshot()` in `server/src/global-settings.ts` using `GlobalSettingsCatalogOptions`. Keep all manifest construction behind this interface and leave contents to `file_get`.
+
+Build entries in this order: effective Pi `AGENTS.md`, effective Pi `settings.json`, native Pimote config, configured paths, extension paths. Resolve config-relative paths from `dirname(configPath)`, leading `~` from the supplied home, and extension paths from the host's resolved registrations. Preserve missing targets. Deduplicate existing canonical targets by first occurrence while keeping the first resolved path as tab identity.
+
+Compute basename labels and add parent segments until colliding labels become unique. Preserve declaration order. Copy option arrays and return independent file records for each snapshot.
+
+**Verify:** `server/src/global-settings.test.ts` passes, including multi-segment label collisions, canonical aliases, missing files, and snapshot isolation.
+**Status:** not started
+
+### Step 4: Implement Pimote extension discovery and loading
+
+Complete `createPimoteExtensionHost()` in `server/src/pimote-extensions/index.ts`. Add private implementation files under `server/src/pimote-extensions/` as needed. Preserve the interfaces in `types.ts` and the SDK factory contract in `packages/sdk/src/pimote/index.ts`.
+
+Discover direct JS/TS modules and entry-bearing extension directories in deterministic order. Support the directory `package.json` main entry exercised by `host.test.ts` and index entry files. Read package `pimote.extensions` through the package adapter, not by scanning arbitrary package directories. Do not recursively treat package implementation files as independent extensions.
+
+Adapt `PimotePackageManager.listConfiguredPackages()` and `getInstalledPath()` without installation or updates. Filter to user declarations before reading package manifests. Resolve only `pimote.extensions` from installed package roots. Never pass `pi.extensions` or project packages to this loader. Deduplicate resolved entry paths across directory and package discovery before factory execution.
+
+Reuse the existing `jiti` dependency and the runtime SDK alias helper in `server/src/folder-sources/loader.ts`. Add `@pimote/sdk/pimote` to the aliases. Load each entry's default factory with a scoped context. Resolve relative settings registrations from the entry module and retain missing settings targets. Keep source registrations in discovery order. Validate registrations at the host interface and report entry failures through registry diagnostics without stopping valid modules.
+
+**Verify:** Discovery, missing-registration, package-scope, and isolated-failure cases in `server/src/pimote-extensions/host.test.ts` pass. SDK imports resolve to Pimote's bundled SDK.
+**Status:** not started
+
+### Step 5: Complete extension lifecycle and source replacement
+
+Implement `start()`, `reload()`, `getRegistry()`, and `shutdown()` in the extension host. Serialize lifecycle operations so factory execution and shutdown never overlap. Await shutdown handlers, invalidate old contexts, clear loader caches, and discover a fresh runtime. Make late registrations through invalidated contexts inert. Replace the registry even when individual entries fail. Preserve diagnostics from the current runtime and continue loading valid entries.
+
+Implement `RepoIndex.replaceUserSources()` in `server/src/repo-index.ts`. Separate extension-owned sources from `registerSource()` core registrations. Update discovery and `prepareFolderOpen()` consumers to use both sets. Replace the user set atomically, invalidate discovery, and publish changes through the existing `currentFacts()`/`notifyRefreshed()` delta machinery. Preserve core sources and guard against publishing an invalidated walk.
+
+Keep built-in creation behind `BuiltinCodeFolderCreator` in `server/src/folder-sources/builtin.ts` and `createCodeFolder()` in `server/src/folder-create.ts`. Preserve the core manager creation port in `server/src/manager/types.ts` and `index.ts`. Do not restore external creator registration or SDK exports.
+
+**Verify:** All host lifecycle cases and the user-source replacement cases in `server/src/repo-index.test.ts` pass. Existing folder creation tests pass for dashboard and manager consumers.
+**Status:** not started
+
+### Step 6: Wire server-global settings and reloads
+
+In `server/src/paths.ts`, define the standard Pimote extensions directory under `PIMOTE_CONFIG_DIR`. In `server/src/index.ts`, construct one config runtime and one extension host after startup configuration preparation. Use Pi's public `getAgentDir()`, `SettingsManager`, and `DefaultPackageManager` exports for effective agent paths and installed user package declarations. Refresh package settings during host rediscovery without installing packages.
+
+Replace the boot call to `loadFolderSources(resolveSourcesDir(...))` with host startup and `repoIndex.replaceUserSources(registry.sources)`. Keep the legacy source-only helper out of production discovery. Report registry diagnostics through server logging. Await host shutdown during graceful server shutdown.
+
+Extend `createServer()` in `server/src/server.ts` to receive the global settings dependencies and pass them to `WsHandler`. Supply a manifest callback that constructs the catalog from the current config snapshot, effective runtime paths, and current extension settings registrations. The callback must not cache one manifest across dialog openings.
+
+Implement `get_global_settings` in `server/src/ws-handler.ts` with the standard request/response envelope and no session lookup. Route `file_put` through the injected config runtime while preserving the existing `AGENTS.md` owning-folder invalidation. After a successful native write, broadcast updated capabilities to connected clients. Send the same current capability payload on connection, with voice determined by the booted orchestrator.
+
+In the `/reload` prompt branch, await `reloadPimoteExtensions` before `session.reload()`. The server-wide callback reloads the host and replaces user sources before returning. Preserve the existing current-session Pi resync and reload response behavior.
+
+**Verify:** The manifest and global-before-Pi reload cases in `server/src/ws-handler.test.ts` pass. Manual checks confirm connection capabilities, native-write broadcasts, extension settings replacement, and folder deltas across clients.
+**Status:** not started
+
+### Step 7: Connect dynamic configuration consumers
+
+Change configuration access in `server/src/session-manager.ts` to accept a current-snapshot supplier while preserving callers that pass a fixed config. Wire the runtime supplier from `server/src/index.ts`. Capture the effective policy when creating a session, a voice extension, or an event buffer. Use the explicit snapshot for default model/thinking selection and `buildVoiceExtensionFactory()` model defaults. Existing sessions, voice extensions, and buffers keep their captured values.
+
+Change `startIdleCheck()` to accept a timeout supplier as well as its existing fixed value. Read the current timeout during each idle check. Wire the runtime timeout supplier at boot. Keep roots, manager placement, HTTP listener, push keys, and the active voice orchestrator bound to startup configuration.
+
+**Verify:** Existing session-manager tests pass. Manual checks show changed defaults and buffer size on new consumers, changed timeout on the next idle check, and no changes to active sessions or voice transport.
+**Status:** not started
+
+### Step 8: Implement client drafts and capability snippets
+
+Complete `GlobalSettingsStore` in `client/src/lib/stores/global-settings.svelte.ts` using its injected transport. Store loaded/saved baselines independently per manifest path. Open one snapshot, select and load the first file, and lazy-load other files on selection. Preserve drafts across selection and guard against stale responses from closed or replaced openings.
+
+Implement edits, complete-content per-file saves, dirty comparison, missing-file creation state, and load/save errors. Refuse saves before a successful load. Capture the submitted draft so later edits remain dirty after a save response. Reset loading/saving flags after rejected transports. Keep the opening manifest unchanged until close and reopen.
+
+Implement clean close, one dirty-discard confirmation, Keep editing, and Discard without writes. Export a production store bound to `connection.send()` without changing the injectable constructor.
+
+Add a snippet accessor to `client/src/lib/stores/server-capabilities.svelte.ts`, defaulting to an empty palette before advertisement. Remove global path constants, the native config fetch, and `parseTagSnippets` from `file-editor.svelte.ts` when no production caller remains. Feed `ConfigFileEditor.svelte` from capabilities while retaining `openFolderInstructions()` and ordinary path-based editing.
+
+Replace the superseded parser/config-fetch cases in `file-editor.svelte.test.ts` with capability-fed snippet behavior. Update existing editor tests affected by this supersession within this implementation step. Do not change the approved global-settings contract tests.
+
+**Verify:** `client/src/lib/stores/global-settings.svelte.test.ts` passes. Existing folder editor tests pass under the capability contract, with no client read of a reconstructed Pimote config path.
+**Status:** not started
+
+### Step 9: Render the approved tabbed editor
+
+Complete `globalSettingsPresentation()` in `client/src/lib/components/global-settings-presentation.ts`. Produce home-only gear placement, path-derived Markdown/JSON/text presentation, Markdown-only capability snippets, and desktop/mobile action locations. Reuse `inferLanguageFromPath()` from `client/src/lib/editor-language.ts` for the editor, mapping plain text to its existing unhighlighted mode.
+
+Complete `GlobalSettingsDialog.svelte` as a renderer of the injected store and its `viewport`, `surface`, and `snippets` inputs. Follow `docs/mocks/global-settings/index.html`: accessible Open Settings gear, modal overlay, no visible Settings title, selected-file summary/path, tab labels, dirty markers, missing-file creation hint, and one close-discard alert dialog.
+
+Reuse the dialog primitives and lazy `ExtensionCodeEditor` pattern from `CodeEditorDialog.svelte`. If shared chrome needs tab insertion or explicit viewport rendering, extend it without changing existing editor behavior. Keep inactive drafts in the store, not in separate editor instances. Mount the active editor only after a successful load. Show manifest/file errors and loading states without exposing an unsafe editable empty draft.
+
+Provide Save for only the active file. Disable it for clean, unloaded, or saving state. Keep desktop Cancel/Save in a semantic footer and mobile Close/Save in the header. Route Escape and outside dismissal through the store's close decision.
+
+Reuse `isValidTagName()` and `wrapWithTag()` from `client/src/lib/tag-wrap.ts` for the Tag row, freeform tag entry, and capability snippet buttons. Render these controls only for Markdown paths. Preserve the selection-wrap behavior used by `ConfigFileEditor.svelte`.
+
+**Verify:** Presentation and actual-dialog tests pass. Manual checks cover tag wrapping, per-tab edits and saves, missing-file creation, error recovery, keyboard dismissal, Keep editing, and Discard in both mock viewports.
+**Status:** not started
+
+### Step 10: Mount the home Settings entry point
+
+Mount `GlobalSettingsDialog.svelte` from `client/src/lib/components/Dashboard.svelte` with the production store and current capability snippets. Supply responsive viewport information using the client breakpoint convention. Position the large desktop gear at bottom-left and the small mobile gear at top-left, including safe-area spacing.
+
+Remove the Agent instructions header button and its global-path import from `FolderList.svelte`. Keep its folder-row `openFolderInstructions()` action. Keep the Settings gear out of conversation mounts. Adjust dashboard/home styling only where needed for the approved placement.
+
+**Verify:** The dashboard opens Settings through the gear at both breakpoints. Conversation surfaces have no gear. Folder instructions remain editable from folder rows.
+**Status:** not started
+
+### Step 11: Update extension guidance and verify integration
+
+Update `README.md`, `packages/sdk/README.md`, and relevant folder recipes in `docs/shipped/folders.md` and `docs/shipped/recipes.md`. Replace the old source-array/creator example with a default `PimoteExtension` factory example. Document `@pimote/sdk/pimote`, `registerSource()`, `registerFile()`, shutdown, user XDG discovery, user-installed package adaptation, and separate `pi.extensions`/`pimote.extensions` entries. Explain explicit dual-host modules and independent lifecycles. Document the removed external creator seam without renaming the core folder wizard.
+
+Document effective Settings paths, missing-file creation, config-relative and module-relative registrations, opening snapshots, native validation, capability snippets, and the exact dynamic/startup configuration matrix. Remove obsolete hard-coded-path warnings and old-loader production claims.
+
+Update `server/src/pimote-docs/index.ts` guidance to distinguish the two hosts. Check `server/src/sdk-twins.ts` and SDK exports for the new type surface and absence of public `FolderCreator`. Update `codemap.md` to describe the host, catalog, runtime, client store/dialog, and source-only SDK seam.
+
+Update `tools/manual-test/PLAN.md` and `tools/manual-test/README.md` to cover Settings instead of the global Agent instructions button. Include multi-client capability refresh, host reload failures, installed-package filtering, native validation, symlink writes, dynamic consumer policies, and retained folder instructions. Use the existing manual-test harness rather than adding dependencies.
+
+**Verify:** Run `npm run build`, `npm run check`, `npm run test --workspace=@pimote/server -- --run`, and `npm run test --workspace=client -- --run`. Complete the plan's Manual Acceptance checks and the approved mock flows. SDK documentation and production discovery contain no external creator registration contract.
+**Status:** not started
