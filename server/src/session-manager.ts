@@ -37,6 +37,8 @@ export interface EventSocket {
 }
 
 export interface SessionManagerOptions {
+  /** Supplies the current effective configuration for new consumers. */
+  configSupplier?: () => PimoteConfig;
   staticHostFactory?: ExtensionFactory;
   fileDownloadFactory?: ExtensionFactory;
   /** Injects the `pimote-docs` system-prompt section into every session. */
@@ -760,6 +762,7 @@ export class PimoteSessionManager {
   private readonly managerExtensionFactory?: ExtensionFactory;
   private readonly pimoteDocsFactory?: ExtensionFactory;
   private readonly isVoiceModeActive?: (slot: ManagedSlot) => boolean;
+  private readonly configSupplier: () => PimoteConfig;
 
   private constructor(
     private readonly config: PimoteConfig,
@@ -774,6 +777,12 @@ export class PimoteSessionManager {
     this.managerExtensionFactory = options.managerExtensionFactory;
     this.pimoteDocsFactory = options.pimoteDocsFactory;
     this.isVoiceModeActive = options.isVoiceModeActive;
+    this.configSupplier = options.configSupplier ?? (() => this.config);
+  }
+
+  /** Return the effective configuration for a new session or extension. */
+  private currentConfig(): PimoteConfig {
+    return this.configSupplier();
   }
 
   /** Initialize the one process-lifetime Pi model/auth runtime before serving sessions. */
@@ -790,13 +799,14 @@ export class PimoteSessionManager {
    * unchanged — sessions simply don't load `@pimote/voice` at all.
    */
   private buildVoiceExtensionFactory(getSession: () => AgentSession): ExtensionFactory | undefined {
+    const config = this.currentConfig();
+    // Voice transport is startup-only. Model defaults are read for each new
+    // voice extension so a native-config reload affects future consumers.
     if (!this.config.voice?.speechmuxSignalUrl || !this.config.voice?.speechmuxLlmWsUrl) {
       return undefined;
     }
-    const interpreter =
-      this.config.defaultInterpreterModel ?? (this.config.defaultProvider && this.config.defaultModel ? `${this.config.defaultProvider}/${this.config.defaultModel}` : undefined);
-    const worker =
-      this.config.defaultWorkerModel ?? (this.config.defaultProvider && this.config.defaultModel ? `${this.config.defaultProvider}/${this.config.defaultModel}` : undefined);
+    const interpreter = config.defaultInterpreterModel ?? (config.defaultProvider && config.defaultModel ? `${config.defaultProvider}/${config.defaultModel}` : undefined);
+    const worker = config.defaultWorkerModel ?? (config.defaultProvider && config.defaultModel ? `${config.defaultProvider}/${config.defaultModel}` : undefined);
     if (!interpreter || !worker) {
       console.warn('[pimote] voice extension disabled: no defaultInterpreterModel/defaultWorkerModel or fallback defaultProvider/defaultModel in config');
       return undefined;
@@ -998,21 +1008,24 @@ export class PimoteSessionManager {
     console.log(`[pimote] openSession: ${availableModels.length} models available, session model: ${session.model ? `${session.model.provider}/${session.model.id}` : 'none'}`);
 
     // Apply default model from config (only for new sessions without an existing model preference)
-    if (!sessionFilePath && this.config.defaultProvider && this.config.defaultModel) {
+    const currentConfig = this.currentConfig();
+    // Apply defaults only to newly-created sessions. Existing sessions retain
+    // their persisted model and thinking settings.
+    if (!sessionFilePath && currentConfig.defaultProvider && currentConfig.defaultModel) {
       const models = await this.modelRuntime.getAvailable();
-      const defaultModel = models.find((m) => m.provider === this.config.defaultProvider && m.id === this.config.defaultModel);
+      const defaultModel = models.find((m) => m.provider === currentConfig.defaultProvider && m.id === currentConfig.defaultModel);
       if (defaultModel) {
         await session.setModel(defaultModel);
         console.log(`[pimote] Set default model: ${defaultModel.provider}/${defaultModel.id}`);
       } else {
-        console.warn(`[pimote] Default model not found: ${this.config.defaultProvider}/${this.config.defaultModel}`);
+        console.warn(`[pimote] Default model not found: ${currentConfig.defaultProvider}/${currentConfig.defaultModel}`);
       }
     }
 
     // Apply default thinking level from config
-    if (!sessionFilePath && this.config.defaultThinkingLevel) {
-      session.setThinkingLevel(this.config.defaultThinkingLevel as AgentSession['thinkingLevel']);
-      console.log(`[pimote] Set default thinking level: ${this.config.defaultThinkingLevel}`);
+    if (!sessionFilePath && currentConfig.defaultThinkingLevel) {
+      session.setThinkingLevel(currentConfig.defaultThinkingLevel as AgentSession['thinkingLevel']);
+      console.log(`[pimote] Set default thinking level: ${currentConfig.defaultThinkingLevel}`);
     }
 
     // Pimote convention: drain the entire steering / follow-up queue into a
@@ -1029,7 +1042,7 @@ export class PimoteSessionManager {
       const sessionState = createSessionState(
         session,
         eventBusRef.current!,
-        this.config,
+        this.currentConfig(),
         {
           onStatusChange: (sid, fp) => this.onStatusChange?.(sid, fp),
           onSessionIdle: (sid, s) => this.handleSessionIdle(sid, s),
@@ -1294,7 +1307,7 @@ export class PimoteSessionManager {
     slot.sessionState = createSessionState(
       slot.runtime.session,
       slot.eventBusRef.current!,
-      this.config,
+      this.currentConfig(),
       {
         onStatusChange: (sid, fp) => this.onStatusChange?.(sid, fp),
         onSessionIdle: (sid, s) => this.handleSessionIdle(sid, s),
@@ -1345,10 +1358,12 @@ export class PimoteSessionManager {
     return Array.from(this.sessions.values());
   }
 
-  startIdleCheck(idleTimeout: number, isCallActive?: (sessionId: string) => boolean): void {
+  startIdleCheck(idleTimeout: number | (() => number), isCallActive?: (sessionId: string) => boolean): void {
     this.stopIdleCheck();
+    const readIdleTimeout = typeof idleTimeout === 'function' ? idleTimeout : () => idleTimeout;
 
     this.idleCheckHandle = setInterval(() => {
+      const effectiveIdleTimeout = readIdleTimeout();
       for (const [sessionId, candidate] of this.sessions) {
         this.withSessionOperation(sessionId, async () => {
           const slot = this.sessions.get(sessionId);
@@ -1361,7 +1376,7 @@ export class PimoteSessionManager {
           // protect unobserved slots. Poll extensions only after the idle threshold.
           const idleSince = slot.sessionState.idleSince;
           const bashInProgress = slot.session.isBashRunning || slot.sessionState.bashDispatchInProgress === true;
-          if (!hasObservers && !hasActiveCall && !bashInProgress && idleSince !== null && Date.now() - idleSince > idleTimeout) {
+          if (!hasObservers && !hasActiveCall && !bashInProgress && idleSince !== null && Date.now() - idleSince > effectiveIdleTimeout) {
             const activityBus = slot.eventBusRef.current;
             if (activityBus && askActivity(activityBus)) return;
             await this.closeSession(sessionId);

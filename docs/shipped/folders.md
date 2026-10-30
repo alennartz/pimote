@@ -45,6 +45,16 @@ Source-listed hubs can be promised before their folder exists. Once materialized
 
 Favorite, archived, and tags attach to the canonical path. A folder moved on disk orphans its curation state. The state stays recorded and is ignored. Restore an archived folder with `pimote_update_folder` (`archived: false`). The folder never leaves disk.
 
+## Pimote extension host
+
+Process-global Pimote extensions load from `$XDG_CONFIG_HOME/pimote/extensions/` in deterministic order. The host accepts direct JavaScript or TypeScript modules and extension directories with an entry file. User-scoped Pi packages can contribute entries through `pimote.extensions`; project packages and `pi.extensions` entries are ignored. Each module exports a default `PimoteExtension` factory from `@pimote/sdk/pimote`.
+
+A factory receives `folders.registerSource(source)`, `settings.registerFile(path)`, and `on('shutdown', handler)`. Relative Settings paths resolve from the entry module. Reload awaits shutdown, invalidates old registrations, clears the loader cache, and replaces the registry even when one entry fails. Folder creation remains a core dashboard and manager operation, not an extension registration.
+
+## Global Settings files
+
+The Settings manifest combines effective Pi `AGENTS.md`, effective Pi `settings.json`, native Pimote config, `settingsFiles` entries, and extension registrations. The server resolves these paths and labels. The client never reconstructs host paths. A missing entry remains visible and is created by a successful save. Native Pimote config writes are parsed and validated before an atomic write. `tagSnippets` is validated on the server and advertised in `server_capabilities`. Changes to settings files apply on the next dialog opening.
+
 ## Freshness
 
 One cached walk feeds the folder listing and its repo facts. The cache holds for 30 seconds and serves stale entries while a background refresh runs. Consequences:

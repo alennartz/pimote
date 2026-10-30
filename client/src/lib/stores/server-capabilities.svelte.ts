@@ -10,13 +10,28 @@ import { connection } from './connection.svelte.js';
 export class ServerCapabilitiesStore {
   private advertised: ServerCapabilitiesEvent | null = $state(null);
 
+  /** True after the server has sent the capability snapshot. */
+  get hasAdvertisement(): boolean {
+    return this.advertised !== null;
+  }
+
   /** Voice calling is enabled on the server. False until advertised. */
   get voice(): boolean {
     return this.advertised?.voice ?? false;
   }
 
+  /** Validated Markdown wrap-tag snippets. Empty until the server advertises them. */
+  get tagSnippets(): readonly string[] {
+    return this.advertised?.tagSnippets ?? [];
+  }
+
+  /** Short alias for callers that render a snippet palette. */
+  get snippets(): readonly string[] {
+    return this.tagSnippets;
+  }
+
   handleEvent(event: ServerCapabilitiesEvent): void {
-    this.advertised = event;
+    this.advertised = { ...event, tagSnippets: [...event.tagSnippets] };
   }
 }
 

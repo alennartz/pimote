@@ -16,7 +16,9 @@ export const PIMOTE_CONFIG_PATH = join(PIMOTE_CONFIG_DIR, 'config.json');
 export const PIMOTE_PUSH_SUBSCRIPTIONS_PATH = join(PIMOTE_STATE_DIR, 'push-subscriptions.json');
 export const PIMOTE_SESSION_METADATA_PATH = join(PIMOTE_STATE_DIR, 'session-metadata.json');
 
-/** Directory scanned for user folder-source modules (dynamic-imported extensible discovery). */
+/** Directory scanned for user Pimote extension modules. */
+export const PIMOTE_EXTENSIONS_DIR = join(PIMOTE_CONFIG_DIR, 'extensions');
+/** Directory scanned for user folder-source modules (legacy source-only loader). */
 export const PIMOTE_FOLDER_SOURCES_DIR = join(PIMOTE_CONFIG_DIR, 'folder-sources');
 /** Deprecated legacy sources dir — read-compat fallback when PIMOTE_FOLDER_SOURCES_DIR is absent (will be retired). */
 export const LEGACY_PIMOTE_PROJECT_SOURCES_DIR = join(PIMOTE_CONFIG_DIR, 'project-sources');

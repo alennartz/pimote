@@ -1,9 +1,13 @@
 import { resolve } from 'node:path';
 import { mkdir, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { DefaultPackageManager, SettingsManager, getAgentDir } from '@earendil-works/pi-coding-agent';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, ensureVapidKeys, expandHomePath, managerRootPlacementError } from './config.js';
+import { ConfigRuntime } from './config-runtime.js';
+import { GlobalSettingsCatalog } from './global-settings.js';
+import { createPimoteExtensionHost } from './pimote-extensions/index.js';
 import { closeSessionForObservers, WsHandler } from './ws-handler.js';
 import { createServer } from './server.js';
 import { PimoteSessionManager, runSlotLifecycle } from './session-manager.js';
@@ -14,7 +18,6 @@ import { scanFolderModel, type FolderOccurrence, type FolderScanWarning, type Sp
 import { RepoIndex } from './repo-index.js';
 import { FolderRegistry } from './folder-registry.js';
 import type { FolderModelPort } from './folder-registry.js';
-import { loadFolderSources, resolveSourcesDir } from './folder-sources/index.js';
 import { createCodeFolder } from './folder-create.js';
 import { seedManagerRoot } from './manager/index.js';
 import type { ManagerToolContext, SessionArchiveOutcome, SessionResumeOutcome } from './manager/index.js';
@@ -24,6 +27,8 @@ import { PushNotificationService } from './push-notification.js';
 import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore } from './push-infrastructure.js';
 import {
   LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
+  PIMOTE_CONFIG_PATH,
+  PIMOTE_EXTENSIONS_DIR,
   PIMOTE_FILE_DOWNLOAD_DIR,
   PIMOTE_REGISTRY_STORE_DIR,
   PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
@@ -59,6 +64,20 @@ export async function main(options: StartOptions = {}) {
   // Allow explicit CLI override first, then PORT env var, then config
   const port = options.portOverride ?? (process.env.PORT ? parseInt(process.env.PORT, 10) : config.port);
 
+  // Native Pimote configuration is the single live source for dynamic policy.
+  // Startup-only fields remain captured in `config` by the consumers that own
+  // listeners, roots, push, and voice transport.
+  const voiceOrchestratorRef: { current: ReturnType<typeof buildVoiceOrchestrator> } = { current: null };
+  const configRuntime = new ConfigRuntime({
+    configPath: PIMOTE_CONFIG_PATH,
+    config,
+    voiceAvailable: () => voiceOrchestratorRef.current !== null,
+  });
+  const agentDir = getAgentDir();
+  const packageSettings = SettingsManager.create(process.cwd(), agentDir);
+  const packageManager = new DefaultPackageManager({ cwd: process.cwd(), agentDir, settingsManager: packageSettings });
+  const pimoteExtensionHost = createPimoteExtensionHost({ extensionDirectory: PIMOTE_EXTENSIONS_DIR, packageManager });
+
   const sessionSummaries = new SessionSummaryIndex();
   const sessionRecords = new SessionRecords(sessionSummaries);
 
@@ -72,10 +91,11 @@ export async function main(options: StartOptions = {}) {
   // post-detection exclusion at listing assembly, not a discovery carve-out —
   // discovery may see the entry; listings and trees never surface it.
   const repoIndex = new RepoIndex(config.roots, { excludeEntryPaths: [config.managerRoot] });
-  const loadedSources = await loadFolderSources(await resolveSourcesDir(config.folderSourcesDir));
-  for (const source of loadedSources.sources) {
-    repoIndex.registerSource(source);
+  const initialPimoteRegistry = await pimoteExtensionHost.start();
+  for (const diagnostic of initialPimoteRegistry.diagnostics) {
+    console.warn(`[pimote-extensions] ${diagnostic.path}: ${diagnostic.message}`);
   }
+  if (initialPimoteRegistry.sources.length > 0) await repoIndex.replaceUserSources(initialPimoteRegistry.sources);
   const folderTree: FolderModelPort = {
     tree: () => repoIndex.tree(),
   };
@@ -107,8 +127,8 @@ export async function main(options: StartOptions = {}) {
   const managerExtensionFactory: ExtensionFactory = (pi) => createManagerExtension(managerContextBinding.get())(pi);
   // Voice is constructed after the session manager. Keep the predicate live so
   // replacement sessions read their current slot session ID.
-  const voiceOrchestratorRef: { current: ReturnType<typeof buildVoiceOrchestrator> } = { current: null };
   const sessionManager = await PimoteSessionManager.create(config, pushNotificationService, {
+    configSupplier: () => configRuntime.snapshot(),
     staticHostFactory,
     fileDownloadFactory: fileDownloads.extensionFactory,
     managerExtensionFactory,
@@ -342,6 +362,27 @@ export async function main(options: StartOptions = {}) {
     console.log('[voice] dormant: voice config absent (set voice.speechmuxSignalUrl and voice.speechmuxLlmWsUrl to enable)');
   }
 
+  const reloadPimoteExtensions = async (): Promise<void> => {
+    const registry = await pimoteExtensionHost.reload();
+    for (const diagnostic of registry.diagnostics) {
+      console.warn(`[pimote-extensions] ${diagnostic.path}: ${diagnostic.message}`);
+    }
+    await repoIndex.replaceUserSources(registry.sources);
+  };
+  const globalSettings = {
+    manifest: () =>
+      new GlobalSettingsCatalog({
+        home: homedir(),
+        agentDir,
+        configPath: PIMOTE_CONFIG_PATH,
+        settingsFiles: configRuntime.snapshot().settingsFiles,
+        extensionFiles: pimoteExtensionHost.getRegistry().settingsFiles,
+      }).snapshot(),
+    configRuntime,
+    capabilities: () => configRuntime.capabilities(),
+    reloadPimoteExtensions,
+  };
+
   let updateChecker: UpdateChecker | undefined;
   if (config.updateCheck !== false) {
     const currentVersion = await getVersion();
@@ -368,6 +409,7 @@ export async function main(options: StartOptions = {}) {
     repoIndex,
     folderRegistry,
     folderListing,
+    globalSettings,
   );
   clientRegistryRef.current = server.clientRegistry;
   managerClientRegistryRef.current = server.clientRegistry;
@@ -391,7 +433,7 @@ export async function main(options: StartOptions = {}) {
   }
 
   // Start idle session reaping while no observers or voice call holders remain.
-  sessionManager.startIdleCheck(config.idleTimeout, voiceBoot ? (sessionId) => voiceBoot.orchestrator.isCallActive(sessionId) : undefined);
+  sessionManager.startIdleCheck(() => configRuntime.snapshot().idleTimeout, voiceBoot ? (sessionId) => voiceBoot.orchestrator.isCallActive(sessionId) : undefined);
 
   await server.start(port);
 
@@ -406,6 +448,7 @@ export async function main(options: StartOptions = {}) {
   const shutdown = async () => {
     console.log('\n[pimote] Shutting down...');
     await voiceBoot?.shutdown();
+    await pimoteExtensionHost.shutdown();
     await sessionManager.dispose();
     await server.close();
     process.exit(0);

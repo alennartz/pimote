@@ -509,25 +509,10 @@ describe('folder instructions entry', () => {
   });
 });
 
-describe('agent instructions entry', () => {
-  it('opens the config-file editor on ~/.pi/agent/AGENTS.md from the header button', async () => {
-    fileEditorStore.close();
-    vi.mocked(connection.send).mockImplementation(async (command) => {
-      if (command.type === 'file_get') return { id: '1', success: true, data: { path: '/p/AGENTS.md', exists: false, content: '' } };
-      return { id: '1', success: true, data: {} };
-    });
+describe('global settings entry', () => {
+  it('does not render a global Agent instructions header button', async () => {
     destroy = render();
     await tick();
-
-    const entry = target.querySelector<HTMLButtonElement>('button[aria-label="Agent instructions"]');
-    expect(entry).not.toBeNull();
-    entry!.click();
-
-    await vi.waitFor(() => expect(fileEditorStore.open).toBe(true));
-    expect(fileEditorStore.title).toBe('Agent instructions');
-    // Will-create flow: the file is missing, the editor opens empty.
-    expect(fileEditorStore.exists).toBe(false);
-    expect(vi.mocked(connection.send)).toHaveBeenCalledWith(expect.objectContaining({ type: 'file_get', path: '~/.pi/agent/AGENTS.md' }));
-    fileEditorStore.close();
+    expect(target.querySelector<HTMLButtonElement>('button[aria-label="Agent instructions"]')).toBeNull();
   });
 });

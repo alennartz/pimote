@@ -28,6 +28,10 @@
     value = $bindable(''),
     editorView = $bindable(null),
     toolbar = null,
+    toolbarVisible = true,
+    tabs = null,
+    viewport = null,
+    accessibleTitle = null,
     onclose,
     oninteractoutside = null,
     onsave,
@@ -55,6 +59,10 @@
     editorView?: EditorView | null;
     /** Row between header and body, e.g. the tag-wrap toolbar. */
     toolbar?: Snippet | null;
+    toolbarVisible?: boolean;
+    tabs?: Snippet | null;
+    viewport?: 'desktop' | 'mobile' | null;
+    accessibleTitle?: string | null;
     /** Every explicit close affordance and unhandled Escape route here; the consumer owns veto and confirm semantics. */
     onclose: () => void;
     /** Outside interaction policy. Defaults to the explicit close policy. */
@@ -119,8 +127,17 @@
     bind:ref={contentEl}
     onEscapeKeydown={onDismissAttempt}
     {onInteractOutside}
-    class="top-0 left-0 flex h-dvh w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 sm:top-1/2 sm:left-1/2 sm:h-[min(92dvh,960px)] sm:w-[min(96vw,1280px)] sm:max-w-[min(96vw,1280px)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl"
+    class="top-0 left-0 flex h-dvh w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 sm:top-1/2 sm:left-1/2 sm:h-[min(92dvh,960px)] sm:w-[min(96vw,1280px)] sm:max-w-[min(96vw,1280px)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl {viewport ===
+    'mobile'
+      ? 'settings-mobile'
+      : viewport === 'desktop'
+        ? 'settings-desktop'
+        : ''}"
   >
+    {#if accessibleTitle}
+      <Dialog.Title class="sr-only">{accessibleTitle}</Dialog.Title>
+      <Dialog.Description class="sr-only">Edit and save each file independently.</Dialog.Description>
+    {/if}
     <form
       onsubmit={(event) => {
         event.preventDefault();
@@ -133,8 +150,16 @@
         style="padding-top: max(0.5rem, env(safe-area-inset-top));"
       >
         <div class="flex items-center gap-2">
-          <Button variant="ghost" size="icon" type="button" class="size-11 sm:hidden" aria-label="Close editor" disabled={saving} onclick={onclose}>
-            <X class="size-5" />
+          <Button
+            variant="ghost"
+            size="icon"
+            type="button"
+            class={viewport === 'desktop' ? 'hidden' : viewport === 'mobile' ? 'h-11 px-3' : 'size-11 sm:hidden'}
+            aria-label="Close editor"
+            disabled={saving}
+            onclick={onclose}
+          >
+            {#if viewport === 'mobile'}Close{:else}<X class="size-5" />{/if}
           </Button>
           <div class="min-w-0 flex-1 text-center sm:text-left">
             <div class="truncate text-base font-semibold sm:overflow-visible sm:break-words sm:whitespace-normal">{title}</div>
@@ -148,16 +173,22 @@
           {#if badge}
             <Badge variant="outline" class="hidden shrink-0 whitespace-nowrap sm:inline-flex">{badge}</Badge>
           {/if}
-          <Button type="submit" class="h-11 sm:hidden" disabled={saving || saveDisabled}>
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
+          {#if viewport !== 'desktop'}
+            <Button type="submit" class={viewport === 'mobile' ? 'h-11' : 'h-11 sm:hidden'} disabled={saving || saveDisabled}>
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          {/if}
         </div>
         {#if error}
           <p class="text-destructive text-sm break-words sm:hidden" role="alert">{error}</p>
         {/if}
       </header>
 
-      {#if toolbar}
+      {#if tabs}
+        {@render tabs()}
+      {/if}
+
+      {#if toolbar && toolbarVisible}
         <div class="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 sm:px-5">
           {@render toolbar()}
         </div>
@@ -179,18 +210,22 @@
         {/if}
       </div>
 
-      <div
-        class="bg-background/95 z-10 hidden shrink-0 gap-2 border-t px-5 py-3 backdrop-blur sm:flex sm:items-center sm:justify-end"
-        style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));"
-      >
-        {#if error}
-          <p class="text-destructive mr-auto min-w-0 truncate text-sm" role="alert">{error}</p>
-        {/if}
-        <Button variant="outline" type="button" disabled={saving} onclick={onclose}>Cancel</Button>
-        <Button type="submit" disabled={saving || saveDisabled}>
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
-      </div>
+      {#if viewport !== 'mobile'}
+        <footer
+          class="bg-background/95 z-10 shrink-0 gap-2 border-t px-5 py-3 backdrop-blur {viewport === 'desktop'
+            ? 'flex items-center justify-end'
+            : 'hidden sm:flex sm:items-center sm:justify-end'}"
+          style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));"
+        >
+          {#if error}
+            <p class="text-destructive mr-auto min-w-0 truncate text-sm" role="alert">{error}</p>
+          {/if}
+          <Button variant="outline" type="button" disabled={saving} onclick={onclose}>Cancel</Button>
+          <Button type="submit" disabled={saving || saveDisabled}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+        </footer>
+      {/if}
     </form>
   </Dialog.Content>
 </Dialog.Root>

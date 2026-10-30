@@ -31,6 +31,7 @@ vi.mock('$lib/stores/connection.svelte.js', () => {
 
 const { connection } = await import('$lib/stores/connection.svelte.js');
 const { fileEditorStore } = await import('$lib/stores/file-editor.svelte.js');
+const { serverCapabilities } = await import('$lib/stores/server-capabilities.svelte.js');
 const { default: ConfigFileEditor } = await import('./ConfigFileEditor.svelte');
 
 let component: ReturnType<typeof mount> | undefined;
@@ -101,6 +102,7 @@ async function typeTag(tag: string): Promise<HTMLInputElement> {
 
 beforeEach(() => {
   fileEditorStore.close();
+  serverCapabilities.handleEvent({ type: 'server_capabilities', voice: false, tagSnippets: ['note', 'tip'] });
 });
 
 afterEach(async () => {

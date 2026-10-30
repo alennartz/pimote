@@ -237,6 +237,7 @@ describe('main — file download bootstrap wiring', () => {
       expect.anything(),
       expect.anything(),
       expect.anything(), // folderListing
+      expect.objectContaining({ manifest: expect.any(Function), configRuntime: expect.anything() }),
     );
   });
 
@@ -262,6 +263,7 @@ describe('main — file download bootstrap wiring', () => {
       expect.anything(),
       expect.anything(),
       expect.anything(), // folderListing
+      expect.objectContaining({ manifest: expect.any(Function), configRuntime: expect.anything() }),
     );
   });
 

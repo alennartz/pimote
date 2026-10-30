@@ -7,6 +7,17 @@ registered here.
 See `PLAN.md` in this directory for the list of primary user journeys
 and which tool (if any) drives each.
 
+## Global Settings acceptance
+
+The home Settings gear opens a server-resolved tabbed manifest. Verify desktop
+bottom-left and mobile top-left placement, no gear on conversations, lazy reads,
+independent drafts, missing-file creation, dirty-close confirmation, Markdown
+capability snippets, and responsive action placement. Exercise native-config
+validation and symlink writes from two clients. Reload Pimote extensions with
+valid, broken, user-package, project-package, and Pi-only entries. Confirm
+dynamic model, idle, and buffer policies apply only to new consumers and
+folder-row AGENTS.md editing remains available.
+
 ## Shared helpers
 
 ### lib/report.mjs

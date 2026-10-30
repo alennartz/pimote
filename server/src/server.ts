@@ -8,7 +8,7 @@ import type { PimoteSessionManager } from './session-manager.js';
 import type { SessionRecords } from './session-records.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
-import { WsHandler, takeOverClientSlot, type ClientRegistry } from './ws-handler.js';
+import { WsHandler, takeOverClientSlot, type ClientRegistry, type WsGlobalSettingsDependencies } from './ws-handler.js';
 import { startWebSocketHeartbeat } from './ws-heartbeat.js';
 import type { RepoIndex } from './repo-index.js';
 import type { FolderRegistry } from './folder-registry.js';
@@ -145,6 +145,7 @@ export async function createServer(
   repoIndex?: RepoIndex,
   folderRegistry?: FolderRegistry,
   folderListing?: FolderListingService,
+  globalSettings?: WsGlobalSettingsDependencies,
 ): Promise<PimoteServer> {
   const appName = resolveAppName(config);
   const clientVersion = await loadClientVersion();
@@ -303,6 +304,8 @@ export async function createServer(
       repoIndex,
       folderRegistry,
       folderListing,
+      globalSettings?.reloadPimoteExtensions,
+      globalSettings,
     );
     takeOverClientSlot(clientRegistry, clientId, handler);
 
@@ -310,7 +313,7 @@ export async function createServer(
     // affordances for disabled features. Voice is enabled iff an
     // orchestrator was wired at boot (it is only built when speechmux is
     // configured — see voice-orchestrator-boot.ts).
-    const capabilities: ServerCapabilitiesEvent = {
+    const capabilities: ServerCapabilitiesEvent = globalSettings?.capabilities?.() ?? {
       type: 'server_capabilities',
       voice: voiceOrchestrator !== undefined,
       tagSnippets: [],

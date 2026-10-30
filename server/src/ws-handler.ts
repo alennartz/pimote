@@ -20,6 +20,8 @@ import type {
   PimoteTreeNode,
   PromptOutcome,
   PromptResponseData,
+  GetGlobalSettingsResponseData,
+  ServerCapabilitiesEvent,
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome, SessionObserver, EventSocket } from './session-manager.js';
 import {
@@ -55,6 +57,14 @@ import { attributeDrained, type Intent } from './queue-ownership.js';
 import type { AgentSession } from '@earendil-works/pi-coding-agent';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { CallBindError } from './voice-orchestrator.js';
+import type { ConfigRuntime } from './config-runtime.js';
+
+export interface WsGlobalSettingsDependencies {
+  manifest?: () => Promise<GetGlobalSettingsResponseData>;
+  reloadPimoteExtensions?: () => Promise<void>;
+  configRuntime?: ConfigRuntime;
+  capabilities?: () => ServerCapabilitiesEvent;
+}
 
 /** Parse data-URL encoded images into the shape the pi SDK expects. */
 function parseDataUrlImages(images?: string[]): { type: 'image'; data: string; mimeType: string }[] | undefined {
@@ -416,6 +426,7 @@ export class WsHandler {
     private readonly folderRegistry?: FolderRegistry,
     private readonly folderListing?: FolderListingService,
     private readonly reloadPimoteExtensions?: () => Promise<void>,
+    private readonly globalSettings?: WsGlobalSettingsDependencies,
   ) {
     this.clientId = clientId;
     // Open-time pin initialization, nonblocking: a folder command arriving
@@ -1044,7 +1055,9 @@ export class WsHandler {
 
         // ---- File editing commands ----
         case 'get_global_settings': {
-          throw new Error('not implemented');
+          const manifest = this.globalSettings?.manifest ? await this.globalSettings.manifest() : { files: [] };
+          this.sendResponse(id, true, manifest);
+          break;
         }
         case 'file_get': {
           this.sendResponse(id, true, await readEditableFile(command.path));
@@ -1052,7 +1065,15 @@ export class WsHandler {
         }
 
         case 'file_put': {
-          const data = await writeEditableFile(command.path, command.content);
+          const runtime = this.globalSettings?.configRuntime;
+          const nativeTarget = runtime ? await runtime.isNativeConfig(command.path) : false;
+          const data = runtime ? await runtime.putFile(command.path, command.content) : await writeEditableFile(command.path, command.content);
+          if (nativeTarget) {
+            const capabilities = this.globalSettings?.capabilities?.() ?? runtime?.capabilities();
+            if (capabilities) {
+              for (const handler of this.clientRegistry.values()) handler.sendToClient(capabilities);
+            }
+          }
           if (basename(data.path) === 'AGENTS.md') {
             // Folder rows are keyed by folder roots: the edit maps to the row
             // that owns it (the enclosing registered root), never to a bare
@@ -1687,6 +1708,9 @@ export class WsHandler {
     }
 
     if (trimmed === '/reload') {
+      // Global Pimote extensions reload first so the current Pi runtime sees
+      // the replacement folder sources before its own extension resync.
+      await this.reloadPimoteExtensions?.();
       await session.reload();
       this.sendReloadToObservers(sessionId, slot);
       this.sendSilentDownloadSnapshot(slot);

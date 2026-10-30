@@ -53,8 +53,8 @@ export async function resolveSourcesDir(
  * workspace checkout whose SDK dist is not built yet); those specifiers then
  * fall back to ordinary Node resolution.
  */
-export function sdkRuntimeAliases(): Record<string, string> {
-  const specifiers = ['@pimote/sdk', '@pimote/sdk/panels', '@pimote/sdk/activity', '@pimote/sdk/folders'];
+export function sdkRuntimeAliases(additionalSpecifiers: readonly string[] = []): Record<string, string> {
+  const specifiers = ['@pimote/sdk', '@pimote/sdk/panels', '@pimote/sdk/activity', '@pimote/sdk/folders', ...additionalSpecifiers];
   const aliases: Record<string, string> = {};
   for (const specifier of specifiers) {
     try {

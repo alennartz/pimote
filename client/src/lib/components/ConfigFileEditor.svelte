@@ -5,6 +5,7 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import CodeEditorDialog from '$lib/components/CodeEditorDialog.svelte';
   import { fileEditorStore } from '$lib/stores/file-editor.svelte.js';
+  import { serverCapabilities } from '$lib/stores/server-capabilities.svelte.js';
   import { isValidTagName, wrapWithTag } from '$lib/tag-wrap.js';
   import type { EditorView } from '@codemirror/view';
   import TagIcon from '@lucide/svelte/icons/tag';
@@ -105,7 +106,7 @@
       <Input bind:value={tagName} bind:ref={tagInputEl} aria-label="Tag name" placeholder="tag" class="h-8 w-28" onkeydown={onTagInputKeydown} />
       <Button size="sm" type="button" disabled={!canWrap || !editorView} onclick={() => applyWrap(tagName)}>Wrap</Button>
     {/if}
-    {#each fileEditorStore.snippets as snippet (snippet)}
+    {#each serverCapabilities.tagSnippets as snippet (snippet)}
       <Button variant="outline" size="sm" type="button" aria-label="Wrap with {snippet}" onclick={() => applyWrap(snippet)}>
         {snippet}
       </Button>

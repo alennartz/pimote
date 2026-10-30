@@ -57,6 +57,22 @@ The expected listing has one hub row with two members, plus one row per member.
 
 Sessions can start at any of the three folders. Change membership later through `pimote_update_hub_members`. Never hand-edit inside the managed member block of a hub `AGENTS.md`, which is the lines between `<!-- pimote:members (managed block) -->` and `<!-- /pimote:members -->`.
 
+## Global Pimote extension
+
+Place a module in `$XDG_CONFIG_HOME/pimote/extensions/`:
+
+```ts
+import type { PimoteExtension } from '@pimote/sdk/pimote';
+
+export default ((context) => {
+  context.folders.registerSource({ id: 'team-folders', list: async () => [] });
+  context.settings.registerFile('./team-instructions.md');
+  context.on('shutdown', () => {});
+}) satisfies PimoteExtension;
+```
+
+The host loads the module at startup and on server-wide `/reload`. Relative Settings paths use the module directory. User-installed packages can declare `pimote.extensions`; Pi-only and project-scoped package entries stay outside this host. A failed module produces a diagnostic but does not discard valid registrations.
+
 ## Anti-patterns and their symptoms
 
 | Attempt                                                         | Symptom                                                                                                                          | Fix                                                                                                               |

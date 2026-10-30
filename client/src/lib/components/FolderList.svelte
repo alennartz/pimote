@@ -7,7 +7,7 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import { openNewSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { isSessionOpenCancelledResponse } from '$lib/session-open-response.js';
-  import { AGENT_INSTRUCTIONS_PATH, fileEditorStore } from '$lib/stores/file-editor.svelte.js';
+  import { fileEditorStore } from '$lib/stores/file-editor.svelte.js';
   import SessionItem from './SessionItem.svelte';
   import HubMembersDialog from './HubMembersDialog.svelte';
   import FolderNatureIcon, { folderIconKind } from './FolderNatureIcon.svelte';
@@ -349,16 +349,6 @@
       <span class="text-xs">{folderStore.total}</span>
     {/if}
     <div class="ml-auto flex items-center gap-2">
-      <Button
-        variant="outline"
-        size="icon-sm"
-        class="text-muted-foreground shrink-0 max-md:size-11"
-        title="Agent instructions"
-        aria-label="Agent instructions"
-        onclick={() => void fileEditorStore.openFile(AGENT_INSTRUCTIONS_PATH, 'Agent instructions')}
-      >
-        <FilePen class="size-4 max-md:size-5" />
-      </Button>
       <DropdownMenu>
         <DropdownMenuTrigger>
           <Button variant="outline" size="icon-sm" class="text-muted-foreground shrink-0 max-md:size-11" title="More folder actions">

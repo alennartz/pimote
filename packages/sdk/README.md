@@ -1,12 +1,13 @@
 # @pimote/sdk
 
-Pimote's extensibility SDK — everything a [pi](https://github.com/earendil-works/pi) extension imports to talk to [pimote](https://github.com/alennartz/pimote). One subpath module per extension seam:
+Pimote's extensibility SDK — everything a [Pi](https://github.com/earendil-works/pi) extension imports to talk to [Pimote](https://github.com/alennartz/pimote). Session-scoped bridges and the process-global Pimote host have separate entry points:
 
-- **`@pimote/sdk/panels`** — push structured card data to the pimote web client
-- **`@pimote/sdk/folders`** — contribute folder discovery and creation to pimote's folder layer
-- **`@pimote/sdk/activity`** — answer pimote's idle-reap background-activity poll
+- **`@pimote/sdk/panels`** — push structured card data to the Pimote web client
+- **`@pimote/sdk/folders`** — type-only folder discovery entries for Pimote extensions
+- **`@pimote/sdk/activity`** — answer Pimote's idle-reap background-activity poll
+- **`@pimote/sdk/pimote`** — define global `PimoteExtension` factories for sources and Settings files
 
-The root `@pimote/sdk` import re-exports all modules.
+The root `@pimote/sdk` import re-exports session-scoped modules and Pimote extension types.
 
 ## Install
 
@@ -112,57 +113,38 @@ Detection uses pi's EventBus for a synchronous in-process round-trip — pimote'
 
 When pimote isn't present, the EventBus emit fires with no listener, `detect()` returns `null`, and there's zero overhead.
 
-## Folders — `@pimote/sdk/folders`
+## Pimote extensions — `@pimote/sdk/pimote`
 
-Type-only module for user-authored folder-source modules: pimote scans a folder-sources directory (default `~/.config/pimote/folder-sources`, configurable via `folderSourcesDir`), dynamic-imports every JS/TS module it finds, and collects each module's exported `sources` and `creators` arrays. Sources contribute repos and hub folders to pimote's folder layer; creators make new folders from user-supplied form params.
-
-### Writing a module
+Pimote extensions are process-global modules. The host loads direct JavaScript/TypeScript modules and entry-bearing directories from `$XDG_CONFIG_HOME/pimote/extensions/`. User-scoped Pi packages can contribute entries through their `pimote.extensions` manifest field. Project packages and `pi.extensions` entries never load in this host. A module listed in both sections is an explicit dual-host module and runs twice with independent lifecycles.
 
 ```ts
-// ~/.config/pimote/folder-sources/my-source.ts
-import type { FolderSource, FolderCreator } from '@pimote/sdk/folders';
+import type { PimoteExtension } from '@pimote/sdk/pimote';
 
-export const sources: FolderSource[] = [
-  {
+const extension: PimoteExtension = (context) => {
+  context.folders.registerSource({
     id: 'my-source',
     async list() {
-      return [
-        {
-          kind: 'repo',
-          path: '/home/me/work/api',
-          name: 'api',
-          branch: 'main',
-          dirty: false,
-          ahead: 0,
-          behind: 0,
-        },
-      ];
+      return [{ kind: 'repo', path: '/home/me/work/api', name: 'api', branch: 'main', dirty: false, ahead: 0, behind: 0 }];
     },
-  },
-];
+  });
+  context.settings.registerFile('./instructions.md');
+  return context.on('shutdown', async () => {
+    // Release process-global resources here.
+  });
+};
 
-export const creators: FolderCreator[] = [
-  {
-    id: 'my-creator',
-    describe() {
-      return { label: 'New API folder', paramSchema: { name: 'string', tags: 'string[]' } };
-    },
-    async create(params) {
-      const path = `/home/me/work/${String(params.name)}`;
-      // ... scaffold the folder ...
-      return { path };
-    },
-  },
-];
+export default extension;
 ```
+
+`registerSource()` contributes folder discovery. `registerFile()` contributes a global Settings tab. Relative file paths resolve from the extension entry module, while absolute and leading-`~` paths remain explicit. Registrations become inert after shutdown or reload. The host replaces all extension registrations on `/reload`, awaits shutdown handlers, and reports isolated diagnostics while continuing valid modules. Folder creation remains a Pimote core capability, so the public SDK has no external creator registration seam.
+
+## Folders — `@pimote/sdk/folders`
+
+This type-only module defines the source discovery seam used by `PimoteExtensionContext.folders.registerSource()`. Sources contribute repos and hubs. Their optional `onFolderOpen(folderPath)` hook runs before an open and can provision a missing entry. Pimote materializes standard hubs and owns the dashboard and manager folder-creation flows.
 
 ### `FolderSource`
 
-The discovery seam. `list()` is called on cache miss and must return the current entries without mutating anything. The optional `onFolderOpen(folderPath)` hook is awaited before any open of a listed entry proceeds — whether the target exists on disk or not, and from every open path (row click, new session, manager tool). Sources self-filter by path: probe the disk and scaffold if the entry is theirs and missing; do other open-time work otherwise. A thrown error aborts the open and surfaces the message to the user.
-
-### `FolderCreator`
-
-The creation seam. `describe()` returns the human-readable form for the creation UI — a `label` plus a `paramSchema` mapping param names to `'string' | 'string[]'`. `create(params)` receives the user-supplied params, makes the folder, and returns its `{ path }`. Pimote resolves that path to the folder's canonical filesystem identity before seeding, broadcasting, or opening a session, so a creator can return the lexical path it used to reach the folder. The path must name the successfully created folder.
+`list()` returns current entries without mutation. The optional `onFolderOpen(folderPath)` hook is awaited before row, new-session, and manager opens. A thrown error aborts the open.
 
 ### Entry shapes
 
@@ -227,22 +209,12 @@ The pimote-side twin, used by the server's idle reaper. Performs the synchronous
 
 ### 0.15.0 (0.x breaking)
 
-The discovery/creation seam is renamed to folder vocabulary — "project" is gone from the SDK surface. No compatibility type aliases exist; source modules must be updated against these successors:
+The SDK now exposes two independent hosts:
 
-| Retired name (≤0.14.x)                         | Replacement (0.15.0)                                                                   |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `@pimote/sdk/projects` subpath                 | `@pimote/sdk/folders`                                                                  |
-| `ProjectSource`                                | `FolderSource`                                                                         |
-| `ProjectCreator`                               | `FolderCreator`                                                                        |
-| `ProjectCreatorDescriptor`                     | `FolderCreatorDescriptor`                                                              |
-| `ProjectCreatorParamType`                      | `FolderCreatorParamType`                                                               |
-| `MultiRepoSourceEntry`                         | `HubSourceEntry`                                                                       |
-| entry discriminator `kind: 'project'`          | entry discriminator `kind: 'hub'`                                                      |
-| `onProjectOpen(projectPath)`                   | `onFolderOpen(folderPath)`                                                             |
-| config key `projectSourcesDir`                 | `folderSourcesDir` (legacy key still read as a deprecated fallback)                    |
-| sources dir `~/.config/pimote/project-sources` | `~/.config/pimote/folder-sources` (legacy dir still loaded when the new one is absent) |
+- `@pimote/sdk/pimote` runs process-global Pimote extensions for folder sources and Settings files.
+- `@pimote/sdk` and its `panels` and `activity` modules run inside Pi sessions through EventBus bridges.
 
-Every name in the left column is retired; each is listed here only so existing modules can be migrated. The wire command for the built-in creation flow is likewise renamed (`create_project` → `create_folder`).
+Folder creation is a Pimote core operation. External creation registration was removed. Existing source modules must move their exported source arrays into a default `PimoteExtension` factory and call `context.folders.registerSource()`. Pi package manifests can list separate `pi.extensions` and `pimote.extensions` entries; Pimote loads only the latter from user scope.
 
 ## License
 

@@ -1,30 +1,8 @@
 import type { FileGetResponseData, PimoteCommand, PimoteResponse } from '@pimote/shared';
 import { connection } from '$lib/stores/connection.svelte.js';
-import { isValidTagName } from '$lib/tag-wrap.js';
 
 /** Wire transport seam — the store talks to the server through this alone. */
 export type SendCommand = (command: PimoteCommand) => Promise<PimoteResponse>;
-
-export const AGENT_INSTRUCTIONS_PATH = '~/.pi/agent/AGENTS.md';
-const PIMOTE_CONFIG_PATH = '~/.config/pimote/config.json';
-
-/**
- * Pure. Lenient `tagSnippets` extraction from the pimote config file's text:
- * invalid JSON, a missing key, or a non-array key yields no snippets, and
- * non-string entries and invalid tag names are dropped.
- */
-export function parseTagSnippets(configText: string): string[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(configText);
-  } catch {
-    return [];
-  }
-  if (typeof parsed !== 'object' || parsed === null) return [];
-  const snippets = (parsed as { tagSnippets?: unknown }).tagSnippets;
-  if (!Array.isArray(snippets)) return [];
-  return snippets.filter((entry): entry is string => typeof entry === 'string' && isValidTagName(entry));
-}
 
 /**
  * State and operations for the config-file editor dialog (first citizen:
@@ -44,7 +22,6 @@ export class FileEditorStore {
   title = $state('');
   content = $state('');
   error = $state<string | null>(null);
-  snippets = $state<string[]>([]);
 
   /** Baseline of the last loaded/saved content; `dirty` means unsaved edits. */
   private baseline = $state('');
@@ -65,7 +42,6 @@ export class FileEditorStore {
     this.loading = true;
     this.path = path;
     this.title = title;
-    void this.loadSnippets(generation);
     await this.loadFile(path, generation);
   }
 
@@ -122,7 +98,6 @@ export class FileEditorStore {
     this.content = '';
     this.baseline = '';
     this.error = null;
-    this.snippets = [];
   }
 
   private async loadFile(path: string, generation: number): Promise<void> {
@@ -144,19 +119,6 @@ export class FileEditorStore {
       this.error = cause instanceof Error ? cause.message : 'Failed to read file';
     } finally {
       if (generation === this.generation) this.loading = false;
-    }
-  }
-
-  /** Fire-and-forget snippet palette load; any failure means simply no snippet buttons. */
-  private async loadSnippets(generation: number): Promise<void> {
-    try {
-      const response = await this.send({ type: 'file_get', path: PIMOTE_CONFIG_PATH });
-      if (!response.success || generation !== this.generation) return;
-      const data = response.data as FileGetResponseData;
-      if (!data.exists) return;
-      this.snippets = parseTagSnippets(data.content);
-    } catch {
-      // Lenient by design: snippet problems never block the editor.
     }
   }
 }

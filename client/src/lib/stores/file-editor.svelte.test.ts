@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PimoteCommand, PimoteResponse } from '@pimote/shared';
-import { FileEditorStore, parseTagSnippets, type SendCommand } from './file-editor.svelte.js';
+import { FileEditorStore, type SendCommand } from './file-editor.svelte.js';
+import { serverCapabilities } from './server-capabilities.svelte.js';
 
 function fileGetResponse(content: string, exists = true): PimoteResponse {
   return { id: '1', success: true, data: { path: '/home/u/.pi/agent/AGENTS.md', exists, content } };
@@ -29,23 +30,6 @@ function routingSend(target: PimoteResponse | (() => Promise<PimoteResponse>), c
     return typeof target === 'function' ? target() : target;
   });
 }
-
-describe('parseTagSnippets', () => {
-  it('returns the tagSnippets array of a valid config', () => {
-    expect(parseTagSnippets('{"tagSnippets": ["note", "tip"]}')).toEqual(['note', 'tip']);
-  });
-
-  it('returns [] for invalid JSON, missing key, or a non-array key', () => {
-    expect(parseTagSnippets('not json {')).toEqual([]);
-    expect(parseTagSnippets('{}')).toEqual([]);
-    expect(parseTagSnippets('{"tagSnippets": "note"}')).toEqual([]);
-    expect(parseTagSnippets('')).toEqual([]);
-  });
-
-  it('drops non-string entries and invalid tag names', () => {
-    expect(parseTagSnippets('{"tagSnippets": ["ok", 3, null, "1bad", "bad name", "has-dash_2"]}')).toEqual(['ok', 'has-dash_2']);
-  });
-});
 
 describe('openFile', () => {
   it('opens the dialog immediately and loads existing content', async () => {
@@ -110,37 +94,26 @@ describe('openFile', () => {
   });
 });
 
-describe('snippet transport', () => {
-  it('loads tagSnippets from the pimote config file', async () => {
-    const { send } = routingSend(fileGetResponse('body'), {
-      id: '1',
-      success: true,
-      data: { path: '/c', exists: true, content: '{"tagSnippets": ["note", "tip"]}' },
-    });
+describe('capability snippets', () => {
+  it('uses the server-advertised tag palette without reading native config', async () => {
+    serverCapabilities.handleEvent({ type: 'server_capabilities', voice: false, tagSnippets: ['note', 'tip'] });
+    const { send, calls } = routingSend(fileGetResponse('body'));
     const store = new FileEditorStore(send);
 
     await store.openFile('~/.pi/agent/AGENTS.md', 'Agent instructions');
-    await vi.waitFor(() => expect(store.snippets).toEqual(['note', 'tip']));
+    expect(serverCapabilities.tagSnippets).toEqual(['note', 'tip']);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ type: 'file_get', path: '~/.pi/agent/AGENTS.md' });
   });
 
-  it('yields no snippets on missing config, invalid JSON, or absent key', async () => {
-    for (const config of [fileGetResponse('', false), fileGetResponse('nope {'), fileGetResponse('{}')]) {
-      const { send } = routingSend(fileGetResponse('body'), config);
-      const store = new FileEditorStore(send);
-      await store.openFile('~/.pi/agent/AGENTS.md', 'Agent instructions');
-      await vi.waitFor(() => expect(store.snippets).toEqual([]));
-    }
-  });
-
-  it('never blocks the editor when the config fetch fails', async () => {
-    const { send } = routingSend(fileGetResponse('body'), () => Promise.reject(new Error('offline')));
+  it('uses an empty palette when the server advertises no snippets', async () => {
+    serverCapabilities.handleEvent({ type: 'server_capabilities', voice: false, tagSnippets: [] });
+    const { send, calls } = routingSend(fileGetResponse('body'));
     const store = new FileEditorStore(send);
 
     await store.openFile('~/.pi/agent/AGENTS.md', 'Agent instructions');
-    await vi.waitFor(() => expect(store.snippets).toEqual([]));
-    expect(store.content).toBe('body');
-    expect(store.error).toBeNull();
-    expect(store.open).toBe(true);
+    expect(serverCapabilities.tagSnippets).toEqual([]);
+    expect(calls).toHaveLength(1);
   });
 });
 

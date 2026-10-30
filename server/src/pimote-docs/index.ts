@@ -28,7 +28,8 @@ export const PIMOTE_DOC_FILES: ReadonlyArray<{ path: string; purpose: string }> 
   },
   {
     path: 'packages/sdk/README.md',
-    purpose: 'The @pimote/sdk API for pi extensions: panels, folders, and activity. Read it before you write an extension that talks to pimote.',
+    purpose:
+      'The @pimote/sdk API for Pi session bridges and the @pimote/sdk/pimote host: panels, activity, folder sources, Settings files, package scopes, and reload lifecycles. Read it before you write an extension.',
   },
 ];
 

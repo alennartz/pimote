@@ -1,5 +1,19 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { untrack, onMount } from 'svelte';
+  import GlobalSettingsDialog from './GlobalSettingsDialog.svelte';
+  import { globalSettingsStore } from '$lib/stores/global-settings.svelte.js';
+  import { serverCapabilities } from '$lib/stores/server-capabilities.svelte.js';
+
+  let viewport = $state<'desktop' | 'mobile'>('desktop');
+  onMount(() => {
+    const query = window.matchMedia('(max-width: 767px)');
+    const updateViewport = () => {
+      viewport = query.matches ? 'mobile' : 'desktop';
+    };
+    updateViewport();
+    query.addEventListener('change', updateViewport);
+    return () => query.removeEventListener('change', updateViewport);
+  });
   import HomeToolbar from '$lib/components/HomeToolbar.svelte';
   import FolderList from '$lib/components/FolderList.svelte';
   import { isPlaceholderSessionId, submitManagerMessage, type ManagerSubmitPorts } from '$lib/manager-composer.js';
@@ -61,6 +75,8 @@
     }
   });
 </script>
+
+<GlobalSettingsDialog store={globalSettingsStore} {viewport} surface="home" snippets={serverCapabilities.tagSnippets} />
 
 <div class="flex min-h-0 flex-1">
   <div class="flex min-h-0 flex-1 flex-col overflow-y-auto" bind:this={scrollElement} onscroll={closeOpenSwipeCard}>

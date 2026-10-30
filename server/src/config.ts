@@ -101,6 +101,71 @@ export function managerRootPlacementError(managerRoot: string, home: string): st
   return null;
 }
 
+/**
+ * Parse and validate a Pimote configuration candidate.
+ *
+ * The parser is shared by startup loading and native-config reloads so both
+ * paths apply the same defaults, path expansion, and model normalization.
+ */
+export function parseConfig(raw: string, configPath: string = CONFIG_PATH, home: string = homedir()): PimoteConfig {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`Failed to parse ${configPath} as JSON`);
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`Config at ${configPath} must be a JSON object`);
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  return parseConfigObject(obj, configPath, home);
+}
+
+function parseConfigObject(obj: Record<string, unknown>, configPath: string, home: string): PimoteConfig {
+  if (!Array.isArray(obj.roots) || obj.roots.length === 0 || !obj.roots.every((r): r is string => typeof r === 'string')) {
+    throw new Error(`Config "roots" must be a non-empty array of strings in ${configPath}`);
+  }
+
+  if (obj.managerRoot !== undefined && (typeof obj.managerRoot !== 'string' || obj.managerRoot.length === 0)) {
+    throw new Error(`Config "managerRoot" must be a non-empty string in ${configPath}`);
+  }
+
+  const settingsFiles = parseStringArray(obj.settingsFiles, 'settingsFiles', configPath);
+  const tagSnippets = parseStringArray(obj.tagSnippets, 'tagSnippets', configPath);
+
+  return {
+    roots: [...obj.roots],
+    managerRoot: expandHomePath(typeof obj.managerRoot === 'string' ? obj.managerRoot : DEFAULT_MANAGER_ROOT, home),
+    folderSourcesDir: typeof obj.folderSourcesDir === 'string' ? obj.folderSourcesDir : typeof obj.projectSourcesDir === 'string' ? obj.projectSourcesDir : undefined,
+    idleTimeout: typeof obj.idleTimeout === 'number' ? obj.idleTimeout : DEFAULTS.idleTimeout,
+    bufferSize: typeof obj.bufferSize === 'number' ? obj.bufferSize : DEFAULTS.bufferSize,
+    port: typeof obj.port === 'number' ? obj.port : DEFAULTS.port,
+    appName: typeof obj.appName === 'string' ? obj.appName : undefined,
+    defaultProvider: typeof obj.defaultProvider === 'string' ? obj.defaultProvider : undefined,
+    defaultModel: typeof obj.defaultModel === 'string' ? obj.defaultModel : undefined,
+    defaultThinkingLevel: typeof obj.defaultThinkingLevel === 'string' ? obj.defaultThinkingLevel : undefined,
+    defaultInterpreterModel: normalizeModelRef(obj.defaultInterpreterModel),
+    defaultWorkerModel: normalizeModelRef(obj.defaultWorkerModel),
+    voice: parseVoiceConfig(obj.voice),
+    vapidPublicKey: typeof obj.vapidPublicKey === 'string' ? obj.vapidPublicKey : undefined,
+    vapidPrivateKey: typeof obj.vapidPrivateKey === 'string' ? obj.vapidPrivateKey : undefined,
+    vapidEmail: typeof obj.vapidEmail === 'string' ? obj.vapidEmail : undefined,
+    updateCheck: typeof obj.updateCheck === 'boolean' ? obj.updateCheck : undefined,
+    tagSnippets,
+    settingsFiles,
+  };
+}
+
+function parseStringArray(value: unknown, field: string, configPath: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || !value.every((entry): entry is string => typeof entry === 'string')) {
+    throw new Error(`Config "${field}" must be an array of strings in ${configPath}`);
+  }
+  return [...value];
+}
+
 export async function loadConfig(): Promise<PimoteConfig> {
   let raw: string;
   try {
@@ -124,47 +189,7 @@ export async function loadConfig(): Promise<PimoteConfig> {
     throw err;
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`Failed to parse ${CONFIG_PATH} as JSON`);
-  }
-
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`Config at ${CONFIG_PATH} must be a JSON object`);
-  }
-
-  const obj = parsed as Record<string, unknown>;
-
-  if (!Array.isArray(obj.roots) || obj.roots.length === 0 || !obj.roots.every((r): r is string => typeof r === 'string')) {
-    throw new Error(`Config "roots" must be a non-empty array of strings in ${CONFIG_PATH}`);
-  }
-
-  if (obj.managerRoot !== undefined && (typeof obj.managerRoot !== 'string' || obj.managerRoot.length === 0)) {
-    throw new Error(`Config "managerRoot" must be a non-empty string in ${CONFIG_PATH}`);
-  }
-
-  return {
-    roots: obj.roots,
-    managerRoot: expandHomePath(typeof obj.managerRoot === 'string' ? obj.managerRoot : DEFAULT_MANAGER_ROOT, homedir()),
-    folderSourcesDir: typeof obj.folderSourcesDir === 'string' ? obj.folderSourcesDir : typeof obj.projectSourcesDir === 'string' ? obj.projectSourcesDir : undefined,
-    idleTimeout: typeof obj.idleTimeout === 'number' ? obj.idleTimeout : DEFAULTS.idleTimeout,
-    bufferSize: typeof obj.bufferSize === 'number' ? obj.bufferSize : DEFAULTS.bufferSize,
-    port: typeof obj.port === 'number' ? obj.port : DEFAULTS.port,
-    appName: typeof obj.appName === 'string' ? obj.appName : undefined,
-    defaultProvider: typeof obj.defaultProvider === 'string' ? obj.defaultProvider : undefined,
-    defaultModel: typeof obj.defaultModel === 'string' ? obj.defaultModel : undefined,
-    defaultThinkingLevel: typeof obj.defaultThinkingLevel === 'string' ? obj.defaultThinkingLevel : undefined,
-    defaultInterpreterModel: normalizeModelRef(obj.defaultInterpreterModel),
-    defaultWorkerModel: normalizeModelRef(obj.defaultWorkerModel),
-    voice: parseVoiceConfig(obj.voice),
-    vapidPublicKey: typeof obj.vapidPublicKey === 'string' ? obj.vapidPublicKey : undefined,
-    vapidPrivateKey: typeof obj.vapidPrivateKey === 'string' ? obj.vapidPrivateKey : undefined,
-    vapidEmail: typeof obj.vapidEmail === 'string' ? obj.vapidEmail : undefined,
-    updateCheck: typeof obj.updateCheck === 'boolean' ? obj.updateCheck : undefined,
-    tagSnippets: Array.isArray(obj.tagSnippets) ? obj.tagSnippets.filter((s): s is string => typeof s === 'string') : undefined,
-  };
+  return parseConfig(raw, CONFIG_PATH, homedir());
 }
 
 function normalizeModelRef(value: unknown): string | undefined {

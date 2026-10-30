@@ -321,27 +321,11 @@ delta delivery (curation, hub create, file_put, discovery
 additions), refresh/reconnect cache-replace, the archive toggle × session
 lists interplay, and rendered-row-only session loading.
 
-## 13. AGENTS.md editor
+## 13. Global Settings and folder instructions
 
-**What:** The home-page "Agent instructions" button opens the config-file
-editor dialog on `~/.pi/agent/AGENTS.md` — raw markdown editor with a tag-wrap
-toolbar (freeform tag input + `tagSnippets` snippet buttons), save
-(last-write-wins), and cancel with a discard confirmation. The same editor is
-folder-scoped through three controls: FolderList's row-menu "Edit AGENTS.md…"
-opens the selected folder's instructions; StatusBar's "Edit folder AGENTS.md"
-and SessionDetailsDialog's "Edit AGENTS.md" open the viewed session folder's
-instructions. The session controls disable editing when disconnected, without
-a folder, restoring, or pending; the details dialog closes before the editor
-opens. The global Folders-header pen stays on the user-level Agent
-instructions.
+The home page shows a responsive Settings gear. Desktop places the large gear at bottom-left. Mobile places the small gear at top-left. The gear is absent on conversation surfaces. Opening it requests one server-resolved manifest containing effective Pi files, native Pimote config, configured files, and Pimote extension registrations. Tabs load lazily and retain independent drafts, dirty markers, missing-file creation hints, and per-file saves. Markdown tabs show the validated capability tag palette. Desktop actions stay in the footer. Mobile actions stay in the header. Close with dirty tabs asks once to keep editing or discard.
 
-**Why:** The first-class config-editing surface (first citizen of the future
-server-configuration workflow), added by the `agents-md-editor` topic.
-
-**Driver:** `tools/manual-test/agents-md-editor-smoke/` (sandboxed pimote +
-`agent-browser`). The three folder-scoped controls are pinned by the client
-unit suite (`FolderInstructionsControls.test.ts`); their journey-level clicks
-stay manual-browser.
+Verify both breakpoints, server-resolved paths and labels, manifest stability until reopen, missing-file creation, invalid native-config rejection, symlink validation, multi-client capability broadcasts, dynamic consumer policies, extension reload diagnostics, user-package filtering, and retained folder-row AGENTS.md editing. Use the existing manual-test harness and browser driver.
 
 ## Automation gap (recorded, not an action item for this topic)
 

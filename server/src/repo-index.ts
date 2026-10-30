@@ -296,6 +296,7 @@ export class RepoIndex {
   private readonly statusTtlMs: number;
   private readonly now: () => number;
   private readonly sources: FolderSource[] = [];
+  private userSources: readonly FolderSource[] = [];
   private listing: ListingStamp | null = null;
   private sourceHubs: { entries: HubSourceEntry[]; at: number } | null = null;
   private personaSources: PersonaSourceEntry[] = [];
@@ -634,7 +635,7 @@ export class RepoIndex {
       await materializeHubFolder(entry);
     }
 
-    for (const source of this.sources) {
+    for (const source of [...this.sources, ...this.userSources]) {
       if (!source.onFolderOpen) continue;
       await source.onFolderOpen(folderPath);
     }
@@ -670,8 +671,13 @@ export class RepoIndex {
   }
 
   /** Replace extension-owned sources atomically, invalidate discovery, and emit folder deltas. Core sources remain registered. */
-  async replaceUserSources(_sources: readonly FolderSource[]): Promise<void> {
-    throw new Error('not implemented');
+  async replaceUserSources(sources: readonly FolderSource[]): Promise<void> {
+    const before = this.currentFacts(NO_STATUS_FACTS);
+    this.userSources = [...sources];
+    this.invalidate();
+    const generation = this.walkGeneration;
+    await this.currentStamp(false);
+    if (generation === this.walkGeneration) this.notifyRefreshed(before, NO_STATUS_FACTS);
   }
 
   /** Register an additional discovery source; its repos join future listings. */
@@ -691,6 +697,8 @@ export class RepoIndex {
 
   /** Fresh discovery: scan the folder model, merge source contributions, mark vanished paths. */
   private async discoverAndStamp(): Promise<ListingStamp> {
+    const generation = this.walkGeneration;
+    const sources = [...this.sources, ...this.userSources];
     const byPath = new Map<string, RepoInfo>();
     const scanned = await scanFolderModel({
       roots: this._roots,
@@ -706,7 +714,7 @@ export class RepoIndex {
     const sourceHubs: HubSourceEntry[] = [];
     const personaSources: PersonaSourceEntry[] = [];
     const seenHubPaths = new Set<string>();
-    for (const source of this.sources) {
+    for (const source of sources) {
       let contributed: SourceEntry[];
       try {
         contributed = await source.list();
@@ -759,15 +767,16 @@ export class RepoIndex {
         byPath.set(entry.path, entry);
       }
     }
-    this.sourceHubs = { entries: sourceHubs, at: this.now() };
-    this.personaSources = personaSources;
-
     const entries: RepoInfo[] = [];
     for (const repo of byPath.values()) {
       entries.push(await this.markMissing(repo));
     }
     const stamp: ListingStamp = { entries, tree, at: this.now() };
-    this.listing = stamp;
+    if (generation === this.walkGeneration) {
+      this.sourceHubs = { entries: sourceHubs, at: this.now() };
+      this.personaSources = personaSources;
+      this.listing = stamp;
+    }
     return stamp;
   }
 
