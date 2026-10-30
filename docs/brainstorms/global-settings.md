@@ -19,10 +19,11 @@ Replace the small home-page button that opens `~/.pi/agent/AGENTS.md` with a fir
 - Pimote extension modules export one default factory. The Pimote host context registers `FolderSource` and settings-file contributions, and exposes a shutdown lifecycle event for `/reload`. `FolderCreator` is removed from the public SDK; built-in folder creation remains Pimote core.
 - Pimote extension reload follows Pi's lifecycle: await shutdown handlers, invalidate the old runtime, clear the module cache, load a fresh registry, and replace the old registry even when individual modules fail. Concurrent reloads are serialized.
 - Reload logic applies only to Pimote's native configuration file. Safe Pimote configuration fields can reload dynamically; unsafe lifecycle fields remain startup-only until their consumers support live replacement. Pi-native and third-party settings files are read and written without Pimote-specific reload behavior. Config-listed settings paths resolve relative to Pimote's config directory. Extension-contributed relative paths resolve relative to their module.
+- The existing generic `file_put` command keeps its wire shape. The server validates a write before committing only when the resolved path is the native Pimote config; all other files retain generic last-write-wins behavior.
 - A declared but missing file remains an empty tab and can be created by saving it.
 - Tab labels use the basename. When labels collide, prepend preceding path segments until each label is unique.
 - Each tab keeps its own draft and dirty state. Saving is per file. Closing prompts once when any tab has unsaved changes.
-- The tag-wrap toolbar is available only for Markdown files. Tag snippets are generic UI data; the Pimote config tab is not a special editor tab.
+- The tag-wrap toolbar is available only for Markdown files. Tag snippets are generic UI data; the Pimote config tab is not a special editor tab. Pimote provides validated snippets through server capabilities rather than client-side config parsing, superseding DR-052's old path-based workaround.
 - The file manifest is a snapshot for one dialog opening. Changes to Pimote's `settingsFiles` list take effect the next time Settings opens.
 
 ## Direction
