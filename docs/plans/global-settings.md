@@ -32,7 +32,7 @@ A deep manifest module that combines built-ins, native Pimote configuration, con
 
 **Pimote configuration runtime** (`server/src/config-runtime.ts` or the equivalent config-owned module)
 
-A validated runtime snapshot and reload seam for native Pimote configuration. It separates safe dynamic fields from startup-only fields, provides the validated tag-snippet capability payload, and supplies the native-config predicate used by `file_put`.
+A validated runtime snapshot and reload seam for native Pimote configuration. It separates safe dynamic fields from startup-only fields, provides the validated tag-snippet capability payload, and supplies the native-config predicate used by `file_put`. The dynamic matrix is explicit: `settingsFiles` and `tagSnippets` update immediately; `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `defaultInterpreterModel`, and `defaultWorkerModel` affect new sessions or new voice extensions; `idleTimeout` is read on the next idle check; and `bufferSize` applies to new session buffers. `roots`, `managerRoot`, `port`, VAPID keys, and active voice transport remain startup-only. Pi-native and third-party files have no Pimote reload policy.
 
 **Global settings client store** (`client/src/lib/stores/global-settings.svelte.ts`)
 
