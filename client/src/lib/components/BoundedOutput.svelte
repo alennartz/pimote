@@ -93,12 +93,12 @@
   }
 
   .bounded-output-text.clamped {
-    max-height: 400px;
+    max-height: 160px;
     overflow: hidden;
   }
 
   .bounded-output-text.scrollable {
-    max-height: 400px;
+    max-height: 160px;
     overflow-y: auto;
   }
 
