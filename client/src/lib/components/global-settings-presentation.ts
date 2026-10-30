@@ -1,5 +1,4 @@
 import { inferLanguageFromPath } from '$lib/editor-language.js';
-import { isValidTagName } from '$lib/tag-wrap.js';
 
 export interface GlobalSettingsPresentationInput {
   surface: 'home' | 'conversation';
@@ -23,7 +22,7 @@ export function globalSettingsPresentation(input: GlobalSettingsPresentationInpu
   return {
     gear: input.surface === 'home' ? { placement: mobile ? 'top-left' : 'bottom-left', size: mobile ? 'small' : 'large' } : null,
     language,
-    tagSnippets: language === 'markdown' ? [...new Set(input.snippets.filter((snippet) => isValidTagName(snippet)))] : [],
+    tagSnippets: language === 'markdown' ? [...input.snippets] : [],
     actions: { placement: mobile ? 'header' : 'footer', closeLabel: mobile ? 'Close' : 'Cancel', saveEnabled: input.dirty },
   };
 }

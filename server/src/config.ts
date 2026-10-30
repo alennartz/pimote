@@ -167,10 +167,14 @@ function parseStringArray(value: unknown, field: string, configPath: string): st
   return [...value];
 }
 
-/** Keep only unique tag names accepted by the Markdown wrapping contract. */
+/** Validate tag names and keep the first occurrence of each snippet. */
 export function normalizeTagSnippets(snippets: readonly string[] | undefined): string[] | undefined {
   if (snippets === undefined) return undefined;
-  return [...new Set(snippets.filter((snippet) => TAG_NAME_PATTERN.test(snippet)))];
+  const invalid = snippets.find((snippet) => !TAG_NAME_PATTERN.test(snippet));
+  if (invalid !== undefined) {
+    throw new Error(`Config "tagSnippets" contains invalid tag name ${JSON.stringify(invalid)}`);
+  }
+  return [...new Set(snippets)];
 }
 
 export async function loadConfig(): Promise<PimoteConfig> {

@@ -252,7 +252,9 @@ class ExtensionHost implements PimoteExtensionHost {
           await module.default(entryRuntime.context(path));
           runtime.commit(entryRuntime);
         } catch (error) {
+          const cleanupDiagnostics = await entryRuntime.stop();
           entryRuntime.seal();
+          runtime.diagnostics.push(...cleanupDiagnostics);
           runtime.diagnostics.push({ path, message: String(error) });
         }
       }
