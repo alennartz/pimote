@@ -402,10 +402,17 @@ async function main() {
     const expected1 = SEED_CONTENT + '\nmanual-edit-line';
     assert(typed && typed.doc === expected1, `typed text lands in the editor via ${typed ? typed.method : 'no editor'}`);
     assert((await clickButtonExact('Save')) === 'CLICKED', 'Save button clicked');
-    const closedAfterSave = await waitFor(async () => !(await dialogShows('AGENTS.md')), { timeoutMs: 10_000 });
-    assert(closedAfterSave, 'dialog closes after a successful save');
+    const cleanAfterSave = await waitFor(
+      async () => await evalJs(`Array.from(document.querySelectorAll('button')).filter((b) => b.offsetParent !== null && b.textContent.trim() === 'Save').every((b) => b.disabled)`),
+      { timeoutMs: 10_000 },
+    );
+    assert(cleanAfterSave, 'active tab is clean and Save is disabled after the per-file save');
+    assert(await dialogShows('AGENTS.md'), 'dialog remains open after the per-file save');
     const disk1 = await waitFor(async () => (await readFile(agentsPath, 'utf8').catch(() => '')) === expected1, { timeoutMs: 5_000, intervalMs: 250 });
     assert(disk1, 'file on disk contains exactly the edited text');
+    assert((await clickButtonExact('Cancel')) === 'CLICKED', 'Cancel closes the clean dialog after saving');
+    const closedAfterSave = await waitFor(async () => !(await dialogShows('AGENTS.md')), { timeoutMs: 10_000 });
+    assert(closedAfterSave, 'dialog closes after Cancel with no dirty tabs');
     const entry2 = await clickSnapshotRef('Open Settings');
     assert(entry2.ok, 'entry button re-clicked from a fresh snapshot (reopen)');
     const reopened = await waitFor(() => editorOpen(), { timeoutMs: 15_000 });
