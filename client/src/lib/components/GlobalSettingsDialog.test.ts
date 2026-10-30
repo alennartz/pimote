@@ -11,7 +11,7 @@ afterEach(async () => {
   document.body.innerHTML = '';
 });
 
-async function render(viewport: 'desktop' | 'mobile' = 'desktop', surface: 'home' | 'conversation' = 'home') {
+async function render(viewport: 'desktop' | 'mobile' = 'desktop') {
   const store = new GlobalSettingsStore(async (command) => {
     if (command.type === 'get_global_settings')
       return {
@@ -28,7 +28,7 @@ async function render(viewport: 'desktop' | 'mobile' = 'desktop', surface: 'home
   });
   const target = document.createElement('div');
   document.body.appendChild(target);
-  component = mount(GlobalSettingsDialog, { target, props: { store, viewport, surface, snippets: ['note'] } });
+  component = mount(GlobalSettingsDialog, { target, props: { store, viewport, snippets: ['note'] } });
   await tick();
   return store;
 }
@@ -39,20 +39,18 @@ function button(text: string): HTMLButtonElement {
 }
 
 describe('Settings dialog rendering', () => {
-  it.each(['desktop', 'mobile'] as const)('opens the %s home overlay through its accessible gear', async (viewport) => {
-    await render(viewport);
-    const gear = document.querySelector<HTMLButtonElement>('[aria-label="Open Settings"]');
-    expect(gear).not.toBeNull();
+  it('does not render a floating trigger', async () => {
+    await render();
+    expect(document.querySelector('[aria-label="Open Settings"]')).toBeNull();
+  });
+
+  it.each(['desktop', 'mobile'] as const)('opens the %s overlay when its store is opened', async (viewport) => {
+    const store = await render(viewport);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-    gear!.click();
+    await store.loadManifest();
     await tick();
     await tick();
     expect(document.querySelector('[role="dialog"][aria-modal="true"]')).not.toBeNull();
-  });
-
-  it('omits the home gear on conversation surfaces', async () => {
-    await render('desktop', 'conversation');
-    expect(document.querySelector('[aria-label="Open Settings"]')).toBeNull();
   });
 
   it('renders tabs, dirty state, and a missing-file creation hint without a visible Settings title', async () => {

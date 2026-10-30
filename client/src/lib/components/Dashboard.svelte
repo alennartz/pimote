@@ -3,6 +3,8 @@
   import GlobalSettingsDialog from './GlobalSettingsDialog.svelte';
   import { globalSettingsStore } from '$lib/stores/global-settings.svelte.js';
   import { serverCapabilities } from '$lib/stores/server-capabilities.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import Settings from '@lucide/svelte/icons/settings';
 
   let viewport = $state<'desktop' | 'mobile'>('desktop');
   onMount(() => {
@@ -76,7 +78,7 @@
   });
 </script>
 
-<GlobalSettingsDialog store={globalSettingsStore} {viewport} surface="home" snippets={serverCapabilities.tagSnippets} />
+<GlobalSettingsDialog store={globalSettingsStore} {viewport} snippets={serverCapabilities.tagSnippets} />
 
 <div class="flex min-h-0 flex-1">
   <div class="flex min-h-0 flex-1 flex-col overflow-y-auto" bind:this={scrollElement} onscroll={closeOpenSwipeCard}>
@@ -85,6 +87,9 @@
         <div class="flex items-center gap-2.5">
           <img src="/pwa/icon-512.png" alt="" class="border-border size-[90px] rounded-xl border object-cover" />
           <span class="text-foreground text-4xl font-semibold tracking-tight">Pimote</span>
+          <Button variant="ghost" size="icon" class="size-9 shrink-0" aria-label="Open Settings" title="Open Settings" onclick={() => void globalSettingsStore.loadManifest()}>
+            <Settings class="size-5" />
+          </Button>
         </div>
       </div>
 

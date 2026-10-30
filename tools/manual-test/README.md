@@ -9,8 +9,8 @@ and which tool (if any) drives each.
 
 ## Global Settings acceptance
 
-The home Settings gear opens a server-resolved tabbed manifest. Verify desktop
-bottom-left and mobile top-left placement, no gear on conversations, lazy reads,
+The home Settings button opens a server-resolved tabbed manifest beside the
+home branding. Verify its in-flow placement and absence on conversations, lazy reads,
 independent drafts, missing-file creation, dirty-close confirmation, Markdown
 capability snippets, and responsive action placement. Exercise native-config
 validation and symlink writes from two clients. Reload Pimote extensions with
@@ -657,7 +657,7 @@ or LLM required. Tracks and kills only the child PID it spawns.
 ### agents-md-editor-smoke (Global Settings)
 
 **Purpose:** Exercise the Global Settings journey (journey 13 in `PLAN.md`)
-end-to-end against a sandboxed Pimote and real PWA. The home-only Settings gear
+end-to-end against a sandboxed Pimote and real PWA. The home-only Settings button
 opens the server-resolved manifest, with effective Pi `AGENTS.md` as the first
 tab. The smoke checks the resolved path and content, Markdown capability
 snippets, exact save round-trip, freeform and snippet tag wrapping, and the

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { globalSettingsPresentation, type GlobalSettingsPresentationInput } from './global-settings-presentation.js';
 
 const input: GlobalSettingsPresentationInput = {
-  surface: 'home',
   viewport: 'desktop',
   path: '/agent/AGENTS.md',
   dirty: false,
@@ -10,18 +9,6 @@ const input: GlobalSettingsPresentationInput = {
 };
 
 describe('Global settings presentation', () => {
-  it('places the large home gear at desktop bottom-left', () => {
-    expect(globalSettingsPresentation(input).gear).toEqual({ placement: 'bottom-left', size: 'large' });
-  });
-
-  it('places the small home gear at mobile top-left', () => {
-    expect(globalSettingsPresentation({ ...input, viewport: 'mobile' }).gear).toEqual({ placement: 'top-left', size: 'small' });
-  });
-
-  it.each(['desktop', 'mobile'] as const)('omits the gear from the %s conversation surface', (viewport) => {
-    expect(globalSettingsPresentation({ ...input, surface: 'conversation', viewport }).gear).toBeNull();
-  });
-
   it.each(['/agent/AGENTS.md', '/custom/instructions.markdown'])('offers capability tag snippets for Markdown path %s', (path) => {
     const view = globalSettingsPresentation({ ...input, path });
     expect(view.language).toBe('markdown');

@@ -9,22 +9,19 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import CodeEditorDialog from './CodeEditorDialog.svelte';
   import { globalSettingsPresentation } from './global-settings-presentation.js';
-  import Settings from '@lucide/svelte/icons/settings';
 
   let {
     store,
     viewport = 'desktop',
-    surface = 'home',
     snippets = [],
   }: {
     store: GlobalSettingsStore;
     viewport?: 'desktop' | 'mobile';
-    surface?: 'home' | 'conversation';
     snippets?: readonly string[];
   } = $props();
 
   let active = $derived(store.files.find((file) => file.path === store.activePath));
-  let presentation = $derived(globalSettingsPresentation({ surface, viewport, path: active?.path ?? '', dirty: active?.dirty ?? false, snippets }));
+  let presentation = $derived(globalSettingsPresentation({ viewport, path: active?.path ?? '', dirty: active?.dirty ?? false, snippets }));
   let editorView = $state<EditorView | null>(null);
   let tagInputVisible = $state(false);
   let tagName = $state('');
@@ -53,17 +50,6 @@
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: result.text }, selection: { anchor: result.from, head: result.to } });
   }
 </script>
-
-{#if presentation.gear}
-  <Button
-    variant="ghost"
-    size="icon"
-    aria-label="Open Settings"
-    title="Open Settings"
-    class={viewport === 'mobile' ? 'settings-gear settings-gear-mobile' : 'settings-gear settings-gear-desktop'}
-    onclick={() => void store.loadManifest()}><Settings class={viewport === 'mobile' ? 'size-5' : 'size-7'} /></Button
-  >
-{/if}
 
 <CodeEditorDialog
   open={store.open}
@@ -151,33 +137,3 @@
     </AlertDialog.Content>
   </AlertDialog.Portal>
 </AlertDialog.Root>
-
-<style>
-  :global(.settings-gear) {
-    position: fixed;
-    z-index: 20;
-    border-radius: 50%;
-  }
-  :global(.settings-gear-desktop) {
-    width: 3.5rem;
-    height: 3.5rem;
-    left: max(1.5rem, env(safe-area-inset-left));
-    bottom: max(1.5rem, env(safe-area-inset-bottom));
-  }
-  :global(.settings-mobile) {
-    top: 0;
-    left: 0;
-    width: 100vw;
-    max-width: none;
-    height: 100dvh;
-    translate: none;
-    transform: none;
-    border-radius: 0;
-  }
-  :global(.settings-gear-mobile) {
-    width: 2.5rem;
-    height: 2.5rem;
-    left: max(0.75rem, env(safe-area-inset-left));
-    top: max(0.75rem, env(safe-area-inset-top));
-  }
-</style>

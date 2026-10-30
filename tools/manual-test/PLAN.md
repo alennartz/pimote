@@ -323,7 +323,7 @@ lists interplay, and rendered-row-only session loading.
 
 ## 13. Global Settings and folder instructions
 
-The home page shows a responsive Settings gear. Desktop places the large gear at bottom-left. Mobile places the small gear at top-left. The gear is absent on conversation surfaces. Opening it requests one server-resolved manifest containing effective Pi files, native Pimote config, configured files, and Pimote extension registrations. Tabs load lazily and retain independent drafts, dirty markers, missing-file creation hints, and per-file saves. Markdown tabs show the validated capability tag palette. Desktop actions stay in the footer. Mobile actions stay in the header. Close with dirty tabs asks once to keep editing or discard.
+The home page shows an in-flow Settings button beside its branding. The button exists only on the dashboard. Opening it requests one server-resolved manifest containing effective Pi files, native Pimote config, configured files, and Pimote extension registrations. Tabs load lazily and retain independent drafts, dirty markers, missing-file creation hints, and per-file saves. Markdown tabs show the validated capability tag palette. Desktop actions stay in the footer. Mobile actions stay in the header. Close with dirty tabs asks once to keep editing or discard.
 
 Verify both breakpoints, server-resolved paths and labels, manifest stability until reopen, missing-file creation, invalid native-config rejection, symlink validation, multi-client capability broadcasts, dynamic consumer policies, extension reload diagnostics, user-package filtering, and retained folder-row AGENTS.md editing. Use the existing manual-test harness and browser driver.
 

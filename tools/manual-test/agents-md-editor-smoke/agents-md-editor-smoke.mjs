@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Smoke for the Global Settings journey: the home-only Settings gear opens
+// Smoke for the Global Settings journey: the home-only Settings button opens
 // the server-resolved manifest and the effective Pi `AGENTS.md` tab.
 //
 // One phase, against a real pimote booted on a sandboxed HOME (own XDG dirs,
@@ -7,7 +7,7 @@
 // project tree for a plausible dashboard). Driven via agent-browser (real
 // Chromium):
 //
-//   1. Entry — snapshot exposes the "Open Settings" gear on the home page;
+//   1. Entry — snapshot exposes the "Open Settings" button on the home page;
 //      clicking its ref opens the dialog.
 //   2. Open  — header shows the `AGENTS.md` label and resolved absolute
 //      sandbox path; the editor loads the file's content; the Tag toolbar
@@ -369,13 +369,13 @@ async function main() {
     const baseUrl = `http://127.0.0.1:${port}`;
 
     // ============================================================
-    section('1 — home-page Settings gear (snapshot → click)');
+    section('1 — home-page Settings button (snapshot → click)');
     // ============================================================
     await browser(['close'], { allowFailure: true });
     await browser(['open', `${baseUrl}/`]);
     await browser(['wait', '3000']);
     const entry = await clickSnapshotRef('Open Settings');
-    assert(entry.ok, `snapshot exposes the "Open Settings" gear and its ref clicks (${entry.ref ?? 'none'})`);
+    assert(entry.ok, `snapshot exposes the "Open Settings" button and its ref clicks (${entry.ref ?? 'none'})`);
     if (!entry.ok) console.error(entry.snap);
 
     // ============================================================
