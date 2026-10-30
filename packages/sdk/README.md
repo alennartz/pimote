@@ -128,7 +128,7 @@ const extension: PimoteExtension = (context) => {
     },
   });
   context.settings.registerFile('./instructions.md');
-  return context.on('shutdown', async () => {
+  context.on('shutdown', async () => {
     // Release process-global resources here.
   });
 };

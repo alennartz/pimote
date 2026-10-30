@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import type { ServerCapabilitiesEvent } from '../../shared/dist/index.js';
-import { parseConfig, type PimoteConfig } from './config.js';
+import { normalizeTagSnippets, parseConfig, type PimoteConfig } from './config.js';
 import { resolveFilePath, writeEditableFile } from './file-edit.js';
 
 export interface ConfigRuntimeOptions {
@@ -16,7 +16,7 @@ function cloneConfig(config: PimoteConfig): PimoteConfig {
     ...config,
     roots: [...config.roots],
     voice: config.voice ? { ...config.voice } : undefined,
-    tagSnippets: config.tagSnippets ? [...config.tagSnippets] : undefined,
+    tagSnippets: normalizeTagSnippets(config.tagSnippets),
     settingsFiles: config.settingsFiles ? [...config.settingsFiles] : undefined,
   };
 }
@@ -44,6 +44,7 @@ export class ConfigRuntime {
   private readonly startupConfig: PimoteConfig;
   private effectiveConfig: PimoteConfig;
   private readonly voiceAvailability: () => boolean;
+  private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(options: ConfigRuntimeOptions) {
     this.configPath = resolveFilePath(options.configPath, homedir());
@@ -74,7 +75,7 @@ export class ConfigRuntime {
     const next = cloneConfig(this.startupConfig);
 
     next.settingsFiles = candidate.settingsFiles ? [...candidate.settingsFiles] : undefined;
-    next.tagSnippets = candidate.tagSnippets ? [...candidate.tagSnippets] : undefined;
+    next.tagSnippets = normalizeTagSnippets(candidate.tagSnippets);
     next.defaultProvider = candidate.defaultProvider;
     next.defaultModel = candidate.defaultModel;
     next.defaultThinkingLevel = candidate.defaultThinkingLevel;
@@ -100,14 +101,21 @@ export class ConfigRuntime {
   }
 
   /** Validate before writing, then apply safe fields. Ordinary files retain generic writes. */
-  async putFile(path: string, content: string): Promise<{ path: string }> {
-    if (await this.isNativeConfig(path)) {
-      const candidate = this.validate(content);
-      const result = await writeEditableFile(path, content);
-      this.apply(candidate);
-      return result;
-    }
+  putFile(path: string, content: string): Promise<{ path: string }> {
+    const operation = this.writeQueue.then(async () => {
+      if (await this.isNativeConfig(path)) {
+        const candidate = this.validate(content);
+        const result = await writeEditableFile(path, content);
+        this.apply(candidate);
+        return result;
+      }
 
-    return writeEditableFile(path, content);
+      return writeEditableFile(path, content);
+    });
+    this.writeQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 }

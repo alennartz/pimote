@@ -75,6 +75,7 @@
   saving={active?.saving ?? false}
   saveDisabled={!presentation.actions.saveEnabled || !active?.loaded}
   ready={active?.loaded ?? false}
+  editorKey={active?.path ?? null}
   toolbarVisible={presentation.language === 'markdown'}
   language={inferLanguageFromPath(active?.path ?? '')}
   bind:value={
@@ -169,6 +170,7 @@
     width: 100vw;
     max-width: none;
     height: 100dvh;
+    translate: none;
     transform: none;
     border-radius: 0;
   }

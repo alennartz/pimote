@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// Smoke for the agents-md-editor topic: the home-page "Agent instructions"
-// entry → config-file editor dialog on `~/.pi/agent/AGENTS.md`.
+// Smoke for the Global Settings journey: the home-only Settings gear opens
+// the server-resolved manifest and the effective Pi `AGENTS.md` tab.
 //
 // One phase, against a real pimote booted on a sandboxed HOME (own XDG dirs,
 // a seeded AGENTS.md, `tagSnippets` in the pimote config, and a one-repo
 // project tree for a plausible dashboard). Driven via agent-browser (real
 // Chromium):
 //
-//   1. Entry — snapshot exposes the "Agent instructions" button in the
-//      Projects header; clicking its ref opens the dialog.
-//   2. Open  — header shows the title and the resolved absolute sandbox path
-//      to `~/.pi/agent/AGENTS.md`; the editor loads the file's content; the
-//      Tag toolbar button and the `tagSnippets` palette (note, todo) render.
+//   1. Entry — snapshot exposes the "Open Settings" gear on the home page;
+//      clicking its ref opens the dialog.
+//   2. Open  — header shows the `AGENTS.md` label and resolved absolute
+//      sandbox path; the editor loads the file's content; the Tag toolbar
+//      button and `tagSnippets` palette (note, todo) render.
 //   3. Edit + save round-trip — text typed through the real input path,
 //      Save closes the dialog, the file on disk holds exactly the edited
 //      text; reopening shows the saved content (load path + clean baseline).
@@ -27,7 +27,7 @@
 //
 // No live LLM or network required. Tracks and kills only the child PID it
 // spawns — no pattern-based `pkill`. See README.md alongside this file and
-// docs/manual-tests/agents-md-editor.md.
+// the Global Settings section in tools/manual-test/PLAN.md.
 
 import { spawn, execFile as execFileCb } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile, readFile, appendFile } from 'node:fs/promises';
@@ -332,7 +332,7 @@ async function clickSnapshotRef(label) {
 // -------------------------------------------------------------------- main
 
 async function main() {
-  console.log('[am-smoke] agents-md-editor config-file editor smoke');
+  console.log('[am-smoke] Global Settings editor smoke');
   const sandboxHome = await mkdtemp(join(tmpdir(), 'agents-md-editor-smoke-'));
   const configDir = join(sandboxHome, '.config', 'pimote');
   await mkdir(configDir, { recursive: true });
@@ -355,7 +355,7 @@ async function main() {
   const logPath = join(sandboxHome, 'pimote.log');
   const shotsDir = process.env.AM_SHOT ? pathResolve(process.env.AM_SHOT) : sandboxHome;
   if (process.env.AM_SHOT) await mkdir(pathResolve(process.env.AM_SHOT, '..'), { recursive: true }).catch(() => {});
-  const shotPath = process.env.AM_SHOT ? shotsDir : join(sandboxHome, 'agents-md-editor.png');
+  const shotPath = process.env.AM_SHOT ? shotsDir : join(sandboxHome, 'global-settings.png');
 
   log('sandbox HOME =', sandboxHome);
   log('agents file  =', agentsPath);
@@ -369,27 +369,27 @@ async function main() {
     const baseUrl = `http://127.0.0.1:${port}`;
 
     // ============================================================
-    section('1 — home-page entry button (snapshot → click)');
+    section('1 — home-page Settings gear (snapshot → click)');
     // ============================================================
     await browser(['close'], { allowFailure: true });
     await browser(['open', `${baseUrl}/`]);
     await browser(['wait', '3000']);
-    const entry = await clickSnapshotRef('Agent instructions');
-    assert(entry.ok, `snapshot exposes the "Agent instructions" button and its ref clicks (${entry.ref ?? 'none'})`);
+    const entry = await clickSnapshotRef('Open Settings');
+    assert(entry.ok, `snapshot exposes the "Open Settings" gear and its ref clicks (${entry.ref ?? 'none'})`);
     if (!entry.ok) console.error(entry.snap);
 
     // ============================================================
-    section('2 — dialog opens on ~/.pi/agent/AGENTS.md');
+    section('2 — dialog opens on the effective Pi AGENTS.md');
     // ============================================================
     const opened = await waitFor(() => editorOpen(), { timeoutMs: 15_000 });
     assert(opened, 'editor mounts after the dialog opens (lazy CodeMirror load)');
-    assert(await dialogShows('Agent instructions'), 'dialog header shows the "Agent instructions" title');
+    assert(await dialogShows('AGENTS.md'), 'dialog header shows the AGENTS.md tab label');
     assert(await dialogShows(agentsPath), `header shows the resolved absolute path (${agentsPath})`);
     const text0 = await cmText();
     assert(text0 === SEED_CONTENT, 'editor content equals the file on disk');
-    assert((await clickAriaLabel('Wrap selection with a tag')) === 'CLICKED', 'Tag toolbar button renders');
+    assert((await clickButtonExact('Tag')) === 'CLICKED', 'Tag toolbar button renders');
     assert(await waitFor(() => evalJs(`!!document.querySelector('input[aria-label="Tag name"]')`)), 'Tag button reveals the tag-name input');
-    assert((await clickAriaLabel('Wrap selection with a tag')) === 'CLICKED', 'Tag button toggles the input closed again');
+    assert((await clickButtonExact('Tag')) === 'CLICKED', 'Tag button toggles the input closed again');
     const inputHidden = await waitFor(async () => !(await evalJs(`!!document.querySelector('input[aria-label="Tag name"]')`)));
     assert(inputHidden, 'tag input hidden after the second toggle');
     assert((await evalJs(`document.querySelectorAll('button[aria-label="Wrap with note"]').length`)) === 1, 'snippet button "note" renders from config tagSnippets');
@@ -402,11 +402,11 @@ async function main() {
     const expected1 = SEED_CONTENT + '\nmanual-edit-line';
     assert(typed && typed.doc === expected1, `typed text lands in the editor via ${typed ? typed.method : 'no editor'}`);
     assert((await clickButtonExact('Save')) === 'CLICKED', 'Save button clicked');
-    const closedAfterSave = await waitFor(async () => !(await dialogShows('Agent instructions')), { timeoutMs: 10_000 });
+    const closedAfterSave = await waitFor(async () => !(await dialogShows('AGENTS.md')), { timeoutMs: 10_000 });
     assert(closedAfterSave, 'dialog closes after a successful save');
     const disk1 = await waitFor(async () => (await readFile(agentsPath, 'utf8').catch(() => '')) === expected1, { timeoutMs: 5_000, intervalMs: 250 });
     assert(disk1, 'file on disk contains exactly the edited text');
-    const entry2 = await clickSnapshotRef('Agent instructions');
+    const entry2 = await clickSnapshotRef('Open Settings');
     assert(entry2.ok, 'entry button re-clicked from a fresh snapshot (reopen)');
     const reopened = await waitFor(() => editorOpen(), { timeoutMs: 15_000 });
     assert(reopened, 'editor mounts again on reopen');
@@ -417,7 +417,7 @@ async function main() {
     // ============================================================
     const wordStart = expected1.indexOf('original');
     await setCaret(wordStart, wordStart + 'original'.length);
-    assert((await clickAriaLabel('Wrap selection with a tag')) === 'CLICKED', 'Tag button opens the input');
+    assert((await clickButtonExact('Tag')) === 'CLICKED', 'Tag button opens the input');
     await waitFor(() => evalJs(`!!document.querySelector('input[aria-label="Tag name"]')`));
     assert(await setTagInputValue('mytag'), 'typed tag name into the tag input');
     await browser(['press', 'Enter']);
@@ -451,15 +451,15 @@ async function main() {
     assert(await dialogShows('Discard unsaved changes?'), 'discard confirmation appears on Cancel');
     assert((await clickButtonExact('Keep editing')) === 'CLICKED', 'Keep editing chosen');
     await wait(300);
-    assert(await dialogShows('Agent instructions'), 'editor dialog still open after Keep editing');
+    assert(await dialogShows('AGENTS.md'), 'editor dialog still open after Keep editing');
     assert((await cmText()) === expected4, 'edits intact after Keep editing');
     await evalJs(`(() => { const c = document.querySelector('.cm-content'); if (c) c.focus(); return true; })()`);
     await browser(['press', 'Escape']);
     await wait(400);
     assert(await dialogShows('Discard unsaved changes?'), 'Esc with unsaved edits is vetoed into the same confirmation');
-    assert(await dialogShows('Agent instructions'), 'editor dialog never closed underneath the confirmation');
+    assert(await dialogShows('AGENTS.md'), 'editor dialog never closed underneath the confirmation');
     assert((await clickButtonExact('Discard')) === 'CLICKED', 'Discard chosen');
-    const closedAfterDiscard = await waitFor(async () => !(await dialogShows('Agent instructions')), { timeoutMs: 10_000 });
+    const closedAfterDiscard = await waitFor(async () => !(await dialogShows('AGENTS.md')), { timeoutMs: 10_000 });
     assert(closedAfterDiscard, 'dialog closes after Discard');
     assert((await readFile(agentsPath, 'utf8')) === expected1, 'disk unchanged by the discarded edits (still the saved text)');
 
@@ -468,7 +468,7 @@ async function main() {
     // ============================================================
     // Reopen once more so the screenshot shows the dialog as a whole (content,
     // toolbar, save bar) rather than the bare dashboard after the discard.
-    await clickSnapshotRef('Agent instructions');
+    await clickSnapshotRef('Open Settings');
     await waitFor(() => editorOpen(), { timeoutMs: 15_000 });
     await wait(500);
     await browser(['screenshot', shotPath], { allowFailure: true });

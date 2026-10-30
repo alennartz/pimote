@@ -4,7 +4,14 @@ import { homedir } from 'node:os';
 import { createJiti } from 'jiti';
 import type { PimoteExtensionContext } from '@pimote/sdk/pimote';
 import { sdkRuntimeAliases } from '../folder-sources/loader.js';
-import type { PimoteExtensionHost, PimoteExtensionHostOptions, PimoteExtensionRegistry, PimoteExtensionDiagnostic, PimoteExtensionModule } from './types.js';
+import type {
+  PimoteConfiguredPackage,
+  PimoteExtensionHost,
+  PimoteExtensionHostOptions,
+  PimoteExtensionRegistry,
+  PimoteExtensionDiagnostic,
+  PimoteExtensionModule,
+} from './types.js';
 
 export type {
   PimoteConfiguredPackage,
@@ -64,9 +71,21 @@ async function discoverEntries(options: PimoteExtensionHostOptions, diagnostics:
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') diagnostics.push({ path: options.extensionDirectory, message: String(error) });
   }
   if (options.packageManager) {
-    for (const pkg of options.packageManager.listConfiguredPackages()) {
+    let configuredPackages: readonly PimoteConfiguredPackage[] = [];
+    try {
+      configuredPackages = options.packageManager.listConfiguredPackages();
+    } catch (error) {
+      diagnostics.push({ path: '<package-manager>', message: String(error) });
+    }
+    for (const pkg of configuredPackages) {
       if (pkg.scope !== 'user') continue;
-      const root = options.packageManager.getInstalledPath(pkg.source, pkg.scope);
+      let root: string | undefined;
+      try {
+        root = options.packageManager.getInstalledPath(pkg.source, pkg.scope);
+      } catch (error) {
+        diagnostics.push({ path: pkg.source, message: String(error) });
+        continue;
+      }
       if (!root) continue;
       try {
         const manifest = await readManifest(root);
@@ -177,16 +196,25 @@ class ExtensionHost implements PimoteExtensionHost {
   private async replaceRuntime(): Promise<PimoteExtensionRegistry> {
     await this.runtime?.stop();
     const runtime = new Runtime();
-    const entries = await discoverEntries(this.options, runtime.diagnostics);
-    const jiti = createJiti(import.meta.url, { moduleCache: false, fsCache: false, tryNative: false, alias: sdkRuntimeAliases(['@pimote/sdk/pimote']) });
-    for (const path of entries) {
-      try {
-        const module = (await jiti.evalModule(await readFile(path, 'utf8'), { filename: path, async: true, forceTranspile: true })) as PimoteExtensionModule;
-        if (typeof module.default !== 'function') throw new Error('Pimote extension must export a default factory');
-        await module.default(runtime.context(path));
-      } catch (error) {
-        runtime.diagnostics.push({ path, message: String(error) });
+    try {
+      const entries = await discoverEntries(this.options, runtime.diagnostics);
+      const jiti = createJiti(import.meta.url, {
+        moduleCache: false,
+        fsCache: false,
+        tryNative: false,
+        alias: sdkRuntimeAliases(['@pimote/sdk/pimote']),
+      });
+      for (const path of entries) {
+        try {
+          const module = (await jiti.evalModule(await readFile(path, 'utf8'), { filename: path, async: true, forceTranspile: true })) as PimoteExtensionModule;
+          if (typeof module.default !== 'function') throw new Error('Pimote extension must export a default factory');
+          await module.default(runtime.context(path));
+        } catch (error) {
+          runtime.diagnostics.push({ path, message: String(error) });
+        }
       }
+    } catch (error) {
+      runtime.diagnostics.push({ path: this.options.extensionDirectory, message: String(error) });
     }
     this.runtime = runtime;
     return runtime.snapshot();

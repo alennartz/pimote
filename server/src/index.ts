@@ -363,6 +363,11 @@ export async function main(options: StartOptions = {}) {
   }
 
   const reloadPimoteExtensions = async (): Promise<void> => {
+    try {
+      await packageSettings.reload();
+    } catch (error) {
+      console.warn(`[pimote-extensions] package settings reload failed: ${String(error)}`);
+    }
     const registry = await pimoteExtensionHost.reload();
     for (const diagnostic of registry.diagnostics) {
       console.warn(`[pimote-extensions] ${diagnostic.path}: ${diagnostic.message}`);

@@ -53,7 +53,9 @@ A factory receives `folders.registerSource(source)`, `settings.registerFile(path
 
 ## Global Settings files
 
-The Settings manifest combines effective Pi `AGENTS.md`, effective Pi `settings.json`, native Pimote config, `settingsFiles` entries, and extension registrations. The server resolves these paths and labels. The client never reconstructs host paths. A missing entry remains visible and is created by a successful save. Native Pimote config writes are parsed and validated before an atomic write. `tagSnippets` is validated on the server and advertised in `server_capabilities`. Changes to settings files apply on the next dialog opening.
+The Settings manifest combines effective Pi `AGENTS.md`, effective Pi `settings.json`, native Pimote config, `settingsFiles` entries, and extension registrations. The server resolves these paths and labels. The client never reconstructs host paths. A missing entry remains visible and is created by a successful save. Native Pimote config writes are parsed and validated before an atomic write. `tagSnippets` is validated on the server and advertised in `server_capabilities`.
+
+Native configuration changes follow this matrix. `settingsFiles` and `tagSnippets` apply immediately. Default provider, model, thinking, interpreter-model, and worker-model fields apply to new sessions or new voice extensions. `idleTimeout` is read at the next idle check. `bufferSize` applies to new session buffers. `roots`, `managerRoot`, `port`, VAPID keys, and active voice transport are startup-only. Pi-native and third-party files have no Pimote reload policy. The manifest stays fixed while its dialog is open; changed file lists appear on the next opening.
 
 ## Freshness
 

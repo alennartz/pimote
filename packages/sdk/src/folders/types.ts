@@ -43,8 +43,8 @@ export type SourceEntry = RepoSourceEntry | HubSourceEntry;
 /**
  * Extensible discovery seam: a source contributes repos and hub
  * folders to the folder layer. Built in: the filesystem walker over
- * configured roots. User-authored sources are dynamic-imported from the
- * configured folder-sources directory.
+ * configured roots. User-authored sources are registered by the global
+ * Pimote extension host.
  */
 export interface FolderSource {
   readonly id: string;

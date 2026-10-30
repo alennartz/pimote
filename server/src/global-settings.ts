@@ -39,14 +39,13 @@ export class GlobalSettingsCatalog {
   async snapshot(): Promise<GetGlobalSettingsResponseData> {
     const paths = this.declaredPaths();
     const entries: ManifestEntry[] = [];
-    const knownCanonicalPaths = new Set<string>();
+    const knownIdentities = new Set<string>();
 
     for (const path of paths) {
       const canonical = await canonicalExistingPath(path);
-      if (canonical !== undefined) {
-        if (knownCanonicalPaths.has(canonical)) continue;
-        knownCanonicalPaths.add(canonical);
-      }
+      const identity = canonical ?? path;
+      if (knownIdentities.has(identity)) continue;
+      knownIdentities.add(identity);
       entries.push({ path, canonical });
     }
 

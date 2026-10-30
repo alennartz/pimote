@@ -654,17 +654,15 @@ failure. On failure the sandbox and boot logs are preserved.
 **Prerequisites:** workspaces built (`npm run build`). No browser, network,
 or LLM required. Tracks and kills only the child PID it spawns.
 
-### agents-md-editor-smoke
+### agents-md-editor-smoke (Global Settings)
 
-**Purpose:** Exercise the AGENTS.md editor journey (the `agents-md-editor`
-topic) end-to-end against a real sandboxed pimote + real PWA: the home-page
-"Agent instructions" button opens the config-file editor dialog on
-`~/.pi/agent/AGENTS.md` (title, resolved path, content, toolbar), edit + save
-round-trips to disk exactly, tag-wrap works freeform (inline wrap with
-selection restored) and via `tagSnippets` snippet buttons (block insert at the
-cursor), and cancel/discard-confirm gates every close path (Cancel →
-confirmation, Keep editing, Esc veto, Discard leaves disk unchanged). Drives
-journey 13 in `PLAN.md`.
+**Purpose:** Exercise the Global Settings journey (journey 13 in `PLAN.md`)
+end-to-end against a sandboxed Pimote and real PWA. The home-only Settings gear
+opens the server-resolved manifest, with effective Pi `AGENTS.md` as the first
+tab. The smoke checks the resolved path and content, Markdown capability
+snippets, exact save round-trip, freeform and snippet tag wrapping, and the
+close-discard flow (Cancel, Keep editing, Escape, and Discard). Folder-row
+`AGENTS.md` editing remains a separate path-based flow.
 
 **Location:** `tools/manual-test/agents-md-editor-smoke/agents-md-editor-smoke.mjs`
 
@@ -674,7 +672,7 @@ journey 13 in `PLAN.md`.
 npm run build
 node tools/manual-test/agents-md-editor-smoke/agents-md-editor-smoke.mjs
 # Keep the coherence screenshot outside the (auto-removed) sandbox:
-AM_SHOT=/tmp/agents-md-editor.png node tools/manual-test/agents-md-editor-smoke/agents-md-editor-smoke.mjs
+AM_SHOT=/tmp/global-settings.png node tools/manual-test/agents-md-editor-smoke/agents-md-editor-smoke.mjs
 ```
 
 **Inputs:** none (fresh `os.tmpdir()` sandbox with its own HOME + XDG dirs,
@@ -682,9 +680,8 @@ a seeded AGENTS.md, and `tagSnippets` in the pimote config; `AM_SHOT=<path>`
 optionally redirects the coherence screenshot; `AM_KEEP=1` preserves the
 sandbox on a passing run).
 
-**Outputs:** per-check ✓/✗ lines + an `agents-md-editor.png` coherence
-screenshot; non-zero exit on failure. On failure the sandbox and server log
-are preserved.
+**Outputs:** per-check ✓/✗ lines + a Global Settings coherence screenshot;
+non-zero exit on failure. On failure the sandbox and server log are preserved.
 
 **Prerequisites:** workspaces built (`npm run build`), `agent-browser` on
 `PATH`, writable `os.tmpdir()`. Tracks and kills only the child PID it

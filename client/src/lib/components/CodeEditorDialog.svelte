@@ -25,6 +25,7 @@
     saveDisabled = false,
     ready = true,
     language = null,
+    editorKey = null,
     value = $bindable(''),
     editorView = $bindable(null),
     toolbar = null,
@@ -54,6 +55,8 @@
     /** While false the code editor stays unmounted, e.g. file still loading. */
     ready?: boolean;
     language?: EditorLanguage | null;
+    /** Stable identity for the edited file; changes reset CodeMirror history. */
+    editorKey?: string | null;
     value?: string;
     /** Live CodeMirror view, for toolbars that act on the selection. */
     editorView?: EditorView | null;
@@ -196,7 +199,9 @@
 
       <div class="min-h-0 flex-1 overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
         {#if editorModule && ready}
-          <editorModule.default bind:value bind:editorView {language} />
+          {#key editorKey}
+            <editorModule.default bind:value bind:editorView {language} />
+          {/key}
         {:else}
           <div class="flex h-full items-center justify-center">
             {#if editorLoadError}

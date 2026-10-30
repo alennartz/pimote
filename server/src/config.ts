@@ -27,7 +27,7 @@ export interface PimoteConfig {
    * finding 1).
    */
   managerRoot: string;
-  /** Directory scanned for user folder-source modules. Default: PIMOTE_FOLDER_SOURCES_DIR. */
+  /** Legacy source-loader path retained for configuration compatibility; the production host ignores it. */
   folderSourcesDir?: string;
   idleTimeout: number;
   bufferSize: number;
@@ -63,6 +63,7 @@ const DEFAULTS = {
 } as const;
 
 const DEFAULT_MANAGER_ROOT = join(PIMOTE_STATE_DIR, 'manager');
+const TAG_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 /** Expand a leading `~`/`~/` to the home directory; any other value passes through unchanged. */
 export function expandHomePath(value: string, home: string): string {
@@ -153,7 +154,7 @@ function parseConfigObject(obj: Record<string, unknown>, configPath: string, hom
     vapidPrivateKey: typeof obj.vapidPrivateKey === 'string' ? obj.vapidPrivateKey : undefined,
     vapidEmail: typeof obj.vapidEmail === 'string' ? obj.vapidEmail : undefined,
     updateCheck: typeof obj.updateCheck === 'boolean' ? obj.updateCheck : undefined,
-    tagSnippets,
+    tagSnippets: normalizeTagSnippets(tagSnippets),
     settingsFiles,
   };
 }
@@ -164,6 +165,12 @@ function parseStringArray(value: unknown, field: string, configPath: string): st
     throw new Error(`Config "${field}" must be an array of strings in ${configPath}`);
   }
   return [...value];
+}
+
+/** Keep only unique tag names accepted by the Markdown wrapping contract. */
+export function normalizeTagSnippets(snippets: readonly string[] | undefined): string[] | undefined {
+  if (snippets === undefined) return undefined;
+  return [...new Set(snippets.filter((snippet) => TAG_NAME_PATTERN.test(snippet)))];
 }
 
 export async function loadConfig(): Promise<PimoteConfig> {

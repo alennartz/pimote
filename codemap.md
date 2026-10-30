@@ -102,11 +102,11 @@ Installable SvelteKit PWA for browsing, controlling, and rendering remote pi ses
 
 Published `@pimote/sdk` extensibility package that pi extensions import to talk to pimote.
 
-**Responsibilities:** card types, EventBus panel detection, namespace-scoped panel handles, background-activity reap-guard seam (`@pimote/sdk/activity`: synchronous EventBus poll with `answerActivity`/`askActivity` twins, consumed by the server's idle reaper — DR-054), folder discovery and creation seam types (`@pimote/sdk/folders`, awaited `onFolderOpen`), RepoInfo twin of the wire type
+**Responsibilities:** card types, EventBus panel detection, namespace-scoped panel handles, background-activity reap-guard seam (`@pimote/sdk/activity`: synchronous EventBus poll with `answerActivity`/`askActivity` twins, consumed by the server's idle reaper — DR-054), Pimote extension factory and source-only folder discovery seam (`@pimote/sdk/pimote` and `@pimote/sdk/folders`, awaited `onFolderOpen`), RepoInfo twin of the wire type; core Pimote owns folder creation
 
 The server's `sdk-twins.ts` asserts compile-time equality between SDK and Protocol types.
 
-The npm package is the authoring surface for extension developers. The app bundles its own copies (`bundleDependencies`) of the SDK and pinned pi runtime, so the packed install never resolves them from the consumer's tree. The server's folder-source loader pins user-module `@pimote/sdk` imports to that bundled copy.
+The npm package is the authoring surface for extension developers. The app bundles its own copies (`bundleDependencies`) of the SDK and pinned pi runtime, so the packed install never resolves them from the consumer's tree. The server's Pimote extension host pins user-module `@pimote/sdk` imports to that bundled copy. Folder sources are contributed through the Pimote host; folder creation remains core behavior.
 
 **Dependencies:** pi SDK extension APIs
 

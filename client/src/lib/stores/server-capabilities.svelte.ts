@@ -5,6 +5,7 @@
 // disabled, so UI affordances stay hidden until the server confirms them.
 
 import type { ServerCapabilitiesEvent } from '@pimote/shared';
+import { isValidTagName } from '$lib/tag-wrap.js';
 import { connection } from './connection.svelte.js';
 
 export class ServerCapabilitiesStore {
@@ -31,7 +32,8 @@ export class ServerCapabilitiesStore {
   }
 
   handleEvent(event: ServerCapabilitiesEvent): void {
-    this.advertised = { ...event, tagSnippets: [...event.tagSnippets] };
+    const tagSnippets = event.tagSnippets.filter((snippet, index, snippets) => isValidTagName(snippet) && snippets.indexOf(snippet) === index);
+    this.advertised = { ...event, tagSnippets };
   }
 }
 

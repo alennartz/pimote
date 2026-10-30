@@ -15,7 +15,7 @@ The implementation covers the main catalog, runtime, extension host, client stor
 - **Category:** plan deviation
 - **Severity:** critical
 - **Location:** `server/src/index.ts:365-370`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Await `packageSettings.reload()` before calling `pimoteExtensionHost.reload()`.
 
 Step 6 requires package settings to refresh during host rediscovery. `DefaultPackageManager.listConfiguredPackages()` reads the cached `SettingsManager`, so packages added or removed with Pi's package manager stay invisible until process restart.
@@ -25,7 +25,7 @@ Step 6 requires package settings to refresh during host rediscovery. `DefaultPac
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `server/src/pimote-extensions/index.ts:177-195`, `server/src/index.ts:365-370`, `server/src/ws-handler.ts:1710-1715`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Catch discovery/package-manager failures, publish a replacement runtime with diagnostics, and let the session reload continue.
 
 `replaceRuntime()` stops the current runtime before discovery. Package-manager calls and Jiti construction can reject outside the per-entry catch, leaving `this.runtime` pointed at an inactive registry. The global reload then rejects before source replacement, and the WebSocket reload never reaches `session.reload()`.
@@ -35,7 +35,7 @@ Step 6 requires package settings to refresh during host rediscovery. `DefaultPac
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `server/src/config-runtime.ts:103-112`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Serialize native `putFile()` operations through one promise chain.
 
 Two WebSocket messages can validate and write the native file concurrently. Their atomic renames and `apply()` calls can complete in different orders, leaving the effective in-memory configuration different from the file on disk.
@@ -45,7 +45,7 @@ Two WebSocket messages can validate and write the native file concurrently. Thei
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `client/src/lib/components/CodeEditorDialog.svelte:130-135,198-199`, `client/src/lib/components/GlobalSettingsDialog.svelte:89-107`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Remount the editor per active path with a keyed block, or replace its `EditorState` when the path changes.
 
 The same CodeMirror instance remains mounted while the active tab changes. The new draft is dispatched into that instance and enters its undo history. Pressing Ctrl-Z immediately after switching can restore the prior tab's text, mark the new tab dirty, and save file A's content to file B.
@@ -55,7 +55,7 @@ The same CodeMirror instance remains mounted while the active tab changes. The n
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `README.md:65,131`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Describe the Global Settings manifest and generic file-edit seam instead of the removed home Agent-instructions editor and hard-coded path.
 
 Step 11 requires removal of obsolete hard-coded-path warnings and old UI claims. These passages still say the Dashboard owns an Agent instructions editor, identify one fixed `AGENTS.md` path, and describe `file_get`/`file_put` as that editor's protocol.
@@ -65,7 +65,7 @@ Step 11 requires removal of obsolete hard-coded-path warnings and old UI claims.
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `tools/manual-test/README.md:657-690`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Replace or retarget `agents-md-editor-smoke` to drive the Global Settings journey.
 
 The manual-test index still describes the home Agent-instructions button and a single `AGENTS.md` editor. This contradicts the new Settings gear, manifest tabs, per-file drafts, and missing-file flow required by Step 11.
@@ -75,7 +75,7 @@ The manual-test index still describes the home Agent-instructions button and a s
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `codemap.md:103-109`, `packages/sdk/src/folders/types.ts:43-47`, `server/src/config.ts:30-31`, `packages/sdk/package.json:4`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Document the global Pimote host and source-only SDK seam, and mark the legacy config key without claiming production scans `folder-sources` or exposes creation seams.
 
 Step 11 requires the codemap and public guidance to describe `@pimote/sdk/pimote`, the new host, and core-owned folder creation. These locations still describe dynamic imports from the configured folder-sources directory or advertise folder discovery/creation seams.
@@ -85,7 +85,7 @@ Step 11 requires the codemap and public guidance to describe `@pimote/sdk/pimote
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `README.md:205-253`, `docs/shipped/folders.md:56`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Add the exact matrix for new-consumer model, voice, idle-timeout, and buffer behavior, and startup-only roots, manager root, port, VAPID, and voice transport.
 
 The documentation lists individual fields but does not state when changed values take effect. The plan explicitly requires this matrix so users know which existing sessions and transports retain captured values.
@@ -95,7 +95,7 @@ The documentation lists individual fields but does not state when changed values
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `packages/sdk/README.md:121-135`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Call `context.on('shutdown', ...)` without returning its unsubscribe function.
 
 `PimoteExtension` returns `void | Promise<void>`, while `context.on()` returns `() => void`. The documented example returns that unsubscribe function and therefore fails its declared type.
@@ -105,7 +105,7 @@ The documentation lists individual fields but does not state when changed values
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/components/CodeEditorDialog.svelte:130-135`, `client/src/lib/components/GlobalSettingsDialog.svelte:166-173`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Clear the CSS `translate` property for the mobile variant, or omit the `sm:` centering utilities when the viewport is mobile.
 
 The Dashboard switches to the mobile variant below 768px, but `sm:` centering classes still apply from 640px upward. The Settings mobile rule resets `transform`, not Tailwind's `translate` property, so the full-screen dialog is translated by half its own width and height at 640–767px.
@@ -115,7 +115,7 @@ The Dashboard switches to the mobile variant below 768px, but `sm:` centering cl
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/global-settings.ts:42-52`, `client/src/lib/components/GlobalSettingsDialog.svelte:95-107`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Deduplicate by canonical path when present, otherwise by the resolved declared path.
 
 The catalog deduplicates only existing canonical targets. Repeating a missing config or extension path leaves duplicate `path` values. Svelte then throws a duplicate-key error for the tab list, and store lookups address only the first entry.
@@ -125,7 +125,7 @@ The catalog deduplicates only existing canonical targets. Repeating a missing co
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/config.ts:135-163`, `client/src/lib/components/GlobalSettingsDialog.svelte:128-130`, `client/src/lib/components/ConfigFileEditor.svelte:109-114`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Reject or filter invalid tag names and duplicate snippets before advertising them.
 
 `parseConfig()` checks only that snippets are strings. Invalid names are advertised as a validated palette but are rejected silently by `applyWrap()`, while duplicate names crash the keyed snippet lists in both editors.
