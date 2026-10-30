@@ -135,7 +135,7 @@ The catalog deduplicates only existing canonical targets. Repeating a missing co
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/repo-index.ts:674-681`, `server/src/index.ts:365-370`
-- **Status:** open
+- **Status:** dismissed
 - **Fix:** Preserve warm status caches and avoid blocking the reload on a full discovery walk when a narrower invalidation is sufficient.
 
 Every `/reload` replaces user sources, calls `invalidate()`, and waits for `currentStamp()`. This performs a full roots-and-source walk before the Pi reload and clears all cached git facts, so the next listing must re-probe every repository. Reload latency therefore grows with the workspace size.
@@ -145,7 +145,7 @@ Every `/reload` replaces user sources, calls `invalidate()`, and waits for `curr
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/pimote-extensions/index.ts:92-126,177-191`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Stage each entry's registrations and commit them only after its factory resolves, then seal the entry context.
 
 A factory that registers a source or file and then throws leaves those registrations in the runtime despite the diagnostic. A timer or other callback can also register after the factory returns, but no later registry replacement reaches the folder index or Settings manifest.
@@ -155,7 +155,7 @@ A factory that registers a source or file and then throws leaves those registrat
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/pimote-extensions/index.ts:133-144`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Surface shutdown diagnostics from the reload and bound handler execution so one handler cannot block reload or process shutdown forever.
 
 Shutdown errors are appended to the old runtime's diagnostics, which is discarded when the replacement registry is published. A handler that never settles blocks every later reload and graceful server shutdown.

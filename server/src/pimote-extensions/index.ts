@@ -101,11 +101,18 @@ async function discoverEntries(options: PimoteExtensionHostOptions, diagnostics:
   return [...new Set(paths)];
 }
 
+type ShutdownRegistration = {
+  path: string;
+  handler: () => void | Promise<void>;
+  active: boolean;
+  owner: Runtime;
+};
+
 class Runtime {
   readonly sources: PimoteExtensionRegistry['sources'][number][] = [];
   readonly settingsFiles: string[] = [];
   readonly diagnostics: PimoteExtensionDiagnostic[] = [];
-  readonly handlers: Array<{ path: string; handler: () => void | Promise<void> }> = [];
+  readonly handlers: ShutdownRegistration[] = [];
   active = true;
 
   context(path: string): PimoteExtensionContext {
@@ -135,30 +142,59 @@ class Runtime {
       on: (event, handler) => {
         if (!this.active) return () => {};
         if (event !== 'shutdown' || typeof handler !== 'function') throw new Error('Invalid shutdown handler');
-        const registration = { path, handler };
+        const registration: ShutdownRegistration = { path, handler, active: true, owner: this };
         this.handlers.push(registration);
         return () => {
-          const index = this.handlers.indexOf(registration);
-          if (index >= 0) this.handlers.splice(index, 1);
+          registration.active = false;
+          registration.owner.removeHandler(registration);
         };
       },
     };
+  }
+
+  /** Publish one successfully initialized entry into this runtime. */
+  commit(entry: Runtime): void {
+    if (!this.active || !entry.active) return;
+    this.sources.push(...entry.sources);
+    this.settingsFiles.push(...entry.settingsFiles);
+    for (const registration of entry.handlers) {
+      registration.owner = this;
+      this.handlers.push(registration);
+    }
+    entry.handlers.length = 0;
+    entry.active = false;
+  }
+
+  /** Seal a staged entry after a failed factory or a completed commit. */
+  seal(): void {
+    this.active = false;
+  }
+
+  private removeHandler(registration: ShutdownRegistration): void {
+    const index = this.handlers.indexOf(registration);
+    if (index >= 0) this.handlers.splice(index, 1);
   }
 
   snapshot(): PimoteExtensionRegistry {
     return { sources: [...this.sources], settingsFiles: [...this.settingsFiles], diagnostics: this.diagnostics.map((diagnostic) => ({ ...diagnostic })) };
   }
 
-  async stop(): Promise<void> {
+  async stop(): Promise<readonly PimoteExtensionDiagnostic[]> {
     this.active = false;
-    for (const { path, handler } of [...this.handlers]) {
+    const shutdownDiagnostics: PimoteExtensionDiagnostic[] = [];
+    for (const registration of [...this.handlers]) {
+      if (!registration.active) continue;
+      registration.active = false;
       try {
-        await handler();
+        await registration.handler();
       } catch (error) {
-        this.diagnostics.push({ path, message: String(error) });
+        const diagnostic = { path: registration.path, message: String(error) };
+        this.diagnostics.push(diagnostic);
+        shutdownDiagnostics.push(diagnostic);
       }
     }
     this.handlers.length = 0;
+    return shutdownDiagnostics;
   }
 }
 
@@ -188,14 +224,18 @@ class ExtensionHost implements PimoteExtensionHost {
 
   shutdown(): Promise<void> {
     return this.serialize(async () => {
-      await this.runtime?.stop();
+      const diagnostics = (await this.runtime?.stop()) ?? [];
+      for (const diagnostic of diagnostics) {
+        console.warn(`[pimote-extensions] ${diagnostic.path}: ${diagnostic.message}`);
+      }
       this.runtime = undefined;
     });
   }
 
   private async replaceRuntime(): Promise<PimoteExtensionRegistry> {
-    await this.runtime?.stop();
+    const shutdownDiagnostics = (await this.runtime?.stop()) ?? [];
     const runtime = new Runtime();
+    runtime.diagnostics.push(...shutdownDiagnostics);
     try {
       const entries = await discoverEntries(this.options, runtime.diagnostics);
       const jiti = createJiti(import.meta.url, {
@@ -205,11 +245,14 @@ class ExtensionHost implements PimoteExtensionHost {
         alias: sdkRuntimeAliases(['@pimote/sdk/pimote']),
       });
       for (const path of entries) {
+        const entryRuntime = new Runtime();
         try {
           const module = (await jiti.evalModule(await readFile(path, 'utf8'), { filename: path, async: true, forceTranspile: true })) as PimoteExtensionModule;
           if (typeof module.default !== 'function') throw new Error('Pimote extension must export a default factory');
-          await module.default(runtime.context(path));
+          await module.default(entryRuntime.context(path));
+          runtime.commit(entryRuntime);
         } catch (error) {
+          entryRuntime.seal();
           runtime.diagnostics.push({ path, message: String(error) });
         }
       }

@@ -136,7 +136,7 @@ const extension: PimoteExtension = (context) => {
 export default extension;
 ```
 
-`registerSource()` contributes folder discovery. `registerFile()` contributes a global Settings tab. Relative file paths resolve from the extension entry module, while absolute and leading-`~` paths remain explicit. Registrations become inert after shutdown or reload. The host replaces all extension registrations on `/reload`, awaits shutdown handlers, and reports isolated diagnostics while continuing valid modules. Folder creation remains a Pimote core capability, so the public SDK has no external creator registration seam.
+`registerSource()` contributes folder discovery. `registerFile()` contributes a global Settings tab. Relative file paths resolve from the extension entry module, while absolute and leading-`~` paths remain explicit. Registrations become inert after shutdown or reload. The host replaces all extension registrations on `/reload`, awaits shutdown handlers, and reports isolated diagnostics while continuing valid modules. Shutdown handlers have no timeout, so an extension must let them settle. Folder creation remains a Pimote core capability, so the public SDK has no external creator registration seam.
 
 ## Folders — `@pimote/sdk/folders`
 

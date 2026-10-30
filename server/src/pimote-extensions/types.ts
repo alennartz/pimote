@@ -52,6 +52,7 @@ export interface PimoteExtensionHostOptions {
  *
  * `reload()` awaits old shutdown handlers, invalidates the old context, and
  * replaces the registry even when some new entries fail. Calls are serialized.
+ * Shutdown handlers have no timeout; extension owners must let them settle.
  */
 export interface PimoteExtensionHost {
   start(): Promise<PimoteExtensionRegistry>;
