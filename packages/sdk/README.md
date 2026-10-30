@@ -1,6 +1,6 @@
 # @pimote/sdk
 
-Pimote's extensibility SDK — everything a [Pi](https://github.com/earendil-works/pi) extension imports to talk to [Pimote](https://github.com/alennartz/pimote). Session-scoped bridges and the process-global Pimote host have separate entry points:
+Pimote's extensibility SDK provides APIs for [Pi](https://github.com/earendil-works/pi) session extensions and process-global Pimote extensions. These hosts have separate entry points:
 
 - **`@pimote/sdk/panels`** — push structured card data to the Pimote web client
 - **`@pimote/sdk/folders`** — type-only folder discovery entries for Pimote extensions

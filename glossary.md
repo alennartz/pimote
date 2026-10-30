@@ -49,7 +49,7 @@ A user-level file Pimote exposes as one tab in the Global settings experience. S
 _Avoid_: settings document, configuration file (when referring to the tabbed settings surface)
 
 **Pimote extension**:
-A trusted module loaded by Pimote from its extension directory at server startup. It implements Pimote-native, server-global surfaces and does not receive Pi's `ExtensionAPI`.
+A trusted module loaded by the global Pimote extension host from its XDG directory or a user-level Pi package's `pimote.extensions` entries. The host loads it at startup and server-wide reload; it does not receive Pi's `ExtensionAPI`.
 _Avoid_: Pi extension, folder-source module (when referring to the generic host)
 
 **Pi extension**:
@@ -122,7 +122,7 @@ Pimote's persisted user curation of folders — favorite/archive state, tags, an
 _Avoid_: project registry
 
 **Folder source**:
-A user module that contributes folder entries to Pimote's folder model.
+A registration by a Pimote extension that contributes folder entries to Pimote's folder model.
 _Avoid_: project source
 
 **Hub member**:
@@ -170,7 +170,7 @@ The client-side boundary between listing windows already fetched and rows still 
 _Avoid_: display subset
 
 **Agent instructions file**:
-The user-level `~/.pi/agent/AGENTS.md` file that supplies instructions to pi agents.
+The `AGENTS.md` file in Pi's effective user-level agent directory. It supplies instructions to Pi agents.
 _Avoid_: project instructions (ambiguous with a code folder's `AGENTS.md`)
 
 **File-edit command**:
@@ -178,7 +178,7 @@ A server-level WebSocket command for reading or atomically writing a file by pat
 _Avoid_: session file command
 
 **Tag snippet**:
-A user-configured tag name offered as a one-tap wrapper in the Agent instructions editor; configured with `tagSnippets` in Pimote's config file.
+A configured tag name offered as a one-tap wrapper in Markdown editors; configured with `tagSnippets` in Pimote's native config.
 _Avoid_: tag template
 
 ## Relationships
