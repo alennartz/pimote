@@ -53,6 +53,11 @@ describe('Global settings manifest', () => {
     expect(files.find((file) => basename(file.path) === 'unique.txt')?.label).toBe('unique.txt');
   });
 
+  it('expands multiple parent segments until colliding labels are unique', async () => {
+    const { files } = await new GlobalSettingsCatalog({ ...options(), settingsFiles: ['a/common/shared.md', 'b/common/shared.md'] }).snapshot();
+    expect(files.filter((file) => basename(file.path) === 'shared.md').map((file) => file.label)).toEqual(['a/common/shared.md', 'b/common/shared.md']);
+  });
+
   it('returns independent snapshots that do not retain consumer mutations', async () => {
     const catalog = new GlobalSettingsCatalog(options());
     const first = await catalog.snapshot();

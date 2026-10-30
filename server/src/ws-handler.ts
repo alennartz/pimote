@@ -415,6 +415,7 @@ export class WsHandler {
     private readonly repoIndex?: RepoIndex,
     private readonly folderRegistry?: FolderRegistry,
     private readonly folderListing?: FolderListingService,
+    private readonly reloadPimoteExtensions?: () => Promise<void>,
   ) {
     this.clientId = clientId;
     // Open-time pin initialization, nonblocking: a folder command arriving

@@ -153,7 +153,7 @@ describe('Pimote extension lifecycle', () => {
     expect(state.shutdowns).toBe(2);
   });
 
-  it('serializes concurrent reloads into distinct fresh runtimes', async () => {
+  it('serializes concurrent reloads without overlapping factories or shutdown', async () => {
     (globalThis as Record<string, unknown>)[stateKey] = { runs: 0, shutdowns: 0, contexts: [] };
     await writeExtension(
       join(extensionDirectory, 'serialized.mjs'),
@@ -172,10 +172,58 @@ describe('Pimote extension lifecycle', () => {
     const [first, second] = await Promise.all([host.reload(), host.reload()]);
     const state = (globalThis as Record<string, { runs: number; shutdowns: number }>)[stateKey];
 
-    expect(state.runs).toBe(3);
-    expect(state.shutdowns).toBe(2);
-    expect(first.sources.map((source) => source.id)).toEqual(['serialized-2']);
-    expect(second.sources.map((source) => source.id)).toEqual(['serialized-3']);
+    expect(state.runs).toBeGreaterThan(1);
+    expect(state.shutdowns).toBe(state.runs - 1);
+    expect(first.sources.length).toBe(1);
+    expect(second.sources.length).toBe(1);
+    expect(host.getRegistry().sources.map((source) => source.id)).toEqual([`serialized-${state.runs}`]);
+    await host.shutdown();
+  });
+
+  it('waits for asynchronous shutdown and reloads changed module contents', async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    (globalThis as Record<string, unknown>)[stateKey] = { gate, entered, active: false, overlap: false };
+    const entry = join(extensionDirectory, 'fresh.mjs');
+    await writeExtension(
+      entry,
+      [
+        `const state = globalThis[${JSON.stringify(stateKey)}];`,
+        'export default (context) => {',
+        '  if (state.active) state.overlap = true;',
+        "  context.folders.registerSource({ id: 'old', list: async () => [] });",
+        "  context.on('shutdown', async () => { state.active = true; state.entered(); await state.gate; state.active = false; });",
+        '};',
+      ].join('\n'),
+    );
+    const host = createPimoteExtensionHost({ extensionDirectory });
+    await host.start();
+    await writeExtension(
+      entry,
+      [
+        `const state = globalThis[${JSON.stringify(stateKey)}];`,
+        'export default (context) => {',
+        '  if (state.active) state.overlap = true;',
+        "  context.folders.registerSource({ id: 'new', list: async () => [] });",
+        '};',
+      ].join('\n'),
+    );
+    const first = host.reload();
+    await started;
+    const second = host.reload();
+    const state = (globalThis as Record<string, { active: boolean; overlap: boolean }>)[stateKey];
+    expect(host.getRegistry().sources.map((source) => source.id)).not.toContain('new');
+    release();
+    await Promise.all([first, second]);
+    expect(state.overlap).toBe(false);
+    expect(host.getRegistry().sources.map((source) => source.id)).toEqual(['new']);
+    await host.shutdown();
   });
 
   it('isolates module failures, reports diagnostics, and still replaces a failed runtime', async () => {
@@ -207,6 +255,7 @@ describe('Pimote extension lifecycle', () => {
         { path: brokenFactory, message: expect.stringContaining('broken factory') },
       ]),
     );
-    expect(host.getRegistry()).toBe(second);
+    expect(host.getRegistry().sources).toEqual([]);
+    await host.shutdown();
   });
 });

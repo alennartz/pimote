@@ -11,7 +11,7 @@ Pimote will replace the home-page Agent instructions button with a first-class S
 - **Protocol** (`shared/src/**`) gains a session-independent `get_global_settings` request and response data for a manifest of resolved file paths and labels. `ServerCapabilitiesEvent` also carries the validated Markdown tag-snippet palette. The Android client has no Settings surface and does not initiate the command.
 - **Server — configuration** (`server/src/config.ts` and a config-runtime seam) adds `settingsFiles`, validates it as an optional string array, resolves the effective Pimote config path through XDG rules, and applies safe native-config changes dynamically. Native Pimote config writes are validated before they reach `file_put`; invalid candidates leave disk and live state unchanged. Pi-native and third-party settings files receive no Pimote-specific reload handling.
 - **Server — Pimote extension host** (new `server/src/pimote-extensions/**`) replaces the folder-sources-only loader with a trusted, jiti-backed Pimote extension host. It discovers direct modules and extension directories in `$XDG_CONFIG_HOME/pimote/extensions/`, and resolves user-level Pi-installed packages through Pi's public package manager, loading only each package's `pimote.extensions` entries. It does not load project-local Pi packages or Pi `pi.extensions` entries.
-- **Server — folder model** (`server/src/repo-index.ts`, `server/src/folder-sources/**`, folder creation routing, manager ports) retains the public `FolderSource` discovery seam, replaces user sources atomically during Pimote extension reload, and broadcasts folder deltas. The public `FolderCreator` seam and external creator registration are removed. Built-in code, persona, and hub creation remains core behavior for the dashboard and manager.
+- **Server — folder model** (`server/src/repo-index.ts` with `replaceUserSources(sources)`, `server/src/folder-sources/**`, folder creation routing, manager ports) retains the public `FolderSource` discovery seam, replaces user sources atomically during Pimote extension reload, and broadcasts folder deltas. The public `FolderCreator` seam and external creator registration are removed. Built-in code, persona, and hub creation remains core behavior for the dashboard and manager.
 - **Server — Global settings catalog** (new `server/src/global-settings.ts`) owns well-known files, config-listed paths, extension registrations, path resolution, canonical-path deduplication, stable labels, missing-file entries, and manifest snapshots. It is the only server authority for the client-visible Settings file list.
 - **Server — WebSocket and lifecycle** (`server/src/server.ts`, `server/src/ws-handler.ts`, `server/src/session-manager.ts`) serves the manifest, routes native config validation and safe reloads, advertises tag snippets, and makes `/reload` reload Pimote extensions once server-wide before continuing the existing current-session Pi reload. Concurrent global reloads serialize. The old Pimote extension registry is invalidated and replaced even when individual modules fail; valid modules continue and diagnostics are reported.
 - **Web Client — dashboard** (`client/src/lib/components/Dashboard.svelte`, `FolderList.svelte`, and home styling) moves the global entry point out of the folder header. The home-only gear is larger at desktop bottom-left and smaller at mobile top-left. The gear is not mounted on conversation surfaces.
@@ -36,7 +36,7 @@ A validated runtime snapshot and reload seam for native Pimote configuration. It
 
 **Global settings client store** (`client/src/lib/stores/global-settings.svelte.ts`)
 
-A client-side state module that owns a manifest snapshot, active tab, per-file drafts, load/save state, dirty state, and close-discard decisions. The dialog remains a renderer of this store rather than a second file-edit implementation.
+A client-side state module that owns a manifest snapshot, active tab, per-file drafts, load/save state, dirty state, and close-discard decisions. The dialog remains a renderer of this store rather than a second file-edit implementation. Its `viewport`, `surface`, and `snippets` inputs control responsive rendering, the home-only gear, and capability-fed Markdown controls. It opens an accessible overlay through the gear. It has no visible Settings title, matching the approved mock.
 
 ### Interfaces
 
@@ -75,7 +75,7 @@ The two hosts load their entries independently. The same physical entry listed i
 
 **Pimote extension lifecycle**
 
-The host loads a fresh runtime at startup and on server-wide `/reload`. Reload awaits registered `shutdown` handlers, invalidates the old context, clears the jiti/module cache, discovers a fresh set, and replaces the old registry. Individual module failures are isolated and reported. Reload requests share one serialized flight. A successful replacement updates `FolderSource` registrations and extension settings registrations; a folder-index replacement invalidates discovery and emits the existing folders delta. Pi's per-session `/reload` remains responsible for Pi extension lifecycle and continues through `AgentSession.reload()`.
+The host loads a fresh runtime at startup and on server-wide `/reload`. `WsHandler` accepts an injected `reloadPimoteExtensions` callback and awaits it before the current session's Pi reload. `RepoIndex.replaceUserSources(sources)` atomically replaces extension-owned sources, preserves core registrations, invalidates discovery, and emits folder deltas. Reload awaits registered `shutdown` handlers, invalidates the old context, clears the jiti/module cache, discovers a fresh set, and replaces the old registry. Individual module failures are isolated and reported. Concurrent reloads cannot overlap. The contract does not require distinct flights or coalescing. A successful replacement updates `FolderSource` registrations and extension settings registrations; a folder-index replacement invalidates discovery and emits the existing folders delta. Pi's per-session `/reload` remains responsible for Pi extension lifecycle and continues through `AgentSession.reload()`.
 
 **Global settings manifest**
 
@@ -127,6 +127,7 @@ The store exposes operations equivalent to `loadManifest()`, `select(path)`, `ed
 - `server/src/global-settings.ts` — global settings manifest catalog interface.
 - `server/src/pimote-extensions/types.ts` — extension host, package discovery, registry, and diagnostic interfaces.
 - `server/src/pimote-extensions/index.ts` — extension host factory seam.
+- `server/src/repo-index.ts` — atomic user-source replacement with folder deltas and preserved core registrations.
 - `server/src/folder-sources/builtin.ts` — core built-in folder creator contract after removing the public creator seam.
 - `server/src/folder-sources/index.ts` — folder-source exports without `FolderCreator`.
 - `server/src/folder-sources/loader.ts` — source-only loading boundary.
@@ -148,6 +149,8 @@ The store exposes operations equivalent to `loadManifest()`, `select(path)`, `ed
 - `server/src/ws-handler.test.ts` — session-independent manifest command envelope.
 - `client/src/lib/stores/global-settings.svelte.test.ts` — manifest snapshots, lazy reads, independent drafts, saves, missing-file creation, errors, and close-discard behavior.
 - `client/src/lib/components/global-settings-presentation.test.ts` — home gear placement, conversation omission, Markdown controls, path language, and responsive actions.
+- `client/src/lib/components/GlobalSettingsDialog.test.ts` — actual accessible gear/overlay rendering, tabs, dirty state, missing-file hints, Markdown Tag row, and responsive actions.
+- `server/src/repo-index.test.ts` — user-source replacement, preserved core sources, invalidated listings, and folder deltas.
 
 ### Behaviors Covered
 
@@ -157,7 +160,8 @@ The store exposes operations equivalent to `loadManifest()`, `select(path)`, `ed
 - Direct JavaScript/TypeScript modules and extension directories load in deterministic discovery order.
 - Relative settings registrations resolve from their entry module, and missing targets remain registered.
 - Only user-scoped Pi package `pimote.extensions` entries load. Pi-only entries and project-scoped packages do not load.
-- Reload awaits shutdown, invalidates old registrations, replaces the registry even after module failures, reports isolated diagnostics, and serializes concurrent reloads.
+- Reload awaits controlled asynchronous shutdown, reads changed module contents, invalidates old registrations, replaces the registry even after module failures, reports isolated diagnostics, and prevents overlapping concurrent reloads.
+- The WebSocket reload command awaits global Pimote reload before the current-session Pi reload. Source replacement preserves core sources and publishes folder deltas.
 - The public SDK exports no `FolderCreator` seam. Built-in folder creation remains a Pimote core boundary.
 
 #### Global settings catalog and protocol
@@ -184,3 +188,12 @@ The store exposes operations equivalent to `loadManifest()`, `select(path)`, `ed
 - Closing with any dirty tab requests one discard confirmation; keeping edits preserves them, and discarding closes without writes.
 - The home gear is large at desktop bottom-left, small at mobile top-left, and absent from conversation surfaces.
 - Markdown paths expose server capability snippets only; JSON and plain-text paths do not. Desktop actions stay in the footer, and mobile actions move to the header.
+- Actual dialog rendering covers accessible overlay opening, no visible Settings title, tab labels, dirty markers, missing-file creation hints, and the Markdown-only Tag row.
+- Manifest response errors and rejected transports leave safe state. Multi-segment basename collisions receive unique labels.
+
+### Manual Acceptance
+
+- Verify documentation, examples, SDK guidance, and removal of the public `FolderCreator` vocabulary during implementation.
+- Verify production capability broadcasts and dynamic configuration wiring into session, voice, idle-check, and buffer consumers. Contract tests cover the runtime policy through captured consumer adapters, not production wiring.
+
+**Review status:** approved

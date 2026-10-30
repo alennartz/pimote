@@ -65,6 +65,39 @@ describe('Native config runtime', () => {
     }
   });
 
+  it('supplies new consumer policies without changing captured session, voice, or buffer policies', async () => {
+    const config = runtime();
+    const sessionPolicy = () => {
+      const value = config.snapshot();
+      return { provider: value.defaultProvider, model: value.defaultModel, thinking: value.defaultThinkingLevel, bufferSize: value.bufferSize };
+    };
+    const voicePolicy = () => {
+      const value = config.snapshot();
+      return { interpreter: value.defaultInterpreterModel, worker: value.defaultWorkerModel };
+    };
+    const existingSession = sessionPolicy();
+    const existingVoice = voicePolicy();
+    const beforeSession = { ...existingSession };
+    const beforeVoice = { ...existingVoice };
+    const next = {
+      ...initial,
+      defaultProvider: 'new-provider',
+      defaultModel: 'new-model',
+      defaultThinkingLevel: 'high',
+      defaultInterpreterModel: 'new-interpreter',
+      defaultWorkerModel: 'new-worker',
+      bufferSize: 200,
+      idleTimeout: 2000,
+    };
+    await config.putFile(path, JSON.stringify(next));
+    expect(sessionPolicy()).toEqual({ provider: 'new-provider', model: 'new-model', thinking: 'high', bufferSize: 200 });
+    expect(voicePolicy()).toEqual({ interpreter: 'new-interpreter', worker: 'new-worker' });
+    expect(existingSession).toEqual(beforeSession);
+    expect(existingVoice).toEqual(beforeVoice);
+    const idleAt = 1500;
+    expect(idleAt >= config.snapshot().idleTimeout).toBe(false);
+  });
+
   it('preserves startup-only roots, manager, listener, VAPID, and voice transport', () => {
     const original = {
       ...initial,

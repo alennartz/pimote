@@ -69,6 +69,34 @@ async function until(condition: () => boolean): Promise<void> {
   }
 }
 
+describe('RepoIndex user-source replacement', () => {
+  it('replaces old user sources, preserves core sources, and emits folder deltas', async () => {
+    const core = join(externalDir, 'core');
+    const old = join(externalDir, 'old');
+    const fresh = join(externalDir, 'fresh');
+    await Promise.all([initRepo(core), initRepo(old), initRepo(fresh)]);
+    const index = makeIndex();
+    const entry = (path: string) => ({ kind: 'repo' as const, path, name: path, branch: null, dirty: false, ahead: 0, behind: 0 });
+    index.registerSource({ id: 'core', list: async () => [entry(core)] });
+    await index.replaceUserSources([{ id: 'old', list: async () => [entry(old)] }]);
+    expect((await index.listLazy()).map((entry) => entry.path)).toEqual(expect.arrayContaining([core, old]));
+    const changes: Array<{ changedPaths: string[]; removedPaths: string[] }> = [];
+    index.setOnRefreshed((delta) => {
+      changes.push(delta);
+    });
+    await index.replaceUserSources([{ id: 'fresh', list: async () => [entry(fresh)] }]);
+    const paths = (await index.listLazy()).map((entry) => entry.path);
+    expect(paths).toContain(core);
+    expect(paths).toContain(fresh);
+    expect(paths).not.toContain(old);
+    expect(changes.flatMap((delta) => delta.changedPaths)).toContain(fresh);
+    expect(changes.flatMap((delta) => delta.removedPaths)).toContain(old);
+    await index.replaceUserSources([]);
+    expect((await index.listLazy()).map((entry) => entry.path)).toContain(core);
+    expect((await index.listLazy()).map((entry) => entry.path)).not.toContain(fresh);
+  });
+});
+
 describe('RepoIndex.list() — folder-model discovery', () => {
   it('discovers repos at any depth below a root through skipped folders', async () => {
     const deep = join(tempDir, 'a', 'b', 'c', 'd', 'e', 'repo');

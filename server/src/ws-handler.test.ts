@@ -277,6 +277,7 @@ function createTestHandler(
     repoIndex?: RepoIndex;
     folderRegistry?: FolderRegistry;
     folderListing?: FolderListingService;
+    reloadPimoteExtensions?: () => Promise<void>;
   },
 ): TestContext {
   const sessions = opts?.sessions ?? new Map();
@@ -310,6 +311,7 @@ function createTestHandler(
     opts?.repoIndex,
     opts?.folderRegistry,
     opts?.folderListing,
+    opts?.reloadPimoteExtensions,
   );
 
   clientRegistry.set(clientId, handler);
@@ -2318,6 +2320,38 @@ describe('WsHandler', () => {
   });
 
   describe('reload prompt', () => {
+    it('awaits global Pimote reload before reloading the current Pi session', async () => {
+      let release!: () => void;
+      let started!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      let globalReady = false;
+      let piSawGlobalReady = false;
+      const slot = createMockSlot({ id: 'session-reload', connectedClientId: 'client-1' });
+      (slot.session as any).reload = async () => {
+        piSawGlobalReady = globalReady;
+      };
+      const { handler, sent } = createTestHandler('client-1', {
+        sessions: new Map([['session-reload', slot]]),
+        reloadPimoteExtensions: async () => {
+          started();
+          await gate;
+          globalReady = true;
+        },
+      });
+      const handling = handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-reload', message: '/reload', id: 'global-reload' }));
+      await entered;
+      expect(findResponse(sent, 'global-reload')).toBeUndefined();
+      release();
+      await handling;
+      expect(piSawGlobalReady).toBe(true);
+      expect(findResponse(sent, 'global-reload')?.success).toBe(true);
+    });
+
     it('waits for reload and sends a full resync with refreshed thinking levels', async () => {
       let finishReload: (() => void) | undefined;
       const reload = vi.fn(

@@ -3,6 +3,9 @@
 
   interface Props {
     store: GlobalSettingsStore;
+    viewport?: 'desktop' | 'mobile';
+    surface?: 'home' | 'conversation';
+    snippets?: readonly string[];
   }
 
   let { store }: Props = $props();

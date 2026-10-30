@@ -182,6 +182,49 @@ describe('GlobalSettingsStore', () => {
     expect(file(store, agents).draft).toBe('# Original\n');
   });
 
+  it.each(['response', 'rejection'] as const)('reports a manifest %s failure without opening stale tabs', async (mode) => {
+    const store = new GlobalSettingsStore(async () => {
+      if (mode === 'rejection') throw new Error('Disconnected');
+      return { id: 'test', success: false, error: 'Disconnected' };
+    });
+    await store.loadManifest();
+    expect(store.error).toBeTruthy();
+    expect(store.loading).toBe(false);
+    expect(store.files).toEqual([]);
+  });
+
+  it('handles rejected file transport without losing drafts or leaving loading flags set', async () => {
+    const f = fixture();
+    let reject = false;
+    const store = new GlobalSettingsStore(async (command) => {
+      if (reject) throw new Error('Disconnected');
+      if (command.type === 'get_global_settings')
+        return {
+          id: 'test',
+          success: true,
+          data: {
+            files: [
+              { path: agents, label: 'AGENTS.md' },
+              { path: config, label: 'config.json' },
+            ],
+          },
+        };
+      return { id: 'test', success: true, data: { path: agents, exists: true, content: f.disk.get(agents) } };
+    });
+    await store.loadManifest();
+    await store.select(agents);
+    store.edit(agents, 'keep me');
+    reject = true;
+    expect(await store.save(agents)).toBe(false);
+    expect(file(store, agents).draft).toBe('keep me');
+    expect(file(store, agents).saving).toBe(false);
+    expect(file(store, agents).error).toBeTruthy();
+    await store.select(config);
+    expect(file(store, config).loaded).toBe(false);
+    expect(file(store, config).loading).toBe(false);
+    expect(file(store, config).error).toBeTruthy();
+  });
+
   it('closes a clean opening without asking to discard', async () => {
     const { store } = fixture();
     await store.loadManifest();

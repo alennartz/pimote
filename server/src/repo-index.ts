@@ -669,6 +669,11 @@ export class RepoIndex {
     this.walkGeneration++;
   }
 
+  /** Replace extension-owned sources atomically, invalidate discovery, and emit folder deltas. Core sources remain registered. */
+  async replaceUserSources(_sources: readonly FolderSource[]): Promise<void> {
+    throw new Error('not implemented');
+  }
+
   /** Register an additional discovery source; its repos join future listings. */
   registerSource(source: FolderSource): void {
     this.sources.push(source);
