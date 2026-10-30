@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
 import StatusBar from './StatusBar.svelte';
-import SessionSettingsDialog from './SessionSettingsDialog.svelte';
+import SessionDetailsDialog from './SessionDetailsDialog.svelte';
 import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 import { connection } from '$lib/stores/connection.svelte.js';
 import { fileEditorStore } from '$lib/stores/file-editor.svelte.js';
@@ -38,10 +38,10 @@ afterEach(async () => {
 async function renderControl(surface: string): Promise<HTMLButtonElement> {
   const target = document.createElement('div');
   document.body.appendChild(target);
-  component = surface === 'desktop' ? mount(StatusBar, { target }) : mount(SessionSettingsDialog, { target });
+  component = surface === 'desktop' ? mount(StatusBar, { target }) : mount(SessionDetailsDialog, { target });
   await tick();
   if (surface === 'mobile') {
-    document.querySelector<HTMLButtonElement>('button[title="Session settings"]')!.click();
+    document.querySelector<HTMLButtonElement>('button[title="Session details"]')!.click();
     await tick();
   }
   const button =

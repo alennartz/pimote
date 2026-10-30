@@ -141,7 +141,7 @@ pimote usable as a phone client.
 ### 8. Voice call — bind, in-call, hangup
 
 **What:** On a session, the user starts a call (mobile: via the
-`Voice call` row in the session-settings dialog; desktop: via the
+`Voice call` row in the session-details dialog; desktop: via the
 inline `Start voice call` button in the status bar); `call_bind` round-
 trips; a full-screen **calling-mode** surface replaces the chat with
 three regions — header (project label + duration + mic state +
@@ -329,9 +329,9 @@ toolbar (freeform tag input + `tagSnippets` snippet buttons), save
 (last-write-wins), and cancel with a discard confirmation. The same editor is
 folder-scoped through three controls: FolderList's row-menu "Edit AGENTS.md…"
 opens the selected folder's instructions; StatusBar's "Edit folder AGENTS.md"
-and SessionSettingsDialog's "Edit AGENTS.md" open the viewed session folder's
+and SessionDetailsDialog's "Edit AGENTS.md" open the viewed session folder's
 instructions. The session controls disable editing when disconnected, without
-a folder, restoring, or pending; the settings dialog closes before the editor
+a folder, restoring, or pending; the details dialog closes before the editor
 opens. The global Folders-header pen stays on the user-level Agent
 instructions.
 

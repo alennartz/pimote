@@ -22,7 +22,7 @@
   import Panel from '$lib/components/Panel.svelte';
   import DownloadToast from '$lib/components/DownloadToast.svelte';
   import DownloadInbox from '$lib/components/DownloadInbox.svelte';
-  import SessionSettingsDialog from '$lib/components/SessionSettingsDialog.svelte';
+  import SessionDetailsDialog from '$lib/components/SessionDetailsDialog.svelte';
   import SessionRenameDialog from '$lib/components/SessionRenameDialog.svelte';
   import { getContextDisplay, getContextTone, getSessionDisplayName } from '$lib/session-summary.js';
   import { getAppName } from '$lib/branding.js';
@@ -304,7 +304,7 @@
 
       {#if sessionRegistry.viewedSessionId}
         <div class="relative">
-          <SessionSettingsDialog />
+          <SessionDetailsDialog />
           {#if updateStore.showMarker}
             <span class="bg-primary pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full" aria-hidden="true"></span>
           {/if}

@@ -1,4 +1,4 @@
-<!-- Desktop-only (mounted under `hidden md:block`). Mobile shows these stats in SessionSettingsDialog. -->
+<!-- Desktop-only (mounted under `hidden md:block`). Mobile shows these stats in SessionDetailsDialog. -->
 <script lang="ts">
   import ModelPicker from './ModelPicker.svelte';
   import ThinkingPicker from './ThinkingPicker.svelte';

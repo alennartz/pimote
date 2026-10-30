@@ -8,11 +8,11 @@
     /** Visual treatment.
      *  - `inline` (default): compact 6×6 muted icon used by the desktop StatusBar.
      *    Always behaves as a Start-only button (legacy behaviour preserved).
-     *  - `dialog-row`: wider labelled button used inside SessionSettingsDialog.
+     *  - `dialog-row`: wider labelled button used inside SessionDetailsDialog.
      *    Toggles between green Start call / red End call. */
     variant?: 'inline' | 'dialog-row';
     /** Optional callback fired immediately after a successful start/end
-     *  click (before the async store call resolves). Used by the settings
+     *  click (before the async store call resolves). Used by the details
      *  dialog to auto-dismiss itself when the user starts/ends a call. */
     onAction?: () => void;
   }

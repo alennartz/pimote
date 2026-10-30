@@ -682,7 +682,7 @@ async function main() {
     for (let i = 0; i < 30; i++) {
       await wait(500);
       const state = await evalBrowser(
-        `(() => ({ composer: Boolean(document.querySelector('textarea:not([aria-label="Message the manager"])')), status: Boolean(document.querySelector('[title="Session settings"]')) }))()`,
+        `(() => ({ composer: Boolean(document.querySelector('textarea:not([aria-label="Message the manager"])')), status: Boolean(document.querySelector('[title="Session details"]')) }))()`,
       );
       if (state?.composer) {
         composerSeen = true;

@@ -108,7 +108,7 @@ Once in a session, you can:
 - **Steer** the agent while it's working — messages queue and deliver when the agent is ready
 - **Abort** a running agent turn
 - **Switch models** and **thinking levels** on the fly
-- See **session context usage** and Pi's complete-session cost breakdown in the StatusBar or session settings
+- See **session context usage** and Pi's complete-session cost breakdown in the StatusBar or session details
 - See each **assistant response's cost breakdown**, including matching tool-result usage, in the transcript
 - Costs use Pi's configured model prices, not provider invoice totals
 - **Compact** the conversation to manage context window usage (also supports auto-compaction)

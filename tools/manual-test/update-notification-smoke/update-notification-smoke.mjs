@@ -291,10 +291,10 @@ async function main() {
     // role-name matching across both trees.
     await browser(['eval', 'Array.from(document.querySelectorAll("main button")).find((button) => button.textContent?.includes("(no messages)"))?.click()']);
     await browser(['wait', '2500']);
-    const markerPresent = await evalBrowser('Boolean(document.querySelector(\'button[title="Session settings"]\')?.parentElement?.querySelector(\'span[aria-hidden="true"]\'))');
-    assert(markerPresent === true, 'settings gear keeps an ambient dot after dismissal');
+    const markerPresent = await evalBrowser('Boolean(document.querySelector(\'button[title="Session details"]\')?.parentElement?.querySelector(\'span[aria-hidden="true"]\'))');
+    assert(markerPresent === true, 'session details gear keeps an ambient dot after dismissal');
 
-    await browser(['find', 'title', 'Session settings', 'click']);
+    await browser(['find', 'title', 'Session details', 'click']);
     await browser(['wait', '500']);
     const settingsText = String(await evalBrowser('document.body.innerText'));
     const settingsHref = await evalBrowser(
@@ -302,9 +302,9 @@ async function main() {
     );
     assert(
       settingsText.includes(`Pimote update`) && settingsText.includes(`Running ${CURRENT_VERSION}`) && settingsText.includes(`Available ${NEWER_VERSION}`),
-      'SessionSettingsDialog retains running/available detail after dismissal',
+      'SessionDetailsDialog retains running/available detail after dismissal',
     );
-    assert(settingsHref === `https://github.com/alennartz/pimote/releases/tag/pimote-v${NEWER_VERSION}`, 'SessionSettingsDialog keeps the supplied release link');
+    assert(settingsHref === `https://github.com/alennartz/pimote/releases/tag/pimote-v${NEWER_VERSION}`, 'SessionDetailsDialog keeps the supplied release link');
     await browser(['press', 'Escape']);
 
     section('Desktop StatusBar twin and visual layout');
@@ -356,7 +356,7 @@ async function main() {
     assert(!disabledText.includes('Update available:'), 'updateCheck:false emits no banner');
     assert((await evalBrowser('document.querySelectorAll(\'[title^="Pimote update:"]\').length')) === 0, 'updateCheck:false emits no desktop ambient marker');
     assert(
-      (await evalBrowser('document.querySelector(\'button[title="Session settings"]\')?.parentElement?.querySelector(\'span[aria-hidden="true"]\') ? 1 : 0')) === 0,
+      (await evalBrowser('document.querySelector(\'button[title="Session details"]\')?.parentElement?.querySelector(\'span[aria-hidden="true"]\') ? 1 : 0')) === 0,
       'updateCheck:false emits no mobile settings dot',
     );
     assert((await fetchCount(fetchLog)) === beforeDisabledFetches, 'updateCheck:false makes no npm registry request');
