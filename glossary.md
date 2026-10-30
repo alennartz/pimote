@@ -36,6 +36,18 @@ _Avoid_: ephemeral manager session
 A persisted conversation with pi, tied to a working folder. Multiple connected clients can observe and send commands in the same live session.
 _Avoid_: session owner
 
+**Session settings**:
+The internal runtime state for one session's model, thinking level, and auto-compaction behavior. The web UI presents these controls under **Session details**.
+_Avoid_: global settings
+
+**Global settings**:
+The home-only settings experience and its manifest of user-level settings files. The web UI labels this experience **Settings**.
+_Avoid_: session settings, agent instructions
+
+**Settings file**:
+A user-level file Pimote exposes as one tab in the Global settings experience. Settings files can be built-in, named in Pimote configuration, or contributed by an extension.
+_Avoid_: settings document, configuration file (when referring to the tabbed settings surface)
+
 **Session cost**:
 Pi's authoritative whole-session dollar total. Pimote shows it separately from assistant-row costs, with an optional breakdown of input, output, cache-read, and cache-write costs from persisted usage.
 
