@@ -45,8 +45,16 @@ The home-only settings experience and its manifest of user-level settings files.
 _Avoid_: session settings, agent instructions
 
 **Settings file**:
-A user-level file Pimote exposes as one tab in the Global settings experience. Settings files can be built-in, named in Pimote configuration, or contributed by an extension.
+A user-level file Pimote exposes as one tab in the Global settings experience. Settings files can be built-in, named in Pimote configuration, or contributed by a Pimote extension.
 _Avoid_: settings document, configuration file (when referring to the tabbed settings surface)
+
+**Pimote extension**:
+A trusted module loaded by Pimote from its extension directory at server startup. It implements Pimote-native, server-global surfaces and does not receive Pi's `ExtensionAPI`.
+_Avoid_: Pi extension, folder-source module (when referring to the generic host)
+
+**Pi extension**:
+A module loaded by Pi for a session from Pi's extension locations. When running under Pimote, it reaches session-bound Pimote surfaces through the session bridge, such as the panels EventBus.
+_Avoid_: Pimote extension
 
 **Session cost**:
 Pi's authoritative whole-session dollar total. Pimote shows it separately from assistant-row costs, with an optional breakdown of input, output, cache-read, and cache-write costs from persisted usage.
