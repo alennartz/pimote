@@ -3,6 +3,7 @@
   import type { BranchTreeStore } from '$lib/stores/branch-tree-store.svelte.js';
   import MessageActionMenu from './MessageActionMenu.svelte';
   import User from '@lucide/svelte/icons/user';
+  import ArrowUp from '@lucide/svelte/icons/arrow-up';
 
   interface Props {
     message: PimoteAgentMessage | StreamingMessage;
@@ -12,9 +13,10 @@
     readOnly?: boolean;
     store?: Pick<BranchTreeStore, 'navigate' | 'openFocused'>;
     onRedo?: (entryId: string, opts?: { compactionPrompt?: string }) => void | Promise<void>;
+    onJump?: () => void;
   }
 
-  let { message, sessionId, abandonedBranchCount = 0, manager = false, readOnly = false, store, onRedo }: Props = $props();
+  let { message, sessionId, abandonedBranchCount = 0, manager = false, readOnly = false, store, onRedo, onJump }: Props = $props();
   let menuOpen = $state(false);
 
   let entryId = $derived('entryId' in message && typeof message.entryId === 'string' ? message.entryId : '');
@@ -28,25 +30,38 @@
 
 {#if entryId}
   <div class="sticky-preview">
-    <button type="button" class="avatar" aria-label="Message actions" onclick={() => (menuOpen = !menuOpen)}>
-      <User size={15} />
-    </button>
+    <span class="avatar-anchor">
+      <button type="button" class="avatar" aria-label="Message actions" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
+        <User size={15} />
+      </button>
+      {#if menuOpen}
+        <div class="menu-pop">
+          <MessageActionMenu open {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} onClose={() => (menuOpen = false)} />
+        </div>
+      {/if}
+    </span>
     <span class="line" title={text}>{text.split('\n')[0]}</span>
-    <span class="chip">previous message</span>
-    <MessageActionMenu open={menuOpen} {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} onClose={() => (menuOpen = false)} />
+    <button type="button" class="jump" aria-label="Jump to previous message" title="Jump to previous message" onclick={() => onJump?.()}>
+      <ArrowUp size={15} />
+    </button>
   </div>
 {/if}
 
 <style>
+  /* Overlays the top of the transcript without taking flow space, so
+     appearing and disappearing never shifts the rows underneath. Width
+     matches the chat frame: min(884px, 100%) minus 16px inner padding. */
   .sticky-preview {
-    position: sticky;
+    position: absolute;
     top: 0;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 8;
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    width: min(852px, 100% - 32px);
     min-height: 2.25rem;
-    margin: 0 0.5rem;
     padding: 0.3rem 0.45rem;
     border: 1px solid var(--border);
     border-top: 0;
@@ -55,11 +70,15 @@
     backdrop-filter: blur(5px);
   }
 
+  .avatar-anchor {
+    position: relative;
+    flex: 0 0 auto;
+  }
+
   .avatar {
     display: inline-flex;
     width: 1.7rem;
     height: 1.7rem;
-    flex: 0 0 auto;
     align-items: center;
     justify-content: center;
     border: 0;
@@ -67,6 +86,25 @@
     background: var(--avatar-bg);
     color: var(--avatar-fg);
     cursor: pointer;
+  }
+
+  .menu-pop {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 9;
+    padding: 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: 0.4rem;
+    background: color-mix(in oklch, var(--background) 96%, transparent);
+    backdrop-filter: blur(5px);
+    box-shadow: 0 2px 8px var(--shadow-color);
+  }
+
+  /* The menu owns column layout for message rows; in the banner it reads as
+     a horizontal toolbar row under the avatar. */
+  .menu-pop :global(.message-action-menu) {
+    flex-direction: row;
   }
 
   .line {
@@ -78,11 +116,23 @@
     font-size: 0.8rem;
   }
 
-  .chip {
+  .jump {
+    display: inline-flex;
+    width: 1.7rem;
+    height: 1.7rem;
     flex: 0 0 auto;
-    color: var(--muted-foreground);
-    font-size: 0.7rem;
-    white-space: nowrap;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 50%;
+    background: var(--secondary);
+    color: var(--secondary-foreground);
+    cursor: pointer;
+  }
+
+  .jump:hover,
+  .avatar:hover {
+    filter: brightness(1.1);
   }
 
   @media (max-width: 640px) {

@@ -165,7 +165,9 @@
       if (!scrollContainer) return;
       const top = scrollContainer.getBoundingClientRect().top;
       const positions = transcriptPositions();
-      stickyEntryId = previousUserAbove(positions, top, 12);
+      // The sticky preview overlays the top of the viewport (~39px tall), so a
+      // row is only truly visible once its bottom clears the band it covers.
+      stickyEntryId = previousUserAbove(positions, top, 40);
       jumpEntryId = previousUserAbove(positions, top, -4);
     });
   }
@@ -416,22 +418,6 @@
 
 <div class="message-list-wrapper">
   <div class="message-list" bind:this={scrollContainer} onscroll={onScroll}>
-    {#if !source && !readOnly && !managerTranscript && !mobileViewport && stickyEntryId}
-      {@const stickyEntry = displayEntries.find((entry) => entry.kind === 'message' && entry.key === stickyEntryId)}
-      {#if stickyEntry && stickyEntry.kind === 'message' && stickyEntry.message.role === 'user' && session?.sessionId}
-        {#key stickyEntryId}
-          <StickyUserPreview
-            message={stickyEntry.message}
-            sessionId={session.sessionId}
-            abandonedBranchCount={alternateCount(stickyEntry)}
-            manager={Boolean(source || managerTranscript)}
-            {readOnly}
-            store={branchTreeStore}
-            onRedo={handleRedo}
-          />
-        {/key}
-      {/if}
-    {/if}
     <div class="message-list-inner" class:pointer-events-none={readOnly}>
       {#if displayEntries.length === 0 && !session?.isStreaming}
         <div class="empty-state">
@@ -475,6 +461,23 @@
       {/if}
     </div>
   </div>
+  {#if !source && !readOnly && !managerTranscript && !mobileViewport && stickyEntryId}
+    {@const stickyEntry = displayEntries.find((entry) => entry.kind === 'message' && entry.key === stickyEntryId)}
+    {#if stickyEntry && stickyEntry.kind === 'message' && stickyEntry.message.role === 'user' && session?.sessionId}
+      {#key stickyEntryId}
+        <StickyUserPreview
+          message={stickyEntry.message}
+          sessionId={session.sessionId}
+          abandonedBranchCount={alternateCount(stickyEntry)}
+          manager={Boolean(source || managerTranscript)}
+          {readOnly}
+          store={branchTreeStore}
+          onRedo={handleRedo}
+          onJump={() => scrollToEntry(stickyEntryId)}
+        />
+      {/key}
+    {/if}
+  {/if}
   {#if findOpen}
     <div class="findbar-host">
       <ConversationFindBar bind:this={findBar} bind:query={findQuery} matches={findMatches} onMatch={onFindMatch} onClose={closeFind} />
