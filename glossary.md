@@ -82,6 +82,22 @@ _Avoid_: pending steer
 One assistant message as rendered in Pimote's transcript, normally with one bot icon. Its text, thinking, and tool calls belong to one provider response; matching tool-result usage contributes to its cost breakdown, while a later assistant response has its own row.
 _Avoid_: assistant turn (ambiguous with a complete agent run)
 
+**Conversation text**:
+User-authored or model-authored text in the active session branch. It excludes tool calls and results, thinking, system entries, and custom display messages.
+_Avoid_: full transcript (which includes non-conversational entries)
+
+**Fork point**:
+A user or assistant message shared by the current path and one or more alternate continuations.
+_Avoid_: branch node, tree node (which can include internal events)
+
+**Abandoned branch**:
+A retained session continuation that is not the currently selected branch.
+_Avoid_: old branch
+
+**Collapsed branch segment**:
+A linear run in the branch explorer represented by its first and last meaningful messages with its middle hidden.
+_Avoid_: intermediate nodes
+
 **Archived session**:
 A persisted session marked as archived. Archiving closes its live runtime and observers; unarchiving clears the archive flag but requires an explicit open.
 _Avoid_: deleted session
