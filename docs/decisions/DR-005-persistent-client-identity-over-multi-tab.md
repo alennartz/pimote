@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. **Partially revised by [DR-067](DR-067-shared-session-observers-with-independent-cursors.md):** the clientId persistence decision stands, but the takeover UI, session ownership, and ownership-conflict machinery described below were removed when sessions became shared observer surfaces. Read those passages as history, not current behavior.
 
 ## Context
 
