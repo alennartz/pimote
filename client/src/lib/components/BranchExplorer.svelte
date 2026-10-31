@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import type { PimoteTreeNode } from '@pimote/shared';
   import { branchTreeStore } from '$lib/stores/branch-tree-store.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
@@ -11,11 +12,14 @@
   import Tag from '@lucide/svelte/icons/tag';
   import Plus from '@lucide/svelte/icons/plus';
 
+  const PREVIEW_CLAMP_THRESHOLD = 160;
+
   let frameEl: HTMLDivElement | null = $state(null);
   let labelInputEl: HTMLInputElement | null = $state(null);
   let editingLabelId: string | null = $state(null);
   let editingLabelValue = $state('');
   let savingLabelId: string | null = $state(null);
+  let expandedMessageIds = new SvelteSet<string>();
   let compactionOpen = $state(false);
   let compactionPrompt = $state('');
 
@@ -109,6 +113,11 @@
 
   function toggleSegment(id: string): void {
     branchTreeStore.toggleSegment(id);
+  }
+
+  function toggleMessagePreview(id: string): void {
+    if (expandedMessageIds.has(id)) expandedMessageIds.delete(id);
+    else expandedMessageIds.add(id);
   }
 
   function beginLabelEdit(id: string, value = ''): void {
@@ -269,7 +278,27 @@
                 <span class="role-icon" aria-hidden="true">{row.role === 'user' ? '👤' : '🤖'}</span>
                 <div class="message-content">
                   <div class="message-heading">
-                    <span class="preview">{row.text}</span>
+                    <span class="preview" class:preview-expanded={expandedMessageIds.has(row.id)}>{row.text}</span>
+                    {#if row.text.length > PREVIEW_CLAMP_THRESHOLD}
+                      <button
+                        type="button"
+                        class="preview-toggle"
+                        title={expandedMessageIds.has(row.id) ? 'Collapse message preview' : 'Expand message preview'}
+                        aria-label={expandedMessageIds.has(row.id) ? 'Collapse message preview' : 'Expand message preview'}
+                        aria-expanded={expandedMessageIds.has(row.id)}
+                        onclick={(event) => {
+                          event.stopPropagation();
+                          toggleMessagePreview(row.id);
+                        }}
+                        onkeydown={(event) => event.stopPropagation()}
+                      >
+                        {#if expandedMessageIds.has(row.id)}
+                          <ChevronDown size={13} aria-hidden="true" />
+                        {:else}
+                          <ChevronRight size={13} aria-hidden="true" />
+                        {/if}
+                      </button>
+                    {/if}
                     {#if row.label && editingLabelId !== row.id}
                       <button
                         type="button"
@@ -514,10 +543,42 @@
     min-width: 0;
   }
   .preview {
+    display: -webkit-box;
+    flex: 1 1 auto;
     min-width: 0;
+    max-height: calc(2 * 1.35em);
+    overflow: hidden;
     overflow-wrap: anywhere;
     font-size: 0.8rem;
     line-height: 1.35;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+  .preview.preview-expanded {
+    display: block;
+    max-height: 11rem;
+    overflow-y: auto;
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
+  }
+  .preview-toggle {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border: 0;
+    border-radius: 0.25rem;
+    background: transparent;
+    color: var(--muted-foreground);
+    padding: 0;
+    cursor: pointer;
+  }
+  .preview-toggle:hover {
+    background: var(--secondary);
+    color: var(--foreground);
   }
   .active-chip {
     background: color-mix(in srgb, var(--primary) 18%, transparent);

@@ -106,6 +106,7 @@
   let activeFindMatch = $state<FindMatch | null>(null);
   let findBar: ConversationFindBar | undefined = $state();
   let rowResizeObserver: ResizeObserver | null = null;
+  let stickyFrame: number | null = null;
 
   const messageEntryIds = $derived.by(() => {
     const ids = new SvelteMap<string, string>();
@@ -158,11 +159,15 @@
   }
 
   function updateStickyTargets(): void {
-    if (!scrollContainer) return;
-    const top = scrollContainer.getBoundingClientRect().top;
-    const previous = previousUserAbove(transcriptPositions(), top, 12);
-    stickyEntryId = previous;
-    jumpEntryId = previousUserAbove(transcriptPositions(), top, -4);
+    if (!scrollContainer || stickyFrame !== null) return;
+    stickyFrame = requestAnimationFrame(() => {
+      stickyFrame = null;
+      if (!scrollContainer) return;
+      const top = scrollContainer.getBoundingClientRect().top;
+      const positions = transcriptPositions();
+      stickyEntryId = previousUserAbove(positions, top, 12);
+      jumpEntryId = previousUserAbove(positions, top, -4);
+    });
   }
 
   function scrollToEntry(key: string | null): void {
@@ -394,6 +399,7 @@
   }, 15_000);
   onDestroy(() => {
     clearInterval(activityInterval);
+    if (stickyFrame !== null) cancelAnimationFrame(stickyFrame);
     rowResizeObserver?.disconnect();
     rowResizeObserver = null;
   });
