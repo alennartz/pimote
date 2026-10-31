@@ -209,6 +209,23 @@
     }
   }
 
+  // Sibling UI (the question panel, the on-screen keyboard) steals height from
+  // the list without scrolling it. Re-glue to the bottom on a shrink while
+  // pinned, or the leftover offset reads as a user scroll-up in onScroll and
+  // disables follow mode.
+  $effect(() => {
+    const el = scrollContainer;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let lastHeight = el.clientHeight;
+    const observer = new ResizeObserver(() => {
+      const height = el.clientHeight;
+      if (height < lastHeight && autoScrollEnabled) el.scrollTop = el.scrollHeight;
+      lastHeight = height;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
+
   async function handleBashCancel(_executionId: string): Promise<void> {
     const viewed = sessionRegistry.viewed;
     if (!viewed?.sessionId) return;
