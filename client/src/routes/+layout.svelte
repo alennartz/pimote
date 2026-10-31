@@ -28,7 +28,9 @@
   import { getAppName } from '$lib/branding.js';
   import PanelRight from '@lucide/svelte/icons/panel-right';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
+  import Settings from '@lucide/svelte/icons/settings';
   import { connection } from '$lib/stores/connection.svelte.js';
+  import { globalSettingsStore } from '$lib/stores/global-settings.svelte.js';
   import { routeNotificationIntent, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
   import { pushSubscription } from '$lib/stores/push-subscription.svelte.js';
@@ -245,6 +247,17 @@
 
     <!-- Mobile header -->
     <header class="border-border flex min-h-12 shrink-0 items-center gap-2 border-b px-3 pt-[max(env(safe-area-inset-top),0.25rem)] md:hidden">
+      {#if page.url.pathname === '/'}
+        <button
+          type="button"
+          class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors"
+          title="Open Settings"
+          aria-label="Open Settings"
+          onclick={() => void globalSettingsStore.loadManifest()}
+        >
+          <Settings class="size-5" />
+        </button>
+      {/if}
       {#if sessionRegistry.viewedSessionId}
         <button
           class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors"
