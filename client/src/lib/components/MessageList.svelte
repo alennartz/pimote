@@ -39,7 +39,12 @@
   let session = $derived(source ?? sessionRegistry.viewed);
   // Manager sessions use the regular session route, so identify them from the
   // server-owned manager root as well as explicit manager sources.
-  let managerTranscript = $derived(Boolean(session && connection.managerRoot && session.folderPath === connection.managerRoot));
+  let managerTranscript = $derived(
+    Boolean(
+      session &&
+      ((connection.managerRoot !== null && session.folderPath === connection.managerRoot) || session.projectName === 'manager' || session.folder?.persona?.name === 'manager'),
+    ),
+  );
 
   // ---- Transcript redo and draft flow ----
 
