@@ -5,9 +5,8 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import CopyButton from './CopyButton.svelte';
   import TtsButton from './TtsButton.svelte';
-  import Undo2 from '@lucide/svelte/icons/undo-2';
+  import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import GitBranch from '@lucide/svelte/icons/git-branch';
-  import ListTree from '@lucide/svelte/icons/list-tree';
 
   export interface MessageActionMenuProps {
     entryId: string;
@@ -83,18 +82,29 @@
 {#if open}
   <div class="message-action-menu tool-menu" role="menu">
     {#if navigationAllowed}
-      <button type="button" role="menuitem" class="action-item" title="Redo from here" onclick={() => redo()}>
-        <Undo2 size={14} />
-        <span>Redo from here</span>
+      <button type="button" role="menuitem" class="action-item" title="Redo from here" aria-label="Redo from here" onclick={() => redo()}>
+        <RotateCcw size={14} aria-hidden="true" />
       </button>
-      <button type="button" role="menuitem" class="action-item" title="Redo with compaction" onclick={openCompaction}>
-        <GitBranch size={14} />
-        <span>Redo with compaction…</span>
+      <button type="button" role="menuitem" class="action-item" title="Rewind with compaction" aria-label="Rewind with compaction" onclick={openCompaction}>
+        <span class="composite-icon" aria-hidden="true">
+          <RotateCcw size={14} />
+          <svg class="compaction-overlay" viewBox="0 0 8 8" width="8" height="8">
+            <rect x="0.5" y="0.5" width="7" height="7" rx="1.5" fill="var(--secondary)" stroke="var(--background)" />
+            <path d="M2 3h4M2 5h4" stroke="currentColor" stroke-width="1" stroke-linecap="round" />
+          </svg>
+        </span>
       </button>
       {#if abandonedBranchCount > 0}
-        <button type="button" role="menuitem" class="action-item" title="View existing branches" onclick={openBranches}>
-          <ListTree size={14} />
-          <span>View existing branches ({abandonedBranchCount})</span>
+        <button
+          type="button"
+          role="menuitem"
+          class="action-item branch-action"
+          title="View existing branches"
+          aria-label={`View existing branches (${abandonedBranchCount})`}
+          onclick={openBranches}
+        >
+          <GitBranch size={14} aria-hidden="true" />
+          <span class="branch-count" aria-hidden="true">{abandonedBranchCount}</span>
         </button>
       {/if}
     {/if}
@@ -124,24 +134,57 @@
 
 <style>
   .message-action-menu {
-    align-items: stretch;
-    min-width: 12rem;
+    align-items: center;
   }
 
   .action-item {
     display: inline-flex;
+    width: 28px;
+    height: 28px;
     align-items: center;
-    gap: 0.45rem;
-    min-height: 28px;
+    justify-content: center;
     border: 0;
     border-radius: 0.35rem;
-    padding: 0.25rem 0.5rem;
+    padding: 0.25rem;
     background: transparent;
     color: var(--foreground);
     cursor: pointer;
-    font-size: 0.8rem;
-    text-align: left;
-    white-space: nowrap;
+  }
+
+  .branch-action {
+    width: auto;
+    min-width: 36px;
+    gap: 0.2rem;
+  }
+
+  .composite-icon {
+    position: relative;
+    display: inline-flex;
+    width: 14px;
+    height: 14px;
+  }
+
+  .composite-icon :global(svg:first-child) {
+    display: block;
+  }
+
+  .compaction-overlay {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    color: var(--foreground);
+  }
+
+  .branch-count {
+    min-width: 1rem;
+    border-radius: 999px;
+    padding: 0 0.2rem;
+    background: var(--secondary);
+    color: var(--foreground);
+    font-size: 0.65rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1rem;
+    text-align: center;
   }
 
   .action-item:hover,

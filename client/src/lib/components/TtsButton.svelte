@@ -8,7 +8,13 @@
   let playing = $derived(speechState.playingKey === messageKey);
 </script>
 
-<button class="tool-btn" onclick={() => toggleTts(messageKey, textContent)} title={playing ? 'Stop audio' : 'Read aloud'}>
+<button
+  type="button"
+  class="tool-btn"
+  onclick={() => toggleTts(messageKey, textContent)}
+  title={playing ? 'Stop audio' : 'Read aloud'}
+  aria-label={playing ? 'Stop audio' : 'Read aloud'}
+>
   {#if playing}
     <VolumeOff size={14} />
   {:else}
