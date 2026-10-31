@@ -487,4 +487,4 @@ Keep its behavioral assertions unchanged. These migrations and retired-suite
 removals are the approved exceptions. Do not change any other existing tests.
 
 **Verify:** Run the complete client and server suites with `npm run test --workspace=client -- --run` and `npm run test --workspace=server -- --run`, then `npm run check`. Confirm no production caller sends wire `fork` or imports the retired tree dialog/store. Complete the approved manual checks from Steps 5–8.
-**Status:** not started
+**Status:** done
