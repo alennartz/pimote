@@ -109,13 +109,17 @@ take a fresh client ID).
 
 ### 5. Slash commands and tree navigation
 
-**What:** `/new`, `/reload`, `/tree` intercepted by the client /
-server. `/tree` opens the tree-navigation dialog; selection dispatches
-`navigate_tree`; the session resyncs to the picked branch.
+**What:** `/new`, `/reload`, and `/tree` are intercepted by the client or
+server. `/tree` opens the branch explorer, where users search messages, edit
+labels, and resume from a selected message. Transcript actions can also redo
+from a message. These actions dispatch `navigate_tree`; the session resyncs to
+the selected branch while retaining abandoned continuations.
 
 **Why:** Tree navigation is the user's handle on pi's branch model.
 
 **Driver:** manual-browser.
+
+**Accepted limitation:** The sandbox has no configured model and its local SGLang endpoint is unavailable. The successful LLM-generated compaction-summary path remains unverified. Modal dispatch, cancellation, error retention, and wire options pass. Repeat with a reachable model before a release that claims provider-level summary quality.
 
 ### 6. Panel cards from extensions
 

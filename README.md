@@ -94,7 +94,7 @@ Each conversation with pi is a **session**, tied to a project folder. You can:
 - **Archive sessions** to hide them from the default list without deleting them (toggle "show archived" to see them again); archiving closes the live session for all observers, and unarchiving does not reopen it
 - **Resume an archived session** through the manager by its session ID; the operation reopens the original record and never creates a replacement
 - **Delete sessions** permanently
-- **Fork sessions** to branch a conversation from a specific point
+- **Redo from a message** to move the active branch within the same session; abandoned continuations remain available in the branch explorer
 - **Start fresh** with a new session in the same project at any time
 
 Unarchived session state persists across browser restarts — reopening Pimote restores your open tabs and reconnects automatically. Archived sessions leave the restore set; the dashboard unarchives them, then opens them explicitly, while the manager can resume the original record by session ID.
@@ -115,8 +115,8 @@ Once in a session, you can:
 - Use **slash commands** — type `/` to get autocomplete for skills, extension commands, and prompt templates
 - **Reference files with `@`** — type `@` to get TUI-style path autocomplete (backed by `fd`); the literal `@path` is sent through to the agent, which reads the file with its own tools (no server-side inlining)
 - **Log in to model providers** with `/login` — an interactive dialog adds OAuth subscription providers (Claude Pro/Max, ChatGPT, GitHub Copilot) remotely, without SSHing into the server or hand-editing `auth.json` (API-key and custom providers are still configured manually)
-- Open **Tree Navigation** with `/tree` to browse session history, search/filter nodes, and edit labels (right-click on desktop, long-press on touch)
-- Pick a tree navigation mode: no summary, summarize, or a custom summary prompt (with in-dialog loading while summarization runs)
+- Open the **branch explorer** with `/tree` to browse branches, expand collapsed message runs, search visible messages or all conversation text, edit labels, and resume from a selected message
+- Use **Redo from here** for one-click navigation without compaction, or open **Redo with compaction…** to use pi's default summarizer or enter custom instructions
 - **Listen** to responses via per-message text-to-speech
 - **Download files** when the agent offers one — approve the native browser download from the toast or the session's Downloads inbox
 

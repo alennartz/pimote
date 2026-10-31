@@ -91,8 +91,8 @@ A user or assistant message shared by the active path and one or more alternate 
 _Avoid_: fork point, fork (pi's new-session-file fork is retired from this UX)
 
 **Tree navigation**:
-Moving the session's leaf pointer to an earlier entry in the same session file, optionally with custom compaction of the abandoned path. pi's `navigateTree`; the wire command is `navigate_tree`.
-_Avoid_: fork, redo
+Moving the active leaf to another message in the same session file. Transcript **Redo from here** and branch-explorer **Resume** use this operation. Optional compaction uses pi's default summarizer or custom instructions. pi's `navigateTree`; the wire command is `navigate_tree`.
+_Avoid_: fork
 
 **Abandoned branch**:
 A retained session continuation that is not the currently selected branch.
