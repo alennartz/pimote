@@ -8,7 +8,7 @@
   import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { branchTreeStore } from '$lib/stores/branch-tree-store.svelte.js';
-  import { abandonedBranchCountAt } from '$lib/branch-tree.js';
+  import { abandonedBranchCounts } from '$lib/branch-tree.js';
   import { findInConversation, type FindMatch } from '$lib/conversation-find.js';
   import { previousUserAbove, type UserMessagePosition } from '$lib/transcript-navigation.js';
   import { needsDraftPrompt, applyDraftChoice, type DraftChoice } from '$lib/draft-policy.js';
@@ -67,7 +67,7 @@
     const result = await branchTreeStore.navigateInSession(sessionId, entryId, opts);
     if (!result || result.cancelled || typeof result.editorText !== 'string') return;
 
-    const currentDraft = viewed.draftText ?? '';
+    const currentDraft = sessionRegistry.sessions[sessionId]?.draftText ?? '';
     const editorText = result.editorText;
     if (needsDraftPrompt(currentDraft, editorText)) {
       const choice = await promptDraftChoice();
@@ -97,6 +97,7 @@
   let findQuery = $state('');
   let activeFindMatch = $state<FindMatch | null>(null);
   let findBar: ConversationFindBar | undefined = $state();
+  let rowResizeObserver: ResizeObserver | null = null;
 
   const messageEntryIds = $derived.by(() => {
     const ids = new SvelteMap<string, string>();
@@ -113,16 +114,21 @@
     return findInConversation(session.messages, findQuery.trim());
   });
 
+  const branchCounts = $derived.by(() => (treeSnapshot ? abandonedBranchCounts(treeSnapshot.tree) : new Map<string, number>()));
+
   function alternateCount(entry: DisplayEntry): number {
-    if (entry.kind !== 'message' || !treeSnapshot) return 0;
+    if (entry.kind !== 'message') return 0;
     const id = 'entryId' in entry.message && typeof entry.message.entryId === 'string' ? entry.message.entryId : undefined;
-    return id ? abandonedBranchCountAt(treeSnapshot.tree, id) : 0;
+    return id ? (branchCounts.get(id) ?? 0) : 0;
   }
 
   function registerRow(node: HTMLElement, key: string) {
     rowElements.set(key, node);
+    if (!rowResizeObserver && typeof ResizeObserver !== 'undefined') rowResizeObserver = new ResizeObserver(() => void tick().then(updateStickyTargets));
+    rowResizeObserver?.observe(node);
     return {
       destroy() {
+        rowResizeObserver?.unobserve(node);
         if (rowElements.get(key) === node) rowElements.delete(key);
       },
     };
@@ -191,8 +197,9 @@
 
   $effect(() => {
     const sessionId = session?.sessionId;
-    // Message replacement and full resync invalidate the tree cache.
+    // Message replacement, ordinary turns, and full resync invalidate the tree cache.
     session?.messageCount;
+    if (sessionId) branchTreeStore.cacheVersion(sessionId);
     session?.messages.length;
     if (!sessionId || source || readOnly || !session.messages.some((message) => 'entryId' in message && typeof message.entryId === 'string')) {
       treeSnapshot = null;
@@ -353,6 +360,7 @@
       const height = el.clientHeight;
       if (height < lastHeight && autoScrollEnabled) el.scrollTop = el.scrollHeight;
       lastHeight = height;
+      updateStickyTargets();
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -376,7 +384,11 @@
   const activityInterval = setInterval(() => {
     now = Date.now();
   }, 15_000);
-  onDestroy(() => clearInterval(activityInterval));
+  onDestroy(() => {
+    clearInterval(activityInterval);
+    rowResizeObserver?.disconnect();
+    rowResizeObserver = null;
+  });
 
   let lastActivityText = $derived.by(() => {
     // Touch `now` to re-evaluate on timer ticks
@@ -393,15 +405,17 @@
     {#if !source && !readOnly && !mobileViewport && stickyEntryId}
       {@const stickyEntry = displayEntries.find((entry) => entry.kind === 'message' && entry.key === stickyEntryId)}
       {#if stickyEntry && stickyEntry.kind === 'message' && stickyEntry.message.role === 'user' && session?.sessionId}
-        <StickyUserPreview
-          message={stickyEntry.message}
-          sessionId={session.sessionId}
-          abandonedBranchCount={alternateCount(stickyEntry)}
-          manager={Boolean(source)}
-          {readOnly}
-          store={branchTreeStore}
-          onRedo={handleRedo}
-        />
+        {#key stickyEntryId}
+          <StickyUserPreview
+            message={stickyEntry.message}
+            sessionId={session.sessionId}
+            abandonedBranchCount={alternateCount(stickyEntry)}
+            manager={Boolean(source)}
+            {readOnly}
+            store={branchTreeStore}
+            onRedo={handleRedo}
+          />
+        {/key}
       {/if}
     {/if}
     <div class="message-list-inner" class:pointer-events-none={readOnly}>
@@ -446,10 +460,12 @@
         </div>
       {/if}
     </div>
-    {#if findOpen}
-      <ConversationFindBar bind:this={findBar} bind:query={findQuery} matches={findMatches} onMatch={onFindMatch} onClose={closeFind} />
-    {/if}
   </div>
+  {#if findOpen}
+    <div class="findbar-host">
+      <ConversationFindBar bind:this={findBar} bind:query={findQuery} matches={findMatches} onMatch={onFindMatch} onClose={closeFind} />
+    </div>
+  {/if}
 
   {#if mobileViewport && jumpEntryId}
     <button class="jump-up" onclick={() => scrollToEntry(jumpEntryId)} title="Jump to previous message" aria-label="Jump to previous message">↑</button>
@@ -545,8 +561,23 @@
 
   @media (max-width: 640px) {
     .jump-up {
+      bottom: 4.5rem;
       display: flex;
     }
+  }
+
+  .findbar-host {
+    position: absolute;
+    z-index: 20;
+    top: 0;
+    right: 0;
+    left: 0;
+    pointer-events: none;
+  }
+
+  .findbar-host :global(.findbar) {
+    pointer-events: auto;
+    margin-top: 0.5rem;
   }
 
   .message-list-inner {

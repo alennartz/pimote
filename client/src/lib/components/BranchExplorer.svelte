@@ -64,7 +64,7 @@
 
   onMount(() => {
     const onKeydown = (event: KeyboardEvent) => {
-      if (!branchTreeStore.state.open) return;
+      if (!branchTreeStore.state.open || event.defaultPrevented) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         if (editingLabelId !== null) {
@@ -334,7 +334,9 @@
       </div>
 
       <footer class="explorer-footer">
-        <button type="button" class="secondary-button" disabled={!canResume || branchTreeStore.state.busy} onclick={openCompaction}>Custom compaction…</button>
+        {#if canResume}
+          <button type="button" class="secondary-button" onclick={openCompaction}>Custom compaction…</button>
+        {/if}
         <button type="button" class="primary-button" disabled={!canResume || branchTreeStore.state.busy} onclick={() => void resume()}>Resume from here</button>
         {#if branchTreeStore.state.busy}<span class="busy-message" role="status">Navigating…</span>{/if}
       </footer>

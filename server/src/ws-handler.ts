@@ -1579,7 +1579,8 @@ export class WsHandler {
       }
 
       case 'get_tree': {
-        this.sendResponse(id, true, this.getTreeResponse(session));
+        const treeResponse = this.getTreeResponse(session);
+        this.sendSerializedResponse(serializeTreeResponse(id, treeResponse.tree, treeResponse.currentLeafId));
         break;
       }
 

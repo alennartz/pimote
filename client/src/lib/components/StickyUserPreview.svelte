@@ -33,9 +33,7 @@
     </button>
     <span class="line" title={text}>{text.split('\n')[0]}</span>
     <span class="chip">previous message</span>
-    {#if menuOpen}
-      <MessageActionMenu {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} onClose={() => (menuOpen = false)} />
-    {/if}
+    <MessageActionMenu open={menuOpen} {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} onClose={() => (menuOpen = false)} />
   </div>
 {/if}
 

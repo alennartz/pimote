@@ -13,6 +13,7 @@
     entryId: string;
     sessionId: string;
     abandonedBranchCount: number;
+    open?: boolean;
     manager?: boolean;
     readOnly?: boolean;
     store?: Pick<BranchTreeStore, 'navigate' | 'openFocused'>;
@@ -28,6 +29,7 @@
     entryId,
     sessionId,
     abandonedBranchCount,
+    open = true,
     manager = false,
     readOnly = false,
     store,
@@ -57,6 +59,7 @@
   function openCompaction() {
     compactionPrompt = '';
     compactionOpen = true;
+    onClose?.();
   }
 
   function cancelCompaction() {
@@ -77,31 +80,33 @@
   }
 </script>
 
-<div class="message-action-menu tool-menu" role="menu">
-  {#if navigationAllowed}
-    <button type="button" role="menuitem" class="action-item" title="Redo from here" onclick={() => redo()}>
-      <Undo2 size={14} />
-      <span>Redo from here</span>
-    </button>
-    <button type="button" role="menuitem" class="action-item" title="Redo with compaction" onclick={openCompaction}>
-      <GitBranch size={14} />
-      <span>Redo with compaction…</span>
-    </button>
-    {#if abandonedBranchCount > 0}
-      <button type="button" role="menuitem" class="action-item" title="View existing branches" onclick={openBranches}>
-        <ListTree size={14} />
-        <span>View existing branches ({abandonedBranchCount})</span>
+{#if open}
+  <div class="message-action-menu tool-menu" role="menu">
+    {#if navigationAllowed}
+      <button type="button" role="menuitem" class="action-item" title="Redo from here" onclick={() => redo()}>
+        <Undo2 size={14} />
+        <span>Redo from here</span>
       </button>
+      <button type="button" role="menuitem" class="action-item" title="Redo with compaction" onclick={openCompaction}>
+        <GitBranch size={14} />
+        <span>Redo with compaction…</span>
+      </button>
+      {#if abandonedBranchCount > 0}
+        <button type="button" role="menuitem" class="action-item" title="View existing branches" onclick={openBranches}>
+          <ListTree size={14} />
+          <span>View existing branches ({abandonedBranchCount})</span>
+        </button>
+      {/if}
     {/if}
-  {/if}
-  {#if ttsText !== undefined && messageKey}
-    <TtsButton {messageKey} textContent={ttsText} />
-  {/if}
-  {#if copyText !== undefined}
-    <CopyButton text={copyText} title="Copy message" />
-  {/if}
-  {@render children?.()}
-</div>
+    {#if ttsText !== undefined && messageKey}
+      <TtsButton {messageKey} textContent={ttsText} />
+    {/if}
+    {#if copyText !== undefined}
+      <CopyButton text={copyText} title="Copy message" />
+    {/if}
+    {@render children?.()}
+  </div>
+{/if}
 
 <Dialog.Root open={compactionOpen} onOpenChange={(open) => !open && cancelCompaction()}>
   <Dialog.Content showCloseButton={false} preventScroll={false} class="compaction-dialog">

@@ -1,6 +1,6 @@
 import type { GetTreeResponseData, PimoteCommand, PimoteEvent, PimoteResponse, PimoteTreeNode } from '@pimote/shared';
 import type { FindMatch } from '$lib/conversation-find.js';
-import { buildBranchMap, segmentsToExpose } from '$lib/branch-tree.js';
+import { buildBranchMap, segmentsToExpose, segmentsToExposeMany } from '$lib/branch-tree.js';
 import { updateTreeNodeLabel } from '$lib/tree-dialog-utils.js';
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { connection } from './connection.svelte.js';
@@ -124,38 +124,48 @@ export class BranchTreeStore {
   // The cache is deliberately private. Store operations replace snapshots and trees
   // rather than mutating values shared with transport callers.
   private readonly cache = new SvelteMap<string, GetTreeResponseData>();
+  private readonly cacheVersions = new SvelteMap<string, number>();
   private readonly navigationBySession = new SvelteMap<string, NavigationState>();
+  private openGeneration = 0;
   private readonly unsubscribeTransport: () => void;
 
   constructor(private readonly _transport: BranchTreeTransport) {
     this.unsubscribeTransport = _transport.onEvent((event) => this.receiveEvent(event));
   }
 
+  /** Return the reactive cache revision for a session. */
+  cacheVersion(sessionId: string): number {
+    return this.cacheVersions.get(sessionId) ?? 0;
+  }
+
   /** Read a session snapshot without opening the explorer. */
   async load(sessionId: string): Promise<GetTreeResponseData | null> {
     const cached = this.cache.get(sessionId);
     if (cached) {
-      this.state.error = null;
+      if (this.state.sessionId === sessionId) this.state.error = null;
       return cloneSnapshot(cached);
     }
 
+    const requestVersion = this.cacheVersion(sessionId);
     try {
       const response = await this._transport.send({ type: 'get_tree', sessionId });
+      if (this.cacheVersion(sessionId) !== requestVersion) return this.load(sessionId);
       if (!response.success || !response.data) {
-        this.state.error = response.error ?? 'Unable to load the branch tree.';
+        if (this.state.sessionId === sessionId) this.state.error = response.error ?? 'Unable to load the branch tree.';
         return null;
       }
       const data = response.data as GetTreeResponseData;
       if (!Array.isArray(data.tree) || (data.currentLeafId !== null && typeof data.currentLeafId !== 'string')) {
-        this.state.error = 'Unable to load the branch tree.';
+        if (this.state.sessionId === sessionId) this.state.error = 'Unable to load the branch tree.';
         return null;
       }
       const snapshot = cloneSnapshot(data);
       this.cache.set(sessionId, snapshot);
-      this.state.error = null;
+      if (this.state.sessionId === sessionId) this.state.error = null;
       return cloneSnapshot(snapshot);
     } catch (error) {
-      this.state.error = error instanceof Error ? error.message : 'Unable to load the branch tree.';
+      if (this.cacheVersion(sessionId) !== requestVersion) return this.load(sessionId);
+      if (this.state.sessionId === sessionId) this.state.error = error instanceof Error ? error.message : 'Unable to load the branch tree.';
       return null;
     }
   }
@@ -163,10 +173,11 @@ export class BranchTreeStore {
   /** Open a tree, using a supplied snapshot or the per-session cache. */
   async open(sessionId: string, suppliedSnapshot?: GetTreeResponseData): Promise<void> {
     this.resetForOpen(sessionId);
+    const generation = this.openGeneration;
     if (suppliedSnapshot) this.cache.set(sessionId, cloneSnapshot(suppliedSnapshot));
 
     const snapshot = suppliedSnapshot ? cloneSnapshot(suppliedSnapshot) : await this.load(sessionId);
-    if (!snapshot) return;
+    if (!snapshot || generation !== this.openGeneration || !this.state.open || this.state.sessionId !== sessionId) return;
     this.publishSnapshot(sessionId, snapshot);
   }
 
@@ -181,6 +192,7 @@ export class BranchTreeStore {
   }
 
   close(): void {
+    this.openGeneration += 1;
     this.state.open = false;
     this.state.sessionId = null;
     this.state.tree = [];
@@ -223,13 +235,11 @@ export class BranchTreeStore {
     const matches = findMatches(conversationNodes(this.state.tree), query);
     this.state.searchMatches = matches;
 
-    const matchingIds = [...new SvelteSet(matches.map((match) => match.messageKey))];
+    const matchingIds = new SvelteSet(matches.map((match) => match.messageKey));
     const expanded = new SvelteSet(this.state.expandedSegmentIds);
-    for (const entryId of matchingIds) {
-      for (const segmentId of segmentsToExpose(this.state.tree, entryId)) expanded.add(segmentId);
-    }
+    for (const segmentId of segmentsToExposeMany(this.state.tree, matchingIds)) expanded.add(segmentId);
     this.state.expandedSegmentIds = expanded;
-    this.state.selectedId = matchingIds[0] ?? null;
+    this.state.selectedId = matchingIds.values().next().value ?? null;
   }
 
   /** Navigate with optional compaction. Failures set error and leave the explorer open. */
@@ -254,20 +264,20 @@ export class BranchTreeStore {
 
     const tracksBusy = this.state.open && this.state.sessionId === sessionId;
     if (tracksBusy) this.state.busy = true;
-    this.state.error = null;
+    if (this.state.sessionId === sessionId) this.state.error = null;
     try {
       const response = await this._transport.send(command);
       if (!response.success || !response.data) {
-        this.state.error = response.error ?? 'Navigation failed.';
+        if (this.state.sessionId === sessionId) this.state.error = response.error ?? 'Navigation failed.';
         this.clearNavigationFailure(sessionId);
         return null;
       }
       const result = navigationResult(response.data);
       if (result.cancelled) this.clearNavigationFailure(sessionId);
-      else if (tracksBusy && !this.navigationBySession.get(sessionId)?.inProgress) this.state.busy = false;
+      else if (tracksBusy && this.state.sessionId === sessionId && !this.navigationBySession.get(sessionId)?.inProgress) this.state.busy = false;
       return result;
     } catch (error) {
-      this.state.error = error instanceof Error ? error.message : 'Navigation failed.';
+      if (this.state.sessionId === sessionId) this.state.error = error instanceof Error ? error.message : 'Navigation failed.';
       this.clearNavigationFailure(sessionId);
       return null;
     }
@@ -289,7 +299,7 @@ export class BranchTreeStore {
         ...(normalizedLabel === undefined ? {} : { label: normalizedLabel }),
       });
       if (!response.success) {
-        this.state.error = response.error ?? 'Unable to set the branch label.';
+        if (this.state.sessionId === sessionId) this.state.error = response.error ?? 'Unable to set the branch label.';
         return;
       }
 
@@ -309,13 +319,14 @@ export class BranchTreeStore {
             this.state.searchScope === 'all' ? findMatches(conversationNodes(this.state.tree), this.state.searchQuery) : this.anchorMatches(this.state.searchQuery);
         }
       }
-      this.state.error = null;
+      if (this.state.sessionId === sessionId) this.state.error = null;
     } catch (error) {
-      this.state.error = error instanceof Error ? error.message : 'Unable to set the branch label.';
+      if (this.state.sessionId === sessionId) this.state.error = error instanceof Error ? error.message : 'Unable to set the branch label.';
     }
   }
 
   private resetForOpen(sessionId: string): void {
+    this.openGeneration += 1;
     this.state.open = true;
     this.state.sessionId = sessionId;
     this.state.tree = [];
@@ -352,6 +363,11 @@ export class BranchTreeStore {
     if (this.state.sessionId === sessionId) this.state.busy = false;
   }
 
+  private invalidateCache(sessionId: string): void {
+    this.cache.delete(sessionId);
+    this.cacheVersions.set(sessionId, this.cacheVersion(sessionId) + 1);
+  }
+
   private receiveEvent(event: PimoteEvent): void {
     if (!('sessionId' in event) || typeof event.sessionId !== 'string') return;
     const sessionId = event.sessionId;
@@ -378,9 +394,14 @@ export class BranchTreeStore {
       return;
     }
 
+    if (event.type === 'agent_end') {
+      this.invalidateCache(sessionId);
+      return;
+    }
+
     if (event.type !== 'full_resync') return;
 
-    this.cache.delete(sessionId);
+    this.invalidateCache(sessionId);
     const navigation = this.navigationBySession.get(sessionId);
     if (!navigation) return;
 

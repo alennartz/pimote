@@ -84,7 +84,7 @@ function messageRow(node: ProjectedNode, depth: number, activeIds: ReadonlySet<s
     kind: 'message',
     id: source.id,
     role: source.role ?? '',
-    text: source.conversationText ?? source.preview,
+    text: source.conversationText || source.preview || '(no message text)',
     ...(source.label === undefined ? {} : { label: source.label }),
     isActive: activeIds.has(source.id),
     isBranchPoint: node.children.length >= 2,
@@ -158,11 +158,10 @@ export function buildBranchMap(tree: PimoteTreeNode[], currentLeafId: string | n
   return rows;
 }
 
-/** Return the collapsed segments that must be expanded to expose a target. */
-export function segmentsToExpose(tree: PimoteTreeNode[], targetId: string): Set<string> {
+/** Return collapsed segments that must be expanded to expose any target. */
+export function segmentsToExposeMany(tree: PimoteTreeNode[], targetIds: ReadonlySet<string>): Set<string> {
+  if (targetIds.size === 0) return new Set();
   const projection = projectTree(tree);
-  if (!projection.byId.has(targetId)) return new Set();
-
   const exposed = new Set<string>();
   const pending = projection.roots.slice().reverse();
   while (pending.length > 0) {
@@ -174,7 +173,7 @@ export function segmentsToExpose(tree: PimoteTreeNode[], targetId: string): Set<
       path.push(endpoint);
     }
 
-    if (path.length > 2 && path.slice(1, -1).some((node) => node.source.id === targetId)) {
+    if (path.length > 2 && path.slice(1, -1).some((node) => targetIds.has(node.source.id))) {
       exposed.add(segmentId(path[0], endpoint));
     }
 
@@ -186,9 +185,20 @@ export function segmentsToExpose(tree: PimoteTreeNode[], targetId: string): Set<
   return exposed;
 }
 
+/** Return the collapsed segments that must be expanded to expose a target. */
+export function segmentsToExpose(tree: PimoteTreeNode[], targetId: string): Set<string> {
+  return segmentsToExposeMany(tree, new Set([targetId]));
+}
+
+/** Derive alternate continuation counts for every projected message in one pass. */
+export function abandonedBranchCounts(tree: PimoteTreeNode[]): ReadonlyMap<string, number> {
+  const projection = projectTree(tree);
+  const counts = new Map<string, number>();
+  for (const [id, node] of projection.byId) counts.set(id, Math.max(0, node.children.length - 1));
+  return counts;
+}
+
 /** Count alternate continuations at a message, or zero for a non-branch point. */
 export function abandonedBranchCountAt(tree: PimoteTreeNode[], entryId: string): number {
-  const node = projectTree(tree).byId.get(entryId);
-  if (!node || node.children.length < 2) return 0;
-  return node.children.length - 1;
+  return abandonedBranchCounts(tree).get(entryId) ?? 0;
 }

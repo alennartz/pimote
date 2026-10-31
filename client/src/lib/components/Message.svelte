@@ -140,9 +140,7 @@
         <button class="message-icon user-icon" onclick={() => (userMenuOpen = !userMenuOpen)}>
           <User size={16} />
         </button>
-        {#if userMenuOpen}
-          <MessageActionMenu {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} onClose={() => (userMenuOpen = false)} />
-        {/if}
+        <MessageActionMenu open={userMenuOpen} {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} onClose={() => (userMenuOpen = false)} />
       </div>
     {:else}
       <div class="message-icon user-icon">
@@ -215,29 +213,28 @@
             <button class="message-icon assistant-icon" onclick={() => (toolMenuOpen = !toolMenuOpen)}>
               <Bot size={16} />
             </button>
-            {#if toolMenuOpen}
-              {#if showNavigationMenu && entryId}
-                <MessageActionMenu
-                  {entryId}
-                  {sessionId}
-                  {abandonedBranchCount}
-                  {manager}
-                  {readOnly}
-                  {store}
-                  {onRedo}
-                  onClose={() => (toolMenuOpen = false)}
-                  copyText={textContent}
-                  ttsText={hasSpeakableText ? textContent : undefined}
-                  {messageKey}
-                />
-              {:else}
-                <div class="tool-menu">
-                  {#if hasSpeakableText}
-                    <TtsButton {messageKey} {textContent} />
-                  {/if}
-                  <CopyButton text={textContent} title="Copy message" />
-                </div>
-              {/if}
+            {#if showNavigationMenu && entryId}
+              <MessageActionMenu
+                open={toolMenuOpen}
+                {entryId}
+                {sessionId}
+                {abandonedBranchCount}
+                {manager}
+                {readOnly}
+                {store}
+                {onRedo}
+                onClose={() => (toolMenuOpen = false)}
+                copyText={textContent}
+                ttsText={hasSpeakableText ? textContent : undefined}
+                {messageKey}
+              />
+            {:else if toolMenuOpen}
+              <div class="tool-menu">
+                {#if hasSpeakableText}
+                  <TtsButton {messageKey} {textContent} />
+                {/if}
+                <CopyButton text={textContent} title="Copy message" />
+              </div>
             {/if}
           {:else}
             <div class="message-icon assistant-icon">
