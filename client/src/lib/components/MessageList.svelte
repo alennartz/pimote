@@ -37,6 +37,9 @@
 
   // The rendered transcript: an explicit source (manager) or the viewed session.
   let session = $derived(source ?? sessionRegistry.viewed);
+  // Manager sessions use the regular session route, so identify them from the
+  // server-owned manager root as well as explicit manager sources.
+  let managerTranscript = $derived(Boolean(session && connection.managerRoot && session.folderPath === connection.managerRoot));
 
   // ---- Transcript redo and draft flow ----
 
@@ -59,7 +62,7 @@
   async function handleRedo(entryId: string, opts?: { compactionPrompt?: string }) {
     // Redo is a regular-session action. Manager and read-only transcripts have
     // no writable branch tree.
-    if (readOnly || source) return;
+    if (readOnly || source || managerTranscript) return;
     const viewed = sessionRegistry.viewed;
     const sessionId = viewed?.sessionId;
     if (!sessionId) return;
@@ -201,7 +204,7 @@
     session?.messageCount;
     if (sessionId) branchTreeStore.cacheVersion(sessionId);
     session?.messages.length;
-    if (!sessionId || source || readOnly || !session.messages.some((message) => 'entryId' in message && typeof message.entryId === 'string')) {
+    if (!sessionId || source || readOnly || managerTranscript || !session.messages.some((message) => 'entryId' in message && typeof message.entryId === 'string')) {
       treeSnapshot = null;
       return;
     }
@@ -402,7 +405,7 @@
 
 <div class="message-list-wrapper">
   <div class="message-list" bind:this={scrollContainer} onscroll={onScroll}>
-    {#if !source && !readOnly && !mobileViewport && stickyEntryId}
+    {#if !source && !readOnly && !managerTranscript && !mobileViewport && stickyEntryId}
       {@const stickyEntry = displayEntries.find((entry) => entry.kind === 'message' && entry.key === stickyEntryId)}
       {#if stickyEntry && stickyEntry.kind === 'message' && stickyEntry.message.role === 'user' && session?.sessionId}
         {#key stickyEntryId}
@@ -410,7 +413,7 @@
             message={stickyEntry.message}
             sessionId={session.sessionId}
             abandonedBranchCount={alternateCount(stickyEntry)}
-            manager={Boolean(source)}
+            manager={Boolean(source || managerTranscript)}
             {readOnly}
             store={branchTreeStore}
             onRedo={handleRedo}
@@ -438,10 +441,10 @@
               {assistantRowUsage}
               sessionId={session?.sessionId ?? ''}
               abandonedBranchCount={alternateCount(entry)}
-              manager={Boolean(source)}
+              manager={Boolean(source || managerTranscript)}
               {readOnly}
               store={branchTreeStore}
-              onRedo={source || readOnly ? undefined : handleRedo}
+              onRedo={source || readOnly || managerTranscript ? undefined : handleRedo}
             />
           {/if}
         </div>
