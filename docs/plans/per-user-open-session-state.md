@@ -120,7 +120,7 @@ export class UserProfiles {
 
 - `persistence.ts`: `getUser(): string | null`, `setUser(name: string): void`, `clearActiveSessions(): void`. `getActiveSessions()` survives as the migration seed only.
 - Connect flow: WS URL gains `&user=<name>` (null → omit → server default). On `user_sessions_changed`: reconcile subscribed sessions (open missing via the existing restore path, drop absent), with migration gated on `fresh` as described under Web Client. Clear the local active-sessions key after the first event of a connection.
-- Settings pane: save → `setUser(name)` → reconnect WS → connect burst delivers the new profile's set.
+- Settings pane: save → `setUser(name)` → reconnect WS → connect burst delivers the new profile's set. A deliberate switch clears the local seed before reconnecting, so a fresh profile genuinely starts empty per the approved mock; a passive fresh connect (migration) keeps adopting the local seed.
 
 ### Interaction Mocks
 
@@ -383,7 +383,7 @@ Keep assertions on `ReconcilePlan` outputs and storage state only — no socket 
 State lives in the component; no new store. No unit tests (plan records the pane as manually covered).
 
 **Verify:** manual journeys: open settings → User tab shows chips with counts; adopt a chip → Save enables → save reconnects and the dashboard shows that profile's sessions; two browsers on one user stay in sync; mobile-width check shows the header Save.
-**Status:** not started
+**Status:** done
 
 ### Step 14: Glossary entries
 
@@ -395,7 +395,7 @@ State lives in the component; no new store. No unit tests (plan records the pane
 Add to **Flagged ambiguities**: "user" also names pi's conversation message role — resolved: the role stays in message-content contracts, the identity sense stays in connection/profile contracts; they never share a wire type.
 
 **Verify:** entries present; terms used in new code match.
-**Status:** not started
+**Status:** done
 
 ### Step 15: Full suite and commit cadence
 

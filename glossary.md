@@ -67,6 +67,13 @@ _Avoid_: session owner, session takeover
 An observer's position in a live session's event buffer. A cursor belongs to one buffer: a cursor from an earlier buffer for the same session id (idle reap, server restart, voice reopen) forces a full resync.
 _Avoid_: epoch (reserved for the folder listing's **wire epoch**)
 
+**User**:
+A connection identity the client presents on the WebSocket URL (`?user=`) and keeps as the per-device `pimote:user` setting. All connections of one user share one open-session set. The name is honor-system; nothing is authenticated.
+_Avoid_: account
+
+**User profile**:
+The server-side per-user open-session set persisted in `user-profiles.json`. A user's connections reconcile against it; a user with no profile yet is fresh.
+
 **Optimistic entry**:
 A user message the composer shows before the server echoes it, keyed by a `clientMessageId`. The echo stamped with that id replaces it; a prompt outcome other than `started` removes it.
 _Avoid_: pending message (that is a **queued message**)
@@ -228,3 +235,4 @@ _Avoid_: tag template
 - "repo folder" was used for code folders — resolved: persona folders are git-initialized too, so the nature is **code folder**.
 - "epoch" named both timestamp values ("ms since epoch") and the folder listing's monotonic counter — resolved: the counter is the **wire epoch**; "epoch ms" stays reserved for timestamps.
 - "chips" named folder-row status indicators (repo branch/dirty, missing member, tags) and the active-session bar's open/bound-session buttons — resolved by the `server-folder-list-paging` plan: bare **chips** means the active-session bar's buttons (client-local state that feeds the live re-sort); folder-row indicators are always qualified (repo chips, tag chips, warning chip).
+- "user" also names pi's conversation message role — resolved: the role stays in message-content contracts, the identity sense stays in connection/profile contracts; they never share a wire type.

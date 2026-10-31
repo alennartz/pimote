@@ -545,6 +545,18 @@ export class ConnectionStore {
     this.sessionCursors.delete(id);
   }
 
+  /** Empty the seed the connect-burst reconcile consumes. A deliberate user
+   *  switch starts the chosen profile's list on this device: a fresh profile
+   *  then stays empty and a known profile's set replaces the view. Local-only
+   *  — each dropped entry notifies the registry through `onSessionDropped`
+   *  and nothing goes over the wire, so the old profile keeps its entries. */
+  clearSubscribedSessions(): void {
+    for (const sessionId of [...this.subscribedSessions.keys()]) {
+      this.removeSubscribedSession(sessionId);
+      this.onSessionDropped?.(sessionId);
+    }
+  }
+
   send(command: PimoteCommand): Promise<PimoteResponse> {
     const id = command.id ?? `cmd-${nextId++}`;
     const withId = { ...command, id };

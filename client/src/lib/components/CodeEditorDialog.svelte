@@ -31,6 +31,7 @@
     toolbar = null,
     toolbarVisible = true,
     tabs = null,
+    body = null,
     viewport = null,
     accessibleTitle = null,
     onclose,
@@ -64,6 +65,8 @@
     toolbar?: Snippet | null;
     toolbarVisible?: boolean;
     tabs?: Snippet | null;
+    /** Replaces the editor pane entirely, e.g. a structured form pane. */
+    body?: Snippet | null;
     viewport?: 'desktop' | 'mobile' | null;
     accessibleTitle?: string | null;
     /** Every explicit close affordance and unhandled Escape route here; the consumer owns veto and confirm semantics. */
@@ -198,7 +201,9 @@
       {/if}
 
       <div class="min-h-0 flex-1 overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
-        {#if editorModule && ready}
+        {#if body}
+          {@render body()}
+        {:else if editorModule && ready}
           {#key editorKey}
             <editorModule.default bind:value bind:editorView {language} />
           {/key}

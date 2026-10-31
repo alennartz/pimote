@@ -1,7 +1,10 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import type { EditorView } from '@codemirror/view';
+  import type { ListUsersResponseData, UserSummary } from '@pimote/shared';
   import type { GlobalSettingsStore } from '$lib/stores/global-settings.svelte.js';
+  import { connection } from '../stores/connection.svelte.js';
+  import { getUser, setUser } from '../stores/persistence.js';
   import { inferLanguageFromPath } from '$lib/editor-language.js';
   import { isValidTagName, wrapWithTag } from '$lib/tag-wrap.js';
   import { AlertDialog } from 'bits-ui';
@@ -27,12 +30,76 @@
   let tagName = $state('');
   let tagInputEl = $state<HTMLInputElement | null>(null);
 
+  // User tab — the device's connection identity, a form pane, not a file.
+  // State lives here; the server's profile list refreshes from list_users on
+  // dialog open and tab select, and after a save once the socket is back.
+  let userTabActive = $state(false);
+  let userName = $state(getUser() ?? '');
+  let persistedUser = $state(getUser() ?? '');
+  let profiles = $state<UserSummary[]>([]);
+  let chipsStale = $state(false);
+
+  let trimmedName = $derived(userName.trim());
+  let userDirty = $derived(trimmedName !== '' && trimmedName !== persistedUser);
+  let currentUser = $derived(persistedUser === '' ? 'default' : persistedUser);
+  let adoptedProfileKnown = $derived(profiles.some((profile) => profile.name === trimmedName));
+
   $effect(() => {
     if (!store.open || store.activePath) {
       tagInputVisible = false;
       tagName = '';
     }
   });
+
+  $effect(() => {
+    if (!store.open) {
+      userTabActive = false;
+      userName = persistedUser;
+    }
+  });
+
+  $effect(() => {
+    if (store.open) void fetchProfiles();
+  });
+
+  $effect(() => {
+    if (userTabActive && chipsStale && connection.ready) void fetchProfiles();
+  });
+
+  function selectUserTab(): void {
+    userTabActive = true;
+    void fetchProfiles();
+  }
+
+  async function fetchProfiles(): Promise<void> {
+    try {
+      const response = await connection.send({ type: 'list_users' });
+      const data = response.data as ListUsersResponseData | undefined;
+      if (!response.success || !data || !Array.isArray(data.users)) return;
+      profiles = data.users;
+      chipsStale = false;
+    } catch {
+      // The socket was not open (dialog opened mid-reconnect, or right after a
+      // save). Mark stale so the ready effect retries once the socket settles.
+      chipsStale = true;
+    }
+  }
+
+  /** Persist the name and rebuild the WebSocket so the new user's connect
+   *  burst loads their profile. A deliberate switch starts the chosen
+   *  profile's list on this device: the seed empties first, so a fresh
+   *  profile stays empty instead of adopting the old list. */
+  function saveUser(): void {
+    if (!userDirty) return;
+    const name = trimmedName;
+    setUser(name);
+    persistedUser = name;
+    userName = name;
+    chipsStale = true;
+    connection.clearSubscribedSessions();
+    connection.disconnect();
+    connection.connect();
+  }
 
   async function showTagInput(): Promise<void> {
     tagInputVisible = !tagInputVisible;
@@ -51,19 +118,69 @@
   }
 </script>
 
+{#snippet userPane()}
+  <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 sm:gap-5 sm:p-6">
+    <div>
+      <div class="mb-2 text-sm font-semibold">User name</div>
+      <Input aria-label="User name" autocomplete="off" spellcheck="false" bind:value={userName} class="sm:max-w-[22rem]" />
+      {#if userDirty}
+        <p class="text-status-reconnecting mt-1.5 text-xs leading-normal">
+          Switches this device to user <b>{trimmedName}</b>.
+          {#if adoptedProfileKnown}Its open-session list replaces the current one.{:else}That profile has no open sessions yet — this device's list starts empty.{/if}
+        </p>
+      {:else}
+        <p class="text-muted-foreground mt-1.5 text-xs leading-normal">
+          Every connection that presents the same user shares one open-session set. This name travels with this device only; nothing is authenticated.
+        </p>
+      {/if}
+    </div>
+    <div>
+      <div class="text-muted-foreground mb-2 text-xs font-medium tracking-wider uppercase">Profiles on this server</div>
+      <div class="flex flex-wrap gap-1.5">
+        {#each profiles as profile (profile.name)}
+          <button
+            type="button"
+            class="rounded-full border px-3 py-1 text-[0.8rem] transition-colors {profile.name === currentUser
+              ? 'border-ring bg-[var(--surface-hover)]'
+              : 'border-border bg-[var(--surface-subtle)] hover:bg-[var(--surface-hover)]'}"
+            onclick={() => {
+              userName = profile.name;
+            }}
+          >
+            {profile.name}<span class="text-muted-foreground ml-1.5 text-[0.7rem]">{profile.sessionCount} {profile.sessionCount === 1 ? 'session' : 'sessions'}</span>
+          </button>
+        {/each}
+      </div>
+    </div>
+    <p class="text-muted-foreground text-[0.8rem] leading-relaxed">
+      Switching to another profile replaces this device's open-session list with that profile's list. Sessions stay put on the server; only this device's view changes.
+    </p>
+  </div>
+{/snippet}
+
 <CodeEditorDialog
   open={store.open}
-  title={active?.label ?? ''}
+  title={userTabActive ? 'User' : (active?.label ?? '')}
   accessibleTitle="Global settings files"
-  subtitle={active?.path ?? null}
-  hint={active?.loaded && !active.exists ? 'New file. It will be created on save.' : active?.dirty ? 'Unsaved changes' : null}
-  error={store.error ?? active?.error ?? null}
-  saving={active?.saving ?? false}
-  saveDisabled={!presentation.actions.saveEnabled || !active?.loaded}
+  subtitle={userTabActive ? "This device's identity on the server" : (active?.path ?? null)}
+  hint={userTabActive
+    ? userDirty
+      ? 'Unsaved changes'
+      : null
+    : active?.loaded && !active.exists
+      ? 'New file. It will be created on save.'
+      : active?.dirty
+        ? 'Unsaved changes'
+        : null}
+  error={userTabActive ? null : (store.error ?? active?.error ?? null)}
+  saving={userTabActive ? false : (active?.saving ?? false)}
+  saveDisabled={userTabActive ? !userDirty : !presentation.actions.saveEnabled || !active?.loaded}
   ready={active?.loaded ?? false}
   editorKey={active?.path ?? null}
-  toolbarVisible={presentation.language === 'markdown'}
+  toolbarVisible={presentation.language === 'markdown' && !userTabActive}
   language={inferLanguageFromPath(active?.path ?? '')}
+  badge={userTabActive ? 'device setting' : null}
+  body={userTabActive ? userPane : null}
   bind:value={
     () => active?.draft ?? '',
     (value) => {
@@ -74,19 +191,29 @@
   {viewport}
   onclose={() => store.close()}
   onsave={() => {
+    if (userTabActive) {
+      saveUser();
+      return;
+    }
     if (active) void store.save(active.path);
   }}
 >
   {#snippet tabs()}
     <div aria-label="Settings files" class="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2" role="tablist">
+      <Button type="button" variant={userTabActive ? 'secondary' : 'ghost'} role="tab" aria-selected={userTabActive} class="shrink-0" onclick={selectUserTab}>
+        User{#if userDirty}<span aria-label="Unsaved changes">*</span>{/if}
+      </Button>
       {#each store.files as file (file.path)}
         <Button
           type="button"
-          variant={file.path === store.activePath ? 'secondary' : 'ghost'}
+          variant={!userTabActive && file.path === store.activePath ? 'secondary' : 'ghost'}
           role="tab"
-          aria-selected={file.path === store.activePath}
+          aria-selected={!userTabActive && file.path === store.activePath}
           class="shrink-0"
-          onclick={() => void store.select(file.path)}
+          onclick={() => {
+            userTabActive = false;
+            void store.select(file.path);
+          }}
         >
           {file.label}{#if file.dirty}<span aria-label="Unsaved changes">*</span>{/if}
         </Button>
