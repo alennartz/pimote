@@ -190,7 +190,7 @@ describe('session row swipe trays', () => {
 });
 
 describe('session row swipe gestures', () => {
-  it('swiping left sends close_session and the card returns to rest', async () => {
+  it('swiping left detaches the session and the card returns to rest', async () => {
     render(openSession);
     await tick();
 
@@ -203,7 +203,7 @@ describe('session row swipe gestures', () => {
 
     dispatchPointer('pointerup', 180);
 
-    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith({ type: 'close_session', sessionId: openSession.id }));
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith({ type: 'detach_session', sessionId: openSession.id }));
     // 'stay' outcome: the card springs back to rest instead of collapsing.
     await vi.waitFor(() => expect(surface().style.transform).toBe('translateX(0px)'));
   });

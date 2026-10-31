@@ -195,6 +195,8 @@ settings) cover it end to end.
 
 ## Steps
 
+**Pre-implementation commit:** `cc9ab2557150dec09c513c30b981a108045dbee9`
+
 ### Step 1: Implement the `UserProfiles` store and `resolveUserName`
 
 Fill the stubs in `server/src/user-profiles.ts` (interfaces and signatures are already fixed there and in `server/src/user-profiles.test.ts`).
@@ -209,14 +211,14 @@ Fill the stubs in `server/src/user-profiles.ts` (interfaces and signatures are a
 - `resolveUserName(raw)`: `raw?.trim()`; empty → `'default'`; cap length at 64.
 
 **Verify:** `npx vitest run server/src/user-profiles.test.ts` — all green.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement the client persistence stubs
 
 Fill `getUser`, `setUser`, `clearActiveSessions` in `client/src/lib/stores/persistence.ts` following the file's existing house pattern (try/catch swallowing, localStorage). New key constant `KEY_USER = 'pimote:user'`. `clearActiveSessions` removes `pimote:activeSessions` via `localStorage.removeItem` inside the same try/catch pattern. Leave `getActiveSessions`/`setActiveSessions` as-is (`setActiveSessions` loses its callers in Step 9; the test suite still covers it).
 
 **Verify:** `npx vitest run client/src/lib/stores/persistence.test.ts` — all green.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Boot wiring — construct, load, and GC the profile store
 
@@ -225,7 +227,7 @@ Fill `getUser`, `setUser`, `clearActiveSessions` in `client/src/lib/stores/persi
 - `server/src/index.test.ts` asserts boot-shape interactions; if its `createServer` mock arity needs the new argument, extend the mock in lockstep with the real signature (that is contract plumbing, not a behavior change).
 
 **Verify:** `npx vitest run server/src/index.test.ts` green; boot logs show no new errors.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Bind the user at connection and deliver the connect burst
 
@@ -246,7 +248,7 @@ static broadcastUserSessionsChanged(
 It iterates `clientRegistry.values()`, filters `handler.user === user && handler.clientId !== exceptClientId`, and sends each a `user_sessions_changed` snapshot (freshness recomputed per send; after any change it is false, which is correct — the gate only matters in the connect burst).
 
 **Verify:** `npx vitest run server/src/ws-handler.test.ts` still green (existing cases unaffected); a manual `wscat`-style connect to `/ws?clientId=x&user=alice` receives `user_sessions_changed` with `fresh: true` in the burst.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Link sessions into the profile on `open_session`
 
@@ -261,7 +263,7 @@ if (await this.userProfiles.link(this.user, { sessionId, folderPath })) {
 using that path's `folderPath` (`newSlot.folderPath` / `existing.folderPath` / `reopenedSlot.folderPath`). The no-echo exclusion is the acting client: it applied the open locally. Keep the `link` inside the existing `withSessionOperation` block for the existing/disk paths so the folder path read is serialized with slot mutation. New-session path links after `broadcastSessionOpened`. Note: the client's restore loop (Step 10) drives migration through this same command — no separate migration code exists server-side.
 
 **Verify:** unit test in Step 11; manually, two browsers as the same user: one opens a session, the other's dashboard gains the tab.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Rework `detach_session` into user-level unlink
 
@@ -275,14 +277,14 @@ Replace the body of `case 'detach_session'` in `server/src/ws-handler.ts`. New b
 Other users' handlers are never touched; their links survive. The existing observer-cleanup at socket close (`cleanup()`, line ~2371) stays detach-only — socket death never unlinks (sticky membership).
 
 **Verify:** unit test in Step 11.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Handle `list_users`
 
 Add `case 'list_users'` in `ws-handler.ts`: `this.sendResponse(id, true, { users: this.userProfiles.summaries() })`. No session operation, no broadcast. The response data shape matches `ListUsersResponseData` in `shared/src/protocol.ts`.
 
 **Verify:** unit test in Step 11; the settings pane (Step 13) renders the chips from it.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Unlink everywhere on archive
 
@@ -297,7 +299,7 @@ for (const affectedUser of await this.userProfiles.unlinkAll(archiveSessionId)) 
 No exclusion here — the archiving connection can belong to a different user, and each affected user's connections (including any that archived) are told. Unarchive (`archived: false`) does not relink — reopening goes through `open_session`, which links (Step 5).
 
 **Verify:** unit test in Step 11.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Strip the client's local mirror and switch the close action
 
@@ -310,7 +312,7 @@ No exclusion here — the archiving connection can belong to a different user, a
 - `onSessionNotFound` / `onSessionRestoreFailed` keep dropping local entries only. Rewrite the stale comment at ~line 1828 (`The connection store sends the socket-scoped detach first...`) — Step 10 removes that send; cleanup rests on the server's same-id takeover eviction (DR-067).
 
 **Verify:** `npx vitest run client/src/lib/stores/session-registry.test.ts` green; grep shows no `persistSessions` remains; grep shows `close_session` sent only from the two placeholder paths.
-**Status:** not started
+**Status:** done
 
 ### Step 10: Client connect flow — user param, profile-gated reconcile, one-time clear
 
@@ -339,7 +341,7 @@ Rules: entries in `server` missing from `current` → `toOpen`; entries in `curr
 - Remove the `detach_session` send in the generic restore-failure branch (~lines 263–268): keep the warn, the `removeSubscribedSession`, and the `onSessionRestoreFailed` notify flow; the server's takeover eviction (DR-067) already detaches a dead socket's observers, and the new command semantics would unlink the user everywhere. Update the branch comment accordingly.
 
 **Verify:** Step 12's tests; manually: two browsers on one user, A opens and closes sessions, B mirrors; a stale second browser with a stale local set reconciles down to server truth after this change only (clear the key once to simulate the pre-migration state).
-**Status:** not started
+**Status:** done
 
 ### Step 11: Wire-flow tests (server)
 
@@ -353,7 +355,7 @@ New file `server/src/ws-user-profiles.test.ts`, following `server/src/ws-handler
 - Restart: build a second `UserProfiles` over the same temp path, `load()`, and assert the pre-restart sets (the store-level reload already covers disk truth; this asserts the handler is wired to the same path).
 
 **Verify:** `npx vitest run server/src/ws-user-profiles.test.ts` green.
-**Status:** not started
+**Status:** done
 
 ### Step 12: Client reconcile tests
 
@@ -367,7 +369,7 @@ New test file `client/src/lib/stores/user-sessions-reconcile.test.ts`:
 Keep assertions on `ReconcilePlan` outputs and storage state only — no socket internals.
 
 **Verify:** `npx vitest run client/src/lib/stores/user-sessions-reconcile.test.ts` green.
-**Status:** not started
+**Status:** done
 
 ### Step 13: Settings User tab
 

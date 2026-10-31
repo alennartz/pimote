@@ -1,8 +1,8 @@
 // ConnectionStore — Svelte 5 runes-based WebSocket connection manager
-import type { OpenSessionResponseData, PimoteCommand, PimoteResponse, PimoteEvent, PimoteServerMessage, RestoreMode } from '@pimote/shared';
+import type { OpenSessionResponseData, PimoteCommand, PimoteResponse, PimoteEvent, PimoteServerMessage, RestoreMode, UserSessionsChangedEvent } from '@pimote/shared';
 import { SvelteMap } from 'svelte/reactivity';
 import { version } from '$app/environment';
-import { getClientId, setClientId } from './persistence.js';
+import { clearActiveSessions, getClientId, getUser, setClientId } from './persistence.js';
 import { updateStore } from './update.svelte.js';
 
 type EventListener = (event: PimoteEvent) => void;
@@ -32,6 +32,42 @@ export interface PendingSessionAdopt {
   folderPath: string;
   openDownloads?: boolean;
 }
+
+/** How to bring this connection's subscribed set in line with the user's
+ *  server-side profile. */
+export interface ReconcilePlan {
+  /** Open via the existing restore path. */
+  toOpen: { sessionId: string; folderPath: string }[];
+  /** Remove locally, never open. */
+  toDrop: string[];
+}
+
+/** Diff this connection's subscribed set against the server's profile truth.
+ *  `fresh` marks a user with no server profile yet (never linked): the local
+ *  set is then the one-time migration seed and gets adopted wholesale
+ *  instead of dropped — a stale second browser with a `fresh: false` set
+ *  reconciles down to server truth instead of resurrecting closed sessions. */
+export function reconcileUserSessions(current: { sessionId: string; folderPath: string }[], server: { sessionId: string; folderPath: string }[], fresh: boolean): ReconcilePlan {
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- pure-function locals, never read reactively
+  const currentIds = new Set(current.map((s) => s.sessionId));
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- pure-function locals, never read reactively
+  const serverIds = new Set(server.map((s) => s.sessionId));
+  const toOpen = server.filter((s) => !currentIds.has(s.sessionId));
+  const toDrop: string[] = [];
+  if (fresh) {
+    toOpen.push(...current);
+  } else {
+    for (const s of current) {
+      if (!serverIds.has(s.sessionId)) toDrop.push(s.sessionId);
+    }
+  }
+  return { toOpen, toDrop };
+}
+
+/** One-time migration gate: after the first user_sessions_changed of the page
+ *  clears the local mirror, nothing reads or writes pimote:activeSessions
+ *  again — the server's per-user profile is the only open-session set. */
+let localMirrorCleared = false;
 
 let nextId = 1;
 /** Identity of this tab. sessionStorage, not localStorage: two tabs must not
@@ -103,6 +139,10 @@ export class ConnectionStore {
   private countdownInterval: ReturnType<typeof setInterval> | null = null;
   private reconnectDelay = 1000;
   private intentionalClose = false;
+  /** Set once the first user_sessions_changed of this socket has driven the
+   *  restore dispatch; reset per connect(). Later events mid-connection
+   *  apply their plan without the syncing/ready bookkeeping. */
+  private restoreDispatched = false;
 
   /** Called after all session restore/open commands complete. Set by session-registry to restore viewed session. */
   onReconnected: (() => void) | null = null;
@@ -123,6 +163,10 @@ export class ConnectionStore {
 
   /** Called when a reconnect restore fails without a definitive server reason. */
   onSessionRestoreFailed: ((sessionId: string) => void) | null = null;
+
+  /** Called when a user_sessions_changed reconcile drops a session this
+   *  connection held but the user's profile does not. */
+  onSessionDropped: ((sessionId: string) => void) | null = null;
 
   /** Called after connection restore when a notification-driven adopt should begin. */
   onPendingAdopt: ((sessionId: string, folderPath: string, options: { openDownloads?: boolean }) => void) | null = null;
@@ -198,8 +242,11 @@ export class ConnectionStore {
     this.phase = 'connecting';
     this.status = this.status === 'disconnected' ? 'connecting' : 'reconnecting';
     this.syncDetail = null;
+    this.restoreDispatched = false;
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    this.ws = new WebSocket(`${protocol}//${location.host}/ws?clientId=${clientId}&version=${encodeURIComponent(version)}`);
+    const user = getUser();
+    const userParam = user !== null ? `&user=${encodeURIComponent(user)}` : '';
+    this.ws = new WebSocket(`${protocol}//${location.host}/ws?clientId=${clientId}&version=${encodeURIComponent(version)}${userParam}`);
     // Identity of THIS socket. Handlers and the async restore continuation
     // capture it and no-op once `this.ws` points elsewhere (replaced) or is
     // null (dropped into backoff).
@@ -209,113 +256,10 @@ export class ConnectionStore {
       if (this.ws !== ws) return;
       this.status = 'connected';
       this.reconnectDelay = 1000;
-
-      // Restore all subscribed sessions. When we still have an in-page cursor,
-      // ask the server for incremental replay; otherwise let it fall back to a
-      // full resync (live in-memory or disk-backed).
-      const sessionCount = this.subscribedSessions.size;
-      if (sessionCount > 0) {
-        this.phase = 'syncing';
-        this.syncProgress = { done: 0, total: sessionCount };
-        this.syncDetail = 'Restoring sessions';
-      }
-
-      const restorePromises: Promise<void>[] = [];
-      for (const [sessionId, folderPath] of this.subscribedSessions) {
-        const lastCursor = this.sessionCursors.get(sessionId);
-        const p = this.send({
-          type: 'open_session',
-          folderPath,
-          sessionId,
-          ...(lastCursor !== undefined ? { lastCursor } : {}),
-        })
-          .then((response) => {
-            // A response can already be queued when this socket drops. Never
-            // let that stale continuation mutate the current connection state.
-            if (this.ws !== ws) return;
-            if (!response.success) {
-              if (response.error === 'session_archived') {
-                if (this.phase === 'syncing') {
-                  this.syncDetail = 'Session archived';
-                }
-                this.removeSubscribedSession(sessionId);
-                this.onSessionArchived?.(sessionId);
-              } else if (isSessionNotFoundError(response.error)) {
-                // Definitive rejection: the session is gone server-side (for
-                // example never persisted before an idle reap). Tell the user,
-                // drop the subscription, and let the registry delete the orphan.
-                if (this.phase === 'syncing') {
-                  this.syncDetail = 'Session not found';
-                }
-                this.removeSubscribedSession(sessionId);
-                this.onSessionNotFound?.(sessionId);
-              } else {
-                // A restore can fail after the server attached this socket, or
-                // before attachment during resync. Detach is idempotent and
-                // socket-scoped, so it handles both paths without touching the
-                // runtime or another observer using the same client id.
-                const error = response.error ?? 'unknown error';
-                console.warn(`[ConnectionStore] Failed to restore session ${sessionId}: ${error}`);
-                if (this.phase === 'syncing') {
-                  this.syncDetail = 'Session restore failed';
-                }
-                try {
-                  void this.send({ type: 'detach_session', sessionId }).catch((detachError) => {
-                    console.warn(`[ConnectionStore] Failed to detach session ${sessionId}:`, detachError);
-                  });
-                } catch (detachError) {
-                  console.warn(`[ConnectionStore] Failed to detach session ${sessionId}:`, detachError);
-                }
-                this.removeSubscribedSession(sessionId);
-                this.onSessionRestoreFailed?.(sessionId);
-                this.emitEvent({
-                  type: 'extension_ui_request',
-                  sessionId,
-                  requestId: `session-restore-failed-${sessionId}-${Date.now()}`,
-                  method: 'notify',
-                  message: 'Session restore failed',
-                  notifyType: 'error',
-                });
-              }
-              return;
-            }
-
-            const data = response.data as OpenSessionResponseData | undefined;
-            if (this.phase === 'syncing') {
-              this.syncDetail = this.labelForRestoreMode(data?.restoreMode, sessionCount);
-            }
-            if (data) this.onSessionRestored?.(sessionId, data);
-          })
-          .catch(() => {
-            // WebSocket dropped before response — will retry on next reconnect
-          })
-          .finally(() => {
-            if (this.syncProgress) {
-              this.syncProgress = { done: this.syncProgress.done + 1, total: this.syncProgress.total };
-            }
-          });
-        restorePromises.push(p);
-      }
-
-      // After all restores, restore correct viewed session on the server.
-      // Import is circular so we use the onReconnected callback instead.
-      Promise.all(restorePromises).then(() => {
-        // Bail if this socket was superseded while restores were in flight
-        // (dropped mid-sync) — otherwise we'd flip the store to ready/'ready'
-        // and fire onReconnected() while actually disconnected and backing off.
-        if (this.ws !== ws) return;
-        this.ready = true;
-        this.phase = 'ready';
-        this.syncProgress = null;
-        this.syncDetail = null;
-        this.onReconnected?.();
-
-        if (this.pendingAdopt) {
-          const { sessionId: sid, folderPath, openDownloads } = this.pendingAdopt;
-          this.pendingAdopt = null;
-          this.onPendingAdopt?.(sid, folderPath, { openDownloads });
-        }
-      });
+      // Restore dispatch waits for the connect burst's user_sessions_changed:
+      // the server's per-user profile owns the open-session set, so the
+      // reconcile must shape the subscription set before any restore goes
+      // out. See the user_sessions_changed branch in onmessage.
     };
 
     this.ws.onmessage = (ev) => {
@@ -371,6 +315,11 @@ export class ConnectionStore {
         this.sessionCursors.set(event.sessionId, event.cursor);
       }
 
+      if (event.type === 'user_sessions_changed') {
+        this.handleUserSessionsChanged(event as UserSessionsChangedEvent, ws);
+        return;
+      }
+
       if (event.type === 'session_archived' && event.archived) {
         this.removeSubscribedSession(event.sessionId);
         this.onSessionArchived?.(event.sessionId);
@@ -402,6 +351,146 @@ export class ConnectionStore {
     this.ws.onerror = () => {
       // onclose will fire after onerror
     };
+  }
+
+  /** Reconcile the subscription set against the user's profile snapshot and
+   *  apply the plan. The first event of a connection dispatches the restore
+   *  loop over the reconciled set; later events mid-connection open missing
+   *  entries directly (their `fresh` is always false, so drops are
+   *  unconditional). */
+  private handleUserSessionsChanged(event: UserSessionsChangedEvent, ws: WebSocket): void {
+    if (this.ws !== ws) return;
+    if (!localMirrorCleared) {
+      localMirrorCleared = true;
+      clearActiveSessions();
+    }
+    const current = [...this.subscribedSessions].map(([sessionId, folderPath]) => ({ sessionId, folderPath }));
+    this.applyReconcilePlan(reconcileUserSessions(current, event.sessions, event.fresh), ws);
+  }
+
+  private applyReconcilePlan(plan: ReconcilePlan, ws: WebSocket): void {
+    for (const sessionId of plan.toDrop) {
+      this.removeSubscribedSession(sessionId);
+      this.onSessionDropped?.(sessionId);
+    }
+    if (!this.restoreDispatched) {
+      for (const { sessionId, folderPath } of plan.toOpen) {
+        if (!this.subscribedSessions.has(sessionId)) this.addSubscribedSession(sessionId, folderPath);
+      }
+      this.restoreDispatched = true;
+      this.dispatchRestores(ws);
+      return;
+    }
+    for (const { sessionId, folderPath } of plan.toOpen) {
+      this.addSubscribedSession(sessionId, folderPath);
+      void this.restoreSession(sessionId, folderPath, ws);
+    }
+  }
+
+  /** Re-attach every subscribed session. Runs once per socket, after the
+   *  first user_sessions_changed has reconciled the set. With an in-page
+   *  cursor a restore asks for incremental replay; otherwise the server
+   *  falls back to a full resync (live in-memory or disk-backed). */
+  private dispatchRestores(ws: WebSocket): void {
+    const sessionCount = this.subscribedSessions.size;
+    if (sessionCount > 0) {
+      this.phase = 'syncing';
+      this.syncProgress = { done: 0, total: sessionCount };
+      this.syncDetail = 'Restoring sessions';
+    }
+    const restorePromises: Promise<void>[] = [];
+    for (const [sessionId, folderPath] of [...this.subscribedSessions]) {
+      restorePromises.push(this.restoreSession(sessionId, folderPath, ws));
+    }
+
+    // After all restores, restore correct viewed session on the server.
+    // Import is circular so we use the onReconnected callback instead.
+    Promise.all(restorePromises).then(() => {
+      // Bail if this socket was superseded while restores were in flight
+      // (dropped mid-sync) — otherwise we'd flip the store to ready/'ready'
+      // and fire onReconnected() while actually disconnected and backing off.
+      if (this.ws !== ws) return;
+      this.ready = true;
+      this.phase = 'ready';
+      this.syncProgress = null;
+      this.syncDetail = null;
+      this.onReconnected?.();
+
+      if (this.pendingAdopt) {
+        const { sessionId: sid, folderPath, openDownloads } = this.pendingAdopt;
+        this.pendingAdopt = null;
+        this.onPendingAdopt?.(sid, folderPath, { openDownloads });
+      }
+    });
+  }
+
+  /** Open one session with the reconnect-restore error handling. */
+  private restoreSession(sessionId: string, folderPath: string, ws: WebSocket): Promise<void> {
+    const lastCursor = this.sessionCursors.get(sessionId);
+    return this.send({
+      type: 'open_session',
+      folderPath,
+      sessionId,
+      ...(lastCursor !== undefined ? { lastCursor } : {}),
+    })
+      .then((response) => {
+        // A response can already be queued when this socket drops. Never
+        // let that stale continuation mutate the current connection state.
+        if (this.ws !== ws) return;
+        if (!response.success) {
+          if (response.error === 'session_archived') {
+            if (this.phase === 'syncing') {
+              this.syncDetail = 'Session archived';
+            }
+            this.removeSubscribedSession(sessionId);
+            this.onSessionArchived?.(sessionId);
+          } else if (isSessionNotFoundError(response.error)) {
+            // Definitive rejection: the session is gone server-side (for
+            // example never persisted before an idle reap). Tell the user,
+            // drop the subscription, and let the registry delete the orphan.
+            if (this.phase === 'syncing') {
+              this.syncDetail = 'Session not found';
+            }
+            this.removeSubscribedSession(sessionId);
+            this.onSessionNotFound?.(sessionId);
+          } else {
+            // A restore can fail after the server attached this socket, or
+            // before attachment during resync. No detach is sent: cleanup
+            // rests on the server's same-id takeover eviction (DR-067), and
+            // detach_session would unlink the user everywhere.
+            const error = response.error ?? 'unknown error';
+            console.warn(`[ConnectionStore] Failed to restore session ${sessionId}: ${error}`);
+            if (this.phase === 'syncing') {
+              this.syncDetail = 'Session restore failed';
+            }
+            this.removeSubscribedSession(sessionId);
+            this.onSessionRestoreFailed?.(sessionId);
+            this.emitEvent({
+              type: 'extension_ui_request',
+              sessionId,
+              requestId: `session-restore-failed-${sessionId}-${Date.now()}`,
+              method: 'notify',
+              message: 'Session restore failed',
+              notifyType: 'error',
+            });
+          }
+          return;
+        }
+
+        const data = response.data as OpenSessionResponseData | undefined;
+        if (this.phase === 'syncing') {
+          this.syncDetail = this.labelForRestoreMode(data?.restoreMode, this.syncProgress?.total ?? 1);
+        }
+        if (data) this.onSessionRestored?.(sessionId, data);
+      })
+      .catch(() => {
+        // WebSocket dropped before response — will retry on next reconnect
+      })
+      .finally(() => {
+        if (this.syncProgress) {
+          this.syncProgress = { done: this.syncProgress.done + 1, total: this.syncProgress.total };
+        }
+      });
   }
 
   disconnect(): void {

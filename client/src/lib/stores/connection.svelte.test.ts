@@ -35,6 +35,13 @@ class FakeWebSocket {
 /** Flush microtasks (and any setTimeout(0)) so promise chains settle. */
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+/** Deliver the connect burst's user_sessions_changed so the restore dispatch
+ *  runs. With `fresh: true` and no server sessions, the tab's local set is
+ *  adopted — the pre-profile behavior the older tests rely on. */
+const burst = (ws: FakeWebSocket, sessions: { sessionId: string; folderPath: string }[] = [], fresh = true) => {
+  ws.onmessage!({ data: JSON.stringify({ type: 'user_sessions_changed', sessions, fresh }) });
+};
+
 beforeEach(() => {
   instances.length = 0;
   vi.stubGlobal('WebSocket', FakeWebSocket);
@@ -71,6 +78,7 @@ describe('ConnectionStore — definitive restore rejections', () => {
     const ws = instances.at(-1)!;
     ws.readyState = FakeWebSocket.OPEN;
     ws.onopen!();
+    burst(ws);
     await flush();
 
     respondTo(ws, 'session_not_found');
@@ -97,6 +105,7 @@ describe('ConnectionStore — definitive restore rejections', () => {
       const initial = instances.at(-1)!;
       initial.readyState = FakeWebSocket.OPEN;
       initial.onopen!();
+      burst(initial);
       await flush();
       c.disconnect();
     }
@@ -106,6 +115,7 @@ describe('ConnectionStore — definitive restore rejections', () => {
     const ws = instances.at(-1)!;
     ws.readyState = FakeWebSocket.OPEN;
     ws.onopen!();
+    burst(ws);
     await flush();
     const opens = ws.sent.map((raw) => JSON.parse(raw)).filter((cmd) => cmd.type === 'open_session');
     expect(opens.every((cmd) => !('force' in cmd))).toBe(true);
@@ -123,7 +133,7 @@ describe('ConnectionStore — definitive restore rejections', () => {
     c.disconnect();
   });
 
-  it('non-definitive restore failures detach, remove locally, and show a small failure notice', async () => {
+  it('non-definitive restore failures remove locally and show a small failure notice without detaching', async () => {
     const c = new ConnectionStore();
     const onSessionNotFound = vi.fn();
     const onSessionRestoreFailed = vi.fn();
@@ -137,6 +147,7 @@ describe('ConnectionStore — definitive restore rejections', () => {
     const ws = instances.at(-1)!;
     ws.readyState = FakeWebSocket.OPEN;
     ws.onopen!();
+    burst(ws);
     await flush();
 
     respondTo(ws, 'internal_error');
@@ -145,36 +156,12 @@ describe('ConnectionStore — definitive restore rejections', () => {
     expect(onSessionNotFound).not.toHaveBeenCalled();
     expect(onSessionRestoreFailed).toHaveBeenCalledWith('s-flaky');
     expect(c.subscribedSessions.has('s-flaky')).toBe(false);
-    expect(ws.sent.map((raw) => JSON.parse(raw)).some((command) => command.type === 'detach_session' && command.sessionId === 's-flaky')).toBe(true);
+    // No client-side detach: the command now unlinks the user everywhere, and
+    // cleanup rests on the server's same-id takeover eviction (DR-067).
+    expect(ws.sent.map((raw) => JSON.parse(raw)).some((command) => command.type === 'detach_session')).toBe(false);
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'extension_ui_request', sessionId: 's-flaky', method: 'notify', message: 'Session restore failed', notifyType: 'error' }),
     );
-
-    c.disconnect();
-  });
-
-  it('keeps local cleanup when the socket rejects the detach command', async () => {
-    const c = new ConnectionStore();
-    const onSessionRestoreFailed = vi.fn();
-    c.onSessionRestoreFailed = onSessionRestoreFailed;
-    c.addSubscribedSession('s-detach-fails', '/proj');
-
-    c.connect();
-    const ws = instances.at(-1)!;
-    const send = ws.send.bind(ws);
-    ws.send = (raw: string) => {
-      if (JSON.parse(raw).type === 'detach_session') throw new Error('socket closed');
-      send(raw);
-    };
-    ws.readyState = FakeWebSocket.OPEN;
-    ws.onopen!();
-    await flush();
-
-    respondTo(ws, 'internal_error');
-    await flush();
-
-    expect(onSessionRestoreFailed).toHaveBeenCalledWith('s-detach-fails');
-    expect(c.subscribedSessions.has('s-detach-fails')).toBe(false);
 
     c.disconnect();
   });
@@ -223,6 +210,7 @@ describe('ConnectionStore — restore success', () => {
     const ws = instances.at(-1)!;
     ws.readyState = FakeWebSocket.OPEN;
     ws.onopen!();
+    burst(ws);
     await flush();
 
     const payload = {
@@ -251,7 +239,8 @@ describe('ConnectionStore — socket identity guards', () => {
     c.connect();
     const ws = instances.at(-1)!;
     ws.readyState = FakeWebSocket.OPEN;
-    ws.onopen!(); // fires restore (open_session) + schedules the Promise.all continuation
+    ws.onopen!();
+    burst(ws); // fires restore (open_session) + schedules the Promise.all continuation
 
     // Socket drops while the restore is still in flight.
     ws.readyState = FakeWebSocket.CLOSED;

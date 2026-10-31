@@ -448,7 +448,7 @@ describe('observer command boundary', () => {
     expect(slot.observers.size).toBe(0);
   });
 
-  it('detaches only this socket without closing the shared runtime', async () => {
+  it('detaches every connection of the user without closing the shared runtime', async () => {
     const { slot, sessions, first, second } = pair();
     await open(first);
     await open(second);
@@ -457,13 +457,13 @@ describe('observer command boundary', () => {
 
     expect(findResponse(first.sent, 'detach-after-attach')).toMatchObject({ success: true });
     expect(slot.observers.has('a')).toBe(false);
-    expect(slot.observers.get('b')).toBeDefined();
+    expect(slot.observers.has('b')).toBe(false);
     expect(sessions.get('session-1')).toBe(slot);
     expect(findEvents(first.sent, 'session_closed')).toEqual([]);
     expect(findEvents(second.sent, 'session_closed')).toEqual([]);
   });
 
-  it('does not let a stale socket detach its replacement observer', async () => {
+  it('unlinks the user everywhere when a stale socket sends detach_session', async () => {
     const slot = createMockSlot({ id: 'session-1', eventBuffer: createMockEventBuffer({ replayResult: [] }) });
     const sessions = new Map([['session-1', slot]]);
     const clientRegistry: ClientRegistry = new Map();
@@ -475,7 +475,9 @@ describe('observer command boundary', () => {
     await first.handler.handleMessage(JSON.stringify({ type: 'detach_session', sessionId: 'session-1', id: 'stale-detach' }));
 
     expect(findResponse(first.sent, 'stale-detach')).toMatchObject({ success: true });
-    expect(slot.observers.get('same-client')?.ws).toBe(replacement.ws);
+    // detach_session is a user-level unlink — the stale socket's user loses the
+    // link everywhere, including the replacement's observer (ref-free removal).
+    expect(slot.observers.has('same-client')).toBe(false);
   });
 
   it('keeps detach cleanup when its response socket fails', async () => {

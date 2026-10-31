@@ -2720,6 +2720,11 @@ describe('reconnect restore attachment cache', () => {
   };
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
   const commands = (ws: FakeWebSocket): Array<Record<string, any>> => ws.sent.map((raw) => JSON.parse(raw));
+  /** Deliver the connect burst's user_sessions_changed so the restore dispatch
+   *  runs; an empty fresh set adopts the tab's local subscriptions. */
+  const burst = (ws: FakeWebSocket): void => {
+    ws.onmessage!({ data: JSON.stringify({ type: 'user_sessions_changed', sessions: [], fresh: true }) });
+  };
   const openCommands = (ws: FakeWebSocket) => commands(ws).filter((command) => command.type === 'open_session');
   const respondToOpen = (ws: FakeWebSocket, response: { success: boolean; error?: string; data?: unknown }): void => {
     const open = openCommands(ws)[0];
@@ -2765,6 +2770,7 @@ describe('reconnect restore attachment cache', () => {
     const ws = FakeWebSocket.instances.at(-1)!;
     ws.readyState = FakeWebSocket.OPEN;
     ws.onopen!();
+    burst(ws);
     respondToOpen(ws, { success: true, data: { sessionId, folderPath: folder.path, restoreMode: 'full_resync_no_cursor' } });
     await flush();
 
@@ -2785,6 +2791,7 @@ describe('reconnect restore attachment cache', () => {
     const first = FakeWebSocket.instances.at(-1)!;
     first.readyState = FakeWebSocket.OPEN;
     first.onopen!();
+    burst(first);
     respondToOpen(first, { success: true, data: { sessionId, folderPath: folder.path } });
     await flush();
 
@@ -2794,6 +2801,7 @@ describe('reconnect restore attachment cache', () => {
     const second = FakeWebSocket.instances.at(-1)!;
     second.readyState = FakeWebSocket.OPEN;
     second.onopen!();
+    burst(second);
     respondToOpen(second, { success: true, data: { sessionId, folderPath: folder.path } });
     await flush();
     emitOpened(second, sessionId);
@@ -2814,6 +2822,7 @@ describe('reconnect restore attachment cache', () => {
     const ws = FakeWebSocket.instances.at(-1)!;
     ws.readyState = FakeWebSocket.OPEN;
     ws.onopen!();
+    burst(ws);
     respondToOpen(ws, { success: false, error });
     await flush();
 
@@ -2832,6 +2841,7 @@ describe('reconnect restore attachment cache', () => {
     const ws = FakeWebSocket.instances.at(-1)!;
     ws.readyState = FakeWebSocket.OPEN;
     ws.onopen!();
+    burst(ws);
     sessionRegistry.removeSession(sessionId);
     connection.removeSubscribedSession(sessionId);
     respondToOpen(ws, { success: true, data: { sessionId, folderPath: folder.path } });
@@ -2855,6 +2865,7 @@ describe('reconnect restore attachment cache', () => {
     const first = FakeWebSocket.instances.at(-1)!;
     first.readyState = FakeWebSocket.OPEN;
     first.onopen!();
+    burst(first);
     respondToOpen(first, { success: true, data: { sessionId, folderPath: folder.path } });
     first.readyState = FakeWebSocket.CLOSED;
     first.onclose!();
@@ -2864,6 +2875,7 @@ describe('reconnect restore attachment cache', () => {
     const second = FakeWebSocket.instances.at(-1)!;
     second.readyState = FakeWebSocket.OPEN;
     second.onopen!();
+    burst(second);
     emitOpened(second, sessionId);
 
     expect(openCommands(second)).toHaveLength(2);
@@ -2947,6 +2959,7 @@ describe('cold-boot notification adoption', () => {
     const ws = FakeWebSocket.instances.at(-1)!;
     ws.readyState = FakeWebSocket.OPEN;
     ws.onopen!();
+    ws.onmessage!({ data: JSON.stringify({ type: 'user_sessions_changed', sessions: [], fresh: true }) });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(toViewed).toHaveBeenCalledWith('s-cold-boot', { replace: false });

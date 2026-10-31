@@ -86,15 +86,12 @@
   // --- Swipe actions (mobile) ------------------------------------------------
   //
   // A folder row outlives both actions: closing keeps the session file listed
-  // (and drops it from the half-open filter via session events), while archiving
-  // flips its badge. Both resolve 'stay', so list reactivity handles removal.
+  // (the optimistic local removal drops it from the half-open filter), while
+  // archiving flips its badge. Both resolve 'stay', so list reactivity handles
+  // removal.
 
   async function swipeClose(): Promise<SwipeActionOutcome> {
-    try {
-      await connection.send({ type: 'close_session', sessionId: session.id });
-    } catch (e) {
-      console.error('Failed to close session:', e);
-    }
+    closeSession(session.id);
     return 'stay';
   }
 

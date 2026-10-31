@@ -17,9 +17,11 @@ import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { serveStaticHostRoute, type StaticHostRegistry } from './static-host/index.js';
 import { applyAppNameToHtml, applyAppNameToManifest, resolveAppName } from './branding.js';
 import { serveFileDownloadRoute, type DownloadManager } from './file-download/index.js';
+import type { UserProfiles } from './user-profiles.js';
 import crypto from 'node:crypto';
-import type { UpdateAvailableEvent, VersionMismatchEvent, ServerCapabilitiesEvent } from '../../shared/dist/index.js';
+import type { UpdateAvailableEvent, VersionMismatchEvent, ServerCapabilitiesEvent, UserSessionsChangedEvent } from '../../shared/dist/index.js';
 import type { UpdateChecker } from './update-check.js';
+import { resolveUserName } from './user-profiles.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 /** Directory holding the built client bundle. Resolved per call so tests can point it elsewhere. */
@@ -146,6 +148,7 @@ export async function createServer(
   folderRegistry?: FolderRegistry,
   folderListing?: FolderListingService,
   globalSettings?: WsGlobalSettingsDependencies,
+  userProfiles?: UserProfiles,
 ): Promise<PimoteServer> {
   const appName = resolveAppName(config);
   const clientVersion = await loadClientVersion();
@@ -277,7 +280,8 @@ export async function createServer(
       return;
     }
     const clientId = url.searchParams.get('clientId') ?? crypto.randomUUID();
-    console.log(`[pimote] WebSocket client connected (clientId=${clientId})`);
+    const user = resolveUserName(url.searchParams.get('user'));
+    console.log(`[pimote] WebSocket client connected (clientId=${clientId}, user=${user})`);
 
     // Version check — if the client's build version doesn't match the server's,
     // send a version_mismatch event and close. The client will reload.
@@ -306,6 +310,8 @@ export async function createServer(
       folderListing,
       globalSettings?.reloadPimoteExtensions,
       globalSettings,
+      userProfiles,
+      user,
     );
     takeOverClientSlot(clientRegistry, clientId, handler);
 
@@ -319,6 +325,18 @@ export async function createServer(
       tagSnippets: [],
     };
     handler.sendToClient(capabilities);
+
+    // Connect burst: the user's current open-session set with the derived
+    // freshness flag. `fresh` gates the client's one-time migration of its
+    // pre-existing local set.
+    if (userProfiles) {
+      const userSessions: UserSessionsChangedEvent = {
+        type: 'user_sessions_changed',
+        sessions: userProfiles.get(user),
+        fresh: userProfiles.isFresh(user),
+      };
+      handler.sendToClient(userSessions);
+    }
 
     ws.on('message', (data) => {
       handler.handleMessage(data.toString()).catch((err) => {

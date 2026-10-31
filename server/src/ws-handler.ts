@@ -45,6 +45,7 @@ import { enrichActiveSessionCounts, isValidFolderName, type FolderRegistry } fro
 import { seedPersonaFolder } from './manager/seed.js';
 import { createCodeFolder } from './folder-create.js';
 import type { FolderListingService } from './folder-listing.js';
+import type { UserProfiles } from './user-profiles.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
@@ -439,6 +440,9 @@ export class WsHandler {
     private readonly folderListing?: FolderListingService,
     private readonly reloadPimoteExtensions?: () => Promise<void>,
     private readonly globalSettings?: WsGlobalSettingsDependencies,
+    private readonly userProfiles?: UserProfiles,
+    /** Honor-system connection identity resolved from the `?user=` query param at socket open. */
+    private readonly user: string = 'default',
   ) {
     this.clientId = clientId;
     // Open-time pin initialization, nonblocking: a folder command arriving
@@ -699,6 +703,7 @@ export class WsHandler {
             const newSlot = this.sessionManager.getSession(sessionId)!;
             await this.claimSession(sessionId, newSlot);
             const folder = await WsHandler.broadcastSessionOpened(sessionId, newSlot.folderPath, this.sessionManager, this.folderRegistry, this.clientRegistry, this.clientId);
+            await this.linkSessionForUser(sessionId, newSlot.folderPath);
 
             WsHandler.broadcastSidebarUpdate(sessionId, newSlot.folderPath, this.sessionManager, this.clientRegistry);
             this.sendResponse(id, true, { sessionId, folderPath: newSlot.folderPath, folder });
@@ -718,6 +723,7 @@ export class WsHandler {
               }
               const restoreMode = await this.syncSessionToClient(requestedSessionId, existing, command.lastCursor);
               WsHandler.broadcastSidebarUpdate(requestedSessionId, existing.folderPath, this.sessionManager, this.clientRegistry);
+              await this.linkSessionForUser(requestedSessionId, existing.folderPath);
               this.sendResponse(id, true, {
                 sessionId: requestedSessionId,
                 folderPath: existing.folderPath,
@@ -748,6 +754,7 @@ export class WsHandler {
             const reopenedSlot = this.sessionManager.getSession(sessionId)!;
             await this.syncSessionToClient(sessionId, reopenedSlot, undefined, 'disk_full_resync');
             WsHandler.broadcastSidebarUpdate(sessionId, reopenedSlot.folderPath, this.sessionManager, this.clientRegistry);
+            await this.linkSessionForUser(sessionId, reopenedSlot.folderPath);
             await this.sendConflictEventIfNeeded(sessionId, reopenedSlot.folderPath);
             this.sendResponse(id, true, {
               sessionId,
@@ -766,12 +773,32 @@ export class WsHandler {
             break;
           }
 
+          // User-level unlink: the requesting user's link to the session drops
+          // everywhere. Every connection of that user detaches from the session
+          // (their views exit; the broadcast tells them to drop the entry);
+          // other users' links are untouched. The socket-scoped detach API stays
+          // server-side — only the wire semantics changed. Socket death never
+          // reaches here: cleanup() stays detach-only (sticky membership).
           await this.sessionManager.withSessionOperation(detachSessionId, async () => {
-            this.sessionManager.detachObserver(detachSessionId, this.clientId, this.ws as unknown as EventSocket);
+            const detachSlot = this.sessionManager.getSession(detachSessionId);
+            for (const handler of this.clientRegistry.values()) {
+              if (handler.user !== this.user) continue;
+              if (detachSlot?.observers.has(handler.clientId)) {
+                this.sessionManager.detachObserver(detachSessionId, handler.clientId, handler.ws as unknown as EventSocket);
+              }
+              handler.subscribedSessions.delete(detachSessionId);
+              if (handler.viewedSessionId === detachSessionId) handler.viewedSessionId = null;
+            }
+            if (this.userProfiles && (await this.userProfiles.unlink(this.user, detachSessionId))) {
+              WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user, this.clientId);
+            }
           });
-          this.subscribedSessions.delete(detachSessionId);
-          if (this.viewedSessionId === detachSessionId) this.viewedSessionId = null;
           this.sendResponse(id, true);
+          break;
+        }
+
+        case 'list_users': {
+          this.sendResponse(id, true, { users: this.userProfiles?.summaries() ?? [] });
           break;
         }
 
@@ -876,6 +903,15 @@ export class WsHandler {
                 }
               } else {
                 await this.sessionMetadataStore.setArchived(archiveSessionPath, false);
+              }
+              // Archived sessions leave every user's profile; each affected
+              // user's connections (including any that archived) are told —
+              // no exclusion, the archiving connection can belong to another
+              // user. Unarchive does not relink; reopening links (open_session).
+              if (command.archived && this.userProfiles) {
+                for (const affectedUser of await this.userProfiles.unlinkAll(archiveSessionId)) {
+                  WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, affectedUser);
+                }
               }
               this.broadcastSessionArchived(archiveSessionId, archiveFolderPath, command.archived);
               archivedCount++;
@@ -1923,6 +1959,16 @@ export class WsHandler {
     return resolveFolderInfoForSession(folderPath, this.sessionManager, this.folderRegistry);
   }
 
+  /** Record the requesting user's link to a session after a successful open,
+   *  then push the new set to their other connections (the acting connection
+   *  applied its open locally — no echo). */
+  private async linkSessionForUser(sessionId: string, folderPath: string): Promise<void> {
+    if (!this.userProfiles) return;
+    if (await this.userProfiles.link(this.user, { sessionId, folderPath })) {
+      WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user, this.clientId);
+    }
+  }
+
   private async sendConflictEventIfNeeded(sessionId: string, folderPath: string): Promise<void> {
     const openConflictPids = await findExternalPiProcesses(folderPath);
 
@@ -2294,6 +2340,18 @@ export class WsHandler {
   }
 
   /** Broadcast a session_state_changed event to ALL connected clients. */
+  /** Push the user's current profile set to their connections, excluding `exceptClientId` (no echo). */
+  static broadcastUserSessionsChanged(userProfiles: UserProfiles, clientRegistry: ClientRegistry, user: string, exceptClientId?: string): void {
+    for (const handler of clientRegistry.values()) {
+      if (handler.user !== user || handler.clientId === exceptClientId) continue;
+      handler.sendToClient({
+        type: 'user_sessions_changed',
+        sessions: userProfiles.get(user),
+        fresh: userProfiles.isFresh(user),
+      });
+    }
+  }
+
   static broadcastSidebarUpdate(sessionId: string, folderPath: string, sessionManager: PimoteSessionManager, clientRegistry: ClientRegistry): void {
     const slot = sessionManager.getSession(sessionId);
 

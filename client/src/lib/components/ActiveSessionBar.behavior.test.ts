@@ -163,7 +163,7 @@ describe('active session bar behavior', () => {
     (close as HTMLButtonElement).click();
     await tick();
     expect(sessionRegistry.sessions[id]).toBeUndefined();
-    expect(connection.send).toHaveBeenCalledWith({ type: 'close_session', sessionId: id });
+    expect(connection.send).toHaveBeenCalledWith({ type: 'detach_session', sessionId: id });
   });
 
   it('removes the chip before the archive response in the swipe action tray', async () => {
@@ -201,7 +201,7 @@ describe('active session bar behavior', () => {
     await tick();
 
     expect(sessionRegistry.sessions[id]).toBeUndefined();
-    expect(connection.send).toHaveBeenCalledWith({ type: 'close_session', sessionId: id });
+    expect(connection.send).toHaveBeenCalledWith({ type: 'detach_session', sessionId: id });
   });
 
   it('removes the chip before the archive response from the desktop context menu', async () => {

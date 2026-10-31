@@ -56,7 +56,7 @@ import { panelStore } from './panel-store.svelte.js';
 import { downloadUi } from './download-ui.svelte.js';
 import { coordinateDownloadUpdate } from '../download-coordinator.js';
 import { handleDownloadNotificationIntent, type DownloadNotificationIntent } from '../download-notification-intent.js';
-import { getActiveSessions, setActiveSessions } from './persistence.js';
+import { getActiveSessions } from './persistence.js';
 import { summarizeAssistantRowUsage, type ToolResultUsageIndex } from '../assistant-row-usage.js';
 
 /** Maximum UTF-8 bytes retained from live bash deltas per execution. */
@@ -403,14 +403,6 @@ export class SessionRegistry {
       if (textContent?.text) return textContent.text;
     }
     return undefined;
-  }
-
-  private persistSessions(): void {
-    setActiveSessions(
-      Object.values(this.sessions)
-        .filter((s) => !s.sessionId.startsWith('pending-') && s.restorable)
-        .map((s) => ({ sessionId: s.sessionId, folderPath: s.folderPath })),
-    );
   }
 
   /** Refresh server-derived metadata after persisted session state changes. */
@@ -987,7 +979,6 @@ export class SessionRegistry {
   addSession(sessionId: string, folderPath: string, projectName: string): void {
     this.clearBashOutputBytes(sessionId);
     this.sessions[sessionId] = this.createSessionState(sessionId, folderPath, projectName);
-    this.persistSessions();
   }
 
   /** Mark a tracked session as restorable or keep its transcript out of reconnect restores. */
@@ -995,7 +986,6 @@ export class SessionRegistry {
     const session = this.sessions[sessionId];
     if (!session || session.restorable === restorable) return;
     session.restorable = restorable;
-    this.persistSessions();
   }
 
   /** Patch a session's folder once it becomes known — a folderless deep-link open resolves it server-side. */
@@ -1004,7 +994,6 @@ export class SessionRegistry {
     if (!session || session.folderPath === folderPath) return;
     session.folderPath = folderPath;
     session.projectName = folderPath.split('/').pop() || 'Unknown';
-    this.persistSessions();
   }
 
   /** Point a session at its folder object — the folder model's canonical
@@ -1032,7 +1021,6 @@ export class SessionRegistry {
   /** Remove a session from the registry without changing the current view. */
   removeSessionQuietly(sessionId: string): void {
     this.removeSessionEntry(sessionId);
-    this.persistSessions();
   }
 
   /** Remove a session from the registry. */
@@ -1046,7 +1034,6 @@ export class SessionRegistry {
       this.syncViewedPanelStore();
       this.navigateToViewed(true);
     }
-    this.persistSessions();
   }
 
   /** Replace a session in-place — same slot in the registry, new session ID.
@@ -1078,7 +1065,6 @@ export class SessionRegistry {
       this.syncViewedPanelStore();
       this.navigateToViewed(true);
     }
-    this.persistSessions();
   }
 
   /** Switch viewed session, clears needsAttention for target */
@@ -1807,10 +1793,16 @@ connection.onEvent((event) => {
 // folder row from the response. Restores (live reclaim, disk reopen) emit no
 // session_opened event, so without this a restarted client keeps the hydrated
 // folder-less state and the session chip falls back to the code-nature glyph.
+// A profile-adopted restore (the session lives in the user's server profile
+// but this tab never tracked it) also creates the registry entry here: the
+// subscription was added before the open went out, so its presence proves the
+// open is not racing a local removal.
 connection.onSessionRestored = (sessionId, data) => {
-  // A restore can finish after local removal or archive. Only cache the
-  // attachment while the session remains both tracked and subscribed.
-  if (!sessionRegistry.sessions[sessionId] || !connection.subscribedSessions.has(sessionId)) return;
+  if (!sessionRegistry.sessions[sessionId]) {
+    if (!connection.subscribedSessions.has(sessionId)) return;
+    const folderPath = data.folderPath ?? connection.subscribedSessions.get(sessionId) ?? '';
+    sessionRegistry.addSession(sessionId, folderPath, folderPath.split('/').pop() || 'Unknown');
+  }
   if (data.folderPath) sessionRegistry.setSessionFolder(sessionId, data.folderPath);
   if (data.folder) sessionRegistry.bindSessionFolder(sessionId, data.folder);
   attachedSessionIds.add(sessionId);
@@ -1825,9 +1817,17 @@ connection.onSessionNotFound = (sessionId) => {
 };
 
 // A non-definitive reconnect failure still leaves this client without a valid
-// observer. The connection store sends the socket-scoped detach first, then
-// this callback removes only the local session entry.
+// observer. No client-side detach is sent: cleanup rests on the server's
+// same-id takeover eviction (DR-067), which detaches the tab's dead socket's
+// observers. This callback removes only the local session entry.
 connection.onSessionRestoreFailed = (sessionId) => {
+  dropSession(sessionId);
+};
+
+// The user's server profile no longer holds this session (another connection
+// detached or closed it, or a stale local stray lost the reconcile). Remove
+// it locally the same way a definitive not-found does.
+connection.onSessionDropped = (sessionId) => {
   dropSession(sessionId);
 };
 
@@ -1918,10 +1918,10 @@ export function removeSessionOptimistically(sessionId: string): boolean {
 /** Close a session optimistically, then let the server finish the close. */
 export function closeSession(sessionId: string): void {
   if (!removeSessionOptimistically(sessionId)) return;
-  // cancelNewSession handled its own continuation and must never send a
-  // close_session for the temporary placeholder id.
+  // cancelNewSession handled its own continuation and must never detach the
+  // temporary placeholder id.
   if (pendingNewSessionRequests.has(sessionId)) return;
-  connection.send({ type: 'close_session', sessionId }).catch(() => {});
+  connection.send({ type: 'detach_session', sessionId }).catch(() => {});
 }
 
 /** Open a new session in the same project as the given session. */

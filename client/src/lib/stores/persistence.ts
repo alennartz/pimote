@@ -6,6 +6,7 @@
 
 const KEY_CLIENT_ID = 'pimote:clientId';
 const KEY_ACTIVE_SESSIONS = 'pimote:activeSessions';
+const KEY_USER = 'pimote:user';
 const KEY_SHOW_ARCHIVED = 'pimote:showArchived';
 const KEY_SESSION_PILL_SWIPE_HINT_SHOWN = 'pimote:sessionPillSwipeHintShown';
 const KEY_DISMISSED_UPDATE_VERSION = 'pimote:dismissedUpdateVersion';
@@ -75,7 +76,11 @@ export function setActiveSessions(sessions: PersistedSession[]): void {
 /** Drop the local open-session mirror for good: the server's per-user profile
  *  is the only open-session set once the first user_sessions_changed lands. */
 export function clearActiveSessions(): void {
-  throw new Error('not implemented');
+  try {
+    localStorage.removeItem(KEY_ACTIVE_SESSIONS);
+  } catch {
+    // best-effort
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -86,11 +91,19 @@ export function clearActiveSessions(): void {
  *  parameter and the server falls back to its default profile. Stored under
  *  the `pimote:user` localStorage key. */
 export function getUser(): string | null {
-  throw new Error('not implemented');
+  try {
+    return localStorage.getItem(KEY_USER);
+  } catch {
+    return null;
+  }
 }
 
-export function setUser(_name: string): void {
-  throw new Error('not implemented');
+export function setUser(name: string): void {
+  try {
+    localStorage.setItem(KEY_USER, name);
+  } catch {
+    // best-effort
+  }
 }
 
 // ---------------------------------------------------------------------------

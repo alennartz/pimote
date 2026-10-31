@@ -9,6 +9,7 @@ import { ConfigRuntime } from './config-runtime.js';
 import { GlobalSettingsCatalog } from './global-settings.js';
 import { createPimoteExtensionHost } from './pimote-extensions/index.js';
 import { closeSessionForObservers, WsHandler } from './ws-handler.js';
+import { UserProfiles } from './user-profiles.js';
 import { createServer } from './server.js';
 import { PimoteSessionManager, runSlotLifecycle } from './session-manager.js';
 import { SessionRecords, resolveSessionAcrossFolders } from './session-records.js';
@@ -34,6 +35,7 @@ import {
   PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
   PIMOTE_SESSION_METADATA_PATH,
   PIMOTE_STATIC_HOST_DIR,
+  PIMOTE_USER_PROFILES_PATH,
 } from './paths.js';
 import { FileSessionMetadataStore } from './session-metadata.js';
 import { buildVoiceOrchestrator } from './voice-orchestrator-boot.js';
@@ -118,6 +120,15 @@ export async function main(options: StartOptions = {}) {
   const validSessionIds = await enumerateValidSessionIds(config.roots, config.managerRoot, sessionRecords);
   if (validSessionIds) {
     await gcStaticHostStore({ storeDir: PIMOTE_STATIC_HOST_DIR, validSessionIds });
+  }
+
+  // Per-user open-session profiles: load the store, then prune entries naming
+  // sessions the boot sweep could not validate (same sweep as the static-host
+  // store; a failed sweep keeps every entry).
+  const userProfiles = new UserProfiles(PIMOTE_USER_PROFILES_PATH);
+  await userProfiles.load();
+  if (validSessionIds) {
+    await userProfiles.gc(validSessionIds);
   }
   const staticHostRegistry = new InMemoryStaticHostRegistry();
   const staticHostStore = new FileStaticHostStore(PIMOTE_STATIC_HOST_DIR);
@@ -415,6 +426,7 @@ export async function main(options: StartOptions = {}) {
     folderRegistry,
     folderListing,
     globalSettings,
+    userProfiles,
   );
   clientRegistryRef.current = server.clientRegistry;
   managerClientRegistryRef.current = server.clientRegistry;
