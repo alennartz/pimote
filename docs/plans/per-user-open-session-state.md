@@ -192,3 +192,212 @@ approved mock, and manual journeys (two browsers on one user, user switch via
 settings) cover it end to end.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Implement the `UserProfiles` store and `resolveUserName`
+
+Fill the stubs in `server/src/user-profiles.ts` (interfaces and signatures are already fixed there and in `server/src/user-profiles.test.ts`).
+
+- Internal shape: `{ version: 1, users: { [name]: { sessions: SessionRef[] } } }`. `load()` reads the document at `storePath`; a missing file, unreadable file, or JSON that fails a shape check degrades to an empty store (folder-registry precedent — never throws).
+- Persistence: every mutating call (`link`, `unlink`, `unlinkAll`, `gc` when it prunes) writes the whole document with temp-write-then-rename in the same directory (atomicity precedent: `folder-registry.ts`). Use `node:fs/promises`.
+- `get(user)` returns a defensive copy (`sessions.map((s) => ({ ...s }))`) so callers cannot mutate truth.
+- Freshness is derived: `isFresh(user)` is `!Object.hasOwn(users, user)`. Never delete a user key — `unlink` that empties a list keeps the key; `gc` that empties a list keeps the key.
+- `link`: no entry with this `sessionId` → push, return true; identical entry → return false; same `sessionId` different `folderPath` → replace in place, return true.
+- `unlink`/`unlinkAll`: filter by `sessionId`; `unlinkAll` returns the names whose list actually shrank, in any order the caller can sort (tests use `toContain`).
+- `summaries()`: `Object.keys(users).sort()` with each count.
+- `resolveUserName(raw)`: `raw?.trim()`; empty → `'default'`; cap length at 64.
+
+**Verify:** `npx vitest run server/src/user-profiles.test.ts` — all green.
+**Status:** not started
+
+### Step 2: Implement the client persistence stubs
+
+Fill `getUser`, `setUser`, `clearActiveSessions` in `client/src/lib/stores/persistence.ts` following the file's existing house pattern (try/catch swallowing, localStorage). New key constant `KEY_USER = 'pimote:user'`. `clearActiveSessions` removes `pimote:activeSessions` via `localStorage.removeItem` inside the same try/catch pattern. Leave `getActiveSessions`/`setActiveSessions` as-is (`setActiveSessions` loses its callers in Step 9; the test suite still covers it).
+
+**Verify:** `npx vitest run client/src/lib/stores/persistence.test.ts` — all green.
+**Status:** not started
+
+### Step 3: Boot wiring — construct, load, and GC the profile store
+
+- `server/src/paths.ts`: add `export const PIMOTE_USER_PROFILES_PATH = join(PIMOTE_STATE_DIR, 'user-profiles.json');`.
+- `server/src/index.ts`: after `validSessionIds` is computed (the same sweep that GCs the static-host store and file downloads), construct `const userProfiles = new UserProfiles(PIMOTE_USER_PROFILES_PATH)`, `await userProfiles.load()`, and when `validSessionIds` is non-null `await userProfiles.gc(validSessionIds)`. Pass `userProfiles` through to `createServer`/the server factory and onward to `WsHandler` (same plumbing path as `folderRegistry`: `server/src/server.ts` factory params → `new WsHandler(...)` argument → `readonly userProfiles` field).
+- `server/src/index.test.ts` asserts boot-shape interactions; if its `createServer` mock arity needs the new argument, extend the mock in lockstep with the real signature (that is contract plumbing, not a behavior change).
+
+**Verify:** `npx vitest run server/src/index.test.ts` green; boot logs show no new errors.
+**Status:** not started
+
+### Step 4: Bind the user at connection and deliver the connect burst
+
+- `server/src/server.ts`, in the `wss.on('connection')` handler: `const user = resolveUserName(url.searchParams.get('user'));` pass `user` to `WsHandler` (new constructor parameter, stored as `readonly user: string`). Console log line gains `user=${user}` alongside `clientId`.
+- Still in the connect burst, right after `handler.sendToClient(capabilities)`: `handler.sendToClient({ type: 'user_sessions_changed', sessions: this-userProfiles.get(user), fresh: this.userProfiles.isFresh(user) })` — i.e. the event is the user's full snapshot with the derived freshness flag.
+- Add a static broadcast helper on `WsHandler`:
+
+```ts
+/** Push the user's current profile set to their connections, excluding `exceptClientId` (no echo). */
+static broadcastUserSessionsChanged(
+  userProfiles: UserProfiles,
+  clientRegistry: ClientRegistry,
+  user: string,
+  exceptClientId?: string,
+): void
+```
+
+It iterates `clientRegistry.values()`, filters `handler.user === user && handler.clientId !== exceptClientId`, and sends each a `user_sessions_changed` snapshot (freshness recomputed per send; after any change it is false, which is correct — the gate only matters in the connect burst).
+
+**Verify:** `npx vitest run server/src/ws-handler.test.ts` still green (existing cases unaffected); a manual `wscat`-style connect to `/ws?clientId=x&user=alice` receives `user_sessions_changed` with `fresh: true` in the burst.
+**Status:** not started
+
+### Step 5: Link sessions into the profile on `open_session`
+
+In `server/src/ws-handler.ts`, `case 'open_session'` — all three success paths (new session, attach to existing, disk reopen) end by sending the success response. Before or immediately after each `sendResponse(id, true, ...)`:
+
+```ts
+if (await this.userProfiles.link(this.user, { sessionId, folderPath })) {
+  WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user, this.clientId);
+}
+```
+
+using that path's `folderPath` (`newSlot.folderPath` / `existing.folderPath` / `reopenedSlot.folderPath`). The no-echo exclusion is the acting client: it applied the open locally. Keep the `link` inside the existing `withSessionOperation` block for the existing/disk paths so the folder path read is serialized with slot mutation. New-session path links after `broadcastSessionOpened`. Note: the client's restore loop (Step 10) drives migration through this same command — no separate migration code exists server-side.
+
+**Verify:** unit test in Step 11; manually, two browsers as the same user: one opens a session, the other's dashboard gains the tab.
+**Status:** not started
+
+### Step 6: Rework `detach_session` into user-level unlink
+
+Replace the body of `case 'detach_session'` in `server/src/ws-handler.ts`. New behavior:
+
+1. Validate `sessionId` as today.
+2. Inside `withSessionOperation`: for every handler in `clientRegistry.values()` with `handler.user === this.user` (including the requesting one), call `sessionManager.detachObserver(sessionId, handler.clientId, handler.ws)` when that handler has the session subscribed, then clear `handler.subscribedSessions.delete(sessionId)` and null its `viewedSessionId` if it pointed there. The server-side socket-scoped detach API stays exactly as-is — only the wire command semantics change.
+3. `await this.userProfiles.unlink(this.user, sessionId)` — if it reports a change, `WsHandler.broadcastUserSessionsChanged(..., exceptClientId: this.clientId)`. The acting connection applies its own change locally.
+4. `this.sendResponse(id, true)`.
+
+Other users' handlers are never touched; their links survive. The existing observer-cleanup at socket close (`cleanup()`, line ~2371) stays detach-only — socket death never unlinks (sticky membership).
+
+**Verify:** unit test in Step 11.
+**Status:** not started
+
+### Step 7: Handle `list_users`
+
+Add `case 'list_users'` in `ws-handler.ts`: `this.sendResponse(id, true, { users: this.userProfiles.summaries() })`. No session operation, no broadcast. The response data shape matches `ListUsersResponseData` in `shared/src/protocol.ts`.
+
+**Verify:** unit test in Step 11; the settings pane (Step 13) renders the chips from it.
+**Status:** not started
+
+### Step 8: Unlink everywhere on archive
+
+In `case 'archive_session'` (`ws-handler.ts`, ~line 849), inside the per-session loop and only when `command.archived` is true: after the record is marked and observers closed,
+
+```ts
+for (const affectedUser of await this.userProfiles.unlinkAll(archiveSessionId)) {
+  WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, affectedUser);
+}
+```
+
+No exclusion here — the archiving connection can belong to a different user, and each affected user's connections (including any that archived) are told. Unarchive (`archived: false`) does not relink — reopening goes through `open_session`, which links (Step 5).
+
+**Verify:** unit test in Step 11.
+**Status:** not started
+
+### Step 9: Strip the client's local mirror and switch the close action
+
+`client/src/lib/stores/session-registry.svelte.ts`:
+
+- Delete the `persistSessions()` method (lines ~408–413) and every call site (~990, 998, 1007, 1035, 1049, 1081). No behavior replaces it — the server owns the set now.
+- Remove the `setActiveSessions` import (keep `getActiveSessions` — the boot hydration at line ~1868 stays as the one-time migration seed until Step 10 replaces its gating).
+- `closeSession` (~line 1920): keep the optimistic local removal and the `pendingNewSessionRequests` guard, change the wire command from `close_session` to `detach_session`.
+- The two `close_session` sends in the pending-placeholder cleanup paths (~line 1674 cancelled-open continuation, ~line 1924 placeholder discard) stay verbatim — that command remains on the wire for them.
+- `onSessionNotFound` / `onSessionRestoreFailed` keep dropping local entries only. Rewrite the stale comment at ~line 1828 (`The connection store sends the socket-scoped detach first...`) — Step 10 removes that send; cleanup rests on the server's same-id takeover eviction (DR-067).
+
+**Verify:** `npx vitest run client/src/lib/stores/session-registry.test.ts` green; grep shows no `persistSessions` remains; grep shows `close_session` sent only from the two placeholder paths.
+**Status:** not started
+
+### Step 10: Client connect flow — user param, profile-gated reconcile, one-time clear
+
+`client/src/lib/stores/connection.svelte.ts`:
+
+- Import `getUser` from persistence. Build the WS URL (line ~202) with `&user=${encodeURIComponent(getUser() ?? '')}` only when `getUser()` is non-null (null → omit → server `default`).
+- Extract a pure reconcile helper (new function, exported for Step 12's tests, in this file or a sibling module):
+
+```ts
+export interface ReconcilePlan {
+  toOpen: { sessionId: string; folderPath: string }[]; // open via existing restore path
+  toDrop: string[]; // remove locally, never open
+}
+export function reconcileUserSessions(
+  current: { sessionId: string; folderPath: string }[], // this connection's subscribed set
+  server: { sessionId: string; folderPath: string }[], // user_sessions_changed payload
+  fresh: boolean,
+): ReconcilePlan;
+```
+
+Rules: entries in `server` missing from `current` → `toOpen`; entries in `current` missing from `server` → `toDrop` **unless** `fresh` (fresh adopts the whole local set into `toOpen`); the union is the fresh profile's migration.
+
+- Restructure `onopen`'s restore dispatch: instead of immediately looping `subscribedSessions`, record the pending restore and dispatch once the first `user_sessions_changed` for this socket arrives (the server sends it in the connect burst; guard the continuation with the `this.ws !== ws` identity check like every other continuation in the file). Apply the plan: `toOpen` entries go through the existing `open_session` restore send loop (unchanged error handling — `session_archived`, `session_not_found`, generic failure); `toDrop` entries call `this.removeSubscribedSession` plus a new callback `onSessionDropped?: (sessionId: string) => void` that `session-registry.svelte.ts` binds to `dropSession`-style local removal (same as `onSessionNotFound`). Sync progress counters count `toOpen` only. When `toOpen` is empty, skip the syncing phase entirely.
+- Add an `onmessage` branch for `user_sessions_changed` (before the generic `emitEvent`, like `session_archived`): store the profile event, run the reconcile on first arrival, and on subsequent arrivals mid-connection apply the same plan (open missing, drop absent — `fresh` is always false there, so drops are unconditional).
+- One-time clear: a module-level `let localMirrorCleared = false`; after the first `user_sessions_changed` of a connection, call `clearActiveSessions()` and set the flag — never read `pimote:activeSessions` again this page load.
+- Remove the `detach_session` send in the generic restore-failure branch (~lines 263–268): keep the warn, the `removeSubscribedSession`, and the `onSessionRestoreFailed` notify flow; the server's takeover eviction (DR-067) already detaches a dead socket's observers, and the new command semantics would unlink the user everywhere. Update the branch comment accordingly.
+
+**Verify:** Step 12's tests; manually: two browsers on one user, A opens and closes sessions, B mirrors; a stale second browser with a stale local set reconciles down to server truth after this change only (clear the key once to simulate the pre-migration state).
+**Status:** not started
+
+### Step 11: Wire-flow tests (server)
+
+New file `server/src/ws-user-profiles.test.ts`, following `server/src/ws-handler.test.ts`'s existing harness for constructing a handler/registry pair. Cover the plan's behavioral contract:
+
+- Connect burst: a connection bound `?user=alice` receives `user_sessions_changed` with Alice's set and `fresh: true` exactly when Alice has no profile; a connection without `user` gets the `default` profile's set.
+- Broadcast targeting: Alice A opens S (via the open path) → Alice B receives the event, A does not (no echo).
+- User-level detach: Alice A sends `detach_session` → Alice B's set drops S and B's observer is detached; Bob's link to S survives and Bob still holds it.
+- Socket death: close A's socket → the profile set is unchanged.
+- Archive: archive S → S leaves Alice's and Bob's profiles; each affected user's connections receive the event.
+- Restart: build a second `UserProfiles` over the same temp path, `load()`, and assert the pre-restart sets (the store-level reload already covers disk truth; this asserts the handler is wired to the same path).
+
+**Verify:** `npx vitest run server/src/ws-user-profiles.test.ts` green.
+**Status:** not started
+
+### Step 12: Client reconcile tests
+
+New test file `client/src/lib/stores/user-sessions-reconcile.test.ts`:
+
+- `fresh: true` + non-empty local seed → the full local set lands in `toOpen` (adoption), nothing dropped.
+- `fresh: false` + stale local seed → local-only entries land in `toDrop`, never `toOpen`; server-only entries land in `toOpen`.
+- Mixed overlap under both flags partitions exactly (union with no duplicates).
+- First-event clear: drive the connection store's event handling once (or the smallest exported seam that owns it) and assert `localStorage.getItem('pimote:activeSessions')` is null afterwards; a second event does not re-write or re-read it.
+
+Keep assertions on `ReconcilePlan` outputs and storage state only — no socket internals.
+
+**Verify:** `npx vitest run client/src/lib/stores/user-sessions-reconcile.test.ts` green.
+**Status:** not started
+
+### Step 13: Settings User tab
+
+`client/src/lib/components/GlobalSettingsDialog.svelte`, inside the existing `CodeEditorDialog` shell — the mock at `docs/mocks/per-user-open-session-state/index.html` is the interaction oracle:
+
+- New **User** tab, rendered first (before the file tabs), with a dirty marker (`*`) when the pane differs from the persisted setting. Selecting it shows a form pane instead of the editor pane; file tabs keep current behavior.
+- Pane contents per the mock: **User name** input (`spellcheck="false" autocomplete="off"`, seeded from `getUser()`), the field note about same-user sharing and no authentication, a **Profiles on this server** section with chips from a `list_users` response (`{ users: UserSummary[] }` — fetch on dialog open and on tab select), each chip showing `name` + `N sessions`, the current user's chip marked current, click-to-adopt filling the input, and the switching-consequence copy.
+- Dirty/save: the dialog's existing Save affordances (desktop footer ≥ 640 px, mobile header below — `CodeEditorDialog` already owns this split) enable only when the input differs from the persisted user. Save → `setUser(name.trim())` (empty input is invalid — keep Save disabled for it) then `connection.disconnect()` + `connection.connect()` so the new user's connect burst loads the new profile. Follow the mock's hint row (`Unsaved changes`) via the shell's `hint` prop.
+- Refresh the chips after save (the adopted profile is now current).
+
+State lives in the component; no new store. No unit tests (plan records the pane as manually covered).
+
+**Verify:** manual journeys: open settings → User tab shows chips with counts; adopt a chip → Save enables → save reconnects and the dashboard shows that profile's sessions; two browsers on one user stay in sync; mobile-width check shows the header Save.
+**Status:** not started
+
+### Step 14: Glossary entries
+
+`glossary.md` — add under **Language**:
+
+- **User**: a connection identity presented by the client (`?user=` on the WS URL, `pimote:user` device setting); honor-system, no auth. _Avoid_: account.
+- **User profile**: the server-side per-user open-session set persisted in `user-profiles.json`.
+
+Add to **Flagged ambiguities**: "user" also names pi's conversation message role — resolved: the role stays in message-content contracts, the identity sense stays in connection/profile contracts; they never share a wire type.
+
+**Verify:** entries present; terms used in new code match.
+**Status:** not started
+
+### Step 15: Full suite and commit cadence
+
+Run the full test suites (`server/`, `client/`, `shared/` per repo scripts) and `npm run check`-equivalents for type/lint gates. Fix fallout only where a step above caused it. Record the Android follow-up noted in the architecture (Android consumes `detach_session`/`close_session` and takes the hard cut in lockstep) wherever the pull brief tracks follow-ups — confirm location with the user if no such file exists.
+
+**Verify:** all suites green; commits made per step (`plan:` through implementation as work lands).
+**Status:** not started
