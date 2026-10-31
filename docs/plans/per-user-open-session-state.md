@@ -170,3 +170,25 @@ export class UserProfiles {
 
 - `getUser` returns null before any user is set; `setUser` round-trips and overwrites the stored name.
 - `clearActiveSessions` empties the active-session list and removes the stored key.
+
+#### Implementation-phase test deliverables (required)
+
+The behaviors below protect the plan's behavioral contract but depend on code that
+does not exist yet. The implementation phase must deliver tests for them:
+
+- Wire flows (`ws-handler` level): connect burst delivery of the user's set with
+  correct `fresh` value; broadcast to the user's other connections only (no echo);
+  user-level `detach_session` unlinking the requesting user everywhere while other
+  users' links to the same session stay; socket death never removes profile
+  entries; archive removes the session from every profile and notifies each
+  affected user; profiles survive a server restart.
+- Client reconcile (connect flow): `fresh: true` adopts the local set; `fresh: false`
+  drops local-only entries without opening them; the local `pimote:activeSessions`
+  key clears after the first `user_sessions_changed` of a connection.
+
+The settings User pane stays intentionally untested by unit tests: no
+component-test infrastructure exists in this repo, its visual contract is the
+approved mock, and manual journeys (two browsers on one user, user switch via
+settings) cover it end to end.
+
+**Review status:** approved
