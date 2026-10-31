@@ -44,7 +44,7 @@ export class BranchTreeStore {
 
   constructor(private readonly _transport: BranchTreeTransport) {}
 
-  /** Open a session's tree, fetching it once and reusing the session cache. */
+  /** Open a cached tree. Transport failures set error and leave the explorer open. */
   async open(_sessionId: string): Promise<void> {
     throw new Error('not implemented');
   }
@@ -66,15 +66,17 @@ export class BranchTreeStore {
     throw new Error('not implemented');
   }
 
+  /** Search visible anchors by conversation text and label. */
   setSearch(_query: string): void {
     throw new Error('not implemented');
   }
 
+  /** Search all conversation text and labels; expose and select matching entries. */
   searchAll(_query: string): void {
     throw new Error('not implemented');
   }
 
-  /** Navigate without compaction, or with default/custom summarization. */
+  /** Navigate with optional compaction. Failures set error and leave the explorer open. */
   async navigate(_entryId: string, _opts?: { compactionPrompt?: string }): Promise<void> {
     throw new Error('not implemented');
   }

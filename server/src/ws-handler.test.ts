@@ -2440,7 +2440,7 @@ describe('WsHandler', () => {
 
       const mapped = mapTreeNodes(tree as any);
 
-      expect(mapped[0].conversationText).toBe('First instruction.\\n\\nFollow-up instruction.');
+      expect(mapped[0].conversationText).toBe('First instruction.\n\nFollow-up instruction.');
       expect(mapped[0].children[0]).not.toHaveProperty('conversationText');
     });
 

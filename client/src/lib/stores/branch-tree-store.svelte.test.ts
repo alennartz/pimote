@@ -65,6 +65,42 @@ describe('BranchTreeStore', () => {
     expect(store.state.selectedId).toBe('u1');
   });
 
+  it('exposes hidden focus targets and searches visible anchors before full text and labels', async () => {
+    const leaf = { ...TREE[0], id: 'last', conversationText: 'Last anchor', preview: 'Last anchor' };
+    const hidden = { ...TREE[0], id: 'hidden', conversationText: 'Hidden needle', label: 'secret label', children: [leaf] };
+    const first = { ...TREE[0], id: 'first', children: [hidden] };
+    vi.mocked(harness.transport.send).mockResolvedValue({ id: 'tree', success: true, data: { tree: [first], currentLeafId: 'last' } });
+    await store.open('session-1');
+    store.setSearch('needle');
+    expect(store.state.searchMatches).toEqual([]);
+    store.searchAll('needle');
+    expect(store.state.searchMatches.map((match) => match.messageKey)).toContain('hidden');
+    expect(store.state.selectedId).toBe('hidden');
+    expect(store.state.expandedSegmentIds.size).toBeGreaterThan(0);
+    store.searchAll('secret');
+    expect(store.state.searchMatches.map((match) => match.messageKey)).toContain('hidden');
+    await store.openFocused('session-1', 'hidden');
+    expect(store.state.selectedId).toBe('hidden');
+    expect(store.state.expandedSegmentIds.size).toBeGreaterThan(0);
+    store.setSearch('secret');
+    expect(store.state.searchMatches.map((match) => match.messageKey)).toContain('hidden');
+  });
+
+  it.each(['response', 'rejection'])('keeps the explorer open and reports %s failures on open and navigate', async (failure) => {
+    if (failure === 'response') vi.mocked(harness.transport.send).mockResolvedValue({ id: 'failed', success: false, error: 'Unavailable' });
+    else vi.mocked(harness.transport.send).mockRejectedValue(new Error('Unavailable'));
+    await store.open('session-1').catch(() => {});
+    expect(store.state.open).toBe(true);
+    expect(store.state.error).toBeTruthy();
+    vi.mocked(harness.transport.send).mockResolvedValue({ id: 'ok', success: true, data: { tree: TREE, currentLeafId: 'u1' } });
+    await store.open('session-1');
+    if (failure === 'response') vi.mocked(harness.transport.send).mockResolvedValue({ id: 'failed', success: false, error: 'Unavailable' });
+    else vi.mocked(harness.transport.send).mockRejectedValue(new Error('Unavailable'));
+    await store.navigate('u1').catch(() => {});
+    expect(store.state.open).toBe(true);
+    expect(store.state.error).toBeTruthy();
+  });
+
   it('tracks segment expansion, selection, and anchor-first search', () => {
     store.toggleSegment('segment-1');
     expect(store.state.expandedSegmentIds).toEqual(new Set(['segment-1']));

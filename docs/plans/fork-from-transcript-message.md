@@ -136,8 +136,8 @@ class BranchTreeStore {
   close(): void;
   toggleSegment(segmentId: string): void;
   select(entryId: string): void;
-  setSearch(query: string): void; // anchors first; UI offers fallback
-  searchAll(query: string): void; // explicit full-text fallback
+  setSearch(query: string): void; // visible anchors: conversation text and labels
+  searchAll(query: string): void; // all conversation text and labels; expose/select matches
   /** navigate_tree; empty prompt → summarize:true (default summarization —
    *  revises the brainstorm's custom-only rule, decided during architecting),
    *  non-empty → summarize + customInstructions (replaceInstructions: false),
@@ -147,7 +147,11 @@ class BranchTreeStore {
 }
 ```
 
-Store contracts: cache invalidates on that session's `full_resync`;
+Store contracts: unsuccessful responses and rejected transport promises from open or
+navigate set `state.error` and keep the explorer open. Search matches use message
+entry identity. Label hits identify the labeled message, not a conversation block.
+The transcript `findInConversation` seam remains conversation-text-only.
+Cache invalidates on that session's `full_resync`;
 `tree_navigation_start`/`end` set busy state and close-on-resync behavior (moved
 from TreeDialog); manager and read-only transcript sources suppress navigation
 actions (existing `MessageList` guard pattern).
@@ -172,6 +176,20 @@ cycles matches; the transcript scrolls to each match and marks it visibly
 - `docs/mocks/fork-from-transcript-message/transcript.html` — face menus, one-click redo, compaction modal, conditional branches item, sticky preview, mobile toggle, find bar.
 - `docs/mocks/fork-from-transcript-message/tree-explorer.html` — branch map, segment expansion, labels, anchor-first search with fallback, resume footer with compaction modal.
 
+### Review-added interaction interfaces
+
+- `MessageActionMenu` accepts `entryId`, `sessionId`, `abandonedBranchCount`,
+  `manager`, `readOnly`, and a store with `navigate`/`openFocused`. Its buttons
+  dispatch navigation for the selected entry. Restricted sources hide navigation.
+- `ConversationFindBar` accepts `matches`, `onMatch`, and `onClose`. Accessible
+  Next match and Previous match buttons cycle through results and report the target.
+- `transcript-navigation.ts` exports `previousUserAbove(positions, viewportTop,
+threshold = 0)`. Positions contain `entryId`, `role`, and `bottom` in transcript
+  order. It returns the last user whose bottom is strictly above viewportTop +
+  threshold, or null. Equality detaches the preview.
+- Branch projection exposes logical depth. Responsive depth compression belongs
+  to rendering, not projection.
+
 ### DR Supersessions
 
 - **DR-007** (Server-owned tree navigation lifecycle and full snapshot transfer) —
@@ -190,6 +208,9 @@ cycles matches; the transcript scrolls to each match and marks it visibly
 - `client/src/lib/branch-tree.ts` — defines the branch-map row model and projection seams.
 - `client/src/lib/conversation-find.ts` — defines the conversation search match shape and search seam.
 - `client/src/lib/stores/branch-tree-store.svelte.ts` — defines the explorer transport, state, and operation seams.
+- `client/src/lib/transcript-navigation.ts` — defines sticky-preview target selection.
+- `client/src/lib/components/MessageActionMenu.svelte` — defines shared action-menu props.
+- `client/src/lib/components/ConversationFindBar.svelte` — defines match-navigation props.
 
 ### Test Files
 
@@ -197,6 +218,9 @@ cycles matches; the transcript scrolls to each match and marks it visibly
 - `client/src/lib/conversation-find.test.ts` — covers ordered text matches and exclusion of non-conversation blocks.
 - `client/src/lib/stores/branch-tree-store.svelte.test.ts` — covers lazy cache reads, focus, search state, navigation options, labels, and lifecycle invalidation.
 - `server/src/ws-handler.test.ts` — covers conversation-text mapping and serialization plus the direct `get_tree` response.
+- `client/src/lib/transcript-navigation.test.ts` — covers previous-user selection and threshold detachment.
+- `client/src/lib/components/MessageActionMenu.test.ts` — covers visibility guards and redo dispatch.
+- `client/src/lib/components/ConversationFindBar.test.ts` — covers match cycling and empty results.
 
 ### Behaviors Covered
 
@@ -228,3 +252,22 @@ cycles matches; the transcript scrolls to each match and marks it visibly
 - One-click navigation omits compaction; empty and non-empty compaction prompts map to default and custom summarization options.
 - Label changes use the tree-label command, with an empty label clearing the value.
 - Full resync invalidates the session cache; tree-navigation lifecycle events update busy state and close the explorer after resync.
+- Anchor search excludes collapsed messages. Full search matches conversation text and labels, exposes hidden hits, and selects exact messages.
+- Open and navigate failures set an error without closing the explorer.
+
+#### Transcript interaction
+
+- Message menus offer both redo actions. Existing branches appear only for positive alternate counts.
+- Manager and read-only sources suppress navigation actions.
+- Redo dispatches the chosen entry with no compaction or the entered compaction prompt.
+- Sticky target selection excludes assistants and detaches at the viewport threshold.
+- Find controls cycle results in both directions and handle empty results.
+
+#### Approved manual coverage
+
+Explorer footer/modal cancellation, mobile layout, jump-up scrolling, responsive
+depth compression, and rendered sticky/find scroll anchoring require manual checks.
+User-message editorText draft-conflict handling retains its existing policy tests.
+The reviewer approved this automated/manual split through the orchestrator.
+
+**Review status:** approved
