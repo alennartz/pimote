@@ -6,8 +6,8 @@ import type { DownloadToastModel } from '../download-presentation.js';
  * Ephemeral UI state for offered downloads.
  *
  * Download snapshots remain owned by SessionRegistry. This holder only queues
- * actionable toast models and carries a one-session request to open the
- * viewed session's fallback inbox.
+ * actionable toast models (surfaced only while their owning session is viewed)
+ * and carries a one-session request to open the viewed session's fallback inbox.
  */
 export class DownloadUiStore implements DownloadToastSink {
   toastQueue: DownloadToastModel[] = $state([]);
@@ -18,8 +18,11 @@ export class DownloadUiStore implements DownloadToastSink {
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- internal ownership index, not template state
   private readonly toastSessionIds = new Map<string, string>();
 
-  get currentToast(): DownloadToastModel | null {
-    return this.toastQueue[0] ?? null;
+  /** First queued offer owned by the viewed session. Offers from background
+   *  sessions stay queued but hidden until their session is viewed. */
+  currentToastFor(viewedSessionId: string | null): DownloadToastModel | null {
+    if (!viewedSessionId) return null;
+    return this.toastQueue.find((toast) => this.toastSessionIds.get(toast.item.id) === viewedSessionId) ?? null;
   }
 
   showDownloadToast(toast: DownloadToastModel): void {
@@ -55,10 +58,9 @@ export class DownloadUiStore implements DownloadToastSink {
     if (this.inboxOpenSessionId === sessionId) this.inboxOpenSessionId = null;
   }
 
-  dismissDownloadToast(toastId?: string): void {
-    const currentToast = this.currentToast;
-    if (!currentToast || (toastId && currentToast.item.id !== toastId)) return;
-    this.toastQueue = this.toastQueue.slice(1);
+  /** Dismiss the offer identified by id, wherever it sits in the queue. */
+  dismissDownloadToast(toastId: string): void {
+    this.toastQueue = this.toastQueue.filter((toast) => toast.item.id !== toastId);
   }
 
   openDownloadInbox(sessionId: string): void {

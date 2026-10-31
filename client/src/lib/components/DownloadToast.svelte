@@ -1,9 +1,12 @@
 <script lang="ts">
   import Download from '@lucide/svelte/icons/download';
   import X from '@lucide/svelte/icons/x';
+  import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { downloadUi } from '$lib/stores/download-ui.svelte.js';
 
-  let toast = $derived(downloadUi.currentToast);
+  // An offer banner belongs to its session: show it only while that session is viewed.
+  let viewedSessionId = $derived(sessionRegistry.viewed?.sessionId ?? null);
+  let toast = $derived(downloadUi.currentToastFor(viewedSessionId));
 
   function dismissToast(): void {
     if (toast) {

@@ -14,24 +14,25 @@
   import Info from '@lucide/svelte/icons/info';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 
-  // Status entries, scoped per session: sessionId → (key → text).
-  // setStatus events carry the owning session's id; without this scoping a
-  // status from a background session (e.g. its quota banner) would render on
-  // whichever session is currently viewed.
+  // Status entries (sessionId → key → text) and notify banners are scoped
+  // per session. Every extension_ui_request carries the owning session's id;
+  // without this scoping a banner from a background session (e.g. its quota
+  // notice) would render on whichever session is currently viewed.
   let statuses = new SvelteMap<string, SvelteMap<string, string>>();
 
   // Notifications with auto-dismiss
   interface Notification {
     id: number;
+    sessionId: string;
     text: string;
     notificationType: 'info' | 'warning' | 'error';
   }
   let notifications: Notification[] = $state([]);
   let nextNotifId = 0;
 
-  function addNotification(text: string, type: 'info' | 'warning' | 'error' = 'info') {
+  function addNotification(sessionId: string, text: string, type: 'info' | 'warning' | 'error' = 'info') {
     const id = nextNotifId++;
-    notifications = [...notifications, { id, text, notificationType: type }];
+    notifications = [...notifications, { id, sessionId, text, notificationType: type }];
     setTimeout(() => {
       notifications = notifications.filter((n) => n.id !== id);
     }, 5000);
@@ -45,6 +46,7 @@
     const unsubscribe = connection.onEvent((event) => {
       if (event.type === 'session_closed') {
         statuses.delete(event.sessionId);
+        notifications = notifications.filter((n) => n.sessionId !== event.sessionId);
         return;
       }
       if (event.type !== 'extension_ui_request') return;
@@ -84,7 +86,7 @@
       } else if (req.method === 'notify') {
         const text = (req.text as string) ?? (req.message as string) ?? '';
         const type = (req.notifyType as 'info' | 'warning' | 'error') ?? (req.notificationType as 'info' | 'warning' | 'error') ?? 'info';
-        addNotification(text, type);
+        addNotification(req.sessionId, text, type);
       } else if (req.method === 'setEditorText') {
         const text = (req.text as string) ?? '';
         const targetSessionId = req.sessionId as string | undefined;
@@ -110,6 +112,12 @@
     if (!viewedId) return [];
     return [...(statuses.get(viewedId)?.entries() ?? [])];
   });
+
+  const visibleNotifications = $derived.by(() => {
+    const viewedId = sessionRegistry.viewedSessionId;
+    if (!viewedId) return [];
+    return notifications.filter((n) => n.sessionId === viewedId);
+  });
 </script>
 
 <!-- Status bar -->
@@ -125,9 +133,9 @@
 {/if}
 
 <!-- Toast notifications -->
-{#if notifications.length > 0}
+{#if visibleNotifications.length > 0}
   <div class="pointer-events-none fixed top-4 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
-    {#each notifications as notif (notif.id)}
+    {#each visibleNotifications as notif (notif.id)}
       <button
         class="pointer-events-auto flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm shadow-lg transition-opacity
 					{notif.notificationType === 'error'
