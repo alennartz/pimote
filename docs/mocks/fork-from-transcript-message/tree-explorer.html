@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mock: branch explorer</title>
+    <link rel="stylesheet" href="mock.css" />
+  </head>
+  <body>
+    <div class="mockbar">
+      <strong>Branch explorer mock (/tree)</strong>
+      <span class="muted">branch anchors only at first · click […] to expand one level · select a message, then resume</span>
+      <a href="index.html" style="color: #93c5fd">index</a>
+    </div>
+
+    <div class="explorer" style="position: static; background: none; padding: 8px; height: calc(100vh - 44px)">
+      <div class="frame panel">
+        <header>
+          <strong>Branches</strong>
+          <input id="search" placeholder="Search branch points…" />
+          <span class="chip" id="scope">anchors</span>
+        </header>
+        <div class="tree" id="tree"></div>
+        <footer>
+          <button class="btn hidden" id="customBtn">Custom compaction…</button>
+          <button class="btn primary" id="resumeBtn" disabled>Resume from here</button>
+        </footer>
+      </div>
+    </div>
+
+    <script>
+      /* Model invariants:
+   - A rendered message is a branch point only when it has ≥2 continuations.
+     Single-child chains are linear history and live inside collapsed segments.
+   - A collapsed segment is a linear run. Expanding it reveals only that run:
+     deeper segments stay folded until separately expanded. */
+      const TREE = {
+        id: 'u1',
+        role: 'user',
+        text: 'Fix the failing retry test in server/src/event-buffer.test.ts',
+        children: [
+          {
+            id: 'seg-main',
+            collapsed: true,
+            count: 3,
+            msgs: [
+              { id: 'a1', role: 'assistant', text: 'The replay cursor assert assumes a monotonic wall clock. I can patch the fixture.', children: [] },
+              { id: 'u2', role: 'user', text: 'Before you patch it — why did the cursor go backwards at all?', children: [] },
+              {
+                id: 'a2',
+                role: 'assistant',
+                text: 'The old cursor used Date.now() directly; two buffers collided.',
+                children: [
+                  {
+                    id: 'seg-counter',
+                    collapsed: true,
+                    count: 6,
+                    msgs: [
+                      { id: 'u3', role: 'user', text: 'Switch to a monotonic counter seeded from wall clock, like DR-077 says.', children: [] },
+                      { id: 'a3', role: 'assistant', text: 'Cursor base is now max(lastCursor, wallClockMs). Tests updated.', children: [] },
+                      { id: 'u4', role: 'user', text: 'Run the whole server test suite.', children: [] },
+                      { id: 'a4', role: 'assistant', text: 'All 412 tests pass.', children: [] },
+                      { id: 'u5', role: 'user', text: 'Commit it with a message that mentions DR-077.', children: [] },
+                      { id: 'a5', role: 'assistant', text: 'Committed as “fix: seed replay cursors…”.', active: true, children: [] },
+                    ],
+                  },
+                  {
+                    id: 'seg-workaround',
+                    collapsed: true,
+                    count: 2,
+                    msgs: [
+                      { id: 'u6', role: 'user', text: 'Just special-case the test instead — assert a different clock.', children: [] },
+                      { id: 'a6', role: 'assistant', text: 'I special-cased the assert. It passes, but the root cause remains.', label: 'test-only workaround', children: [] },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            id: 'seg-rewrite',
+            collapsed: true,
+            count: 3,
+            msgs: [
+              { id: 'u7', role: 'user', text: 'Forget the cursor — rewrite the replay buffer from scratch.', children: [] },
+              { id: 'a7', role: 'assistant', text: 'A rewrite is risky: observers, cursors, and resync all depend on it.', children: [] },
+              { id: 'u8', role: 'user', text: 'Fair. Drop this idea.', label: 'abandoned rewrite', children: [] },
+            ],
+          },
+        ],
+      };
+
+      const treeEl = document.getElementById('tree');
+      const searchEl = document.getElementById('search');
+      const scopeEl = document.getElementById('scope');
+      const resumeBtn = document.getElementById('resumeBtn');
+      const customBtn = document.getElementById('customBtn');
+
+      const expanded = new Set(); // segment ids shown one level deep
+      let selectedId = null;
+      let focusId = new URLSearchParams(location.search).get('focus');
+
+      const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+      const ACTIVE_PATH = new Set(['u1', 'a1', 'u2', 'a2', 'u3', 'a3', 'u4', 'a4', 'u5', 'a5']);
+
+      function collect(n, fn) {
+        fn(n);
+        for (const c of n.children || []) collect(c, fn);
+        for (const m of n.msgs || []) collect(m, fn);
+      }
+      function isBranchPoint(n) {
+        return (n.children || []).length > 1;
+      }
+
+      /* ids of segments that must open to expose targetId */
+      function segmentsToOpen(n, target, acc) {
+        if (n.id === target) return true;
+        for (const seg of n.children || []) {
+          if (!seg.collapsed) continue;
+          if (
+            segmentsToOpen(seg, target, acc) ||
+            (seg.msgs || []).some((m) => {
+              const hit = collectHit(m, target);
+              return hit;
+            })
+          ) {
+            acc.add(seg.id);
+            for (const m of seg.msgs || []) segmentsToOpen(m, target, acc);
+            return true;
+          }
+        }
+        return false;
+      }
+      function collectHit(n, target) {
+        let hit = false;
+        collect(n, (x) => {
+          if (x.id === target) hit = true;
+        });
+        return hit;
+      }
+
+      function msgRow(n, depth, plain) {
+        const indent = Math.min(depth, 6) * 20;
+        const bp = isBranchPoint(n) && !plain;
+        const label = n.label ? `<span class="chip warn label-chip" data-label-for="${n.id}" title="Click to edit">${esc(n.label)}</span>` : '';
+        const active = n.active ? `<span class="chip">active</span>` : '';
+        const role = n.role === 'user' ? '👤' : '🤖';
+        /* the affordance exists on every row; CSS reveals it on hover (desktop)
+     or selection (mobile). Plain anchors keep it — only child structure is
+     suppressed when plain. */
+        const labelAdd = `<button class="label-add" data-label-add="${n.id}" title="Label">🏷</button>`;
+        let html = `<div class="trow ${selectedId === n.id ? 'selected' : ''} ${ACTIVE_PATH.has(n.id) ? 'active-path' : ''}" data-id="${n.id}" style="margin-left:${indent}px">
+    <div class="head">${role} <span class="preview">${esc(n.text)}</span> ${label} ${active} ${labelAdd}</div>
+  </div>`;
+        if (bp) for (const c of n.children) html += segRow(c, depth + 1);
+        return html;
+      }
+
+      function segRow(seg, depth) {
+        const msgs = seg.msgs || [];
+        const first = msgs[0];
+        const last = msgs[msgs.length - 1];
+        const middle = Math.max(0, seg.count - 2);
+        if (!expanded.has(seg.id)) {
+          /* Collapsed: anchors stay selectable but render plain — a collapsed
+       segment never exposes the branch structure beneath its anchors. */
+          let html = msgRow(first, depth, true);
+          if (middle > 0) {
+            const indent = Math.min(depth, 6) * 20;
+            html += `<div class="trow collapsed" data-id="${seg.id}" style="margin-left:${indent}px">
+        <div class="head"><span class="chip">[…] ${middle} messages</span></div>
+      </div>`;
+          }
+          html += msgRow(last, depth, true);
+          return html;
+        }
+        let html = msgRow(first, depth);
+        if (middle > 0) {
+          const indent = Math.min(depth, 6) * 20;
+          html += `<div class="trow collapsed" data-id="${seg.id}" style="margin-left:${indent}px">
+      <div class="head"><span class="chip">⊟ collapse</span></div>
+    </div>`;
+          for (let i = 1; i < msgs.length - 1; i++) html += msgRow(msgs[i], depth);
+        }
+        html += msgRow(last, depth);
+        return html;
+      }
+
+      function render() {
+        treeEl.innerHTML = msgRow(TREE, 0);
+        if (focusId) {
+          const acc = new Set();
+          segmentsToOpen(TREE, focusId, acc);
+          for (const id of acc) expanded.add(id);
+          render();
+          const el = treeEl.querySelector(`[data-id="${focusId}"]`);
+          if (el) {
+            selectedId = focusId;
+            render();
+            updateFooter();
+          }
+          el?.scrollIntoView({ block: 'center' });
+          focusId = null;
+        }
+      }
+
+      treeEl.addEventListener('click', (e) => {
+        const chip = e.target.closest('.label-chip');
+        const add = e.target.closest('.label-add');
+        if (chip || add) {
+          const row = (chip || add).closest('.trow');
+          const labelId = chip ? chip.dataset.labelFor : add.dataset.labelAdd;
+          const n = (() => {
+            let hit = null;
+            collect(TREE, (x) => {
+              if (x.id === labelId) hit = x;
+            });
+            return hit;
+          })();
+          if (n && row) startInlineLabel(row, n);
+          return;
+        }
+        const row = e.target.closest('.trow');
+        if (!row) return;
+        const id = row.dataset.id;
+        const node = (() => {
+          let hit = null;
+          collect(TREE, (n) => {
+            if (n.id === id) hit = n;
+          });
+          return hit;
+        })();
+        if (node?.collapsed) {
+          if (expanded.has(id)) expanded.delete(id);
+          else expanded.add(id); // toggle both fold kinds
+          render();
+          return;
+        }
+        selectedId = id;
+        render();
+        updateFooter();
+      });
+
+      /* click a label chip to edit; click the 🏷 on a selected row to add one */
+      function startInlineLabel(row, n) {
+        const chip = row.querySelector('.label-chip');
+        const input = document.createElement('input');
+        input.className = 'inline-label';
+        input.value = n.label ?? '';
+        if (chip) chip.replaceWith(input);
+        else row.querySelector('.head').appendChild(input);
+        input.focus();
+        input.select();
+        let done = false;
+        const commit = () => {
+          if (done) return;
+          done = true;
+          n.label = input.value.trim() || undefined;
+          render();
+        };
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') {
+            done = true;
+            render();
+          }
+        });
+        input.addEventListener('blur', commit);
+      }
+
+      function selectedNode() {
+        let hit = null;
+        collect(TREE, (n) => {
+          if (n.id === selectedId) hit = n;
+        });
+        return hit;
+      }
+      function updateFooter() {
+        const n = selectedNode();
+        const selectable = !!n && !n.collapsed;
+        resumeBtn.disabled = !selectable;
+        customBtn.classList.toggle('hidden', !selectable);
+      }
+
+      resumeBtn.addEventListener('click', () => {
+        toast(`navigate_tree → ${selectedId} (no compaction) — explorer closes, transcript resyncs`);
+      });
+
+      /* ---- compaction modal (same minimal dialog as the transcript) ---- */
+      let compactionModal = null;
+      function closeCompaction() {
+        compactionModal?.remove();
+        compactionModal = null;
+      }
+      customBtn.addEventListener('click', () => {
+        closeCompaction();
+        compactionModal = document.createElement('div');
+        compactionModal.className = 'modal-overlay';
+        compactionModal.innerHTML = `
+    <div class="redo-pop modal">
+      <textarea placeholder="Compaction prompt…"></textarea>
+      <div class="actions">
+        <button class="btn" data-act="cancel">Cancel</button>
+        <button class="btn primary" data-act="go">OK</button>
+      </div>
+    </div>`;
+        compactionModal.addEventListener('click', (e) => {
+          const act = e.target.dataset?.act;
+          if (act === 'cancel' || e.target === compactionModal) closeCompaction();
+          if (act === 'go') {
+            const prompt = compactionModal.querySelector('textarea').value.trim();
+            closeCompaction();
+            toast(`navigate_tree → ${selectedId} — ${prompt ? 'custom compaction prompt' : 'default summarization prompt'}; explorer closes, transcript resyncs`);
+          }
+        });
+        document.body.appendChild(compactionModal);
+        compactionModal.querySelector('textarea').focus();
+      });
+
+      /* ---- anchor-first search with explicit full fallback ---- */
+      searchEl.addEventListener('input', () => {
+        const q = searchEl.value.trim().toLowerCase();
+        if (!q) {
+          scopeEl.textContent = 'anchors';
+          render();
+          return;
+        }
+
+        const visible = new Set();
+        const hiddenIds = new Set();
+        collect(TREE, (n) => {
+          if (n.collapsed) {
+            const msgs = n.msgs || [];
+            if (expanded.has(n.id)) {
+              for (const m of msgs) collect(m, (x) => visible.add(x.id));
+            } else {
+              /* first and last anchors are visible; the middle is folded */
+              if (msgs[0]) visible.add(msgs[0].id);
+              if (msgs[msgs.length - 1]) visible.add(msgs[msgs.length - 1].id);
+              for (let i = 1; i < msgs.length - 1; i++) collect(msgs[i], (x) => hiddenIds.add(x.id));
+            }
+          } else {
+            visible.add(n.id);
+          }
+        });
+
+        const anchorHits = [...visible].filter((id) => matchesId(id, q));
+        if (anchorHits.length) {
+          scopeEl.textContent = `anchors · ${anchorHits.length}`;
+          render();
+          highlight(anchorHits);
+          return;
+        }
+
+        scopeEl.textContent = 'anchors · 0';
+        document.querySelectorAll('.notice').forEach((el) => el.remove());
+        treeEl.insertAdjacentHTML('beforeend', `<div class="notice" id="fb">No branch-point matches. <button class="btn" id="fbGo">Search all messages</button></div>`);
+        document.getElementById('fbGo').onclick = () => {
+          const allHits = [...visible, ...hiddenIds].filter((id) => matchesId(id, q));
+          for (const id of allHits) {
+            const acc = new Set();
+            segmentsToOpen(TREE, id, acc);
+            for (const s of acc) expanded.add(s);
+          }
+          scopeEl.textContent = `all messages · ${allHits.length}`;
+          render();
+          highlight(allHits);
+        };
+      });
+      function matchesId(id, q) {
+        let hit = false;
+        collect(TREE, (n) => {
+          if (n.id === id) hit = hit || (n.text || '').toLowerCase().includes(q) || (n.label || '').toLowerCase().includes(q);
+        });
+        return hit;
+      }
+      function highlight(ids) {
+        for (const id of ids) {
+          const el = treeEl.querySelector(`[data-id="${id}"] .preview`);
+          if (el) el.style.background = '#fde047';
+        }
+      }
+
+      function toast(text) {
+        const t = document.createElement('div');
+        t.className = 'toast';
+        t.textContent = text;
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 4000);
+      }
+
+      render();
+      updateFooter();
+    </script>
+  </body>
+</html>

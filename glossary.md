@@ -86,9 +86,13 @@ _Avoid_: assistant turn (ambiguous with a complete agent run)
 User-authored or model-authored text in the active session branch. It excludes tool calls and results, thinking, system entries, and custom display messages.
 _Avoid_: full transcript (which includes non-conversational entries)
 
-**Fork point**:
-A user or assistant message shared by the current path and one or more alternate continuations.
-_Avoid_: branch node, tree node (which can include internal events)
+**Branch point**:
+A user or assistant message shared by the active path and one or more alternate continuations. The anchor for tree navigation.
+_Avoid_: fork point, fork (pi's new-session-file fork is retired from this UX)
+
+**Tree navigation**:
+Moving the session's leaf pointer to an earlier entry in the same session file, optionally with custom compaction of the abandoned path. pi's `navigateTree`; the wire command is `navigate_tree`.
+_Avoid_: fork, redo
 
 **Abandoned branch**:
 A retained session continuation that is not the currently selected branch.
