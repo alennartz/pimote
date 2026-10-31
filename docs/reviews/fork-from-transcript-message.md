@@ -15,7 +15,7 @@ The scoped fix commit resolves the prior correctness findings: deep `get_tree` r
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `client/src/lib/components/BranchExplorer.svelte:263`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Remove the `branch` chip or update the approved interaction contract to include it.
 
 The approved explorer mock says branch structure reads from indentation alone and has no metadata on rows. The implementation still renders `<span class="branch-chip">branch</span>` for every branch point. The fix commit corrected custom-compaction visibility and menu dismissal, but it did not remove this remaining mock drift.

@@ -269,7 +269,6 @@
                 <span class="role-icon" aria-hidden="true">{row.role === 'user' ? '👤' : '🤖'}</span>
                 <div class="message-content">
                   <div class="message-heading">
-                    {#if row.isBranchPoint}<span class="branch-chip">branch</span>{/if}
                     <span class="preview">{row.text}</span>
                     {#if row.label && editingLabelId !== row.id}
                       <button
@@ -434,7 +433,6 @@
   }
   .scope-chip,
   .segment-chip,
-  .branch-chip,
   .active-chip,
   .label-chip {
     display: inline-flex;
@@ -520,10 +518,6 @@
     overflow-wrap: anywhere;
     font-size: 0.8rem;
     line-height: 1.35;
-  }
-  .branch-chip {
-    background: color-mix(in srgb, var(--primary) 16%, transparent);
-    color: var(--primary);
   }
   .active-chip {
     background: color-mix(in srgb, var(--primary) 18%, transparent);
