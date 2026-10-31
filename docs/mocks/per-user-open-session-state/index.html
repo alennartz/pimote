@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Global Settings — User pane mock (adaptive)</title>
+    <style>
+      :root {
+        --background: oklch(0.137 0.036 258.5);
+        --foreground: oklch(0.984 0.003 247.9);
+        --primary: oklch(0.984 0.003 247.9);
+        --primary-foreground: oklch(0.208 0.04 265.7);
+        --secondary: oklch(0.28 0.037 260);
+        --secondary-foreground: oklch(0.984 0.003 247.9);
+        --muted-foreground: oklch(0.711 0.035 256.8);
+        --border: oklch(0.28 0.037 260);
+        --input: oklch(0.28 0.037 260);
+        --ring: oklch(0.869 0.02 252.8);
+        --warning: oklch(0.72 0.17 55.9);
+        --reconnecting: oklch(0.77 0.165 70.6);
+        --surface-sunken: oklch(0.155 0.025 258);
+        --surface-subtle: oklch(0.2 0.02 258);
+        --surface-hover: oklch(0.22 0.035 259);
+        --radius: 0.625rem;
+        --mono: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html {
+        background: oklch(0.09 0.02 258);
+      }
+      body {
+        font-family: 'Inter Variable', system-ui, sans-serif;
+        color: var(--foreground);
+        background: oklch(0.09 0.02 258);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 2rem 1.25rem 4rem;
+        gap: 1rem;
+        min-height: 100vh;
+      }
+
+      /* Demo controls */
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .controls .frame-label {
+        font-size: 0.72rem;
+        color: #8ea0b8;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        margin-right: 0.4rem;
+      }
+      .preset {
+        font-family: inherit;
+        font-size: 0.75rem;
+        padding: 0.3rem 0.7rem;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--surface-subtle);
+        color: var(--foreground);
+        cursor: pointer;
+      }
+      .preset:hover {
+        background: var(--surface-hover);
+      }
+      .preset.active {
+        border-color: var(--ring);
+        background: var(--surface-hover);
+      }
+      .width-readout {
+        font-size: 0.72rem;
+        color: var(--muted-foreground);
+        font-variant-numeric: tabular-nums;
+        min-width: 5.5rem;
+      }
+      .drag-hint {
+        font-size: 0.72rem;
+        color: var(--muted-foreground);
+      }
+
+      .stage {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+      }
+
+      /* The dialog is the container; chrome adapts to its own width. */
+      .dialog {
+        container-type: inline-size;
+        width: var(--w, 880px);
+        max-width: 100%;
+        min-width: 330px;
+        height: min(560px, calc(100vh - 10rem));
+        background: var(--background);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: 0 24px 60px oklch(0 0 0 / 0.45);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        position: relative;
+      }
+
+      /* Drag handle */
+      .resize-handle {
+        position: absolute;
+        top: 0;
+        right: -0.6rem;
+        width: 1.2rem;
+        height: 100%;
+        cursor: ew-resize;
+        touch-action: none;
+        z-index: 5;
+      }
+      .resize-handle::after {
+        content: '';
+        position: absolute;
+        top: 15%;
+        bottom: 15%;
+        left: 50%;
+        width: 3px;
+        transform: translateX(-50%);
+        border-radius: 2px;
+        background: var(--border);
+      }
+      .resize-handle:hover::after {
+        background: var(--muted-foreground);
+      }
+
+      /* Header */
+      .dlg-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+        padding: 1rem 1.25rem 0.75rem;
+      }
+      .dlg-header-text {
+        flex: 1;
+        min-width: 0;
+      }
+      .dlg-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+      }
+      .dlg-subtitle {
+        font-size: 0.75rem;
+        color: var(--muted-foreground);
+        margin-top: 0.15rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .dlg-hint {
+        font-size: 0.75rem;
+        color: var(--muted-foreground);
+        margin-top: 0.1rem;
+      }
+      .dlg-badge {
+        font-size: 0.65rem;
+        color: var(--muted-foreground);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.1rem 0.5rem;
+        margin-top: 0.1rem;
+        white-space: nowrap;
+      }
+      .icon-btn {
+        background: none;
+        border: none;
+        color: var(--muted-foreground);
+        cursor: pointer;
+        width: 1.9rem;
+        height: 1.9rem;
+        border-radius: calc(var(--radius) * 0.6);
+        display: grid;
+        place-items: center;
+        font-size: 1rem;
+        flex-shrink: 0;
+      }
+      .icon-btn:hover {
+        background: var(--surface-hover);
+        color: var(--foreground);
+      }
+      .header-save {
+        display: none;
+      }
+
+      /* Tab row */
+      .tab-row {
+        display: flex;
+        gap: 0.25rem;
+        overflow-x: auto;
+        border-bottom: 1px solid var(--border);
+        padding: 0.5rem 0.75rem;
+        flex-shrink: 0;
+        scrollbar-width: none;
+      }
+      .tab {
+        font-family: inherit;
+        font-size: 0.8rem;
+        padding: 0.35rem 0.75rem;
+        border-radius: calc(var(--radius) * 0.7);
+        border: none;
+        cursor: pointer;
+        background: none;
+        color: var(--secondary-foreground);
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+      .tab:hover {
+        background: var(--surface-hover);
+      }
+      .tab.active {
+        background: var(--secondary);
+      }
+      .tab .dirty {
+        color: var(--warning);
+        margin-left: 0.15rem;
+      }
+
+      /* Body */
+      .dlg-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .editor-body {
+        flex: 1;
+        background: var(--surface-sunken);
+        font-family: var(--mono);
+        font-size: 0.8rem;
+        line-height: 1.55;
+        padding: 0.9rem 1.1rem;
+        overflow: auto;
+      }
+      .editor-body .ln {
+        color: oklch(0.45 0.03 258);
+        user-select: none;
+        padding-right: 1.1rem;
+        text-align: right;
+        display: inline-block;
+        min-width: 1.6rem;
+      }
+      .form-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1.4rem 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1.15rem;
+      }
+      .field-label {
+        font-size: 0.8rem;
+        font-weight: 600;
+        margin-bottom: 0.4rem;
+      }
+      .field-input {
+        width: 100%;
+        max-width: 22rem;
+        font-size: 0.85rem;
+        padding: 0.45rem 0.7rem;
+        background: var(--background);
+        color: var(--foreground);
+        border: 1px solid var(--input);
+        border-radius: calc(var(--radius) * 0.7);
+        outline: none;
+        font-family: inherit;
+      }
+      .field-input:focus {
+        border-color: var(--ring);
+        box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 30%, transparent);
+      }
+      .field-note {
+        font-size: 0.75rem;
+        color: var(--muted-foreground);
+        margin-top: 0.4rem;
+        line-height: 1.5;
+      }
+      .field-note.warn {
+        color: var(--reconnecting);
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+      }
+      .chip {
+        font-size: 0.78rem;
+        padding: 0.3rem 0.7rem;
+        border-radius: 999px;
+        background: var(--surface-subtle);
+        border: 1px solid var(--border);
+        color: var(--foreground);
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .chip:hover {
+        background: var(--surface-hover);
+      }
+      .chip.current {
+        border-color: var(--ring);
+        background: var(--surface-hover);
+      }
+      .chip .count {
+        color: var(--muted-foreground);
+        margin-left: 0.35rem;
+        font-size: 0.7rem;
+      }
+      .pane-section-title {
+        font-size: 0.75rem;
+        color: var(--muted-foreground);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.5rem;
+      }
+      .explain {
+        font-size: 0.78rem;
+        color: var(--muted-foreground);
+        line-height: 1.6;
+      }
+
+      /* Footer (desktop chrome) */
+      .dlg-footer {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1.25rem;
+        border-top: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .dlg-footer .spacer {
+        flex: 1;
+      }
+      .btn {
+        font-family: inherit;
+        font-size: 0.8rem;
+        padding: 0.4rem 0.95rem;
+        border-radius: calc(var(--radius) * 0.7);
+        cursor: pointer;
+        border: 1px solid transparent;
+      }
+      .btn-outline {
+        background: none;
+        border-color: var(--border);
+        color: var(--foreground);
+      }
+      .btn-outline:hover {
+        background: var(--surface-hover);
+      }
+      .btn-primary {
+        background: var(--primary);
+        color: var(--primary-foreground);
+      }
+      .btn-primary:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      /* ---- Narrow container: mobile chrome ---- */
+      @container (max-width: 639px) {
+        .dlg-header {
+          padding: 0.7rem 0.9rem 0.55rem;
+          align-items: center;
+        }
+        .dlg-badge {
+          display: none;
+        }
+        .icon-btn {
+          width: 2.2rem;
+          height: 2.2rem;
+        }
+        .header-save {
+          display: block;
+          font-family: inherit;
+          font-size: 0.8rem;
+          padding: 0.4rem 0.95rem;
+          border-radius: calc(var(--radius) * 0.7);
+          cursor: pointer;
+          border: none;
+          background: var(--primary);
+          color: var(--primary-foreground);
+          flex-shrink: 0;
+        }
+        .header-save:disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
+        }
+        .dlg-footer {
+          display: none;
+        }
+        .form-body {
+          padding: 1.1rem 1rem;
+          gap: 1rem;
+        }
+        .field-input {
+          max-width: none;
+          font-size: 0.95rem;
+          padding: 0.6rem 0.8rem;
+        }
+        .chip {
+          padding: 0.45rem 0.85rem;
+          font-size: 0.82rem;
+        }
+        .explain {
+          font-size: 0.8rem;
+        }
+      }
+
+      .resize-handle {
+        display: none;
+      }
+      .demo-resizable .resize-handle {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="controls">
+      <span class="frame-label">Global settings · User pane</span>
+      <button class="preset active" data-w="880">Desktop 880</button>
+      <button class="preset" data-w="620">Tablet 620</button>
+      <button class="preset" data-w="390">Phone 390</button>
+      <span class="width-readout" id="width-readout">880 px</span>
+      <span class="drag-hint">— or drag the dialog's right edge; the chrome adapts below 640 px</span>
+    </div>
+
+    <div class="stage demo-resizable">
+      <div class="dialog" id="dialog">
+        <div class="resize-handle" id="resize-handle"></div>
+
+        <div class="dlg-header">
+          <button class="icon-btn" aria-label="Close">✕</button>
+          <div class="dlg-header-text">
+            <div class="dlg-title">User</div>
+            <div class="dlg-subtitle">This device's identity on the server</div>
+            <div class="dlg-hint" id="hint" style="display: none">Unsaved changes</div>
+          </div>
+          <div class="dlg-badge">device setting</div>
+          <button class="btn btn-primary header-save" id="save-header" disabled>Save</button>
+        </div>
+
+        <div class="tab-row" role="tablist">
+          <button class="tab" data-tab="file">AGENTS.md</button>
+          <button class="tab" data-tab="file">settings.json</button>
+          <button class="tab" data-tab="file">config.json</button>
+          <button class="tab active" data-tab="user" id="user-tab">User</button>
+        </div>
+
+        <div class="dlg-body">
+          <div class="editor-body" id="editor-pane" style="display: none">
+            <div><span class="ln">1</span># Agent instructions</div>
+            <div><span class="ln">2</span></div>
+            <div><span class="ln">3</span>Keep responses short. Prefer edits over explanations.</div>
+            <div><span class="ln">4</span></div>
+            <div><span class="ln">5</span>When unsure, ask before destructive operations.</div>
+            <div><span class="ln">6</span></div>
+          </div>
+
+          <div class="form-body" id="user-pane">
+            <div>
+              <div class="field-label">User name</div>
+              <input class="field-input" id="user-input" value="alenna" spellcheck="false" autocomplete="off" />
+              <div class="field-note" id="user-note">
+                Every connection that presents the same user shares one open-session set. This name travels with this device only; nothing is authenticated.
+              </div>
+            </div>
+            <div>
+              <div class="pane-section-title">Profiles on this server</div>
+              <div class="chips" id="profile-chips">
+                <button class="chip current">alenna<span class="count">4 sessions</span></button>
+                <button class="chip">default<span class="count">2 sessions</span></button>
+              </div>
+            </div>
+            <p class="explain">
+              Switching to another profile replaces this device's open-session list with that profile's list. Sessions stay put on the server; only this device's view changes.
+            </p>
+          </div>
+        </div>
+
+        <div class="dlg-footer">
+          <div class="spacer"></div>
+          <button class="btn btn-outline">Cancel</button>
+          <button class="btn btn-primary" id="save-footer" disabled>Save</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const dialog = document.getElementById('dialog');
+      const input = document.getElementById('user-input');
+      const note = document.getElementById('user-note');
+      const hint = document.getElementById('hint');
+      const userTab = document.getElementById('user-tab');
+      const saves = [document.getElementById('save-footer'), document.getElementById('save-header')];
+      const initial = input.value;
+      const pristineNote = note.textContent;
+
+      // ---- Width: presets + drag ----
+      const readout = document.getElementById('width-readout');
+      function setWidth(px) {
+        dialog.style.setProperty('--w', px + 'px');
+        readout.textContent = px + ' px';
+        document.querySelectorAll('.preset').forEach((p) => p.classList.toggle('active', Number(p.dataset.w) === px));
+      }
+      document.querySelectorAll('.preset').forEach((p) => p.addEventListener('click', () => setWidth(Number(p.dataset.w))));
+
+      let dragging = false;
+      const handle = document.getElementById('resize-handle');
+      handle.addEventListener('pointerdown', (e) => {
+        dragging = true;
+        handle.setPointerCapture(e.pointerId);
+      });
+      handle.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const rect = dialog.getBoundingClientRect();
+        const px = Math.round(Math.min(1000, Math.max(330, e.clientX - rect.left)));
+        dialog.style.setProperty('--w', px + 'px');
+        readout.textContent = px + ' px';
+        document.querySelectorAll('.preset').forEach((p) => p.classList.remove('active'));
+      });
+      handle.addEventListener('pointerup', () => {
+        dragging = false;
+      });
+
+      // ---- Dirty state ----
+      function setDirty(dirty) {
+        saves.forEach((s) => (s.disabled = !dirty));
+        hint.style.display = dirty ? '' : 'none';
+        const dot = userTab.querySelector('.dirty');
+        if (dirty && !dot) userTab.insertAdjacentHTML('beforeend', '<span class="dirty">*</span>');
+        if (!dirty && dot) dot.remove();
+      }
+      input.addEventListener('input', () => {
+        const dirty = input.value !== initial;
+        setDirty(dirty && input.value.trim() !== '');
+        if (input.value !== initial) {
+          const known = [...document.querySelectorAll('#profile-chips .chip')].some((c) => c.childNodes[0].textContent.trim() === input.value);
+          note.classList.add('warn');
+          note.innerHTML = known
+            ? 'Switches this device to user <b>' + esc(input.value) + '</b>. Its open-session list replaces the current one.'
+            : 'Switches this device to user <b>' + esc(input.value) + "</b>. That profile has no open sessions yet — this device's list starts empty.";
+        } else {
+          note.classList.remove('warn');
+          note.textContent = pristineNote;
+        }
+      });
+      function esc(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+      }
+
+      // ---- Profile chips adopt the name ----
+      document.getElementById('profile-chips').addEventListener('click', (e) => {
+        const chip = e.target.closest('.chip');
+        if (!chip) return;
+        input.value = chip.childNodes[0].textContent.trim();
+        input.dispatchEvent(new Event('input'));
+      });
+
+      // ---- Tabs ----
+      const editorPane = document.getElementById('editor-pane');
+      document.querySelectorAll('.tab').forEach((tab) => {
+        tab.addEventListener('click', () => {
+          document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+          tab.classList.add('active');
+          const isUser = tab.dataset.tab === 'user';
+          document.getElementById('user-pane').style.display = isUser ? '' : 'none';
+          editorPane.style.display = isUser ? 'none' : '';
+          if (!isUser) setDirty(false);
+        });
+      });
+    </script>
+  </body>
+</html>
