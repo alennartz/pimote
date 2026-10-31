@@ -2408,6 +2408,62 @@ describe('WsHandler', () => {
   });
 
   describe('tree navigation interfaces', () => {
+    it('maps full conversation text for message nodes and omits it for non-message nodes', () => {
+      const tree = [
+        {
+          entry: {
+            id: 'entry-user',
+            type: 'message',
+            message: {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'First instruction.' },
+                { type: 'thinking', text: 'Not part of the conversation.' },
+                { type: 'text', text: 'Follow-up instruction.' },
+              ],
+            },
+            timestamp: '2026-04-11T12:00:00.000Z',
+          },
+          children: [
+            {
+              entry: {
+                id: 'entry-summary',
+                type: 'branch_summary',
+                summary: 'An abandoned branch summary',
+                timestamp: '2026-04-11T12:01:00.000Z',
+              },
+              children: [],
+            },
+          ],
+        },
+      ];
+
+      const mapped = mapTreeNodes(tree as any);
+
+      expect(mapped[0].conversationText).toBe('First instruction.\\n\\nFollow-up instruction.');
+      expect(mapped[0].children[0]).not.toHaveProperty('conversationText');
+    });
+
+    it('serializes conversation text in direct tree responses', () => {
+      const tree: PimoteTreeNode[] = [
+        {
+          id: 'entry-assistant',
+          type: 'message',
+          role: 'assistant',
+          preview: 'A short preview',
+          conversationText: 'The complete assistant response.',
+          timestamp: '2026-04-11T12:00:00.000Z',
+          children: [],
+        },
+      ];
+
+      const parsed = JSON.parse(serializeTreeResponse('req-tree-text', tree, 'entry-assistant')) as {
+        data: { tree: PimoteTreeNode[] };
+      };
+
+      expect(parsed.data.tree[0].conversationText).toBe('The complete assistant response.');
+    });
+
     it('maps deeply nested trees without overflowing the call stack', () => {
       const root = {
         entry: {
@@ -2473,6 +2529,50 @@ describe('WsHandler', () => {
       for (let i = 0; i < 10_000 - 1; i += 1) node = node.children[0];
       expect(node.id).toBe('entry-9999');
       expect(node.children).toEqual([]);
+    });
+
+    it('returns mapped tree data for a direct get_tree command', async () => {
+      const tree = [
+        {
+          entry: {
+            id: 'entry-user',
+            type: 'message',
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: 'Show the latest tree node' }],
+            },
+            timestamp: '2026-04-11T12:00:00.000Z',
+          },
+          children: [],
+        },
+      ];
+
+      const session = createMockSlot({
+        id: 'session-get-tree',
+        connectedClientId: 'client-1',
+      });
+
+      (session.session as any).sessionManager = {
+        getTree: () => tree,
+        getLeafId: () => 'entry-user',
+      };
+
+      const sessions = new Map([['session-get-tree', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'get_tree',
+          sessionId: 'session-get-tree',
+          id: 'req-get-tree',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-get-tree');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as { currentLeafId: string }).currentLeafId).toBe('entry-user');
+      expect((resp!.data as { tree: PimoteTreeNode[] }).tree[0].conversationText).toBe('Show the latest tree node');
     });
 
     it('returns mapped tree data when prompt message is /tree', async () => {

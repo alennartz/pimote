@@ -240,13 +240,15 @@ export interface Card {
   href?: string;
 }
 
-/** Session tree node transferred over the wire (preview-only, no full message content). */
+/** Session tree node transferred over the wire. */
 export interface PimoteTreeNode {
   id: string;
   type: string;
   role?: string;
   customType?: string;
   preview: string;
+  /** Full user/assistant text, with content blocks joined by two newlines. */
+  conversationText?: string;
   /** ISO 8601 */
   timestamp: string;
   label?: string;
@@ -482,6 +484,15 @@ export interface DequeueSteeringCommand extends CommandBase {
 export interface ForkCommand extends CommandBase {
   type: 'fork';
   entryId: string;
+}
+
+export interface GetTreeCommand extends CommandBase {
+  type: 'get_tree';
+}
+
+export interface GetTreeResponseData {
+  tree: PimoteTreeNode[];
+  currentLeafId: string | null;
 }
 
 export interface NavigateTreeCommand extends CommandBase {
@@ -869,6 +880,7 @@ export type PimoteCommand =
   | SetSessionNameCommand
   | DequeueSteeringCommand
   | ForkCommand
+  | GetTreeCommand
   | NavigateTreeCommand
   | SetTreeLabelCommand
   | CreateFolderCommand

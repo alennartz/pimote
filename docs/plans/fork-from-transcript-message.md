@@ -179,3 +179,52 @@ cycles matches; the transcript scrolls to each match and marks it visibly
   conversation text. The server-owned lifecycle and full-snapshot decisions stand.
 - New decision (no prior DR exists): tree navigation is the sole branching
   primitive; the new-session `fork` wire command is retired.
+
+## Tests
+
+**Pre-test-write commit:** `d79490ed2436c8f3ce9e38d76bbab8077b6fb7f9`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — adds optional message `conversationText`, the `get_tree` command, and its response shape.
+- `client/src/lib/branch-tree.ts` — defines the branch-map row model and projection seams.
+- `client/src/lib/conversation-find.ts` — defines the conversation search match shape and search seam.
+- `client/src/lib/stores/branch-tree-store.svelte.ts` — defines the explorer transport, state, and operation seams.
+
+### Test Files
+
+- `client/src/lib/branch-tree.test.ts` — covers collapsed segments, active-path projection, focus expansion, and alternate branch counts.
+- `client/src/lib/conversation-find.test.ts` — covers ordered text matches and exclusion of non-conversation blocks.
+- `client/src/lib/stores/branch-tree-store.svelte.test.ts` — covers lazy cache reads, focus, search state, navigation options, labels, and lifecycle invalidation.
+- `server/src/ws-handler.test.ts` — covers conversation-text mapping and serialization plus the direct `get_tree` response.
+
+### Behaviors Covered
+
+#### Server tree transfer
+
+- Message tree nodes carry complete user/assistant text while non-message nodes omit it.
+- Serialized tree responses preserve `conversationText`.
+- The `get_tree` command returns the mapped snapshot and current leaf.
+
+#### Branch tree projection
+
+- Linear continuations fold to first and last message anchors with a hidden-message count.
+- Active-path messages are marked, and shared messages render once.
+- Expanding a segment reveals that segment without forcing deeper segments open.
+- Focusing a hidden message returns the segments needed to expose it.
+- A branch point reports its alternate continuation count; linear and missing entries report zero.
+
+#### Conversation search
+
+- Case-insensitive matches are returned in transcript order with message keys, block offsets, and lengths.
+- Thinking, tool, system, custom, and other non-conversation blocks are excluded.
+- An empty query returns no matches.
+
+#### Branch tree store
+
+- The first open fetches a session tree; later opens reuse that session's cached snapshot.
+- Focused opens select the requested entry and expose its collapsed segments.
+- Segment expansion, selection, anchor-first search, and explicit full-text search update store state.
+- One-click navigation omits compaction; empty and non-empty compaction prompts map to default and custom summarization options.
+- Label changes use the tree-label command, with an empty label clearing the value.
+- Full resync invalidates the session cache; tree-navigation lifecycle events update busy state and close the explorer after resync.
