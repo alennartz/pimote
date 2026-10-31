@@ -662,7 +662,9 @@ export interface OpenSessionResponseData {
   folder?: FolderInfo;
 }
 
-/** Detach this WebSocket's observer from a live session without closing the runtime. */
+/** Client → server. WAS socket-scoped observer detach; NOW user-level unlink:
+ *  the requesting user's link to the session drops everywhere. The user's other
+ *  connections detach from the session; other users' links are untouched. */
 export interface DetachSessionCommand extends CommandBase {
   type: 'detach_session';
   sessionId: string;
@@ -670,6 +672,22 @@ export interface DetachSessionCommand extends CommandBase {
 
 export interface CloseSessionCommand extends CommandBase {
   type: 'close_session';
+}
+
+/** List every user profile on the server with its open-session count.
+ *  Backs the settings pane's profile chips. resp: ListUsersResponseData */
+export interface ListUsersCommand extends CommandBase {
+  type: 'list_users';
+}
+
+/** Profile names with open-session counts, alphabetically. */
+export interface UserSummary {
+  name: string;
+  sessionCount: number;
+}
+
+export interface ListUsersResponseData {
+  users: UserSummary[];
 }
 
 export interface DeleteSessionCommand extends CommandBase {
@@ -890,6 +908,7 @@ export type PimoteCommand =
   | OpenSessionCommand
   | DetachSessionCommand
   | CloseSessionCommand
+  | ListUsersCommand
   | DeleteSessionCommand
   | ArchiveSessionCommand
   | TakeoverFolderCommand
@@ -1247,6 +1266,18 @@ export interface FoldersChangedEvent {
   epoch: number;
 }
 
+/** Server → client. Sent in the connect burst and after any change to this
+ *  user's profile. Recipients replace their local view with `sessions`. */
+export interface UserSessionsChangedEvent {
+  type: 'user_sessions_changed';
+  /** The user's full open-session set — server truth, not a delta. */
+  sessions: { sessionId: string; folderPath: string }[];
+  /** True when this user has no server profile yet (never linked).
+   *  Gates migration: only a fresh profile adopts a connection's
+   *  pre-existing local set. */
+  fresh: boolean;
+}
+
 export interface SessionRestoreEvent {
   type: 'session_restore';
   sessionId: string;
@@ -1449,6 +1480,7 @@ export type PimoteEvent =
   | SessionCommandsChangedEvent
   | ConnectionRestoredEvent
   | FoldersChangedEvent
+  | UserSessionsChangedEvent
   | SessionRestoreEvent
   | BufferedEventsEvent
   | FullResyncEvent

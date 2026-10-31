@@ -46,8 +46,19 @@ afterEach(() => {
 // Dynamic import to pick up the stubbed localStorage each time.
 // The module is pure functions that reference `localStorage` at call time,
 // so a static import works fine.
-const { getClientId, setClientId, getActiveSessions, setActiveSessions, getShowArchived, setShowArchived, getSessionPillSwipeHintShown, setSessionPillSwipeHintShown } =
-  await import('./persistence.js');
+const {
+  getClientId,
+  setClientId,
+  getActiveSessions,
+  setActiveSessions,
+  clearActiveSessions,
+  getUser,
+  setUser,
+  getShowArchived,
+  setShowArchived,
+  getSessionPillSwipeHintShown,
+  setSessionPillSwipeHintShown,
+} = await import('./persistence.js');
 
 describe('Persistence — Client ID', () => {
   it('returns null when no clientId has been stored', () => {
@@ -83,6 +94,23 @@ describe('Persistence — Client ID', () => {
       throw new Error('QuotaExceededError');
     });
     expect(() => setClientId('abc')).not.toThrow();
+  });
+});
+
+describe('Persistence — User', () => {
+  it('returns null before any user has been set', () => {
+    expect(getUser()).toBeNull();
+  });
+
+  it('round-trips the user name through set and get', () => {
+    setUser('alenna');
+    expect(getUser()).toBe('alenna');
+  });
+
+  it('overwrites a previously stored user', () => {
+    setUser('alenna');
+    setUser('default');
+    expect(getUser()).toBe('default');
   });
 });
 
@@ -144,6 +172,18 @@ describe('Persistence — Active Sessions', () => {
       throw new Error('QuotaExceededError');
     });
     expect(() => setActiveSessions([{ sessionId: 's1', folderPath: '/p' }])).not.toThrow();
+  });
+
+  it('empties the active-session list on clearActiveSessions', () => {
+    setActiveSessions([
+      { sessionId: 's1', folderPath: '/home/user/project-a' },
+      { sessionId: 's2', folderPath: '/home/user/project-b' },
+    ]);
+
+    clearActiveSessions();
+
+    expect(getActiveSessions()).toEqual([]);
+    expect(mockLocalStorage.getItem('pimote:activeSessions')).toBeNull();
   });
 });
 

@@ -72,6 +72,27 @@ export function setActiveSessions(sessions: PersistedSession[]): void {
   }
 }
 
+/** Drop the local open-session mirror for good: the server's per-user profile
+ *  is the only open-session set once the first user_sessions_changed lands. */
+export function clearActiveSessions(): void {
+  throw new Error('not implemented');
+}
+
+// ---------------------------------------------------------------------------
+// User (this device's identity on the server)
+// ---------------------------------------------------------------------------
+
+/** This device's user name, or null when never set — the connection omits the
+ *  parameter and the server falls back to its default profile. Stored under
+ *  the `pimote:user` localStorage key. */
+export function getUser(): string | null {
+  throw new Error('not implemented');
+}
+
+export function setUser(_name: string): void {
+  throw new Error('not implemented');
+}
+
 // ---------------------------------------------------------------------------
 // Sidebar preferences
 // ---------------------------------------------------------------------------

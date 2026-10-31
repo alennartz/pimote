@@ -125,3 +125,48 @@ export class UserProfiles {
 ### Interaction Mocks
 
 - `docs/mocks/per-user-open-session-state/index.html` — approved visual and interaction contract for the Global Settings User pane: adaptive chrome (desktop footer Save ≥ 640 px, mobile header Save below, per CodeEditorDialog behavior), dirty state (tab marker, header hint, Save enablement), profile chips with session counts and click-to-adopt, consequence hints distinguishing known-profile switches from fresh profiles.
+
+## Tests
+
+**Pre-test-write commit:** `3a1a4b548f8f7554d4b08b0aecfe05343098e20d`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — wire contract: `UserSessionsChangedEvent` (connect burst + change push, full set + `fresh` gate), `ListUsersCommand` with `ListUsersResponseData`/`UserSummary`, `detach_session` doc comment hardened to the user-level unlink meaning; both union memberships added. Runtime wire flows (connect burst delivery, broadcast targeting, echo suppression, query-param binding) land with the ws-handler wiring in the implementation phase.
+- `server/src/user-profiles.ts` — `SessionRef`, `UserProfiles` profile store (load/gc/get/isFresh/link/unlink/unlinkAll/summaries), and `resolveUserName` (trim, cap length, blank/absent → `default`). All bodies are `not implemented` stubs.
+- `client/src/lib/stores/persistence.ts` — `getUser`/`setUser` (per-device `pimote:user` setting) and `clearActiveSessions` (drops the local open-session mirror). Stubs.
+
+### Test Files
+
+- `server/src/user-profiles.test.ts` — full behavioral suite for the profile store and name resolution over real files in a temp dir.
+- `client/src/lib/stores/persistence.test.ts` — extended with the User-setting round-trip and the active-session clear contract.
+
+### Behaviors Covered
+
+#### UserProfiles (server store)
+
+- Boot degrades a missing or corrupt profile file to an empty store where every user is fresh.
+- A user is fresh exactly until its first link; unlinking sessions or reloading never restores freshness.
+- Link adds a session to a user's profile and reports the change.
+- Re-linking the identical session reference duplicates nothing and reports no change.
+- Re-linking a held session under a new folder updates that session's folder reference instead of duplicating it.
+- `get` hands out snapshots — callers cannot mutate profile truth through a returned list.
+- Unlink removes one session from one user, keeps their other sessions, and reports the change.
+- Unlink of a session the user does not hold (or for an unknown user) changes nothing and reports no change.
+- Unlinking one user leaves another user's link to the same session in place.
+- `unlinkAll` removes a session from every holder and names exactly the affected users; an unheld session names no users.
+- A user profile stays listed (count 0, non-fresh) after its last session is unlinked, across reloads too.
+- `gc` prunes entries naming sessions outside the valid set; a fully pruned user keeps their empty, non-fresh key.
+- Profiles survive a reload from disk; arbitrary user names (slashes, spaces, unicode) round-trip without encoding.
+- A hand-written document in the storage shape loads as profile truth, and a later mutation persists to disk.
+
+#### resolveUserName
+
+- Absent (`null`/`undefined`) and blank names resolve to `default`.
+- Surrounding whitespace is trimmed.
+- Very long names are capped to a bounded length.
+
+#### Client persistence
+
+- `getUser` returns null before any user is set; `setUser` round-trips and overwrites the stored name.
+- `clearActiveSessions` empties the active-session list and removes the stored key.
