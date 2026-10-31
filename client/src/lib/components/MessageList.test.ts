@@ -94,6 +94,41 @@ function settle() {
   return new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
+describe('MessageList streaming menus', () => {
+  it.each([true, false])('keeps finalized message menus open while streaming, pinned=%s', async (pinned) => {
+    const session = sessionRegistry.viewed!;
+    session.messages = [
+      { role: 'user', entryId: 'u1', content: [{ type: 'text', text: 'hello' }] },
+      { role: 'assistant', entryId: 'a1', content: [{ type: 'text', text: 'finished answer' }] },
+    ];
+    session.messageKeys = ['m1', 'm2'];
+    session.isStreaming = true;
+    session.streamingKey = 'm3';
+    session.streamingMessage = { role: 'assistant', content: [{ type: 'text', text: 'live' }] };
+    flushSync();
+    await settle();
+    container.scrollTop = pinned ? geometry.scrollHeight : 0;
+    container.dispatchEvent(new Event('scroll'));
+    flushSync();
+
+    for (const selector of ['.user-icon', '.assistant-icon']) {
+      const icon = target.querySelector<HTMLButtonElement>(`button${selector}`)!;
+      const message = icon.closest('.message')!;
+      icon.click();
+      flushSync();
+      expect(message.querySelector('[role="menu"]')).not.toBeNull();
+      for (let i = 0; i < 30; i++) {
+        session.streamingMessage!.content[0].text += ' delta';
+        flushSync();
+        await settle();
+        expect(message.querySelector('[role="menu"]')).not.toBeNull();
+      }
+      icon.click();
+      flushSync();
+    }
+  });
+});
+
 describe('MessageList scroll pin', () => {
   it('stays glued to the bottom when the viewport shrinks while pinned', async () => {
     container.scrollTop = geometry.scrollHeight;
