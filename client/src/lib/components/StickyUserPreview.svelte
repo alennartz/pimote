@@ -48,15 +48,12 @@
 {/if}
 
 <style>
-  /* Overlays the top of the transcript without taking flow space, so
-     appearing and disappearing never shifts the rows underneath. Width
-     matches the chat frame: min(884px, 100%) minus 16px inner padding. */
+  /* Centers within .sticky-host, which spans the scroll container's client
+     area, so this aligns with the chat frame (min(884px, 100%) minus its
+     16px inner padding). Takes no flow space, so appearing and disappearing
+     never shifts the rows underneath. */
   .sticky-preview {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 8;
+    margin: 0 auto;
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -68,6 +65,7 @@
     border-radius: 0 0 0.4rem 0.4rem;
     background: color-mix(in oklch, var(--background) 94%, transparent);
     backdrop-filter: blur(5px);
+    pointer-events: auto;
   }
 
   .avatar-anchor {

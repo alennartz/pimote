@@ -107,6 +107,7 @@
   let findBar: ConversationFindBar | undefined = $state();
   let rowResizeObserver: ResizeObserver | null = null;
   let stickyFrame: number | null = null;
+  let listClientWidth = $state<number | null>(null);
 
   const messageEntryIds = $derived.by(() => {
     const ids = new SvelteMap<string, string>();
@@ -375,6 +376,7 @@
       const height = el.clientHeight;
       if (height < lastHeight && autoScrollEnabled) el.scrollTop = el.scrollHeight;
       lastHeight = height;
+      listClientWidth = el.clientWidth;
       updateStickyTargets();
     });
     observer.observe(el);
@@ -465,16 +467,18 @@
     {@const stickyEntry = displayEntries.find((entry) => entry.kind === 'message' && entry.key === stickyEntryId)}
     {#if stickyEntry && stickyEntry.kind === 'message' && stickyEntry.message.role === 'user' && session?.sessionId}
       {#key stickyEntryId}
-        <StickyUserPreview
-          message={stickyEntry.message}
-          sessionId={session.sessionId}
-          abandonedBranchCount={alternateCount(stickyEntry)}
-          manager={Boolean(source || managerTranscript)}
-          {readOnly}
-          store={branchTreeStore}
-          onRedo={handleRedo}
-          onJump={() => scrollToEntry(stickyEntryId)}
-        />
+        <div class="sticky-host" style={listClientWidth ? `--band-w: ${listClientWidth}px` : undefined}>
+          <StickyUserPreview
+            message={stickyEntry.message}
+            sessionId={session.sessionId}
+            abandonedBranchCount={alternateCount(stickyEntry)}
+            manager={Boolean(source || managerTranscript)}
+            {readOnly}
+            store={branchTreeStore}
+            onRedo={handleRedo}
+            onJump={() => scrollToEntry(stickyEntryId)}
+          />
+        </div>
       {/key}
     {/if}
   {/if}
@@ -536,6 +540,17 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+  }
+
+  /* Spans only the scroll container's client area (scrollbar gutter
+     excluded) so the banner centers on the same axis as the chat frame. */
+  .sticky-host {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: var(--band-w, 100%);
+    z-index: 8;
+    pointer-events: none;
   }
 
   .message-list {
