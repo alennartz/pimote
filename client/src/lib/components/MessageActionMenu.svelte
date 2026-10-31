@@ -134,7 +134,19 @@
 
 <style>
   .message-action-menu {
+    /* Own its layout: the parent's .tool-menu scoped rules never reach this
+       component's root (Svelte scoping). Desktop stacks vertically; mobile
+       flows as one horizontal row. */
+    display: flex;
+    flex-direction: column;
     align-items: center;
+    gap: 6px;
+  }
+
+  @media (max-width: 640px) {
+    .message-action-menu {
+      flex-direction: row;
+    }
   }
 
   .action-item {
