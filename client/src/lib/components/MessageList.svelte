@@ -198,6 +198,11 @@
     return activeFindMatch.messageKey === `message-${entry.messageIndex ?? -1}`;
   }
 
+  function isTextEntryTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    return target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
+  }
+
   function onKeydown(event: KeyboardEvent): void {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
       event.preventDefault();
@@ -208,6 +213,12 @@
     if (event.key === 'Escape' && findOpen) {
       event.preventDefault();
       closeFind();
+    }
+    // END re-glues a detached scroll viewer to the bottom. Text-entry targets
+    // keep the key for caret movement.
+    if (event.key === 'End' && !event.ctrlKey && !event.metaKey && !event.altKey && !autoScrollEnabled && !isTextEntryTarget(event.target)) {
+      event.preventDefault();
+      scrollToBottom();
     }
   }
 
