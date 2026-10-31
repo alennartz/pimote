@@ -24,14 +24,33 @@ afterEach(() => {
 });
 
 describe('MessageList native bash display boundary', () => {
-  it('persists forked message text in the replacement session draft', async () => {
+  it('persists redone message text in the current session draft', async () => {
     const session = setupSession();
-    session.messages = [{ role: 'user', entryId: 'entry-1', content: [{ type: 'text', text: 'Fork point' }] }];
+    session.messages = [{ role: 'user', entryId: 'entry-1', content: [{ type: 'text', text: 'Redo point' }] }];
     session.messageKeys = ['msg-1'];
     vi.spyOn(connection, 'send').mockImplementation(async (command) => {
-      if (command.type !== 'fork') throw new Error(`unexpected command: ${command.type}`);
-      sessionRegistry.replaceSession('s1', 's2', '/workspace/project', 'project');
-      return { id: 'fork-1', success: true, data: { cancelled: false, selectedText: 'forked message' } } as never;
+      if (command.type === 'get_tree') {
+        return {
+          id: 'tree-1',
+          success: true,
+          data: {
+            tree: [
+              {
+                id: 'entry-1',
+                type: 'message',
+                role: 'user',
+                preview: 'Redo point',
+                conversationText: 'Redo point',
+                timestamp: '2025-01-01T00:00:00.000Z',
+                children: [],
+              },
+            ],
+            currentLeafId: 'entry-1',
+          },
+        } as never;
+      }
+      if (command.type !== 'navigate_tree') throw new Error(`unexpected command: ${command.type}`);
+      return { id: 'navigate-1', success: true, data: { cancelled: false, editorText: 'redone message' } } as never;
     });
 
     const view = render();
@@ -40,14 +59,16 @@ describe('MessageList native bash display boundary', () => {
     userIcon!.click();
     await tick();
 
-    const fork = view.target.querySelector<HTMLButtonElement>('button[title="Fork from this message"]');
-    expect(fork).not.toBeNull();
-    fork!.click();
+    const redo = view.target.querySelector<HTMLButtonElement>('button[title="Redo from here"]');
+    expect(redo).not.toBeNull();
+    redo!.click();
+    await Promise.resolve();
+    await tick();
     await Promise.resolve();
     await tick();
 
-    expect(sessionRegistry.viewedSessionId).toBe('s2');
-    expect(sessionRegistry.sessions.s2.draftText).toBe('forked message');
+    expect(sessionRegistry.viewedSessionId).toBe('s1');
+    expect(sessionRegistry.sessions.s1.draftText).toBe('redone message');
     view.destroy();
   });
 

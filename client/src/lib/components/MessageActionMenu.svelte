@@ -79,16 +79,16 @@
 
 <div class="message-action-menu tool-menu" role="menu">
   {#if navigationAllowed}
-    <button type="button" role="menuitem" class="action-item" onclick={() => redo()}>
+    <button type="button" role="menuitem" class="action-item" title="Redo from here" onclick={() => redo()}>
       <Undo2 size={14} />
       <span>Redo from here</span>
     </button>
-    <button type="button" role="menuitem" class="action-item" onclick={openCompaction}>
+    <button type="button" role="menuitem" class="action-item" title="Redo with compaction" onclick={openCompaction}>
       <GitBranch size={14} />
       <span>Redo with compaction…</span>
     </button>
     {#if abandonedBranchCount > 0}
-      <button type="button" role="menuitem" class="action-item" onclick={openBranches}>
+      <button type="button" role="menuitem" class="action-item" title="View existing branches" onclick={openBranches}>
         <ListTree size={14} />
         <span>View existing branches ({abandonedBranchCount})</span>
       </button>

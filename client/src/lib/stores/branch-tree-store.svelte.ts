@@ -252,7 +252,8 @@ export class BranchTreeStore {
       ...(opts?.compactionPrompt ? { customInstructions: opts.compactionPrompt, replaceInstructions: false } : {}),
     };
 
-    this.state.busy = true;
+    const tracksBusy = this.state.open && this.state.sessionId === sessionId;
+    if (tracksBusy) this.state.busy = true;
     this.state.error = null;
     try {
       const response = await this._transport.send(command);
@@ -263,7 +264,7 @@ export class BranchTreeStore {
       }
       const result = navigationResult(response.data);
       if (result.cancelled) this.clearNavigationFailure(sessionId);
-      else if (!this.navigationBySession.get(sessionId)?.inProgress && this.state.sessionId === sessionId) this.state.busy = false;
+      else if (tracksBusy && !this.navigationBySession.get(sessionId)?.inProgress) this.state.busy = false;
       return result;
     } catch (error) {
       this.state.error = error instanceof Error ? error.message : 'Navigation failed.';

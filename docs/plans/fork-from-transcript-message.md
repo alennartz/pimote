@@ -389,7 +389,7 @@ Copy/TTS availability rules, tool rendering, costs, and streaming behavior.
 Use existing dialog and button modules rather than adding dependencies.
 
 **Verify:** Run `npm run test --workspace=client -- --run src/lib/components/MessageActionMenu.test.ts`. Check both face menus and modal cancellation against `docs/mocks/fork-from-transcript-message/transcript.html`.
-**Status:** in progress
+**Status:** done
 
 ### Step 6: Build the branch explorer
 
@@ -417,7 +417,7 @@ Close on Escape, dismissal, or viewed-session changes. Keep lifecycle handling i
 the store, not the explorer. Show load/navigation errors inside the open frame.
 
 **Verify:** Check collapsed/expanded runs, focused opens, inline label clearing, anchor/full search, resume, cancellation, busy/error states, and narrow layouts against `docs/mocks/fork-from-transcript-message/tree-explorer.html`.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Integrate transcript redo and sticky navigation
 
@@ -442,7 +442,7 @@ On mobile, hide the preview and add jump-up scrolling to the previous user messa
 Preserve the existing bottom-scroll and abort controls.
 
 **Verify:** Existing draft-policy tests pass. Check redo on both roles, occupied-draft choices, sticky threshold detachment, older-target replacement, mobile jump-up, and unchanged bottom-follow behavior against `transcript.html`.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Integrate conversation find controls
 
@@ -459,7 +459,7 @@ search out of tool/thinking/system/custom content. Remove keyboard and layout
 listeners when the transcript unmounts.
 
 **Verify:** Run `npm run test --workspace=client -- --run src/lib/components/ConversationFindBar.test.ts`. Check keyboard opening/closing, count changes, cycling, visible marking, and scroll anchoring against `transcript.html`.
-**Status:** not started
+**Status:** in progress
 
 ### Step 9: Switch entry paths and retire old surfaces
 

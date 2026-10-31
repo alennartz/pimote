@@ -1,15 +1,22 @@
 <script lang="ts">
-  import { tick, onDestroy } from 'svelte';
+  import { tick, onDestroy, onMount } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import { formatRelativeTime } from '$lib/format-relative-time.js';
-  import type { PimoteAgentMessage, StreamingMessage, AssistantRowUsage } from '@pimote/shared';
+  import type { GetTreeResponseData, PimoteAgentMessage, StreamingMessage, AssistantRowUsage } from '@pimote/shared';
   import { indexToolResultUsage, summarizeAssistantRowUsage } from '$lib/assistant-row-usage.js';
   import type { BashExecutionState, PerSessionState } from '$lib/stores/session-registry.svelte.js';
   import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
+  import { branchTreeStore } from '$lib/stores/branch-tree-store.svelte.js';
+  import { abandonedBranchCountAt } from '$lib/branch-tree.js';
+  import { findInConversation, type FindMatch } from '$lib/conversation-find.js';
+  import { previousUserAbove, type UserMessagePosition } from '$lib/transcript-navigation.js';
   import { needsDraftPrompt, applyDraftChoice, type DraftChoice } from '$lib/draft-policy.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import Message from './Message.svelte';
+  import StickyUserPreview from './StickyUserPreview.svelte';
+  import ConversationFindBar from './ConversationFindBar.svelte';
   import BashExecution from './BashExecution.svelte';
   import StreamingIndicator from './StreamingIndicator.svelte';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
@@ -21,7 +28,7 @@
      *  auto-scroll are unchanged. Default: false. */
     readOnly?: boolean;
     /** Message source to render. Defaults to the viewed regular session;
-     *  the manager chat passes its own transcript instead. Fork and the
+     *  the manager chat passes its own transcript instead. Redo and the
      *  floating abort are session-only affordances and are disabled for an
      *  explicit source. */
     source?: PerSessionState | null;
@@ -31,7 +38,7 @@
   // The rendered transcript: an explicit source (manager) or the viewed session.
   let session = $derived(source ?? sessionRegistry.viewed);
 
-  // ---- Fork flow ----
+  // ---- Transcript redo and draft flow ----
 
   let draftDialogOpen = $state(false);
   let draftDialogResolve: ((choice: DraftChoice) => void) | null = $state(null);
@@ -49,50 +56,25 @@
     draftDialogOpen = false;
   }
 
-  async function handleFork(entryId: string) {
-    // Session-only affordance: forks act on the viewed regular session and
-    // no-op for an explicit source (the manager has no forkable branch tree).
+  async function handleRedo(entryId: string, opts?: { compactionPrompt?: string }) {
+    // Redo is a regular-session action. Manager and read-only transcripts have
+    // no writable branch tree.
     if (readOnly || source) return;
     const viewed = sessionRegistry.viewed;
-    if (!viewed?.sessionId) return;
+    const sessionId = viewed?.sessionId;
+    if (!sessionId) return;
 
-    let res;
-    try {
-      res = await connection.send({
-        type: 'fork',
-        sessionId: viewed.sessionId,
-        entryId,
-      });
-    } catch (e) {
-      console.error('Failed to send fork:', e);
-      return;
-    }
+    const result = await branchTreeStore.navigateInSession(sessionId, entryId, opts);
+    if (!result || result.cancelled || typeof result.editorText !== 'string') return;
 
-    if (!res.success || !res.data) return;
-    const data = res.data as { cancelled: boolean; selectedText?: string };
-    if (data.cancelled) return;
-
-    // After session replacement, sessionRegistry.viewed points to the new session
-    const newSessionId = sessionRegistry.viewedSessionId;
-    if (!newSessionId) return;
-
-    const currentDraft = sessionRegistry.viewed?.draftText ?? '';
-    const selectedText = data.selectedText;
-
-    if (readOnly) {
-      // In read-only calling-mode we never block on a dialog; just bail
-      // before opening any UI.
-      return;
-    }
-
-    if (needsDraftPrompt(currentDraft, selectedText)) {
+    const currentDraft = viewed.draftText ?? '';
+    const editorText = result.editorText;
+    if (needsDraftPrompt(currentDraft, editorText)) {
       const choice = await promptDraftChoice();
-      const nextText = applyDraftChoice(currentDraft, selectedText!, choice);
-      if (nextText !== null) {
-        sessionRegistry.setDraftText(newSessionId, nextText);
-      }
-    } else if (selectedText) {
-      sessionRegistry.setDraftText(newSessionId, selectedText);
+      const nextText = applyDraftChoice(currentDraft, editorText, choice);
+      if (nextText !== null) sessionRegistry.setDraftText(sessionId, nextText);
+    } else {
+      sessionRegistry.setDraftText(sessionId, editorText);
     }
   }
 
@@ -106,6 +88,155 @@
   let userScrolledUp = $state(false);
   let autoScrollEnabled = $state(true);
 
+  let treeSnapshot = $state<GetTreeResponseData | null>(null);
+  let rowElements = new SvelteMap<string, HTMLElement>();
+  let stickyEntryId = $state<string | null>(null);
+  let jumpEntryId = $state<string | null>(null);
+  let mobileViewport = $state(false);
+  let findOpen = $state(false);
+  let findQuery = $state('');
+  let activeFindMatch = $state<FindMatch | null>(null);
+  let findBar: ConversationFindBar | undefined = $state();
+
+  const messageEntryIds = $derived.by(() => {
+    const ids = new SvelteMap<string, string>();
+    for (const entry of displayEntries) {
+      if (entry.kind !== 'message') continue;
+      const id = 'entryId' in entry.message && typeof entry.message.entryId === 'string' ? entry.message.entryId : undefined;
+      if (id) ids.set(id, entry.key);
+    }
+    return ids;
+  });
+
+  const findMatches = $derived.by(() => {
+    if (!findQuery.trim() || !session) return [];
+    return findInConversation(session.messages, findQuery.trim());
+  });
+
+  function alternateCount(entry: DisplayEntry): number {
+    if (entry.kind !== 'message' || !treeSnapshot) return 0;
+    const id = 'entryId' in entry.message && typeof entry.message.entryId === 'string' ? entry.message.entryId : undefined;
+    return id ? abandonedBranchCountAt(treeSnapshot.tree, id) : 0;
+  }
+
+  function registerRow(node: HTMLElement, key: string) {
+    rowElements.set(key, node);
+    return {
+      destroy() {
+        if (rowElements.get(key) === node) rowElements.delete(key);
+      },
+    };
+  }
+
+  function transcriptPositions(): UserMessagePosition[] {
+    const positions: UserMessagePosition[] = [];
+    for (const entry of displayEntries) {
+      if (entry.kind !== 'message') continue;
+      const node = rowElements.get(entry.key);
+      if (!node) continue;
+      positions.push({
+        entryId: entry.key,
+        role: entry.message.role,
+        bottom: node.getBoundingClientRect().bottom,
+      });
+    }
+    return positions;
+  }
+
+  function updateStickyTargets(): void {
+    if (!scrollContainer) return;
+    const top = scrollContainer.getBoundingClientRect().top;
+    const previous = previousUserAbove(transcriptPositions(), top, 12);
+    stickyEntryId = previous;
+    jumpEntryId = previousUserAbove(transcriptPositions(), top, -4);
+  }
+
+  function scrollToEntry(key: string | null): void {
+    if (!key) return;
+    rowElements.get(key)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function closeFind(): void {
+    findOpen = false;
+    findQuery = '';
+    activeFindMatch = null;
+  }
+
+  function onFindMatch(match: FindMatch): void {
+    activeFindMatch = match;
+    const fallbackIndex = match.messageKey.startsWith('message-') ? Number(match.messageKey.slice(8)) : -1;
+    const fallbackEntry = fallbackIndex >= 0 ? displayEntries.find((entry) => entry.kind === 'message' && entry.messageIndex === fallbackIndex) : undefined;
+    const key = messageEntryIds.get(match.messageKey) ?? fallbackEntry?.key;
+    scrollToEntry(key ?? null);
+  }
+
+  function isActiveFindEntry(entry: DisplayEntry): boolean {
+    if (entry.kind !== 'message' || !activeFindMatch) return false;
+    if (activeFindMatch.messageKey === entry.key || ('entryId' in entry.message && activeFindMatch.messageKey === entry.message.entryId)) return true;
+    return activeFindMatch.messageKey === `message-${entry.messageIndex ?? -1}`;
+  }
+
+  function onKeydown(event: KeyboardEvent): void {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+      event.preventDefault();
+      findOpen = true;
+      void tick().then(() => findBar?.focusInput());
+      return;
+    }
+    if (event.key === 'Escape' && findOpen) {
+      event.preventDefault();
+      closeFind();
+    }
+  }
+
+  $effect(() => {
+    const sessionId = session?.sessionId;
+    // Message replacement and full resync invalidate the tree cache.
+    session?.messageCount;
+    session?.messages.length;
+    if (!sessionId || source || readOnly) {
+      treeSnapshot = null;
+      return;
+    }
+    // Session message count changes after navigation and full resync. `load`
+    // returns the cached snapshot until branch-tree lifecycle invalidates it.
+    void branchTreeStore.load(sessionId).then((snapshot) => {
+      if (sessionRegistry.viewedSessionId === sessionId) treeSnapshot = snapshot;
+    });
+  });
+
+  $effect(() => {
+    // Recompute sticky and jump targets after rows or message layout changes.
+    displayEntries.length;
+    void tick().then(updateStickyTargets);
+  });
+
+  $effect(() => {
+    const first = findMatches[0];
+    if (!findQuery.trim() || !first) {
+      if (!findQuery.trim()) activeFindMatch = null;
+      return;
+    }
+    if (!activeFindMatch || !findMatches.some((match) => match.messageKey === activeFindMatch?.messageKey && match.offset === activeFindMatch.offset)) {
+      onFindMatch(first);
+    }
+  });
+
+  onMount(() => {
+    document.addEventListener('keydown', onKeydown);
+    const media = typeof window.matchMedia === 'function' ? window.matchMedia('(max-width: 640px)') : null;
+    const updateMobile = () => (mobileViewport = media?.matches ?? false);
+    updateMobile();
+    media?.addEventListener?.('change', updateMobile);
+    const resize = () => updateStickyTargets();
+    window.addEventListener('resize', resize);
+    return () => {
+      document.removeEventListener('keydown', onKeydown);
+      media?.removeEventListener?.('change', updateMobile);
+      window.removeEventListener('resize', resize);
+    };
+  });
+
   // Track whether user has scrolled away from bottom
   function onScroll() {
     if (!scrollContainer) return;
@@ -115,6 +246,7 @@
     const atBottom = distanceFromBottom < 80;
     userScrolledUp = !atBottom;
     autoScrollEnabled = atBottom;
+    updateStickyTargets();
   }
 
   type DisplayEntry =
@@ -258,6 +390,20 @@
 
 <div class="message-list-wrapper">
   <div class="message-list" bind:this={scrollContainer} onscroll={onScroll}>
+    {#if !source && !readOnly && !mobileViewport && stickyEntryId}
+      {@const stickyEntry = displayEntries.find((entry) => entry.kind === 'message' && entry.key === stickyEntryId)}
+      {#if stickyEntry && stickyEntry.kind === 'message' && stickyEntry.message.role === 'user' && session?.sessionId}
+        <StickyUserPreview
+          message={stickyEntry.message}
+          sessionId={session.sessionId}
+          abandonedBranchCount={alternateCount(stickyEntry)}
+          manager={Boolean(source)}
+          {readOnly}
+          store={branchTreeStore}
+          onRedo={handleRedo}
+        />
+      {/if}
+    {/if}
     <div class="message-list-inner" class:pointer-events-none={readOnly}>
       {#if displayEntries.length === 0 && !session?.isStreaming}
         <div class="empty-state">
@@ -266,12 +412,25 @@
       {/if}
 
       {#each displayEntries as entry (entry.key)}
-        {#if entry.kind === 'bash'}
-          <BashExecution execution={entry.execution} onCancel={readOnly ? undefined : () => handleBashCancel(entry.execution.id)} />
-        {:else}
-          {@const assistantRowUsage = getAssistantRowUsage(entry)}
-          <Message message={entry.message} streaming={entry.streaming} messageKey={entry.key} {assistantRowUsage} onfork={source || readOnly ? undefined : handleFork} />
-        {/if}
+        <div class="transcript-row" class:find-active={isActiveFindEntry(entry)} use:registerRow={entry.key} data-message-key={entry.key}>
+          {#if entry.kind === 'bash'}
+            <BashExecution execution={entry.execution} onCancel={readOnly ? undefined : () => handleBashCancel(entry.execution.id)} />
+          {:else}
+            {@const assistantRowUsage = getAssistantRowUsage(entry)}
+            <Message
+              message={entry.message}
+              streaming={entry.streaming}
+              messageKey={entry.key}
+              {assistantRowUsage}
+              sessionId={session?.sessionId ?? ''}
+              abandonedBranchCount={alternateCount(entry)}
+              manager={Boolean(source)}
+              {readOnly}
+              store={branchTreeStore}
+              onRedo={source || readOnly ? undefined : handleRedo}
+            />
+          {/if}
+        </div>
       {/each}
 
       <!-- Streaming indicator (agent is working but no content yet) -->
@@ -287,7 +446,14 @@
         </div>
       {/if}
     </div>
+    {#if findOpen}
+      <ConversationFindBar bind:this={findBar} bind:query={findQuery} matches={findMatches} onMatch={onFindMatch} onClose={closeFind} />
+    {/if}
   </div>
+
+  {#if mobileViewport && jumpEntryId}
+    <button class="jump-up" onclick={() => scrollToEntry(jumpEntryId)} title="Jump to previous message" aria-label="Jump to previous message">↑</button>
+  {/if}
 
   <!-- Floating abort button (mobile only) -->
   {#if !source && session?.isStreaming && !readOnly}
@@ -311,7 +477,7 @@
     <Dialog.Content showCloseButton={false}>
       <Dialog.Header>
         <Dialog.Title>Draft conflict</Dialog.Title>
-        <Dialog.Description>The editor already has text. How should the forked message be combined?</Dialog.Description>
+        <Dialog.Description>The editor already has text. How should the redone message be combined?</Dialog.Description>
       </Dialog.Header>
       <Dialog.Footer>
         <Button variant="outline" onclick={() => resolveDraft('ignore')}>Ignore</Button>
@@ -340,11 +506,47 @@
   }
 
   .message-list {
+    position: relative;
     flex: 1;
     overflow-x: hidden;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     scroll-behavior: auto;
+  }
+
+  .transcript-row {
+    position: relative;
+    border-radius: 0.4rem;
+  }
+
+  .transcript-row.find-active {
+    background: color-mix(in oklch, var(--accent) 14%, transparent);
+    outline: 1px solid color-mix(in oklch, var(--accent) 45%, transparent);
+  }
+
+  .jump-up {
+    position: absolute;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    z-index: 10;
+    display: none;
+    width: 2.4rem;
+    height: 2.4rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--secondary);
+    color: var(--secondary-foreground);
+    box-shadow: 0 2px 8px var(--shadow-color);
+    cursor: pointer;
+    font-size: 1.2rem;
+  }
+
+  @media (max-width: 640px) {
+    .jump-up {
+      display: flex;
+    }
   }
 
   .message-list-inner {
