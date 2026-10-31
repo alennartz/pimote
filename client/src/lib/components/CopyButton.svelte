@@ -26,3 +26,24 @@
     <Copy size={14} />
   {/if}
 </button>
+
+<style>
+  /* Matches TtsButton's .tool-btn so both render as identical 28px menu items. */
+  .copy-button {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    background: var(--secondary);
+    color: var(--foreground);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  .copy-button:active {
+    background: color-mix(in oklch, var(--secondary) 90%, white);
+  }
+</style>
