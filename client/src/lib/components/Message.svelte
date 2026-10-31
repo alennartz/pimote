@@ -8,6 +8,8 @@
   import BashExecution, { type FinalBashExecutionMessage } from './BashExecution.svelte';
   import TtsButton from './TtsButton.svelte';
   import CopyButton from './CopyButton.svelte';
+  import MessageActionMenu from './MessageActionMenu.svelte';
+  import type { BranchTreeStore } from '$lib/stores/branch-tree-store.svelte.js';
   import User from '@lucide/svelte/icons/user';
   import Bot from '@lucide/svelte/icons/bot';
   import GitFork from '@lucide/svelte/icons/git-fork';
@@ -28,12 +30,25 @@
     messageKey = '',
     assistantRowUsage = null,
     onfork,
+    sessionId = '',
+    abandonedBranchCount = 0,
+    manager = false,
+    readOnly = false,
+    store,
+    onRedo,
   }: {
     message: PimoteAgentMessage | StreamingMessage;
     streaming?: boolean;
     messageKey?: string;
     assistantRowUsage?: AssistantRowUsage | null;
+    /** Legacy transcript fork callback. Kept for callers that have not moved to tree navigation. */
     onfork?: (entryId: string) => void;
+    sessionId?: string;
+    abandonedBranchCount?: number;
+    manager?: boolean;
+    readOnly?: boolean;
+    store?: Pick<BranchTreeStore, 'navigate' | 'openFocused'>;
+    onRedo?: (entryId: string, opts?: { compactionPrompt?: string }) => void | Promise<void>;
   } = $props();
   let userMenuOpen = $state(false);
   let customExpanded = $state(false);
@@ -71,7 +86,13 @@
     return parseAssistantError(raw);
   });
 
-  let hasAssistantMenu = $derived(message.role === 'assistant' && !streaming && textContent.length > 0);
+  let entryId = $derived('entryId' in message && typeof message.entryId === 'string' ? message.entryId : undefined);
+
+  // New navigation callers opt in by supplying a store or transcript-owned
+  // redo callback. Standalone Message instances retain their copy/TTS menu.
+  let navigationConfigured = $derived(Boolean(entryId && (store || onRedo) && sessionId));
+  let showNavigationMenu = $derived(navigationConfigured && !manager && !readOnly);
+  let hasAssistantMenu = $derived(message.role === 'assistant' && !streaming && (textContent.length > 0 || showNavigationMenu));
 
   function getUserText(msg: PimoteAgentMessage | StreamingMessage): string {
     return msg.content
@@ -87,7 +108,6 @@
     return { name: match[1], body: match[2], after: match[3].trim() };
   }
 
-  let entryId = $derived('entryId' in message && typeof message.entryId === 'string' ? message.entryId : undefined);
   let userText = $derived(getUserText(message));
   let skillBlock = $derived(message.role === 'user' ? parseSkillBlock(userText) : null);
   let skillLines = $derived(skillBlock ? skillBlock.body.split('\n') : []);
@@ -119,24 +139,28 @@
   <!-- Tool results are displayed inline with their tool calls — skip standalone rendering -->
 {:else if message.role === 'user'}
   <div class="message user-message">
-    {#if entryId && onfork}
+    {#if entryId && (showNavigationMenu || onfork)}
       <div class="user-icon-col">
         <button class="message-icon user-icon" onclick={() => (userMenuOpen = !userMenuOpen)}>
           <User size={16} />
         </button>
         {#if userMenuOpen}
-          <div class="tool-menu">
-            <button
-              class="fork-btn"
-              onclick={() => {
-                onfork?.(entryId!);
-                userMenuOpen = false;
-              }}
-              title="Fork from this message"
-            >
-              <GitFork size={16} />
-            </button>
-          </div>
+          {#if showNavigationMenu}
+            <MessageActionMenu {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} onClose={() => (userMenuOpen = false)} />
+          {:else}
+            <div class="tool-menu">
+              <button
+                class="fork-btn"
+                onclick={() => {
+                  onfork?.(entryId!);
+                  userMenuOpen = false;
+                }}
+                title="Fork from this message"
+              >
+                <GitFork size={16} />
+              </button>
+            </div>
+          {/if}
         {/if}
       </div>
     {:else}
@@ -211,12 +235,28 @@
               <Bot size={16} />
             </button>
             {#if toolMenuOpen}
-              <div class="tool-menu">
-                {#if hasSpeakableText}
-                  <TtsButton {messageKey} {textContent} />
-                {/if}
-                <CopyButton text={textContent} title="Copy message" />
-              </div>
+              {#if showNavigationMenu && entryId}
+                <MessageActionMenu
+                  {entryId}
+                  {sessionId}
+                  {abandonedBranchCount}
+                  {manager}
+                  {readOnly}
+                  {store}
+                  {onRedo}
+                  onClose={() => (toolMenuOpen = false)}
+                  copyText={textContent}
+                  ttsText={hasSpeakableText ? textContent : undefined}
+                  {messageKey}
+                />
+              {:else}
+                <div class="tool-menu">
+                  {#if hasSpeakableText}
+                    <TtsButton {messageKey} {textContent} />
+                  {/if}
+                  <CopyButton text={textContent} title="Copy message" />
+                </div>
+              {/if}
             {/if}
           {:else}
             <div class="message-icon assistant-icon">

@@ -282,6 +282,8 @@ The reviewer approved this automated/manual split through the orchestrator.
 
 ## Steps
 
+**Pre-implementation commit:** `3be1072747aced1635442fbfe441ce930c8d5ef8`
+
 ### Step 1: Transfer complete conversation trees
 
 In `server/src/ws-handler.ts`, enrich `mapTreeNodes` with `conversationText`
@@ -296,7 +298,7 @@ leaf. Keep observer access consistent with existing tree reads.
 `shared/src/protocol.ts` already contains the additive interface declarations.
 
 **Verify:** Run `npm run test --workspace=server -- --run src/ws-handler.test.ts -t "tree navigation interfaces"`. Conversation text, direct reads, slash reads, and deep-tree tests pass.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Implement branch projection
 
@@ -315,7 +317,7 @@ Keep all topology calculations pure. Reuse traversal ideas from
 `client/src/lib/tree-dialog-utils.ts`, without duplicating topology in rendering.
 
 **Verify:** Run `npm run test --workspace=client -- --run src/lib/branch-tree.test.ts`. All projection, focus, exclusion, depth, and alternate-count cases pass.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Implement transcript search and target selection
 
@@ -330,7 +332,7 @@ cutoff, `viewportTop + threshold`. Equality detaches the preview. Return null
 when no user qualifies. Do not include DOM access in either module.
 
 **Verify:** Run `npm run test --workspace=client -- --run src/lib/conversation-find.test.ts src/lib/transcript-navigation.test.ts`.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Implement snapshot and explorer state
 
@@ -364,7 +366,7 @@ Invalidate the matching session cache on every full resync. Move start/end busy
 tracking and close-on-resync handling from TreeDialog, keeping sessions isolated.
 
 **Verify:** Run `npm run test --workspace=client -- --run src/lib/stores/branch-tree-store.svelte.test.ts`. Cache, focus, search, labels, options, lifecycle, and both failure modes pass.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Build shared message actions
 
@@ -387,7 +389,7 @@ Copy/TTS availability rules, tool rendering, costs, and streaming behavior.
 Use existing dialog and button modules rather than adding dependencies.
 
 **Verify:** Run `npm run test --workspace=client -- --run src/lib/components/MessageActionMenu.test.ts`. Check both face menus and modal cancellation against `docs/mocks/fork-from-transcript-message/transcript.html`.
-**Status:** not started
+**Status:** in progress
 
 ### Step 6: Build the branch explorer
 

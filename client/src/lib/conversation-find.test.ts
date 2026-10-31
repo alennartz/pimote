@@ -24,7 +24,7 @@ describe('conversation search', () => {
 
     expect(findInConversation(messages, 'retry')).toEqual([
       { messageKey: 'u1', blockIndex: 0, offset: 8, length: 5 },
-      { messageKey: 'a1', blockIndex: 1, offset: 18, length: 5 },
+      { messageKey: 'a1', blockIndex: 1, offset: 19, length: 5 },
       { messageKey: 'a1', blockIndex: 3, offset: 4, length: 5 },
     ]);
   });

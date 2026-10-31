@@ -21,6 +21,7 @@ import type {
   PromptOutcome,
   PromptResponseData,
   GetGlobalSettingsResponseData,
+  GetTreeResponseData,
   ServerCapabilitiesEvent,
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome, SessionObserver, EventSocket } from './session-manager.js';
@@ -170,7 +171,7 @@ function truncatePreview(value: string): string {
   return `${value.slice(0, TREE_PREVIEW_MAX_CHARS - 3)}...`;
 }
 
-function textFromEntryContent(content: unknown): string {
+function textFromEntryContent(content: unknown, separator = '\n'): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content
@@ -180,7 +181,14 @@ function textFromEntryContent(content: unknown): string {
       return candidate.type === 'text' && typeof candidate.text === 'string';
     })
     .map((block) => block.text)
-    .join('\n');
+    .join(separator);
+}
+
+function conversationTextForEntry(entry: SessionTreeNode['entry']): string | undefined {
+  if (entry.type !== 'message') return undefined;
+  const role = typeof entry.message.role === 'string' ? entry.message.role : undefined;
+  if (role !== 'user' && role !== 'assistant') return undefined;
+  return textFromEntryContent((entry.message as { content?: unknown } | undefined)?.content, '\n\n');
 }
 
 function previewForEntry(entry: SessionTreeNode['entry']): string {
@@ -289,6 +297,7 @@ export function mapTreeNodes(nodes: SessionTreeNode[]): PimoteTreeNode[] {
     const current = pending.pop()!;
     const { node } = current;
     const timestamp = typeof node.entry.timestamp === 'string' ? node.entry.timestamp : new Date(0).toISOString();
+    const conversationText = conversationTextForEntry(node.entry);
     const mappedNode: PimoteTreeNode = {
       id: node.entry.id,
       type: node.entry.type,
@@ -302,6 +311,7 @@ export function mapTreeNodes(nodes: SessionTreeNode[]): PimoteTreeNode[] {
             : undefined,
       customType: 'customType' in node.entry && typeof node.entry.customType === 'string' ? node.entry.customType : undefined,
       preview: previewForEntry(node.entry),
+      ...(conversationText !== undefined ? { conversationText } : {}),
       timestamp,
       label: node.label,
       labelTimestamp: node.labelTimestamp,
@@ -345,7 +355,9 @@ export function serializeTreeResponse(id: string, tree: PimoteTreeNode[], curren
     chunks.push('{"id":', JSON.stringify(node.id), ',"type":', JSON.stringify(node.type));
     if (node.role !== undefined) chunks.push(',"role":', JSON.stringify(node.role));
     if (node.customType !== undefined) chunks.push(',"customType":', JSON.stringify(node.customType));
-    chunks.push(',"preview":', JSON.stringify(node.preview), ',"timestamp":', JSON.stringify(node.timestamp));
+    chunks.push(',"preview":', JSON.stringify(node.preview));
+    if (node.conversationText !== undefined) chunks.push(',"conversationText":', JSON.stringify(node.conversationText));
+    chunks.push(',"timestamp":', JSON.stringify(node.timestamp));
     if (node.label !== undefined) chunks.push(',"label":', JSON.stringify(node.label));
     if (node.labelTimestamp !== undefined) chunks.push(',"labelTimestamp":', JSON.stringify(node.labelTimestamp));
     chunks.push(',"children":[');
@@ -1170,6 +1182,7 @@ export class WsHandler {
         case 'get_messages':
         case 'new_session':
         case 'get_session_stats':
+        case 'get_tree':
         case 'get_session_meta':
         case 'get_commands':
         case 'complete_args':
@@ -1566,6 +1579,11 @@ export class WsHandler {
         break;
       }
 
+      case 'get_tree': {
+        this.sendResponse(id, true, this.getTreeResponse(session));
+        break;
+      }
+
       case 'get_session_stats': {
         const stats = session.getSessionStats();
         this.sendResponse(id, true, { stats });
@@ -1696,6 +1714,13 @@ export class WsHandler {
     }
   }
 
+  private getTreeResponse(session: AgentSession): GetTreeResponseData {
+    return {
+      tree: mapTreeNodes(session.sessionManager.getTree() as SessionTreeNode[]),
+      currentLeafId: session.sessionManager.getLeafId(),
+    };
+  }
+
   /** Dispatch slash commands owned by Pimote before pi can queue them as text. */
   private async dispatchPimoteSlashCommand(id: string, sessionId: string, slot: ManagedSlot, message: string): Promise<boolean> {
     const session = slot.session;
@@ -1719,9 +1744,8 @@ export class WsHandler {
     }
 
     if (trimmed === '/tree') {
-      const tree = mapTreeNodes(session.sessionManager.getTree() as SessionTreeNode[]);
-      const currentLeafId = session.sessionManager.getLeafId();
-      this.sendSerializedResponse(serializeTreeResponse(id, tree, currentLeafId));
+      const treeResponse = this.getTreeResponse(session);
+      this.sendSerializedResponse(serializeTreeResponse(id, treeResponse.tree, treeResponse.currentLeafId));
       return true;
     }
 
