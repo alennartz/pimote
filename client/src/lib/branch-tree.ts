@@ -37,15 +37,22 @@ function isConversationMessage(node: PimoteTreeNode): boolean {
   return node.type === 'message' && (node.role === 'user' || node.role === 'assistant');
 }
 
+function hasConversationText(node: PimoteTreeNode): boolean {
+  return typeof node.conversationText === 'string' && node.conversationText.trim().length > 0;
+}
+
 /**
  * Remove non-conversation entries while attaching each message to its next
- * meaningful ancestor. The iterative walk preserves wire order and handles
- * very deep session trees without consuming the call stack.
+ * meaningful ancestor. Textless turns stay only when they have at least two
+ * projected children, so they still mark a real branch point. The iterative
+ * walk preserves wire order and handles very deep session trees without
+ * consuming the call stack.
  */
 function projectTree(tree: PimoteTreeNode[]): Projection {
   const roots: ProjectedNode[] = [];
   const byId = new Map<string, ProjectedNode>();
   const parentByRawId = new Map<string, string | null>();
+  const order: ProjectedNode[] = [];
   const pending: Array<{ node: PimoteTreeNode; parent: ProjectedNode | null; rawParentId: string | null }> = [];
 
   for (let index = tree.length - 1; index >= 0; index -= 1) {
@@ -61,6 +68,7 @@ function projectTree(tree: PimoteTreeNode[]): Projection {
     if (isConversationMessage(current.node)) {
       const projected: ProjectedNode = { source: current.node, children: [], parent };
       byId.set(current.node.id, projected);
+      order.push(projected);
       if (parent) parent.children.push(projected);
       else roots.push(projected);
       parent = projected;
@@ -71,7 +79,31 @@ function projectTree(tree: PimoteTreeNode[]): Projection {
     }
   }
 
-  return { roots, byId, parentByRawId };
+  // Rebuild each projected subtree from the leaves upward. A dropped node
+  // contributes its visible children directly to its parent, which preserves
+  // wire order and makes branch-point counts reflect projected children.
+  const visibleChildren = new Map<ProjectedNode, ProjectedNode[]>();
+  for (let index = order.length - 1; index >= 0; index -= 1) {
+    const node = order[index];
+    const children: ProjectedNode[] = [];
+    for (const child of node.children) children.push(...(visibleChildren.get(child) ?? [child]));
+
+    if (!hasConversationText(node.source) && children.length < 2) {
+      byId.delete(node.source.id);
+      visibleChildren.set(node, children);
+      continue;
+    }
+
+    node.children = children;
+    for (const child of children) child.parent = node;
+    visibleChildren.set(node, [node]);
+  }
+
+  const projectedRoots: ProjectedNode[] = [];
+  for (const root of roots) projectedRoots.push(...(visibleChildren.get(root) ?? [root]));
+  for (const root of projectedRoots) root.parent = null;
+
+  return { roots: projectedRoots, byId, parentByRawId };
 }
 
 function segmentId(first: ProjectedNode, last: ProjectedNode): string {
@@ -80,11 +112,12 @@ function segmentId(first: ProjectedNode, last: ProjectedNode): string {
 
 function messageRow(node: ProjectedNode, depth: number, activeIds: ReadonlySet<string>): BranchMapRow {
   const source = node.source;
+  const text = hasConversationText(source) ? source.conversationText! : source.role === 'assistant' ? 'assistant turn — tool calls only' : 'user turn — image only';
   return {
     kind: 'message',
     id: source.id,
     role: source.role ?? '',
-    text: source.conversationText || source.preview || '(no message text)',
+    text,
     ...(source.label === undefined ? {} : { label: source.label }),
     isActive: activeIds.has(source.id),
     isBranchPoint: node.children.length >= 2,
