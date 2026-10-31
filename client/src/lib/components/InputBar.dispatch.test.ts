@@ -5,7 +5,7 @@ import type { PimoteCommand, PimoteResponse } from '@pimote/shared';
 import InputBar from './InputBar.svelte';
 import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 import { connection } from '$lib/stores/connection.svelte.js';
-import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
+import { branchTreeStore } from '$lib/stores/branch-tree-store.svelte.js';
 import { pushSharedImages, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
 
 // The composer settles its optimistic transcript entry and pending-steer pill
@@ -68,7 +68,7 @@ afterEach(async () => {
   sessionRegistry.sessions = {};
   sessionRegistry.viewedSessionId = null;
   connection.ready = false;
-  treeDialogStore.closeDialog();
+  branchTreeStore.close();
   sharedImagesRequest.images = [];
   sharedImagesRequest.seq = 0;
 });
@@ -159,7 +159,7 @@ describe('prompt dispatch outcome', () => {
     setupSession(true);
     respond({ tree: [], currentLeafId: null });
     await submit('/tree');
-    expect(treeDialogStore.state).toMatchObject({ open: true, sessionId: 's1', tree: [], currentLeafId: null });
+    expect(branchTreeStore.state).toMatchObject({ open: true, sessionId: 's1', tree: [], currentLeafId: null });
   });
 });
 

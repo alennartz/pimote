@@ -12,7 +12,6 @@
   import type { BranchTreeStore } from '$lib/stores/branch-tree-store.svelte.js';
   import User from '@lucide/svelte/icons/user';
   import Bot from '@lucide/svelte/icons/bot';
-  import GitFork from '@lucide/svelte/icons/git-fork';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import CircleSlash from '@lucide/svelte/icons/circle-slash';
@@ -29,7 +28,6 @@
     streaming = false,
     messageKey = '',
     assistantRowUsage = null,
-    onfork,
     sessionId = '',
     abandonedBranchCount = 0,
     manager = false,
@@ -41,8 +39,6 @@
     streaming?: boolean;
     messageKey?: string;
     assistantRowUsage?: AssistantRowUsage | null;
-    /** Legacy transcript fork callback. Kept for callers that have not moved to tree navigation. */
-    onfork?: (entryId: string) => void;
     sessionId?: string;
     abandonedBranchCount?: number;
     manager?: boolean;
@@ -139,28 +135,13 @@
   <!-- Tool results are displayed inline with their tool calls — skip standalone rendering -->
 {:else if message.role === 'user'}
   <div class="message user-message">
-    {#if entryId && (showNavigationMenu || onfork)}
+    {#if entryId && showNavigationMenu}
       <div class="user-icon-col">
         <button class="message-icon user-icon" onclick={() => (userMenuOpen = !userMenuOpen)}>
           <User size={16} />
         </button>
         {#if userMenuOpen}
-          {#if showNavigationMenu}
-            <MessageActionMenu {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} onClose={() => (userMenuOpen = false)} />
-          {:else}
-            <div class="tool-menu">
-              <button
-                class="fork-btn"
-                onclick={() => {
-                  onfork?.(entryId!);
-                  userMenuOpen = false;
-                }}
-                title="Fork from this message"
-              >
-                <GitFork size={16} />
-              </button>
-            </div>
-          {/if}
+          <MessageActionMenu {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} onClose={() => (userMenuOpen = false)} />
         {/if}
       </div>
     {:else}
@@ -460,24 +441,6 @@
     align-items: center;
     gap: 6px;
     margin-top: 2px;
-  }
-
-  .fork-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: none;
-    background: var(--secondary);
-    color: var(--foreground);
-    cursor: pointer;
-    transition: background-color 0.15s;
-  }
-
-  .fork-btn:hover {
-    background: color-mix(in oklch, var(--secondary) 90%, white);
   }
 
   .assistant-meta {

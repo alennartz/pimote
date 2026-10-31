@@ -166,7 +166,7 @@ export interface AssistantRowUsage {
 export interface PimoteAgentMessage {
   role: string;
   content: PimoteMessageContent[];
-  /** Stable session entry ID from the pi SDK, used for targeting specific messages (e.g. fork). */
+  /** Stable session entry ID from the pi SDK, used for targeting specific messages. */
   entryId?: string;
   /** Present when role === 'custom' — the extension-defined message type (e.g. 'agent-complete') */
   customType?: string;
@@ -479,11 +479,6 @@ export interface RenameSessionCommand extends CommandBase {
 
 export interface DequeueSteeringCommand extends CommandBase {
   type: 'dequeue_steering';
-}
-
-export interface ForkCommand extends CommandBase {
-  type: 'fork';
-  entryId: string;
 }
 
 export interface GetTreeCommand extends CommandBase {
@@ -879,7 +874,6 @@ export type PimoteCommand =
   | CompleteFileRefsCommand
   | SetSessionNameCommand
   | DequeueSteeringCommand
-  | ForkCommand
   | GetTreeCommand
   | NavigateTreeCommand
   | SetTreeLabelCommand
@@ -947,8 +941,8 @@ export interface AgentEndEvent extends SessionEventBase {
    *  no "needs attention", no completion notification). */
   willRetry?: boolean;
   /** Entry IDs for all messages, zipped 1:1 with the session message list.
-   *  Sent so the client can enable fork targets on messages received via
-   *  streaming events (which don't carry entry IDs individually). */
+   *  Sent so the client can target messages received via streaming events
+   *  (which don't carry entry IDs individually). */
   messageEntryIds?: string[];
 }
 

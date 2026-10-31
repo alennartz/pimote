@@ -43,7 +43,7 @@ export class EventBuffer {
      *  any cursor an earlier buffer for the same session handed out. */
     private readonly baseCursor = 0,
     /** Entry ids of the session's context messages, attached to each final
-     *  agent_end so clients can fork from messages that arrived by streaming. */
+     *  agent_end so clients can target messages that arrived by streaming. */
     private readonly getMessageEntryIds?: () => string[],
   ) {
     this.buffer = new Array(capacity);

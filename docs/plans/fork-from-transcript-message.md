@@ -459,7 +459,7 @@ search out of tool/thinking/system/custom content. Remove keyboard and layout
 listeners when the transcript unmounts.
 
 **Verify:** Run `npm run test --workspace=client -- --run src/lib/components/ConversationFindBar.test.ts`. Check keyboard opening/closing, count changes, cycling, visible marking, and scroll anchoring against `transcript.html`.
-**Status:** in progress
+**Status:** done
 
 ### Step 9: Switch entry paths and retire old surfaces
 

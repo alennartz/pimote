@@ -635,7 +635,7 @@ export class SessionRegistry {
         session.streamingMessage = null;
         session.streamingKey = null;
         session.lastPositiveStreamingUsage = null;
-        // Apply entry IDs so fork targets work on messages received via streaming.
+        // Apply entry IDs so navigation targets work on messages received via streaming.
         if (endEvent.messageEntryIds) {
           this.applyMessageEntryIds(session, endEvent.messageEntryIds);
         }
@@ -1308,7 +1308,7 @@ export class SessionRegistry {
     // If the model is still streaming, retain a completed transient entry until
     // agent_settled. Pi queues the native history entry until that same boundary;
     // appending it now would place it before the active assistant message and
-    // shift positional fork targets.
+    // shift positional navigation targets.
     const completed: BashExecutionState = {
       ...execution,
       output: result.output,

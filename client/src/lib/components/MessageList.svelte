@@ -194,7 +194,7 @@
     // Message replacement and full resync invalidate the tree cache.
     session?.messageCount;
     session?.messages.length;
-    if (!sessionId || source || readOnly) {
+    if (!sessionId || source || readOnly || !session.messages.some((message) => 'entryId' in message && typeof message.entryId === 'string')) {
       treeSnapshot = null;
       return;
     }

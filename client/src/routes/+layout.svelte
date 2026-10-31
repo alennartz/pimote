@@ -17,7 +17,7 @@
   import '$lib/stores/voice-call-store.js';
   // Side-effect import: subscribes the login store to `login_step` events at app boot.
   import '$lib/stores/login-store.js';
-  import TreeDialog from '$lib/components/TreeDialog.svelte';
+  import BranchExplorer from '$lib/components/BranchExplorer.svelte';
   import LoginDialog from '$lib/components/LoginDialog.svelte';
   import Panel from '$lib/components/Panel.svelte';
   import DownloadToast from '$lib/components/DownloadToast.svelte';
@@ -361,8 +361,8 @@
   <!-- Extension UI dialogs (global overlay) -->
   <ExtensionDialog />
 
-  <!-- Tree navigation dialog -->
-  <TreeDialog />
+  <!-- Branch explorer -->
+  <BranchExplorer />
 
   <!-- Provider login dialog -->
   <LoginDialog />

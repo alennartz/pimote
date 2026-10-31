@@ -5,7 +5,7 @@
   import { commandStore } from '$lib/stores/command-store.svelte.js';
   import { consumeSharedImages, editorTextRequest, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
   import { getExtensionUiQueue } from '$lib/stores/extension-ui-queue.svelte.js';
-  import { treeDialogStore } from '$lib/stores/tree-dialog.svelte.js';
+  import { branchTreeStore } from '$lib/stores/branch-tree-store.svelte.js';
   import { loginStore } from '$lib/stores/login-store.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import CommandAutocomplete from './CommandAutocomplete.svelte';
@@ -263,7 +263,7 @@
         sessionRegistry.viewedSessionId !== sessionId ||
         untrack(isMobileViewport) ||
         uiQueue.hasRequestForSession(sessionId) ||
-        treeDialogStore.state.open ||
+        branchTreeStore.state.open ||
         loginStore.state.flow !== 'idle' ||
         document.querySelector('[role="dialog"][aria-modal="true"]:not([data-state="closed"]), [role="alertdialog"][aria-modal="true"]:not([data-state="closed"]), dialog[open]')
       )
@@ -503,7 +503,10 @@
         } else {
           const promptData = dispatchResponse.data as Record<string, unknown> | undefined;
           if (promptData?.tree) {
-            treeDialogStore.openDialog(sessionId, promptData.tree as import('@pimote/shared').PimoteTreeNode[], (promptData.currentLeafId as string) ?? null);
+            void branchTreeStore.open(sessionId, {
+              tree: promptData.tree as import('@pimote/shared').PimoteTreeNode[],
+              currentLeafId: (promptData.currentLeafId as string) ?? null,
+            });
           } else if ((dispatchResponse.data as PromptResponseData | undefined)?.outcome !== 'queued') {
             dropPill();
           }
@@ -538,10 +541,13 @@
           restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, clientMessageId);
           console.error('Prompt rejected:', promptResponse.error);
         } else {
-          // Handle /tree response — open tree dialog instead of adding a message
+          // Handle /tree response — open the branch explorer instead of adding a message
           const promptData = promptResponse.data as Record<string, unknown> | undefined;
           if (promptData?.tree) {
-            treeDialogStore.openDialog(sessionId, promptData.tree as import('@pimote/shared').PimoteTreeNode[], (promptData.currentLeafId as string) ?? null);
+            void branchTreeStore.open(sessionId, {
+              tree: promptData.tree as import('@pimote/shared').PimoteTreeNode[],
+              currentLeafId: (promptData.currentLeafId as string) ?? null,
+            });
           } else if (clientMessageId && (promptData as PromptResponseData | undefined)?.outcome !== 'started') {
             // Only a started prompt echoes a stamped user message. A queued
             // prompt shows in the steering queue and echoes unstamped later.
@@ -654,7 +660,7 @@
     // Textareas handle Escape themselves so autocomplete keeps precedence and
     // the abort command is sent only once. A window listener covers keyboard
     // focus on every other element in the desktop session view.
-    if (e.key !== 'Escape' || e.defaultPrevented || isMobileViewport() || treeDialogStore.state.open || loginStore.state.flow !== 'idle' || !sessionRegistry.viewed?.isStreaming)
+    if (e.key !== 'Escape' || e.defaultPrevented || isMobileViewport() || branchTreeStore.state.open || loginStore.state.flow !== 'idle' || !sessionRegistry.viewed?.isStreaming)
       return;
     e.preventDefault();
     handleAbort();

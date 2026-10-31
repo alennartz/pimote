@@ -365,7 +365,7 @@
     align-items: center;
     justify-content: center;
     padding: 0.5rem;
-    background: color-mix(in srgb, black 60%, transparent);
+    background: color-mix(in srgb, var(--foreground) 60%, transparent);
   }
 
   .explorer-frame {
@@ -378,7 +378,7 @@
     border: 1px solid var(--border);
     border-radius: 0.75rem;
     background: var(--background);
-    box-shadow: 0 20px 50px rgb(0 0 0 / 0.3);
+    box-shadow: 0 20px 50px color-mix(in srgb, var(--foreground) 30%, transparent);
   }
 
   .explorer-header,
@@ -496,7 +496,7 @@
     border-color: color-mix(in srgb, var(--primary) 45%, transparent);
   }
   .message-row.match .preview {
-    background: color-mix(in srgb, #facc15 45%, transparent);
+    background: color-mix(in srgb, var(--warning) 45%, transparent);
   }
   .role-icon {
     flex: 0 0 auto;

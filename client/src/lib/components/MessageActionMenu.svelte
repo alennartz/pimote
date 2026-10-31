@@ -104,7 +104,7 @@
 </div>
 
 <Dialog.Root open={compactionOpen} onOpenChange={(open) => !open && cancelCompaction()}>
-  <Dialog.Content showCloseButton={false} class="compaction-dialog">
+  <Dialog.Content showCloseButton={false} restoreScrollDelay={0} class="compaction-dialog">
     <Dialog.Header>
       <Dialog.Title>Redo with compaction</Dialog.Title>
       <Dialog.Description>Optionally tell pi how to summarize the conversation before redoing this message.</Dialog.Description>
