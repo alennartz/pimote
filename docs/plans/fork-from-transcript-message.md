@@ -131,8 +131,9 @@ findInConversation(messages: readonly PimoteAgentMessage[], query: string): Find
 ```ts
 // client/src/lib/stores/branch-tree-store.svelte.ts
 class BranchTreeStore {
-  open(sessionId: string): Promise<void>; // lazy fetch, cached
-  openFocused(sessionId: string, entryId: string): Promise<void>;
+  load(sessionId: string): Promise<GetTreeResponseData | null>; // lazy fetch, cached
+  open(sessionId: string, snapshot?: GetTreeResponseData): Promise<void>;
+  openFocused(sessionId: string, entryId: string, snapshot?: GetTreeResponseData): Promise<void>;
   close(): void;
   toggleSegment(segmentId: string): void;
   select(entryId: string): void;
@@ -142,7 +143,7 @@ class BranchTreeStore {
    *  revises the brainstorm's custom-only rule, decided during architecting),
    *  non-empty → summarize + customInstructions (replaceInstructions: false),
    *  called without compaction for one-click redo. */
-  navigate(entryId: string, opts?: { compactionPrompt?: string }): Promise<void>;
+  navigate(entryId: string, opts?: { compactionPrompt?: string }): Promise<{ cancelled: boolean; editorText?: string } | null>;
   setLabel(entryId: string, label: string | undefined): Promise<void>;
 }
 ```
@@ -179,8 +180,15 @@ cycles matches; the transcript scrolls to each match and marks it visibly
 ### Review-added interaction interfaces
 
 - `MessageActionMenu` accepts `entryId`, `sessionId`, `abandonedBranchCount`,
-  `manager`, `readOnly`, and a store with `navigate`/`openFocused`. Its buttons
-  dispatch navigation for the selected entry. Restricted sources hide navigation.
+  `manager`, `readOnly`, and a store with `navigate`/`openFocused`. It also accepts
+  optional `onRedo(entryId, opts)` for transcript-owned draft handling. Without
+  that callback, it dispatches through the store. Restricted sources hide navigation.
+- `load` reads the snapshot without opening the explorer. Transcript menus derive
+  alternate counts from the loaded state. Optional snapshots on `open` and
+  `openFocused` seed the cache without another read.
+- `navigate` returns the navigation result, or null on failure with `state.error`
+  set. MessageList applies the draft conflict policy to `editorText`.
+  BranchExplorer preserves TreeDialog's `sessionRegistry.setDraftText` behavior.
 - `ConversationFindBar` accepts `matches`, `onMatch`, and `onClose`. Accessible
   Next match and Previous match buttons cycle through results and report the target.
 - `transcript-navigation.ts` exports `previousUserAbove(positions, viewportTop,
@@ -271,3 +279,210 @@ User-message editorText draft-conflict handling retains its existing policy test
 The reviewer approved this automated/manual split through the orchestrator.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Transfer complete conversation trees
+
+In `server/src/ws-handler.ts`, enrich `mapTreeNodes` with `conversationText`
+only for user and assistant message entries. Reuse text extraction from
+`previewForEntry`, join text blocks with `\n\n`, and exclude thinking and tools.
+Keep preview truncation unchanged. Extend `serializeTreeResponse` to emit the
+optional field without changing its iterative traversal.
+
+Add a shared tree-response handler used by `dispatchPimoteSlashCommand` and the
+`get_tree` session-command case. Return `GetTreeResponseData` with the current
+leaf. Keep observer access consistent with existing tree reads.
+`shared/src/protocol.ts` already contains the additive interface declarations.
+
+**Verify:** Run `npm run test --workspace=server -- --run src/ws-handler.test.ts -t "tree navigation interfaces"`. Conversation text, direct reads, slash reads, and deep-tree tests pass.
+**Status:** not started
+
+### Step 2: Implement branch projection
+
+Implement `buildBranchMap`, `segmentsToExpose`, and `abandonedBranchCountAt` in
+`client/src/lib/branch-tree.ts` behind the existing row interface.
+Project user and assistant messages only. Preserve conversation descendants of
+omitted internal and tool nodes. Render shared messages once, preserve tree order,
+and mark active ancestry from `currentLeafId`.
+
+Classify branch points by meaningful continuations. Fold linear runs into first
+and last anchors with a segment row counting only hidden messages. Segment
+identities must remain stable across projection, expansion, and focus operations.
+Expanding one run must not expand deeper runs. Expose hidden focus targets without
+expanding unrelated segments. Report logical depth without a responsive cap.
+Keep all topology calculations pure. Reuse traversal ideas from
+`client/src/lib/tree-dialog-utils.ts`, without duplicating topology in rendering.
+
+**Verify:** Run `npm run test --workspace=client -- --run src/lib/branch-tree.test.ts`. All projection, focus, exclusion, depth, and alternate-count cases pass.
+**Status:** not started
+
+### Step 3: Implement transcript search and target selection
+
+Implement `findInConversation` in `client/src/lib/conversation-find.ts`.
+Return case-insensitive text matches in transcript and block order. Preserve original
+block indices, offsets, and match lengths. Use message entry identity when present.
+Only search user and assistant text blocks. Empty queries return no matches.
+
+Implement `previousUserAbove` in `client/src/lib/transcript-navigation.ts`.
+Return the last user entry with bottom strictly below the viewport's numeric
+cutoff, `viewportTop + threshold`. Equality detaches the preview. Return null
+when no user qualifies. Do not include DOM access in either module.
+
+**Verify:** Run `npm run test --workspace=client -- --run src/lib/conversation-find.test.ts src/lib/transcript-navigation.test.ts`.
+**Status:** not started
+
+### Step 4: Implement snapshot and explorer state
+
+Implement `BranchTreeStore` in
+`client/src/lib/stores/branch-tree-store.svelte.ts`. Add the approved `load` seam,
+optional snapshot parameters, and navigation-result return type from Interfaces.
+Keep transport injected. The store owns the per-session cache and navigation
+lifecycle state previously held by TreeDialog.
+
+`load` fetches only an uncached session and publishes its snapshot without opening
+the explorer. `open` resets explorer interaction state and reads through `load`,
+or seeds the cache from its supplied snapshot. `openFocused` selects the exact
+entry and expands `segmentsToExpose`. Implement close, selection, and segment
+toggling with reactive state.
+
+Use `buildBranchMap` for anchor search eligibility. Match conversation text and
+labels by exact message identity. `searchAll` includes hidden conversation entries,
+exposes matching segments, and selects a matching entry. Keep label matches at
+message identity rather than inventing conversation-block offsets.
+
+`navigate` sends no compaction fields for one-click redo. An explicit empty prompt
+sends `summarize: true`. A non-empty prompt also sends `customInstructions` and
+`replaceInstructions: false`. Return the result without applying composer policy.
+Unsuccessful responses and rejected promises return null, set error, and keep
+the explorer open. Cancellation must not trigger successful close behavior.
+
+`setLabel` sends `set_tree_label`, normalizes empty labels to undefined, and updates
+the cached snapshot after success. Reuse `updateTreeNodeLabel` from
+`client/src/lib/tree-dialog-utils.ts`. Subscribe to transport events once.
+Invalidate the matching session cache on every full resync. Move start/end busy
+tracking and close-on-resync handling from TreeDialog, keeping sessions isolated.
+
+**Verify:** Run `npm run test --workspace=client -- --run src/lib/stores/branch-tree-store.svelte.test.ts`. Cache, focus, search, labels, options, lifecycle, and both failure modes pass.
+**Status:** not started
+
+### Step 5: Build shared message actions
+
+Implement `client/src/lib/components/MessageActionMenu.svelte` with the approved
+props. Render both redo buttons for navigation-capable sources. Show
+`View existing branches (N)` only for positive alternate counts. Hide navigation
+for manager and read-only sources. One-click redo dispatches immediately without
+confirmation or compaction. Use `onRedo` when supplied, otherwise store navigation.
+Focused branch opening calls `openFocused(sessionId, entryId)`.
+
+Implement the compaction modal with textarea, Cancel, and OK. Cancel and dismissal
+must not navigate. OK passes the entered prompt, including an empty string.
+Preserve existing Copy and TTS controls through optional menu content or props.
+Keep the navigation props usable by the existing component tests.
+
+Update `client/src/lib/components/Message.svelte` to use this menu on user and
+assistant faces. Replace `onfork` with transcript redo integration props. Allow
+navigation for persisted assistant entries even without speakable text. Preserve
+Copy/TTS availability rules, tool rendering, costs, and streaming behavior.
+Use existing dialog and button modules rather than adding dependencies.
+
+**Verify:** Run `npm run test --workspace=client -- --run src/lib/components/MessageActionMenu.test.ts`. Check both face menus and modal cancellation against `docs/mocks/fork-from-transcript-message/transcript.html`.
+**Status:** not started
+
+### Step 6: Build the branch explorer
+
+Create `client/src/lib/components/BranchExplorer.svelte` around `branchTreeStore`
+and `buildBranchMap`. Follow `tree-explorer.html`: large frame, indented message
+rows, collapsed-message chips, active-path styling, selection, and resume footer.
+Compress indentation responsively without horizontal scrolling. Expanded segments
+need a collapse affordance even though expanded projection omits their segment row.
+Keep that affordance keyed to store segment identities.
+
+Render label chips and an add-label action. Inline editing commits on Enter or
+blur, cancels on Escape, and clears empty input. Call store `setLabel`; retain
+errors without losing the selection. Reuse the retained tree utilities for pure
+label updates and path/filter needs rather than copying their implementations.
+
+Wire anchor search, scope/count display, highlighted message hits, and an explicit
+Search all messages fallback. Focused opens and full-search hits scroll to the
+exact selected message after rendering. Disable resume without a message selection
+or while busy. Resume without compaction calls `navigate(selectedId)`.
+Compaction opens the opt-in modal with Cancel and OK, using the same prompt rules
+as transcript redo. Apply successful non-cancelled `editorText` through
+`sessionRegistry.setDraftText(sessionId, editorText)`, preserving TreeDialog behavior.
+
+Close on Escape, dismissal, or viewed-session changes. Keep lifecycle handling in
+the store, not the explorer. Show load/navigation errors inside the open frame.
+
+**Verify:** Check collapsed/expanded runs, focused opens, inline label clearing, anchor/full search, resume, cancellation, busy/error states, and narrow layouts against `docs/mocks/fork-from-transcript-message/tree-explorer.html`.
+**Status:** not started
+
+### Step 7: Integrate transcript redo and sticky navigation
+
+Replace `handleFork` in `client/src/lib/components/MessageList.svelte` with an
+`onRedo` callback. Bind navigation to the viewed regular session, retaining the
+`source` and `readOnly` guards. Call store navigation and use returned `editorText`
+with existing `needsDraftPrompt`, `applyDraftChoice`, and draft-choice dialog.
+Use the same session ID after navigation, not new-session replacement semantics.
+Do not apply editor text for null or cancelled results. Update fork wording.
+
+Load snapshots without opening the explorer for navigation-capable message menus.
+Derive alternate counts reactively through `abandonedBranchCountAt`, so menus gain
+the branches item when data arrives. Refresh after cache invalidation without
+fetching for manager or read-only sources.
+
+Create `client/src/lib/components/StickyUserPreview.svelte`. Render a desktop-only,
+one-line truncated user preview with avatar and the same MessageActionMenu and
+`onRedo`. MessageList gathers rendered message positions and calls
+`previousUserAbove` on scroll and layout changes. Attach message keys to scrollable
+rows without changing message rendering. Hide the preview when no target qualifies.
+On mobile, hide the preview and add jump-up scrolling to the previous user message.
+Preserve the existing bottom-scroll and abort controls.
+
+**Verify:** Existing draft-policy tests pass. Check redo on both roles, occupied-draft choices, sticky threshold detachment, older-target replacement, mobile jump-up, and unchanged bottom-follow behavior against `transcript.html`.
+**Status:** not started
+
+### Step 8: Integrate conversation find controls
+
+Implement `client/src/lib/components/ConversationFindBar.svelte` with its existing
+matches, onMatch, and onClose props. Add query binding needed by MessageList without
+breaking those props. Show match count and accessible Next match and Previous match
+buttons. Cycle in both directions and do nothing for empty results.
+
+Host the bar in `MessageList.svelte`. Ctrl/Cmd+F opens and focuses it; Escape closes
+it and clears the find state. Search the current active transcript with
+`findInConversation`. Map entry identities to existing transcript message keys when
+scrolling. Scroll to each reported match and mark its row or text visibly. Keep
+search out of tool/thinking/system/custom content. Remove keyboard and layout
+listeners when the transcript unmounts.
+
+**Verify:** Run `npm run test --workspace=client -- --run src/lib/components/ConversationFindBar.test.ts`. Check keyboard opening/closing, count changes, cycling, visible marking, and scroll anchoring against `transcript.html`.
+**Status:** not started
+
+### Step 9: Switch entry paths and retire old surfaces
+
+In `client/src/lib/components/InputBar.svelte`, replace treeDialogStore references
+with branchTreeStore. Both existing tree-response paths call
+`open(sessionId, { tree, currentLeafId })`, preserving the supplied snapshot without
+another request. Update slash-menu and Escape guards to the new open state.
+In `client/src/routes/+layout.svelte`, replace TreeDialog with BranchExplorer.
+
+Remove `ForkCommand` and its union member from `shared/src/protocol.ts`. Remove
+the server fork command case and its routing entry in `server/src/ws-handler.ts`.
+Update protocol comments that describe message entry IDs as fork targets.
+Leave pi's `commandContextActions.fork` and SDK extension behavior unchanged.
+
+Delete `client/src/lib/components/TreeDialog.svelte` and
+`client/src/lib/stores/tree-dialog.svelte.ts`. Retain
+`client/src/lib/tree-dialog-utils.ts` and its tests for reusable pure helpers.
+Retire `TreeDialog.test.ts`, `stores/tree-dialog.svelte.test.ts`, and the
+`describe('fork command')` suite in `server/src/ws-handler.test.ts` with fork-only
+fixtures. These deletions retire the removed feature contracts.
+
+In the live `client/src/lib/components/InputBar.dispatch.test.ts`, change only the
+store import, cleanup call (`closeDialog` to `close`), and tree-state references.
+Keep its behavioral assertions unchanged. These migrations and retired-suite
+removals are the approved exceptions. Do not change any other existing tests.
+
+**Verify:** Run the complete client and server suites with `npm run test --workspace=client -- --run` and `npm run test --workspace=server -- --run`, then `npm run check`. Confirm no production caller sends wire `fork` or imports the retired tree dialog/store. Complete the approved manual checks from Steps 5–8.
+**Status:** not started
