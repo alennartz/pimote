@@ -575,8 +575,9 @@
 
   @media (max-width: 640px) {
     .jump-up {
-      bottom: 4.5rem;
+      top: 0.75rem;
       display: flex;
+      opacity: 0.5;
     }
   }
 
