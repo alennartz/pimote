@@ -402,4 +402,4 @@ Add to **Flagged ambiguities**: "user" also names pi's conversation message role
 Run the full test suites (`server/`, `client/`, `shared/` per repo scripts) and `npm run check`-equivalents for type/lint gates. Fix fallout only where a step above caused it. Record the Android follow-up noted in the architecture (Android consumes `detach_session`/`close_session` and takes the hard cut in lockstep) wherever the pull brief tracks follow-ups — confirm location with the user if no such file exists.
 
 **Verify:** all suites green; commits made per step (`plan:` through implementation as work lands).
-**Status:** not started
+**Status:** done
