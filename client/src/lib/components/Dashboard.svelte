@@ -80,25 +80,24 @@
 
 <GlobalSettingsDialog store={globalSettingsStore} {viewport} snippets={serverCapabilities.tagSnippets} />
 
+<Button
+  variant="ghost"
+  size="icon"
+  class="settings-gear settings-gear-desktop hidden md:flex"
+  aria-label="Open Settings"
+  title="Open Settings"
+  onclick={() => void globalSettingsStore.loadManifest()}
+>
+  <Settings class="size-7" />
+</Button>
+
 <div class="flex min-h-0 flex-1">
   <div class="flex min-h-0 flex-1 flex-col overflow-y-auto" bind:this={scrollElement} onscroll={closeOpenSwipeCard}>
     <div class="mx-auto flex w-full max-w-2xl flex-col gap-10 px-5 pt-12 pb-28 md:max-w-4xl md:pt-16">
       <div class="flex flex-col items-center gap-1.5">
-        <div class="flex w-full items-center justify-center gap-2.5 md:justify-start">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="hidden size-9 shrink-0 md:inline-flex"
-            aria-label="Open Settings"
-            title="Open Settings"
-            onclick={() => void globalSettingsStore.loadManifest()}
-          >
-            <Settings class="size-5" />
-          </Button>
-          <div class="flex items-center gap-2.5">
-            <img src="/pwa/icon-512.png" alt="" class="border-border size-[90px] rounded-xl border object-cover" />
-            <span class="text-foreground text-4xl font-semibold tracking-tight">Pimote</span>
-          </div>
+        <div class="flex items-center gap-2.5">
+          <img src="/pwa/icon-512.png" alt="" class="border-border size-[90px] rounded-xl border object-cover" />
+          <span class="text-foreground text-4xl font-semibold tracking-tight">Pimote</span>
         </div>
       </div>
 
@@ -110,3 +109,17 @@
     </div>
   </div>
 </div>
+
+<style>
+  :global(.settings-gear) {
+    position: fixed;
+    z-index: 20;
+    border-radius: 50%;
+  }
+  :global(.settings-gear-desktop) {
+    width: 3.5rem;
+    height: 3.5rem;
+    left: max(1.5rem, env(safe-area-inset-left));
+    bottom: max(1.5rem, env(safe-area-inset-bottom));
+  }
+</style>

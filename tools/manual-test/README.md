@@ -9,9 +9,9 @@ and which tool (if any) drives each.
 
 ## Global Settings acceptance
 
-The home Settings button opens a server-resolved tabbed manifest from the
-left side of the mobile header or desktop branding row. Verify the app name
-sits to its right and the button is absent on conversations, lazy reads,
+The home Settings control opens a server-resolved tabbed manifest. Verify the
+original desktop bottom-left gear, the mobile header button, and the app name
+sitting to its right. Verify the control is absent on conversations, lazy reads,
 independent drafts, missing-file creation, dirty-close confirmation, Markdown
 capability snippets, and responsive action placement. Exercise native-config
 validation and symlink writes from two clients. Reload Pimote extensions with
