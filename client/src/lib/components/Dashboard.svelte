@@ -83,14 +83,15 @@
 <div class="flex min-h-0 flex-1">
   <div class="flex min-h-0 flex-1 flex-col overflow-y-auto" bind:this={scrollElement} onscroll={closeOpenSwipeCard}>
     <div class="mx-auto flex w-full max-w-2xl flex-col gap-10 px-5 pt-12 pb-28 md:max-w-4xl md:pt-16">
-      <div class="flex flex-col items-center gap-1.5">
-        <div class="flex items-center gap-2.5">
+      <div class="grid w-full grid-cols-[auto_1fr_auto] items-start gap-2.5">
+        <Button variant="ghost" size="icon" class="size-9 shrink-0" aria-label="Open Settings" title="Open Settings" onclick={() => void globalSettingsStore.loadManifest()}>
+          <Settings class="size-5" />
+        </Button>
+        <div class="flex items-center justify-center gap-2.5">
           <img src="/pwa/icon-512.png" alt="" class="border-border size-[90px] rounded-xl border object-cover" />
           <span class="text-foreground text-4xl font-semibold tracking-tight">Pimote</span>
-          <Button variant="ghost" size="icon" class="size-9 shrink-0" aria-label="Open Settings" title="Open Settings" onclick={() => void globalSettingsStore.loadManifest()}>
-            <Settings class="size-5" />
-          </Button>
         </div>
+        <div class="size-9" aria-hidden="true"></div>
       </div>
 
       <HomeToolbar bind:search bind:managerMode bind:managerDraft {managerReady} busy={managerBusy} onSubmitManager={submitManagerDraft} />
