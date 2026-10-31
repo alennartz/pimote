@@ -818,6 +818,15 @@ export class WsHandler {
             } else {
               this.sendSessionClosedEvent(closeSessionId);
             }
+            // Closed sessions leave every user's profile — close_session only
+            // arrives from cancelled opens and legacy clients, and a surviving
+            // link would reopen the session the user closed. No exclusion,
+            // mirroring the archive path.
+            if (this.userProfiles) {
+              for (const affectedUser of await this.userProfiles.unlinkAll(closeSessionId)) {
+                WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, affectedUser);
+              }
+            }
           });
 
           this.sendResponse(id, true);
@@ -850,6 +859,14 @@ export class WsHandler {
 
             if (deleteSessionPath) {
               await this.sessionMetadataStore.delete(deleteSessionPath);
+            }
+
+            // Deleted sessions leave every user's profile; each affected
+            // user's connections are told alongside session_deleted.
+            if (this.userProfiles) {
+              for (const affectedUser of await this.userProfiles.unlinkAll(deleteSessionId)) {
+                WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, affectedUser);
+              }
             }
 
             // Broadcast deletion to all clients so sidebar lists update
@@ -969,6 +986,7 @@ export class WsHandler {
 
           const takeoverSlot = this.sessionManager.getSession(takeoverSessionId)!;
           await this.claimSession(takeoverSessionId, takeoverSlot);
+          await this.linkSessionForUser(takeoverSessionId, takeoverSlot.folderPath);
           const folder = await WsHandler.broadcastSessionOpened(
             takeoverSessionId,
             takeoverSlot.folderPath,
@@ -1880,6 +1898,7 @@ export class WsHandler {
     this.subscribedSessions.delete(oldId);
     this.subscribedSessions.add(newId);
     if (this.viewedSessionId === oldId) this.viewedSessionId = newId;
+    await this.relinkSessionForUser(oldId, newId, folderPath);
 
     const isFirstObserver = firstObserver ?? slot.observers.keys().next().value === this.clientId;
 
@@ -1965,6 +1984,19 @@ export class WsHandler {
   private async linkSessionForUser(sessionId: string, folderPath: string): Promise<void> {
     if (!this.userProfiles) return;
     if (await this.userProfiles.link(this.user, { sessionId, folderPath })) {
+      WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user, this.clientId);
+    }
+  }
+
+  /** Move the requesting user's profile link across a session rekey, then
+   *  push the new set to their other connections (this connection applied the
+   *  swap locally — no echo). Idempotent when several observers of one user
+   *  each run this. */
+  private async relinkSessionForUser(oldId: string, newId: string, folderPath: string): Promise<void> {
+    if (!this.userProfiles) return;
+    const unlinked = await this.userProfiles.unlink(this.user, oldId);
+    const linked = await this.userProfiles.link(this.user, { sessionId: newId, folderPath });
+    if (unlinked || linked) {
       WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user, this.clientId);
     }
   }

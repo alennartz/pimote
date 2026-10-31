@@ -308,10 +308,10 @@ No exclusion here — the archiving connection can belong to a different user, a
 - Delete the `persistSessions()` method (lines ~408–413) and every call site (~990, 998, 1007, 1035, 1049, 1081). No behavior replaces it — the server owns the set now.
 - Remove the `setActiveSessions` import (keep `getActiveSessions` — the boot hydration at line ~1868 stays as the one-time migration seed until Step 10 replaces its gating).
 - `closeSession` (~line 1920): keep the optimistic local removal and the `pendingNewSessionRequests` guard, change the wire command from `close_session` to `detach_session`.
-- The two `close_session` sends in the pending-placeholder cleanup paths (~line 1674 cancelled-open continuation, ~line 1924 placeholder discard) stay verbatim — that command remains on the wire for them.
+- The `close_session` send in the pending-placeholder cleanup path (~line 1674 cancelled-open continuation) stays verbatim — that command remains on the wire for it. The other named site (~line 1924, inside `closeSession` itself) converts to `detach_session` with the command switch above: the pre-implementation code shows `closeSession`'s `pendingNewSessionRequests` guard meant placeholders never sent `close_session` from there, so only one placeholder-path send ever existed.
 - `onSessionNotFound` / `onSessionRestoreFailed` keep dropping local entries only. Rewrite the stale comment at ~line 1828 (`The connection store sends the socket-scoped detach first...`) — Step 10 removes that send; cleanup rests on the server's same-id takeover eviction (DR-067).
 
-**Verify:** `npx vitest run client/src/lib/stores/session-registry.test.ts` green; grep shows no `persistSessions` remains; grep shows `close_session` sent only from the two placeholder paths.
+**Verify:** `npx vitest run client/src/lib/stores/session-registry.test.ts` green; grep shows no `persistSessions` remains; grep shows `close_session` sent only from the cancelled-open continuation.
 **Status:** done
 
 ### Step 10: Client connect flow — user param, profile-gated reconcile, one-time clear

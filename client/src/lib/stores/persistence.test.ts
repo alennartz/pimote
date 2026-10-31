@@ -112,6 +112,13 @@ describe('Persistence — User', () => {
     setUser('default');
     expect(getUser()).toBe('default');
   });
+
+  it('normalizes the stored name to the server-side profile key rule', () => {
+    setUser('  alenna  ');
+    expect(getUser()).toBe('alenna');
+    setUser('a'.repeat(100));
+    expect(getUser()).toBe('a'.repeat(64));
+  });
 });
 
 describe('Persistence — Active Sessions', () => {

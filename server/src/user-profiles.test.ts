@@ -262,6 +262,27 @@ describe('UserProfiles — persistence', () => {
     expect(reloaded.get(name)).toEqual([S1]);
     expect(reloaded.summaries()).toEqual([{ name, sessionCount: 1 }]);
   });
+
+  it('keys profiles by names colliding with Object prototype members', async () => {
+    const path = storePath();
+    const profiles = new UserProfiles(path);
+    await profiles.load();
+
+    for (const name of ['constructor', 'toString', '__proto__']) {
+      expect(await profiles.link(name, S1)).toBe(true);
+      expect(profiles.get(name)).toEqual([S1]);
+      expect(profiles.isFresh(name)).toBe(false);
+    }
+    expect(profiles.get('alice')).toEqual([]);
+    expect(profiles.isFresh('alice')).toBe(true);
+
+    const reloaded = new UserProfiles(path);
+    await reloaded.load();
+    for (const name of ['constructor', 'toString', '__proto__']) {
+      expect(reloaded.get(name)).toEqual([S1]);
+      expect(reloaded.isFresh(name)).toBe(false);
+    }
+  });
 });
 
 describe('UserProfiles — summaries', () => {

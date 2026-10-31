@@ -19,8 +19,10 @@ interface ProfileDocument {
 /** A persisted document as handed to the parser. */
 type PersistedDocument = Partial<ProfileDocument>;
 
+/** The users map is null-prototype so user names colliding with Object
+ *  prototype members (`constructor`, `__proto__`, ...) stay ordinary keys. */
 function emptyDocument(): ProfileDocument {
-  return { version: DOCUMENT_VERSION, users: {} };
+  return { version: DOCUMENT_VERSION, users: Object.create(null) as ProfileDocument['users'] };
 }
 
 /** Parse a persisted document; a corrupt or malformed file degrades to empty. */
@@ -31,7 +33,7 @@ function parseDocument(raw: string): ProfileDocument {
     for (const profile of Object.values(parsed.users)) {
       if (!profile || typeof profile !== 'object' || !Array.isArray(profile.sessions)) return emptyDocument();
     }
-    return { version: DOCUMENT_VERSION, users: parsed.users };
+    return { version: DOCUMENT_VERSION, users: Object.assign(Object.create(null), parsed.users) as ProfileDocument['users'] };
   } catch {
     return emptyDocument();
   }
@@ -54,6 +56,10 @@ const MAX_USER_NAME_LENGTH = 64;
  */
 export class UserProfiles {
   private document: ProfileDocument = emptyDocument();
+  /** Serializes persist I/O: mutations are synchronous, but the writes must
+   *  not race, or an older rename can land last and resurrect a mutated-away
+   *  entry on disk. Each write stringifies current memory inside the chain. */
+  private persistChain: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly storePath: string) {}
 
@@ -99,7 +105,7 @@ export class UserProfiles {
     } else {
       profile.sessions.push({ ...ref });
     }
-    await this.persist();
+    await this.persistOrLog();
     return true;
   }
 
@@ -110,7 +116,7 @@ export class UserProfiles {
     const kept = profile.sessions.filter((s) => s.sessionId !== sessionId);
     if (kept.length === profile.sessions.length) return false;
     profile.sessions = kept;
-    await this.persist();
+    await this.persistOrLog();
     return true;
   }
 
@@ -144,8 +150,25 @@ export class UserProfiles {
     return profile;
   }
 
+  /** Persist without throwing: the mutation stays applied and callers keep
+   *  their mutation-then-broadcast contract; memory stays ahead of disk until
+   *  the next successful write. */
+  private async persistOrLog(): Promise<void> {
+    try {
+      await this.persist();
+    } catch (error) {
+      console.warn('[user-profiles] persist failed:', error instanceof Error ? error.message : error);
+    }
+  }
+
   /** Atomic replace: write to a unique `.tmp`, then rename over the final path. */
   private async persist(): Promise<void> {
+    const write = this.persistChain.then(() => this.writeDocument());
+    this.persistChain = write.catch(() => {});
+    await write;
+  }
+
+  private async writeDocument(): Promise<void> {
     await mkdir(dirname(this.storePath), { recursive: true });
     const temporaryPath = `${this.storePath}.${randomUUID()}.tmp`;
     try {

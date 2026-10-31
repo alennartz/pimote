@@ -103,6 +103,7 @@ function createMockSessionManager(sessions: Map<string, ManagedSlot>): PimoteSes
       if (!observer || (ws !== undefined && observer.ws !== ws)) return;
       sessions.get(id)?.observers.delete(clientId);
     },
+    closeSession: async () => {},
   } as unknown as PimoteSessionManager;
 }
 
@@ -318,6 +319,76 @@ describe('user profile wire flows', () => {
     expect(store.get('alice')).toEqual([]);
     expect(store.get('bob')).toEqual([]);
     // No exclusion: the archiving connection's user is affected and told too.
+    expect(userSessionsEvents(aliceA.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [], fresh: false }]);
+    expect(userSessionsEvents(bob.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [], fresh: false }]);
+  });
+
+  it('moves the user profile across a rekey and notifies their other connections, with no echo', async () => {
+    const store = new UserProfiles(storePath());
+    await store.load();
+    const slot = createMockSlot('session-1');
+    const sessions = new Map([['session-1', slot]]);
+    const clientRegistry: ClientRegistry = new Map();
+    const aliceA = createTestHandler('alice-a', { user: 'alice', userProfiles: store, sessions, clientRegistry });
+    const aliceB = createTestHandler('alice-b', { user: 'alice', userProfiles: store, sessions, clientRegistry });
+    await open(aliceA, 'session-1', 'open-a');
+
+    const rekeyed: SessionRef = { sessionId: 'session-2', folderPath: '/home/user/project' };
+    const observer = slot.observers.get('alice-a');
+    await observer?.onSessionReset?.(slot, { kind: 'rekeyed', oldId: 'session-1', newId: 'session-2', folderPath: '/home/user/project' });
+
+    expect(store.get('alice')).toEqual([rekeyed]);
+    // This connection applied the swap locally — no echo. Alice's other
+    // connection saw the open broadcast and then the rekeyed set.
+    expect(userSessionsEvents(aliceA.sent)).toEqual([]);
+    expect(userSessionsEvents(aliceB.sent)).toEqual([
+      { type: 'user_sessions_changed', sessions: [S1], fresh: false },
+      { type: 'user_sessions_changed', sessions: [rekeyed], fresh: false },
+    ]);
+  });
+
+  it('removes a closed session from every profile and notifies each affected user', async () => {
+    const store = new UserProfiles(storePath());
+    await store.load();
+    await store.link('alice', S1);
+    await store.link('bob', S1);
+    const slot = createMockSlot('session-1');
+    const sessions = new Map([['session-1', slot]]);
+    const clientRegistry: ClientRegistry = new Map();
+    const aliceA = createTestHandler('alice-a', { user: 'alice', userProfiles: store, sessions, clientRegistry });
+    const bob = createTestHandler('bob', { user: 'bob', userProfiles: store, sessions, clientRegistry });
+
+    await aliceA.handler.handleMessage(JSON.stringify({ type: 'close_session', sessionId: 'session-1', id: 'close-a' }));
+
+    expect(findResponse(aliceA.sent, 'close-a')).toMatchObject({ success: true });
+    expect(store.get('alice')).toEqual([]);
+    expect(store.get('bob')).toEqual([]);
+    expect(userSessionsEvents(aliceA.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [], fresh: false }]);
+    expect(userSessionsEvents(bob.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [], fresh: false }]);
+  });
+
+  it('removes a deleted session from every profile and notifies each affected user', async () => {
+    const store = new UserProfiles(storePath());
+    await store.load();
+    await store.link('alice', S1);
+    await store.link('bob', S1);
+    const slot = createMockSlot('session-1');
+    const sessions = new Map([['session-1', slot]]);
+    const clientRegistry: ClientRegistry = new Map();
+    const aliceA = createTestHandler('alice-a', {
+      user: 'alice',
+      userProfiles: store,
+      sessions,
+      clientRegistry,
+      sessionRecords: { resolveSessionPath: async () => undefined, deleteSession: async () => true } as unknown as SessionRecords,
+    });
+    const bob = createTestHandler('bob', { user: 'bob', userProfiles: store, sessions, clientRegistry });
+
+    await aliceA.handler.handleMessage(JSON.stringify({ type: 'delete_session', sessionId: 'session-1', folderPath: '/home/user/project', id: 'delete-a' }));
+
+    expect(findResponse(aliceA.sent, 'delete-a')).toMatchObject({ success: true });
+    expect(store.get('alice')).toEqual([]);
+    expect(store.get('bob')).toEqual([]);
     expect(userSessionsEvents(aliceA.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [], fresh: false }]);
     expect(userSessionsEvents(bob.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [], fresh: false }]);
   });

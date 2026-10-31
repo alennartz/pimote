@@ -98,9 +98,11 @@ export function getUser(): string | null {
   }
 }
 
+/** Store a user name. Mirrors the server's resolveUserName (trim, cap 64) so
+ *  the stored name always equals the server-side profile key. */
 export function setUser(name: string): void {
   try {
-    localStorage.setItem(KEY_USER, name);
+    localStorage.setItem(KEY_USER, name.trim().slice(0, 64));
   } catch {
     // best-effort
   }
