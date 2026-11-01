@@ -48,6 +48,7 @@ function createMockSlot(id: string, folderPath = '/home/user/project'): ManagedS
     autoCompactionEnabled: false,
     resourceLoader: { getSkills: () => ({ skills: [], diagnostics: [] }) },
     promptTemplates: [],
+    prompt: vi.fn(() => new Promise(() => {})),
     bindExtensions: async () => {},
     modelRuntime: { getAvailable: async () => [] },
     clearQueue: () => ({ steering: [], followUp: [] }),
@@ -102,6 +103,11 @@ function createMockSessionManager(sessions: Map<string, ManagedSlot>): PimoteSes
       const observer = sessions.get(id)?.observers.get(clientId);
       if (!observer || (ws !== undefined && observer.ws !== ws)) return;
       sessions.get(id)?.observers.delete(clientId);
+    },
+    openSession: async (folderPath: string) => {
+      const id = `fresh-${sessions.size + 1}`;
+      sessions.set(id, createMockSlot(id, folderPath));
+      return id;
     },
     closeSession: async () => {},
   } as unknown as PimoteSessionManager;
@@ -369,6 +375,43 @@ describe('user profile wire flows', () => {
 
     expect(store.get('bob')).toEqual([rekeyed]);
     expect(userSessionsEvents(bob.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [rekeyed], fresh: false }]);
+  });
+
+  it('intercepts a forwarded /new prompt: pi gets nothing, the actor moves to a fresh session, other holders stay', async () => {
+    const store = new UserProfiles(storePath());
+    await store.load();
+    await store.link('alice', S1);
+    await store.link('bob', S1);
+    const slot = createMockSlot('session-1');
+    const sessions = new Map([['session-1', slot]]);
+    const clientRegistry: ClientRegistry = new Map();
+    const aliceA = createTestHandler('alice-a', { user: 'alice', userProfiles: store, sessions, clientRegistry });
+    const aliceB = createTestHandler('alice-b', { user: 'alice', userProfiles: store, sessions, clientRegistry });
+    const bob = createTestHandler('bob-a', { user: 'bob', userProfiles: store, sessions, clientRegistry });
+    await open(aliceA, 'session-1', 'open-a');
+    await open(bob, 'session-1', 'open-bob');
+
+    await aliceA.handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-1', message: '/new', id: 'new-a' }));
+
+    expect(findResponse(aliceA.sent, 'new-a')).toMatchObject({ success: true });
+    // pi never saw the prompt.
+    expect(slot.session.prompt).not.toHaveBeenCalled();
+    // The actor's profile moved to a fresh session in the same folder.
+    const newId = [...sessions.keys()].find((k) => k !== 'session-1')!;
+    const newRef: SessionRef = { sessionId: newId, folderPath: '/home/user/project' };
+    expect(store.get('alice')).toEqual([newRef]);
+    // The acting connection now views the fresh session; its old observer is gone.
+    expect(sessions.get(newId)!.observers.has('alice-a')).toBe(true);
+    expect(slot.observers.has('alice-a')).toBe(false);
+    // Other holders are untouched: bob keeps the old session live, linked, and observed.
+    expect(store.get('bob')).toEqual([S1]);
+    expect(slot.observers.has('bob-a')).toBe(true);
+    // The identical sequence links then detaches; with the links pre-seeded,
+    // Alice's other connection sees exactly the swap's two profile broadcasts.
+    expect(userSessionsEvents(aliceB.sent)).toEqual([
+      { type: 'user_sessions_changed', sessions: [S1, newRef], fresh: false },
+      { type: 'user_sessions_changed', sessions: [newRef], fresh: false },
+    ]);
   });
 
   it('removes a closed session from every profile and notifies each affected user', async () => {

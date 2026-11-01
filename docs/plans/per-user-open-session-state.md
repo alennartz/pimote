@@ -426,4 +426,4 @@ The composer parses `/new` locally and never forwards it: sequence is `new_sessi
 
 Prompt dispatch: a prompt whose first token is `/new` never dispatches to pi. The server runs the identical sequence (new session in the folder, open/link for the acting user, user-level detach of the old id) and leaves other users untouched. Wire tests: forwarded `/new` prompt → pi receives nothing; actor's profile moves old→new; other users' sets and live observers unchanged.
 
-**Status:** pending
+**Status:** done

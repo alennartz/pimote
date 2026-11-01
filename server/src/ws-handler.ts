@@ -85,6 +85,12 @@ function parseDataUrlImages(images?: string[]): { type: 'image'; data: string; m
  * runs inside pi's `started` preflight, before pi emits the run's messages.
  * Rejects when pi refuses the prompt before dispatch.
  */
+/** True when the forwarded input's first token is the retired `/new`
+ *  command: such input never dispatches to pi. */
+function isForwardedNew(message: string): boolean {
+  return message.trim().split(/\s+/)[0] === '/new';
+}
+
 function dispatchPrompt(
   session: Pick<AgentSession, 'prompt'>,
   text: string,
@@ -696,18 +702,9 @@ export class WsHandler {
               this.sendResponse(id, false, undefined, 'folder_required');
               break;
             }
-            // Folder-source open hooks run before the session does: a source
-            // can materialize a listed-but-missing folder on first open.
-            await this.repoIndex?.runOpenHooks(command.folderPath);
-            const sessionId = await this.sessionManager.openSession(command.folderPath);
-            const newSlot = this.sessionManager.getSession(sessionId)!;
-            await this.claimSession(sessionId, newSlot);
-            const folder = await WsHandler.broadcastSessionOpened(sessionId, newSlot.folderPath, this.sessionManager, this.folderRegistry, this.clientRegistry, this.clientId);
-            await this.linkSessionForUser(sessionId, newSlot.folderPath);
-
-            WsHandler.broadcastSidebarUpdate(sessionId, newSlot.folderPath, this.sessionManager, this.clientRegistry);
-            this.sendResponse(id, true, { sessionId, folderPath: newSlot.folderPath, folder });
-            await this.sendConflictEventIfNeeded(sessionId, newSlot.folderPath);
+            const { sessionId, folderPath, folder } = await this.openNewSessionInFolder(command.folderPath);
+            this.sendResponse(id, true, { sessionId, folderPath, folder });
+            await this.sendConflictEventIfNeeded(sessionId, folderPath);
             break;
           }
 
@@ -772,27 +769,7 @@ export class WsHandler {
             this.sendResponse(id, false, undefined, 'sessionId is required');
             break;
           }
-
-          // User-level unlink: the requesting user's link to the session drops
-          // everywhere. Every connection of that user detaches from the session
-          // (their views exit; the broadcast tells them to drop the entry);
-          // other users' links are untouched. The socket-scoped detach API stays
-          // server-side — only the wire semantics changed. Socket death never
-          // reaches here: cleanup() stays detach-only (sticky membership).
-          await this.sessionManager.withSessionOperation(detachSessionId, async () => {
-            const detachSlot = this.sessionManager.getSession(detachSessionId);
-            for (const handler of this.clientRegistry.values()) {
-              if (handler.user !== this.user) continue;
-              if (detachSlot?.observers.has(handler.clientId)) {
-                this.sessionManager.detachObserver(detachSessionId, handler.clientId, handler.ws as unknown as EventSocket);
-              }
-              handler.subscribedSessions.delete(detachSessionId);
-              if (handler.viewedSessionId === detachSessionId) handler.viewedSessionId = null;
-            }
-            if (this.userProfiles && (await this.userProfiles.unlink(this.user, detachSessionId))) {
-              WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user, this.clientId);
-            }
-          });
+          await this.detachSessionForUser(detachSessionId);
           this.sendResponse(id, true);
           break;
         }
@@ -1766,9 +1743,16 @@ export class WsHandler {
     const session = slot.session;
     const trimmed = message.trim();
 
-    if (trimmed === '/new') {
-      const result = await runSlotLifecycle(slot, 'reset', () => slot.runtime.newSession());
-      this.sendResponse(id, true, { success: !result.cancelled });
+    if (isForwardedNew(trimmed)) {
+      // A forwarded /new never dispatches to pi. Run the composer's additive
+      // sequence: a fresh session in this folder opened and linked for the
+      // acting user, then their user-level detach of the old id. The old slot
+      // stays live for its other holders.
+      const oldId = slot.sessionState.id;
+      const created = await this.openNewSessionInFolder(slot.folderPath);
+      await this.detachSessionForUser(oldId);
+      this.sendResponse(id, true);
+      await this.sendConflictEventIfNeeded(created.sessionId, created.folderPath);
       return true;
     }
 
@@ -2000,6 +1984,46 @@ export class WsHandler {
         WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, user, user === this.user ? this.clientId : undefined);
       }
     }
+  }
+
+  /** Create a session in `folderPath`, claim it for this connection, and link
+   *  it into the user's profile — the server side of the composer's
+   *  new-session flow (the open_session creation path). Folder-source open
+   *  hooks run before the session does: a source can materialize a
+   *  listed-but-missing folder on first open. The caller sends its response
+   *  first, then pushes the conflict event (response before conflict push). */
+  private async openNewSessionInFolder(folderPath: string): Promise<{ sessionId: string; folderPath: string; folder: FolderInfo }> {
+    await this.repoIndex?.runOpenHooks(folderPath);
+    const sessionId = await this.sessionManager.openSession(folderPath);
+    const newSlot = this.sessionManager.getSession(sessionId)!;
+    await this.claimSession(sessionId, newSlot);
+    const folder = await WsHandler.broadcastSessionOpened(sessionId, newSlot.folderPath, this.sessionManager, this.folderRegistry, this.clientRegistry, this.clientId);
+    await this.linkSessionForUser(sessionId, newSlot.folderPath);
+    WsHandler.broadcastSidebarUpdate(sessionId, newSlot.folderPath, this.sessionManager, this.clientRegistry);
+    return { sessionId, folderPath: newSlot.folderPath, folder };
+  }
+
+  /** User-level unlink: the requesting user's link to the session drops
+   *  everywhere. Every connection of that user detaches from the session
+   *  (their views exit; the broadcast tells them to drop the entry);
+   *  other users' links are untouched. The socket-scoped detach API stays
+   *  server-side — only the wire semantics changed. Socket death never
+   *  reaches here: cleanup() stays detach-only (sticky membership). */
+  private async detachSessionForUser(sessionId: string): Promise<void> {
+    await this.sessionManager.withSessionOperation(sessionId, async () => {
+      const detachSlot = this.sessionManager.getSession(sessionId);
+      for (const handler of this.clientRegistry.values()) {
+        if (handler.user !== this.user) continue;
+        if (detachSlot?.observers.has(handler.clientId)) {
+          this.sessionManager.detachObserver(sessionId, handler.clientId, handler.ws as unknown as EventSocket);
+        }
+        handler.subscribedSessions.delete(sessionId);
+        if (handler.viewedSessionId === sessionId) handler.viewedSessionId = null;
+      }
+      if (this.userProfiles && (await this.userProfiles.unlink(this.user, sessionId))) {
+        WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user, this.clientId);
+      }
+    });
   }
 
   private async sendConflictEventIfNeeded(sessionId: string, folderPath: string): Promise<void> {
