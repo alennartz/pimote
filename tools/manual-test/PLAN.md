@@ -329,7 +329,32 @@ lists interplay, and rendered-row-only session loading.
 
 The home page shows the desktop Settings gear at bottom-left and an in-flow Settings button at the left of the mobile header. The app name sits immediately to its right on mobile. The button exists only on the dashboard. Opening it requests one server-resolved manifest containing effective Pi files, native Pimote config, configured files, and Pimote extension registrations. Tabs load lazily and retain independent drafts, dirty markers, missing-file creation hints, and per-file saves. Markdown tabs show the validated capability tag palette. Desktop actions stay in the footer. Mobile actions stay in the header. Close with dirty tabs asks once to keep editing or discard.
 
-Verify both breakpoints, server-resolved paths and labels, manifest stability until reopen, missing-file creation, invalid native-config rejection, symlink validation, multi-client capability broadcasts, dynamic consumer policies, extension reload diagnostics, user-package filtering, and retained folder-row AGENTS.md editing. Use the existing manual-test harness and browser driver.
+Verify both breakpoints, server-resolved paths and labels, manifest stability until reopen, missing-file creation, invalid native-config rejection, symlink validation, multi-client capability broadcasts, dynamic consumer policies, extension reload diagnostics, user-package filtering, and retained folder-row AGENTS.md editing. Use the existing manual-test harness and browser driver. The User tab (first tab, `per-user-open-session-state` topic) is the device's connection identity: name field, profile chips with session counts from `list_users`, click-to-adopt, deliberate-switch consequence copy, and Save (desktop footer / mobile header) that persists `pimote:user` and reconnects.
+
+## 14. One user, many devices: the shared open-session set
+
+**What:** Every connection presents a user (`pimote:user` device setting,
+`default` when unset) and rides one server-side open-session profile.
+Opening a session on one device makes it appear on the user's other
+devices (`user_sessions_changed`, no echo to the acting connection);
+closing (detach) on one device drops it from the others — including a
+device that was viewing it — while other users' links to the same session
+stay put. A fresh profile adopts the device's pre-existing local set once
+(first connect); a stale second browser drops its extras instead of
+resurrecting closed sessions. Profiles survive server restarts; boot GC
+prunes entries whose session file left the disk. The Settings User pane
+(driven by the same journey): chips with counts, adopt, rename to a
+brand-new user starts that device's list empty, Save-and-reconnect on
+desktop footer and mobile header.
+
+**Why:** This replaced browser local storage as the source of truth for
+the open-session list; a regression either forks the user's devices onto
+different sets or resurrects closed sessions.
+
+**Driver:** `tools/manual-test/user-profiles-smoke/` (two agent-browser
+sessions + user-aware WsProbes over a real sandboxed server; covers the
+wire contract, the two-browser journeys, migration, restart/GC, and the
+settings User pane).
 
 ## Automation gap (recorded, not an action item for this topic)
 

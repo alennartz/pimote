@@ -688,6 +688,47 @@ non-zero exit on failure. On failure the sandbox and server log are preserved.
 `PATH`, writable `os.tmpdir()`. Tracks and kills only the child PID it
 spawns. No real LLM or network required.
 
+### user-profiles-smoke
+
+**Purpose:** Exercise the per-user open-session state (the
+`per-user-open-session-state` topic) end-to-end against a real sandboxed
+pimote. User-aware WsProbes cover the wire contract (connect burst with
+`fresh`, no-echo broadcast, user-level detach isolation, socket-death
+stickiness, `list_users` counts); three agent-browser sessions cover the
+PWA surface: two browsers on one user share one set, detach from one
+device drops it from the user's other devices (and exits a viewing
+device) while other users keep their links, the settings User pane
+(chip counts, click-to-adopt, dirty state, footer Save, brand-new-user
+rename starts empty, mobile header Save), migration adopt-once and the
+stale-second-browser reconcile-down, restart survival, and boot GC of
+dead entries. Exercises the residual no-observer rekey edge once and
+reports its user-visibility without fixing it.
+
+**Location:** `tools/manual-test/user-profiles-smoke/user-profiles-smoke.mjs`
+(shared boot/probe/browser helpers from `tools/manual-test/lib/`;
+`lib/ws-probe.mjs` gained an optional `user` constructor argument for
+`?user=` connections).
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/user-profiles-smoke/user-profiles-smoke.mjs
+# Coherence screenshots outside the sandbox, or keep the sandbox on pass:
+UP_SHOTS=/tmp/up-shots UP_KEEP=1 node tools/manual-test/user-profiles-smoke/user-profiles-smoke.mjs
+```
+
+**Inputs:** none (fresh `os.tmpdir()` sandbox; `UP_SHOTS=<dir>` redirects
+screenshots; `UP_KEEP=1` preserves the sandbox on a passing run).
+
+**Outputs:** per-check ✓/✗/⊝ lines, mobile/desktop coherence screenshots,
+and a non-zero exit on hard failure. The rekey-edge phase logs its
+observation instead of asserting.
+
+**Prerequisites:** workspaces built (`npm run build`), `agent-browser` on
+`PATH`, `git` on `PATH`, writable `os.tmpdir()`. Tracks and kills only the
+child PID it spawns. No real LLM, network, or push subscription required.
+
 ### agent-browser (cross-repo skill)
 
 **Purpose:** Drive PWA user journeys end-to-end via a headless-Chromium
