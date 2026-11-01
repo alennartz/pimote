@@ -13,6 +13,7 @@
 import { copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { createConnection } from 'node:net';
 import { WebSocketServer } from 'ws';
 import { tmpdir } from 'node:os';
 import { join, resolve as pathResolve } from 'node:path';
@@ -88,16 +89,52 @@ async function main() {
   await mkdir(agentDir, { recursive: true });
   await gitInit(projectDir, 'main');
 
-  // Copy the host's local model catalog when present. The session is seeded,
-  // so no LLM call is required, but voice extension loading needs a model ref.
+  // Copy the host's model catalog when any provider carries a model. The
+  // session is seeded, so no LLM call is required — but pi's prompt preflight
+  // (steer queue) and voice extension loading need a configured model.
   let modelAvailable;
+  let defaultProvider;
+  let defaultModel;
   try {
     const modelsPath = join(REAL_AGENT_DIR, 'models.json');
     const models = JSON.parse(await readFile(modelsPath, 'utf8'));
-    modelAvailable = Boolean(models.providers?.jetson?.models?.length);
-    if (modelAvailable) await copyFile(modelsPath, join(agentDir, 'models.json'));
+    const providerEntry = Object.entries(models.providers ?? {}).find(([, p]) => (p.models?.length ?? 0) > 0);
+    modelAvailable = Boolean(providerEntry);
+    if (modelAvailable) {
+      await copyFile(modelsPath, join(agentDir, 'models.json'));
+      defaultProvider = providerEntry[0];
+      defaultModel = providerEntry[1].models[0].id;
+    }
   } catch {
     modelAvailable = false;
+  }
+
+  // Run-dependent checks (queueing under an in-flight run, replay past a
+  // settled turn) need a reachable model endpoint, not just a configured one.
+  let modelReachable = false;
+  if (modelAvailable) {
+    try {
+      const catalog = JSON.parse(await readFile(join(REAL_AGENT_DIR, 'models.json'), 'utf8'));
+      const endpoint = new URL(catalog.providers?.[defaultProvider]?.baseUrl ?? '');
+      modelReachable = await new Promise((resolve) => {
+        const socket = createConnection({
+          host: endpoint.hostname,
+          port: Number(endpoint.port || (endpoint.protocol === 'https:' ? 443 : 80)),
+          timeout: 1_500,
+        });
+        socket.on('connect', () => {
+          socket.destroy();
+          resolve(true);
+        });
+        socket.on('error', () => resolve(false));
+        socket.on('timeout', () => {
+          socket.destroy();
+          resolve(false);
+        });
+      });
+    } catch {
+      modelReachable = false;
+    }
   }
 
   const extensionDir = join(agentDir, 'extensions');
@@ -114,7 +151,7 @@ async function main() {
     port,
     bufferSize: 100,
     updateCheck: false,
-    ...(modelAvailable ? { defaultProvider: 'jetson', defaultModel: 'qwen3.8-27b' } : {}),
+    ...(modelAvailable ? { defaultProvider, defaultModel } : {}),
     ...(modelAvailable ? { voice: { speechmuxSignalUrl: `ws://127.0.0.1:${speechmuxPort}/signal`, speechmuxLlmWsUrl: `ws://127.0.0.1:${speechmuxPort}/llm` } } : {}),
   };
   await writeFile(configPath, JSON.stringify(config, null, 2));
@@ -127,6 +164,7 @@ async function main() {
   log('session      =', sessionId);
   log('port         =', port);
   log('voice        =', modelAvailable ? 'configured' : 'environment-bounded (no local model catalog)');
+  log('model endpoint =', modelReachable ? 'reachable' : 'unreachable (run-dependent checks soften)');
 
   let child;
   let external;
@@ -176,7 +214,13 @@ async function main() {
       latestQueue.steering.indexOf('observer A queued send') < latestQueue.steering.indexOf('observer B queued send'),
     );
     if (!queueOrderOk) log('queue snapshots:', JSON.stringify(queueSnapshots));
-    assert(queueOrderOk, 'observer sends enter one queue in arrival order');
+    // Holding both steers in one queue needs A's send to start a live run;
+    // without a reachable endpoint the run dies (or hangs) before B's steer.
+    if (modelReachable) {
+      assert(queueOrderOk, 'observer sends enter one queue in arrival order');
+    } else {
+      soft(queueOrderOk, 'observer sends enter one queue in arrival order', 'no reachable model endpoint — the first steer cannot hold a run open');
+    }
 
     second.close();
     const remainingSend = await first.send({ type: 'steer', sessionId, message: 'observer A after B disconnects' });
@@ -204,7 +248,13 @@ async function main() {
     const lateUpdates = allEvents(late, 'bash_execution_update');
     assert(lateUpdates.length === 0, 'late observer does not receive pre-join live bash deltas');
     if (!flattenedEventText(late).includes('observer-live-output')) log('late observer events after bash:', JSON.stringify(late.events.slice(-12).map((entry) => entry.event)));
-    assert(flattenedEventText(late).includes('observer-live-output'), 'late observer receives the final bash result through replay');
+    // Replaying past the in-flight turn needs the model endpoint: an
+    // unreachable endpoint leaves a hung run as the replay leaf.
+    if (modelReachable) {
+      assert(flattenedEventText(late).includes('observer-live-output'), 'late observer receives the final bash result through replay');
+    } else {
+      soft(flattenedEventText(late).includes('observer-live-output'), 'late observer receives the final bash result through replay', 'no reachable model endpoint — a hung run stays the replay leaf');
+    }
 
     section('Extension dialog: broadcast and first answer wins');
     const dialogPromise = first.send({ type: 'bash', sessionId, command: '__session_ownership_dialog__' });
