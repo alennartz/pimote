@@ -368,6 +368,15 @@ export class ConnectionStore {
     this.applyReconcilePlan(reconcileUserSessions(current, event.sessions, event.fresh), ws);
   }
 
+  /** Registry entry creation for sessions adopted from the user's profile.
+   *  The server replays session state (full_resync) BEFORE the open_session
+   *  response, and the registry drops events for sessions it does not track
+   *  — so the entry must exist when the replay arrives or it is discarded
+   *  and the session renders empty forever. In-page opens materialize the
+   *  entry through openExistingSession before the send; the reconcile paths
+   *  (connect burst and mid-connection adoption) need this callback. */
+  onReconcileAdopt: ((sessionId: string, folderPath: string) => void) | null = null;
+
   private applyReconcilePlan(plan: ReconcilePlan, ws: WebSocket): void {
     for (const sessionId of plan.toDrop) {
       this.removeSubscribedSession(sessionId);
@@ -376,6 +385,7 @@ export class ConnectionStore {
     if (!this.restoreDispatched) {
       for (const { sessionId, folderPath } of plan.toOpen) {
         if (!this.subscribedSessions.has(sessionId)) this.addSubscribedSession(sessionId, folderPath);
+        this.onReconcileAdopt?.(sessionId, folderPath);
       }
       this.restoreDispatched = true;
       this.dispatchRestores(ws);
@@ -383,6 +393,7 @@ export class ConnectionStore {
     }
     for (const { sessionId, folderPath } of plan.toOpen) {
       this.addSubscribedSession(sessionId, folderPath);
+      this.onReconcileAdopt?.(sessionId, folderPath);
       void this.restoreSession(sessionId, folderPath, ws);
     }
   }

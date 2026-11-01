@@ -1793,10 +1793,6 @@ connection.onEvent((event) => {
 // folder row from the response. Restores (live reclaim, disk reopen) emit no
 // session_opened event, so without this a restarted client keeps the hydrated
 // folder-less state and the session chip falls back to the code-nature glyph.
-// A profile-adopted restore (the session lives in the user's server profile
-// but this tab never tracked it) also creates the registry entry here: the
-// subscription was added before the open went out, so its presence proves the
-// open is not racing a local removal.
 connection.onSessionRestored = (sessionId, data) => {
   if (!sessionRegistry.sessions[sessionId]) {
     if (!connection.subscribedSessions.has(sessionId)) return;
@@ -1829,6 +1825,16 @@ connection.onSessionRestoreFailed = (sessionId) => {
 // it locally the same way a definitive not-found does.
 connection.onSessionDropped = (sessionId) => {
   dropSession(sessionId);
+};
+
+// The reconcile adopted a profile session this tab never tracked. Create the
+// registry entry BEFORE the open goes out: the server replays session state
+// (full_resync) before the open_session response, and handleEvent drops
+// events for sessions the registry does not track — a late entry would
+// render the session empty forever.
+connection.onReconcileAdopt = (sessionId, folderPath) => {
+  if (sessionRegistry.sessions[sessionId]) return;
+  sessionRegistry.addSession(sessionId, folderPath, folderPath.split('/').pop() || 'Unknown');
 };
 
 connection.onSessionArchived = (sessionId) => {

@@ -69,6 +69,12 @@
     if (decision.action === 'wait') return;
 
     if (decision.action === 'load') {
+      // The socket may still be handshaking (deep link, reload). Sending now
+      // rejects with 'WebSocket not connected', the failure path drops the
+      // session, and the next run falls back off a session the server could
+      // have served. Wait: the effect re-runs when readiness flips, and the
+      // connect burst's reconcile may adopt the session before that.
+      if (!connection.ready) return;
       attemptedLoads.push(id);
       void openExistingSession(id, decision.folderPath, { switchTo: false });
       return;

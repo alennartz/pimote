@@ -2,12 +2,14 @@
 // End-to-end smoke for per-user server-side open-session state.
 //
 // Boots a real pimote server with fabricated sessions and drives both the
-// wire (user-aware WsProbes) and the real PWA (three agent-browser sessions)
+// wire (user-aware WsProbes) and the real PWA (four agent-browser sessions)
 // through the topic's journeys: one shared open-session set per user across
 // devices, cross-user isolation, user-level detach, the settings User pane
 // (adopt chip, rename to a fresh user, mobile header Save), migration
 // adopt-once and stale-browser reconcile-down, restart survival, boot GC of
-// dead entries, and the residual no-observer rekey edge (reported, not fixed).
+// dead entries, the /new surface (session-view control, composer command,
+// server guard for forwarded prompts), and the shared rekey relink (every
+// holder follows a rekey, watcher or not).
 //
 // Optional environment variables:
 //   UP_SHOTS=/tmp/dir  keep browser screenshots outside the disposable sandbox
@@ -200,6 +202,7 @@ async function main() {
   const browserA = makeBrowserHelpers({ session: `up-a-${browserToken}`, log });
   const browserB = makeBrowserHelpers({ session: `up-b-${browserToken}`, log });
   const browserM = makeBrowserHelpers({ session: `up-m-${browserToken}`, log });
+  const browserN = makeBrowserHelpers({ session: `up-n-${browserToken}`, log });
   const baseUrl = `http://127.0.0.1:${port}`;
 
   const stop = async () => {
@@ -476,6 +479,133 @@ async function main() {
     assert(staleMirror === null, 'the stale mirror still clears');
 
     // ============================================================
+    section('N — session-view New session control moves the set everywhere');
+    // ============================================================
+    // nia views the shared session; her second connection watches the
+    // profile; bob holds the same session live as another user.
+    await claimUser(browserN, baseUrl, 'nia');
+    const probeNia = track(new WsProbe(port, `up-nia-burst-${Math.random().toString(36).slice(2, 8)}`, 'nia'));
+    await probeNia.open();
+    await probeNia.waitForEvent('user_sessions_changed', () => true, 8_000);
+    const probeBob3 = track(new WsProbe(port, `up-bob-hold-${Math.random().toString(36).slice(2, 8)}`, 'bob'));
+    await probeBob3.open();
+    await probeBob3.waitForEvent('user_sessions_changed', () => true, 8_000);
+    await probeBob3.send({ type: 'open_session', sessionId: sharedId, folderPath: projectDir });
+
+    await revealAndExpand(browserN, projectDir);
+    const niaEntryClicked = await browserN.evalBrowser(clickEntryExpr(T_SHARED));
+    assert(niaEntryClicked === 'clicked', 'nia opens the shared session from the dashboard');
+    const niaComposer = await waitFor(() => browserN.evalBrowser(`Boolean(document.querySelector('textarea[aria-label="Message"]'))`), 15_000, 300);
+    assert(niaComposer === true, 'nia reaches the session surface');
+
+    const beforeControl = Date.now();
+    const controlClicked = await browserN.evalBrowser(
+      `(() => { const c = document.querySelector('button[title^="Starts a fresh session"]'); if (!c) return 'NO_CONTROL'; c.click(); return 'clicked'; })()`,
+    );
+    assert(controlClicked === 'clicked', 'the session-view pill bar exposes the New session control');
+    let freshPath = null;
+    const freshLanded = await waitFor(async () => {
+      const path = await browserN.evalBrowser(`location.pathname`);
+      freshPath = typeof path === 'string' && path.startsWith('/sessions/') && !path.includes(sharedId) ? path : null;
+      return Boolean(freshPath);
+    }, 15_000, 300);
+    assert(freshLanded === true, `the control lands nia in a fresh session (got ${JSON.stringify(freshPath ?? 'timeout')})`);
+    const freshId = String(freshPath ?? '').split('/').pop() ?? '';
+    assert(freshId !== sharedId && freshId.length > 0, 'the fresh session has its own id');
+    const blankBody = await browserN.evalBrowser(`!document.body.innerText.includes(${JSON.stringify(T_SHARED)})`);
+    assert(blankBody === true, 'the fresh session renders blank (no seed transcript)');
+
+    const niaMove = await probeNia.waitForEvent(
+      'user_sessions_changed',
+      (e) => e.sessions.length === 1 && e.sessions[0].sessionId === freshId,
+      10_000,
+    );
+    assert(Boolean(niaMove), `nia's other device moved to the fresh session and dropped the old id`);
+    const oldPillGone = await waitFor(async () => {
+      // nia's browser is on the session view: the old session's PILL must be
+      // gone from the pill bar (her own set); the dashboard row stays behind.
+      const gone = await browserN.evalBrowser(
+        `(() => { const bar = document.querySelector('.session-pill-bar-root'); if (!bar) return 'NO_BAR'; return !Array.from(bar.querySelectorAll('button')).some((b) => (b.textContent ?? '').includes(${JSON.stringify(T_SHARED)})); })()`,
+      );
+      return gone === true;
+    }, 10_000, 300);
+    assert(oldPillGone === true, `the old session dropped from nia's own list`);
+    assert((await summaryFor(defaultProbe, 'nia'))?.sessionCount === 1, 'list_users: nia holds exactly the fresh session');
+    const bobCount = (await summaryFor(defaultProbe, 'bob'))?.sessionCount ?? null;
+    assert(bobCount === 1, `bob's link to the old session is untouched (count ${JSON.stringify(bobCount)})`);
+    const bobMeta2 = await probeBob3.send({ type: 'get_session_meta', sessionId: sharedId });
+    assert(bobMeta2.success === true, 'the old conversation stays live for its other holder');
+    const bobBroadcasts = burstsSince(probeBob3, beforeControl).map((entry) => entry.event);
+    assert(bobBroadcasts.length === 0, `bob received no nia broadcast (got ${JSON.stringify(bobBroadcasts)})`);
+
+    // ============================================================
+    section('N — composer /new is intercepted locally and never dispatches');
+    // ============================================================
+    await browserN.evalBrowser(
+      `(() => { const ta = document.querySelector('textarea[aria-label="Message"]'); ta?.focus(); return Boolean(ta); })()`,
+    );
+    await browserN.fillSelector('textarea[aria-label="Message"]', '/');
+    await browserN.wait(500);
+    const slashItems = await browserN.evalBrowser(`(() => {
+      const pop = document.querySelector('.bg-popover');
+      if (!pop) return JSON.stringify([]);
+      return JSON.stringify(Array.from(pop.querySelectorAll('button span.font-medium')).map((s) => s.textContent.trim()));
+    })()`);
+    const slashList = JSON.parse(String(slashItems ?? '[]'));
+    assert(!slashList.includes('new'), `pi's /new is gone from the composer slash menu (got ${JSON.stringify(slashList)})`);
+
+    const sinceSlash = probeNia.events.length;
+    await browserN.fillSelector('textarea[aria-label="Message"]', '/new');
+    await browserN.evalBrowser(`(() => { const ta = document.querySelector('textarea[aria-label="Message"]'); ta?.focus(); return Boolean(ta); })()`);
+    await browserN.browser(['press', 'Enter']);
+    let composer2Path = null;
+    const composer2Landed = await waitFor(async () => {
+      const path = await browserN.evalBrowser(`location.pathname`);
+      composer2Path = typeof path === 'string' && path.startsWith('/sessions/') && !path.includes(freshId) ? path : null;
+      return Boolean(composer2Path);
+    }, 15_000, 300);
+    const freshId2 = String(composer2Path ?? '').split('/').pop() ?? '';
+    assert(composer2Landed === true, `typing /new starts another fresh session (got ${JSON.stringify(composer2Path ?? 'timeout')})`);
+    const composer2Text = String(await browserN.evalBrowser(`document.querySelector('textarea[aria-label="Message"]')?.value ?? ''`));
+    assert(composer2Text === '', 'the composer clears after the interception');
+    const noForwardEcho = await browserN.evalBrowser(`!document.body.innerText.includes('/new')`);
+    assert(noForwardEcho === true, 'no /new prompt text renders anywhere (nothing was dispatched)');
+    const niaEventsSince = probeNia.events.slice(sinceSlash).map((entry) => entry.event);
+    assert(!niaEventsSince.some((e) => e.type === 'message_start' || e.type === 'agent_start'), 'no agent run started on the intercepted session');
+    const niaMove2 = await probeNia.waitForEvent(
+      'user_sessions_changed',
+      (e) => e.sessions.length === 1 && e.sessions[0].sessionId === freshId2,
+      10_000,
+    );
+    assert(Boolean(niaMove2), `nia's profile follows the composer flow to the second fresh session`);
+    assert((await summaryFor(defaultProbe, 'nia'))?.sessionCount === 1, 'list_users: nia holds exactly the second fresh session');
+
+    // ============================================================
+    section('N — a forwarded /new prompt hits the server guard, not pi');
+    // ============================================================
+    const probeFrank = track(new WsProbe(port, `up-frank-${Math.random().toString(36).slice(2, 8)}`, 'frank'));
+    await probeFrank.open();
+    await probeFrank.waitForEvent('user_sessions_changed', () => true, 8_000);
+    await probeFrank.send({ type: 'open_session', sessionId: sharedId, folderPath: projectDir });
+    const bobEventsBefore = probeBob3.events.length;
+    const guarded = await probeFrank.send({ type: 'prompt', sessionId: sharedId, message: '/new' });
+    assert(guarded.success === true, 'a forwarded /new prompt answers success');
+    const guardNewId = guarded.data?.sessionId ?? '';
+    assert(guardNewId !== '' && guardNewId !== sharedId, `the response carries the fresh session pointer (got ${JSON.stringify(guardNewId)})`);
+    const guardMove = await probeFrank.waitForEvent(
+      'user_sessions_changed',
+      (e) => e.sessions.length === 1 && e.sessions[0].sessionId === guardNewId,
+      10_000,
+    );
+    assert(Boolean(guardMove), 'the acting raw client is told its new set (guard sequence converges it live)');
+    assert((await summaryFor(defaultProbe, 'frank'))?.sessionCount === 1, 'list_users: frank holds exactly the guarded fresh session');
+    await new Promise((r) => setTimeout(r, 500));
+    const bobNewEvents = probeBob3.events.slice(bobEventsBefore).map((entry) => entry.event);
+    assert(!bobNewEvents.some((e) => e.type === 'session_replaced' || e.type === 'agent_start' || e.type === 'message_start'), `pi saw nothing: bob's live old session neither rekeyed nor ran`);
+    const bobMeta3 = await probeBob3.send({ type: 'get_session_meta', sessionId: sharedId });
+    assert(bobMeta3.success === true, 'the old conversation stays live for its other holder after the guard');
+
+    // ============================================================
     section('R — restart survival and boot GC of dead entries');
     // ============================================================
     const probeGc = track(new WsProbe(port, `up-gc-${Math.random().toString(36).slice(2, 8)}`, 'alice'));
@@ -508,44 +638,58 @@ async function main() {
     assert(!users.some((u) => u.name === 'carol'), 'carol still has no key after restart');
 
     // ============================================================
-    section('E — residual edge: rekey with no live observer (report only)');
+    section('E — shared rekey relink: every holder follows, watcher or not');
     // ============================================================
     // erin holds a profile link to the shared session and disconnects; a
-    // bob connection then rekeys the slot (new_session — pi's /new path).
+    // bob connection then rekeys the slot (new_session — pi's /new runtime
+    // path). The rekey is shared: holders with no live observer follow to
+    // the new id instead of restoring the abandoned transcript.
     const probeBobE = track(new WsProbe(port, `up-bob-rekey-${Math.random().toString(36).slice(2, 8)}`, 'bob'));
     await probeBobE.open();
+    await probeBobE.waitForEvent('user_sessions_changed', () => true, 8_000);
     await probeBobE.send({ type: 'open_session', sessionId: sharedId, folderPath: projectDir });
     const probeErin = track(new WsProbe(port, `up-erin-${Math.random().toString(36).slice(2, 8)}`, 'erin'));
     await probeErin.open();
+    await probeErin.waitForEvent('user_sessions_changed', () => true, 8_000);
     await probeErin.send({ type: 'open_session', sessionId: sharedId, folderPath: projectDir });
     assert((await summaryFor(postRestartDefault, 'erin'))?.sessionCount === 1, `erin's profile links the shared session`);
     probeErin.close();
     await sleep(300);
 
+    const beforeRekeyTs = Date.now();
     const rekey = await probeBobE.send({ type: 'new_session', sessionId: sharedId });
-    assert(rekey.success === true, `bob's live connection rekeys the session (pi /new path)`);
-    assert((await summaryFor(postRestartDefault, 'bob'))?.sessionCount === 1, `bob's profile follows the rekey`);
-    const erinStale = await summaryFor(postRestartDefault, 'erin');
-    assert(erinStale?.sessionCount === 1, 'RESIDUAL EDGE CONFIRMED: erin still holds the pre-rekey session id with no live observer');
+    assert(rekey.success === true, `bob's live connection rekeys the session (pi /new runtime path)`);
+    // The observing connection applied the swap locally via session_replaced;
+    // the profile broadcast skips it (no echo).
+    const replaced = await probeBobE.waitForEvent('session_replaced', (e) => e.oldSessionId === sharedId, 8_000);
+    assert(Boolean(replaced), `bob's observing connection receives session_replaced`);
+    assert(burstsSince(probeBobE, beforeRekeyTs).length === 0, `the observing connection receives no profile echo`);
 
-    // User-visibility: erin reconnects; does her device restore the stale
-    // entry, and what does the restore do?
+    // The observerless holder follows: erin's profile now names the new id.
+    let erinHoldsOne = false;
+    await waitFor(async () => {
+      const users = await summaries(postRestartDefault);
+      erinHoldsOne = users.find((u) => u.name === 'erin')?.sessionCount === 1;
+      return erinHoldsOne;
+    }, 8_000, 300);
+    assert(erinHoldsOne === true, `erin's profile follows the rekey (1 session)`);
+
+    // The rekeyed id: read it off a fresh erin connection's burst.
     const probeErin2 = track(new WsProbe(port, `up-erin-return-${Math.random().toString(36).slice(2, 8)}`, 'erin'));
     await probeErin2.open();
     const erinBurst = await probeErin2.waitForEvent('user_sessions_changed', () => true, 8_000);
-    const staleEntry = erinBurst.sessions.find((s) => s.sessionId === sharedId);
-    log('erin burst after rekey:', JSON.stringify(erinBurst));
-    if (staleEntry) {
-      const reopen = await probeErin2.send({ type: 'open_session', sessionId: sharedId, folderPath: staleEntry.folderPath });
-      if (reopen.success === true) {
-        log('EDGE USER-VISIBLE: the stale pre-rekey session reopens as a live transcript on erin\'s device, while the rekeyed live session is absent from her set.');
-      } else {
-        log(`EDGE USER-VISIBLE (churn variant): the stale entry fails to reopen (${reopen.error}) and retries on every reconnect; boot GC will not prune it while the old file exists.`);
-      }
-    } else {
-      log('EDGE NOT REPRODUCED in this environment: erin burst =', JSON.stringify(erinBurst));
-    }
-    soft(true, 'residual rekey edge exercised once and reported (not fixed per topic scope)', 'recorded as an open issue');
+    const followed = erinBurst.fresh === false && erinBurst.sessions.length === 1 && erinBurst.sessions[0].sessionId !== sharedId;
+    if (!followed) log('erin burst after rekey:', JSON.stringify(erinBurst));
+    assert(followed === true, `the observerless holder's burst names the rekeyed session, not the stale one`);
+    const newId = erinBurst.sessions[0].sessionId;
+    const reopen = await probeErin2.send({ type: 'open_session', sessionId: newId, folderPath: erinBurst.sessions[0].folderPath });
+    assert(reopen.success === true, `erin's device opens the rekeyed session she was moved to`);
+
+    // bob's profile likewise names the new id.
+    const probeBob4 = track(new WsProbe(port, `up-bob-after-${Math.random().toString(36).slice(2, 8)}`, 'bob'));
+    await probeBob4.open();
+    const bobBurst = await probeBob4.waitForEvent('user_sessions_changed', () => true, 8_000);
+    assert(bobBurst.fresh === false && bobBurst.sessions.length === 1 && bobBurst.sessions[0].sessionId === newId, `bob's profile names the rekeyed session too`);
 
     await browserA.browser(['screenshot', join(shotsDir, 'user-profiles.png')], { allowFailure: true }).catch(() => {});
     console.log(`[user-profiles] screenshot: ${join(shotsDir, 'user-profiles.png')}`);
