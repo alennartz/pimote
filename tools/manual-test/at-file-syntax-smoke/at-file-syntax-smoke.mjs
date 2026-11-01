@@ -32,7 +32,7 @@
 // docs/manual-tests/at-file-syntax-web.md.
 
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile, appendFile, readFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, writeFile, appendFile, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve as pathResolve } from 'node:path';
@@ -344,7 +344,30 @@ async function main() {
 
   const port = await getFreePort();
   const configPath = join(xdgConfig, 'pimote', 'config.json');
-  await writeFile(configPath, JSON.stringify({ roots: [projectsRoot], port, bufferSize: 100 }, null, 2));
+  // Seed the host's model catalog when a provider carries a model: the
+  // prompt-acceptance phase needs pi's preflight to accept a send, which
+  // requires a configured model with credentials.
+  let modelAvailable = false;
+  let defaultProvider;
+  let defaultModel;
+  try {
+    const models = JSON.parse(await readFile(join(process.env.HOME ?? '', '.pi', 'agent', 'models.json'), 'utf8'));
+    const providerEntry = Object.entries(models.providers ?? {}).find(([, p]) => (p.models?.length ?? 0) > 0);
+    if (providerEntry) {
+      const agentDir = join(sandboxHome, '.pi', 'agent');
+      await mkdir(agentDir, { recursive: true });
+      await copyFile(join(process.env.HOME ?? '', '.pi', 'agent', 'models.json'), join(agentDir, 'models.json'));
+      modelAvailable = true;
+      defaultProvider = providerEntry[0];
+      defaultModel = providerEntry[1].models[0].id;
+    }
+  } catch {
+    modelAvailable = false;
+  }
+  await writeFile(
+    configPath,
+    JSON.stringify({ roots: [projectsRoot], port, bufferSize: 100, ...(modelAvailable ? { defaultProvider, defaultModel } : {}) }, null, 2),
+  );
 
   const logPath = join(sandboxHome, 'pimote.log');
   log('sandbox HOME =', sandboxHome);
@@ -441,17 +464,29 @@ async function main() {
     // keep a minimal PATH so any incidental shell-outs other than fd survive).
     const fdMissingConfig = join(xdgConfig, 'pimote');
     const fdMissingLog = join(sandboxHome, 'pimote-nofd.log');
-    // Verify fd is genuinely unreachable on the override PATH before asserting.
+    // Verify fd is genuinely unreachable on the child server's search before
+    // asserting. The server probes PATH PLUS hardcoded fallback dirs
+    // (~/.pi/agent/bin, ~/.cargo/bin, ~/.local/bin, /usr/local/bin, /usr/bin,
+    // /opt/homebrew/bin — see file-references.ts fdSearchDirs), so a PATH
+    // override alone hides nothing when fd is installed in any of them.
+    const candidateDirs = [
+      ...sanitizedPath.split(':').filter((d) => d && !d.startsWith(sandboxHome)),
+      join(sandboxHome, '.pi', 'agent', 'bin'),
+      join(sandboxHome, '.cargo', 'bin'),
+      join(sandboxHome, '.local', 'bin'),
+      '/usr/local/bin',
+      '/usr/bin',
+      '/opt/homebrew/bin',
+    ];
     const fdReachable = await new Promise((resolve) => {
-      const probe = spawn('sh', ['-c', 'command -v fd || command -v fdfind'], {
-        env: { ...process.env, PATH: sanitizedPath },
+      const probe = spawn('sh', ['-c', candidateDirs.map((d) => `test -x ${JSON.stringify(d)}/fd || test -x ${JSON.stringify(d)}/fdfind`).join(' || ')], {
         stdio: 'ignore',
       });
       probe.on('exit', (code) => resolve(code === 0));
       probe.on('error', () => resolve(false));
     });
     if (fdReachable) {
-      log('WARN: fd still reachable on sanitized PATH; fd-missing assertions skipped');
+      log('WARN: fd still reachable through the server\'s fallback search dirs; fd-missing assertions skipped');
       assert(true, 'fd-missing path could not be isolated in this environment (skipped) — see note');
     } else {
       // Reuse the same config (roots/port get overridden by PIMOTE_PORT).
@@ -588,7 +623,9 @@ async function main() {
       { allowFailure: true },
     );
     await abCmd(['wait', '1500']);
-    if (sent.stdout.includes('SENT')) {
+    if (!modelAvailable) {
+      soft(true, 'optimistic user message shows the literal "@top.txt" token unchanged (no expansion)', 'no model catalog in this environment — pi preflight rejects every prompt');
+    } else if (sent.stdout.includes('SENT')) {
       const echoed = (await abCmd(['eval', `(() => document.body.innerText.includes('check @top.txt now') ? 'YES' : 'NO')()`], { allowFailure: true })).stdout;
       assert(echoed.includes('YES'), 'optimistic user message shows the literal "@top.txt" token unchanged (no expansion)');
     } else {
