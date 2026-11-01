@@ -517,8 +517,10 @@ async function main() {
 
     const codeOpen = await probeA.send({ type: 'open_session', folderPath: strayCode });
     assert(codeOpen.success === true && Boolean(codeOpen.data?.sessionId), 'open_session succeeds in an unscanned plain cwd');
-    const codeOpened = await probeA.waitForEvent('session_opened', (e) => e.sessionId === codeOpen.data.sessionId);
-    const codeFolder = codeOpened?.folder;
+    // The acting connection applies its own open locally: classification
+    // arrives in the command response's `folder` (session_opened goes to
+    // other clients only).
+    const codeFolder = codeOpen.data?.folder;
     assert(
       codeFolder?.path === strayCode && codeFolder?.name === 'stray-code' && codeFolder?.nature === 'code' && codeFolder?.persona === undefined && codeFolder?.shortcutCount === 0,
       'fallback folder row: basename name, code nature (no marker, no git), shortcutCount 0',
@@ -530,8 +532,7 @@ async function main() {
 
     const personaOpen = await probeA.send({ type: 'open_session', folderPath: strayPersona });
     assert(personaOpen.success === true && Boolean(personaOpen.data?.sessionId), 'open_session succeeds in an unscanned persona-marker cwd');
-    const personaOpened = await probeA.waitForEvent('session_opened', (e) => e.sessionId === personaOpen.data?.sessionId);
-    const personaFolder = personaOpened?.folder;
+    const personaFolder = personaOpen.data?.folder;
     assert(
       personaFolder?.nature === 'persona' &&
         personaFolder?.name === 'stray-persona' &&

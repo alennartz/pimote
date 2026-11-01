@@ -174,11 +174,14 @@ async function main() {
 
     // --- the open-new path behind the dashboard submission: a new session
     // --- at the manager root classifies the folder as the manager persona ---
+    // The acting connection applies its own open locally: classification
+    // arrives in the command response's `folder` (session_opened goes to
+    // other clients only).
     const created = await probeA.send({ type: 'open_session', folderPath: managerRootC });
     assert(created.success === true && Boolean(created.data?.sessionId), 'open_session at the manager root creates a session (submission path)');
-    const createdOpened = await probeA.waitForEvent('session_opened', (e) => e.sessionId === created.data?.sessionId);
-    assert(createdOpened?.folder?.nature === 'persona' && createdOpened?.folder?.persona?.name === 'manager', 'manager root classifies as persona "manager" on the wire');
-    assert(createdOpened?.folder?.persona?.description === 'user-owned manager persona', 'classification reflects the user-owned AGENTS.md, not the shipped seed');
+    const createdFolder = created.data?.folder;
+    assert(createdFolder?.nature === 'persona' && createdFolder?.persona?.name === 'manager', 'manager root classifies as persona "manager" on the wire');
+    assert(createdFolder?.persona?.description === 'user-owned manager persona', 'classification reflects the user-owned AGENTS.md, not the shipped seed');
     await probeA.send({ type: 'close_session', sessionId: created.data.sessionId }).catch(() => undefined);
 
     const open = await probeA.send({ type: 'open_session', sessionId: seededId });

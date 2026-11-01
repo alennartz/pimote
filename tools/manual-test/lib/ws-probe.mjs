@@ -5,6 +5,9 @@
 // Usage:
 //   const probe = new WsProbe(port, `my-probe-${id}`);
 //   await probe.open();
+// Pass a third argument to claim a user profile (per-user open-session
+// state): new WsProbe(port, clientId, 'alice') connects as ?user=alice.
+// Omitted or empty connects unnamed, which the server maps to `default`.
 //   const { data } = await probe.send({ type: 'list_folders' });
 //   const listing = await probe.listFolders({ limit: 3 });   // accumulate
 //   await probe.waitForEvent('folders_changed', (e) => …);
@@ -13,8 +16,9 @@
 let nextCmdId = 0;
 
 export class WsProbe {
-  constructor(port, clientId) {
-    this.url = `ws://127.0.0.1:${port}/ws?clientId=${clientId}`;
+  constructor(port, clientId, user) {
+    const userParam = user ? `&user=${encodeURIComponent(user)}` : '';
+    this.url = `ws://127.0.0.1:${port}/ws?clientId=${clientId}${userParam}`;
     this.pending = new Map();
     this.events = [];
     this.ws = null;
