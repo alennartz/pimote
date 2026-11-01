@@ -19,11 +19,14 @@ A late architecture decision supersedes part of the brainstorm: the profile is *
 - Term decision (resolves the brainstorm's fog item explicitly): the identity concept keeps the word **user** — it is the word the capture, the client setting, and the product language already use. The collision with pi's conversation-role "user" lives in disjoint contracts (message content roles vs connection identity and profile keys); they never appear in the same wire type. Disambiguation is a documentation duty: implementation adds glossary entries for **User** (connection identity, client-side setting) and **User profile** (server-side per-user open-session set), with a flagged-ambiguity note distinguishing them from the message-role sense.
 - `detach_session` changes meaning, hard cut (house style: the ownership removal cut, DR-056): it was socket-scoped observer detach; it becomes **user-level unlink** — the requesting user's link to the session drops everywhere. The internal socket-scoped observer detach remains a server-side API (`sessionManager.detachObserver`), only the wire command changes.
 - `close_session` stays on the wire and keeps its server handler, but no dashboard surface sends it anymore. Android consumes a subset and takes the hard cut in lockstep; per the pull brief this is recorded as a named Android follow-up, not work in this pull.
+- **`/new` is retired as a forwarded command.** No prompt containing `/new` ever reaches pi: the server intercepts forwarded `/new` prompts and runs the additive translation (see Interfaces); the web composer owns `/new` locally and never sends it as a prompt. No new wire types — the flow composes `new_session`, open, and `detach_session`.
 
 **Server** (`server/src/`)
 
 - New module `user-profiles.ts` (see New Modules).
 - `ws-handler.ts`: parse the `user` query param at WebSocket open (trim, cap length, empty/absent → `default`); bind it to the connection. In the `open_session` flow: after the observer attaches, link the session into the user's profile; on change, persist and broadcast `user_sessions_changed` to the user's **other** connections. New `detach_session` handling: resolve the requesting user, detach all of that user's observers on the session, unlink the profile entry, broadcast the new set to the user's other connections (the acting connection applies its own change locally — no echo). New `list_users` handling. Session archive: remove the session from every user's profile and broadcast to each affected user's connections. Boot: load the profile store, then GC it against the boot-time `validSessionIds` (same sweep that prunes other per-session stores).
+- Extension-driven slot identity replacement ("rekey") keeps its server machinery but gains profile semantics: a rekey is a **shared** fact — the slot's conversation was replaced, so every user whose profile held the old id follows to the new id, watcher or not. Implementation: `unlinkAll(oldId)`, then `link(newId)` for each affected user, broadcasts without echo. Supersedes the observer-only relink from the review-fix round (the confirmed manual-test gap: a non-observing holder kept the stale entry and restored the abandoned transcript).
+- **`/new` interception.** A forwarded prompt whose first token is `/new` never dispatches to pi. The server runs the same sequence the client composes: `new_session` in the current session's folder, open the new session for the acting user (link), then the user-level detach of the old session id. Other users are untouched; the old slot stays live for whoever holds it.
 - Membership semantics (the contract the tests protect):
   - Sticky: a socket dying (tab closed, laptop asleep, phone backgrounded) never removes profile entries. Only explicit `detach_session`, archive, or GC remove them.
   - Ref-free removal: `detach_session` unlinks the requesting user unconditionally, regardless of that user's other live connections, and detaches those connections from the session (their views exit; the broadcast tells them to drop the entry).
@@ -35,6 +38,7 @@ A late architecture decision supersedes part of the brainstorm: the profile is *
 - `connection.svelte.ts`: append `&user=<name>` from the new client setting to the WS URL. Handle the connect-burst `user_sessions_changed` event: reconcile `subscribedSessions` against the server set — open entries the client lacks (existing restore loop), drop entries the server set lacks. The migration rule rides the `fresh` flag and preserves the brainstorm's adopt-once semantics: when `fresh` is true, the connection's local-seeded entries are adopted (the restore loop links them into the new profile); when false, local entries absent from the server set are **dropped, never opened** — a stale second browser reconciles down to server truth instead of resurrecting closed sessions. After the first event of a connection, clear the local `pimote:activeSessions` key and never read it again.
 - `session-registry.svelte.ts`: delete `persistSessions()` and its call sites — the mirror no longer exists. The user-facing close action sends `detach_session` instead of `close_session`. The `close_session` sends in the pending-placeholder cleanup paths stay (the command remains on the wire for them). `onSessionNotFound` / restore-failure handlers keep dropping local entries; the reconnect-restore cleanup that sent a socket-scoped `detach_session` must be reworked — under the new semantics it would unlink the user everywhere. Verify same-id eviction cleanup covers it (DR-067: a disconnected observer releases its cursor; the server's takeover eviction detaches the dead socket's observers) and remove the client-side detach call.
 - `persistence.ts`: add `getUser()`/`setUser()` over a new `pimote:user` key; keep `getActiveSessions()` as the one-time migration seed; replace `setActiveSessions` usage with a `clearActiveSessions()`.
+- **Composer and session view (`/new` surface).** The composer owns `/new` locally: it parses the token, runs new-session-in-this-folder → open → detach, and never forwards `/new` as a prompt; pi's `/new` no longer appears in the composer's command list. The session view gains a **New session** control (label "New session"; tooltip per the approved design: starts a fresh session in this folder; this one drops from your list on all your devices and keeps living for anyone else who holds it).
 - `GlobalSettingsDialog.svelte`: new **User** tab — the first non-file tab. Renders a structured pane (form, not editor) inside the same `CodeEditorDialog` shell: name field, profile chips with session counts (from `list_users`), consequence copy. Save rides the dialog's existing Save (desktop footer / mobile header, per the approved mock), disabled until changed; saving persists the local setting and re-establishes the WebSocket so the new user's set loads.
 
 ### New Modules
@@ -89,6 +93,8 @@ Behavioral contract for the wire (what tests assert):
 - A sends `detach_session` for S → A's other live connections drop S from their sets and detach from it; connections of other users holding S are unaffected and still hold it.
 - Socket death changes nothing: kill a connection's socket, the profile set is unchanged.
 - Archive session S → S leaves every profile; each affected user's connections are told.
+- **`/new` (composed by the client, guarded server-side):** a new session is created in the same folder and opened for the actor; the actor's user detaches from the old id; no prompt containing `/new` reaches pi. Other users keep the old session live and in their lists. A forwarded `/new` prompt produces the identical sequence server-side.
+- **Extension-driven rekey:** every user whose profile held the old id follows to the new id — including users with no live observer at rekey time. No holder of the old id remains.
 - Restart the server → profiles survive; a fresh connection gets the pre-restart set.
 
 **Server store seam** (`user-profiles.ts`):
@@ -403,3 +409,21 @@ Run the full test suites (`server/`, `client/`, `shared/` per repo scripts) and 
 
 **Verify:** all suites green; commits made per step (`plan:` through implementation as work lands).
 **Status:** done
+
+### Step 16: Shared rekey relink for extension-driven switches
+
+Extend the review-round relink so it covers every holder, not just live observers: on a `rekeyed` outcome, `unlinkAll(oldId)`, then `link(newId)` for each affected user, broadcasting each affected user's changed set without echo. Update the existing relink wire tests to the shared expectation and add the non-observing-holder case (the confirmed manual-test gap: holder with no live observer follows to the new id instead of restoring the abandoned transcript).
+
+**Status:** pending
+
+### Step 17: Client-owned `/new` — composer command and session-view control
+
+The composer parses `/new` locally and never forwards it: sequence is `new_session` in the current session's folder → open the new session (attach, view, profile link) → `detach_session` for the old id (user-level). Pi's `/new` disappears from the composer's slash-command list. The session view gains the approved **New session** control running the same flow. Client tests: `/new` intercepted locally, verbs in order, no `/new` prompt sent, control matches the approved label/tooltip.
+
+**Status:** pending
+
+### Step 18: Server guard for forwarded `/new` prompts
+
+Prompt dispatch: a prompt whose first token is `/new` never dispatches to pi. The server runs the identical sequence (new session in the folder, open/link for the acting user, user-level detach of the old id) and leaves other users untouched. Wire tests: forwarded `/new` prompt → pi receives nothing; actor's profile moves old→new; other users' sets and live observers unchanged.
+
+**Status:** pending
