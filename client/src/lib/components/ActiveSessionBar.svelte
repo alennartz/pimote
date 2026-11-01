@@ -1,6 +1,5 @@
 <script lang="ts">
   import Archive from '@lucide/svelte/icons/archive';
-  import MessageSquarePlus from '@lucide/svelte/icons/message-square-plus';
   import Plus from '@lucide/svelte/icons/plus';
   import X from '@lucide/svelte/icons/x';
   import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -10,14 +9,7 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import {
-    sessionRegistry,
-    switchToSession,
-    closeSession,
-    removeSessionOptimistically,
-    newSessionInProject,
-    replaceSessionWithFresh,
-  } from '$lib/stores/session-registry.svelte.js';
+  import { sessionRegistry, switchToSession, closeSession, removeSessionOptimistically, newSessionInProject } from '$lib/stores/session-registry.svelte.js';
   import { getExtensionUiQueue } from '$lib/stores/extension-ui-queue.svelte.js';
   import { getSessionPillSwipeHintShown, setSessionPillSwipeHintShown } from '$lib/stores/persistence.js';
   import { getSessionChipLabel, getSessionDisplayName } from '$lib/session-summary.js';
@@ -333,15 +325,6 @@
       {/each}
 
       {#if sessionRegistry.viewedSessionId}
-        <button
-          class="border-border bg-secondary text-secondary-foreground hover:bg-secondary/80 flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors"
-          title="Starts a fresh session in this folder; this one drops from your list on all your devices and keeps living for anyone else who holds it."
-          onclick={() => replaceSessionWithFresh(sessionRegistry.viewedSessionId!)}
-        >
-          <MessageSquarePlus class="size-3" />
-          <span>New session</span>
-        </button>
-
         <button
           class="border-muted-foreground/30 text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground flex shrink-0 items-center gap-1 rounded-full border border-dashed px-2.5 py-1 text-xs transition-colors disabled:pointer-events-none disabled:opacity-40"
           title="New session in {sessionRegistry.viewed?.projectName}"
