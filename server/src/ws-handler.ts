@@ -769,7 +769,7 @@ export class WsHandler {
             this.sendResponse(id, false, undefined, 'sessionId is required');
             break;
           }
-          await this.detachSessionForUser(detachSessionId);
+          await this.detachSessionForUser(detachSessionId, this.clientId);
           this.sendResponse(id, true);
           break;
         }
@@ -1747,11 +1747,14 @@ export class WsHandler {
       // A forwarded /new never dispatches to pi. Run the composer's additive
       // sequence: a fresh session in this folder opened and linked for the
       // acting user, then their user-level detach of the old id. The old slot
-      // stays live for its other holders.
+      // stays live for its other holders. This actor intercepted nothing
+      // locally, so the detach broadcast excludes no one and the response
+      // carries the new session pointer — otherwise the actor would display a
+      // session it no longer receives until its next reconnect.
       const oldId = slot.sessionState.id;
       const created = await this.openNewSessionInFolder(slot.folderPath);
       await this.detachSessionForUser(oldId);
-      this.sendResponse(id, true);
+      this.sendResponse(id, true, { sessionId: created.sessionId, folderPath: created.folderPath });
       await this.sendConflictEventIfNeeded(created.sessionId, created.folderPath);
       return true;
     }
@@ -1882,7 +1885,6 @@ export class WsHandler {
     this.subscribedSessions.delete(oldId);
     this.subscribedSessions.add(newId);
     if (this.viewedSessionId === oldId) this.viewedSessionId = newId;
-    await this.relinkSessionAcrossRekey(oldId, newId, folderPath);
 
     const isFirstObserver = firstObserver ?? slot.observers.keys().next().value === this.clientId;
 
@@ -1974,14 +1976,21 @@ export class WsHandler {
 
   /** Move every holder's profile link across a session rekey, then push each
    *  changed set to that user's connections. A rekey is shared — holders with
-   *  no live observer follow too. This connection applied the swap locally, so
-   *  its user's broadcast excludes it (no echo). Idempotent when several
-   *  observers of the slot each run this. */
-  private async relinkSessionAcrossRekey(oldId: string, newId: string, folderPath: string): Promise<void> {
-    if (!this.userProfiles) return;
-    for (const user of await this.userProfiles.unlinkAll(oldId)) {
-      if (await this.userProfiles.link(user, { sessionId: newId, folderPath })) {
-        WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, user, user === this.user ? this.clientId : undefined);
+   *  no live observer follow too. Connections in `excludeClientIds` applied
+   *  the swap locally via session_replaced, so their user's broadcast skips
+   *  them (no echo). Wired to the manager's onSlotRekeyed hook at boot: one
+   *  sweep per rekey, observerless slots included. */
+  static async relinkSessionAcrossRekey(
+    userProfiles: UserProfiles,
+    clientRegistry: ClientRegistry,
+    oldId: string,
+    newId: string,
+    folderPath: string,
+    excludeClientIds: ReadonlySet<string>,
+  ): Promise<void> {
+    for (const user of await userProfiles.unlinkAll(oldId)) {
+      if (await userProfiles.link(user, { sessionId: newId, folderPath })) {
+        WsHandler.broadcastUserSessionsChanged(userProfiles, clientRegistry, user, (clientId) => excludeClientIds.has(clientId));
       }
     }
   }
@@ -2008,8 +2017,10 @@ export class WsHandler {
    *  (their views exit; the broadcast tells them to drop the entry);
    *  other users' links are untouched. The socket-scoped detach API stays
    *  server-side — only the wire semantics changed. Socket death never
-   *  reaches here: cleanup() stays detach-only (sticky membership). */
-  private async detachSessionForUser(sessionId: string): Promise<void> {
+   *  reaches here: cleanup() stays detach-only (sticky membership).
+   *  `exceptClientId` omits a connection that applied the change locally
+   *  (no echo); the forwarded-/new guard passes none, so its actor is told. */
+  private async detachSessionForUser(sessionId: string, exceptClientId?: string): Promise<void> {
     await this.sessionManager.withSessionOperation(sessionId, async () => {
       const detachSlot = this.sessionManager.getSession(sessionId);
       for (const handler of this.clientRegistry.values()) {
@@ -2021,7 +2032,7 @@ export class WsHandler {
         if (handler.viewedSessionId === sessionId) handler.viewedSessionId = null;
       }
       if (this.userProfiles && (await this.userProfiles.unlink(this.user, sessionId))) {
-        WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user, this.clientId);
+        WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user, exceptClientId);
       }
     });
   }
@@ -2397,10 +2408,12 @@ export class WsHandler {
   }
 
   /** Broadcast a session_state_changed event to ALL connected clients. */
-  /** Push the user's current profile set to their connections, excluding `exceptClientId` (no echo). */
-  static broadcastUserSessionsChanged(userProfiles: UserProfiles, clientRegistry: ClientRegistry, user: string, exceptClientId?: string): void {
+  /** Push the user's current profile set to their connections, excluding the
+   *  given client id (no echo) or every client a predicate rejects. */
+  static broadcastUserSessionsChanged(userProfiles: UserProfiles, clientRegistry: ClientRegistry, user: string, except?: string | ((clientId: string) => boolean)): void {
     for (const handler of clientRegistry.values()) {
-      if (handler.user !== user || handler.clientId === exceptClientId) continue;
+      if (handler.user !== user) continue;
+      if (typeof except === 'function' ? except(handler.clientId) : handler.clientId === except) continue;
       handler.sendToClient({
         type: 'user_sessions_changed',
         sessions: userProfiles.get(user),

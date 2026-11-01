@@ -756,6 +756,12 @@ export class PimoteSessionManager {
    *  session ID, BEFORE that slot is closed. Consumers notify every observer of
    *  the evicted slot while it is still addressable via getSlot. */
   onSlotEvicted?: (sessionId: string) => void;
+  /** Fired once per concrete re-key, after the slot's maps are re-keyed and
+   *  before observers are notified — even when the slot has no observers.
+   *  `observerClientIds` names the connections about to receive
+   *  session_replaced (they apply the swap locally, so profile broadcasts can
+   *  skip them). */
+  onSlotRekeyed?: (oldId: string, newId: string, folderPath: string, observerClientIds: ReadonlySet<string>) => Promise<void> | void;
 
   private readonly staticHostFactory?: ExtensionFactory;
   private readonly fileDownloadFactory?: ExtensionFactory;
@@ -1235,6 +1241,9 @@ export class PimoteSessionManager {
     if (newId !== oldId) this.reKeySession(slot, oldId, newId);
 
     const outcome: SessionResetOutcome = newId === oldId ? { kind: 'unchanged' } : { kind: 'rekeyed', oldId, newId, folderPath: slot.folderPath };
+    if (outcome.kind === 'rekeyed') {
+      await this.onSlotRekeyed?.(outcome.oldId, outcome.newId, outcome.folderPath, new Set(observers.map((observer) => observer.clientId)));
+    }
     return { observers, outcome, needsBinding: true };
   }
 

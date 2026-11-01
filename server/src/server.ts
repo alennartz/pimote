@@ -225,6 +225,16 @@ export async function createServer(
     }
   };
 
+  // A shared rekey moves every holder's profile link to the new id and tells
+  // each affected user's connections. Observing connections are excluded —
+  // they are about to receive session_replaced and apply the swap locally.
+  // The hook fires even for observerless slots, so holders follow extension-
+  // and voice-driven switches too.
+  sessionManager.onSlotRekeyed = (oldId, newId, folderPath, observerClientIds) => {
+    if (!userProfiles) return;
+    return WsHandler.relinkSessionAcrossRekey(userProfiles, clientRegistry, oldId, newId, folderPath, observerClientIds);
+  };
+
   // Folder registry mutations (update / createHub / membership) report the
   // exact changed/removed paths (their targets plus derived dependents) and
   // broadcast through the same delta channel. The listing service builds the

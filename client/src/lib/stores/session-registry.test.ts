@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { PimoteEvent, PimoteAgentMessage, FolderInfo, PimoteResponse } from '@pimote/shared';
-import { SessionRegistry, routeNotificationIntent, sessionRegistry, openExistingSession, openNewSession, newSessionInProject, closeSession } from './session-registry.svelte.js';
+import {
+  SessionRegistry,
+  routeNotificationIntent,
+  sessionRegistry,
+  openExistingSession,
+  openNewSession,
+  newSessionInProject,
+  closeSession,
+  replaceSessionWithFresh,
+} from './session-registry.svelte.js';
 import { connection } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
 import { editorTextRequest } from './input-bar.svelte.js';
@@ -1146,6 +1155,37 @@ describe('SessionRegistry', () => {
   // --------------------------------------------------------------------------
   // Session Conflict
   // --------------------------------------------------------------------------
+  describe('replaceSessionWithFresh', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+      for (const id of ['stale', 'fresh']) {
+        if (sessionRegistry.sessions[id]) sessionRegistry.removeSession(id);
+        connection.removeSubscribedSession(id);
+      }
+      sessionRegistry.goHome();
+    });
+
+    it('reuses the running replacement on re-entry instead of creating a second fresh session', async () => {
+      sessionRegistry.addSession('stale', '/repos/x', 'x');
+      const send = vi.spyOn(connection, 'send').mockImplementation(async (cmd: any) => {
+        if (cmd.type === 'open_session') {
+          return { id: 'open', success: true, data: { sessionId: 'fresh', folderPath: '/repos/x' } };
+        }
+        return { id: cmd.id ?? 'x', success: false };
+      });
+
+      const first = replaceSessionWithFresh('stale');
+      const second = replaceSessionWithFresh('stale');
+      await Promise.all([first, second]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // One fresh session created, one user-level detach of the old id — the
+      // double-fire left no stray runtime behind.
+      expect(send.mock.calls.filter(([cmd]) => cmd.type === 'open_session')).toHaveLength(1);
+      expect(send.mock.calls.filter(([cmd]) => cmd.type === 'detach_session' && (cmd as any).sessionId === 'stale')).toHaveLength(1);
+    });
+  });
+
   describe('Session Conflict', () => {
     it('session_conflict event populates conflictingProcesses on the target session', () => {
       registry.addSession('s1', '/path', 'proj');

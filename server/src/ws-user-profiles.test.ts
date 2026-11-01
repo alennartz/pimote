@@ -148,6 +148,7 @@ interface TestContext {
   ws: any;
   sent: Array<PimoteEvent | PimoteResponse>;
   user: string;
+  sessionManager: PimoteSessionManager;
 }
 
 function createTestHandler(
@@ -156,13 +157,14 @@ function createTestHandler(
     user: string;
     userProfiles: UserProfiles;
     sessions?: Map<string, ManagedSlot>;
+    sessionManager?: PimoteSessionManager;
     clientRegistry?: ClientRegistry;
     sessionRecords?: SessionRecords;
     sessionMetadataStore?: ReturnType<typeof createMockSessionMetadataStore>;
   },
 ): TestContext {
   const sessions = opts.sessions ?? new Map();
-  const sessionManager = createMockSessionManager(sessions);
+  const sessionManager = opts.sessionManager ?? createMockSessionManager(sessions);
   const clientRegistry = opts.clientRegistry ?? new Map();
   const { ws, sent } = createMockWs();
   const handler = new WsHandler(
@@ -184,7 +186,13 @@ function createTestHandler(
     opts.user,
   );
   clientRegistry.set(clientId, handler);
-  return { handler, ws, sent, user: opts.user };
+  return { handler, ws, sent, user: opts.user, sessionManager };
+}
+
+/** Wire the manager's rekey hook exactly as server.ts does at boot. */
+function wireRekeyRelink(sessionManager: PimoteSessionManager, store: UserProfiles, clientRegistry: ClientRegistry): void {
+  sessionManager.onSlotRekeyed = (oldId, newId, folderPath, observerClientIds) =>
+    WsHandler.relinkSessionAcrossRekey(store, clientRegistry, oldId, newId, folderPath, observerClientIds);
 }
 
 function findResponse(sent: Array<any>, id: string): PimoteResponse | undefined {
@@ -329,33 +337,33 @@ describe('user profile wire flows', () => {
     expect(userSessionsEvents(bob.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [], fresh: false }]);
   });
 
-  it('moves every holder across a rekey and notifies each affected user, with no echo to the acting connection', async () => {
+  it('moves every holder across a rekey; observing connections are excluded, the other connections are told', async () => {
     const store = new UserProfiles(storePath());
     await store.load();
     const slot = createMockSlot('session-1');
     const sessions = new Map([['session-1', slot]]);
     const clientRegistry: ClientRegistry = new Map();
-    const aliceA = createTestHandler('alice-a', { user: 'alice', userProfiles: store, sessions, clientRegistry });
+    const sessionManager = createMockSessionManager(sessions);
+    const aliceA = createTestHandler('alice-a', { user: 'alice', userProfiles: store, sessions, clientRegistry, sessionManager });
     const aliceB = createTestHandler('alice-b', { user: 'alice', userProfiles: store, sessions, clientRegistry });
     const bob = createTestHandler('bob-a', { user: 'bob', userProfiles: store, sessions, clientRegistry });
     await open(aliceA, 'session-1', 'open-a');
     await open(bob, 'session-1', 'open-bob');
 
     const rekeyed: SessionRef = { sessionId: 'session-2', folderPath: '/home/user/project' };
-    const observer = slot.observers.get('alice-a');
-    await observer?.onSessionReset?.(slot, { kind: 'rekeyed', oldId: 'session-1', newId: 'session-2', folderPath: '/home/user/project' });
+    wireRekeyRelink(sessionManager, store, clientRegistry);
+    await sessionManager.onSlotRekeyed!('session-1', 'session-2', '/home/user/project', new Set(['alice-a', 'bob-a']));
 
     // A rekey is shared: every holder follows, watcher or not.
     expect(store.get('alice')).toEqual([rekeyed]);
     expect(store.get('bob')).toEqual([rekeyed]);
-    // The acting connection applied the swap locally — no echo.
+    // Observers applied the swap locally via session_replaced — no echo.
     expect(userSessionsEvents(aliceA.sent)).toEqual([]);
+    expect(userSessionsEvents(bob.sent)).toEqual([]);
     expect(userSessionsEvents(aliceB.sent)).toEqual([
       { type: 'user_sessions_changed', sessions: [S1], fresh: false },
       { type: 'user_sessions_changed', sessions: [rekeyed], fresh: false },
     ]);
-    // Bob opened the session himself (no echo), so the rekey set is his first event.
-    expect(userSessionsEvents(bob.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [rekeyed], fresh: false }]);
   });
 
   it('follows a holder with no live observer to the new id instead of leaving the abandoned transcript', async () => {
@@ -365,15 +373,39 @@ describe('user profile wire flows', () => {
     const slot = createMockSlot('session-1');
     const sessions = new Map([['session-1', slot]]);
     const clientRegistry: ClientRegistry = new Map();
-    const aliceA = createTestHandler('alice-a', { user: 'alice', userProfiles: store, sessions, clientRegistry });
+    const sessionManager = createMockSessionManager(sessions);
+    const aliceA = createTestHandler('alice-a', { user: 'alice', userProfiles: store, sessions, clientRegistry, sessionManager });
     await open(aliceA, 'session-1', 'open-a');
     const bob = createTestHandler('bob-a', { user: 'bob', userProfiles: store, sessions, clientRegistry });
 
     const rekeyed: SessionRef = { sessionId: 'session-2', folderPath: '/home/user/project' };
-    const observer = slot.observers.get('alice-a');
-    await observer?.onSessionReset?.(slot, { kind: 'rekeyed', oldId: 'session-1', newId: 'session-2', folderPath: '/home/user/project' });
+    wireRekeyRelink(sessionManager, store, clientRegistry);
+    await sessionManager.onSlotRekeyed!('session-1', 'session-2', '/home/user/project', new Set(['alice-a']));
 
     expect(store.get('bob')).toEqual([rekeyed]);
+    expect(userSessionsEvents(bob.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [rekeyed], fresh: false }]);
+  });
+
+  it('tells every holder when a rekey fires with no observers at all', async () => {
+    const store = new UserProfiles(storePath());
+    await store.load();
+    await store.link('bob', S1);
+    const slot = createMockSlot('session-1');
+    const sessions = new Map([['session-1', slot]]);
+    const clientRegistry: ClientRegistry = new Map();
+    const sessionManager = createMockSessionManager(sessions);
+    const aliceA = createTestHandler('alice-a', { user: 'alice', userProfiles: store, sessions, clientRegistry, sessionManager });
+    await open(aliceA, 'session-1', 'open-a');
+    const bob = createTestHandler('bob-a', { user: 'bob', userProfiles: store, sessions, clientRegistry });
+
+    const rekeyed: SessionRef = { sessionId: 'session-2', folderPath: '/home/user/project' };
+    wireRekeyRelink(sessionManager, store, clientRegistry);
+    await sessionManager.onSlotRekeyed!('session-1', 'session-2', '/home/user/project', new Set());
+
+    expect(store.get('alice')).toEqual([rekeyed]);
+    expect(store.get('bob')).toEqual([rekeyed]);
+    // No session_replaced is coming for anyone — every connection is told.
+    expect(userSessionsEvents(aliceA.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [rekeyed], fresh: false }]);
     expect(userSessionsEvents(bob.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [rekeyed], fresh: false }]);
   });
 
@@ -393,12 +425,12 @@ describe('user profile wire flows', () => {
 
     await aliceA.handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-1', message: '/new', id: 'new-a' }));
 
-    expect(findResponse(aliceA.sent, 'new-a')).toMatchObject({ success: true });
-    // pi never saw the prompt.
-    expect(slot.session.prompt).not.toHaveBeenCalled();
     // The actor's profile moved to a fresh session in the same folder.
     const newId = [...sessions.keys()].find((k) => k !== 'session-1')!;
     const newRef: SessionRef = { sessionId: newId, folderPath: '/home/user/project' };
+    expect(findResponse(aliceA.sent, 'new-a')).toMatchObject({ success: true, data: { sessionId: newId, folderPath: '/home/user/project' } });
+    // pi never saw the prompt.
+    expect(slot.session.prompt).not.toHaveBeenCalled();
     expect(store.get('alice')).toEqual([newRef]);
     // The acting connection now views the fresh session; its old observer is gone.
     expect(sessions.get(newId)!.observers.has('alice-a')).toBe(true);
@@ -412,6 +444,9 @@ describe('user profile wire flows', () => {
       { type: 'user_sessions_changed', sessions: [S1, newRef], fresh: false },
       { type: 'user_sessions_changed', sessions: [newRef], fresh: false },
     ]);
+    // The actor intercepted nothing locally, so the detach broadcast excludes
+    // no one: it is told like any other connection and converges live.
+    expect(userSessionsEvents(aliceA.sent)).toEqual([{ type: 'user_sessions_changed', sessions: [newRef], fresh: false }]);
   });
 
   it('removes a closed session from every profile and notifies each affected user', async () => {

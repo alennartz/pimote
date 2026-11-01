@@ -30,7 +30,7 @@ The two frozen test files were extended only additively (`ef07229`: one prototyp
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/ws-handler.ts:1746-1757` (guard), `2012-2027` (`detachSessionForUser`), `2000-2004` (`openNewSessionInFolder`)
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Broadcast `user_sessions_changed` without exclusion in the guard path (add an exclusion flag to `detachSessionForUser`, pass it off here), and include `{ sessionId, folderPath }` in the response.
 
 The guard exists for clients that do not intercept `/new` locally (the realistic forwarder is the mobile app). For that actor the server claims the new session — making it an observer of a session it has never heard of, with the `session_opened` broadcast excluded — then `detachSessionForUser` wipes its subscription to the old session while the `user_sessions_changed` broadcast excludes it too. The actor receives `{ success: true }` with no session pointer, no view change, and no events: it displays a session it no longer receives, until its next reconnect. A no-exclusion broadcast lets its reconcile open the new id and drop the old, converging live.
@@ -40,7 +40,7 @@ The guard exists for clients that do not intercept `/new` locally (the realistic
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/user-profiles.ts:133` (callers `ws-handler.ts:1982`, `803`, `844`, `906`)
-- **Status:** open
+- **Status:** resolved
 - **Fix:** `await this.persistOrLog();` in `unlinkAll` (one line; `gc` may keep the throwing variant since a boot abort is coherent there).
 
 `unlinkAll` mutates memory, then a failed disk write (full disk, read-only state dir) throws after the mutation, skipping the per-user broadcasts in the archive, delete, and close paths. Worst in the rekey path: the throw propagates from `relinkSessionAcrossRekey` through `handleSessionReset` into `notifySessionReset`'s sequential await loop (`session-manager.ts:1241-1245`), so observers after the failing one never receive `session_replaced` and never swap their subscriptions; `handleRuntimeSessionReplacement`'s catch then rolls the freshly re-keyed slot back. The revision's hardening contract ("mutation stays applied, callers keep broadcasting") is implemented for `link`/`unlink` but missed here. This is also why prior finding 8 is only partially resolved.
@@ -50,7 +50,7 @@ The guard exists for clients that do not intercept `/new` locally (the realistic
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/stores/session-registry.svelte.ts:1934-1943`; `client/src/lib/components/ActiveSessionBar.svelte:336-344`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Keep an in-flight promise per session and return the running promise on re-entry.
 
 A fast double-tap on the "New session" control (no debounce) — or `/new` while a `pending-` placeholder from a previous open is still unresolved — runs `openNewSession` twice before the first `closeSession(oldId)` removes the registry entry. Two fresh sessions are created server-side and both link into the profile; the user keeps a stray empty session (a live runtime plus a persisted file) to close manually.
@@ -60,7 +60,7 @@ A fast double-tap on the "New session" control (no debounce) — or `/new` while
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/session-manager.ts:1241-1245` (empty observer list → no relink); `server/src/ws-handler.ts:1885`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** No small one — trigger the relink sweep from the rekey itself (an `onSlotRekeyed` hook wired at boot) rather than from observer notification.
 
 A runtime replacement with zero live observers (voice- or extension-driven switch, or all observers dropped mid-flight) re-keys the slot but never runs `relinkSessionAcrossRekey`, so every holder's profile keeps the dead old id. On the next reconcile those clients open the old id and, where the old file still exists on disk, resurrect the stale transcript — the original finding's failure shape, narrowed to an exotic trigger.

@@ -72,7 +72,9 @@ export class UserProfiles {
     }
   }
 
-  /** Prune entries naming sessions outside `validSessionIds` (boot-time sweep). */
+  /** Prune entries naming sessions outside `validSessionIds` (boot-time sweep).
+   *  Throws on persist failure — a boot sweep that cannot be written aborts
+   *  coherently; runtime mutators use persistOrLog instead. */
   async gc(validSessionIds: Set<string>): Promise<void> {
     let pruned = false;
     for (const [name, profile] of Object.entries(this.document.users)) {
@@ -130,7 +132,7 @@ export class UserProfiles {
         affected.push(name);
       }
     }
-    if (affected.length > 0) await this.persist();
+    if (affected.length > 0) await this.persistOrLog();
     return affected;
   }
 

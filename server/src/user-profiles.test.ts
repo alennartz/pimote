@@ -304,6 +304,27 @@ describe('UserProfiles — summaries', () => {
   });
 });
 
+describe('UserProfiles — persistence failures', () => {
+  it('keeps unlinkAll tolerating a failed write while gc aborts the boot sweep', async () => {
+    // A file where the store's directory belongs makes every write fail.
+    const blocker = join(tempDir, 'blocker');
+    await writeFile(blocker, 'not a directory', 'utf-8');
+    const profiles = new UserProfiles(join(blocker, 'profiles.json'));
+    await profiles.load();
+
+    await profiles.link('alice', S1);
+
+    // Runtime mutators keep the mutation applied and report it; the throw
+    // must not abort a caller mid-sweep (shared rekey, archive, delete).
+    expect(await profiles.unlinkAll('s1')).toEqual(['alice']);
+    expect(profiles.get('alice')).toEqual([]);
+
+    // The boot sweep may still abort coherently on the same failure.
+    await profiles.link('alice', S1);
+    await expect(profiles.gc(new Set<string>())).rejects.toThrow();
+  });
+});
+
 describe('resolveUserName', () => {
   it('falls back to default when the name is absent', () => {
     expect(resolveUserName(null)).toBe('default');

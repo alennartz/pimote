@@ -1931,16 +1931,32 @@ export function newSessionInProject(sessionId: string): Promise<PimoteResponse |
   return openNewSession(session.folderPath);
 }
 
+/** In-flight replacement per session: a fast double-fire (double-tap on the
+ *  control, /new while a placeholder open is unresolved) reuses the running
+ *  replacement instead of creating a second fresh session. */
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- replacement deduplication bookkeeping, not reactive UI state
+const inFlightReplacements = new Map<string, Promise<PimoteResponse | undefined>>();
+
 /** Start a fresh session in this folder and drop the old one from the user's
  *  open-session list everywhere: open (attach, view, profile link), then a
  *  user-level detach of the old id. pi's /new, composed client-side — the
- *  text never dispatches to pi. */
+ *  text never dispatches to pi. Returns the running replacement on re-entry. */
 export async function replaceSessionWithFresh(sessionId: string): Promise<PimoteResponse | undefined> {
-  const session = sessionRegistry.sessions[sessionId];
-  if (!session) return Promise.resolve(undefined);
-  const response = await openNewSession(session.folderPath);
-  // Only a successful open may unlink the old id: on failure the user stays
-  // in it, and a cancelled open already tore the fresh session down.
-  if (response.success) closeSession(sessionId);
-  return response;
+  const running = inFlightReplacements.get(sessionId);
+  if (running) return running;
+  const replacement = (async () => {
+    const session = sessionRegistry.sessions[sessionId];
+    if (!session) return undefined;
+    const response = await openNewSession(session.folderPath);
+    // Only a successful open may unlink the old id: on failure the user stays
+    // in it, and a cancelled open already tore the fresh session down.
+    if (response.success) closeSession(sessionId);
+    return response;
+  })();
+  inFlightReplacements.set(sessionId, replacement);
+  try {
+    return await replacement;
+  } finally {
+    inFlightReplacements.delete(sessionId);
+  }
 }
