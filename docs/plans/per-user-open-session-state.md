@@ -420,7 +420,7 @@ Extend the review-round relink so it covers every holder, not just live observer
 
 The composer parses `/new` locally and never forwards it: sequence is `new_session` in the current session's folder → open the new session (attach, view, profile link) → `detach_session` for the old id (user-level). Pi's `/new` disappears from the composer's slash-command list. The session view gains the approved **New session** control running the same flow. Client tests: `/new` intercepted locally, verbs in order, no `/new` prompt sent, control matches the approved label/tooltip.
 
-**Status:** pending
+**Status:** done
 
 ### Step 18: Server guard for forwarded `/new` prompts
 

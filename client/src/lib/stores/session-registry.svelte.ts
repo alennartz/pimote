@@ -1930,3 +1930,17 @@ export function newSessionInProject(sessionId: string): Promise<PimoteResponse |
   if (!session) return Promise.resolve(undefined);
   return openNewSession(session.folderPath);
 }
+
+/** Start a fresh session in this folder and drop the old one from the user's
+ *  open-session list everywhere: open (attach, view, profile link), then a
+ *  user-level detach of the old id. pi's /new, composed client-side — the
+ *  text never dispatches to pi. */
+export async function replaceSessionWithFresh(sessionId: string): Promise<PimoteResponse | undefined> {
+  const session = sessionRegistry.sessions[sessionId];
+  if (!session) return Promise.resolve(undefined);
+  const response = await openNewSession(session.folderPath);
+  // Only a successful open may unlink the old id: on failure the user stays
+  // in it, and a cancelled open already tore the fresh session down.
+  if (response.success) closeSession(sessionId);
+  return response;
+}

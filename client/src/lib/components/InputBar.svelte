@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack, tick } from 'svelte';
-  import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { abortSession, replaceSessionWithFresh, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection, isConnectionLossError } from '$lib/stores/connection.svelte.js';
   import { commandStore } from '$lib/stores/command-store.svelte.js';
   import { consumeSharedImages, editorTextRequest, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
@@ -46,7 +46,9 @@
   let selectedCommand: CommandInfo | null = $state(null);
   let fileRefPrefix: string | null = $state(null);
 
-  const commandItems = $derived(commandStore.getCommands(sessionRegistry.viewedSessionId ?? ''));
+  // The composer owns /new locally, so pi's command stays out of the list —
+  // every command shown here still dispatches to the agent.
+  const commandItems = $derived(commandStore.getCommands(sessionRegistry.viewedSessionId ?? '').filter((command) => command.name !== 'new'));
 
   const autocompleteQuery = $derived.by(() => {
     if (!autocompleteVisible) return '';
@@ -406,6 +408,25 @@
           console.error('Failed to send bash command:', error);
         }
       }
+      return;
+    }
+
+    // Own `/new` locally — it names this client flow, not a pi prompt: start
+    // a fresh session in this folder and drop the old one from the user's
+    // open-session list on every device.
+    if (/^\/new(?:\s|$)/.test(text)) {
+      const sessionId = sessionRegistry.viewed?.sessionId;
+      inputText = '';
+      autocompleteVisible = false;
+      selectedCommand = null;
+      if (sessionRegistry.viewed) {
+        sessionRegistry.viewed.draftText = '';
+      }
+      if (textareaEl) {
+        textareaEl.style.height = 'auto';
+      }
+      restoreTextareaFocus(focusSnapshot);
+      if (sessionId) void replaceSessionWithFresh(sessionId);
       return;
     }
 
