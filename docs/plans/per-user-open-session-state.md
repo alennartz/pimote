@@ -414,7 +414,7 @@ Run the full test suites (`server/`, `client/`, `shared/` per repo scripts) and 
 
 Extend the review-round relink so it covers every holder, not just live observers: on a `rekeyed` outcome, `unlinkAll(oldId)`, then `link(newId)` for each affected user, broadcasting each affected user's changed set without echo. Update the existing relink wire tests to the shared expectation and add the non-observing-holder case (the confirmed manual-test gap: holder with no live observer follows to the new id instead of restoring the abandoned transcript).
 
-**Status:** pending
+**Status:** done
 
 ### Step 17: Client-owned `/new` — composer command and session-view control
 

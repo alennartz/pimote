@@ -1898,7 +1898,7 @@ export class WsHandler {
     this.subscribedSessions.delete(oldId);
     this.subscribedSessions.add(newId);
     if (this.viewedSessionId === oldId) this.viewedSessionId = newId;
-    await this.relinkSessionForUser(oldId, newId, folderPath);
+    await this.relinkSessionAcrossRekey(oldId, newId, folderPath);
 
     const isFirstObserver = firstObserver ?? slot.observers.keys().next().value === this.clientId;
 
@@ -1988,16 +1988,17 @@ export class WsHandler {
     }
   }
 
-  /** Move the requesting user's profile link across a session rekey, then
-   *  push the new set to their other connections (this connection applied the
-   *  swap locally — no echo). Idempotent when several observers of one user
-   *  each run this. */
-  private async relinkSessionForUser(oldId: string, newId: string, folderPath: string): Promise<void> {
+  /** Move every holder's profile link across a session rekey, then push each
+   *  changed set to that user's connections. A rekey is shared — holders with
+   *  no live observer follow too. This connection applied the swap locally, so
+   *  its user's broadcast excludes it (no echo). Idempotent when several
+   *  observers of the slot each run this. */
+  private async relinkSessionAcrossRekey(oldId: string, newId: string, folderPath: string): Promise<void> {
     if (!this.userProfiles) return;
-    const unlinked = await this.userProfiles.unlink(this.user, oldId);
-    const linked = await this.userProfiles.link(this.user, { sessionId: newId, folderPath });
-    if (unlinked || linked) {
-      WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user, this.clientId);
+    for (const user of await this.userProfiles.unlinkAll(oldId)) {
+      if (await this.userProfiles.link(user, { sessionId: newId, folderPath })) {
+        WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, user, user === this.user ? this.clientId : undefined);
+      }
     }
   }
 
