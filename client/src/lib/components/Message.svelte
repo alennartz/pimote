@@ -17,6 +17,7 @@
   import CircleSlash from '@lucide/svelte/icons/circle-slash';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
   import { parseAssistantError } from '$lib/assistant-error.js';
+  import { collapseDuplicateTextBlocks } from '$lib/assistant-text-dedupe.js';
   import CostBreakdownPopover from './CostBreakdownPopover.svelte';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
 
@@ -54,7 +55,12 @@
   let skillExpanded = $state(false);
   let toolMenuOpen = $state(false);
 
-  let hasSpeakableText = $derived(message.role === 'assistant' && !streaming && message.content.some((c) => c.type === 'text' && c.text));
+  // Some models emit the answer twice (an extra message item repeating the
+  // final answer); collapse the duplicate before rendering, copying, or
+  // speaking it.
+  let visibleContent = $derived(message.role === 'assistant' ? collapseDuplicateTextBlocks(message.content) : message.content);
+
+  let hasSpeakableText = $derived(message.role === 'assistant' && !streaming && visibleContent.some((c) => c.type === 'text' && c.text));
 
   // An assistant turn cancelled by session.abort() (e.g. a voice-mode barge-in
   // produces one per interrupt). `aborted` comes from the wire; the server-side
@@ -69,7 +75,7 @@
   );
 
   let textContent = $derived(
-    message.content
+    visibleContent
       .filter((c) => c.type === 'text' && c.text)
       .map((c) => c.text!)
       .join('\n\n'),
@@ -256,7 +262,7 @@
             {/if}
           </div>
         {/if}
-        {#each message.content as block, i (i)}
+        {#each visibleContent as block, i (i)}
           {@const blockStreaming = block.streaming ?? false}
           {#if block.type === 'text'}
             <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
