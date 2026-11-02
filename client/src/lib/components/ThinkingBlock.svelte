@@ -1,14 +1,21 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import BrainCircuit from '@lucide/svelte/icons/brain-circuit';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
-  import { shouldRenderThinkingBlock } from '$lib/thinking-content.js';
+  import { countThinkingWords, createThinkingWordCounter, previewThinkingText, shouldRenderThinkingBlock } from '$lib/thinking-content.js';
 
   let { text, streaming = false }: { text: string; streaming?: boolean } = $props();
 
   // $state instead of $derived so manual toggle during streaming isn't snapped back
   let expanded = $state(false);
   let rootEl: HTMLDivElement | undefined = $state();
+  let contentEl: HTMLPreElement | undefined = $state();
+  let renderedTextNode: Text | null = null;
+  let renderedTextLength = 0;
+  let contentScrollFrame: number | null = null;
+  const updateWordCount = createThinkingWordCounter();
+  let wordCount = $derived(0);
 
   // Auto-expand while streaming.
   $effect(() => {
@@ -28,26 +35,52 @@
     });
   });
 
-  // Auto-scroll content to bottom during streaming
-  let contentEl: HTMLDivElement | undefined = $state();
+  // Append streamed deltas to one text node instead of replacing the full
+  // cumulative reasoning string on every update.
   $effect(() => {
-    if (streaming && text && contentEl) {
-      contentEl.scrollTop = contentEl.scrollHeight;
+    const el = contentEl;
+    const nextText = text;
+    if (!el) return;
+
+    if (!renderedTextNode || renderedTextNode.parentNode !== el) {
+      renderedTextNode = document.createTextNode(nextText);
+      el.appendChild(renderedTextNode);
+      renderedTextLength = nextText.length;
+    } else if (nextText.length <= renderedTextLength) {
+      renderedTextNode.data = nextText;
+      renderedTextLength = nextText.length;
+    } else {
+      renderedTextNode.appendData(nextText.slice(renderedTextLength));
+      renderedTextLength = nextText.length;
     }
   });
 
-  let previewWords = $derived.by(() => {
-    if (!text) return '';
-    return text.trim().split(/\s+/).slice(0, 8).join(' ');
+  function scheduleContentScroll(): void {
+    if (!contentEl || contentScrollFrame !== null) return;
+    const target = contentEl;
+    contentScrollFrame = requestAnimationFrame(() => {
+      contentScrollFrame = null;
+      if (streaming && contentEl === target) target.scrollTop = target.scrollHeight;
+    });
+  }
+
+  $effect(() => {
+    if (streaming && text && contentEl) scheduleContentScroll();
   });
 
-  let wordCount = $derived.by(() => {
-    if (!text) return 0;
-    const words = text
-      .trim()
-      .split(/\s+/)
-      .filter((w) => w.length > 0);
-    return words.length;
+  onDestroy(() => {
+    if (contentScrollFrame !== null) cancelAnimationFrame(contentScrollFrame);
+    contentScrollFrame = null;
+    renderedTextNode = null;
+    renderedTextLength = 0;
+  });
+
+  let previewWords = $derived(previewThinkingText(text));
+
+  // Count only the appended suffix during streaming, then reconcile once against
+  // the finalized text in case the provider normalized its terminal message.
+  $effect(() => {
+    wordCount = streaming ? updateWordCount(text) : countThinkingWords(text);
   });
 
   let shouldRender = $derived(shouldRenderThinkingBlock(text, streaming));
@@ -73,8 +106,8 @@
     </button>
 
     {#if expanded}
-      <div class="thinking-content" bind:this={contentEl}>
-        <pre class="thinking-text">{text}</pre>
+      <div class="thinking-content">
+        <pre class="thinking-text" bind:this={contentEl}></pre>
       </div>
     {/if}
   </div>

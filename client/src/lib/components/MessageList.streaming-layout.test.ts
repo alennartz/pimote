@@ -98,8 +98,9 @@ it('bounds streaming transcript geometry work to one refresh per display frame',
     await settle();
   }
   paint();
-  // Layout notifications between frames must not repeatedly read the transcript.
-  expect(measurements).toBeLessThanOrEqual(rows.length);
+  // Sticky navigation only needs user-row geometry, even after many layout notifications.
+  const userRows = session.messages.filter((message) => message.role === 'user').length;
+  expect(measurements).toBeLessThanOrEqual(userRows);
   expect(target.querySelector('.sticky-preview')?.textContent).toContain('message 40');
   firstVisibleRow = 30;
   container.dispatchEvent(new Event('scroll'));

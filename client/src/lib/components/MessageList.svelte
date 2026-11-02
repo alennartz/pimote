@@ -107,6 +107,7 @@
   let findBar: ConversationFindBar | undefined = $state();
   let rowResizeObserver: ResizeObserver | null = null;
   let stickyFrame: number | null = null;
+  let autoScrollFrame: number | null = null;
   let listClientWidth = $state<number | null>(null);
 
   const messageEntryIds = $derived.by(() => {
@@ -134,7 +135,7 @@
 
   function registerRow(node: HTMLElement, key: string) {
     rowElements.set(key, node);
-    if (!rowResizeObserver && typeof ResizeObserver !== 'undefined') rowResizeObserver = new ResizeObserver(() => void tick().then(updateStickyTargets));
+    if (!rowResizeObserver && typeof ResizeObserver !== 'undefined') rowResizeObserver = new ResizeObserver(updateStickyTargets);
     rowResizeObserver?.observe(node);
     return {
       destroy() {
@@ -147,12 +148,12 @@
   function transcriptPositions(): UserMessagePosition[] {
     const positions: UserMessagePosition[] = [];
     for (const entry of displayEntries) {
-      if (entry.kind !== 'message') continue;
+      if (entry.kind !== 'message' || entry.message.role !== 'user') continue;
       const node = rowElements.get(entry.key);
       if (!node) continue;
       positions.push({
         entryId: entry.key,
-        role: entry.message.role,
+        role: 'user',
         bottom: node.getBoundingClientRect().bottom,
       });
     }
@@ -359,14 +360,18 @@
       }
     }
 
-    if (autoScrollEnabled && scrollContainer) {
-      tick().then(() => {
-        if (scrollContainer && autoScrollEnabled) {
-          scrollContainer.scrollTop = scrollContainer.scrollHeight;
-        }
-      });
-    }
+    scheduleAutoScroll();
   });
+
+  function scheduleAutoScroll(): void {
+    if (!autoScrollEnabled || !scrollContainer || autoScrollFrame !== null) return;
+    autoScrollFrame = requestAnimationFrame(() => {
+      autoScrollFrame = null;
+      if (scrollContainer && autoScrollEnabled) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+    });
+  }
 
   function scrollToBottom() {
     if (scrollContainer) {
@@ -415,6 +420,7 @@
   onDestroy(() => {
     clearInterval(activityInterval);
     if (stickyFrame !== null) cancelAnimationFrame(stickyFrame);
+    if (autoScrollFrame !== null) cancelAnimationFrame(autoScrollFrame);
     rowResizeObserver?.disconnect();
     rowResizeObserver = null;
   });

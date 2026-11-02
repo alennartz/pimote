@@ -67,8 +67,25 @@ let component: ReturnType<typeof mount> | undefined;
 let target: HTMLDivElement;
 let container: HTMLElement;
 let geometry: ReturnType<typeof stubGeometry>;
+let frameCallbacks: Map<number, FrameRequestCallback>;
+let nextFrameId: number;
+
+function paintFrame() {
+  const callbacks = [...frameCallbacks.values()];
+  frameCallbacks.clear();
+  for (const callback of callbacks) callback(16);
+  flushSync();
+}
 
 beforeEach(async () => {
+  frameCallbacks = new Map();
+  nextFrameId = 0;
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    const id = ++nextFrameId;
+    frameCallbacks.set(id, callback);
+    return id;
+  });
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frameCallbacks.delete(id));
   RecordingResizeObserver.instances = [];
   sessionRegistry.addSession('s1', '/workspace/project', 'project');
   sessionRegistry.switchTo('s1');
@@ -85,6 +102,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (component) await unmount(component);
   component = undefined;
+  vi.unstubAllGlobals();
   sessionRegistry.sessions = {};
   sessionRegistry.viewedSessionId = null;
   document.body.replaceChildren();
@@ -133,6 +151,7 @@ describe('MessageList scroll pin', () => {
   it('stays glued to the bottom when the viewport shrinks while pinned', async () => {
     container.scrollTop = geometry.scrollHeight;
     await settle();
+    paintFrame();
     expect(container.scrollTop).toBe(600); // pinned: real bottom of 1000/400
 
     // A question panel appears below the list and steals 260px of height.
@@ -145,6 +164,7 @@ describe('MessageList scroll pin', () => {
   it('keeps following output after a question panel appears', async () => {
     container.scrollTop = geometry.scrollHeight;
     await settle();
+    paintFrame();
 
     geometry.clientHeight = 140;
     fireResize(container);
@@ -158,6 +178,7 @@ describe('MessageList scroll pin', () => {
     session.messageKeys = [...session.messageKeys, 'm2'];
     flushSync();
     await settle();
+    paintFrame();
 
     expect(container.scrollTop).toBe(1260); // followed to the new bottom
     expect(target.querySelector('.scroll-to-bottom')).toBeNull();
