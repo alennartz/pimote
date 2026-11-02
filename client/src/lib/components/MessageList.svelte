@@ -95,6 +95,11 @@
   let scrollContainer: HTMLDivElement | undefined = $state();
   let userScrolledUp = $state(false);
   let autoScrollEnabled = $state(true);
+  let manualScrollDirection: 'up' | 'down' | null = null;
+  let manualScrollExpiresAt = 0;
+  let previousScrollTop: number | null = null;
+  let touchStartY: number | null = null;
+  let scrollbarDragY: number | null = null;
 
   let treeSnapshot = $state<GetTreeResponseData | null>(null);
   let rowElements = new SvelteMap<string, HTMLElement>();
@@ -204,6 +209,72 @@
     return target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
   }
 
+  function noteManualScroll(direction: 'up' | 'down'): void {
+    manualScrollDirection = direction;
+    manualScrollExpiresAt = Date.now() + 250;
+  }
+
+  function nestedScrollerCanHandle(target: EventTarget | null, scrollDeltaY: number): boolean {
+    if (!scrollContainer || !(target instanceof Element)) return false;
+
+    let ancestor: Element | null = target;
+    while (ancestor && ancestor !== scrollContainer) {
+      if (ancestor instanceof HTMLElement) {
+        const overflowY = getComputedStyle(ancestor).overflowY;
+        if ((overflowY === 'auto' || overflowY === 'scroll') && ancestor.scrollHeight > ancestor.clientHeight) {
+          const atTop = ancestor.scrollTop <= 0;
+          const atBottom = ancestor.scrollTop + ancestor.clientHeight >= ancestor.scrollHeight;
+          if ((scrollDeltaY < 0 && !atTop) || (scrollDeltaY > 0 && !atBottom)) return true;
+        }
+      }
+      ancestor = ancestor.parentElement;
+    }
+
+    return false;
+  }
+
+  function onWheel(event: WheelEvent): void {
+    if (event.deltaY === 0 || nestedScrollerCanHandle(event.target, event.deltaY)) return;
+    noteManualScroll(event.deltaY < 0 ? 'up' : 'down');
+  }
+
+  function onTouchStart(event: TouchEvent): void {
+    touchStartY = event.touches.length === 1 ? event.touches[0].clientY : null;
+  }
+
+  function onTouchMove(event: TouchEvent): void {
+    if (touchStartY === null || event.touches.length !== 1) return;
+    const nextY = event.touches[0].clientY;
+    const scrollDeltaY = touchStartY - nextY;
+    touchStartY = nextY;
+    if (scrollDeltaY !== 0 && !nestedScrollerCanHandle(event.target, scrollDeltaY)) {
+      noteManualScroll(scrollDeltaY < 0 ? 'up' : 'down');
+    }
+  }
+
+  function onTouchEnd(): void {
+    touchStartY = null;
+  }
+
+  function onPointerDown(event: PointerEvent): void {
+    const el = scrollContainer;
+    if (!el || event.pointerType !== 'mouse') return;
+    const rect = el.getBoundingClientRect();
+    const gutterWidth = Math.max(16, el.offsetWidth - el.clientWidth);
+    scrollbarDragY = event.clientX >= rect.right - gutterWidth ? event.clientY : null;
+  }
+
+  function onPointerMove(event: PointerEvent): void {
+    if (scrollbarDragY === null) return;
+    const deltaY = event.clientY - scrollbarDragY;
+    scrollbarDragY = event.clientY;
+    if (deltaY !== 0) noteManualScroll(deltaY < 0 ? 'up' : 'down');
+  }
+
+  function onPointerUp(): void {
+    scrollbarDragY = null;
+  }
+
   function onKeydown(event: KeyboardEvent): void {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
       event.preventDefault();
@@ -214,6 +285,10 @@
     if (event.key === 'Escape' && findOpen) {
       event.preventDefault();
       closeFind();
+    }
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && !isTextEntryTarget(event.target)) {
+      if (event.key === 'ArrowUp' || event.key === 'PageUp' || event.key === 'Home') noteManualScroll('up');
+      else if (event.key === 'ArrowDown' || event.key === 'PageDown' || event.key === 'End') noteManualScroll('down');
     }
     // END re-glues a detached scroll viewer to the bottom. Text-entry targets
     // keep the key for caret movement.
@@ -258,7 +333,11 @@
   });
 
   onMount(() => {
+    previousScrollTop = scrollContainer?.scrollTop ?? null;
     document.addEventListener('keydown', onKeydown);
+    document.addEventListener('pointermove', onPointerMove, true);
+    document.addEventListener('pointerup', onPointerUp, true);
+    document.addEventListener('pointercancel', onPointerUp, true);
     const media = typeof window.matchMedia === 'function' ? window.matchMedia('(max-width: 640px)') : null;
     const updateMobile = () => (mobileViewport = media?.matches ?? false);
     updateMobile();
@@ -267,6 +346,9 @@
     window.addEventListener('resize', resize);
     return () => {
       document.removeEventListener('keydown', onKeydown);
+      document.removeEventListener('pointermove', onPointerMove, true);
+      document.removeEventListener('pointerup', onPointerUp, true);
+      document.removeEventListener('pointercancel', onPointerUp, true);
       media?.removeEventListener?.('change', updateMobile);
       window.removeEventListener('resize', resize);
     };
@@ -277,10 +359,22 @@
     if (!scrollContainer) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-    // Consider "at bottom" if within 80px
+    // Keep the existing near-bottom threshold, but only manual input can
+    // change follow mode. Programmatic scroll events can arrive after layout.
     const atBottom = distanceFromBottom < 80;
-    userScrolledUp = !atBottom;
-    autoScrollEnabled = atBottom;
+    const direction = Date.now() <= manualScrollExpiresAt ? manualScrollDirection : null;
+    const movedUp = previousScrollTop !== null && scrollTop < previousScrollTop;
+    const movedDown = previousScrollTop !== null && scrollTop > previousScrollTop;
+    previousScrollTop = scrollTop;
+    if ((direction === 'up' && movedUp) || (direction === 'down' && movedDown)) {
+      manualScrollDirection = null;
+      manualScrollExpiresAt = 0;
+      userScrolledUp = !atBottom;
+      autoScrollEnabled = atBottom;
+    } else if (direction === null) {
+      manualScrollDirection = null;
+      manualScrollExpiresAt = 0;
+    }
     updateStickyTargets();
   }
 
@@ -369,6 +463,7 @@
       autoScrollFrame = null;
       if (scrollContainer && autoScrollEnabled) {
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        previousScrollTop = scrollContainer.scrollTop;
       }
     });
   }
@@ -377,6 +472,7 @@
     if (scrollContainer) {
       autoScrollEnabled = true;
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      previousScrollTop = scrollContainer.scrollTop;
     }
   }
 
@@ -390,7 +486,10 @@
     let lastHeight = el.clientHeight;
     const observer = new ResizeObserver(() => {
       const height = el.clientHeight;
-      if (height < lastHeight && autoScrollEnabled) el.scrollTop = el.scrollHeight;
+      if (height < lastHeight && autoScrollEnabled) {
+        el.scrollTop = el.scrollHeight;
+        previousScrollTop = el.scrollTop;
+      }
       lastHeight = height;
       listClientWidth = el.clientWidth;
       updateStickyTargets();
@@ -436,7 +535,19 @@
 </script>
 
 <div class="message-list-wrapper">
-  <div class="message-list" bind:this={scrollContainer} onscroll={onScroll}>
+  <div
+    class="message-list"
+    role="region"
+    aria-label="Conversation transcript"
+    bind:this={scrollContainer}
+    onscroll={onScroll}
+    onwheel={onWheel}
+    ontouchstart={onTouchStart}
+    ontouchmove={onTouchMove}
+    ontouchend={onTouchEnd}
+    ontouchcancel={onTouchEnd}
+    onpointerdown={onPointerDown}
+  >
     <div class="message-list-inner" class:pointer-events-none={readOnly}>
       {#if displayEntries.length === 0 && !session?.isStreaming}
         <div class="empty-state">

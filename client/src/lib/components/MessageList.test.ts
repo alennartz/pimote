@@ -148,6 +148,82 @@ describe('MessageList streaming menus', () => {
 });
 
 describe('MessageList scroll pin', () => {
+  it('keeps following streamed output when a scroll event arrives before the next frame', async () => {
+    const session = sessionRegistry.viewed!;
+    session.isStreaming = true;
+    session.streamingKey = 'stream';
+    session.streamingMessage = { role: 'assistant', content: [{ type: 'thinking', text: 'Reasoning' }] };
+    flushSync();
+    await settle();
+    paintFrame();
+
+    container.scrollTop = geometry.scrollHeight;
+    container.dispatchEvent(new Event('scroll'));
+    geometry.scrollHeight = 1400;
+    session.streamingMessage.content[0].text += ' continues';
+    flushSync();
+    await settle();
+
+    // A native scroll notification can arrive before the scheduled follow-up frame.
+    container.dispatchEvent(new Event('scroll'));
+    paintFrame();
+
+    expect(container.scrollTop).toBe(1000);
+    expect(target.querySelector('.scroll-to-bottom')).toBeNull();
+  });
+
+  it('does not unpin from a programmatic scroll event', async () => {
+    const session = sessionRegistry.viewed!;
+    session.isStreaming = true;
+    session.streamingKey = 'stream';
+    session.streamingMessage = { role: 'assistant', content: [{ type: 'thinking', text: 'Reasoning' }] };
+    geometry.scrollHeight = 1400;
+    flushSync();
+    await settle();
+    paintFrame();
+
+    container.dispatchEvent(new Event('scroll'));
+    container.scrollTop = 900;
+    container.dispatchEvent(new Event('scroll'));
+    expect(target.querySelector('.scroll-to-bottom')).toBeNull();
+
+    geometry.scrollHeight = 1500;
+    session.streamingMessage.content[0].text += ' continues';
+    flushSync();
+    await settle();
+    paintFrame();
+
+    expect(container.scrollTop).toBe(1100);
+    expect(target.querySelector('.scroll-to-bottom')).toBeNull();
+  });
+
+  it('unpins after a manual upward wheel scroll and stays unpinned', async () => {
+    const session = sessionRegistry.viewed!;
+    session.isStreaming = true;
+    session.streamingKey = 'stream';
+    session.streamingMessage = { role: 'assistant', content: [{ type: 'thinking', text: 'Reasoning' }] };
+    geometry.scrollHeight = 1400;
+    flushSync();
+    await settle();
+    paintFrame();
+
+    container.dispatchEvent(new Event('scroll'));
+    container.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
+    container.scrollTop = 900;
+    container.dispatchEvent(new Event('scroll'));
+    flushSync();
+    expect(target.querySelector('.scroll-to-bottom')).not.toBeNull();
+
+    geometry.scrollHeight = 1500;
+    session.streamingMessage.content[0].text += ' continues';
+    flushSync();
+    await settle();
+    paintFrame();
+
+    expect(container.scrollTop).toBe(900);
+    expect(target.querySelector('.scroll-to-bottom')).not.toBeNull();
+  });
+
   it('stays glued to the bottom when the viewport shrinks while pinned', async () => {
     container.scrollTop = geometry.scrollHeight;
     await settle();
