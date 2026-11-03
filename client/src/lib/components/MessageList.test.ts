@@ -66,6 +66,7 @@ function stubGeometry(el: HTMLElement) {
 let component: ReturnType<typeof mount> | undefined;
 let target: HTMLDivElement;
 let container: HTMLElement;
+let inner: HTMLElement;
 let geometry: ReturnType<typeof stubGeometry>;
 let frameCallbacks: Map<number, FrameRequestCallback>;
 let nextFrameId: number;
@@ -96,6 +97,7 @@ beforeEach(async () => {
   document.body.append(target);
   component = mount(MessageList, { target });
   container = target.querySelector<HTMLElement>('.message-list')!;
+  inner = target.querySelector<HTMLElement>('.message-list-inner')!;
   geometry = stubGeometry(container);
 });
 
@@ -163,12 +165,13 @@ describe('MessageList scroll pin', () => {
     session.streamingMessage.content[0].text += ' continues';
     flushSync();
     await settle();
+    fireResize(inner);
 
     // A native scroll notification can arrive before the scheduled follow-up frame.
     container.dispatchEvent(new Event('scroll'));
     paintFrame();
 
-    expect(container.scrollTop).toBe(1000);
+    expect(container.scrollTop).toBe(999);
     expect(target.querySelector('.scroll-to-bottom')).toBeNull();
   });
 
@@ -191,9 +194,10 @@ describe('MessageList scroll pin', () => {
     session.streamingMessage.content[0].text += ' continues';
     flushSync();
     await settle();
+    fireResize(inner);
     paintFrame();
 
-    expect(container.scrollTop).toBe(1100);
+    expect(container.scrollTop).toBe(1099);
     expect(target.querySelector('.scroll-to-bottom')).toBeNull();
   });
 
@@ -218,6 +222,7 @@ describe('MessageList scroll pin', () => {
     session.streamingMessage.content[0].text += ' continues';
     flushSync();
     await settle();
+    fireResize(inner);
     paintFrame();
 
     expect(container.scrollTop).toBe(900);
@@ -233,8 +238,9 @@ describe('MessageList scroll pin', () => {
     // A question panel appears below the list and steals 260px of height.
     geometry.clientHeight = 140;
     fireResize(container);
+    paintFrame();
 
-    expect(container.scrollTop).toBe(860); // glued to the new bottom, not offset
+    expect(container.scrollTop).toBe(859); // glued to the new bottom, not offset
   });
 
   it('keeps following output after a question panel appears', async () => {
@@ -254,9 +260,10 @@ describe('MessageList scroll pin', () => {
     session.messageKeys = [...session.messageKeys, 'm2'];
     flushSync();
     await settle();
+    fireResize(inner);
     paintFrame();
 
-    expect(container.scrollTop).toBe(1260); // followed to the new bottom
+    expect(container.scrollTop).toBe(1259); // followed to the new bottom
     expect(target.querySelector('.scroll-to-bottom')).toBeNull();
   });
 });

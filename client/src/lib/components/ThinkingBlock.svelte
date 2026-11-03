@@ -4,6 +4,7 @@
   import BrainCircuit from '@lucide/svelte/icons/brain-circuit';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
   import { countThinkingWords, createThinkingWordCounter, previewThinkingText, shouldRenderThinkingBlock } from '$lib/thinking-content.js';
+  import { StickToBottom } from '$lib/stick-to-bottom.svelte.js';
 
   let { text, streaming = false }: { text: string; streaming?: boolean } = $props();
 
@@ -13,9 +14,19 @@
   let contentEl: HTMLPreElement | undefined = $state();
   let renderedTextNode: Text | null = null;
   let renderedTextLength = 0;
-  let contentScrollFrame: number | null = null;
   const updateWordCount = createThinkingWordCounter();
   let wordCount = $derived(0);
+
+  // Follows the reasoning text while streaming; the reader can scroll up and
+  // the block stops yanking them back down. The pre is both scroller and
+  // content, so one element serves both roles. The instance self-manages its
+  // listeners, resize observation, and following; no method calls needed.
+  const _stick = new StickToBottom({
+    scrollElement: () => contentEl,
+    contentElement: () => contentEl,
+    initial: 'instant',
+    resize: 'instant',
+  });
 
   // Auto-expand while streaming.
   $effect(() => {
@@ -55,22 +66,7 @@
     }
   });
 
-  function scheduleContentScroll(): void {
-    if (!contentEl || contentScrollFrame !== null) return;
-    const target = contentEl;
-    contentScrollFrame = requestAnimationFrame(() => {
-      contentScrollFrame = null;
-      if (streaming && contentEl === target) target.scrollTop = target.scrollHeight;
-    });
-  }
-
-  $effect(() => {
-    if (streaming && text && contentEl) scheduleContentScroll();
-  });
-
   onDestroy(() => {
-    if (contentScrollFrame !== null) cancelAnimationFrame(contentScrollFrame);
-    contentScrollFrame = null;
     renderedTextNode = null;
     renderedTextLength = 0;
   });
