@@ -11,19 +11,20 @@
   // $state instead of $derived so manual toggle during streaming isn't snapped back
   let expanded = $state(false);
   let rootEl: HTMLDivElement | undefined = $state();
-  let contentEl: HTMLPreElement | undefined = $state();
+  let scrollEl: HTMLDivElement | undefined = $state();
+  let textEl: HTMLPreElement | undefined = $state();
   let renderedTextNode: Text | null = null;
   let renderedTextLength = 0;
   const updateWordCount = createThinkingWordCounter();
   let wordCount = $derived(0);
 
   // Follows the reasoning text while streaming; the reader can scroll up and
-  // the block stops yanking them back down. The pre is both scroller and
-  // content, so one element serves both roles. The instance self-manages its
-  // listeners, resize observation, and following; no method calls needed.
+  // the block stops yanking them back down. The content div scrolls; the pre
+  // inside it grows and is what the resize observation watches. The instance
+  // self-manages its listeners and following; no method calls needed.
   const _stick = new StickToBottom({
-    scrollElement: () => contentEl,
-    contentElement: () => contentEl,
+    scrollElement: () => scrollEl,
+    contentElement: () => textEl,
     initial: 'instant',
     resize: 'instant',
   });
@@ -49,7 +50,7 @@
   // Append streamed deltas to one text node instead of replacing the full
   // cumulative reasoning string on every update.
   $effect(() => {
-    const el = contentEl;
+    const el = textEl;
     const nextText = text;
     if (!el) return;
 
@@ -102,8 +103,8 @@
     </button>
 
     {#if expanded}
-      <div class="thinking-content">
-        <pre class="thinking-text" bind:this={contentEl}></pre>
+      <div class="thinking-content" bind:this={scrollEl}>
+        <pre class="thinking-text" bind:this={textEl}></pre>
       </div>
     {/if}
   </div>

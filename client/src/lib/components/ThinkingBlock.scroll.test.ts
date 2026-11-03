@@ -46,7 +46,8 @@ function stubGeometry(el: HTMLElement) {
 
 let component: ReturnType<typeof mount> | undefined;
 let target: HTMLDivElement;
-let pre: HTMLElement;
+let scroller: HTMLElement;
+let text: HTMLElement;
 let geometry: ReturnType<typeof stubGeometry>;
 let frameCallbacks: Map<number, FrameRequestCallback>;
 let nextFrameId: number;
@@ -72,8 +73,9 @@ beforeEach(async () => {
   document.body.append(target);
   component = mount(ThinkingBlock, { target, props: { streaming: true, text: 'start' } });
   flushSync();
-  pre = target.querySelector<HTMLElement>('.thinking-text')!;
-  geometry = stubGeometry(pre);
+  scroller = target.querySelector<HTMLElement>('.thinking-content')!;
+  text = target.querySelector<HTMLElement>('.thinking-text')!;
+  geometry = stubGeometry(scroller);
 });
 
 afterEach(async () => {
@@ -85,31 +87,31 @@ afterEach(async () => {
 
 describe('ThinkingBlock scroll pin', () => {
   it('follows streamed reasoning while pinned', () => {
-    pre.scrollTop = geometry.scrollHeight;
-    pre.dispatchEvent(new Event('scroll'));
+    scroller.scrollTop = geometry.scrollHeight;
+    scroller.dispatchEvent(new Event('scroll'));
     paintFrame();
 
     geometry.scrollHeight = 1400;
-    fireResize(pre);
+    fireResize(text);
     paintFrame();
 
-    expect(pre.scrollTop).toBe(1199); // stayed glued to the bottom of the reasoning
+    expect(scroller.scrollTop).toBe(1199); // stayed glued to the bottom of the reasoning
   });
 
   it('stops following after the reader scrolls up', () => {
-    pre.scrollTop = geometry.scrollHeight;
-    pre.dispatchEvent(new Event('scroll'));
+    scroller.scrollTop = geometry.scrollHeight;
+    scroller.dispatchEvent(new Event('scroll'));
     paintFrame();
 
-    pre.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
-    pre.scrollTop = 300;
-    pre.dispatchEvent(new Event('scroll'));
+    scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
+    scroller.scrollTop = 300;
+    scroller.dispatchEvent(new Event('scroll'));
     flushSync();
 
     geometry.scrollHeight = 1400;
-    fireResize(pre);
+    fireResize(text);
     paintFrame();
 
-    expect(pre.scrollTop).toBe(300); // left where the reader put it
+    expect(scroller.scrollTop).toBe(300); // left where the reader put it
   });
 });
