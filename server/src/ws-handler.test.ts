@@ -2409,6 +2409,70 @@ describe('WsHandler', () => {
     });
   });
 
+  describe('fork command', () => {
+    it('responds with error when entryId is missing', async () => {
+      const session = createMockSlot({ id: 'session-fork', connectedClientId: 'client-1' });
+      const sessions = new Map([['session-fork', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(JSON.stringify({ type: 'fork', sessionId: 'session-fork', id: 'req-fork-no-entry' }));
+
+      const resp = findResponse(sent, 'req-fork-no-entry');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(false);
+      expect(resp!.error).toContain('entryId');
+    });
+
+    it('calls runtime.fork with entryId and returns selectedText and cancelled from result', async () => {
+      const forkFn = vi.fn().mockResolvedValue({ cancelled: false, selectedText: 'forked message text' });
+      const slot = createMockSlot({ id: 'session-fork-ok', connectedClientId: 'client-1' });
+      (slot.runtime as any).fork = forkFn;
+      const sessions = new Map([['session-fork-ok', slot]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'fork',
+          sessionId: 'session-fork-ok',
+          entryId: 'entry-target-42',
+          id: 'req-fork-ok',
+        }),
+      );
+
+      expect(forkFn).toHaveBeenCalledWith('entry-target-42');
+
+      const resp = findResponse(sent, 'req-fork-ok');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).cancelled).toBe(false);
+      expect((resp!.data as any).selectedText).toBe('forked message text');
+    });
+
+    it('returns cancelled: true when runtime.fork is cancelled and re-keys nothing', async () => {
+      const forkFn = vi.fn().mockResolvedValue({ cancelled: true });
+      const slot = createMockSlot({ id: 'session-fork-cancel', connectedClientId: 'client-1' });
+      (slot.runtime as any).fork = forkFn;
+      const sessions = new Map([['session-fork-cancel', slot]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'fork',
+          sessionId: 'session-fork-cancel',
+          entryId: 'entry-target',
+          id: 'req-fork-cancel',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-fork-cancel');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect((resp!.data as any).cancelled).toBe(true);
+      expect(sessions.has('session-fork-cancel')).toBe(true);
+      expect(findEvents(sent, 'session_replaced')).toHaveLength(0);
+    });
+  });
+
   describe('tree navigation interfaces', () => {
     it('maps full conversation text for message nodes and omits it for non-message nodes', () => {
       const tree = [

@@ -6,6 +6,7 @@
   import CopyButton from './CopyButton.svelte';
   import TtsButton from './TtsButton.svelte';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+  import GitFork from '@lucide/svelte/icons/git-fork';
   import GitBranch from '@lucide/svelte/icons/git-branch';
 
   export interface MessageActionMenuProps {
@@ -17,6 +18,7 @@
     readOnly?: boolean;
     store?: Pick<BranchTreeStore, 'navigate' | 'openFocused'>;
     onRedo?: (entryId: string, opts?: { compactionPrompt?: string }) => void | Promise<void>;
+    onFork?: (entryId: string) => void | Promise<void>;
     onClose?: () => void;
     copyText?: string;
     ttsText?: string;
@@ -33,6 +35,7 @@
     readOnly = false,
     store,
     onRedo,
+    onFork,
     onClose,
     copyText,
     ttsText,
@@ -77,6 +80,11 @@
     if (store) void store.openFocused(sessionId, entryId);
     onClose?.();
   }
+
+  function forkFromHere() {
+    if (onFork) void onFork(entryId);
+    onClose?.();
+  }
 </script>
 
 {#if open}
@@ -94,6 +102,11 @@
           </svg>
         </span>
       </button>
+      {#if onFork}
+        <button type="button" role="menuitem" class="action-item" title="Fork from this message" aria-label="Fork from this message" onclick={forkFromHere}>
+          <GitFork size={14} aria-hidden="true" />
+        </button>
+      {/if}
       {#if abandonedBranchCount > 0}
         <button
           type="button"

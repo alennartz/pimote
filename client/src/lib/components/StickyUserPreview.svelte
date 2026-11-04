@@ -13,10 +13,11 @@
     readOnly?: boolean;
     store?: Pick<BranchTreeStore, 'navigate' | 'openFocused'>;
     onRedo?: (entryId: string, opts?: { compactionPrompt?: string }) => void | Promise<void>;
+    onFork?: (entryId: string) => void | Promise<void>;
     onJump?: () => void;
   }
 
-  let { message, sessionId, abandonedBranchCount = 0, manager = false, readOnly = false, store, onRedo, onJump }: Props = $props();
+  let { message, sessionId, abandonedBranchCount = 0, manager = false, readOnly = false, store, onRedo, onFork, onJump }: Props = $props();
   let menuOpen = $state(false);
 
   let entryId = $derived('entryId' in message && typeof message.entryId === 'string' ? message.entryId : '');
@@ -36,7 +37,7 @@
       </button>
       {#if menuOpen}
         <div class="menu-pop">
-          <MessageActionMenu open {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} onClose={() => (menuOpen = false)} />
+          <MessageActionMenu open {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} {onFork} onClose={() => (menuOpen = false)} />
         </div>
       {/if}
     </span>

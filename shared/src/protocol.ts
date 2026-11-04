@@ -481,6 +481,11 @@ export interface DequeueSteeringCommand extends CommandBase {
   type: 'dequeue_steering';
 }
 
+export interface ForkCommand extends CommandBase {
+  type: 'fork';
+  entryId: string;
+}
+
 export interface GetTreeCommand extends CommandBase {
   type: 'get_tree';
 }
@@ -892,6 +897,7 @@ export type PimoteCommand =
   | CompleteFileRefsCommand
   | SetSessionNameCommand
   | DequeueSteeringCommand
+  | ForkCommand
   | GetTreeCommand
   | NavigateTreeCommand
   | SetTreeLabelCommand

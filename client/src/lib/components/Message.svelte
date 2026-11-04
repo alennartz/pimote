@@ -35,6 +35,7 @@
     readOnly = false,
     store,
     onRedo,
+    onFork,
   }: {
     message: PimoteAgentMessage | StreamingMessage;
     streaming?: boolean;
@@ -46,6 +47,7 @@
     readOnly?: boolean;
     store?: Pick<BranchTreeStore, 'navigate' | 'openFocused'>;
     onRedo?: (entryId: string, opts?: { compactionPrompt?: string }) => void | Promise<void>;
+    onFork?: (entryId: string) => void | Promise<void>;
   } = $props();
   let userMenuOpen = $state(false);
   let customExpanded = $state(false);
@@ -146,7 +148,18 @@
         <button class="message-icon user-icon" onclick={() => (userMenuOpen = !userMenuOpen)}>
           <User size={16} />
         </button>
-        <MessageActionMenu open={userMenuOpen} {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} onClose={() => (userMenuOpen = false)} />
+        <MessageActionMenu
+          open={userMenuOpen}
+          {entryId}
+          {sessionId}
+          {abandonedBranchCount}
+          {manager}
+          {readOnly}
+          {store}
+          {onRedo}
+          onFork={message.role === 'user' ? onFork : undefined}
+          onClose={() => (userMenuOpen = false)}
+        />
       </div>
     {:else}
       <div class="message-icon user-icon">

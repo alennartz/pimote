@@ -95,11 +95,15 @@ _Avoid_: full transcript (which includes non-conversational entries)
 
 **Branch point**:
 A user or assistant message shared by the active path and one or more alternate continuations. The anchor for tree navigation.
-_Avoid_: fork point, fork (pi's new-session-file fork is retired from this UX)
+_Avoid_: fork point (fork creates a new session file rather than marking a branch in this one)
 
 **Tree navigation**:
 Moving the active leaf to another message in the same session file. Transcript **Redo from here** and branch-explorer **Resume** use this operation. Optional compaction uses pi's default summarizer or custom instructions. pi's `navigateTree`; the wire command is `navigate_tree`.
 _Avoid_: fork
+
+**Fork from message**:
+Continuing from a chosen user message in a new session file while the original session stays untouched and live. The transcript **Fork from this message** action uses pi's `runtime.fork`; the wire command is `fork`. Fork draft policy restores the selected prompt text (Replace, Append, Prepend, Ignore on conflict).
+_Avoid_: redo (redo re-branches in place), branch (reserved for tree navigation)
 
 **Abandoned branch**:
 A retained session continuation that is not the currently selected branch.

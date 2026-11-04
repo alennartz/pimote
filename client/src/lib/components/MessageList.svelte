@@ -87,6 +87,43 @@
     }
   }
 
+  async function handleFork(entryId: string) {
+    // Fork is a regular-session action. Manager and read-only transcripts have
+    // no forkable tree.
+    if (readOnly || source || managerTranscript) return;
+    const viewed = sessionRegistry.viewed;
+    const sessionId = viewed?.sessionId;
+    if (!sessionId) return;
+
+    // Fork replaces the session, so capture the pre-fork draft first.
+    const currentDraft = sessionRegistry.sessions[sessionId]?.draftText ?? '';
+
+    let res;
+    try {
+      res = await connection.send({ type: 'fork', sessionId, entryId });
+    } catch (e) {
+      console.error('Failed to send fork:', e);
+      return;
+    }
+
+    if (!res.success || !res.data) return;
+    const data = res.data as { cancelled: boolean; selectedText?: string };
+    if (data.cancelled) return;
+
+    // After session replacement, sessionRegistry.viewed points to the new session.
+    const newSessionId = sessionRegistry.viewedSessionId;
+    if (!newSessionId) return;
+
+    const selectedText = data.selectedText;
+    if (needsDraftPrompt(currentDraft, selectedText)) {
+      const choice = await promptDraftChoice();
+      const nextText = applyDraftChoice(currentDraft, selectedText!, choice);
+      if (nextText !== null) sessionRegistry.setDraftText(newSessionId, nextText);
+    } else if (selectedText) {
+      sessionRegistry.setDraftText(newSessionId, selectedText);
+    }
+  }
+
   function handleAbort() {
     // The manager composer owns abort for an explicit source.
     const sessionId = sessionRegistry.viewedSessionId;
@@ -425,6 +462,7 @@
               {readOnly}
               store={branchTreeStore}
               onRedo={source || readOnly || managerTranscript ? undefined : handleRedo}
+              onFork={source || readOnly || managerTranscript ? undefined : handleFork}
             />
           {/if}
         </div>
@@ -457,6 +495,7 @@
             {readOnly}
             store={branchTreeStore}
             onRedo={handleRedo}
+            onFork={handleFork}
             onJump={() => scrollToEntry(stickyEntryId)}
           />
         </div>

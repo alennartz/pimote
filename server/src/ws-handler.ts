@@ -1220,6 +1220,7 @@ export class WsHandler {
         case 'complete_file_refs':
         case 'set_session_name':
         case 'dequeue_steering':
+        case 'fork':
         case 'navigate_tree':
         case 'set_tree_label': {
           await this.handleSessionCommand(command, id);
@@ -1670,6 +1671,20 @@ export class WsHandler {
       case 'set_session_name': {
         session.setSessionName(command.name);
         this.sendResponse(id, true);
+        break;
+      }
+
+      case 'fork': {
+        if (!command.entryId) {
+          this.sendResponse(id, false, undefined, 'entryId is required');
+          break;
+        }
+        const forkResult = await runSlotLifecycle(slot, 'reset', () => slot.runtime.fork(command.entryId));
+        const forkData: { cancelled: boolean; selectedText?: string } = { cancelled: forkResult.cancelled };
+        if (forkResult.selectedText !== undefined) {
+          forkData.selectedText = forkResult.selectedText;
+        }
+        this.sendResponse(id, true, forkData);
         break;
       }
 

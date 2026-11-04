@@ -95,6 +95,7 @@ Each conversation with pi is a **session**, tied to a project folder. You can:
 - **Resume an archived session** through the manager by its session ID; the operation reopens the original record and never creates a replacement
 - **Delete sessions** permanently
 - **Redo from a message** to move the active branch within the same session; abandoned continuations remain available in the branch explorer
+- **Fork from a message** to continue from that point in a new session file while the original session stays untouched and live; the forked prompt text returns to the composer (Replace, Append, Prepend, or Ignore on draft conflict)
 - **Start fresh** with a new session in the same project at any time
 
 Unarchived session state persists across browser restarts — reopening Pimote restores your open tabs and reconnects automatically. Archived sessions leave the restore set; the dashboard unarchives them, then opens them explicitly, while the manager can resume the original record by session ID.
