@@ -6,9 +6,11 @@ import type { FolderInfo, FolderMemberInfo, HubMemberRepresentation, RepoInfo } 
 import type { FolderEntry, FolderNature, FolderOccurrence, SparseTree } from './folder-model/index.js';
 import type { FolderRegistryPort, FolderUpdatePatch, HubActivityPort } from './manager/types.js';
 import type { HubWorktreePort } from './hub-worktrees.js';
+import { HubWorktrees, defaultWorktreeGitRunner } from './hub-worktrees.js';
 import { hubAgentsMarkdown, injectMemberLine, managedMemberNature, removeMemberLine, seededMemberLine } from './hub-agents-md.js';
 import { MEMORY_STUB } from './folder-seeding.js';
-import { materializeHubFolder, memberIgnoreLine } from './folder-sources/materialize.js';
+import { createHubDirectory, hasWorktreeMarker, materializeHubFolder, memberIgnoreLine, worktreeHubIgnore, writeWorktreeMarker } from './folder-sources/materialize.js';
+import { gitInitDir } from './folder-sources/git-init.js';
 import type { HubSourceEntry } from './folder-sources/index.js';
 import type { PersonaSourceEntry, RepoIndex } from './repo-index.js';
 
@@ -189,14 +191,25 @@ function collectScanEntries(tree: SparseTree): Map<string, ScanRow> {
   return byPath;
 }
 
-/** One hub-side member symlink: its name, target, nature, and liveness. */
-interface HubLink {
+/** One hub member from the on-disk shape: a member symlink or a Git-verified
+ *  nested worktree. */
+interface HubMember {
   name: string;
-  /** Canonical target path when present, lexical absolute path when dangling. */
+  /** Canonical source path — the add/remove identity. */
   target: string;
   nature: FolderNature;
-  /** Whether the target currently resolves to a directory. */
+  representation: HubMemberRepresentation;
+  /** The nested checkout inside the hub (worktree members only). */
+  worktreePath?: string;
+  /** Whether the symlink target currently resolves (symlink members only). */
   missing: boolean;
+}
+
+/** The probed on-disk shape for one hub path: members plus the selected
+ *  member representation. */
+interface HubShape {
+  members: HubMember[];
+  representation: HubMemberRepresentation;
 }
 
 /** Whether `target` lies inside directory `dir` — the scanner's shortcut rule. */
@@ -205,11 +218,12 @@ function isInside(target: string, dir: string): boolean {
 }
 
 /** The hub-management gate the row menu shows ("Manage members…") as a
- *  server invariant: a manageable hub carries the probe's `members` fact or
- *  shortcut occurrences. Source hubs may qualify from their promise before
- *  materialization; scanned hubs qualify from their on-disk symlinks. */
+ *  server invariant: a hub is whatever row carries the shape probe's hub
+ *  fact — members, a mode marker, or a source promise. Source hubs may
+ *  qualify from their promise before materialization; scanned hubs qualify
+ *  from their on-disk shape. */
 function isManageableHub(row: FolderInfo): boolean {
-  return row.members !== undefined || row.shortcutCount > 0;
+  return row.hub !== undefined;
 }
 
 /**
@@ -278,75 +292,112 @@ async function candidateFolderNature(path: string, known: ReadonlyMap<string, Fo
 }
 
 /**
- * The hub symlink inventory for each given path (plan: 0.15-2 dashboard
- * folder UX). Existing directory targets must be known folder-model entries,
+ * The member for one hub child symlink, or null when the link does not
+ * qualify. Existing directory targets must be known folder-model entries,
  * including source-listed folders outside the configured roots. A dangling
  * target needs provenance: an exact seeded member line in the hub's managed
  * block. Existing files never become members, even when a managed line names
- * them. AGENTS.md is reserved for instructions and is never a member link.
- * Targets equal to or inside the hub are skipped, the same rule the scanner
- * uses for shortcuts. Links sort by name. Empty inventories are retained only
- * for source hubs and rows that already carried shortcut occurrences; probing
- * plain folders does not turn them into hubs.
+ * them. Targets equal to or inside the hub are skipped, the same rule the
+ * scanner uses for shortcuts.
  */
-async function readHubLinks(
+async function symlinkMember(
+  path: string,
+  name: string,
+  hubCanonical: string,
+  agentsMarkdown: string | null,
+  knownFolders: ReadonlyMap<string, FolderNature>,
+): Promise<HubMember | null> {
+  try {
+    const lexical = resolve(path, await readlink(join(path, name)));
+    let targetStats: Stats;
+    try {
+      targetStats = await stat(lexical);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return null;
+      // An absent target is a member only when the exact line this module
+      // seeded proves it. The lexical path is retained for removal and
+      // for the missing member row.
+      const nature = managedMemberNature(agentsMarkdown ?? '', name);
+      if (nature === undefined || lexical === hubCanonical || isInside(lexical, hubCanonical)) return null;
+      return { name, target: lexical, nature, representation: 'symlink', missing: true };
+    }
+    // A target that exists but is not a directory is never a member. This
+    // check must happen before any nature or provenance fallback.
+    if (!targetStats.isDirectory()) return null;
+    const target = await realpath(lexical);
+    if (target === hubCanonical || isInside(target, hubCanonical)) return null;
+    // Live targets need a known folder-model identity. Managed provenance
+    // is reserved for the absent-target fallback above.
+    const nature = knownFolders.get(target);
+    if (nature === undefined) return null;
+    return { name, target, nature, representation: 'symlink', missing: false };
+  } catch {
+    // A link removed or replaced mid-probe (ENOENT, EINVAL): skip the
+    // link, never the view.
+    return null;
+  }
+}
+
+/**
+ * The combined hub shape probe for each given path (plan:
+ * hub-member-representation). Symlink members follow the symlink rules above;
+ * real child directories count as members only when
+ * `HubWorktreePort.inspectMember` verifies them as nested Git worktrees —
+ * ordinary directories and independent repositories (a `.git` directory)
+ * are not members. The mode is worktree when a valid `.pimote-hub.json`
+ * marker or a nested worktree says so; the marker preserves the worktree
+ * choice after the last code worktree is removed. Shapes sort members by
+ * name. Empty shapes are retained only for source hubs, rows that already
+ * carried shortcut occurrences, and marked hubs; probing plain folders does
+ * not turn them into hubs. The probe is best-effort: one broken hub
+ * directory must never fail the listing.
+ */
+async function probeHubShapes(
   paths: Iterable<string>,
+  worktrees: HubWorktreePort,
   knownFolders: ReadonlyMap<string, FolderNature>,
   retainEmptyPaths: ReadonlySet<string> = new Set(),
-): Promise<Map<string, HubLink[]>> {
-  const inventory = new Map<string, HubLink[]>();
+): Promise<Map<string, HubShape>> {
+  const shapes = new Map<string, HubShape>();
   for (const path of paths) {
     let entries: Dirent[];
     try {
       entries = await readdir(path, { withFileTypes: true });
     } catch {
-      // Absent, not a directory, or unreadable (EACCES): the probe is
-      // best-effort — one broken hub directory must never fail the listing.
+      // Absent, not a directory, or unreadable (EACCES).
       continue;
     }
     const hubCanonical = await realpath(path).catch(() => path);
     const agentsMarkdown = await readTextIfPresent(join(path, 'AGENTS.md')).catch(() => null);
-    const links: HubLink[] = [];
+    const members: HubMember[] = [];
     for (const entry of entries) {
       // AGENTS.md is hub instructions, never a member link. In particular,
       // do not unlink it if a user stores it as a symlink.
-      if (!entry.isSymbolicLink() || entry.name === 'AGENTS.md') continue;
-      try {
-        const lexical = resolve(path, await readlink(join(path, entry.name)));
-        let targetStats: Stats;
-        try {
-          targetStats = await stat(lexical);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') continue;
-          // An absent target is a member only when the exact line this module
-          // seeded proves it. The lexical path is retained for removal and
-          // for the missing member row.
-          const nature = managedMemberNature(agentsMarkdown ?? '', entry.name);
-          if (nature === undefined || lexical === hubCanonical || isInside(lexical, hubCanonical)) continue;
-          links.push({ name: entry.name, target: lexical, nature, missing: true });
-          continue;
-        }
-        // A target that exists but is not a directory is never a member. This
-        // check must happen before any nature or provenance fallback.
-        if (!targetStats.isDirectory()) continue;
-        const target = await realpath(lexical);
-        if (target === hubCanonical || isInside(target, hubCanonical)) continue;
-        // Live targets need a known folder-model identity. Managed provenance
-        // is reserved for the absent-target fallback below.
-        const nature = knownFolders.get(target);
-        if (nature === undefined) continue;
-        links.push({ name: entry.name, target, nature, missing: false });
-      } catch {
-        // A link removed or replaced mid-probe (ENOENT, EINVAL): skip the
-        // link, never the view.
+      if (entry.name === 'AGENTS.md') continue;
+      if (entry.isSymbolicLink()) {
+        const member = await symlinkMember(path, entry.name, hubCanonical, agentsMarkdown, knownFolders);
+        if (member) members.push(member);
+      } else if (entry.isDirectory()) {
+        const facts = await worktrees.inspectMember(join(path, entry.name)).catch(() => null);
+        if (!facts) continue;
+        members.push({
+          name: entry.name,
+          target: await realpath(facts.sourcePath).catch(() => facts.sourcePath),
+          nature: 'code',
+          representation: 'worktree',
+          worktreePath: facts.worktreePath,
+          missing: false,
+        });
       }
     }
-    if (links.length > 0 || retainEmptyPaths.has(path)) {
-      links.sort((a, b) => a.name.localeCompare(b.name));
-      inventory.set(path, links);
+    const marked = await hasWorktreeMarker(path);
+    const representation: HubMemberRepresentation = marked || members.some((member) => member.representation === 'worktree') ? 'worktree' : 'symlink';
+    if (members.length > 0 || marked || retainEmptyPaths.has(path)) {
+      members.sort((a, b) => a.name.localeCompare(b.name));
+      shapes.set(path, { members, representation });
     }
   }
-  return inventory;
+  return shapes;
 }
 
 /** Effective hub metadata for one path: source-listed hubs only (their
@@ -388,8 +439,8 @@ interface FolderViewInputs {
   personas: PersonaSourceEntry[];
   /** Paths verified absent on disk; every unlisted path counts as present. */
   absent: ReadonlySet<string>;
-  /** Hub symlink inventories from the edge probe; probed paths only. */
-  hubLinks: ReadonlyMap<string, HubLink[]>;
+  /** Combined hub shapes from the edge probe; probed paths only. */
+  hubShapes: ReadonlyMap<string, HubShape>;
 }
 
 /**
@@ -398,12 +449,14 @@ interface FolderViewInputs {
  * persona homes — never derived from repos alone. Pure construction:
  * classification and metadata come from explicit inputs.
  *
- * Hub facts follow the shape (DR-064): any row whose symlink inventory carries
- * member links gets `members` (the inventory) and `repos` (the code members'
- * git facts), whoever created the hub. Source metadata is the promise layer —
- * it fills `memberPaths` only until the folder materializes and the inventory
- * takes over. Rows get `missing` only when they are not scanned and verified
- * absent — orphaned curation overrides alone never make a row.
+ * Hub facts follow the shape (DR-064, revised for worktree members): any row
+ * whose combined shape probe carries members — member symlinks plus
+ * Git-verified nested worktrees — or a mode marker gets `members` and `repos`
+ * (the code members' git facts), whoever created the hub. Source metadata is
+ * the promise layer — it fills `memberPaths` only until the folder
+ * materializes and the shape takes over. Rows get `missing` only when they
+ * are not scanned and verified absent — orphaned curation overrides alone
+ * never make a row.
  *
  * Plain code rows known to the index carry their own repo facts in `repo`,
  * copied from the index cache (no git probe here). Hub rows keep membership in
@@ -429,16 +482,18 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
     const override = input.doc.overrides[path];
     const userTags = override?.tags;
     // Only probed paths carry `members`; the probe skipped absent paths.
-    const memberLinks = input.hubLinks.get(path);
-    // Membership: the symlink inventory when probed (the shape), else the
-    // source promise for not-yet-materialized source hubs.
-    const memberPaths = memberLinks ? memberLinks.map((link) => link.target) : hub?.memberPaths;
-    const isHub = hub !== undefined || (scan?.shortcutCount !== undefined && scan.shortcutCount > 0) || memberLinks !== undefined;
+    const shape = input.hubShapes.get(path);
+    // Membership: the on-disk shape when probed (symlinks plus verified
+    // nested worktrees), else the source promise for not-yet-materialized
+    // source hubs.
+    const memberPaths = shape ? shape.members.map((member) => member.target) : hub?.memberPaths;
+    const isHub = hub !== undefined || shape !== undefined;
     // `repos` carries git facts for the code members only — persona members
     // have none. A code member absent from the index still gets the missing
     // placeholder.
-    const memberNature = new Map(memberLinks?.map((link) => [link.target, link.nature] as const));
-    const memberMissing = new Map(memberLinks?.map((link) => [link.target, link.missing] as const));
+    const memberNature = new Map(shape?.members.map((member) => [member.target, member.nature] as const));
+    const memberMissing = new Map(shape?.members.map((member) => [member.target, member.missing] as const));
+    const memberCheckout = new Map(shape?.members.filter((member) => member.worktreePath !== undefined).map((member) => [member.target, member.worktreePath] as const));
     const memberRepos: RepoInfo[] | undefined =
       memberPaths !== undefined
         ? memberPaths
@@ -453,16 +508,16 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
                 : linkMissing === false
                   ? { path: memberPath, name: basename(memberPath), branch: null, dirty: false, ahead: 0, behind: 0 }
                   : missingRepo(memberPath);
-              return { ...base, tags: repoTags(memberPath) };
+              const worktreePath = memberCheckout.get(memberPath);
+              return { ...base, ...(worktreePath ? { worktreePath } : {}), tags: repoTags(memberPath) };
             })
         : undefined;
-    const folderMembers: FolderMemberInfo[] | undefined = memberLinks?.map((link) => ({
-      path: link.target,
-      name: link.name,
-      nature: link.nature,
-      // The probe is symlink-only today; the worktree phase derives this
-      // from the on-disk shape (symlink or nested detached worktree).
-      representation: 'symlink' as HubMemberRepresentation,
+    const folderMembers: FolderMemberInfo[] | undefined = shape?.members.map((member) => ({
+      path: member.target,
+      name: member.name,
+      nature: member.nature,
+      representation: member.representation,
+      ...(member.worktreePath ? { worktreePath: member.worktreePath } : {}),
     }));
     // Hub rows implicitly inherit their members' tags.
     const memberTagUnion = memberRepos ? unionTags(...memberRepos.map((member) => member.tags)) : undefined;
@@ -476,15 +531,20 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
       name: scan?.entry.name ?? hub?.name ?? repo?.name ?? basename(path),
       nature,
       ...(scan?.entry.persona ? { persona: scan.entry.persona } : sourcePersona ? { persona: sourcePersona.persona } : {}),
-      // A probed inventory is authoritative, including an empty filtered
-      // inventory. Fall back to scan/source promises only when unprobed.
-      shortcutCount: memberLinks ? memberLinks.length : (scan?.shortcutCount ?? hub?.memberPaths.length ?? 0),
+      // A probed shape is authoritative, including an empty filtered one.
+      // Fall back to scan/source promises only when unprobed. The count is
+      // symlink members only — worktree members are real directories, not
+      // shortcuts.
+      shortcutCount: shape ? shape.members.filter((member) => member.representation === 'symlink').length : (scan?.shortcutCount ?? hub?.memberPaths.length ?? 0),
       favorite: override?.favorite ?? false,
       archived: override?.archived ?? false,
       // Effective tags: own user ∪ source-contributed, plus inherited member
       // tags for hubs; userTags is only the removable own-path subset.
       tags: (hub ? unionTags(userTags, hub.sourceTags, memberTagUnion) : unionTags(repo?.tags, sourcePersona?.tags, userTags, memberTagUnion)) ?? [],
       missing: !scan && input.absent.has(path),
+      // Every discovered or promised hub reports its representation; a
+      // promise-only hub has no shape on disk yet and defaults to symlinks.
+      ...(shape ? { hub: { representation: shape.representation } } : hub ? { hub: { representation: 'symlink' as HubMemberRepresentation } } : {}),
       ...(ownRepo ? { repo: ownRepo } : {}),
       ...(memberRepos ? { repos: memberRepos } : {}),
       ...(folderMembers ? { members: folderMembers } : {}),
@@ -538,14 +598,19 @@ export class FolderRegistry implements FolderRegistryPort {
   private documentPromise: Promise<RegistryDocument> | null = null;
   private readonly subscribers = new Set<(change: { changedPaths: string[]; removedPaths: string[] }) => void>();
   private mutations: Promise<unknown> = Promise.resolve();
+  private readonly worktrees: HubWorktreePort;
 
   constructor(
     private readonly repos: RepoIndex,
     private readonly storeDir: string,
     private readonly tree: FolderModelPort,
-    private readonly worktrees?: HubWorktreePort,
+    worktrees?: HubWorktreePort,
     private readonly activity?: HubActivityPort,
-  ) {}
+  ) {
+    // The worktree probe backs every view, so a registry without an injected
+    // port still runs against real Git; tests inject a guarded fake.
+    this.worktrees = worktrees ?? new HubWorktrees(defaultWorktreeGitRunner);
+  }
 
   /**
    * The merged folder view: every unique canonical scan entry (code and
@@ -582,8 +647,12 @@ export class FolderRegistry implements FolderRegistryPort {
    */
   async enrichRows(rows: FolderInfo[]): Promise<void> {
     const targets = rows.flatMap((row) => [...(row.repo ? [row.repo] : []), ...(row.repos ?? [])]);
-    const status = await this.repos.enrichStatus(targets.map((repo) => repo.path));
+    // Worktree members report the nested checkout's status, not the source
+    // repository's — the index probes only canonical listed paths.
+    const checkoutTargets = targets.filter((target) => target.worktreePath !== undefined);
+    const status = await this.repos.enrichStatus(targets.filter((target) => target.worktreePath === undefined).map((repo) => repo.path));
     for (const target of targets) {
+      if (target.worktreePath !== undefined) continue;
       const facts = status.get(target.path);
       if (!facts) continue;
       target.branch = facts.branch;
@@ -591,6 +660,14 @@ export class FolderRegistry implements FolderRegistryPort {
       target.ahead = facts.ahead;
       target.behind = facts.behind;
     }
+    await Promise.all(
+      checkoutTargets.map(async (target) => {
+        const facts = await this.worktrees.inspectMember(target.worktreePath!).catch(() => null);
+        if (!facts) return;
+        target.branch = facts.branch;
+        target.dirty = facts.dirty;
+      }),
+    );
   }
 
   /** The merged view over one folder tree; pure construction, edge probes first. */
@@ -599,8 +676,8 @@ export class FolderRegistry implements FolderRegistryPort {
     const absent = await resolveAbsentPaths(repos, sourceHubMetadata(sourceHubs).keys());
     // Probe every included scan row. A hub whose member targets all vanished
     // has no shortcut occurrences left, but its managed lines still establish
-    // membership for the dangling links. `readHubLinks` omits empty probes, so
-    // ordinary folders do not become hubs.
+    // membership for the dangling links. `probeHubShapes` omits empty probes,
+    // so ordinary folders do not become hubs.
     const sourceHubPaths = new Set(sourceHubMetadata(sourceHubs).keys());
     const probePaths = new Set(sourceHubPaths);
     const retainEmptyPaths = new Set(sourceHubPaths);
@@ -609,8 +686,8 @@ export class FolderRegistry implements FolderRegistryPort {
       if (row.shortcutCount > 0) retainEmptyPaths.add(path);
     }
     const knownFolders = await resolveKnownFolderNatures(tree, repos, sourceHubs, personas);
-    const hubLinks = await readHubLinks(probePaths, knownFolders, retainEmptyPaths);
-    return mergedFolders({ doc, tree, repos, sourceHubs, personas, absent, hubLinks });
+    const hubShapes = await probeHubShapes(probePaths, this.worktrees, knownFolders, retainEmptyPaths);
+    return mergedFolders({ doc, tree, repos, sourceHubs, personas, absent, hubShapes });
   }
 
   /** Apply a curation patch. Unknown folder paths reject. */
@@ -637,10 +714,10 @@ export class FolderRegistry implements FolderRegistryPort {
       const [sourceHubs, tree, repos, personas] = await Promise.all([this.repos.listSourceHubs(), this.tree.tree(), this.repos.listLazy(), this.repos.listSourcePersonas()]);
       const hubs = sourceHubMetadata(sourceHubs);
       const scanned = collectScanEntries(tree);
-      // Probe source hubs too: an on-disk inventory, including an empty
-      // filtered inventory, supersedes a stale source member promise.
+      // Probe source hubs too: an on-disk shape, including an empty filtered
+      // one, supersedes a stale source member promise.
       // Keep this probe set aligned with viewOver: a hub with only dangling
-      // managed members must still contribute its inventory to change targets.
+      // managed members must still contribute its membership to change targets.
       const sourceHubPaths = new Set(sourceHubs.map((hub) => hub.path));
       const probePaths = new Set(sourceHubPaths);
       const retainEmptyPaths = new Set(sourceHubPaths);
@@ -649,9 +726,9 @@ export class FolderRegistry implements FolderRegistryPort {
         if (row.shortcutCount > 0) retainEmptyPaths.add(path);
       }
       const knownFolders = await resolveKnownFolderNatures(tree, repos, sourceHubs, personas);
-      const inventory = await readHubLinks(probePaths, knownFolders, retainEmptyPaths);
-      for (const [path, links] of inventory) {
-        hubs.set(path, { name: basename(path), memberPaths: links.map((link) => link.target) });
+      const shapes = await probeHubShapes(probePaths, this.worktrees, knownFolders, retainEmptyPaths);
+      for (const [path, shape] of shapes) {
+        hubs.set(path, { name: basename(path), memberPaths: shape.members.map((member) => member.target) });
       }
       const change = updateChangeTargets(patch, hubs);
       await this.persist(doc);
@@ -660,12 +737,14 @@ export class FolderRegistry implements FolderRegistryPort {
   }
 
   /**
-   * Create a hub folder: mkdir under `root`, symlink every member, and
-   * generate the hub AGENTS.md with its managed member block (plus git init
-   * and member .gitignore). Members are any discovered folder-model entry
-   * (code or persona); unknown members reject. The persona variant
-   * (`personaText !== undefined`) seeds a persona marker and memory.md.
-   * Returns the canonical path; callers read the row from the shared view.
+   * Create a hub folder: mkdir under `root`, materialize every member per
+   * the selected representation (member symlinks, or detached worktrees for
+   * code members plus persona symlinks), and generate the hub AGENTS.md with
+   * its managed member block (plus git init and member .gitignore). Members
+   * are any discovered folder-model entry (code or persona); unknown members
+   * reject. The persona variant (`personaText !== undefined`) seeds a persona
+   * marker and memory.md. Returns the canonical path; callers read the row
+   * from the shared view.
    */
   async createHub(input: {
     name: string;
@@ -696,17 +775,30 @@ export class FolderRegistry implements FolderRegistryPort {
         if (seen.has(base)) throw new Error(`Duplicate member name: ${base}`);
         seen.add(base);
       }
-      const target = join(root, name);
+      // Creation identifies the row by its real path; a symlinked root must
+      // not leak the alias into worktree registrations.
+      const target = join(await realpath(root).catch(() => root), name);
       for (const memberPath of memberPaths) {
         if (isInside(memberPath, target) || isInside(target, memberPath)) throw new Error(`A hub member cannot contain or live inside the hub: ${memberPath}`);
       }
       if (await pathExists(target)) throw new Error(`Directory already exists: ${target}`);
 
       const members = memberPaths.map((memberPath) => ({ name: basename(memberPath), nature: natures.get(memberPath)! }));
+      const representation = input.memberRepresentation ?? 'symlink';
       const agentsMd =
         input.personaText !== undefined
-          ? hubAgentsMarkdown({ name, members, persona: { description: input.description ?? '', personaText: input.personaText } })
-          : hubAgentsMarkdown({ name, members, body: input.body });
+          ? hubAgentsMarkdown({ name, members, representation, persona: { description: input.description ?? '', personaText: input.personaText } })
+          : hubAgentsMarkdown({ name, members, representation, body: input.body });
+
+      if (representation === 'worktree') {
+        const canonicalTarget = await this.createWorktreeHub(target, memberPaths, natures, agentsMd, input.personaText !== undefined);
+        // No registry receipt (DR-064): the shape on disk is the hub's record.
+        // Invalidate here so the next walk — not a persisted list — vouches for
+        // the new row, then report the freshly materialized facts directly.
+        this.repos.invalidateListing();
+        this.fireChange({ changedPaths: [canonicalTarget], removedPaths: [] });
+        return { path: canonicalTarget };
+      }
 
       let canonicalTarget: string;
       try {
@@ -731,13 +823,82 @@ export class FolderRegistry implements FolderRegistryPort {
   }
 
   /**
+   * Materialize the worktree layout: the mode marker, one detached worktree
+   * per code member, persona symlinks, the generated files, and the hub
+   * repository. Any failure removes every created worktree through Git
+   * before removing the fresh hub directory — all-or-nothing, like the
+   * symlink layout, so Git never keeps stale worktree metadata.
+   */
+  private async createWorktreeHub(target: string, memberPaths: string[], natures: Map<string, FolderNature>, agentsMd: string, personaMemory: boolean): Promise<string> {
+    await createHubDirectory(target);
+    const created: Array<{ sourcePath: string; worktreePath: string }> = [];
+    try {
+      await writeWorktreeMarker(target);
+      for (const memberPath of memberPaths) {
+        const child = join(target, basename(memberPath));
+        // Personas are never worktrees — only code members detach.
+        if (natures.get(memberPath) === 'persona') {
+          await symlink(memberPath, child);
+        } else {
+          await this.worktrees.createDetached({ sourcePath: memberPath, worktreePath: child });
+          created.push({ sourcePath: memberPath, worktreePath: child });
+        }
+      }
+      await writeFile(join(target, 'AGENTS.md'), agentsMd, 'utf8');
+      await writeFile(join(target, '.gitignore'), worktreeHubIgnore(memberPaths.map((memberPath) => basename(memberPath))), 'utf8');
+      await gitInitDir(target);
+      // The persona-hub variant is a persona folder: its marker AGENTS.md
+      // (rendered above) plus the memory stub, rolled back with the hub.
+      if (personaMemory) await writeFile(join(target, 'memory.md'), MEMORY_STUB, 'utf8');
+      return await realpath(target);
+    } catch (error) {
+      for (const worktree of created) await this.worktrees.remove(worktree).catch(() => {});
+      await rm(target, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
+  }
+
+  /**
    * Disband a worktree hub (plan: hub-member-representation): validate the
    * activity, clean-state, and detached-`HEAD` guards, remove every nested
-   * worktree through Git, then delete the hub directory. Symlink hubs
-   * reject. Returns the removed checkout paths.
+   * worktree through Git, then delete the hub directory. Only a marked or
+   * Git-verified worktree hub accepts it; symlink hubs reject. Returns the
+   * removed checkout paths.
    */
-  async disbandHub(_hubPath: string): Promise<{ removedWorktreePaths: string[] }> {
-    throw new Error('not implemented');
+  async disbandHub(hubPath: string): Promise<{ removedWorktreePaths: string[] }> {
+    return this.serialized(async () => {
+      const shape = (await probeHubShapes([hubPath], this.worktrees, new Map())).get(hubPath);
+      if (!shape || shape.representation !== 'worktree') throw new Error(`Not a worktree hub: ${hubPath}`);
+      const worktrees = shape.members.filter((member) => member.representation === 'worktree').map((member) => ({ sourcePath: member.target, worktreePath: member.worktreePath! }));
+
+      // The activity guard runs before any worktree validation: a dirty
+      // report must not mask an in-use checkout, and the guard must see the
+      // hub and every checkout.
+      if (this.activity) {
+        const busy = await this.activity.findBusyPaths([hubPath, ...worktrees.map((worktree) => worktree.worktreePath)]);
+        if (busy.length > 0) throw new Error(`Hub is in use by an active session or pi process: ${busy.join(', ')}`);
+      }
+      // Validate every checkout before removing any: a partial removal must
+      // never strand dirty or unreachable work.
+      for (const worktree of worktrees) {
+        const check = await this.worktrees.validateRemoval(worktree);
+        if (check.dirty) throw new Error(`Worktree has uncommitted changes: ${worktree.worktreePath}`);
+        if (check.detached && !check.headReachableFromBranchRef)
+          throw new Error(`Detached HEAD in ${worktree.worktreePath} is not reachable from a branch ref; create a branch to keep the work.`);
+      }
+
+      const removedWorktreePaths: string[] = [];
+      for (const worktree of worktrees) {
+        await this.worktrees.remove(worktree);
+        removedWorktreePaths.push(worktree.worktreePath);
+      }
+      // Never follows member symlinks; persona links are unlinked with the
+      // hub directory.
+      await rm(hubPath, { recursive: true, force: true });
+      this.repos.invalidateListing();
+      this.fireChange({ changedPaths: [], removedPaths: [hubPath] });
+      return { removedWorktreePaths };
+    });
   }
 
   /** Subscribe to registry mutations; returns an unsubscribe function. */
@@ -749,12 +910,16 @@ export class FolderRegistry implements FolderRegistryPort {
   }
 
   /**
-   * Add a hub member (plan: 0.15-2 dashboard folder UX). `memberPath` must be
-   * a discovered folder-model entry (any nature); a duplicate basename is
-   * rejected. Adds the hub-side symlink and injects the member's exact seeded
-   * link line into the hub AGENTS.md managed block. Throws with a
-   * user-presentable message on validation failure. Broadcasts a
-   * folders_changed delta like the other mutations.
+   * Add a hub member (plan: 0.15-2 dashboard folder UX, representation-aware
+   * per hub-member-representation). `memberPath` must be a discovered
+   * folder-model entry (any nature); a duplicate basename is rejected. Adds
+   * the member per the hub representation — persona members always symlink;
+   * code members detach in a worktree hub and symlink otherwise — and
+   * injects the member's exact seeded link line into the hub AGENTS.md
+   * managed block. A failure after a worktree was created removes it through
+   * Git; a failed rollback names the remaining checkout path for retry.
+   * Throws with a user-presentable message on validation failure. Broadcasts
+   * a folders_changed delta like the other mutations.
    */
   async addMember(hubPath: string, memberPath: string): Promise<void> {
     return this.serialized(async () => {
@@ -786,13 +951,34 @@ export class FolderRegistry implements FolderRegistryPort {
         undo.push(before === null ? () => rm(path, { force: true }) : () => writeFile(path, before, 'utf8'));
       };
 
-      await symlink(memberPath, linkPath);
-      undo.push(() => unlink(linkPath));
+      // The hub representation decides the layout: code members detach in a
+      // worktree hub, everything else symlinks.
+      const asWorktree = hub.hub?.representation === 'worktree' && nature === 'code';
+      let createdWorktree: string | null = null;
+      if (asWorktree) {
+        const child = join(hubPath, name);
+        await this.worktrees.createDetached({ sourcePath: memberPath, worktreePath: child });
+        createdWorktree = child;
+        undo.push(() => this.worktrees.remove({ sourcePath: memberPath, worktreePath: child }));
+      } else {
+        await symlink(memberPath, linkPath);
+        undo.push(() => unlink(linkPath));
+      }
       try {
         await writeBack(agentsPath, agentsBefore, injectMemberLine(agentsBefore ?? '', seededMemberLine(name, nature)));
         if (ignoreBefore !== null) await writeBack(ignorePath, ignoreBefore, appendExactLine(ignoreBefore, memberIgnoreLine(name)));
       } catch (error) {
-        for (const step of undo.reverse()) await step().catch(() => {});
+        // A rollback failure on a worktree must not hide the stranded
+        // checkout: name it so the shape stays discoverable for retry.
+        let strandedWorktree: string | null = null;
+        for (const step of undo.reverse()) {
+          await step().catch(() => {
+            strandedWorktree ??= createdWorktree;
+          });
+        }
+        if (strandedWorktree) {
+          throw new Error(`Rolled back the member add but could not remove the new checkout ${strandedWorktree}; it stays discoverable for retry.`, { cause: error });
+        }
         throw error;
       }
 
@@ -802,12 +988,16 @@ export class FolderRegistry implements FolderRegistryPort {
   }
 
   /**
-   * Remove a hub member (plan: 0.15-2 dashboard folder UX). The member link
-   * must be in the current hub inventory: live links resolve to known folder
-   * identities, and dangling links need an exact managed seed line. Unlinks
-   * the hub-side symlink ONLY, never touches the member folder, and removes
-   * the member's seeded line if present byte-exact. Broadcasts a folders_changed
-   * delta like the other mutations.
+   * Remove a hub member (plan: 0.15-2 dashboard folder UX,
+   * representation-aware per hub-member-representation). The member must be
+   * in the current combined inventory by canonical source path: live links
+   * resolve to known folder identities, dangling links need an exact managed
+   * seed line, and code members can be Git-verified nested worktrees. A
+   * dirty worktree rejects before any disk change; a clean one is removed
+   * through Git while the source repository and its branches stay untouched.
+   * Symlinks are unlinked hub-side only. Managed-line and ignore-line
+   * cleanup is best effort. Broadcasts a folders_changed delta like the
+   * other mutations.
    */
   async removeMember(hubPath: string, memberPath: string): Promise<void> {
     return this.serialized(async () => {
@@ -816,31 +1006,49 @@ export class FolderRegistry implements FolderRegistryPort {
       const hub = (await this.listLazy()).find((folder) => folder.path === hubPath);
       if (!hub) throw new Error(`Unknown hub folder: ${hubPath}`);
       if (!isManageableHub(hub)) throw new Error(`Not a hub folder: ${hubPath}`);
-      // Membership is the same symlink inventory used by views. It retains
-      // managed dangling links, while excluding files and unprovenance links.
+      // Membership is the same combined shape probe used by views. It
+      // retains managed dangling links, verifies nested worktrees through
+      // Git, and excludes files and unprovenance links.
       const knownFolders = await this.knownFolderNatures();
       const requestedTarget = (await canonicalDirectory(memberPath)) ?? resolve(memberPath);
-      const link = (await readHubLinks([hubPath], knownFolders)).get(hubPath)?.find((candidate) => candidate.target === requestedTarget);
-      if (!link) throw new Error(`Not a member of ${basename(hubPath)}: ${memberPath}`);
+      const shape = (await probeHubShapes([hubPath], this.worktrees, knownFolders)).get(hubPath);
+      const member = shape?.members.find((candidate) => candidate.target === requestedTarget);
+      if (!member) throw new Error(`Not a member of ${basename(hubPath)}: ${memberPath}`);
 
-      // Unlink the hub-side symlink ONLY — the member folder is never touched.
-      // readHubLinks excludes AGENTS.md, so instruction symlinks are never
-      // mistaken for member links.
-      await unlink(join(hubPath, link.name));
-      // Try both seeded lines — both are exact strings this module's mutator
-      // may have seeded before the member's nature changed.
-      const name = link.name;
-      const agentsPath = join(hubPath, 'AGENTS.md');
-      const content = await readTextIfPresent(agentsPath);
-      if (content !== null) {
-        const updated = removeMemberLine(removeMemberLine(content, seededMemberLine(name, 'code')), seededMemberLine(name, 'persona'));
-        if (updated !== content) await writeFile(agentsPath, updated, 'utf8');
+      if (member.representation === 'worktree') {
+        // The clean-state guard runs before any disk change; the detached-
+        // `HEAD` reachability check is disband-only.
+        const check = await this.worktrees.validateRemoval({ sourcePath: member.target, worktreePath: member.worktreePath! });
+        if (check.dirty) throw new Error(`Worktree has uncommitted changes: ${member.worktreePath}`);
+        // Git removes the checkout; the source repository and its branches
+        // stay untouched.
+        await this.worktrees.remove({ sourcePath: member.target, worktreePath: member.worktreePath! });
+      } else {
+        // Unlink the hub-side symlink ONLY — the member folder is never
+        // touched. The probe excludes AGENTS.md, so instruction symlinks are
+        // never mistaken for member links.
+        await unlink(join(hubPath, member.name));
       }
-      const ignorePath = join(hubPath, '.gitignore');
-      const ignoreContent = await readTextIfPresent(ignorePath);
-      if (ignoreContent !== null) {
-        const updatedIgnore = deleteExactLine(ignoreContent, memberIgnoreLine(name));
-        if (updatedIgnore !== ignoreContent) await writeFile(ignorePath, updatedIgnore, 'utf8');
+      // Try both seeded lines — both are exact strings this module's mutator
+      // may have seeded before the member's nature changed. Cleanup is best
+      // effort after the shape mutation: a write failure leaves stale managed
+      // text but must not fail a removal whose preconditions passed.
+      const name = member.name;
+      const agentsPath = join(hubPath, 'AGENTS.md');
+      try {
+        const content = await readTextIfPresent(agentsPath);
+        if (content !== null) {
+          const updated = removeMemberLine(removeMemberLine(content, seededMemberLine(name, 'code')), seededMemberLine(name, 'persona'));
+          if (updated !== content) await writeFile(agentsPath, updated, 'utf8');
+        }
+        const ignorePath = join(hubPath, '.gitignore');
+        const ignoreContent = await readTextIfPresent(ignorePath);
+        if (ignoreContent !== null) {
+          const updatedIgnore = deleteExactLine(ignoreContent, memberIgnoreLine(name));
+          if (updatedIgnore !== ignoreContent) await writeFile(ignorePath, updatedIgnore, 'utf8');
+        }
+      } catch {
+        // Stale managed text is tolerable; the member is already removed.
       }
       this.repos.invalidateListing();
       this.fireChange({ changedPaths: [hubPath], removedPaths: [] });

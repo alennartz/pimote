@@ -253,7 +253,7 @@ Add the marker read/write seam to `server/src/folder-sources/materialize.ts` for
 Update `FolderViewInputs`, `mergedFolders`, `viewOver`, `update`, and `isManageableHub` in `server/src/folder-registry.ts` to use the combined inventory. Emit `FolderInfo.hub` for discovered and promised hubs, and emit each member's canonical `path`, nature, representation, and optional `worktreePath`. Keep `shortcutCount` as the symlink count. Preserve source promises, canonical source tags, missing-member behavior, and tag-change fan-out.
 
 **Verify:** The row, marker, symlink, and worktree discovery cases in `server/src/folder-registry-worktree.test.ts` pass once creation is implemented in Step 4. Existing `server/src/folder-registry.test.ts` membership and curation cases remain passing.
-**Status:** not started
+**Status:** done
 
 ### Step 4: Materialize both hub layouts
 
@@ -262,7 +262,7 @@ Extend `materializeHubFolder` in `server/src/folder-sources/materialize.ts` and 
 Validate discovered members, reserved names, duplicate basenames, and containment before creating the target. If creation fails, remove every created worktree through Git before removing the fresh hub directory. Include persona `memory.md` in the same rollback scope. Update `hubAgentsMarkdown` in `server/src/hub-agents-md.ts` to describe the selected layout while retaining its exact seeded member lines and managed block.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/folder-registry-worktree.test.ts src/folder-registry.test.ts src/hub-agents-md.test.ts` passes the creation, default layout, source preservation, ignore, rollback, and existing managed-line cases.
-**Status:** not started
+**Status:** done
 
 ### Step 5: Make member edits representation-aware
 
@@ -271,7 +271,7 @@ Update `FolderRegistry.addMember` and `removeMember` in `server/src/folder-regis
 If an add fails after creating a worktree, remove it through Git. If rollback fails, report the remaining checkout path so it stays discoverable for retry. Before removing a worktree member, reject dirty state without changing disk. Remove clean worktrees through Git and symlinks by unlinking only the hub-side link. Preserve branches and user prose. Treat exact managed-line and ignore-line cleanup after removal as best effort.
 
 **Verify:** The add, rollback, dirty removal, persona symlink, canonical identity, and last-worktree marker cases in `server/src/folder-registry-worktree.test.ts` pass. Existing membership tests in `server/src/folder-registry.test.ts` pass.
-**Status:** not started
+**Status:** done
 
 ### Step 6: Implement guarded disband
 
@@ -280,7 +280,7 @@ Implement `FolderRegistry.disbandHub` in `server/src/folder-registry.ts` through
 After all checks pass, remove worktrees through Git and delete the hub without following member symlinks. Preserve branches. Return `removedWorktreePaths`, invalidate discovery, and emit one change with the hub in `removedPaths`. If removal fails, leave the hub and remaining worktrees discoverable for retry.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/folder-registry-worktree.test.ts src/hub-activity.test.ts` passes all guarded disband, partial-failure, retry, and notification cases.
-**Status:** not started
+**Status:** done
 
 ### Step 7: Enrich rows from nested checkout status
 

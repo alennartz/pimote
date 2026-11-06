@@ -1,5 +1,6 @@
 import { codeFolderAgentsMd, personaAgentsMd } from './folder-seeding.js';
 import type { FolderNature } from './folder-model/index.js';
+import type { HubMemberRepresentation } from '../../shared/dist/index.js';
 
 /**
  * The hub AGENTS.md managed-content mutator (plan: 0.15-2 dashboard folder
@@ -98,15 +99,22 @@ export function removeMemberLine(markdown: string, line: string): string {
  * optional persona text — both from the shared seed renderers, so the folder
  * and hub paths cannot drift. Both then declare the members managed block,
  * seeded via `injectMemberLine` so creation and later removal use the same
- * byte strings. Source-listed hubs keep `agentsMarkdown` (folder-sources).
+ * byte strings. The intro describes the selected member representation
+ * (plan: hub-member-representation); source-listed hubs keep `agentsMarkdown`
+ * (folder-sources).
  */
 export function hubAgentsMarkdown(input: {
   name: string;
   members: { name: string; nature: 'code' | 'persona' }[];
+  representation?: HubMemberRepresentation;
   body?: string;
   persona?: { description: string; personaText: string };
 }): string {
   const head = input.persona ? personaAgentsMd(input.name, input.persona.description, input.persona.personaText) : codeFolderAgentsMd(input.name, input.body ?? '');
-  const seeded = `${head}\nA hub is a folder composed of shortcuts to its members:\n\n${OPEN}\n${CLOSE}\n`;
+  const intro =
+    input.representation === 'worktree'
+      ? 'A hub is a folder composed of its members. Code members are nested detached Git worktrees; persona members are symlinks:'
+      : 'A hub is a folder composed of shortcuts to its members:';
+  const seeded = `${head}\n${intro}\n\n${OPEN}\n${CLOSE}\n`;
   return input.members.reduce((markdown, member) => injectMemberLine(markdown, seededMemberLine(member.name, member.nature)), seeded);
 }

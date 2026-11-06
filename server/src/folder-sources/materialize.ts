@@ -1,7 +1,54 @@
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { HubSourceEntry } from '@pimote/sdk/folders';
 import { gitInitDir } from './git-init.js';
+
+/** The worktree-hub mode marker. Membership stays shape-derived; the marker
+ *  only preserves the worktree choice after the last code worktree is
+ *  removed. It carries nothing else — no version, branch, or member list. */
+export const HUB_MARKER_FILE = '.pimote-hub.json';
+
+const WORKTREE_MARKER_CONTENT = '{"memberRepresentation":"worktree"}';
+
+/** Whether `dir` carries a valid worktree-mode marker: `.pimote-hub.json`
+ *  containing exactly `{ "memberRepresentation": "worktree" }`. Read and
+ *  parse failures count as absent — one broken hub directory must never
+ *  fail the listing. */
+export async function hasWorktreeMarker(dir: string): Promise<boolean> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(join(dir, HUB_MARKER_FILE), 'utf8'));
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) && JSON.stringify(parsed) === WORKTREE_MARKER_CONTENT;
+  } catch {
+    return false;
+  }
+}
+
+/** Write the worktree-mode marker into an existing hub directory. */
+export async function writeWorktreeMarker(dir: string): Promise<void> {
+  await writeFile(join(dir, HUB_MARKER_FILE), `${WORKTREE_MARKER_CONTENT}\n`, 'utf8');
+}
+
+/** Exclusively create the hub directory: the layout is only ever built into
+ *  a directory this call created, and a failed build removes it again. Both
+ *  entry paths get the same guarantees this way — a retry (e.g. after a
+ *  failed `git init`) rebuilds fully instead of inheriting a half-built hub
+ *  that open-time materialization would then leave git-less forever. */
+export async function createHubDirectory(path: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  try {
+    await mkdir(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error(`Directory already exists: ${path}`, { cause: error });
+    throw error;
+  }
+}
+
+/** The worktree hub's .gitignore content: the mode marker plus every member
+ *  basename, so the hub repository ignores its own layout. One root-anchored
+ *  literal pattern per line. */
+export function worktreeHubIgnore(memberNames: string[]): string {
+  return [HUB_MARKER_FILE, ...memberNames].map((name) => `${memberIgnoreLine(name)}\n`).join('');
+}
 
 /**
  * The hub folder layout, owned by pimote: one absolute symlink
@@ -15,18 +62,7 @@ import { gitInitDir } from './git-init.js';
  * different AGENTS.md layout (registry `createHub`) pass it as `agentsMd`.
  */
 export async function materializeHubFolder(entry: HubSourceEntry, agentsMd: string = agentsMarkdown(entry.name, entry.memberPaths)): Promise<void> {
-  // Exclusive ownership of the hub directory: the layout is only ever built
-  // into a directory this call created, and a failed build removes it again.
-  // Both entry paths get the same guarantees this way — a retry (e.g. after a
-  // failed `git init`) rebuilds fully instead of inheriting a half-built hub
-  // that open-time materialization would then leave git-less forever.
-  await mkdir(dirname(entry.path), { recursive: true });
-  try {
-    await mkdir(entry.path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error(`Directory already exists: ${entry.path}`, { cause: error });
-    throw error;
-  }
+  await createHubDirectory(entry.path);
   try {
     for (const memberPath of entry.memberPaths) {
       // Dangling symlinks are fine: members may themselves be listed-but-not-yet-
