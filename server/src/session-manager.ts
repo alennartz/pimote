@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { resolve, sep } from 'node:path';
 import {
   createAgentSessionRuntime,
   createAgentSessionServices,
@@ -160,6 +161,11 @@ export interface SlotLifecycleOptions {
 
 const slotLifecycleStates = new WeakMap<ManagedSlot, SlotLifecycleState>();
 const slotLifecycleContext = new AsyncLocalStorage<SlotLifecycleContext>();
+
+/** Whether `child` is `ancestor` itself or lives strictly below it. */
+function isWithin(child: string, ancestor: string): boolean {
+  return child === ancestor || child.startsWith(ancestor + sep);
+}
 
 function lifecycleStateFor(slot: ManagedSlot): SlotLifecycleState {
   let state = slotLifecycleStates.get(slot);
@@ -743,6 +749,9 @@ export class PimoteSessionManager {
   private readonly extensionBindFlights = new WeakMap<AgentSession, Promise<void>>();
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
   private gitBranchCheckHandle: ReturnType<typeof setInterval> | null = null;
+  /** Call-active predicate from the latest startIdleCheck; an active voice
+   *  call protects a slot from an explicit close-at request too. */
+  private callActiveCheck?: (sessionId: string) => boolean;
   private lastKnownGitBranchBySession = new Map<string, string | null>();
 
   onStatusChange?: (sessionId: string, folderPath: string) => void;
@@ -1369,6 +1378,7 @@ export class PimoteSessionManager {
 
   startIdleCheck(idleTimeout: number | (() => number), isCallActive?: (sessionId: string) => boolean): void {
     this.stopIdleCheck();
+    this.callActiveCheck = isCallActive;
     const readIdleTimeout = typeof idleTimeout === 'function' ? idleTimeout : () => idleTimeout;
 
     this.idleCheckHandle = setInterval(() => {
@@ -1377,19 +1387,13 @@ export class PimoteSessionManager {
         this.withSessionOperation(sessionId, async () => {
           const slot = this.sessions.get(sessionId);
           if (slot !== candidate) return;
-          if (slot.sessionState.treeNavigationInProgress) return;
-
-          const hasObservers = slot.observers.size > 0;
-          const hasActiveCall = isCallActive?.(sessionId) === true;
-          // Only settled sessions can reap. Bash admission and active calls also
-          // protect unobserved slots. Poll extensions only after the idle threshold.
+          if (this.isSlotBusy(slot, isCallActive?.(sessionId) === true)) return;
+          // Only settled sessions reap; the busy rule already kept working slots.
           const idleSince = slot.sessionState.idleSince;
-          const bashInProgress = slot.session.isBashRunning || slot.sessionState.bashDispatchInProgress === true;
-          if (!hasObservers && !hasActiveCall && !bashInProgress && idleSince !== null && Date.now() - idleSince > effectiveIdleTimeout) {
-            const activityBus = slot.eventBusRef.current;
-            if (activityBus && askActivity(activityBus)) return;
-            await this.closeSession(sessionId);
-          }
+          if (idleSince === null || Date.now() - idleSince <= effectiveIdleTimeout) return;
+          // Poll extensions only after the idle threshold.
+          if (this.slotReportsActivity(slot)) return;
+          await this.closeSession(sessionId);
         }).catch(() => {
           // Best-effort cleanup — swallow errors during idle reaping
         });
@@ -1414,6 +1418,28 @@ export class PimoteSessionManager {
     }, 3000);
   }
 
+  /** The reaper's busy rule minus the idle wait: a slot with observers, a
+   *  live call, bash in flight, tree navigation, or an unsettled run must not
+   *  be closed. One lifecycle rule holds for the idle reaper and for explicit
+   *  close-at requests alike. */
+  private isSlotBusy(slot: ManagedSlot, isCallActive: boolean): boolean {
+    return (
+      slot.observers.size > 0 ||
+      isCallActive ||
+      slot.session.isBashRunning ||
+      slot.sessionState.bashDispatchInProgress === true ||
+      slot.sessionState.treeNavigationInProgress ||
+      slot.sessionState.idleSince === null
+    );
+  }
+
+  /** The SDK reap-guard poll: extensions reporting live background work hold
+   *  the slot open. */
+  private slotReportsActivity(slot: ManagedSlot): boolean {
+    const activityBus = slot.eventBusRef.current;
+    return activityBus !== null && askActivity(activityBus);
+  }
+
   stopIdleCheck(): void {
     if (this.idleCheckHandle !== null) {
       clearInterval(this.idleCheckHandle);
@@ -1423,6 +1449,54 @@ export class PimoteSessionManager {
       clearInterval(this.gitBranchCheckHandle);
       this.gitBranchCheckHandle = null;
     }
+  }
+
+  /**
+   * Close idle, observerless session slots rooted at or below any requested
+   * path, through the canonical close lifecycle, and return the requested
+   * paths that still host a live slot. A working or observed slot, a slot
+   * with an active call, bash, tree navigation, or reported background work,
+   * and a slot whose close failed all count as still hosted — the caller
+   * must fail closed. This is the idle reaper's rule applied immediately
+   * instead of after the idle timeout; hub disband uses it to retire hub
+   * sessions the way archiving does.
+   */
+  async closeIdleSessionsAt(paths: ReadonlyArray<string>): Promise<ReadonlyArray<string>> {
+    const bases = paths.map((path) => resolve(path));
+    const hosted = (folderPath: string) => bases.some((base) => isWithin(resolve(folderPath), base));
+    const stillHosted = new Set<string>();
+    const snapshot = [...this.sessions];
+    await Promise.all(
+      snapshot.map(async ([sessionId, candidate]) => {
+        if (!hosted(candidate.folderPath)) return;
+        await this.withSessionOperation(sessionId, async () => {
+          const slot = this.sessions.get(sessionId);
+          // The slot was replaced under us; the replacement occupies the same
+          // folder and was never classified. Fail closed.
+          if (slot !== candidate) {
+            stillHosted.add(candidate.folderPath);
+            return;
+          }
+          if (this.isSlotBusy(slot, this.callActiveCheck?.(sessionId) === true)) {
+            stillHosted.add(slot.folderPath);
+            return;
+          }
+          if (this.slotReportsActivity(slot)) {
+            stillHosted.add(slot.folderPath);
+            return;
+          }
+          try {
+            await this.closeSession(sessionId);
+          } catch {
+            // A slot that refuses to close still hosts its folder.
+            stillHosted.add(slot.folderPath);
+          }
+        }).catch(() => {
+          stillHosted.add(candidate.folderPath);
+        });
+      }),
+    );
+    return paths.filter((requested) => [...stillHosted].some((folder) => isWithin(resolve(folder), resolve(requested))));
   }
 
   async dispose(): Promise<void> {

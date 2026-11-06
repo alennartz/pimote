@@ -2,7 +2,10 @@ import { resolve, sep } from 'node:path';
 import type { HubActivityPort } from './manager/types.js';
 
 export interface HubActivitySources {
-  sessionWorkingDirectories(): Promise<ReadonlyArray<string>>;
+  /** Close idle, observerless session slots rooted at or below any requested
+   *  path through the canonical session lifecycle; return the requested paths
+   *  that still host a live session. */
+  closeIdleSessionsAt(paths: ReadonlyArray<string>): Promise<ReadonlyArray<string>>;
   externalPiWorkingDirectories(): Promise<ReadonlyArray<string>>;
 }
 
@@ -14,11 +17,12 @@ function isWithin(child: string, ancestor: string): boolean {
 export class HubActivity implements HubActivityPort {
   constructor(private readonly sources: HubActivitySources) {}
 
-  /** The subset of `paths` whose subtree contains a live session or external
-   *  pi working directory. Either source failing rejects: a disband guard
-   *  must fail closed, never wave the hub through. */
-  async findBusyPaths(paths: ReadonlyArray<string>): Promise<ReadonlyArray<string>> {
-    const [sessions, external] = await Promise.all([this.sources.sessionWorkingDirectories(), this.sources.externalPiWorkingDirectories()]);
+  /** Close idle session slots in the requested subtrees, then report the
+   *  requested paths that remain busy: a session that kept working or kept
+   *  its observers, and external pi processes. Either source failing rejects:
+   *  a disband guard must fail closed, never wave the hub through. */
+  async closeIdleSessionsAt(paths: ReadonlyArray<string>): Promise<ReadonlyArray<string>> {
+    const [sessions, external] = await Promise.all([this.sources.closeIdleSessionsAt(paths), this.sources.externalPiWorkingDirectories()]);
     const workingDirectories = [...sessions, ...external].map((directory) => resolve(directory));
     const busy: string[] = [];
     for (const requested of paths) {

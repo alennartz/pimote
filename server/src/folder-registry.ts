@@ -863,11 +863,13 @@ export class FolderRegistry implements FolderRegistryPort {
       if (!shape || shape.representation !== 'worktree') throw new Error(`Not a worktree hub: ${hubPath}`);
       const worktrees = shape.members.filter((member) => member.representation === 'worktree').map((member) => ({ sourcePath: member.target, worktreePath: member.worktreePath! }));
 
-      // The activity guard runs before any worktree validation: a dirty
-      // report must not mask an in-use checkout, and the guard must see the
-      // hub and every checkout.
+      // The activity guard runs before any worktree validation: it closes
+      // idle, observerless session slots first — disband retires sessions the
+      // way archiving does — then rejects on the sessions or external pi
+      // processes that remain. The guard must see the hub and every checkout,
+      // and fail closed.
       if (this.activity) {
-        const busy = await this.activity.findBusyPaths([hubPath, ...worktrees.map((worktree) => worktree.worktreePath)]);
+        const busy = await this.activity.closeIdleSessionsAt([hubPath, ...worktrees.map((worktree) => worktree.worktreePath)]);
         if (busy.length > 0) throw new Error(`Hub is in use by an active session or pi process: ${busy.join(', ')}`);
       }
       // Validate every checkout before removing any: a partial removal must

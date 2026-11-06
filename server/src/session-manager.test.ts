@@ -1069,3 +1069,99 @@ describe('PimoteSessionManager — openSession reuse (#5)', () => {
     expect(id).toBe('sess-x');
   });
 });
+
+describe('PimoteSessionManager — closeIdleSessionsAt', () => {
+  function mockEventBus(): { on: (channel: string, handler: (data: unknown) => void) => () => void; emit: (channel: string, data: unknown) => void } {
+    const handlers = new Map<string, ((data: unknown) => void)[]>();
+    return {
+      on: (channel, handler) => {
+        handlers.set(channel, [...(handlers.get(channel) ?? []), handler]);
+        return () =>
+          handlers.set(
+            channel,
+            (handlers.get(channel) ?? []).filter((h) => h !== handler),
+          );
+      },
+      emit: (channel, data) => {
+        for (const handler of handlers.get(channel) ?? []) handler(data);
+      },
+    };
+  }
+
+  it('closes an idle observerless slot in the requested subtree and reports no busy paths', async () => {
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
+    const slot = createFakeSlot({ id: 'idle', folderPath: '/work/hub/api', idleSince: Date.now() });
+    injectSession(manager, slot);
+    const close = vi.spyOn(manager, 'closeSession').mockResolvedValue(undefined);
+
+    await expect(manager.closeIdleSessionsAt(['/work/hub'])).resolves.toEqual([]);
+    expect(close).toHaveBeenCalledWith('idle');
+  });
+
+  it.each(['observer', 'working', 'navigation', 'bash', 'dispatch', 'call', 'extension'])('keeps a %s slot hosted and reports its path', async (busy) => {
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
+    const slot = createFakeSlot({ id: 'held', folderPath: '/work/hub/api', idleSince: Date.now() });
+    injectSession(manager, slot);
+    if (busy === 'observer') slot.observers.set('client', {} as SessionObserver);
+    if (busy === 'working') slot.sessionState.idleSince = null;
+    if (busy === 'navigation') slot.sessionState.treeNavigationInProgress = true;
+    if (busy === 'bash') Object.assign(slot.session, { isBashRunning: true });
+    if (busy === 'dispatch') slot.sessionState.bashDispatchInProgress = true;
+    if (busy === 'call') {
+      let activeCall = false;
+      manager.startIdleCheck(300_000, () => activeCall);
+      manager.stopIdleCheck();
+      activeCall = true;
+    }
+    if (busy === 'extension') {
+      slot.eventBusRef.current = mockEventBus() as any;
+      // answerActivity-style responder: asserts live work inline during the ask.
+      slot.eventBusRef.current.on('pimote:activity:request', () => {
+        slot.eventBusRef.current!.emit('pimote:activity:response', { active: true });
+      });
+    }
+    const close = vi.spyOn(manager, 'closeSession').mockResolvedValue(undefined);
+
+    await expect(manager.closeIdleSessionsAt(['/work/hub'])).resolves.toEqual(['/work/hub']);
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('ignores slots outside the requested subtree', async () => {
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
+    const slot = createFakeSlot({ id: 'elsewhere', folderPath: '/work/other', idleSince: Date.now() });
+    injectSession(manager, slot);
+    const close = vi.spyOn(manager, 'closeSession').mockResolvedValue(undefined);
+
+    await expect(manager.closeIdleSessionsAt(['/work/hub'])).resolves.toEqual([]);
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('reports the requested paths that still host slots, not the slot folders', async () => {
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
+    injectSession(manager, createFakeSlot({ id: 'deep', folderPath: '/work/hub/api/src', idleSince: null }));
+    injectSession(manager, createFakeSlot({ id: 'fresh', folderPath: '/work/hub/other', idleSince: Date.now() }));
+
+    await expect(manager.closeIdleSessionsAt(['/work/hub'])).resolves.toEqual(['/work/hub']);
+  });
+
+  it('counts a slot whose close fails as still hosted instead of rejecting', async () => {
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
+    const slot = createFakeSlot({ id: 'sticky', folderPath: '/work/hub/api', idleSince: Date.now() });
+    injectSession(manager, slot);
+    vi.spyOn(manager, 'closeSession').mockRejectedValue(new Error('dispose failed'));
+
+    await expect(manager.closeIdleSessionsAt(['/work/hub'])).resolves.toEqual(['/work/hub']);
+  });
+
+  it('counts a slot replaced mid-operation as still hosted (fail closed)', async () => {
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
+    const slot = createFakeSlot({ id: 'raced', folderPath: '/work/hub/api', idleSince: Date.now() });
+    injectSession(manager, slot);
+    const close = vi.spyOn(manager, 'closeSession').mockResolvedValue(undefined);
+
+    const pending = manager.closeIdleSessionsAt(['/work/hub']);
+    injectSession(manager, createFakeSlot({ id: 'raced', folderPath: '/work/hub/api', idleSince: Date.now() }));
+    await expect(pending).resolves.toEqual(['/work/hub']);
+    expect(close).not.toHaveBeenCalled();
+  });
+});

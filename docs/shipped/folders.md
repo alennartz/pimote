@@ -57,7 +57,7 @@ Membership edits follow the hub's mode. Adding a code member to a worktree hub d
 
 Disband removes every nested worktree through Git, then deletes the hub directory. Only a marked or Git-verified worktree hub accepts it. Symlink hubs reject disband; delete them by hand like any other folder. The guards run before any mutation:
 
-- No live session or external pi process may sit in the hub or any checkout. The check fails closed when an activity source fails.
+- Idle sessions with no observers in the hub or any checkout are closed first, through the same lifecycle the idle reaper uses. Disband retires hub sessions the way archiving does. Sessions that are still working or observed keep the hub. The check fails closed when an activity source fails.
 - Every checkout must be clean.
 - Every detached `HEAD` must be reachable from a local or remote-tracking branch ref. Unreachable work blocks disband. Create a branch to keep it.
 

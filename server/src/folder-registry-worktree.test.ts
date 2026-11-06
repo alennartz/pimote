@@ -346,7 +346,7 @@ describe('FolderRegistry.removeMember — worktree hubs', () => {
 describe('FolderRegistry.disbandHub', () => {
   it('removes every nested worktree and the hub directory, reporting the removed paths', async () => {
     const { hubPath, worktreePath } = await makeWorktreeHub();
-    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { findBusyPaths: async () => [] });
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
     const changes: Array<{ changedPaths: string[]; removedPaths: string[] }> = [];
     registry.onChange((change) => changes.push(change));
 
@@ -365,7 +365,7 @@ describe('FolderRegistry.disbandHub', () => {
     await initRepo(hubPath);
     await writeFile(join(hubPath, 'AGENTS.md'), '# unmarked\n', 'utf8');
     const worktreePath = await addNestedWorktree(hubPath, repoA, 'repo-a');
-    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { findBusyPaths: async () => [] });
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
 
     const result = await registry.disbandHub(hubPath);
 
@@ -375,7 +375,7 @@ describe('FolderRegistry.disbandHub', () => {
 
   it('rejects a symlink hub without a marker or nested worktree', async () => {
     const hubPath = await makeSymlinkHub();
-    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { findBusyPaths: async () => [] });
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
 
     await expect(registry.disbandHub(hubPath)).rejects.toThrow(/worktree hub/i);
     expect(existsSync(hubPath)).toBe(true);
@@ -384,7 +384,7 @@ describe('FolderRegistry.disbandHub', () => {
   it('rejects when a worktree has uncommitted changes and keeps the hub', async () => {
     const { hubPath, worktreePath } = await makeWorktreeHub();
     await writeFile(join(worktreePath, 'scratch.txt'), 'wip\n', 'utf8');
-    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { findBusyPaths: async () => [] });
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
 
     await expect(registry.disbandHub(hubPath)).rejects.toThrow(/uncommitted|dirty|changes/i);
     expect(existsSync(worktreePath)).toBe(true);
@@ -395,7 +395,7 @@ describe('FolderRegistry.disbandHub', () => {
     const { hubPath, worktreePath } = await makeWorktreeHub();
     const gitArgs = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
     await execFileAsync('git', [...gitArgs, 'commit', '--allow-empty', '-m', 'wip'], { cwd: worktreePath });
-    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { findBusyPaths: async () => [] });
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
 
     await expect(registry.disbandHub(hubPath)).rejects.toThrow(/reachable|detached/i);
     expect(existsSync(hubPath)).toBe(true);
@@ -405,7 +405,7 @@ describe('FolderRegistry.disbandHub', () => {
     const { hubPath, worktreePath } = await makeWorktreeHub();
     const second = await addNestedWorktree(hubPath, repoB, 'repo-b');
     await writeFile(join(second, 'scratch.txt'), 'wip\n', 'utf8');
-    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { findBusyPaths: async () => [] });
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
 
     await expect(registry.disbandHub(hubPath)).rejects.toThrow(/dirty|uncommitted|changes/i);
 
@@ -418,7 +418,7 @@ describe('FolderRegistry.disbandHub', () => {
     const { hubPath, worktreePath } = await makeWorktreeHub();
     await execFileAsync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-m', 'feature'], { cwd: worktreePath });
     await execFileAsync('git', ['update-ref', ref, 'HEAD'], { cwd: worktreePath });
-    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { findBusyPaths: async () => [] });
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
 
     await registry.disbandHub(hubPath);
 
@@ -456,7 +456,7 @@ describe('FolderRegistry.disbandHub', () => {
         removedOne = true;
       },
     };
-    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), worktrees, { findBusyPaths: async () => [] });
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), worktrees, { closeIdleSessionsAt: async () => [] });
 
     await expect(registry.disbandHub(hubPath)).rejects.toThrow();
     expect(existsSync(hubPath)).toBe(true);
@@ -471,12 +471,14 @@ describe('FolderRegistry.disbandHub', () => {
     expect(await gitWorktreeList(repoB)).not.toContain(second);
   });
 
-  it.each(['session', 'external pi'])('keeps the hub when a %s uses a checkout descendant', async (kind) => {
+  it.each(['session', 'external pi'])('keeps the hub when a %s remains in a checkout descendant', async (kind) => {
     const { hubPath, worktreePath } = await makeWorktreeHub();
     const cwd = join(worktreePath, 'src');
     await mkdir(cwd);
     const activity = new HubActivity({
-      sessionWorkingDirectories: async () => (kind === 'session' ? [cwd] : []),
+      // The close source reports the session as remaining (working or
+      // observed); external pi processes stay out of its reach.
+      closeIdleSessionsAt: async () => (kind === 'session' ? [cwd] : []),
       externalPiWorkingDirectories: async () => (kind === 'external pi' ? [cwd] : []),
     });
     const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, activity);
@@ -490,7 +492,7 @@ describe('FolderRegistry.disbandHub', () => {
   it('rejects when the activity port reports a busy path in the hub subtree', async () => {
     const { hubPath, worktreePath } = await makeWorktreeHub();
     const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, {
-      findBusyPaths: async (paths) => paths.filter((path) => path === worktreePath),
+      closeIdleSessionsAt: async (paths) => paths.filter((path) => path === worktreePath),
     });
 
     await expect(registry.disbandHub(hubPath)).rejects.toThrow(/active|busy|session|process/i);
@@ -498,22 +500,23 @@ describe('FolderRegistry.disbandHub', () => {
     expect(existsSync(worktreePath)).toBe(true);
   });
 
-  it('checks the hub subtree for activity before validating worktree state', async () => {
+  it('closes an idle observerless session before the remaining guards run', async () => {
     const { hubPath, worktreePath } = await makeWorktreeHub();
     await writeFile(join(worktreePath, 'scratch.txt'), 'wip\n', 'utf8');
-    const busyCalls: ReadonlyArray<string>[] = [];
+    const closeRequests: ReadonlyArray<string>[] = [];
     const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, {
-      findBusyPaths: async (paths) => {
-        busyCalls.push(paths);
-        return [worktreePath];
+      closeIdleSessionsAt: async (paths) => {
+        // The idle session slot was closed; nothing remains busy.
+        closeRequests.push(paths);
+        return [];
       },
     });
 
-    await expect(registry.disbandHub(hubPath)).rejects.toThrow();
-    // The activity guard sees the hub and the nested checkout, whatever the
-    // worktree's dirty state is.
-    expect(busyCalls[0]).toContain(hubPath);
-    expect(busyCalls[0]).toContain(worktreePath);
+    await expect(registry.disbandHub(hubPath)).rejects.toThrow(/uncommitted|dirty|changes/i);
+    // The close request covers the hub and the nested checkout, whatever the
+    // worktree's dirty state is, and the dirty guard still keeps the hub.
+    expect(closeRequests[0]).toContain(hubPath);
+    expect(closeRequests[0]).toContain(worktreePath);
     expect(existsSync(hubPath)).toBe(true);
   });
 });

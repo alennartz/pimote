@@ -11,9 +11,10 @@
 // Folder-UX flows under test: the four-kind creation wizard (code, persona,
 // code-hub, persona-hub — including the detached-worktree hub layout), hub
 // member add/remove with representation-aware materialization ("Manage
-// members…"), the guarded worktree-hub disband (dirty, active-session, and
-// detached-HEAD reachability rejections, then a successful disband), and
-// folder archive/restore from the row context menu.
+// members…"), the guarded worktree-hub disband (dirty, observed-session, and
+// detached-HEAD reachability rejections, then a successful disband that
+// closes the idle observerless hub session itself), and folder
+// archive/restore from the row context menu.
 //
 // Discovery semantics under test: sparse scan with no depth bound (nested
 // entries under SKIPPED wrappers are discovered, never inside included git
@@ -509,7 +510,7 @@ async function main() {
     assert(alphaStatusAfterCreate.trim() === '', 'worktree creation leaves the source checkout clean');
 
     // ============================================================
-    section('W — disband_hub guards (dirty, active session, unreachable HEAD) and success');
+    section('W — disband_hub guards (dirty, observed session, unreachable HEAD) and success with idle-session close');
     // ============================================================
     // Dirty guard: an untracked file rejects before any disk change.
     await writeFile(join(alphaWorktree, 'scratch.txt'), 'uncommitted\n');
@@ -527,23 +528,25 @@ async function main() {
     );
     await rm(join(alphaWorktree, 'scratch.txt'), { force: true });
 
-    // Activity guard: a live session inside the hub subtree rejects.
-    const busyOpen = await probeB.send({ type: 'open_session', folderPath: vaneDir });
+    // Activity guard, observed side: a session with a live observer rejects.
+    // A dedicated probe holds the observation so the main probes stay free.
+    const observerProbe = new WsProbe(port, `pm-probe-c-${randomUUID().slice(0, 8)}`);
+    await observerProbe.open();
+    const busyOpen = await observerProbe.send({ type: 'open_session', folderPath: vaneDir });
     assert(busyOpen.success === true && Boolean(busyOpen.data?.sessionId), 'a session opens inside the hub for the activity guard');
     const busyDisband = await probeB.send({ type: 'disband_hub', hubPath: vaneDir });
     assert(
       busyDisband.success === false && String(busyDisband.error ?? '').includes('in use'),
-      'disband rejects while a session lives in the hub subtree',
+      'disband rejects while an observed session lives in the hub subtree',
     );
-    await probeB.send({ type: 'close_session', sessionId: busyOpen.data.sessionId });
-    // close_session resolves after the slot leaves the live set; wait for the
-    // row to report idle before the next guard attempt.
-    assert(
-      await waitUntil(async () => ((await probeA.listFolders({ repin: true })).data.folders.find((f) => f.path === vaneDir)?.activeSessionCount ?? 1) === 0, 10_000),
-      'the hub session released before the next guard attempt',
-    );
+    assert(await exists(vaneDir), 'the observed-session-rejected hub stays on disk');
+    // The observer leaves: the slot stays open but idle and observerless.
+    observerProbe.close();
 
-    // Reachability guard: a detached HEAD no branch ref reaches.
+    // Reachability guard: a detached HEAD no branch ref reaches. The idle
+    // observerless session from the last step is still live here — this
+    // disband attempt proves the guard closed it, because the activity check
+    // passed and the rejection names the checkout, not the session.
     await writeFile(join(alphaWorktree, 'lonely.txt'), 'detached work\n');
     await gitIn(alphaWorktree, 'add', '.');
     await gitIn(alphaWorktree, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'lonely detached work');
@@ -556,6 +559,7 @@ async function main() {
 
     // Branch creation is user-owned: naming the detached commit keeps the work.
     await gitIn(alphaWorktree, 'branch', 'feature/keep');
+    // The final disband also closes the idle hub session left open above.
     const disbandMark = Date.now();
     const disbandResp = await probeB.send({ type: 'disband_hub', hubPath: vaneDir });
     assert(disbandResp.success === true, 'disband succeeds once HEAD is reachable from a branch ref');

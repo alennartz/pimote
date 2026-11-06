@@ -22,4 +22,4 @@ Accepted
 
 > **Amendment (2026-01-14, DR-063/064):** hub disband was removed from every surface. `FolderRegistry.createHub` now invalidates discovery before it emits its creation delta; no `disband_hub` removal delta exists.
 >
-> **Amendment (DR-080):** `disband_hub` returns for worktree hubs only, and its removal delta carries the hub path in `removedPaths`. Symlink hubs still have no disband mutation. The invalidation-before-delta rule stands.
+> **Amendment (DR-085):** `disband_hub` returns for worktree hubs only, and its removal delta carries the hub path in `removedPaths`. Symlink hubs still have no disband mutation. The invalidation-before-delta rule stands.

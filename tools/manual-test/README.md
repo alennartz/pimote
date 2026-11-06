@@ -502,17 +502,18 @@ remain bounded, and session lists load only for rendered rows. Open/bound chat
 session restoration stays independent of window fetches.
 
 Guarded worktree-hub disband coverage, wire and dashboard: `disband_hub`
-rejects a dirty checkout (uncommitted changes), a live session in the hub
-subtree (in use), and a detached HEAD no local or remote-tracking branch ref
+closes idle, observerless sessions in the hub subtree first, then rejects a
+dirty checkout (uncommitted changes), a session still working or observed
+(in use), and a detached HEAD no local or remote-tracking branch ref
 reaches; each rejection keeps the hub on disk. Naming the detached commit
 with a user-created branch (branch creation stays user-owned) lets disband
 succeed: the response lists the removed checkout path, `folders_changed`
 drops the hub via `removedPaths`, the hub directory disappears, and the
 source repository stays on its branch, clean, with no stale worktree
 registration and the user branch preserved. The dashboard dialog journey
-repeats the dirty and active-session rejections with the blocking state kept
-visible, then disbands after the hub session closes; symlink hub rows offer
-no disband item.
+repeats the dirty and observed-session rejections with the blocking state
+kept visible, then disbands after the hub session closes; symlink hub rows
+offer no disband item.
 
 **Location:** `tools/manual-test/project-management-smoke/project-management-smoke.mjs`
 (shared boot/probe/browser helpers from `tools/manual-test/lib/`).
@@ -618,11 +619,13 @@ materializes detached code checkouts at source HEAD plus the minimal
 `.pimote-hub.json` marker and the worktree row facts; `pimote_update_hub_members`
 adds persona members as symlinks and code members as detached worktrees and
 rejects dirty worktree removal; `pimote_disband_hub` rejects a symlink hub,
-an active session in the hub subtree, a dirty checkout, and a detached HEAD
-unreachable from any branch ref (each rejection keeps the hub on disk), then
-succeeds once the user names the detached commit with a branch: the response
-lists the removed checkout, the hub directory disappears, and the source
-repository keeps its branches with no stale worktree registration.
+a working or observed session in the hub subtree, a dirty checkout, and a
+detached HEAD unreachable from any branch ref (each rejection keeps the hub
+on disk); an idle observerless session closes during the guard, so disband
+proceeds to the worktree checks, then succeeds once the user names the
+detached commit with a branch: the response lists the removed checkout, the
+hub directory disappears, and the source repository keeps its branches with
+no stale worktree registration.
 Complements the LLM-driven manager-chat phase of `project-management-smoke`,
 which cannot force tool choice.
 

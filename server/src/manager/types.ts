@@ -131,13 +131,15 @@ export interface FolderRegistryPort {
   disbandHub(hubPath: string): Promise<{ removedWorktreePaths: string[] }>;
 }
 
-/** Narrow activity seam for guarded hub disband: the registry checks the hub
- *  subtree for active sessions and external pi processes through this port —
- *  never the session manager directly. */
+/** Narrow activity seam for guarded hub disband: the registry closes idle
+ *  session slots and checks the hub subtree for remaining activity through
+ *  this port — never the session manager directly. */
 export interface HubActivityPort {
-  /** Return the subset of `paths` with active Pimote sessions or external pi
-   *  processes. */
-  findBusyPaths(paths: ReadonlyArray<string>): Promise<ReadonlyArray<string>>;
+  /** Close idle, observerless session slots rooted at or below any requested
+   *  path through the canonical close lifecycle, then return the subset of
+   *  `paths` that remain busy: sessions still working or observed, and
+   *  external pi processes. Fails closed when an activity source fails. */
+  closeIdleSessionsAt(paths: ReadonlyArray<string>): Promise<ReadonlyArray<string>>;
 }
 
 /** Input for core code-folder creation (`pimote_create_folder`, kind `code`). */

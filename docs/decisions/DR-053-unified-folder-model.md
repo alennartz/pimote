@@ -49,4 +49,4 @@ Pimote's folder space was described by three overlapping mechanisms: the repo in
 
 > **Amendment (2026-01-14, DR-064):** hub membership is the on-disk symlink inventory for every included folder with shortcut members, not a persisted creator-owned registry row. The curation document now stores overrides only. Source hub promises remain until materialization; then the inventory is authoritative. Hand-built hubs are first-class.
 >
-> **Amendment (DR-080):** the inventory widens to symlink members plus Git-verified nested detached worktrees; a worktree member's identity stays its canonical source checkout, and a `.pimote-hub.json` marker preserves worktree mode after the last worktree is removed. The registry still stores curation only.
+> **Amendment (DR-085):** the inventory widens to symlink members plus Git-verified nested detached worktrees; a worktree member's identity stays its canonical source checkout, and a `.pimote-hub.json` marker preserves worktree mode after the last worktree is removed. The registry still stores curation only.

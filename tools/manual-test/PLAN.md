@@ -284,10 +284,11 @@ members as nested detached Git worktrees — plus exact seeded `AGENTS.md` lines
 member folder is never touched) and every row archives/restores ("Archive
 project" / "Restore project": folder curation only, session records never
 archive); worktree hub rows add the guarded "Disband worktree hub…" action
-(the server rejects active sessions or external pi processes in the hub
-subtree, dirty checkouts, and detached HEADs unreachable from a local or
-remote-tracking branch ref; it removes the worktrees and the hub without
-merging, committing, stashing, or deleting branches); epoch-stamped `folders_changed` deltas merge `changed`
+(the server closes idle, observerless sessions in the hub subtree first, then
+rejects sessions still working or observed, external pi processes, dirty
+checkouts, and detached HEADs unreachable from a local or remote-tracking
+branch ref; it removes the worktrees and the hub without merging,
+committing, stashing, or deleting branches); epoch-stamped `folders_changed` deltas merge `changed`
 rows and drop `removedPaths` in both clients. Archived-row probes explicitly
 set `includeArchived`. Fresh discovery comparisons explicitly repin. Folder sources contribute repo/hub entries (missing ones
 provision via `onFolderOpen` at open time); the manager is a persisted
@@ -314,8 +315,9 @@ server + `agent-browser` + a second WebSocket probe client, including the
 four-kind creation wizard with the detached-worktree hub layout (wizard
 representation choice, detached checkouts, marker, member representation and
 checkout paths), hub member add/remove with `FolderInfo.members` deltas in
-both layouts, guarded worktree-hub disband at the wire (dirty, active-session,
-and detached-HEAD reachability rejections, then a successful disband that
+both layouts, guarded worktree-hub disband at the wire (dirty,
+observed-session, and detached-HEAD reachability rejections, then a
+successful disband that closes the idle observerless hub session itself and
 preserves branches) and through the dashboard dialog after closing the hub
 session, folder archive/restore, the
 unscanned-cwd session fallback and legacy `multiRepo` registry read-compat

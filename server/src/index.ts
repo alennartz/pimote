@@ -150,16 +150,16 @@ export async function main(options: StartOptions = {}) {
   });
 
   // The folder registry is constructed after the session manager so the hub
-  // disband activity guard can read live slot folder paths without the
-  // registry ever holding the session manager itself (plan:
-  // hub-member-representation Step 2).
+  // disband guard can close idle hub sessions through the manager's canonical
+  // close lifecycle without the registry ever holding the session manager
+  // itself (plan: hub-member-representation Step 2).
   const folderRegistry = new FolderRegistry(
     repoIndex,
     PIMOTE_REGISTRY_STORE_DIR,
     folderTree,
     new HubWorktrees(defaultWorktreeGitRunner),
     new HubActivity({
-      sessionWorkingDirectories: async () => sessionManager.getAllSessions().map((slot) => slot.folderPath),
+      closeIdleSessionsAt: (paths) => sessionManager.closeIdleSessionsAt(paths),
       externalPiWorkingDirectories: listExternalPiWorkingDirectories,
     }),
   );

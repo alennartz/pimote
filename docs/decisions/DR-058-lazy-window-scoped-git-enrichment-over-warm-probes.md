@@ -20,4 +20,4 @@ The first `list_folders` window blocked on a whole-set git-status pass. Manual t
 
 > **Amendment (2026-01-14, DR-063/064):** hub disband was removed. `createHub` owns discovery invalidation before its delta; there is no disband mutation.
 >
-> **Amendment (DR-080):** the guarded worktree-only disband mutation exists again and owns the same invalidation-before-delta behavior for its removal delta.
+> **Amendment (DR-085):** the guarded worktree-only disband mutation exists again and owns the same invalidation-before-delta behavior for its removal delta.

@@ -19,8 +19,9 @@
 // lifecycle runs end-to-end through the manager seams: worktree creation
 // (detached checkouts + mode marker), representation-aware membership edits
 // via pimote_update_hub_members, and the guarded pimote_disband_hub
-// rejections (symlink hub, active session, dirty checkout, unreachable
-// detached HEAD) followed by a successful disband that preserves branches.
+// rejections (symlink hub, working-or-observed session, dirty checkout,
+// unreachable detached HEAD) followed by a successful disband that closes
+// the idle observerless hub session itself and preserves branches.
 // The destructive disband fixture is always fabricated inside the sandbox —
 // a user-supplied MTMS_ROOT tree never hosts it.
 //
@@ -146,14 +147,30 @@ async function main() {
     // Git facts fill in per served row; the probe stubs the refresh seam.
     requestStatusRefresh: async () => {},
   };
-  // Live session cwds the activity guard sees — mutated by the disband phase.
-  const busySessionCwds = [];
+  // Session slots the disband guard sees, split by the guard's rule: an idle
+  // observerless slot closes during disband (recorded for assertion); a
+  // working or observed slot stays and keeps the hub busy.
+  const workingSessionCwds = [];
+  let idleSessionCwd = null;
+  const closedSessionCwds = [];
+  const hostedBy = (cwd, paths) => paths.some((p) => cwd === p || cwd.startsWith(p + '/'));
   const folders = new FolderRegistry(
     repos,
     storeDir,
     tree,
     new HubWorktrees(defaultWorktreeGitRunner),
-    new HubActivity({ sessionWorkingDirectories: async () => busySessionCwds, externalPiWorkingDirectories: async () => [] }),
+    new HubActivity({
+      // Stand-in for the session manager's close seam: idle observerless
+      // slots close during the guard, working or observed slots remain.
+      closeIdleSessionsAt: async (paths) => {
+        if (idleSessionCwd && hostedBy(idleSessionCwd, paths)) {
+          closedSessionCwds.push(idleSessionCwd);
+          idleSessionCwd = null;
+        }
+        return workingSessionCwds.filter((cwd) => hostedBy(cwd, paths));
+      },
+      externalPiWorkingDirectories: async () => [],
+    }),
   );
   const context = {
     folders,
@@ -425,15 +442,21 @@ async function main() {
   assert(disbandSymlink.isError === true && disbandError(disbandSymlink).includes('Not a worktree hub'), 'a symlink hub rejects disband');
   assert(await exists(west), 'the rejected symlink hub stays on disk');
 
-  busySessionCwds.push(checkout);
+  // A working or observed session slot stays hosted: the guard rejects.
+  workingSessionCwds.push(checkout);
   const disbandBusy = await disband('call-db2', wtHubC);
-  assert(disbandBusy.isError === true && disbandError(disbandBusy).includes('in use'), 'a hub with an active session in its subtree rejects disband');
+  assert(disbandBusy.isError === true && disbandError(disbandBusy).includes('in use'), 'a hub with a working or observed session in its subtree rejects disband');
   assert(await exists(wtHub), 'the busy hub stays on disk');
-  busySessionCwds.length = 0;
+  workingSessionCwds.length = 0;
 
+  // An idle, observerless slot closes during the guard, so disband proceeds
+  // to the worktree guards: here the dirty checkout still rejects, and the
+  // closed slot is recorded.
+  idleSessionCwd = checkout;
   await writeFile(join(checkout, 'scratch.txt'), 'uncommitted\n');
   const disbandDirty = await disband('call-db3', wtHubC);
-  assert(disbandDirty.isError === true && disbandError(disbandDirty).includes('uncommitted changes'), 'a dirty checkout rejects disband');
+  assert(disbandDirty.isError === true && disbandError(disbandDirty).includes('uncommitted changes'), 'a dirty checkout rejects disband after the idle session closed');
+  assert(closedSessionCwds.includes(checkout), 'the guard closed the idle observerless hub session during the disband attempt');
   assert(await exists(wtHub), 'the dirty-rejected hub stays on disk');
   await rm(join(checkout, 'scratch.txt'), { force: true });
 
