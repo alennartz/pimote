@@ -222,6 +222,8 @@ Folder rows use the existing context menu. Worktree hubs add `Disband worktree h
 
 ## Steps
 
+**Pre-implementation commit:** `278f371fedd2ae6b22d147bcb9ecef85fd895728`
+
 ### Step 1: Implement the Git worktree adapter
 
 Implement `HubWorktrees` in `server/src/hub-worktrees.ts` behind the existing `HubWorktreePort` and `WorktreeGitRunner` interfaces. Recognize only directories with a `.git` file that Git confirms in its worktree list. Return the canonical source checkout, nested checkout, branch, dirty state, detached state, and branch-ref reachability. Reject ordinary directories, independent repositories, and unverifiable paths.
@@ -229,7 +231,7 @@ Implement `HubWorktrees` in `server/src/hub-worktrees.ts` behind the existing `H
 Create detached checkouts from source `HEAD`, validate staged, unstaged, and untracked changes, and remove checkouts through Git. Check reachability against local and remote-tracking branch refs. Do not perform branch operations. Supply a production runner using `execFile`, the existing Git environment protections, and a timeout. Preserve the injected runner for tests.
 
 **Verify:** `npm run build:shared && npm run test --workspace=@pimote/server -- --run src/hub-worktrees.test.ts` passes.
-**Status:** not started
+**Status:** done
 
 ### Step 2: Wire the activity guard
 
@@ -240,7 +242,7 @@ Extend `server/src/takeover.ts` with an external pi working-directory enumeratio
 In `server/src/index.ts`, construct `FolderRegistry` after `PimoteSessionManager` is available. Inject `HubActivity` with live slot folder paths and the external pi enumeration. Inject the production worktree adapter, or give the registry an equivalent production default. Keep session-manager access out of the registry.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/hub-activity.test.ts src/takeover.test.ts src/index.test.ts` passes the activity and existing takeover checks. The manager disband test passes after Step 9.
-**Status:** not started
+**Status:** done
 
 ### Step 3: Derive hub membership from disk shape
 

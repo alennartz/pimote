@@ -1,3 +1,8 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { lstat, realpath } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+
 /**
  * The hub worktree Git adapter (plan: hub-member-representation). A deep
  * server module that owns the Git CLI seam for detached worktree creation,
@@ -67,22 +72,130 @@ export interface HubWorktreePort {
   remove(input: { sourcePath: string; worktreePath: string }): Promise<void>;
 }
 
+const GIT_TIMEOUT_MS = 30_000;
+
+/** The production runner: same environment protections as the repo's other
+ *  Git seams (no inherited GIT_DIR/GIT_WORK_TREE, no optional locks) and a
+ *  command timeout, so a stalled Git CLI cannot hang a registry mutation. */
+export const defaultWorktreeGitRunner: WorktreeGitRunner = async (args, cwd) => {
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  env.GIT_OPTIONAL_LOCKS = '0';
+  const execFileAsync = promisify(execFile);
+  const { stdout } = await execFileAsync('git', args, { cwd, env, encoding: 'utf-8', timeout: GIT_TIMEOUT_MS });
+  return { stdout };
+};
+
+/** One entry of `git worktree list --porcelain`. */
+interface WorktreeListEntry {
+  path: string;
+  /** `refs/heads/<name>` when attached; absent when detached. */
+  branchRef: string | null;
+  detached: boolean;
+  bare: boolean;
+}
+
+function parseWorktreeList(stdout: string): WorktreeListEntry[] {
+  const entries: WorktreeListEntry[] = [];
+  let current: WorktreeListEntry | null = null;
+  for (const line of stdout.split('\n')) {
+    if (line === '') {
+      current = null;
+      continue;
+    }
+    const spaceIndex = line.indexOf(' ');
+    const key = spaceIndex === -1 ? line : line.slice(0, spaceIndex);
+    const value = spaceIndex === -1 ? '' : line.slice(spaceIndex + 1);
+    if (key === 'worktree') {
+      current = { path: value, branchRef: null, detached: false, bare: false };
+      entries.push(current);
+    } else if (current) {
+      if (key === 'branch') current.branchRef = value;
+      else if (key === 'detached') current.detached = true;
+      else if (key === 'bare') current.bare = true;
+    }
+  }
+  return entries;
+}
+
+function branchNameFromRef(branchRef: string | null): string | null {
+  const prefix = 'refs/heads/';
+  return branchRef?.startsWith(prefix) ? branchRef.slice(prefix.length) : null;
+}
+
+/** Non-empty `git status --porcelain` — staged, unstaged, and untracked
+ *  changes all count as dirty. */
+async function isDirty(run: WorktreeGitRunner, cwd: string): Promise<boolean> {
+  const { stdout } = await run(['status', '--porcelain'], cwd);
+  return stdout.trim() !== '';
+}
+
+/** True when `HEAD` is reachable from some local or remote-tracking branch
+ *  ref: rev-list with `--not --branches --remotes` must come up empty. No
+ *  fetch, no branch operations. */
+async function isHeadReachableFromBranchRef(run: WorktreeGitRunner, cwd: string): Promise<boolean> {
+  const { stdout } = await run(['rev-list', 'HEAD', '--not', '--branches', '--remotes'], cwd);
+  return stdout.trim() === '';
+}
+
 export class HubWorktrees implements HubWorktreePort {
   constructor(private readonly run: WorktreeGitRunner) {}
 
-  async inspectMember(_path: string): Promise<WorktreeMemberFacts | null> {
-    throw new Error('not implemented');
+  async inspectMember(path: string): Promise<WorktreeMemberFacts | null> {
+    // A linked worktree carries `.git` as a file; an independent repository
+    // carries it as a directory and never counts as a hub member.
+    const gitEntry = await lstat(join(path, '.git')).catch(() => null);
+    if (!gitEntry?.isFile()) return null;
+
+    const resolved = await realpath(path).catch(() => null);
+    if (!resolved) return null;
+
+    let entries: WorktreeListEntry[];
+    try {
+      entries = parseWorktreeList((await this.run(['worktree', 'list', '--porcelain'], path)).stdout);
+    } catch {
+      // Git cannot verify this checkout (broken .git file, corrupt repo).
+      return null;
+    }
+    const own = entries.find((entry) => resolve(entry.path) === resolve(resolved));
+    if (!own) return null;
+    // The main worktree is listed first; that checkout is the canonical
+    // source repository the member was detached from.
+    const source = entries.find((entry) => !entry.bare);
+    if (!source) return null;
+
+    return {
+      sourcePath: source.path,
+      worktreePath: own.path,
+      branch: branchNameFromRef(own.branchRef),
+      dirty: await isDirty(this.run, path),
+      detached: own.detached || own.branchRef === null,
+      headReachableFromBranchRef: await isHeadReachableFromBranchRef(this.run, path),
+    };
   }
 
-  async createDetached(_input: { sourcePath: string; worktreePath: string }): Promise<void> {
-    throw new Error('not implemented');
+  async createDetached(input: { sourcePath: string; worktreePath: string }): Promise<void> {
+    await this.run(['worktree', 'add', '--detach', input.worktreePath, 'HEAD'], input.sourcePath);
   }
 
-  async validateRemoval(_input: { sourcePath: string; worktreePath: string }): Promise<WorktreeRemovalCheck> {
-    throw new Error('not implemented');
+  async validateRemoval(input: { sourcePath: string; worktreePath: string }): Promise<WorktreeRemovalCheck> {
+    const [dirty, detached, headReachableFromBranchRef] = await Promise.all([
+      isDirty(this.run, input.worktreePath),
+      this.isDetached(input.worktreePath),
+      isHeadReachableFromBranchRef(this.run, input.worktreePath),
+    ]);
+    return { dirty, detached, headReachableFromBranchRef };
   }
 
-  async remove(_input: { sourcePath: string; worktreePath: string }): Promise<void> {
-    throw new Error('not implemented');
+  async remove(input: { sourcePath: string; worktreePath: string }): Promise<void> {
+    // No --force: the clean-state guard is authoritative, and Git's own
+    // dirty-worktree refusal is the second line of defense.
+    await this.run(['worktree', 'remove', input.worktreePath], input.sourcePath);
+  }
+
+  private async isDetached(cwd: string): Promise<boolean> {
+    const { stdout } = await this.run(['branch', '--show-current'], cwd);
+    return stdout.trim() === '';
   }
 }

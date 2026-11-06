@@ -19,6 +19,9 @@ import { scanFolderModel, type FolderOccurrence, type FolderScanWarning, type Sp
 import { RepoIndex } from './repo-index.js';
 import { FolderRegistry } from './folder-registry.js';
 import type { FolderModelPort } from './folder-registry.js';
+import { HubWorktrees, defaultWorktreeGitRunner } from './hub-worktrees.js';
+import { HubActivity } from './hub-activity.js';
+import { listExternalPiWorkingDirectories } from './takeover.js';
 import { createCodeFolder } from './folder-create.js';
 import { seedManagerRoot } from './manager/index.js';
 import type { ManagerToolContext, SessionArchiveOutcome, SessionResumeOutcome } from './manager/index.js';
@@ -101,7 +104,6 @@ export async function main(options: StartOptions = {}) {
   const folderTree: FolderModelPort = {
     tree: () => repoIndex.tree(),
   };
-  const folderRegistry = new FolderRegistry(repoIndex, PIMOTE_REGISTRY_STORE_DIR, folderTree);
 
   // Initialize push notification service
   await migratePushSubscriptionStore(LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH, PIMOTE_PUSH_SUBSCRIPTIONS_PATH);
@@ -146,6 +148,21 @@ export async function main(options: StartOptions = {}) {
     pimoteDocsFactory: createPimoteDocsExtension(),
     isVoiceModeActive: (slot) => voiceOrchestratorRef.current?.orchestrator.isCallActive(slot.sessionState.id) ?? false,
   });
+
+  // The folder registry is constructed after the session manager so the hub
+  // disband activity guard can read live slot folder paths without the
+  // registry ever holding the session manager itself (plan:
+  // hub-member-representation Step 2).
+  const folderRegistry = new FolderRegistry(
+    repoIndex,
+    PIMOTE_REGISTRY_STORE_DIR,
+    folderTree,
+    new HubWorktrees(defaultWorktreeGitRunner),
+    new HubActivity({
+      sessionWorkingDirectories: async () => sessionManager.getAllSessions().map((slot) => slot.folderPath),
+      externalPiWorkingDirectories: listExternalPiWorkingDirectories,
+    }),
+  );
 
   // The folder listing service: ordering, search, and windowing over the
   // registry's rows, fed by the shared per-file session-summary cache and the

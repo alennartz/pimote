@@ -32,9 +32,14 @@ async function isDescendantOfAny(pid: number, ancestorPids: Set<number>): Promis
   return false;
 }
 
+/** One root external pi process with its resolved working directory. */
+interface ExternalPiProcessInfo {
+  pid: number;
+  cwd: string;
+}
+
 /**
- * Find external pi processes whose working directory matches `folderPath`.
- * Scans /proc to find processes running pi-coding-agent in the given folder.
+ * Scan /proc for every root external pi process with its working directory.
  *
  * Excludes:
  * - The current process (pimote server)
@@ -42,27 +47,18 @@ async function isDescendantOfAny(pid: number, ancestorPids: Set<number>): Promis
  * - Descendants of any other pi process (sub-agents spawned by an external pi)
  *
  * Only "root" pi processes — those not parented by another pi process or this
- * server — are returned as conflicts.
+ * server — are returned.
+ *
+ * Throws when /proc itself cannot be read: the disband activity guard fails
+ * closed rather than treating an unavailable enumeration as "no activity".
  */
-export async function findExternalPiProcesses(folderPath: string): Promise<number[]> {
+async function scanRootExternalPiProcesses(): Promise<ExternalPiProcessInfo[]> {
   const myPid = process.pid;
 
-  let resolvedFolder: string;
-  try {
-    resolvedFolder = await realpath(folderPath);
-  } catch {
-    return [];
-  }
+  const entries = await readdir('/proc');
 
-  let entries: string[];
-  try {
-    entries = await readdir('/proc');
-  } catch {
-    return [];
-  }
-
-  // First pass: collect all pi processes in this folder (excluding ourselves)
-  const allPiPids: number[] = [];
+  // First pass: collect all external pi processes (excluding ourselves)
+  const allProcesses: ExternalPiProcessInfo[] = [];
 
   for (const entry of entries) {
     const pid = Number(entry);
@@ -78,8 +74,6 @@ export async function findExternalPiProcesses(folderPath: string): Promise<numbe
         resolvedCwd = cwd;
       }
 
-      if (resolvedCwd !== resolvedFolder) continue;
-
       // Check cmdline to verify it's a pi process
       const cmdlineRaw = await readFile(`/proc/${pid}/cmdline`, 'utf-8');
       // cmdline uses null bytes as separators
@@ -87,7 +81,7 @@ export async function findExternalPiProcesses(folderPath: string): Promise<numbe
 
       if (!isPiProcess(cmdline)) continue;
 
-      allPiPids.push(pid);
+      allProcesses.push({ pid, cwd: resolvedCwd });
     } catch (err: unknown) {
       // ENOENT (process exited), EACCES (no permission) — skip
       const code = (err as NodeJS.ErrnoException).code;
@@ -97,19 +91,52 @@ export async function findExternalPiProcesses(folderPath: string): Promise<numbe
     }
   }
 
-  if (allPiPids.length === 0) return [];
+  if (allProcesses.length === 0) return [];
 
   // Second pass: filter out any pi process that is a descendant of
   // this server or of another pi process in the set.
-  const ancestorPids = new Set([myPid, ...allPiPids]);
-  const rootPids: number[] = [];
+  const ancestorPids = new Set([myPid, ...allProcesses.map((processInfo) => processInfo.pid)]);
+  const rootProcesses: ExternalPiProcessInfo[] = [];
 
-  for (const pid of allPiPids) {
-    if (await isDescendantOfAny(pid, ancestorPids)) continue;
-    rootPids.push(pid);
+  for (const processInfo of allProcesses) {
+    if (await isDescendantOfAny(processInfo.pid, ancestorPids)) continue;
+    rootProcesses.push(processInfo);
   }
 
-  return rootPids;
+  return rootProcesses;
+}
+
+/**
+ * Find external pi processes whose working directory matches `folderPath`.
+ * Scans /proc to find processes running pi-coding-agent in the given folder.
+ * Same exclusions as `scanRootExternalPiProcesses`.
+ */
+export async function findExternalPiProcesses(folderPath: string): Promise<number[]> {
+  let resolvedFolder: string;
+  try {
+    resolvedFolder = await realpath(folderPath);
+  } catch {
+    return [];
+  }
+
+  let processes: ExternalPiProcessInfo[];
+  try {
+    processes = await scanRootExternalPiProcesses();
+  } catch {
+    return [];
+  }
+
+  return processes.filter((processInfo) => processInfo.cwd === resolvedFolder).map((processInfo) => processInfo.pid);
+}
+
+/**
+ * Working directories of every root external pi process, deduplicated.
+ * Supports the disband activity guard's subtree checks; throws when /proc
+ * cannot be read so the guard fails closed (never an empty "all clear").
+ */
+export async function listExternalPiWorkingDirectories(): Promise<string[]> {
+  const processes = await scanRootExternalPiProcesses();
+  return [...new Set(processes.map((processInfo) => processInfo.cwd))];
 }
 
 /**
