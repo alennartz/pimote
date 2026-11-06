@@ -107,7 +107,7 @@ describe('FolderRegistry.addMember', () => {
     const registry = makeRegistry();
     const hub = await findRow(registry, hubPath);
     expect(hub).toMatchObject({ nature: 'persona', shortcutCount: 1 });
-    expect(hub?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code' }]);
+    expect(hub?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code', representation: 'symlink' }]);
     expect(hub?.repos?.map((repo) => repo.path)).toEqual([repoA]);
 
     await registry.addMember(hubPath, repoB);
@@ -294,8 +294,8 @@ describe('FolderRegistry.removeMember', () => {
 
     const row = await findRow(registry, hubPath);
     expect(row?.members).toEqual([
-      { path: personaPath, name: 'ada', nature: 'persona' },
-      { path: repoA, name: 'repo-a', nature: 'code' },
+      { path: personaPath, name: 'ada', nature: 'persona', representation: 'symlink' },
+      { path: repoA, name: 'repo-a', nature: 'code', representation: 'symlink' },
     ]);
     expect(await readHubAgents(hubPath)).toContain(seededMemberLine('ada', 'persona'));
 
@@ -314,7 +314,7 @@ describe('FolderRegistry.removeMember', () => {
     await writeFile(agentsPath, injectMemberLine(agents, seededMemberLine('ghost-persona', 'persona')), 'utf8');
 
     const row = await findRow(registry, hubPath);
-    expect(row?.members).toContainEqual({ path: ghost, name: 'ghost-persona', nature: 'persona' });
+    expect(row?.members).toContainEqual({ path: ghost, name: 'ghost-persona', nature: 'persona', representation: 'symlink' });
 
     await registry.removeMember(hubPath, ghost);
     expect(await findSymlinkTo(hubPath, ghost)).toBeUndefined();
@@ -330,14 +330,14 @@ describe('FolderRegistry.removeMember', () => {
 
     const before = await findRow(registry, hubPath);
     expect(before?.members).toEqual([
-      { path: personaPath, name: 'ada', nature: 'persona' },
-      { path: repoA, name: 'repo-a', nature: 'code' },
+      { path: personaPath, name: 'ada', nature: 'persona', representation: 'symlink' },
+      { path: repoA, name: 'repo-a', nature: 'code', representation: 'symlink' },
     ]);
     expect(before?.repos).toContainEqual(expect.objectContaining({ path: repoA, missing: true }));
 
     await registry.removeMember(hubPath, repoA);
     const afterCode = await findRow(registry, hubPath);
-    expect(afterCode?.members).toEqual([{ path: personaPath, name: 'ada', nature: 'persona' }]);
+    expect(afterCode?.members).toEqual([{ path: personaPath, name: 'ada', nature: 'persona', representation: 'symlink' }]);
 
     await registry.removeMember(hubPath, personaPath);
     const afterLast = await findRow(registry, hubPath);
@@ -397,8 +397,8 @@ describe('FolderInfo.members — hub rows', () => {
 
     const row = await findRow(registry, hubPath);
     expect(row?.members).toHaveLength(2);
-    expect(row?.members).toContainEqual({ path: repoA, name: basename(repoA), nature: 'code' });
-    expect(row?.members).toContainEqual({ path: personaPath, name: basename(personaPath), nature: 'persona' });
+    expect(row?.members).toContainEqual({ path: repoA, name: basename(repoA), nature: 'code', representation: 'symlink' });
+    expect(row?.members).toContainEqual({ path: personaPath, name: basename(personaPath), nature: 'persona', representation: 'symlink' });
   });
 
   it('keeps a valid hand-built external folder member discovered through the hub', async () => {
@@ -409,7 +409,7 @@ describe('FolderInfo.members — hub rows', () => {
     await symlink(externalRepo, join(hubPath, 'repo-c'));
 
     const row = await findRow(registry, hubPath);
-    expect(row?.members).toContainEqual({ path: externalRepo, name: 'repo-c', nature: 'code' });
+    expect(row?.members).toContainEqual({ path: externalRepo, name: 'repo-c', nature: 'code', representation: 'symlink' });
 
     await registry.removeMember(hubPath, externalRepo);
     expect(await findSymlinkTo(hubPath, externalRepo)).toBeUndefined();
@@ -428,7 +428,7 @@ describe('FolderInfo.members — hub rows', () => {
     await symlink(externalRepo, join(hubPath, 'repo-c'));
 
     const row = await findRow(registry, hubPath);
-    expect(row?.members).toContainEqual({ path: externalRepo, name: 'repo-c', nature: 'code' });
+    expect(row?.members).toContainEqual({ path: externalRepo, name: 'repo-c', nature: 'code', representation: 'symlink' });
 
     await registry.removeMember(hubPath, externalRepo);
     expect(await findSymlinkTo(hubPath, externalRepo)).toBeUndefined();
@@ -444,7 +444,7 @@ describe('FolderInfo.members — hub rows', () => {
     await symlink(join(tempDir, 'gone.txt'), join(hubPath, 'notes'));
 
     const row = await findRow(registry, hubPath);
-    expect(row?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code' }]);
+    expect(row?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code', representation: 'symlink' }]);
 
     const beforeRefusedRemoval = await readFile(instructions, 'utf8');
     await expect(registry.removeMember(hubPath, instructions)).rejects.toThrow(/Not a member/);
@@ -462,7 +462,7 @@ describe('FolderInfo.members — hub rows', () => {
     await symlink(unknownDir, join(hubPath, 'unlisted'));
 
     const row = await findRow(registry, hubPath);
-    expect(row?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code' }]);
+    expect(row?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code', representation: 'symlink' }]);
     await expect(registry.removeMember(hubPath, unknownDir)).rejects.toThrow(/Not a member/);
     expect(await readlink(join(hubPath, 'unlisted'))).toBe(unknownDir);
   });
@@ -479,7 +479,7 @@ describe('FolderInfo.members — hub rows', () => {
     await symlink(missing, join(hubPath, 'missing-source-folder'));
 
     const row = await findRow(registry, hubPath);
-    expect(row?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code' }]);
+    expect(row?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code', representation: 'symlink' }]);
     await expect(registry.removeMember(hubPath, missing)).rejects.toThrow(/Not a member/);
     expect(await readlink(join(hubPath, 'missing-source-folder'))).toBe(missing);
   });

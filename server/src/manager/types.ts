@@ -1,4 +1,4 @@
-import type { FolderInfo } from '../../../shared/dist/index.js';
+import type { FolderInfo, HubMemberRepresentation } from '../../../shared/dist/index.js';
 import type { PimoteConfig } from '../config.js';
 
 /** Live snapshot of one open session, as the manager tools see it. */
@@ -113,9 +113,31 @@ export interface FolderRegistryPort {
   /** Deliver requested git facts later through the folder delta channel. */
   requestStatusRefresh?(rows: ReadonlyArray<FolderInfo>): Promise<void>;
   update(patch: FolderUpdatePatch): Promise<void>;
-  createHub(input: { name: string; root: string; memberPaths: string[]; body?: string; description?: string; personaText?: string }): Promise<{ path: string }>;
+  /** `memberRepresentation` selects the code-member layout: symlinks by
+   *  default, or nested detached worktrees. Persona members always symlink. */
+  createHub(input: {
+    name: string;
+    root: string;
+    memberPaths: string[];
+    memberRepresentation?: HubMemberRepresentation;
+    body?: string;
+    description?: string;
+    personaText?: string;
+  }): Promise<{ path: string }>;
   addMember(hubPath: string, memberPath: string): Promise<void>;
   removeMember(hubPath: string, memberPath: string): Promise<void>;
+  /** Disband a worktree hub: remove its nested worktrees and delete the hub
+   *  directory. Symlink hubs reject. Returns the removed checkout paths. */
+  disbandHub(hubPath: string): Promise<{ removedWorktreePaths: string[] }>;
+}
+
+/** Narrow activity seam for guarded hub disband: the registry checks the hub
+ *  subtree for active sessions and external pi processes through this port —
+ *  never the session manager directly. */
+export interface HubActivityPort {
+  /** Return the subset of `paths` with active Pimote sessions or external pi
+   *  processes. */
+  findBusyPaths(paths: ReadonlyArray<string>): Promise<ReadonlyArray<string>>;
 }
 
 /** Input for core code-folder creation (`pimote_create_folder`, kind `code`). */

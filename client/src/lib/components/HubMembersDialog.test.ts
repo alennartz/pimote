@@ -55,7 +55,7 @@ const hub = makeFolder({
   path: '/w/stack',
   name: 'stack',
   shortcutCount: 1,
-  members: [{ path: '/w/ada', name: 'ada', nature: 'persona' }],
+  members: [{ path: '/w/ada', name: 'ada', nature: 'persona', representation: 'symlink' }],
 });
 
 function shows(text: string): boolean {

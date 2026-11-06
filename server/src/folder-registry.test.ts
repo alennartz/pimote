@@ -567,7 +567,7 @@ describe('FolderRegistry.createHub()', () => {
 
     expect(existsSync(join(storeDir, 'registry.json'))).toBe(false);
     const discovered = await findRow(makeRegistry(), created.path);
-    expect(discovered?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code' }]);
+    expect(discovered?.members).toEqual([{ path: repoA, name: 'repo-a', nature: 'code', representation: 'symlink' }]);
     expect(discovered?.repos?.map((repo) => repo.path)).toEqual([repoA]);
   });
 });

@@ -52,7 +52,13 @@ const alpha = makeFolder({ path: '/w/alpha', name: 'alpha' });
 const archivedRow = makeFolder({ path: '/w/old', name: 'old', archived: true });
 
 const memberRepo = { path: '/w/one', name: 'one', branch: null, dirty: false, ahead: 0, behind: 0, missing: false };
-const hub = makeFolder({ path: '/w/stack', name: 'stack', shortcutCount: 1, repos: [memberRepo], members: [{ path: '/w/one', name: 'one', nature: 'code' }] });
+const hub = makeFolder({
+  path: '/w/stack',
+  name: 'stack',
+  shortcutCount: 1,
+  repos: [memberRepo],
+  members: [{ path: '/w/one', name: 'one', nature: 'code', representation: 'symlink' }],
+});
 const shortcutHub = makeFolder({ path: '/w/shortcuts', name: 'shortcuts', shortcutCount: 1 });
 const emptyHub = makeFolder({ path: '/w/empty', name: 'empty', members: [], repos: [] });
 

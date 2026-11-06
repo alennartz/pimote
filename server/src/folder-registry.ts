@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import type { Dirent, Stats } from 'node:fs';
 import { lstat, mkdir, readFile, readdir, readlink, rename, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
-import type { FolderInfo, FolderMemberInfo, RepoInfo } from '../../shared/dist/index.js';
+import type { FolderInfo, FolderMemberInfo, HubMemberRepresentation, RepoInfo } from '../../shared/dist/index.js';
 import type { FolderEntry, FolderNature, FolderOccurrence, SparseTree } from './folder-model/index.js';
-import type { FolderRegistryPort, FolderUpdatePatch } from './manager/types.js';
+import type { FolderRegistryPort, FolderUpdatePatch, HubActivityPort } from './manager/types.js';
+import type { HubWorktreePort } from './hub-worktrees.js';
 import { hubAgentsMarkdown, injectMemberLine, managedMemberNature, removeMemberLine, seededMemberLine } from './hub-agents-md.js';
 import { MEMORY_STUB } from './folder-seeding.js';
 import { materializeHubFolder, memberIgnoreLine } from './folder-sources/materialize.js';
@@ -459,6 +460,9 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
       path: link.target,
       name: link.name,
       nature: link.nature,
+      // The probe is symlink-only today; the worktree phase derives this
+      // from the on-disk shape (symlink or nested detached worktree).
+      representation: 'symlink' as HubMemberRepresentation,
     }));
     // Hub rows implicitly inherit their members' tags.
     const memberTagUnion = memberRepos ? unionTags(...memberRepos.map((member) => member.tags)) : undefined;
@@ -539,6 +543,8 @@ export class FolderRegistry implements FolderRegistryPort {
     private readonly repos: RepoIndex,
     private readonly storeDir: string,
     private readonly tree: FolderModelPort,
+    private readonly worktrees?: HubWorktreePort,
+    private readonly activity?: HubActivityPort,
   ) {}
 
   /**
@@ -661,7 +667,15 @@ export class FolderRegistry implements FolderRegistryPort {
    * (`personaText !== undefined`) seeds a persona marker and memory.md.
    * Returns the canonical path; callers read the row from the shared view.
    */
-  async createHub(input: { name: string; root: string; memberPaths: string[]; body?: string; description?: string; personaText?: string }): Promise<{ path: string }> {
+  async createHub(input: {
+    name: string;
+    root: string;
+    memberPaths: string[];
+    memberRepresentation?: HubMemberRepresentation;
+    body?: string;
+    description?: string;
+    personaText?: string;
+  }): Promise<{ path: string }> {
     return this.serialized(async () => {
       const { name, root } = input;
       if (!isValidFolderName(name)) throw new Error(`Invalid folder name: ${name}`);
@@ -714,6 +728,16 @@ export class FolderRegistry implements FolderRegistryPort {
       this.fireChange({ changedPaths: [canonicalTarget], removedPaths: [] });
       return { path: canonicalTarget };
     });
+  }
+
+  /**
+   * Disband a worktree hub (plan: hub-member-representation): validate the
+   * activity, clean-state, and detached-`HEAD` guards, remove every nested
+   * worktree through Git, then delete the hub directory. Symlink hubs
+   * reject. Returns the removed checkout paths.
+   */
+  async disbandHub(_hubPath: string): Promise<{ removedWorktreePaths: string[] }> {
+    throw new Error('not implemented');
   }
 
   /** Subscribe to registry mutations; returns an unsubscribe function. */

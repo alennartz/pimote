@@ -1,3 +1,11 @@
+/** How a hub materializes its code members on disk. */
+export type HubMemberRepresentation = 'symlink' | 'worktree';
+
+/** Hub fact on a folder row: the selected member representation. */
+export interface HubInfo {
+  representation: HubMemberRepresentation;
+}
+
 /** A git repository as discovered by the server's repo index. */
 export interface RepoInfo {
   path: string;
@@ -7,6 +15,9 @@ export interface RepoInfo {
   /** Commits ahead of upstream; 0 when unknown. */
   ahead: number;
   behind: number;
+  /** Present for worktree hub members: the nested checkout inside the hub
+   *  whose git facts these are. The canonical `path` stays the source repo. */
+  worktreePath?: string;
   /** Epoch ms of last session activity in this repo, when known. */
   lastActivity?: number;
   /** True when the repo path no longer exists on disk (deleted member, broken symlink).
@@ -16,13 +27,18 @@ export interface RepoInfo {
   tags?: string[];
 }
 
-/** One hub member: a hub-side symlink inventory entry behind `FolderInfo.members`. */
+/** One hub member behind `FolderInfo.members` — a symlink or, in worktree
+ *  hubs, a nested detached Git worktree for code members. */
 export interface FolderMemberInfo {
-  /** Canonical member path. */
+  /** Canonical source/member identity used by add/remove commands. */
   path: string;
-  /** Basename — the hub-side symlink name. */
+  /** Basename inside the hub. */
   name: string;
   nature: 'code' | 'persona';
+  /** How this member is materialized inside the hub. */
+  representation: HubMemberRepresentation;
+  /** Present for code worktree members: the checkout inside the hub. */
+  worktreePath?: string;
 }
 
 /**
@@ -44,6 +60,9 @@ export interface FolderInfo {
   tags: string[];
   /** True when a source-listed repo/hub is absent on disk. */
   missing: boolean;
+  /** Hub fact — present for every discovered or promised hub, including a
+   *  worktree hub with only persona symlinks. */
+  hub?: HubInfo;
   /** Code member repos with git facts; present when a hub's symlink inventory
    *  or a source promise identifies its members. */
   repos?: RepoInfo[];
@@ -535,6 +554,14 @@ export interface CreatePersonaFolderCommand extends CommandBase {
   personaText: string;
 }
 
+/** Disband a worktree hub: remove its nested worktrees and delete the hub
+ *  directory. Only worktree hubs accept it. resp: DisbandHubResponseData */
+export interface DisbandHubCommand extends CommandBase {
+  type: 'disband_hub';
+  /** Canonical hub path. */
+  hubPath: string;
+}
+
 /** Add a hub member: hub-side symlink + the member's seeded AGENTS.md link line.
  *  memberPath must be a discovered folder-model entry (any nature). */
 export interface AddHubMemberCommand extends CommandBase {
@@ -586,7 +613,8 @@ export interface UpdateFolderCommand extends CommandBase {
   removeTags?: string[];
 }
 
-/** Create a hub folder: mkdir + symlinks to member folders + generated AGENTS.md. resp: CreateHubResponseData */
+/** Create a hub folder: mkdir + member materialization per representation +
+ *  generated AGENTS.md. resp: CreateHubResponseData */
 export interface CreateHubCommand extends CommandBase {
   type: 'create_hub';
   name: string;
@@ -594,6 +622,9 @@ export interface CreateHubCommand extends CommandBase {
   root: string;
   /** Every memberPath must be a discovered folder-model entry (any nature). */
   memberPaths: string[];
+  /** Code member layout: symlinks (default) or nested detached worktrees.
+   *  Persona members always use symlinks. */
+  memberRepresentation?: HubMemberRepresentation;
   /** Seeded as the AGENTS.md body (code-hub variant); stub even when empty. */
   body?: string;
   /** Persona-hub variant fields; the variant is marked by `personaText !== undefined`
@@ -623,6 +654,11 @@ export interface ListReposResponseData {
 
 export interface CreateHubResponseData {
   folderPath: string;
+}
+
+export interface DisbandHubResponseData {
+  /** Nested checkouts removed through Git, in removal order. */
+  removedWorktreePaths: string[];
 }
 
 export interface CreatePersonaFolderResponseData {
@@ -909,6 +945,7 @@ export type PimoteCommand =
   | CreateHubCommand
   | AddHubMemberCommand
   | RemoveHubMemberCommand
+  | DisbandHubCommand
   | RenameSessionCommand
   | ListSessionsCommand
   | OpenSessionCommand

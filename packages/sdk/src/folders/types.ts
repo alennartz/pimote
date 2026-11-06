@@ -10,6 +10,9 @@ export interface RepoInfo {
   /** Commits ahead of upstream; 0 when unknown. */
   ahead: number;
   behind: number;
+  /** Present for worktree hub members: the nested checkout inside the hub
+   *  whose git facts these are. The canonical `path` stays the source repo. */
+  worktreePath?: string;
   /** Epoch ms of last session activity in this repo, when known. */
   lastActivity?: number;
   /** True when the repo path no longer exists on disk (deleted member, broken symlink). */

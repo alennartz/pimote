@@ -136,3 +136,69 @@ Folder rows use the existing context menu. Worktree hubs add `Disband worktree h
 - **DR-062** (Small-but-powerful manager toolset with freshness flags and a materialized skill) — superseded only where it permanently retires hub disband. New decision: restore a manager disband tool for worktree hubs so the manager and dashboard share the guarded lifecycle operation.
 - **DR-063** (Hub disband removed from every surface) — superseded because ephemeral detached worktree hubs need an explicit cleanup operation. New decision: disband is worktree-only, validates activity, clean state, and detached-`HEAD` reachability, then removes worktrees and the hub without branch operations.
 - **DR-064** (Hub shape is membership truth; registry stores curation only) — superseded because nested worktrees are real directories rather than symlink shortcuts. New decision: membership remains on-disk shape truth, with symlink members plus Git-verified nested worktree members; a minimal mode marker preserves worktree representation after the last worktree disappears, while the registry still stores curation only.
+
+## Tests
+
+**Pre-test-write commit:** `82ca4d80b95f26835d4fe06cd3f0db816b0b0bdd`
+
+### Interface Files
+
+- `shared/src/protocol.ts` — `HubMemberRepresentation`, `HubInfo`, `representation`/`worktreePath` on `FolderMemberInfo`, `hub` on `FolderInfo`, `worktreePath` on `RepoInfo`, `memberRepresentation` on `CreateHubCommand`, `DisbandHubCommand`, `DisbandHubResponseData`, and the `disband_hub` entry in the `PimoteCommand` union
+- `packages/sdk/src/folders/types.ts` — `worktreePath` on the SDK `RepoInfo` twin (key-set parity kept for `sdk-twins.ts`)
+- `server/src/manager/types.ts` — `memberRepresentation` on `FolderRegistryPort.createHub`, `disbandHub` on `FolderRegistryPort`, and the `HubActivityPort` activity seam
+- `server/src/hub-worktrees.ts` — `WorktreeGitRunner`, `WorktreeMemberFacts`, `WorktreeRemovalCheck`, `HubWorktreePort`, and the `HubWorktrees` adapter with `not implemented` stubs
+- `server/src/folder-registry.ts` — worktree/activity ports as optional constructor seams, the `memberRepresentation` input, the `disbandHub` stub, and `representation` on merged member rows
+
+### Test Files
+
+- `server/src/hub-worktrees.test.ts` — Git-adapter behaviors over deterministic git fixtures: nested-worktree recognition and its rejects, detached creation, removal preconditions, and removal without touching the source
+- `server/src/folder-registry-worktree.test.ts` — registry worktree-mode creation, row facts, rollback, worktree-aware membership edits, and the guarded disband lifecycle
+- `client/src/lib/components/FolderCreatorWizard.representation.test.ts` — the Members-phase layout choice, its helper text, and the `memberRepresentation` wire field on create
+- `client/src/lib/components/FolderList.disband.test.ts` — the worktree-only disband menu item, hub identification from the hub fact, the confirmation dialog, and the failed-validation flow
+- `client/src/lib/components/HubMembersDialog.representation.test.ts` — per-member representation display, the nested checkout path, and the picker's representation hint
+
+### Behaviors Covered
+
+#### HubWorktrees (Git adapter)
+
+- `inspectMember` recognizes a nested detached worktree and reports source path, checkout path, branch, dirty state, detached flag, and detached-`HEAD` reachability
+- `inspectMember` returns null for an ordinary nested directory, an independent repository with a `.git` directory, and a path Git cannot verify
+- `createDetached` creates a detached worktree at the hub child from the source `HEAD` and rejects when the target already exists
+- `validateRemoval` reports clean reachable state, dirty state on uncommitted changes, and unreachable `HEAD` for a detached-`HEAD` commit
+- `remove` deletes the nested worktree through Git, leaves the source repository and its `HEAD` intact, and preserves user-created branches
+
+#### FolderRegistry — worktree mode
+
+- `createHub` with `memberRepresentation: 'worktree'` writes the `.pimote-hub.json` marker, materializes code members as nested detached worktrees, and symlinks persona members
+- The merged row reports the `hub` representation fact, per-member `representation` and `worktreePath`, and `worktreePath` on code member `repos`
+- Symlink-mode rows report the `hub` fact with `symlink` representation
+- A failed worktree creation rolls back every created worktree through the Git adapter and removes the fresh hub directory
+- `addMember` on a worktree hub materializes a code member as a detached worktree with its checkout path on the row
+- `removeMember` removes a worktree member's nested checkout, preserves the canonical source repository and its branch, and drops the member from the row
+
+#### FolderRegistry — guarded disband
+
+- `disbandHub` removes every nested worktree and the hub directory and returns the removed checkout paths
+- `disbandHub` accepts a worktree hub identified by the marker or by a valid nested worktree when the marker is absent
+- `disbandHub` rejects a symlink hub without a marker or nested worktree and keeps the hub on disk
+- `disbandHub` rejects a worktree with uncommitted changes and a detached `HEAD` unreachable from a local or remote-tracking ref, keeping the hub
+- `disbandHub` checks the hub subtree through `HubActivityPort` before validating worktree state and rejects busy paths, keeping the hub
+
+#### FolderCreatorWizard
+
+- The hub Members phase offers Symlinks and Detached worktrees and states that personas always use symlinks
+- Choosing Detached worktrees sends `create_hub` with `memberRepresentation: 'worktree'`
+
+#### FolderList
+
+- Worktree hub rows offer "Disband worktree hub…" in the context menu; symlink hubs do not
+- A row with the hub fact and no members or shortcut occurrences is identified as a hub
+- The disband action asks for confirmation stating nested worktrees are removed without merging or deleting branches
+- Confirmation sends `disband_hub` with the canonical hub path
+- A failed disband keeps the dialog open and lists the blocking worktree state
+
+#### HubMembersDialog
+
+- Member rows list each member's representation and, for worktree members, the nested checkout path
+- Persona symlink members are distinguishable from code worktree members
+- The add-member picker states the representation a new code member will use in a worktree hub
