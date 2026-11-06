@@ -59,6 +59,34 @@ const hub = makeFolder({
 });
 const web = makeFolder({ path: '/w/web', name: 'web' });
 
+function removeButton(name: string): HTMLButtonElement {
+  const found = document.querySelector(`button[aria-label="Remove ${name}"]`);
+  if (!(found instanceof HTMLButtonElement)) throw new Error(`remove button not found: ${name}`);
+  return found;
+}
+
+function memberRow(name: string, path: string): HTMLElement {
+  let row: HTMLElement | null = removeButton(name).parentElement;
+  while (row && !(row.textContent?.includes(name) && row.textContent.includes(path))) row = row.parentElement;
+  if (!row || row.querySelectorAll('button[aria-label^="Remove "]').length !== 1) throw new Error(`member row not found: ${name}`);
+  return row;
+}
+
+function pickerRow(name: string): HTMLElement {
+  const row = [...document.querySelectorAll<HTMLElement>('button, label')].find((el) => el.querySelector('input[type="checkbox"]') && el.textContent?.includes(name));
+  if (!row) throw new Error(`picker row not found: ${name}`);
+  return row;
+}
+
+function pickerSection(): HTMLElement {
+  const search = document.querySelector('input[placeholder="Search folders"]');
+  if (!search) throw new Error('member search not found');
+  let section: HTMLElement | null = search.parentElement;
+  while (section && !(section.textContent?.includes('Add member') && section.contains(pickerRow('web')))) section = section.parentElement;
+  if (!section || section.querySelector('button[aria-label^="Remove "]')) throw new Error('add-member section not found');
+  return section;
+}
+
 function render(hubRow: FolderInfo) {
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -69,7 +97,8 @@ function render(hubRow: FolderInfo) {
 let destroy: (() => void) | null = null;
 
 beforeEach(() => {
-  vi.mocked(connection.send).mockClear();
+  vi.mocked(connection.send).mockReset();
+  vi.mocked(connection.send).mockResolvedValue({ id: '1', success: true, data: {} });
   folderStore.folders = [hub, web];
   folderStore.roots = [];
   folderStore.loading = false;
@@ -90,29 +119,34 @@ describe('HubMembersDialog — member representation display', () => {
     destroy = render(hub);
     await tick();
 
-    const text = document.body.textContent ?? '';
-    expect(text).toContain('one');
+    const text = memberRow('one', '/w/one').textContent ?? '';
     expect(text).toContain('/w/platform/one');
-    expect(text.toLowerCase()).toContain('worktree');
+    expect(text).toMatch(/worktree/i);
   });
 
   it('distinguishes a persona symlink member from a code worktree member', async () => {
     destroy = render(hub);
     await tick();
 
-    const text = document.body.textContent ?? '';
-    expect(text).toContain('ada');
-    expect(text).toContain('/w/ada');
-    // The persona member's row states its symlink representation.
-    expect(text.toLowerCase()).toContain('symlink');
+    const text = memberRow('ada', '/w/ada').textContent ?? '';
+    expect(text).toMatch(/symlink/i);
+    expect(text).not.toMatch(/worktree/i);
   });
 
   it('shows the representation a new code member will use in this hub', async () => {
     destroy = render(hub);
     await tick();
 
-    // The add-member picker states that code members join as detached
-    // worktrees in a worktree hub.
-    expect((document.body.textContent ?? '').toLowerCase()).toContain('worktree');
+    expect(pickerSection().textContent ?? '').toMatch(/(?:code[^.]*worktree|worktree[^.]*code)/i);
+  });
+
+  it('still adds and removes members by their canonical paths', async () => {
+    destroy = render(hub);
+    await tick();
+
+    pickerRow('web').click();
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'add_hub_member', hubPath: '/w/platform', memberPath: '/w/web' })));
+    removeButton('one').click();
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'remove_hub_member', hubPath: '/w/platform', memberPath: '/w/one' })));
   });
 });

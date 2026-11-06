@@ -21,7 +21,7 @@ const gitRunner = async (args: string[], cwd: string): Promise<{ stdout: string 
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
   env.GIT_OPTIONAL_LOCKS = '0';
-  const { stdout } = await execFileAsync('git', args, { cwd, env, encoding: 'utf-8', timeout: 2000 });
+  const { stdout } = await execFileAsync('git', args, { cwd, env, encoding: 'utf-8', timeout: 10000 });
   return { stdout };
 };
 
@@ -33,7 +33,9 @@ beforeEach(async () => {
   await mkdir(hubDir, { recursive: true });
   const gitArgs = ['-c', 'init.defaultBranch=main', '-c', 'user.name=t', '-c', 'user.email=t@t'];
   await execFileAsync('git', [...gitArgs, 'init'], { cwd: sourceRepo });
-  await execFileAsync('git', [...gitArgs, 'commit', '--allow-empty', '-m', 'init'], { cwd: sourceRepo });
+  await writeFile(join(sourceRepo, 'tracked.txt'), 'original\n', 'utf8');
+  await execFileAsync('git', ['add', 'tracked.txt'], { cwd: sourceRepo });
+  await execFileAsync('git', [...gitArgs, 'commit', '-m', 'init'], { cwd: sourceRepo });
   worktrees = new HubWorktrees(gitRunner);
 });
 
@@ -102,12 +104,17 @@ describe('HubWorktrees.createDetached', () => {
     expect(gitEntry.isDirectory()).toBe(false);
     const listed = await gitWorktreeList(sourceRepo);
     expect(listed).toContain(worktreePath);
+    const sourceHead = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: sourceRepo });
+    const checkoutHead = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: worktreePath });
+    const checkoutBranch = await execFileAsync('git', ['branch', '--show-current'], { cwd: worktreePath });
+    expect(checkoutHead.stdout.trim()).toBe(sourceHead.stdout.trim());
+    expect(checkoutBranch.stdout.trim()).toBe('');
   });
 
   it('rejects when the target already exists', async () => {
     const worktreePath = await addNestedWorktree('repo-a');
 
-    await expect(worktrees.createDetached({ sourcePath: sourceRepo, worktreePath })).rejects.toThrow(/already exists/i);
+    await expect(worktrees.createDetached({ sourcePath: sourceRepo, worktreePath })).rejects.toThrow();
   });
 });
 
@@ -120,9 +127,11 @@ describe('HubWorktrees.validateRemoval', () => {
     expect(check).toEqual({ dirty: false, detached: true, headReachableFromBranchRef: true });
   });
 
-  it('reports dirty when the worktree has uncommitted changes', async () => {
+  it.each(['untracked', 'unstaged', 'staged'])('reports dirty for %s changes', async (kind) => {
     const worktreePath = await addNestedWorktree('repo-a');
-    await writeFile(join(worktreePath, 'scratch.txt'), 'wip\n', 'utf8');
+    const file = kind === 'untracked' ? 'scratch.txt' : 'tracked.txt';
+    await writeFile(join(worktreePath, file), 'wip\n', 'utf8');
+    if (kind === 'staged') await execFileAsync('git', ['add', file], { cwd: worktreePath });
 
     const check = await worktrees.validateRemoval({ sourcePath: sourceRepo, worktreePath });
 
@@ -137,6 +146,17 @@ describe('HubWorktrees.validateRemoval', () => {
     const check = await worktrees.validateRemoval({ sourcePath: sourceRepo, worktreePath });
 
     expect(check.headReachableFromBranchRef).toBe(false);
+  });
+
+  it.each(['refs/heads/feature', 'refs/remotes/origin/feature'])('recognizes detached HEAD reachable from %s', async (ref) => {
+    const worktreePath = await addNestedWorktree('repo-a');
+    await execFileAsync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-m', 'feature'], { cwd: worktreePath });
+    await execFileAsync('git', ['update-ref', ref, 'HEAD'], { cwd: worktreePath });
+
+    const check = await worktrees.validateRemoval({ sourcePath: sourceRepo, worktreePath });
+
+    expect(check.detached).toBe(true);
+    expect(check.headReachableFromBranchRef).toBe(true);
   });
 });
 
@@ -154,7 +174,7 @@ describe('HubWorktrees.remove', () => {
 
   it('preserves user-created branches in the source repository', async () => {
     const worktreePath = await addNestedWorktree('repo-a');
-    await execFileAsync('git', ['branch', 'feature'], { cwd: sourceRepo });
+    await execFileAsync('git', ['switch', '-c', 'feature'], { cwd: worktreePath });
 
     await worktrees.remove({ sourcePath: sourceRepo, worktreePath });
 

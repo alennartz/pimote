@@ -55,10 +55,39 @@ function button(text: string): HTMLButtonElement {
   return found;
 }
 
-function kindButton(kind: string): HTMLElement {
-  const icon = document.querySelector(`[data-folder-icon="${kind}"]`);
-  if (!icon) throw new Error(`kind icon not found: ${kind}`);
-  return (icon.closest('button') ?? icon) as HTMLElement;
+function kindButton(): HTMLButtonElement {
+  const found = document.querySelector('button[aria-label="New code hub"]');
+  if (!(found instanceof HTMLButtonElement)) throw new Error('code hub button not found');
+  return found;
+}
+
+function layoutDescription(): string {
+  const symlinks = button('Symlinks');
+  let section: HTMLElement | null = symlinks.parentElement;
+  while (section) {
+    if (section.contains(button('Detached worktrees'))) {
+      const helper = [...section.querySelectorAll<HTMLElement>('p, div, span')].find(
+        (el) => !el.querySelector('button, input') && /persona[^.]*symlink/i.test(el.textContent ?? ''),
+      );
+      if (helper) return helper.textContent ?? '';
+    }
+    section = section.parentElement;
+  }
+  throw new Error('layout description not found');
+}
+
+function selectMember(name: string): void {
+  const row = [...document.querySelectorAll<HTMLElement>('button, label')].find((el) => el.querySelector('input[type="checkbox"]') && el.textContent?.includes(name));
+  if (!row) throw new Error(`picker row not found: ${name}`);
+  row.click();
+}
+
+async function createHub(): Promise<void> {
+  selectMember('alpha');
+  await tick();
+  button('Next').click();
+  await tick();
+  button('Create').click();
 }
 
 function fillName(name: string): void {
@@ -77,7 +106,7 @@ function render() {
 
 /** Walk to the code-hub Members phase. */
 async function openMembersStep(): Promise<void> {
-  kindButton('code-hub').click();
+  kindButton().click();
   await tick();
   fillName('platform');
   button('Next').click();
@@ -113,13 +142,39 @@ describe('FolderCreatorWizard — code member layout choice', () => {
     expect(button('Detached worktrees')).toBeTruthy();
   });
 
-  it('states in the helper text that personas always use symlinks', async () => {
+  it('explains the code and persona layouts in the choice helper', async () => {
     destroy = render();
     await openMembersStep();
+    expect(layoutDescription()).toMatch(/persona[^.]*symlink/i);
+
     button('Detached worktrees').click();
     await tick();
+    expect(layoutDescription()).toMatch(/code[^.]*worktree/i);
+    expect(layoutDescription()).toMatch(/persona[^.]*symlink/i);
+  });
 
-    expect((document.body.textContent ?? '').toLowerCase()).toContain('symlink');
+  it('creates a symlink hub by default and opens a session in the returned folder', async () => {
+    destroy = render();
+    await openMembersStep();
+    let finishCreation!: (response: any) => void;
+    vi.mocked(connection.send).mockImplementation(async (command: any) => {
+      if (command.type === 'create_hub')
+        return new Promise((resolve) => {
+          finishCreation = resolve;
+        });
+      return { id: '1', success: false, error: 'session_open_cancelled' };
+    });
+    await createHub();
+
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'create_hub', name: 'platform', memberPaths: ['/roots/alpha'] })));
+    const command = vi
+      .mocked(connection.send)
+      .mock.calls.map(([request]) => request)
+      .find((request) => request.type === 'create_hub');
+    expect(command?.type === 'create_hub' && (command.memberRepresentation === undefined || command.memberRepresentation === 'symlink')).toBe(true);
+    expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session' }));
+    finishCreation({ id: '1', success: true, data: { folderPath: '/canonical/platform' } });
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session', folderPath: '/canonical/platform' })));
   });
 
   it('sends create_hub with detached-worktree representation when that layout is chosen', async () => {
@@ -128,13 +183,13 @@ describe('FolderCreatorWizard — code member layout choice', () => {
 
     button('Detached worktrees').click();
     await tick();
-    const row = [...document.querySelectorAll<HTMLElement>('button, label')].find((el) => el.querySelector('input[type="checkbox"]') && el.textContent?.includes('alpha'));
-    if (!row) throw new Error('picker row not found: alpha');
-    row.click();
-    button('Next').click();
-    await tick();
-    button('Create').click();
+    await createHub();
 
-    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'create_hub', name: 'platform', memberRepresentation: 'worktree' })));
+    await vi.waitFor(() =>
+      expect(connection.send).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'create_hub', name: 'platform', memberPaths: ['/roots/alpha'], memberRepresentation: 'worktree' }),
+      ),
+    );
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'open_session', folderPath: '/roots/platform' })));
   });
 });

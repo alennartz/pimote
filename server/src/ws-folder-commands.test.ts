@@ -30,7 +30,7 @@ function createMockWs(): { ws: any; sent: Array<PimoteResponse> } {
 interface TestContext {
   handler: WsHandler;
   sent: Array<PimoteResponse>;
-  folderRegistry: { addMember: ReturnType<typeof vi.fn>; removeMember: ReturnType<typeof vi.fn> };
+  folderRegistry: { addMember: ReturnType<typeof vi.fn>; removeMember: ReturnType<typeof vi.fn>; disbandHub: ReturnType<typeof vi.fn> };
 }
 
 function createHandler(roots: string[]): TestContext {
@@ -38,6 +38,7 @@ function createHandler(roots: string[]): TestContext {
   const folderRegistry = {
     addMember: vi.fn(async () => undefined),
     removeMember: vi.fn(async () => undefined),
+    disbandHub: vi.fn(async (_hubPath: string) => ({ removedWorktreePaths: [] as string[] })),
     list: vi.fn(async () => []),
   };
   const repoIndex = { roots, invalidateListing: vi.fn() };
@@ -104,6 +105,32 @@ describe('add_hub_member / remove_hub_member routing', () => {
     const response = findResponse(ctx.sent, 'r1');
     expect(response?.success).toBe(false);
     expect(response?.error).toContain('Duplicate member name: ada');
+  });
+});
+
+describe('disband_hub routing', () => {
+  it('returns the registry removal summary', async () => {
+    const ctx = createHandler([rootDir]);
+    ctx.folderRegistry.disbandHub.mockResolvedValue({ removedWorktreePaths: ['/w/hub/api', '/w/hub/web'] });
+
+    await ctx.handler.handleMessage(JSON.stringify({ id: 'r1', type: 'disband_hub', hubPath: '/w/hub' }));
+
+    expect(ctx.folderRegistry.disbandHub).toHaveBeenCalledWith('/w/hub');
+    expect(findResponse(ctx.sent, 'r1')).toMatchObject({ success: true, data: { removedWorktreePaths: ['/w/hub/api', '/w/hub/web'] } });
+  });
+
+  it.each([
+    'Hub is not a worktree hub: /w/hub',
+    'Hub is busy: /w/hub/api',
+    'Worktree has uncommitted changes: /w/hub/api',
+    'Detached HEAD is not reachable from a branch: /w/hub/api',
+  ])('surfaces the registry guard error: %s', async (message) => {
+    const ctx = createHandler([rootDir]);
+    ctx.folderRegistry.disbandHub.mockRejectedValue(new Error(message));
+
+    await ctx.handler.handleMessage(JSON.stringify({ id: 'r1', type: 'disband_hub', hubPath: '/w/hub' }));
+
+    expect(findResponse(ctx.sent, 'r1')).toMatchObject({ success: false, error: message });
   });
 });
 

@@ -60,6 +60,7 @@ const symlinkHub = makeFolder({
   path: '/w/stack',
   name: 'stack',
   shortcutCount: 1,
+  hub: { representation: 'symlink' },
   members: [{ path: '/w/one', name: 'one', nature: 'code', representation: 'symlink' }],
 });
 /** A promised worktree hub: the hub fact is the only hub signal — no members
@@ -80,14 +81,14 @@ function render() {
   return () => unmount(component);
 }
 
-function nameButton(path: string): HTMLButtonElement {
-  const button = target.querySelector(`[data-folder-path="${path}"]`)?.closest('button');
-  if (!(button instanceof HTMLButtonElement)) throw new Error(`folder row button not found: ${path}`);
+function nameButton(name: string): HTMLButtonElement {
+  const button = [...target.querySelectorAll('button')].find((item) => item.textContent?.trim() === name);
+  if (!(button instanceof HTMLButtonElement)) throw new Error(`folder row button not found: ${name}`);
   return button;
 }
 
 function menuItem(label: string): HTMLElement | null {
-  return [...document.querySelectorAll<HTMLElement>('[data-slot="context-menu-item"]')].find((item) => item.textContent?.trim() === label) ?? null;
+  return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.trim() === label) ?? null;
 }
 
 function requireMenuItem(label: string): HTMLElement {
@@ -96,13 +97,34 @@ function requireMenuItem(label: string): HTMLElement {
   return item;
 }
 
-function openMenu(path: string) {
-  nameButton(path).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+function openMenu(name: string) {
+  nameButton(name).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+}
+
+function dialog(): HTMLElement {
+  const found = document.querySelector<HTMLElement>('[role="dialog"], [role="alertdialog"]');
+  if (!found) throw new Error('confirmation dialog not found');
+  return found;
+}
+
+function dialogButton(label: string): HTMLButtonElement {
+  const found = [...dialog().querySelectorAll('button')].find((item) => item.textContent?.trim() === label);
+  if (!found) throw new Error(`dialog button not found: ${label}`);
+  return found;
+}
+
+async function openDisband(): Promise<void> {
+  openMenu(worktreeHub.name);
+  await tick();
+  requireMenuItem('Disband worktree hub…').click();
+  await tick();
 }
 
 let destroy: (() => void) | null = null;
 
 beforeEach(() => {
+  vi.mocked(connection.send).mockReset();
+  vi.mocked(connection.send).mockImplementation(async (command: any) => ({ id: '1', success: true, data: command.type === 'list_sessions' ? { sessions: [] } : {} }));
   folderStore.folders = [worktreeHub];
   folderStore.loading = false;
   folderStore.showArchived = false;
@@ -120,17 +142,21 @@ afterEach(async () => {
 });
 
 describe('row context menu — guarded worktree disband', () => {
-  it('offers "Disband worktree hub…" on worktree hubs and not on symlink hubs', async () => {
-    folderStore.folders = [worktreeHub, symlinkHub];
+  it('offers "Disband worktree hub…" on worktree hubs', async () => {
     destroy = render();
     await tick();
-
-    openMenu(worktreeHub.path);
+    openMenu(worktreeHub.name);
     await tick();
     requireMenuItem('Disband worktree hub…');
+  });
 
-    openMenu(symlinkHub.path);
+  it('does not offer disband on symlink hubs', async () => {
+    folderStore.folders = [symlinkHub];
+    destroy = render();
     await tick();
+    openMenu(symlinkHub.name);
+    await tick();
+    requireMenuItem('Manage members…');
     expect(menuItem('Disband worktree hub…')).toBeNull();
   });
 
@@ -141,7 +167,7 @@ describe('row context menu — guarded worktree disband', () => {
 
     // No members and no shortcut occurrences; the hub fact alone makes this
     // a hub row.
-    openMenu(promisedWorktreeHub.path);
+    openMenu(promisedWorktreeHub.name);
     await tick();
     requireMenuItem('Manage members…');
   });
@@ -151,14 +177,15 @@ describe('row context menu — guarded worktree disband', () => {
     destroy = render();
     await tick();
 
-    openMenu(worktreeHub.path);
-    await tick();
-    requireMenuItem('Disband worktree hub…').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await tick();
+    await openDisband();
 
-    const text = document.body.textContent ?? '';
-    expect(text).toContain('worktree');
-    expect(text).toContain('merge');
+    const text = dialog().textContent ?? '';
+    expect(text).toMatch(/remov\w*/i);
+    expect(text).toMatch(/worktrees/i);
+    expect(text).toMatch(/hub/i);
+    expect(text).toMatch(/(?:does not|doesn't|without|neither|never|will not)[^.]*merg\w*/i);
+    expect(text).toMatch(/(?:does not|doesn't|without|neither|never|will not)[^.]*delet\w*/i);
+    expect(text).toMatch(/branch/i);
   });
 
   it('sends disband_hub with the hub path on confirmation', async () => {
@@ -166,36 +193,32 @@ describe('row context menu — guarded worktree disband', () => {
     destroy = render();
     await tick();
 
-    openMenu(worktreeHub.path);
-    await tick();
-    requireMenuItem('Disband worktree hub…').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await tick();
-    const confirm = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Disband');
-    if (!confirm) throw new Error('confirm button not found');
-    confirm.click();
-    await tick();
+    await openDisband();
+    dialogButton('Disband').click();
+    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'disband_hub', hubPath: '/w/platform' })));
+  });
 
-    expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'disband_hub', hubPath: '/w/platform' }));
+  it('closes the confirmation without disbanding when cancelled', async () => {
+    destroy = render();
+    await tick();
+    await openDisband();
+
+    dialogButton('Cancel').click();
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull());
+    expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'disband_hub' }));
   });
 
   it('keeps the dialog open and lists the blocking state when validation fails', async () => {
-    vi.mocked(connection.send).mockImplementation(async () => ({ id: '1', success: false, error: 'Cannot disband: one has uncommitted changes' }));
+    vi.mocked(connection.send).mockImplementation(async (command: any) =>
+      command.type === 'disband_hub' ? { id: '1', success: false, error: 'Cannot disband: one has uncommitted changes' } : { id: '1', success: true, data: { sessions: [] } },
+    );
     folderStore.folders = [worktreeHub];
     destroy = render();
     await tick();
 
-    openMenu(worktreeHub.path);
-    await tick();
-    requireMenuItem('Disband worktree hub…').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await tick();
-    const confirm = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Disband');
-    if (!confirm) throw new Error('confirm button not found');
-    confirm.click();
-    await vi.waitFor(() => expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'disband_hub' })));
-    await tick();
-
-    expect(document.body.textContent ?? '').toContain('uncommitted changes');
-    // The confirmation dialog is still open: the Disband button is present.
-    expect([...document.body.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Disband')).toBe(true);
+    await openDisband();
+    dialogButton('Disband').click();
+    await vi.waitFor(() => expect(dialog().textContent ?? '').toContain('one has uncommitted changes'));
+    expect(dialogButton('Disband')).toBeTruthy();
   });
 });

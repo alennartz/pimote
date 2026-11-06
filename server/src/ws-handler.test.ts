@@ -4165,6 +4165,27 @@ describe('WsHandler', () => {
       expect(invalidate).not.toHaveBeenCalled();
     });
 
+    it('passes the requested worktree representation to the registry', async () => {
+      const createHub = vi.fn(async () => folderRow('/home/user/projects/hub', { repos: [] }));
+      const repoIndex = { roots: ['/home/user/projects'], list: async () => [] } as unknown as RepoIndex;
+      const folderRegistry = { list: async () => [], createHub } as unknown as FolderRegistry;
+      const { handler, sent } = createTestHandler('client-1', { repoIndex, folderRegistry });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'create_hub',
+          id: 'req-worktree',
+          name: 'hub',
+          root: '/home/user/projects',
+          memberPaths: ['/home/user/projects/a'],
+          memberRepresentation: 'worktree',
+        }),
+      );
+
+      expect(createHub).toHaveBeenCalledWith(expect.objectContaining({ memberPaths: ['/home/user/projects/a'], memberRepresentation: 'worktree' }));
+      expect(findResponse(sent, 'req-worktree')).toMatchObject({ success: true, data: { folderPath: '/home/user/projects/hub' } });
+    });
+
     it('surfaces hub validation errors without invalidating the index', async () => {
       const invalidate = vi.fn();
       const repoIndex = { roots: ['/home/user/projects'], list: async () => [], invalidate } as unknown as RepoIndex;

@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => {
     list: folderList,
     listLazy: vi.fn(async (...args: unknown[]) => folderList(...args)),
     requestStatusRefresh: vi.fn(async () => undefined),
+    disbandHub: vi.fn(async (_hubPath: string) => ({ removedWorktreePaths: [] as string[] })),
   };
   const server = {
     clientRegistry: new Map(),
@@ -180,6 +181,7 @@ function resetMocks(): void {
   mocks.sessionMetadataStore.setArchived.mockReset().mockResolvedValue(undefined);
   mocks.folderRegistry.list.mockReset().mockResolvedValue([]);
   mocks.folderRegistry.requestStatusRefresh.mockReset().mockResolvedValue(undefined);
+  mocks.folderRegistry.disbandHub.mockReset().mockResolvedValue({ removedWorktreePaths: [] });
   mocks.sessionManagerCreate.mockReset().mockResolvedValue(mocks.sessionManager);
   mocks.realpath.mockReset().mockImplementation(async (path: string) => path);
   mocks.mkdir.mockReset().mockResolvedValue(undefined);
@@ -440,19 +442,30 @@ describe('main — manager toolset port wiring', () => {
   it('registers exactly the pinned manager toolset, with pimote_find_folders read-only', async () => {
     const tools = await registeredManagerTools();
 
-    expect(tools.map((tool) => tool.name)).toEqual([
-      'pimote_find_folders',
-      'pimote_find_sessions',
-      'pimote_start_session',
-      'pimote_resume_session',
-      'pimote_archive_sessions',
-      'pimote_create_folder',
-      'pimote_update_folder',
-      'pimote_update_hub_members',
-    ]);
+    expect(tools.map((tool) => tool.name).sort()).toEqual(
+      [
+        'pimote_find_folders',
+        'pimote_find_sessions',
+        'pimote_start_session',
+        'pimote_resume_session',
+        'pimote_archive_sessions',
+        'pimote_create_folder',
+        'pimote_update_folder',
+        'pimote_update_hub_members',
+        'pimote_disband_hub',
+      ].sort(),
+    );
     const list = toolNamed(tools, 'pimote_find_folders');
     expect(list.annotations.readOnlyHint).toBe(true);
     expect(Object.keys(list.parameters.properties ?? {}).sort()).toEqual(['hub', 'includeArchived', 'nature', 'query']);
+  });
+
+  it('wires manager hub disband to the folder registry', async () => {
+    mocks.folderRegistry.disbandHub.mockResolvedValue({ removedWorktreePaths: ['/workspace/hub/api'] });
+    const result = await toolNamed(await registeredManagerTools(), 'pimote_disband_hub').execute('call-1', { hubPath: '/workspace/hub' }, undefined, undefined, {});
+
+    expect(mocks.folderRegistry.disbandHub).toHaveBeenCalledWith('/workspace/hub');
+    expect(result.structuredContent).toMatchObject({ removedWorktreePaths: ['/workspace/hub/api'] });
   });
 
   it('wires pimote_find_folders: FolderInfo defaults materialized and live counts enriched through the session manager', async () => {

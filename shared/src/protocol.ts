@@ -53,7 +53,7 @@ export interface FolderInfo {
   name: string;
   nature: 'code' | 'persona';
   persona?: { name?: string; description?: string };
-  /** > 0 → hub icon variant. */
+  /** Number of symlink shortcuts. Hub identity is reported by `hub`. */
   shortcutCount: number;
   favorite: boolean;
   archived: boolean;
@@ -63,10 +63,9 @@ export interface FolderInfo {
   /** Hub fact — present for every discovered or promised hub, including a
    *  worktree hub with only persona symlinks. */
   hub?: HubInfo;
-  /** Code member repos with git facts; present when a hub's symlink inventory
-   *  or a source promise identifies its members. */
+  /** Code member repos with git facts; derived from hub shape or a source promise. */
   repos?: RepoInfo[];
-  /** Hub members from the symlink inventory — the membership fact.
+  /** Hub members from symlinks and verified nested worktrees.
    *  `repos` carries code-member git facts, not membership identity. */
   members?: FolderMemberInfo[];
   /** This row's own repo facts — copied from the repo index's cache for plain
@@ -562,7 +561,7 @@ export interface DisbandHubCommand extends CommandBase {
   hubPath: string;
 }
 
-/** Add a hub member: hub-side symlink + the member's seeded AGENTS.md link line.
+/** Add a hub member according to the hub representation.
  *  memberPath must be a discovered folder-model entry (any nature). */
 export interface AddHubMemberCommand extends CommandBase {
   type: 'add_hub_member';
@@ -570,8 +569,8 @@ export interface AddHubMemberCommand extends CommandBase {
   memberPath: string;
 }
 
-/** Remove a hub member: unlink the hub-side symlink and drop its seeded line.
- *  Works by path even when the member folder is missing; never touches the member folder. */
+/** Remove a hub member by canonical path. Worktree members require a clean checkout.
+ *  Symlink members can be removed even when the target folder is missing. */
 export interface RemoveHubMemberCommand extends CommandBase {
   type: 'remove_hub_member';
   hubPath: string;

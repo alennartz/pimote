@@ -39,10 +39,6 @@ function makeFakePi(): { toolDefs: any[]; api: any } {
   return { toolDefs, api: api as any };
 }
 
-// The pinned toolset (DR-062, revised by DR-074): eight tools — one folder
-// read (rows carry git facts and hub membership; query/nature/hub/archived
-// filters), a unified sessions view, kind-parameterized creation, batched
-// hub membership.
 const MANAGER_TOOL_NAMES = [
   'pimote_find_folders',
   'pimote_find_sessions',
@@ -52,6 +48,7 @@ const MANAGER_TOOL_NAMES = [
   'pimote_create_folder',
   'pimote_update_folder',
   'pimote_update_hub_members',
+  'pimote_disband_hub',
 ];
 
 function spyPorts() {
@@ -69,6 +66,7 @@ function spyPorts() {
       createHub: vi.fn(async () => ({ path: '/w/hub' }) as FolderInfo),
       addMember: vi.fn(async () => undefined),
       removeMember: vi.fn(async () => undefined),
+      disbandHub: vi.fn(async (_hubPath: string) => ({ removedWorktreePaths: [] as string[] })),
     },
     repos: { invalidateListing: vi.fn() },
     creators: { create: vi.fn(async () => ({ folderPath: '/w/created' })) },
@@ -187,6 +185,7 @@ describe('pimote_find_folders', () => {
       'archived',
       'tags',
       'missing',
+      'hub',
       'repos',
       'members',
       'repo',
@@ -202,11 +201,11 @@ describe('pimote_find_folders', () => {
 
   it('serves complete rows with defaults, hub membership, and own repo facts', async () => {
     const ports = spyPorts();
-    const hubMembers = [{ path: '/w/api', name: 'api', branch: 'main', dirty: true, ahead: 1, behind: 0 }];
-    const inventory = [{ path: '/w/api', name: 'api', nature: 'code' as const }];
+    const hubMembers = [{ path: '/w/api', name: 'api', branch: 'feature', dirty: true, ahead: 1, behind: 0, worktreePath: '/w/ada/api' }];
+    const inventory = [{ path: '/w/api', name: 'api', nature: 'code' as const, representation: 'worktree' as const, worktreePath: '/w/ada/api' }];
     const ownRepo = { path: '/w/bare', name: 'bare', branch: 'main', dirty: false, ahead: 0, behind: 0 };
     ports.folders.list.mockResolvedValue([
-      { ...makePersonaFolder('/w/ada'), repos: hubMembers, members: inventory },
+      { ...makePersonaFolder('/w/ada'), hub: { representation: 'worktree' }, repos: hubMembers, members: inventory },
       { ...makeFolder('/w/bare'), repo: ownRepo },
     ]);
 
@@ -215,6 +214,7 @@ describe('pimote_find_folders', () => {
     expect(result.isError ?? false).toBe(false);
     const [ada, bare] = result.structuredContent.folders;
     expect(ada.persona).toEqual({ name: 'Ada', description: 'helpful agent' });
+    expect(ada.hub).toEqual({ representation: 'worktree' });
     expect(ada.repos).toEqual(hubMembers);
     expect(ada.members).toEqual(inventory);
     expect(bare.repo).toEqual(ownRepo);
@@ -268,16 +268,20 @@ describe('pimote_find_folders', () => {
 
   it('filters hub rows with the hub flag', async () => {
     const ports = spyPorts();
-    ports.folders.list.mockResolvedValue([makeFolder('/w/app'), { ...makeFolder('/w/hub'), shortcutCount: 2 }]);
+    ports.folders.list.mockResolvedValue([
+      makeFolder('/w/app'),
+      { ...makeFolder('/w/hub'), shortcutCount: 2, hub: { representation: 'symlink' } },
+      { ...makeFolder('/w/worktree'), shortcutCount: 0, hub: { representation: 'worktree' } },
+    ]);
 
     const toolDefs = register(ports);
     const hubs = (await toolNamed(toolDefs, 'pimote_find_folders').execute('c', { hub: true }, undefined, undefined, {})) as ToolResult;
     const plain = (await toolNamed(toolDefs, 'pimote_find_folders').execute('c', { hub: false }, undefined, undefined, {})) as ToolResult;
     const both = (await toolNamed(toolDefs, 'pimote_find_folders').execute('c', {}, undefined, undefined, {})) as ToolResult;
 
-    expect((hubs.structuredContent.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/hub']);
+    expect((hubs.structuredContent.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(expect.arrayContaining(['/w/hub', '/w/worktree']));
     expect((plain.structuredContent.folders as FolderInfo[]).map((folder) => folder.path)).toEqual(['/w/app']);
-    expect(both.structuredContent.folders).toHaveLength(2);
+    expect(both.structuredContent.folders).toHaveLength(3);
   });
 
   it('hides archived folders unless includeArchived is set', async () => {
@@ -592,6 +596,8 @@ describe('pimote_create_folder', () => {
     { kind: 'persona', description: 'helpful agent' },
     { kind: 'persona', description: 'helpful agent', memberPaths: [] },
     { kind: 'code-hub', memberPaths: ['/w/api'] },
+    { kind: 'code-hub', memberPaths: ['/w/api'], memberRepresentation: 'worktree' },
+    { kind: 'persona-hub', description: 'crew lead', memberPaths: ['/w/ada'], memberRepresentation: 'worktree' },
     { kind: 'persona-hub', description: 'crew lead', memberPaths: ['/w/ada'] },
   ])('accepts conditional creation arguments %j', (params) => {
     const schema = toolNamed(register(spyPorts()), 'pimote_create_folder').parameters;
@@ -612,6 +618,11 @@ describe('pimote_create_folder', () => {
   ])('rejects incomplete creation arguments in the schema %j', (params) => {
     const schema = toolNamed(register(spyPorts()), 'pimote_create_folder').parameters;
     expect(Value.Check(schema, { name: 'new-folder', parentPath: '/tmp', ...params })).toBe(false);
+  });
+
+  it('rejects an unknown hub member representation in the schema', () => {
+    const schema = toolNamed(register(spyPorts()), 'pimote_create_folder').parameters;
+    expect(Value.Check(schema, { kind: 'code-hub', name: 'h', parentPath: '/tmp', memberPaths: ['/w/api'], memberRepresentation: 'copy' })).toBe(false);
   });
 
   /** Sandbox with a real scan root so parentPath resolution runs for real. */
@@ -668,6 +679,19 @@ describe('pimote_create_folder', () => {
       // The registry owns both effects; the tool adds neither.
       expect(sandbox.ports.repos.invalidateListing).not.toHaveBeenCalled();
       expect(sandbox.ports.notifyFoldersChanged).not.toHaveBeenCalled();
+    } finally {
+      await sandbox.cleanup();
+    }
+  });
+
+  it('passes the worktree representation to hub creation', async () => {
+    const sandbox = await makeSandbox();
+    try {
+      const result = await sandbox.run({ kind: 'code-hub', name: 'platform', parentPath: sandbox.root, memberPaths: ['/w/api'], memberRepresentation: 'worktree' });
+
+      expect(result.isError ?? false).toBe(false);
+      expect(result.structuredContent.folderPath).toBe('/w/hub');
+      expect(sandbox.ports.folders.createHub).toHaveBeenCalledWith(expect.objectContaining({ memberRepresentation: 'worktree', memberPaths: ['/w/api'] }));
     } finally {
       await sandbox.cleanup();
     }
@@ -866,6 +890,35 @@ describe('pimote_update_hub_members', () => {
     expect(result.structuredContent.error).toContain('nothing to update');
     expect(ports.folders.addMember).not.toHaveBeenCalled();
     expect(ports.folders.removeMember).not.toHaveBeenCalled();
+  });
+});
+
+describe('pimote_disband_hub', () => {
+  it('returns the removed worktree paths from the registry', async () => {
+    const ports = spyPorts();
+    ports.folders.disbandHub.mockResolvedValue({ removedWorktreePaths: ['/w/hub/api', '/w/hub/web'] });
+    const tool = toolNamed(register(ports), 'pimote_disband_hub');
+
+    expect(Value.Check(tool.parameters, { hubPath: '/w/hub' })).toBe(true);
+    const result = (await tool.execute('c', { hubPath: '/w/hub' }, undefined, undefined, {})) as ToolResult;
+
+    expect(ports.folders.disbandHub).toHaveBeenCalledWith('/w/hub');
+    expect(result.isError ?? false).toBe(false);
+    expect(result.structuredContent).toMatchObject({ removedWorktreePaths: ['/w/hub/api', '/w/hub/web'] });
+  });
+
+  it.each([
+    'Hub is not a worktree hub: /w/hub',
+    'Hub is busy: /w/hub/api',
+    'Worktree has uncommitted changes: /w/hub/api',
+    'Detached HEAD is not reachable from a branch: /w/hub/api',
+  ])('surfaces the registry guard error: %s', async (message) => {
+    const ports = spyPorts();
+    ports.folders.disbandHub.mockRejectedValue(new Error(message));
+    const result = (await toolNamed(register(ports), 'pimote_disband_hub').execute('c', { hubPath: '/w/hub' }, undefined, undefined, {})) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.error).toContain(message);
   });
 });
 
