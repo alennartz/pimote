@@ -218,6 +218,8 @@ Folder rows use the existing context menu. Worktree hubs add `Disband worktree h
 - The add-member picker states the representation a new code member will use in a worktree hub
 - The picker and remove buttons send the canonical member path
 
+**Recorded exception:** commit `9308823` corrected the pre-written tool-count assertion in `server/src/index.test.ts` from 8 to 9. Step 9 restores `pimote_disband_hub` as the ninth manager tool, so the pre-written count of 8 contradicted this plan.
+
 **Review status:** approved
 
 ## Steps

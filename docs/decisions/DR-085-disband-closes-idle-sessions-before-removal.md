@@ -11,6 +11,8 @@ DR-080 restored worktree-hub disband behind an activity guard that rejected when
 The server already owns the machinery for retiring a session safely. The idle reaper classifies a slot as uncloseable while it has observers, an active call, bash in flight, tree navigation, an unsettled run, or extensions reporting background work, and closes eligible slots through the canonical `closeSession` lifecycle. Archiving an open session evicts its slot the same way. Disband stood alone in treating any live session as a hard block, duplicating a judgment the server already makes — just later, on a timer.
 
 > Supersedes DR-080 (Worktree hubs — detached code members with guarded worktree-only disband), last recorded at commit `c7983414fe42ff823042d0fb2a532de92af897f1`.
+>
+> DR-080 itself superseded DR-063 (Hub disband removed from every surface) and DR-064 (Hub shape is membership truth; registry stores curation only). That supersession chain carries over to this record.
 
 ## Decision
 

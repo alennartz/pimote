@@ -25,7 +25,7 @@ Every scanned row is probed, and every scanned row is a folder with a `.git` ent
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `server/src/folder-registry.ts:381`, `server/src/hub-worktrees.ts:172-174`, `server/src/folder-registry.ts:891`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** In the disband probe, reject when a child directory has a `.git` file and `inspectMember` returns null or throws; move `isDirty`/`isHeadReachableFromBranchRef` out of `inspectMember` so the probe does not depend on them.
 
 `inspectMember` does not catch failures from `git status` or `rev-list HEAD` — a 30 s timeout on a large checkout, an unborn `HEAD`, a moved source repo, or a broken gitdir pointer. `probeHubShapes` turns any of these into `null`, so the checkout counts as an ordinary directory. The disband guards check members only, so `rm -rf hubPath` then deletes that checkout's uncommitted work. The guard fails open in exactly the cases where Git is unhealthy.
@@ -65,7 +65,7 @@ If the selected member is itself a linked worktree or a submodule, the probe rep
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `server/src/folder-registry.ts:502-512`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Build worktree members from the status cached for `worktreePath` (or neutral values) instead of the source `knownRepo`.
 
 The plan's Interfaces section says worktree-hub row facts "describe the nested checkout". The base member row uses the canonical source's cached `branch`/`dirty`/`ahead`/`behind` with `worktreePath` attached; `enrichRows` corrects this only after a status refresh. Before that, `listLazy` rows — including `pimote_find_folders` output, whose schema says these facts belong to the nested checkout — report the source's state as if it were the checkout's. An agent can read `dirty:false` for a dirty worktree and act on it.
@@ -95,7 +95,7 @@ The scan drops any pi process that descends from pimote or from another pi proce
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/folder-registry.ts:884-893`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Wrap the removal loop and the `rm` in `try/finally` and call `invalidateListing()` and `fireChange({ changedPaths: [hubPath] })` there.
 
 If `remove` fails on worktree N or `rm` fails, earlier worktrees are already gone. No invalidation or change broadcast happens, so clients keep the old member list until some other refresh. The plan requires the remaining shape to stay discoverable for retry; the disk state qualifies, the clients' view does not.
@@ -105,7 +105,7 @@ If `remove` fails on worktree N or `rm` fails, earlier worktrees are already gon
 - **Category:** plan deviation
 - **Severity:** warning
 - **Location:** `server/src/index.test.ts:577`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Record the exception in the plan's Tests section.
 
 Commit `9308823` changed the frozen tool-count assertion from 8 to 9. It is a one-line correction the plan itself forced (Step 9 restores `pimote_disband_hub` as the ninth tool, so the pre-written count of 8 contradicted the plan), but it is still an implementation-phase edit to a listed test file.
@@ -115,7 +115,7 @@ Commit `9308823` changed the frozen tool-count assertion from 8 to 9. It is a on
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `docs/decisions/DR-085-disband-closes-idle-sessions-before-removal.md:12`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Add the DR-063/DR-064 provenance to DR-085's Context.
 
 Commit `c798341` recorded the worktree-hub decision as DR-080 while `DR-080-validated-native-config-writes` already existed; `5f8965e` corrected this by deleting the duplicate and re-recording as DR-085. The supersession chain for DR-063/DR-064 now lives only in the deleted DR-080's git history, since DR-085 cites only DR-080.

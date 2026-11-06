@@ -380,9 +380,15 @@ async function probeHubShapes(
       } else if (entry.isDirectory()) {
         const facts = await worktrees.inspectMember(join(path, entry.name)).catch(() => null);
         if (!facts) continue;
+        const target = await realpath(facts.sourcePath).catch(() => facts.sourcePath);
+        // A checkout detached from the probed directory itself, or from
+        // something inside it, is not a member: a plain repository holding a
+        // top-level linked worktree (or submodule) must never read as a
+        // worktree hub — disbanding it would delete the repository.
+        if (target === hubCanonical || isInside(target, hubCanonical)) continue;
         members.push({
           name: entry.name,
-          target: await realpath(facts.sourcePath).catch(() => facts.sourcePath),
+          target,
           nature: 'code',
           representation: 'worktree',
           worktreePath: facts.worktreePath,
@@ -501,14 +507,19 @@ function mergedFolders(input: FolderViewInputs): FolderInfo[] {
             .map((memberPath) => {
               const knownRepo = byPath.get(memberPath);
               const linkMissing = memberMissing.get(memberPath);
-              const base = knownRepo
-                ? linkMissing === true
-                  ? { ...knownRepo, missing: true }
-                  : knownRepo
-                : linkMissing === false
-                  ? { path: memberPath, name: basename(memberPath), branch: null, dirty: false, ahead: 0, behind: 0 }
-                  : missingRepo(memberPath);
               const worktreePath = memberCheckout.get(memberPath);
+              // Worktree member facts describe the nested checkout, never the
+              // canonical source's cached status; enrichment fills the
+              // checkout's real status later.
+              const base = worktreePath
+                ? { path: memberPath, name: basename(memberPath), branch: null, dirty: false, ahead: 0, behind: 0 }
+                : knownRepo
+                  ? linkMissing === true
+                    ? { ...knownRepo, missing: true }
+                    : knownRepo
+                  : linkMissing === false
+                    ? { path: memberPath, name: basename(memberPath), branch: null, dirty: false, ahead: 0, behind: 0 }
+                    : missingRepo(memberPath);
               return { ...base, ...(worktreePath ? { worktreePath } : {}), tags: repoTags(memberPath) };
             })
         : undefined;
@@ -859,9 +870,28 @@ export class FolderRegistry implements FolderRegistryPort {
    */
   async disbandHub(hubPath: string): Promise<{ removedWorktreePaths: string[] }> {
     return this.serialized(async () => {
+      // The same hub-row gate addMember and removeMember apply: an arbitrary
+      // path — one the registry does not vouch for as a hub — never qualifies.
+      const hub = (await this.listLazy()).find((folder) => folder.path === hubPath);
+      if (!hub || !isManageableHub(hub)) throw new Error(`Not a worktree hub: ${hubPath}`);
       const shape = (await probeHubShapes([hubPath], this.worktrees, new Map())).get(hubPath);
       if (!shape || shape.representation !== 'worktree') throw new Error(`Not a worktree hub: ${hubPath}`);
       const worktrees = shape.members.filter((member) => member.representation === 'worktree').map((member) => ({ sourcePath: member.target, worktreePath: member.worktreePath! }));
+
+      // Fail closed: a child directory carrying a `.git` file the probe could
+      // not verify is still a checkout-shaped thing. Treating it as an
+      // ordinary directory would let the deletion below destroy its uncommitted
+      // work exactly when Git is unhealthy (a moved source repo, a broken
+      // gitdir pointer, a timed-out probe).
+      const verified = new Set(worktrees.map((worktree) => resolve(worktree.worktreePath)));
+      const children = await readdir(hubPath, { withFileTypes: true }).catch(() => [] as Dirent[]);
+      for (const child of children) {
+        if (!child.isDirectory()) continue;
+        const childPath = join(hubPath, child.name);
+        if (verified.has(resolve(childPath))) continue;
+        const gitEntry = await lstat(join(childPath, '.git')).catch(() => null);
+        if (gitEntry?.isFile()) throw new Error(`Git cannot verify the checkout at ${childPath}; resolve it before disbanding the hub.`);
+      }
 
       // The activity guard runs before any worktree validation: it closes
       // idle, observerless session slots first — disband retires sessions the
@@ -882,14 +912,24 @@ export class FolderRegistry implements FolderRegistryPort {
       }
 
       const removedWorktreePaths: string[] = [];
-      for (const worktree of worktrees) {
-        await this.worktrees.remove(worktree);
-        removedWorktreePaths.push(worktree.worktreePath);
+      let failed = false;
+      try {
+        for (const worktree of worktrees) {
+          await this.worktrees.remove(worktree);
+          removedWorktreePaths.push(worktree.worktreePath);
+        }
+        // Never follows member symlinks; persona links are unlinked with the
+        // hub directory.
+        await rm(hubPath, { recursive: true, force: true });
+      } catch (error) {
+        failed = true;
+        throw error;
+      } finally {
+        // A partial failure still changed the shape: refresh discovery and
+        // tell clients, so a retry sees what remains.
+        this.repos.invalidateListing();
+        if (failed) this.fireChange({ changedPaths: [hubPath], removedPaths: [] });
       }
-      // Never follows member symlinks; persona links are unlinked with the
-      // hub directory.
-      await rm(hubPath, { recursive: true, force: true });
-      this.repos.invalidateListing();
       this.fireChange({ changedPaths: [], removedPaths: [hubPath] });
       return { removedWorktreePaths };
     });
