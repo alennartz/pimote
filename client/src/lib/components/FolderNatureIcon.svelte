@@ -1,11 +1,13 @@
 <script module lang="ts">
+  import type { HubInfo } from '@pimote/shared';
+
   export type FolderIconKind = 'code' | 'code-hub' | 'persona' | 'persona-hub';
 
-  /** Icon kind from folder facts: nature × shortcut presence only.
-   *  Shortcut-bearing folders get the hub variant even without hub registry
-   *  membership — `repos` gates the membership chips, never the icon. */
-  export function folderIconKind(folder: { nature: 'code' | 'persona'; shortcutCount: number }): FolderIconKind {
-    const hub = folder.shortcutCount > 0;
+  /** Icon kind from folder facts: nature × hub presence. The hub fact
+   *  identifies hubs outright; shortcut presence keeps its signal for rows
+   *  without one — `repos` gates the membership chips, never the icon. */
+  export function folderIconKind(folder: { nature: 'code' | 'persona'; shortcutCount: number; hub?: HubInfo }): FolderIconKind {
+    const hub = folder.hub !== undefined || folder.shortcutCount > 0;
     return folder.nature === 'persona' ? (hub ? 'persona-hub' : 'persona') : hub ? 'code-hub' : 'code';
   }
 </script>

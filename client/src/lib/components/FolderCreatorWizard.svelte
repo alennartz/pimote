@@ -1,5 +1,5 @@
 <script module lang="ts">
-  import type { FolderInfo, PimoteCommand } from '@pimote/shared';
+  import type { FolderInfo, HubMemberRepresentation, PimoteCommand } from '@pimote/shared';
 
   export type WizardKind = 'code' | 'persona' | 'code-hub' | 'persona-hub';
 
@@ -31,24 +31,42 @@
   }
 
   /** The one creation command per kind, with the trimmed text step body. Persona
-   *  kinds always carry `description` and `personaText`, possibly empty. */
-  export function creationCommand(input: { kind: WizardKind; root: string; name: string; description: string; text: string; memberPaths: string[] }): PimoteCommand {
-    const { kind, root, name, description, text, memberPaths } = input;
+   *  kinds always carry `description` and `personaText`, possibly empty. Hub
+   *  kinds carry the Members-phase layout choice; omission means symlinks. */
+  export function creationCommand(input: {
+    kind: WizardKind;
+    root: string;
+    name: string;
+    description: string;
+    text: string;
+    memberPaths: string[];
+    memberRepresentation?: HubMemberRepresentation;
+  }): PimoteCommand {
+    const { kind, root, name, description, text, memberPaths, memberRepresentation } = input;
     const body = text.trim();
     if (kind === 'persona') {
       return { type: 'create_persona_folder', root, name, description: description.trim(), personaText: body };
     }
     if (kind === 'code-hub') {
-      return { type: 'create_hub', root, name, memberPaths, body };
+      return { type: 'create_hub', root, name, memberPaths, body, ...(memberRepresentation === 'worktree' ? { memberRepresentation } : {}) };
     }
     if (kind === 'persona-hub') {
-      return { type: 'create_hub', root, name, memberPaths, description: description.trim(), personaText: body };
+      return {
+        type: 'create_hub',
+        root,
+        name,
+        memberPaths,
+        description: description.trim(),
+        personaText: body,
+        ...(memberRepresentation === 'worktree' ? { memberRepresentation } : {}),
+      };
     }
     return { type: 'create_folder', root, name, body };
   }
 </script>
 
 <script lang="ts">
+  import { SvelteMap } from 'svelte/reactivity';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { openNewSession } from '$lib/stores/session-registry.svelte.js';
   import { isSessionOpenCancelledResponse } from '$lib/session-open-response.js';
@@ -76,6 +94,11 @@
   let description = $state('');
   let text = $state('');
   let selectedPaths: string[] = $state([]);
+  /** Code-member layout for hub kinds; personas always symlink. */
+  let memberRepresentation = $state<HubMemberRepresentation>('symlink');
+  /** Natures of search results by path — search-only rows are not yet in
+   *  the shared folder list, and the worktree count must include them. */
+  const searchedNatures = new SvelteMap<string, FolderInfo['nature']>();
   let selectedRoot = $state('');
   let error = $state('');
   let creating = $state(false);
@@ -90,7 +113,12 @@
   /** Any folder the server lists is a valid member, on disk or not. */
   const memberCandidates = $derived([...folderStore.folders].sort(byDisplayName));
   /** Server search results through the same ordering as the rows. */
-  const searchMembers = (query: string) => folderStore.searchCandidates(query).then((rows) => rows.sort(byDisplayName));
+  const searchMembers = (query: string) =>
+    folderStore.searchCandidates(query).then((rows) => {
+      const sorted = rows.sort(byDisplayName);
+      for (const folder of sorted) searchedNatures.set(folder.path, folder.nature);
+      return sorted;
+    });
 
   /** Selecting a kind resets the flow to its identity step. */
   function selectKind(next: WizardKind): void {
@@ -100,6 +128,8 @@
     description = '';
     text = '';
     selectedPaths = [];
+    memberRepresentation = 'symlink';
+    searchedNatures.clear();
     selectedRoot = '';
     createdFolderPath = '';
     error = '';
@@ -109,6 +139,19 @@
   function toggleMember(path: string): void {
     selectedPaths = selectedPaths.includes(path) ? selectedPaths.filter((p) => p !== path) : [...selectedPaths, path];
   }
+
+  /** Selected code members — the worktree count, search results included. */
+  const selectedCodeCount = $derived(
+    selectedPaths.filter((path) => {
+      const folder = folderStore.folders.find((candidate) => candidate.path === path);
+      return (folder?.nature ?? searchedNatures.get(path)) === 'code';
+    }).length,
+  );
+  const representationNote = $derived(
+    memberRepresentation === 'worktree'
+      ? `${selectedCodeCount} code member${selectedCodeCount === 1 ? '' : 's'} will use nested detached worktrees. Persona members remain symlinked.`
+      : 'Code members stay at their canonical folders. Persona members always use symlinks.',
+  );
 
   /** Validation lives in the click handlers, never in a DOM `disabled` gate on input-derived state. */
   function advanceStep(): void {
@@ -154,7 +197,9 @@
     try {
       let folderPath = createdFolderPath;
       if (folderPath === '') {
-        const response = await connection.send(creationCommand({ kind, root: effectiveRoot, name: name.trim(), description, text, memberPaths: selectedPaths }));
+        const response = await connection.send(
+          creationCommand({ kind, root: effectiveRoot, name: name.trim(), description, text, memberPaths: selectedPaths, memberRepresentation }),
+        );
         if (!response.success) {
           error = response.error ?? 'Failed to create folder';
           return;
@@ -225,6 +270,34 @@
         </div>
       {:else if step === 'members'}
         <MemberPicker candidates={memberCandidates} {selectedPaths} onToggle={toggleMember} search={searchMembers} />
+        {#if isHubKind(kind)}
+          <div class="flex flex-col gap-1.5">
+            <div class="text-muted-foreground text-xs font-medium">Code member layout</div>
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="border-border hover:bg-accent hover:text-accent-foreground rounded-md border px-2.5 py-1 text-sm transition-colors {memberRepresentation === 'symlink'
+                  ? 'bg-accent text-accent-foreground'
+                  : ''}"
+                aria-pressed={memberRepresentation === 'symlink'}
+                onclick={() => (memberRepresentation = 'symlink')}
+              >
+                Symlinks
+              </button>
+              <button
+                type="button"
+                class="border-border hover:bg-accent hover:text-accent-foreground rounded-md border px-2.5 py-1 text-sm transition-colors {memberRepresentation === 'worktree'
+                  ? 'bg-accent text-accent-foreground'
+                  : ''}"
+                aria-pressed={memberRepresentation === 'worktree'}
+                onclick={() => (memberRepresentation = 'worktree')}
+              >
+                Detached worktrees
+              </button>
+            </div>
+            <p class="text-muted-foreground text-xs">{representationNote}</p>
+          </div>
+        {/if}
       {:else}
         <div class="flex flex-col gap-1.5">
           <div class="text-muted-foreground text-xs font-medium">{isPersonaKind(kind) ? 'Persona' : 'Vision'}</div>

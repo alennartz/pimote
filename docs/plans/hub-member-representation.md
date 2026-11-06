@@ -320,7 +320,7 @@ In `FolderNatureIcon.svelte` and `FolderList.svelte`, identify hubs from `Folder
 Add the command wrapper to `client/src/lib/stores/folder-store.svelte.ts`. When an authoritative folder row omits a prior hub fact, clear that fact from the existing canonical object so a stale disband action cannot survive a shape change. Let `removedPaths` remove rows after successful disband.
 
 **Verify:** `npm run test --workspace=client -- --run src/lib/components/FolderCreatorWizard.representation.test.ts src/lib/components/FolderList.disband.test.ts src/lib/components/HubMembersDialog.representation.test.ts` and `npm run check --workspace=client` pass. Compare creation, member management, cancellation, failure, and success states with `docs/mocks/hub-member-representation/index.html`.
-**Status:** not started
+**Status:** done
 
 ### Step 11: Update shipped guidance and smoke coverage
 

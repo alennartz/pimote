@@ -26,6 +26,7 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
 
   interface Props {
     /** Homepage search query — owned by the combined toolbar box at the top. */
@@ -116,6 +117,38 @@
   let tagTarget = $state<FolderInfo | null>(null);
   let tagName = $state('');
   let tagError = $state('');
+
+  // Disband confirmation state. The target is re-derived from the store like
+  // the members dialog, so the guard text follows the current row.
+  let disbandHubPath = $state<string | null>(null);
+  const disbandHub = $derived(folderStore.folders.find((folder) => folder.path === disbandHubPath) ?? null);
+  $effect(() => {
+    if (disbandHubPath !== null && disbandHub === null) disbandHubPath = null;
+  });
+  let disbandError = $state('');
+  let disbanding = $state(false);
+
+  function openDisband(folder: FolderInfo) {
+    disbandHubPath = folder.path;
+    disbandError = '';
+    disbanding = false;
+  }
+
+  async function confirmDisband() {
+    const target = disbandHub;
+    if (!target || disbanding) return;
+    disbanding = true;
+    disbandError = '';
+    try {
+      await folderStore.disbandHub(target.path);
+      disbandHubPath = null;
+    } catch (e) {
+      // The server's guard state stays visible; the dialog stays open.
+      disbandError = e instanceof Error ? e.message : 'Failed to disband hub';
+    } finally {
+      disbanding = false;
+    }
+  }
 
   function openTagDialog(folder: FolderInfo) {
     tagTarget = folder;
@@ -451,6 +484,14 @@
                     {/if}
                   </button>
                   <div class="ml-auto flex shrink-0 items-center gap-0.5">
+                    {#if folder.hub?.representation === 'worktree'}
+                      <span
+                        class="border-border/60 bg-muted/60 text-muted-foreground shrink-0 rounded px-1 py-0.5 text-[10px] font-medium tracking-wide uppercase"
+                        title="Code members use nested detached worktrees here"
+                      >
+                        worktree hub
+                      </span>
+                    {/if}
                     <button
                       class="group/star flex shrink-0 items-center rounded p-1 transition-colors max-md:-m-1 max-md:p-2"
                       title={folder.favorite ? 'Unfavorite' : 'Favorite'}
@@ -575,12 +616,20 @@
                     <Tag class="size-4" />
                     Add tag…
                   </ContextMenuItem>
-                  <!-- Membership management opens for any hub fact:
-                       `members` (symlink inventory) or `shortcutCount`. -->
-                  {#if folder.members !== undefined || folder.shortcutCount > 0}
+                  <!-- Membership management opens for any hub fact: the
+                       hub representation fact, `members` (symlink
+                       inventory), or `shortcutCount`. -->
+                  {#if folder.hub !== undefined || folder.members !== undefined || folder.shortcutCount > 0}
                     <ContextMenuItem onSelect={() => (membersHubPath = folder.path)}>
                       <Network class="size-4" />
                       Manage members…
+                    </ContextMenuItem>
+                  {/if}
+                  {#if folder.hub?.representation === 'worktree'}
+                    <ContextMenuSeparator />
+                    <ContextMenuItem variant="destructive" onSelect={() => openDisband(folder)}>
+                      <Trash2 class="size-4" />
+                      Disband worktree hub…
                     </ContextMenuItem>
                   {/if}
                   <ContextMenuSeparator />
@@ -692,5 +741,30 @@
     {#if membersHub}
       <HubMembersDialog hub={membersHub} />
     {/if}
+  </Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root
+  open={disbandHub !== null}
+  onOpenChange={(open) => {
+    if (!open) disbandHubPath = null;
+  }}
+>
+  <Dialog.Content class="sm:max-w-lg">
+    <Dialog.Header>
+      <Dialog.Title>Disband {disbandHub ? displayName(disbandHub) : ''}?</Dialog.Title>
+      <Dialog.Description>This removes the nested worktrees and the hub directory. It does not merge or delete branches.</Dialog.Description>
+    </Dialog.Header>
+    <div class="rounded-md border-l-4 border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-sm text-yellow-600 dark:text-yellow-400">
+      Every worktree must have no staged, unstaged, or untracked changes. A detached <code class="bg-muted rounded px-1 py-0.5 text-xs">HEAD</code> must be reachable from a local or
+      remote-tracking branch.
+    </div>
+    {#if disbandError}
+      <p class="text-destructive text-sm" role="alert">{disbandError}</p>
+    {/if}
+    <Dialog.Footer>
+      <Button variant="outline" onclick={() => (disbandHubPath = null)} disabled={disbanding}>Cancel</Button>
+      <Button variant="destructive" onclick={() => void confirmDisband()} disabled={disbanding}>{disbanding ? 'Disbanding…' : 'Disband'}</Button>
+    </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

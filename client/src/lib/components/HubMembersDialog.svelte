@@ -22,6 +22,23 @@
   const removingPaths = new SvelteSet<string>();
 
   const members = $derived(hub.members ?? []);
+  const worktreeHub = $derived(hub.hub?.representation === 'worktree');
+  /** Intro wording follows the hub layout: symlinks describe the shortcut
+   *  shape, worktrees name the nested checkouts. */
+  const intro = $derived(
+    worktreeHub
+      ? 'Hub basics: a hub is a folder composed of members. Code members use detached worktrees here; persona members use symlinks.'
+      : 'Hub basics: a hub is a folder composed of shortcuts to its members.',
+  );
+  /** What a newly added code member becomes in this hub. */
+  const addNote = $derived(worktreeHub ? 'Code members join as detached worktrees.' : 'Code members join as symlinks.');
+  /** One path line per member: canonical source, nested checkout when the
+   *  member is a worktree, and the member's representation. */
+  function memberDetail(member: FolderMemberInfo): string {
+    const checkout = member.worktreePath ? ` · ${member.worktreePath}` : '';
+    const shape = member.representation === 'worktree' ? 'detached worktree' : 'symlink';
+    return `${member.path}${checkout} · ${shape}`;
+  }
   const memberPaths = $derived(new Set(members.map((member) => member.path)));
   /** Eligible as a member: not the hub, not already a member. A folder the
    *  server lists qualifies whether or not it exists on disk yet. */
@@ -64,7 +81,7 @@
 </script>
 
 <div class="flex flex-col gap-4">
-  <p class="text-muted-foreground text-sm">Hub basics: a hub is a folder composed of shortcuts to its members.</p>
+  <p class="text-muted-foreground text-sm">{intro}</p>
 
   <div class="flex flex-col gap-1.5">
     <div class="text-muted-foreground text-xs font-medium">Members</div>
@@ -78,7 +95,7 @@
               <FolderNatureIcon kind={folderIconKind({ nature: member.nature, shortcutCount: 0 })} class="text-muted-foreground size-4 shrink-0" />
               <div class="min-w-0 flex-1">
                 <div class="truncate text-sm font-medium">{member.name}</div>
-                <div class="text-muted-foreground truncate text-xs">{member.path}</div>
+                <div class="text-muted-foreground truncate text-xs">{memberDetail(member)}</div>
               </div>
               <button
                 type="button"
@@ -99,6 +116,7 @@
   <div class="flex flex-col gap-1.5">
     <div class="text-muted-foreground text-xs font-medium">Add member</div>
     <MemberPicker {candidates} selectedPaths={[...addingPaths]} onToggle={(path) => void addMember(path)} search={searchCandidates} />
+    <p class="text-muted-foreground text-xs">{addNote}</p>
   </div>
 
   {#if error}

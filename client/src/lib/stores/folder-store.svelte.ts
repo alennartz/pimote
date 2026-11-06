@@ -417,12 +417,24 @@ export class FolderStore {
     if (!response.success) throw new Error(response.error ?? 'Failed to remove hub member');
   }
 
+  /** Remove every nested worktree and delete a worktree hub. The server's
+   *  guard errors surface verbatim; the row drops through the
+   *  `folders_changed` removal broadcast. */
+  async disbandHub(hubPath: string): Promise<{ removedWorktreePaths: string[] }> {
+    const response = await connection.send({ type: 'disband_hub', hubPath });
+    if (!response.success) throw new Error(response.error ?? 'Failed to disband hub');
+    return (response.data as { removedWorktreePaths: string[] }) ?? { removedWorktreePaths: [] };
+  }
+
   /** Collapse a wire folder row onto the canonical object for its path:
    *  get-or-create, then field-merge so every view of the folder (list rows,
    *  session pointers) observes the update through the same object. */
   upsertFolder(row: FolderInfo): FolderInfo {
     const existing = this.folderByKey.get(row.path);
     if (existing) {
+      // A canonical row without the hub fact ends hubhood: a folder that
+      // stopped being a worktree hub must not keep a stale disband action.
+      if (row.hub === undefined && existing.hub !== undefined) delete existing.hub;
       Object.assign(existing, row);
       return existing;
     }
