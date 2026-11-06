@@ -574,7 +574,7 @@ describe('main — manager toolset port wiring', () => {
     expect(firstClient).toHaveBeenCalledWith(expect.objectContaining({ type: 'session_opened', sessionId: 'sess-9', folder: alphaFolder }));
     expect(secondClient).toHaveBeenCalledWith(expect.objectContaining({ type: 'session_opened', sessionId: 'sess-9', folder: alphaFolder }));
     expect(withMessage.structuredContent).toEqual({ sessionId: 'sess-9', folderPath: '/workspace/alpha', firstMessageSent: true });
-    expect(tools).toHaveLength(8);
+    expect(tools).toHaveLength(9);
   });
 
   it('broadcasts an already-open manager resume to every client', async () => {

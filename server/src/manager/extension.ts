@@ -11,7 +11,7 @@ import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext, Sessi
 
 /**
  * Build the pi `ExtensionFactory` for the manager extension (DR-062: one
- * small, powerful tool surface). Registers the manager's eight pimote tools,
+ * small, powerful tool surface). Registers the manager's nine pimote tools,
  * acting only through the injected `ManagerToolContext`. Folder recipes and
  * the folder model reach the manager through the `pimote-docs` section.
  *
@@ -55,7 +55,8 @@ const FIRST_MESSAGE_EXCERPT_LENGTH = 200;
 /** One-line structural hint, embedded at the error sites where the folder
  *  model's leaf rule decides between a retry and a different shape. */
 const NESTING_HINT =
-  'Included folders (code or persona) are leaves — real subfolders inside them stay undiscovered. ' + 'Hub members are symlinked in (kind "code-hub"/"persona-hub"), never nested.';
+  'Included folders (code or persona) are leaves — real subfolders inside them stay undiscovered. ' +
+  'Hub members join by canonical path (kind "code-hub"/"persona-hub") as symlinks or nested worktrees, never nested inline.';
 
 /** Collapse whitespace and truncate to `maxLength` with an ellipsis. */
 function excerpt(text: string, maxLength = FIRST_MESSAGE_EXCERPT_LENGTH): string {
@@ -86,6 +87,9 @@ const RepoInfoSchema = Type.Object({
   dirty: Type.Boolean(),
   ahead: Type.Integer(),
   behind: Type.Integer(),
+  worktreePath: Type.Optional(
+    Type.String({ description: 'Present for worktree hub members: the nested checkout inside the hub whose git facts these are. The canonical path stays the source repo.' }),
+  ),
   lastActivity: Type.Optional(Type.Integer()),
   missing: Type.Optional(Type.Boolean()),
   tags: Type.Optional(Type.Array(Type.String())),
@@ -104,9 +108,11 @@ const PersonaInfoSchema = Type.Object({
  *  counts zero) are required and annotated with their defaults. Repo facts and
  *  hub member inventory stay explicit so the single list tool answers both. */
 const FolderMemberInfoSchema = Type.Object({
-  path: Type.String({ description: 'Canonical member path; the symlink target.' }),
-  name: Type.String({ description: 'Hub-side symlink basename.' }),
+  path: Type.String({ description: 'Canonical source/member identity used by add and remove commands; the symlink target or worktree source checkout.' }),
+  name: Type.String({ description: 'Hub-side member basename.' }),
   nature: Type.Union([Type.Literal('code'), Type.Literal('persona')]),
+  representation: Type.Union([Type.Literal('symlink'), Type.Literal('worktree')], { description: 'How this member is materialized inside the hub.' }),
+  worktreePath: Type.Optional(Type.String({ description: 'Present for code worktree members: the checkout inside the hub.' })),
 });
 
 const FolderInfoSchema = Type.Object({
@@ -114,13 +120,20 @@ const FolderInfoSchema = Type.Object({
   name: Type.String({ description: 'Folder basename; persona folders carry the basename here, never the persona name.' }),
   nature: Type.Union([Type.Literal('code'), Type.Literal('persona')]),
   persona: Type.Optional(PersonaInfoSchema),
-  shortcutCount: Type.Integer({ default: 0, description: 'Immediate shortcut occurrences; > 0 marks a hub.' }),
+  shortcutCount: Type.Integer({ default: 0, description: 'Immediate shortcut occurrences. Hub identity is reported by `hub`.' }),
+  hub: Type.Optional(
+    Type.Object({
+      representation: Type.Union([Type.Literal('symlink'), Type.Literal('worktree')], {
+        description: 'How the hub materializes its code members. Present for every discovered or promised hub.',
+      }),
+    }),
+  ),
   favorite: Type.Boolean({ default: false }),
   archived: Type.Boolean({ default: false }),
   tags: Type.Array(Type.String(), { default: [] }),
   missing: Type.Boolean({ default: false, description: 'Source-listed repo/hub absent on disk.' }),
   repos: Type.Optional(Type.Array(RepoInfoSchema, { description: 'Code hub-member git facts, derived from member symlinks or a source promise.' })),
-  members: Type.Optional(Type.Array(FolderMemberInfoSchema, { description: 'Hub membership from the on-disk symlink inventory.' })),
+  members: Type.Optional(Type.Array(FolderMemberInfoSchema, { description: 'Hub membership from the on-disk shape: symlink members plus Git-verified nested worktree members.' })),
   repo: Type.Optional(RepoInfoSchema),
   lastActivity: Type.Optional(Type.Integer()),
   userTags: Type.Optional(Type.Array(Type.String())),
@@ -318,7 +331,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         enrichActiveSessionCounts(folders, context.sessions.getAllSessions());
         let rows = folders.map(applyFolderDefaults);
         if (params.nature !== undefined) rows = rows.filter((row) => row.nature === params.nature);
-        if (params.hub !== undefined) rows = rows.filter((row) => row.shortcutCount > 0 === params.hub);
+        if (params.hub !== undefined) rows = rows.filter((row) => (row.hub !== undefined) === params.hub);
         if (!params.includeArchived) rows = rows.filter((row) => !row.archived);
         const query = params.query?.trim().toLowerCase() || undefined;
         if (query !== undefined) rows = filterByQuery(rows, query);
@@ -513,7 +526,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       description:
         'Creates the selected folder kind, returning canonical folderPath, invalidating discovery, and broadcasting the change. ' +
         'It seeds AGENTS.md, initializes code folders and hubs with git, and adds memory.md for persona kinds. ' +
-        'Hub kinds also create member symlinks and a member .gitignore, leaving member directories unchanged.',
+        'Hub kinds add members as symlinks or, with memberRepresentation "worktree", as nested detached worktrees, leaving member directories unchanged.',
       parameters: Type.Object(
         {
           kind: Type.Union([Type.Literal('code'), Type.Literal('persona'), Type.Literal('code-hub'), Type.Literal('persona-hub')], {
@@ -526,6 +539,11 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
           memberPaths: Type.Optional(
             Type.Array(Type.String(), {
               description: 'Hub-only canonical paths of known code or persona folders, required and nonempty, with unique basenames and no containment with the hub.',
+            }),
+          ),
+          memberRepresentation: Type.Optional(
+            Type.Union([Type.Literal('symlink'), Type.Literal('worktree')], {
+              description: 'Hub-only code-member layout: symlinks (default) or nested detached worktrees created at source HEAD. Persona members always use symlinks.',
             }),
           ),
           description: Type.Optional(Type.String({ description: 'Persona-only nonblank description written to AGENTS.md front matter, required for both persona kinds.' })),
@@ -607,6 +625,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
             name: params.name,
             root: parent.parentPath,
             memberPaths: params.memberPaths!,
+            ...(params.memberRepresentation !== undefined ? { memberRepresentation: params.memberRepresentation } : {}),
             ...(kind === 'persona-hub' ? { description: params.description!, personaText: params.prompt ?? '' } : {}),
             ...(kind === 'code-hub' && params.body !== undefined ? { body: params.body } : {}),
           });
@@ -670,7 +689,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       exposure: 'direct',
       promptSnippet: 'Change hub membership while keeping member folders in their homes.',
       description:
-        "Removes members before adding members, updating hub symlinks, managed AGENTS.md lines, and the hub's existing .gitignore without changing member directories. " +
+        "Removes members before adding members, updating hub symlinks or nested worktrees per the hub's representation, managed AGENTS.md lines, and the hub's existing .gitignore without changing member directories. " +
         'Returns independent results with memberPath, action, outcome (added, removed, or error), and error text when present, broadcasting each successful change. ' +
         'A batch with no additions or removals returns an error.',
       parameters: Type.Object({
@@ -709,6 +728,31 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
           }
         }
         return jsonToolResult({ results });
+      },
+    });
+
+    pi.registerTool({
+      name: 'pimote_disband_hub',
+      label: 'Disband hub',
+      exposure: 'direct',
+      promptSnippet: 'Delete a worktree hub once its checkouts pass the guard checks.',
+      description:
+        'Disbands a worktree hub: removes its nested detached worktrees through Git and deletes the hub directory, without merging, committing, stashing, or deleting branches. ' +
+        'Symlink hubs reject. The registry refuses hubs with active sessions or external pi processes, dirty checkouts, or detached HEAD commits unreachable from a branch ref, ' +
+        'keeping the hub on disk for a retry. Returns removedWorktreePaths.',
+      parameters: Type.Object({
+        hubPath: Type.String({ description: 'Canonical path of a known worktree hub folder.' }),
+      }),
+      outputSchema: Type.Object({
+        removedWorktreePaths: Type.Array(Type.String(), { description: 'Nested checkout paths removed through Git before the hub directory was deleted.' }),
+      }),
+      execute: async (_callId, params): Promise<JsonToolResult> => {
+        try {
+          const { removedWorktreePaths } = await context.folders.disbandHub(params.hubPath);
+          return jsonToolResult({ removedWorktreePaths });
+        } catch (error) {
+          return errorToolResult(`failed to disband hub: ${errorMessage(error)} — use pimote_find_folders to see known folders`);
+        }
       },
     });
   };

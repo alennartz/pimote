@@ -289,7 +289,7 @@ Update `server/src/repo-index.ts` to support bounded, cached Git-status probes f
 Update `FolderRegistry.requestStatusRefresh` and `enrichRows` in `server/src/folder-registry.ts` to probe `repo.worktreePath ?? repo.path`. Apply branch, dirty, ahead, and behind from the checkout while keeping `RepoInfo.path` and tags tied to the canonical source. Route asynchronous checkout status changes to the owning hub row without making the repo index own hub membership.
 
 **Verify:** The checkout-status and canonical-identity cases in `server/src/folder-registry-worktree.test.ts` pass. Run `npm run test --workspace=@pimote/server -- --run src/repo-index.test.ts src/folder-registry-worktree.test.ts src/folder-listing.test.ts` and confirm existing windowed status behavior remains passing.
-**Status:** not started
+**Status:** done
 
 ### Step 8: Route dashboard commands
 
@@ -298,7 +298,7 @@ In `server/src/ws-handler.ts`, forward `CreateHubCommand.memberRepresentation` t
 The protocol interfaces already exist in `shared/src/protocol.ts` and the SDK `RepoInfo.worktreePath` twin already exists in `packages/sdk/src/folders/types.ts`. Verify their response and union wiring and keep `server/src/sdk-twins.ts` parity intact.
 
 **Verify:** `npm run build:shared && npm run build --workspace=@pimote/sdk && npm run test --workspace=@pimote/server -- --run src/ws-folder-commands.test.ts src/ws-handler.test.ts` passes. `npm run check` verifies SDK twin parity.
-**Status:** not started
+**Status:** done
 
 ### Step 9: Restore the manager twin
 
@@ -307,7 +307,7 @@ Update `RepoInfoSchema`, `FolderMemberInfoSchema`, and `FolderInfoSchema` in `se
 Add the optional `memberRepresentation` schema to `pimote_create_folder` and forward it for both hub kinds. Register `pimote_disband_hub` with canonical `hubPath`, an output schema for `removedWorktreePaths`, and structured guard errors. Keep `pimote_update_hub_members` path-based and route all mutations through the existing registry port.
 
 **Verify:** `npm run test --workspace=@pimote/server -- --run src/manager/extension.test.ts src/index.test.ts` passes the schema, hub filter, create, disband, and server wiring cases.
-**Status:** not started
+**Status:** done
 
 ### Step 10: Add dashboard representation controls
 

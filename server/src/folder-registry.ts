@@ -632,42 +632,34 @@ export class FolderRegistry implements FolderRegistryPort {
     return sortFolders(await this.viewOver(await this.tree.tree(signal), await this.repos.listLazy(signal)));
   }
 
-  /** Request git facts for exactly these rows without delaying the caller. */
+  /** Request git facts for exactly these rows without delaying the caller:
+   *  each repo's own checkout path (`worktreePath ?? path`), so a worktree
+   *  member's nested checkout refreshes instead of its canonical source. */
   requestStatusRefresh(rows: ReadonlyArray<FolderInfo>): Promise<void> {
-    const paths = rows.flatMap((row) => [...(row.repo ? [row.repo.path] : []), ...(row.repos ?? []).map((repo) => repo.path)]);
+    const paths = rows.flatMap((row) => [...(row.repo ? [row.repo.worktreePath ?? row.repo.path] : []), ...(row.repos ?? []).map((repo) => repo.worktreePath ?? repo.path)]);
     return this.repos.requestStatusRefresh(paths);
   }
 
   /**
    * Git status for exactly these rows — their own repo facts and hub member
    * facts — patched onto the rows in place. The one mutation point for
-   * enrichment; rows are fresh per view build. Probes are scoped to the given
-   * rows (bounded concurrency), so windows and deltas never pay a whole-set
-   * pass.
+   * enrichment; rows are fresh per view build. Each target probes its own
+   * checkout path (`worktreePath ?? path`): a worktree member reports its
+   * nested checkout's status while `path` and tags stay canonical. Probes
+   * are scoped to the given rows (bounded concurrency), so windows and
+   * deltas never pay a whole-set pass.
    */
   async enrichRows(rows: FolderInfo[]): Promise<void> {
     const targets = rows.flatMap((row) => [...(row.repo ? [row.repo] : []), ...(row.repos ?? [])]);
-    // Worktree members report the nested checkout's status, not the source
-    // repository's — the index probes only canonical listed paths.
-    const checkoutTargets = targets.filter((target) => target.worktreePath !== undefined);
-    const status = await this.repos.enrichStatus(targets.filter((target) => target.worktreePath === undefined).map((repo) => repo.path));
+    const status = await this.repos.enrichStatus(targets.map((target) => target.worktreePath ?? target.path));
     for (const target of targets) {
-      if (target.worktreePath !== undefined) continue;
-      const facts = status.get(target.path);
+      const facts = status.get(target.worktreePath ?? target.path);
       if (!facts) continue;
       target.branch = facts.branch;
       target.dirty = facts.dirty;
       target.ahead = facts.ahead;
       target.behind = facts.behind;
     }
-    await Promise.all(
-      checkoutTargets.map(async (target) => {
-        const facts = await this.worktrees.inspectMember(target.worktreePath!).catch(() => null);
-        if (!facts) return;
-        target.branch = facts.branch;
-        target.dirty = facts.dirty;
-      }),
-    );
   }
 
   /** The merged view over one folder tree; pure construction, edge probes first. */

@@ -249,6 +249,25 @@ function dependentHubPaths(memberPath: string, tree: SparseTree | null, sourceHu
   return [...hubs].sort();
 }
 
+/** Whether `target` lies inside directory `dir` (never equal). */
+function isInsideDir(target: string, dir: string): boolean {
+  return dir === '/' ? target.startsWith('/') : target.startsWith(`${dir}/`);
+}
+
+/** Discovered entries whose row contains `path`: a nested checkout's git
+ *  facts move the folder row that contains it. Containment only — the index
+ *  knows no membership. Sorted for deterministic change payloads. */
+function containingEntryPaths(path: string, tree: SparseTree | null): string[] {
+  if (!tree) return [];
+  const containers: string[] = [];
+  const visit = (occurrence: FolderOccurrence): void => {
+    if (isInsideDir(path, occurrence.entry.path)) containers.push(occurrence.entry.path);
+    for (const child of occurrence.children) visit(child);
+  };
+  for (const occurrence of tree.occurrences) visit(occurrence);
+  return containers.sort();
+}
+
 /** Branch, dirty flag, and ahead/behind for one repo. Failed probes yield neutral values. */
 async function readGitStatus(cwd: string): Promise<Omit<RepoStatus, 'at'>> {
   const git = gitRunner(cwd);
@@ -393,16 +412,20 @@ export class RepoIndex {
    * Git status for exactly these paths: entries whose status is missing or
    * past its TTL are probed (bounded concurrency); fresh cache entries are
    * served as-is. Window-scoped enrichment — never a whole-set pass. Missing
-   * entries and unknown paths are skipped, so their rows keep identity facts.
+   * entries are skipped, so their rows keep identity facts. Requested paths
+   * the listing does not carry — a nested checkout the walk never enters —
+   * probe on the same TTL and cache, independent of hub membership.
    */
   async enrichStatus(paths: Iterable<string>): Promise<ReadonlyMap<string, GitStatus>> {
     const wanted = new Set(paths);
     const stamp = await this.currentStamp(false);
-    await mapWithConcurrency(
-      stamp.entries.filter((entry) => wanted.has(entry.path) && this.statusExpired(entry)),
-      GIT_PROBE_CONCURRENCY,
-      (entry) => this.probeStatus(entry.path),
-    );
+    const listed = new Map(stamp.entries.map((entry) => [entry.path, entry] as const));
+    const due = [...wanted].filter((path) => {
+      const entry = listed.get(path);
+      if (entry) return this.statusExpired(entry);
+      return this.statusDue(path);
+    });
+    await mapWithConcurrency(due, GIT_PROBE_CONCURRENCY, (path) => this.probeStatus(path));
     const resolved = new Map<string, GitStatus>();
     for (const path of wanted) {
       const status = this.statusCache.get(path);
@@ -527,22 +550,37 @@ export class RepoIndex {
     })();
   }
 
-  /** Probe one requested path and deliver only its status movement. */
+  /** Probe one requested path and deliver only its status movement.
+   *  Requested paths the listing does not carry probe the same way — a
+   *  nested checkout's movement still reaches its owning row through the
+   *  containment fan-out, without the index owning any membership. */
   private async refreshRequestedStatus(path: string): Promise<void> {
     const stamp = await this.currentStamp(false);
     const entry = stamp.entries.find((candidate) => candidate.path === path);
-    if (!entry || entry.missing) return;
+    if (entry?.missing) return;
 
-    const before = this.currentFacts().get(path);
-    if (this.statusExpired(entry)) await this.probeStatus(path);
+    const before = this.statusFact(path);
+    if (this.statusDue(path)) await this.probeStatus(path);
     this.notifyRequestedStatus(path, before);
   }
 
+  /** Status values cached for one path, or undefined when never probed.
+   *  Identity facts cannot move within one requested refresh, so the status
+   *  values alone decide whether the path's facts moved. */
+  private statusFact(path: string): string | undefined {
+    const status = this.statusCache.get(path);
+    return status ? JSON.stringify({ branch: status.branch, dirty: status.dirty, ahead: status.ahead, behind: status.behind }) : undefined;
+  }
+
   private notifyRequestedStatus(path: string, before: string | undefined): void {
-    const after = this.currentFacts().get(path);
+    const after = this.statusFact(path);
     if (before === after) return;
 
-    const changedPaths = new Set([path, ...dependentHubPaths(path, this.listing?.tree ?? null, this.sourceHubs?.entries ?? [])]);
+    const changedPaths = new Set([
+      path,
+      ...containingEntryPaths(path, this.listing?.tree ?? null),
+      ...dependentHubPaths(path, this.listing?.tree ?? null, this.sourceHubs?.entries ?? []),
+    ]);
     this.onRefreshed?.({ changedPaths: [...changedPaths].sort(), removedPaths: [] });
   }
 
@@ -576,11 +614,16 @@ export class RepoIndex {
     });
   }
 
+  /** Whether a path's cached status is due for a probe: absent or past its TTL. */
+  private statusDue(path: string): boolean {
+    const cached = this.statusCache.get(path);
+    return !cached || this.now() - cached.at >= this.statusTtlMs;
+  }
+
   /** Whether a served entry's status is due for a probe (missing or past its TTL). */
   private statusExpired(entry: RepoInfo): boolean {
     if (entry.missing) return false;
-    const cached = this.statusCache.get(entry.path);
-    return !cached || this.now() - cached.at >= this.statusTtlMs;
+    return this.statusDue(entry.path);
   }
 
   /** Probe statuses that are stale or missing; fresh ones are left alone. */

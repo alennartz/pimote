@@ -554,6 +554,7 @@ export class WsHandler {
             name: command.name,
             root: command.root,
             memberPaths: command.memberPaths,
+            ...(command.memberRepresentation !== undefined ? { memberRepresentation: command.memberRepresentation } : {}),
             ...(command.body !== undefined ? { body: command.body } : {}),
             ...(command.description !== undefined ? { description: command.description } : {}),
             ...(command.personaText !== undefined ? { personaText: command.personaText } : {}),
@@ -600,6 +601,17 @@ export class WsHandler {
           const { folderRegistry } = this.requireFolderDeps();
           await folderRegistry.removeMember(command.hubPath, command.memberPath);
           this.sendResponse(id, true);
+          break;
+        }
+
+        case 'disband_hub': {
+          const { folderRegistry } = this.requireFolderDeps();
+          // Validation errors fall through to the outer catch, which responds
+          // with the user-presentable message. The registry's onChange (wired
+          // in server.ts) broadcasts the folders_changed delta with the hub
+          // path in removedPaths.
+          const disbanded = await folderRegistry.disbandHub(command.hubPath);
+          this.sendResponse(id, true, { removedWorktreePaths: disbanded.removedWorktreePaths });
           break;
         }
 
