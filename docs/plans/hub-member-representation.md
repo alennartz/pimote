@@ -219,3 +219,112 @@ Folder rows use the existing context menu. Worktree hubs add `Disband worktree h
 - The picker and remove buttons send the canonical member path
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Implement the Git worktree adapter
+
+Implement `HubWorktrees` in `server/src/hub-worktrees.ts` behind the existing `HubWorktreePort` and `WorktreeGitRunner` interfaces. Recognize only directories with a `.git` file that Git confirms in its worktree list. Return the canonical source checkout, nested checkout, branch, dirty state, detached state, and branch-ref reachability. Reject ordinary directories, independent repositories, and unverifiable paths.
+
+Create detached checkouts from source `HEAD`, validate staged, unstaged, and untracked changes, and remove checkouts through Git. Check reachability against local and remote-tracking branch refs. Do not perform branch operations. Supply a production runner using `execFile`, the existing Git environment protections, and a timeout. Preserve the injected runner for tests.
+
+**Verify:** `npm run build:shared && npm run test --workspace=@pimote/server -- --run src/hub-worktrees.test.ts` passes.
+**Status:** not started
+
+### Step 2: Wire the activity guard
+
+Implement `HubActivity.findBusyPaths` in `server/src/hub-activity.ts`. Normalize requested paths and working directories before matching each requested path against sessions and external pi processes at that path or below it. Reject when either source fails.
+
+Extend `server/src/takeover.ts` with an external pi working-directory enumeration that supports subtree checks. Preserve the current process and descendant exclusions and exact-directory behavior for takeover. Preserve the existing per-directory exclusion behavior when enumerating multiple directories. Do not convert an enumeration failure into an empty result for disband.
+
+In `server/src/index.ts`, construct `FolderRegistry` after `PimoteSessionManager` is available. Inject `HubActivity` with live slot folder paths and the external pi enumeration. Inject the production worktree adapter, or give the registry an equivalent production default. Keep session-manager access out of the registry.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/hub-activity.test.ts src/takeover.test.ts src/index.test.ts` passes the activity and existing takeover checks. The manager disband test passes after Step 9.
+**Status:** not started
+
+### Step 3: Derive hub membership from disk shape
+
+Replace the symlink-only inventory in `server/src/folder-registry.ts` with a combined top-level member probe. Retain `readHubLinks` rules for live and dangling symlinks, canonical identity, nature, containment, and managed-line provenance. Probe real child directories through `HubWorktreePort.inspectMember`; do not treat independent nested repositories as members.
+
+Add the marker read/write seam to `server/src/folder-sources/materialize.ts` for `.pimote-hub.json` containing only `{ "memberRepresentation": "worktree" }`. A valid marker or nested worktree selects worktree mode, including after the last worktree is removed. Source-promised and symlink-shaped hubs select symlink mode otherwise.
+
+Update `FolderViewInputs`, `mergedFolders`, `viewOver`, `update`, and `isManageableHub` in `server/src/folder-registry.ts` to use the combined inventory. Emit `FolderInfo.hub` for discovered and promised hubs, and emit each member's canonical `path`, nature, representation, and optional `worktreePath`. Keep `shortcutCount` as the symlink count. Preserve source promises, canonical source tags, missing-member behavior, and tag-change fan-out.
+
+**Verify:** The row, marker, symlink, and worktree discovery cases in `server/src/folder-registry-worktree.test.ts` pass once creation is implemented in Step 4. Existing `server/src/folder-registry.test.ts` membership and curation cases remain passing.
+**Status:** not started
+
+### Step 4: Materialize both hub layouts
+
+Extend `materializeHubFolder` in `server/src/folder-sources/materialize.ts` and `FolderRegistry.createHub` in `server/src/folder-registry.ts` to choose the layout from `memberRepresentation`, defaulting to symlinks. Keep source-listed hub materialization on the existing symlink path. For worktree mode, write the marker, create detached code worktrees, symlink personas, ignore the marker and all member basenames, write the generated files, and initialize the hub repository.
+
+Validate discovered members, reserved names, duplicate basenames, and containment before creating the target. If creation fails, remove every created worktree through Git before removing the fresh hub directory. Include persona `memory.md` in the same rollback scope. Update `hubAgentsMarkdown` in `server/src/hub-agents-md.ts` to describe the selected layout while retaining its exact seeded member lines and managed block.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/folder-registry-worktree.test.ts src/folder-registry.test.ts src/hub-agents-md.test.ts` passes the creation, default layout, source preservation, ignore, rollback, and existing managed-line cases.
+**Status:** not started
+
+### Step 5: Make member edits representation-aware
+
+Update `FolderRegistry.addMember` and `removeMember` in `server/src/folder-registry.ts` to use the combined inventory and canonical source identities. Add code as a detached worktree in a worktree hub and as a symlink otherwise. Always add personas as symlinks. Keep the existing serialized mutation seam and basename, containment, and discovered-member checks.
+
+If an add fails after creating a worktree, remove it through Git. If rollback fails, report the remaining checkout path so it stays discoverable for retry. Before removing a worktree member, reject dirty state without changing disk. Remove clean worktrees through Git and symlinks by unlinking only the hub-side link. Preserve branches and user prose. Treat exact managed-line and ignore-line cleanup after removal as best effort.
+
+**Verify:** The add, rollback, dirty removal, persona symlink, canonical identity, and last-worktree marker cases in `server/src/folder-registry-worktree.test.ts` pass. Existing membership tests in `server/src/folder-registry.test.ts` pass.
+**Status:** not started
+
+### Step 6: Implement guarded disband
+
+Implement `FolderRegistry.disbandHub` in `server/src/folder-registry.ts` through the same serialized mutation seam. Accept only a marked or Git-verified worktree hub. Check activity for the hub and its worktree paths before validating any worktree. Validate every checkout before removing any: reject dirty checkouts and detached `HEAD` commits unreachable from local or remote-tracking branch refs.
+
+After all checks pass, remove worktrees through Git and delete the hub without following member symlinks. Preserve branches. Return `removedWorktreePaths`, invalidate discovery, and emit one change with the hub in `removedPaths`. If removal fails, leave the hub and remaining worktrees discoverable for retry.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/folder-registry-worktree.test.ts src/hub-activity.test.ts` passes all guarded disband, partial-failure, retry, and notification cases.
+**Status:** not started
+
+### Step 7: Enrich rows from nested checkout status
+
+Update `server/src/repo-index.ts` to support bounded, cached Git-status probes for requested checkout paths even when discovery did not list those paths. Keep this capability independent of hub membership. Preserve the existing TTL and stale-while-revalidate behavior for ordinary repos.
+
+Update `FolderRegistry.requestStatusRefresh` and `enrichRows` in `server/src/folder-registry.ts` to probe `repo.worktreePath ?? repo.path`. Apply branch, dirty, ahead, and behind from the checkout while keeping `RepoInfo.path` and tags tied to the canonical source. Route asynchronous checkout status changes to the owning hub row without making the repo index own hub membership.
+
+**Verify:** The checkout-status and canonical-identity cases in `server/src/folder-registry-worktree.test.ts` pass. Run `npm run test --workspace=@pimote/server -- --run src/repo-index.test.ts src/folder-registry-worktree.test.ts src/folder-listing.test.ts` and confirm existing windowed status behavior remains passing.
+**Status:** not started
+
+### Step 8: Route dashboard commands
+
+In `server/src/ws-handler.ts`, forward `CreateHubCommand.memberRepresentation` to `FolderRegistry.createHub` when supplied. Add `disband_hub` routing to `FolderRegistry.disbandHub`, returning its removal summary and preserving user-presentable guard errors. Keep registry notifications authoritative.
+
+The protocol interfaces already exist in `shared/src/protocol.ts` and the SDK `RepoInfo.worktreePath` twin already exists in `packages/sdk/src/folders/types.ts`. Verify their response and union wiring and keep `server/src/sdk-twins.ts` parity intact.
+
+**Verify:** `npm run build:shared && npm run build --workspace=@pimote/sdk && npm run test --workspace=@pimote/server -- --run src/ws-folder-commands.test.ts src/ws-handler.test.ts` passes. `npm run check` verifies SDK twin parity.
+**Status:** not started
+
+### Step 9: Restore the manager twin
+
+Update `RepoInfoSchema`, `FolderMemberInfoSchema`, and `FolderInfoSchema` in `server/src/manager/extension.ts` for hub facts, member representations, and checkout paths. Make `pimote_find_folders` filter by the hub fact rather than shortcut count alone. Update its descriptions, membership descriptions, and `NESTING_HINT` to cover symlinks and worktrees.
+
+Add the optional `memberRepresentation` schema to `pimote_create_folder` and forward it for both hub kinds. Register `pimote_disband_hub` with canonical `hubPath`, an output schema for `removedWorktreePaths`, and structured guard errors. Keep `pimote_update_hub_members` path-based and route all mutations through the existing registry port.
+
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/manager/extension.test.ts src/index.test.ts` passes the schema, hub filter, create, disband, and server wiring cases.
+**Status:** not started
+
+### Step 10: Add dashboard representation controls
+
+In `client/src/lib/components/FolderCreatorWizard.svelte`, add the approved compact `Symlinks` and `Detached worktrees` choice to the Members phase. Default and reset to symlinks, explain that personas remain symlinks, and show the selected code-member worktree count, including selections from search results. Pass the selected representation through `creationCommand` for both hub kinds. Keep the four-kind row, identity and Vision or Persona phases, and successful session opening unchanged.
+
+In `HubMembersDialog.svelte` and `MemberPicker.svelte`, show each member's representation and nested checkout path when present. Show the layout a new code member will use. Keep the existing shortcut description for symlink hubs and use worktree-specific wording for worktree hubs. Retain asynchronous search and canonical-path add and remove actions.
+
+In `FolderNatureIcon.svelte` and `FolderList.svelte`, identify hubs from `FolderInfo.hub`, including rows with no members or shortcuts. Preserve the existing shortcut and member signals where present. Add `Disband worktree hub…` only for worktree hubs. The confirmation must explain checkout and hub removal, branch preservation, clean-state requirements, and detached-`HEAD` reachability. Cancel sends nothing. Keep the dialog open with the server's blocking state on failure.
+
+Add the command wrapper to `client/src/lib/stores/folder-store.svelte.ts`. When an authoritative folder row omits a prior hub fact, clear that fact from the existing canonical object so a stale disband action cannot survive a shape change. Let `removedPaths` remove rows after successful disband.
+
+**Verify:** `npm run test --workspace=client -- --run src/lib/components/FolderCreatorWizard.representation.test.ts src/lib/components/FolderList.disband.test.ts src/lib/components/HubMembersDialog.representation.test.ts` and `npm run check --workspace=client` pass. Compare creation, member management, cancellation, failure, and success states with `docs/mocks/hub-member-representation/index.html`.
+**Status:** not started
+
+### Step 11: Update shipped guidance and smoke coverage
+
+Update `docs/shipped/folders.md`, `docs/shipped/recipes.md`, and `docs/shipped/manager.md` for both hub layouts, canonical member identity, detached checkout lifecycle, clean and reachability guards, and worktree-only disband. Update `codemap.md` for the new modules and flows. Update the hub and member definitions in `glossary.md` to include verified worktrees without changing the domain terms. Follow the decision-records skill to record the architecture's decisions: partially supersede DR-062 and supersede DR-063 and DR-064, preserving the remaining decisions.
+
+Extend `tools/manual-test/project-management-smoke/project-management-smoke.mjs` and `tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs` through their real dashboard, wire, and manager mutation seams. Preserve symlink coverage and update the retired-disband and manager tool-count assertions. Exercise detached creation, code and persona membership edits, active-session and dirty-state rejection, unreachable detached commits, branch-ref reachability, and successful guarded disband after closing the hub session. Use an isolated fixture for destructive manager smoke flows, including when `MTMS_ROOT` is set. Update `tools/manual-test/PLAN.md` and `tools/manual-test/README.md` to match the new coverage.
+
+**Verify:** Run `npm run build`, `npm run check`, `npm run test --workspace=@pimote/server -- --run`, and `npm run test --workspace=client -- --run`. Run `node tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs` and `node tools/manual-test/project-management-smoke/project-management-smoke.mjs` with the documented browser prerequisites. Both smoke drivers pass.
+**Status:** not started
