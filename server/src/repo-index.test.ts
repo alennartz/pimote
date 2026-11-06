@@ -479,6 +479,20 @@ describe('RepoIndex lazy status enrichment (window path)', () => {
     expect(rows.find((r) => r.path === b)?.dirty).toBe(false);
   });
 
+  it('evicts status for a removed nested checkout', async () => {
+    const repo = join(tempDir, 'repo');
+    await initRepo(repo);
+    const index = makeIndex();
+    await writeFile(join(repo, 'notes.txt'), 'dirty');
+    await index.enrichStatus([repo]);
+    expect((await index.enrichStatus([repo])).get(repo)?.dirty).toBe(true);
+
+    await rm(join(repo, 'notes.txt'));
+    index.evictStatus([repo]);
+
+    expect((await index.enrichStatus([repo])).get(repo)?.dirty).toBe(false);
+  });
+
   it('keeps stale lazy listing refreshes identity-only', async () => {
     const a = join(tempDir, 'a');
     const b = join(tempDir, 'b');

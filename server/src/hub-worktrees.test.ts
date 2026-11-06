@@ -58,27 +58,54 @@ async function gitWorktreeList(cwd: string): Promise<string[]> {
     .map((line) => line.slice('worktree '.length).trim());
 }
 
-describe('HubWorktrees.inspectMember', () => {
-  it('recognizes a nested detached worktree and reports its facts', async () => {
+describe('HubWorktrees.recognize', () => {
+  it('recognizes a nested detached worktree and reports the worktree set as source candidates', async () => {
     const worktreePath = await addNestedWorktree('repo-a');
 
-    const facts = await worktrees.inspectMember(worktreePath);
+    const recognition = await worktrees.recognize(worktreePath);
 
-    expect(facts).toMatchObject({
-      sourcePath: sourceRepo,
-      worktreePath,
-      branch: null,
-      dirty: false,
-      detached: true,
-      headReachableFromBranchRef: true,
+    expect(recognition).toEqual({ worktreePath, sourceCandidates: [sourceRepo] });
+  });
+
+  it('lists linked worktrees after the main worktree in the source candidates', async () => {
+    const worktreePath = await addNestedWorktree('repo-a');
+    const linked = join(tempDir, 'linked');
+    await execFileAsync('git', ['worktree', 'add', linked], { cwd: sourceRepo });
+
+    const recognition = await worktrees.recognize(worktreePath);
+
+    expect(recognition?.sourceCandidates).toEqual([sourceRepo, linked]);
+  });
+
+  it('excludes a bare main worktree from the source candidates', async () => {
+    const bare = join(tempDir, 'bare');
+    await execFileAsync('git', ['clone', '--bare', sourceRepo, bare]);
+    const child = join(hubDir, 'from-bare');
+    await execFileAsync('git', ['worktree', 'add', '--detach', child, 'HEAD'], { cwd: bare });
+
+    const recognition = await worktrees.recognize(child);
+
+    expect(recognition?.sourceCandidates).toEqual([bare]);
+  });
+
+  it('recognizes without running status or reachability probes', async () => {
+    const worktreePath = await addNestedWorktree('repo-a');
+    const calls: string[][] = [];
+    const observing = new HubWorktrees(async (args, cwd) => {
+      calls.push(args);
+      return gitRunner(args, cwd);
     });
+
+    await observing.recognize(worktreePath);
+
+    expect(calls).toEqual([['worktree', 'list', '--porcelain']]);
   });
 
   it('returns null for an ordinary nested directory', async () => {
     const plain = join(hubDir, 'plain');
     await mkdir(plain);
 
-    await expect(worktrees.inspectMember(plain)).resolves.toBeNull();
+    await expect(worktrees.recognize(plain)).resolves.toBeNull();
   });
 
   it('returns null for an independent repository with a .git directory', async () => {
@@ -86,11 +113,34 @@ describe('HubWorktrees.inspectMember', () => {
     await mkdir(independent, { recursive: true });
     await execFileAsync('git', ['init'], { cwd: independent });
 
-    await expect(worktrees.inspectMember(independent)).resolves.toBeNull();
+    await expect(worktrees.recognize(independent)).resolves.toBeNull();
   });
 
   it('returns null for a path Git cannot verify', async () => {
-    await expect(worktrees.inspectMember(join(hubDir, 'missing'))).resolves.toBeNull();
+    await expect(worktrees.recognize(join(hubDir, 'missing'))).resolves.toBeNull();
+  });
+});
+
+describe('HubWorktrees.isDirty', () => {
+  it('reports a clean repository as not dirty', async () => {
+    await expect(worktrees.isDirty(sourceRepo)).resolves.toBe(false);
+  });
+
+  it('reports untracked changes as dirty', async () => {
+    await writeFile(join(sourceRepo, 'scratch.txt'), 'wip\n', 'utf8');
+    await expect(worktrees.isDirty(sourceRepo)).resolves.toBe(true);
+  });
+});
+
+describe('HubWorktrees.pruneStale', () => {
+  it("drops worktree metadata left behind a checkout removed behind Git's back", async () => {
+    const worktreePath = await addNestedWorktree('repo-a');
+    await rm(worktreePath, { recursive: true, force: true });
+    expect(await gitWorktreeList(sourceRepo)).toContain(worktreePath);
+
+    await worktrees.pruneStale(sourceRepo);
+
+    expect(await gitWorktreeList(sourceRepo)).not.toContain(worktreePath);
   });
 });
 

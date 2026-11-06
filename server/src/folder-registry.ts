@@ -7,6 +7,7 @@ import type { FolderEntry, FolderNature, FolderOccurrence, SparseTree } from './
 import type { FolderRegistryPort, FolderUpdatePatch, HubActivityPort } from './manager/types.js';
 import type { HubWorktreePort } from './hub-worktrees.js';
 import { HubWorktrees, defaultWorktreeGitRunner } from './hub-worktrees.js';
+import { mapWithConcurrency } from './concurrency.js';
 import { hubAgentsMarkdown, injectMemberLine, managedMemberNature, removeMemberLine, seededMemberLine } from './hub-agents-md.js';
 import { MEMORY_STUB } from './folder-seeding.js';
 import { createHubDirectory, hasWorktreeMarker, materializeHubFolder, memberIgnoreLine, worktreeHubIgnore, writeWorktreeMarker } from './folder-sources/materialize.js';
@@ -338,13 +339,24 @@ async function symlinkMember(
   }
 }
 
+/** Bounded child-probe concurrency for the hub shape probe: one Git command
+ *  per candidate child, so an unbounded burst over many children floods the
+ *  process table. */
+const HUB_PROBE_CONCURRENCY = 4;
+
 /**
  * The combined hub shape probe for each given path (plan:
  * hub-member-representation). Symlink members follow the symlink rules above;
  * real child directories count as members only when
- * `HubWorktreePort.inspectMember` verifies them as nested Git worktrees —
+ * `HubWorktreePort.recognize` verifies them as nested Git worktrees —
  * ordinary directories and independent repositories (a `.git` directory)
- * are not members. The mode is worktree when a valid `.pimote-hub.json`
+ * are not members. A recognized worktree whose source repository is the
+ * probed directory itself, or inside it, is not a member either: a plain
+ * repository holding a top-level linked worktree must never read as a
+ * worktree hub — disbanding it would delete the repository. The member's
+ * canonical identity resolves against known folders, preferring a candidate
+ * whose basename matches the selected child and rejecting ambiguity. The
+ * mode is worktree when a valid `.pimote-hub.json`
  * marker or a nested worktree says so; the marker preserves the worktree
  * choice after the last code worktree is removed. Shapes sort members by
  * name. Empty shapes are retained only for source hubs, rows that already
@@ -377,25 +389,42 @@ async function probeHubShapes(
       if (entry.isSymbolicLink()) {
         const member = await symlinkMember(path, entry.name, hubCanonical, agentsMarkdown, knownFolders);
         if (member) members.push(member);
-      } else if (entry.isDirectory()) {
-        const facts = await worktrees.inspectMember(join(path, entry.name)).catch(() => null);
-        if (!facts) continue;
-        const target = await realpath(facts.sourcePath).catch(() => facts.sourcePath);
+      }
+    }
+    // Git-backed recognition runs concurrently across the candidate children:
+    // one `git worktree list` each, never a status probe — the listing path
+    // must not block on Git.
+    const probed = await mapWithConcurrency(
+      entries.filter((entry) => entry.isDirectory() && entry.name !== 'AGENTS.md'),
+      HUB_PROBE_CONCURRENCY,
+      async (entry): Promise<HubMember | null> => {
+        const recognition = await worktrees.recognize(join(path, entry.name)).catch(() => null);
+        if (!recognition) return null;
+        const candidates = await Promise.all(
+          recognition.sourceCandidates.map(async (candidate) => {
+            const canonical = await realpath(candidate).catch(() => candidate);
+            return knownFolders.has(canonical) || knownFolders.has(candidate) ? { path: canonical, exactName: basename(canonical) === entry.name } : null;
+          }),
+        );
+        const known = candidates.filter((candidate): candidate is { path: string; exactName: boolean } => candidate !== null);
+        // Hub creation names each checkout after its canonical member. Prefer
+        // that exact basename so a linked worktree selected as the member
+        // keeps its identity instead of collapsing onto the repository's main
+        // checkout. If a hand-built checkout has no basename match, accept a
+        // sole known candidate; multiple candidates remain unverifiable and
+        // do not become a member with a guessed identity.
+        const exact = known.filter((candidate) => candidate.exactName);
+        const target = (exact.length === 1 ? exact[0] : exact.length === 0 && known.length === 1 ? known[0] : null)?.path;
+        if (!target) return null;
         // A checkout detached from the probed directory itself, or from
         // something inside it, is not a member: a plain repository holding a
         // top-level linked worktree (or submodule) must never read as a
         // worktree hub — disbanding it would delete the repository.
-        if (target === hubCanonical || isInside(target, hubCanonical)) continue;
-        members.push({
-          name: entry.name,
-          target,
-          nature: 'code',
-          representation: 'worktree',
-          worktreePath: facts.worktreePath,
-          missing: false,
-        });
-      }
-    }
+        if (target === hubCanonical || isInside(target, hubCanonical)) return null;
+        return { name: entry.name, target, nature: 'code', representation: 'worktree', worktreePath: recognition.worktreePath, missing: false };
+      },
+    );
+    for (const member of probed) if (member) members.push(member);
     const marked = await hasWorktreeMarker(path);
     const representation: HubMemberRepresentation = marked || members.some((member) => member.representation === 'worktree') ? 'worktree' : 'symlink';
     if (members.length > 0 || marked || retainEmptyPaths.has(path)) {
@@ -857,43 +886,39 @@ export class FolderRegistry implements FolderRegistryPort {
     } catch (error) {
       for (const worktree of created) await this.worktrees.remove(worktree).catch(() => {});
       await rm(target, { recursive: true, force: true }).catch(() => {});
+      // A failed create or a swallowed remove can leave stale worktree
+      // metadata behind the deleted checkout; prune each code source so
+      // Git's worktree list stays truthful.
+      for (const memberPath of memberPaths) {
+        if (natures.get(memberPath) !== 'persona') await this.worktrees.pruneStale(memberPath).catch(() => {});
+      }
       throw error;
     }
   }
 
   /**
    * Disband a worktree hub (plan: hub-member-representation): validate the
-   * activity, clean-state, and detached-`HEAD` guards, remove every nested
-   * worktree through Git, then delete the hub directory. Only a marked or
-   * Git-verified worktree hub accepts it; symlink hubs reject. Returns the
-   * removed checkout paths.
+   * marker, activity, content, clean-state, and detached-`HEAD` guards,
+   * remove every nested worktree through Git, then delete the hub directory.
+   * Only a hub carrying the `.pimote-hub.json` marker accepts it — shape-
+   * derived worktree membership still powers rows and member edits, but a
+   * directory that merely holds a linked worktree of any repository can
+   * never lose its contents to disband. Returns the removed checkout paths.
    */
   async disbandHub(hubPath: string): Promise<{ removedWorktreePaths: string[] }> {
     return this.serialized(async () => {
+      // The marker is the deliberate worktree-hub act; without it, disband
+      // rejects before anything else runs.
+      if (!(await hasWorktreeMarker(hubPath))) throw new Error(`Not a marked worktree hub: ${hubPath}`);
       // The same hub-row gate addMember and removeMember apply: an arbitrary
       // path — one the registry does not vouch for as a hub — never qualifies.
       const hub = (await this.listLazy()).find((folder) => folder.path === hubPath);
       if (!hub || !isManageableHub(hub)) throw new Error(`Not a worktree hub: ${hubPath}`);
-      const shape = (await probeHubShapes([hubPath], this.worktrees, new Map())).get(hubPath);
+      const shape = (await probeHubShapes([hubPath], this.worktrees, await this.knownFolderNatures())).get(hubPath);
       if (!shape || shape.representation !== 'worktree') throw new Error(`Not a worktree hub: ${hubPath}`);
       const worktrees = shape.members.filter((member) => member.representation === 'worktree').map((member) => ({ sourcePath: member.target, worktreePath: member.worktreePath! }));
 
-      // Fail closed: a child directory carrying a `.git` file the probe could
-      // not verify is still a checkout-shaped thing. Treating it as an
-      // ordinary directory would let the deletion below destroy its uncommitted
-      // work exactly when Git is unhealthy (a moved source repo, a broken
-      // gitdir pointer, a timed-out probe).
-      const verified = new Set(worktrees.map((worktree) => resolve(worktree.worktreePath)));
-      const children = await readdir(hubPath, { withFileTypes: true }).catch(() => [] as Dirent[]);
-      for (const child of children) {
-        if (!child.isDirectory()) continue;
-        const childPath = join(hubPath, child.name);
-        if (verified.has(resolve(childPath))) continue;
-        const gitEntry = await lstat(join(childPath, '.git')).catch(() => null);
-        if (gitEntry?.isFile()) throw new Error(`Git cannot verify the checkout at ${childPath}; resolve it before disbanding the hub.`);
-      }
-
-      // The activity guard runs before any worktree validation: it closes
+      // The activity guard runs before any other removal guard: it closes
       // idle, observerless session slots first — disband retires sessions the
       // way archiving does — then rejects on the sessions or external pi
       // processes that remain. The guard must see the hub and every checkout,
@@ -902,6 +927,57 @@ export class FolderRegistry implements FolderRegistryPort {
         const busy = await this.activity.closeIdleSessionsAt([hubPath, ...worktrees.map((worktree) => worktree.worktreePath)]);
         if (busy.length > 0) throw new Error(`Hub is in use by an active session or pi process: ${busy.join(', ')}`);
       }
+
+      // The hub's own content is not disposable. Beyond the generated files
+      // and the managed members, anything in the hub — a user file, an
+      // edited AGENTS.md sibling, an independent repository cloned in —
+      // blocks deletion. And fail closed on checkout-shaped children the
+      // probe could not verify: treating them as ordinary directories would
+      // let the deletion below destroy their uncommitted work exactly when
+      // Git is unhealthy (a moved source repo, a broken gitdir pointer, a
+      // timed-out probe).
+      const generated = new Set(['AGENTS.md', '.gitignore', '.pimote-hub.json', 'memory.md', '.git']);
+      const memberNames = new Set(shape.members.map((member) => member.name));
+      const memberCheckouts = new Set(worktrees.map((worktree) => resolve(worktree.worktreePath)));
+      const children = await readdir(hubPath, { withFileTypes: true }).catch(() => [] as Dirent[]);
+      for (const child of children) {
+        const childPath = join(hubPath, child.name);
+        if (generated.has(child.name)) continue;
+        if (child.isSymbolicLink() && memberNames.has(child.name)) continue;
+        if (child.isDirectory()) {
+          if (memberCheckouts.has(resolve(childPath))) continue;
+          const gitEntry = await lstat(join(childPath, '.git')).catch(() => null);
+          if (gitEntry?.isFile()) throw new Error(`Git cannot verify the checkout at ${childPath}; resolve it before disbanding the hub.`);
+        }
+        throw new Error(`Unrecognized content in the hub: ${childPath}; remove this uncommitted hub content before disbanding the hub.`);
+      }
+      // `.gitignore` is generated and deterministic from the managed member
+      // names. A user edit that hides unrelated hub content must block the
+      // destructive operation, even when Git itself ignores that file.
+      const ignoreContent = await readTextIfPresent(join(hubPath, '.gitignore'));
+      if (ignoreContent !== null) {
+        const expectedIgnore = new Set(
+          worktreeHubIgnore([...memberNames])
+            .trim()
+            .split('\n')
+            .filter(Boolean),
+        );
+        const actualIgnore = new Set(ignoreContent.trim().split('\n').filter(Boolean));
+        if (actualIgnore.size !== expectedIgnore.size || [...actualIgnore].some((line) => !expectedIgnore.has(line))) {
+          throw new Error(`The hub .gitignore was edited; restore generated content before disbanding the hub.`);
+        }
+      }
+      // The hub repository's uncommitted work dies with the hub — reject on
+      // it, and fail closed when Git cannot answer.
+      let hubDirty: boolean;
+      try {
+        const generatedHubPaths = new Set([...generated, ...memberNames]);
+        hubDirty = await this.worktrees.isDirty(hubPath, generatedHubPaths);
+      } catch {
+        throw new Error(`Cannot verify the state of the hub repository: ${hubPath}`);
+      }
+      if (hubDirty) throw new Error(`The hub repository has uncommitted changes: ${hubPath}`);
+
       // Validate every checkout before removing any: a partial removal must
       // never strand dirty or unreachable work.
       for (const worktree of worktrees) {
@@ -925,9 +1001,12 @@ export class FolderRegistry implements FolderRegistryPort {
         failed = true;
         throw error;
       } finally {
-        // A partial failure still changed the shape: refresh discovery and
-        // tell clients, so a retry sees what remains.
+        // A partial failure still changed the shape: refresh discovery, drop
+        // the removed checkouts' cached status, and tell clients, so a retry
+        // sees what remains.
         this.repos.invalidateListing();
+        this.repos.evictStatus(removedWorktreePaths);
+        await Promise.all(worktrees.map((worktree) => this.worktrees.pruneStale(worktree.sourcePath).catch(() => {})));
         if (failed) this.fireChange({ changedPaths: [hubPath], removedPaths: [] });
       }
       this.fireChange({ changedPaths: [], removedPaths: [hubPath] });
@@ -991,9 +1070,19 @@ export class FolderRegistry implements FolderRegistryPort {
       let createdWorktree: string | null = null;
       if (asWorktree) {
         const child = join(hubPath, name);
-        await this.worktrees.createDetached({ sourcePath: memberPath, worktreePath: child });
+        try {
+          await this.worktrees.createDetached({ sourcePath: memberPath, worktreePath: child });
+        } catch (error) {
+          // Git can register a worktree before reporting a late failure. Prune
+          // the source metadata even when the checkout never reached `undo`.
+          await this.worktrees.pruneStale(memberPath).catch(() => {});
+          throw error;
+        }
         createdWorktree = child;
-        undo.push(() => this.worktrees.remove({ sourcePath: memberPath, worktreePath: child }));
+        undo.push(async () => {
+          await this.worktrees.remove({ sourcePath: memberPath, worktreePath: child });
+          await this.worktrees.pruneStale(memberPath).catch(() => {});
+        });
       } else {
         await symlink(memberPath, linkPath);
         undo.push(() => unlink(linkPath));
@@ -1010,6 +1099,7 @@ export class FolderRegistry implements FolderRegistryPort {
             strandedWorktree ??= createdWorktree;
           });
         }
+        if (createdWorktree) await this.worktrees.pruneStale(memberPath).catch(() => {});
         if (strandedWorktree) {
           throw new Error(`Rolled back the member add but could not remove the new checkout ${strandedWorktree}; it stays discoverable for retry.`, { cause: error });
         }
@@ -1057,6 +1147,8 @@ export class FolderRegistry implements FolderRegistryPort {
         // Git removes the checkout; the source repository and its branches
         // stay untouched.
         await this.worktrees.remove({ sourcePath: member.target, worktreePath: member.worktreePath! });
+        // The checkout leaves the listing; its cached status must not linger.
+        this.repos.evictStatus([member.worktreePath!]);
       } else {
         // Unlink the hub-side symlink ONLY — the member folder is never
         // touched. The probe excludes AGENTS.md, so instruction symlinks are

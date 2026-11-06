@@ -15,7 +15,7 @@ Steps 1–5 and 7–11 were implemented faithfully: the Git worktree adapter, sh
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `server/src/folder-registry.ts:860-891`, `server/src/folder-registry.ts:376-392`, `server/src/hub-worktrees.ts:145-175`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** In `probeHubShapes`, drop worktree members whose `sourcePath` equals or sits inside the probed directory; in `disbandHub`, require `hubPath` to be a known hub row that carries the `.pimote-hub.json` marker.
 
 Every scanned row is probed, and every scanned row is a folder with a `.git` entry. A top-level child with a `.git` file that `git worktree list --porcelain` confirms turns the parent into a "worktree hub": a repo with `git worktree add ./wt`, a dotfiles repo in `~`, or a repo with a top-level submodule. The dashboard then shows "Disband worktree hub…". The `disband_hub` command and `pimote_disband_hub` also accept any `hubPath`, even one that is not a known row. Reproduced: `disbandHub(R)` on a plain repo `R` holding a clean detached `R/wt` and an uncommitted file deleted the whole of `R`, uncommitted file included. A repo with a submodule survives (`git worktree remove` refuses a main working tree) but still shows the hub badge and the disband action, and an attempt closes its idle sessions before it fails.
@@ -35,7 +35,7 @@ Every scanned row is probed, and every scanned row is a folder with a `.git` ent
 - **Category:** plan deviation
 - **Severity:** critical
 - **Location:** `server/src/hub-activity.test.ts`, `server/src/folder-registry-worktree.test.ts:346-512`, `server/src/manager/types.ts:135-143`, `server/src/hub-activity.ts`, `server/src/folder-registry.ts:866-876`, `server/src/session-manager.ts:1454-1501`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Amend the plan's Interfaces, Step 2, and Step 6 to the DR-085 semantics (or revert to the planned `findBusyPaths` guard), then restore or re-freeze the affected guard tests.
 
 The plan specifies `HubActivityPort.findBusyPaths` as an observation-only guard that checks the hub subtree for active Pimote sessions and external pi processes and rejects. The implementation redefines the port as `closeIdleSessionsAt`, which mutates session state first (closes idle observerless slots through the close lifecycle) and rejects only on what remains. DR-085 records the decision as Accepted, but the plan was never amended. The change also drags in unplanned work: a refactor of the idle reaper's busy rule (`isSlotBusy`, `startIdleCheck`) plus new `session-manager.test.ts` coverage. Test immutability is violated: the Tests section freezes `hub-activity.test.ts` and `folder-registry-worktree.test.ts` at `278f371`, and commit `5f8965e` rewrote both — inverting a settled expectation ("activity rejection wins over dirty state" became "closes an idle observerless session before the remaining guards run").
@@ -45,7 +45,7 @@ The plan specifies `HubActivityPort.findBusyPaths` as an observation-only guard 
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/folder-registry.ts:891`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Before `rm`, reject when the hub's own repo is dirty or when any child is not a member, the marker, or a generated file.
 
 The guards cover nested worktrees only. The deletion also removes everything else in the hub: the hub repo's uncommitted files, persona `memory.md`, and independent repos cloned into the hub. The probe itself says independent repos "are not members", yet disband deletes them. The UI dialog does not warn about any of this.
@@ -55,7 +55,7 @@ The guards cover nested worktrees only. The deletion also removes everything els
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/hub-worktrees.ts:162-166`, `server/src/folder-registry.ts:382-389`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Map the member to the folder it was created from (for example by matching `git rev-parse --git-common-dir` against known folders); do not use the first non-bare entry.
 
 If the selected member is itself a linked worktree or a submodule, the probe reports `target` as the main worktree. If the main repo is bare, `find(!bare)` returns an arbitrary linked worktree. The shape then disagrees with the selected `memberPath`: `removeMember(hub, selectedPath)` fails with "Not a member", and members that resolve to the same target collide in `memberNature`/`memberCheckout` and `find`.
@@ -75,7 +75,7 @@ The plan's Interfaces section says worktree-hub row facts "describe the nested c
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/folder-registry.ts:355-404`, `server/src/hub-worktrees.ts:157-175`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Limit `inspectMember` in the view path to `worktree list` recognition and run the probes with bounded concurrency.
 
 `viewOver` calls `inspectMember` for each child directory with a `.git` file across every scanned row: `worktree list`, then `status --porcelain`, then `rev-list`, in sequence — and the view discards the dirty and reachability results. This breaks `listLazy`'s promise of never blocking on Git probes, in the WS listing and inside each `update`, `addMember`, and `removeMember` (under the mutation lock). Repos with several submodules pay the same cost.
@@ -85,7 +85,7 @@ The plan's Interfaces section says worktree-hub row facts "describe the nested c
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/takeover.ts:94-105`, `server/src/hub-activity.ts:24-33`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** For the guard, report every pi process whose cwd is inside the hub, not only root processes.
 
 The scan drops any pi process that descends from pimote or from another pi process, wherever that parent runs. A subagent with cwd inside a hub worktree is invisible to the guard when its parent runs elsewhere (a pimote session's child, or an external pi in another folder). Disband then deletes the directory under a running agent. `findExternalPiProcesses` in takeover also changed: a subagent whose parent pi runs in another folder no longer counts as a conflict.
@@ -125,7 +125,7 @@ Commit `c798341` recorded the worktree-hub decision as DR-080 while `DR-080-vali
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `client/src/lib/components/HubMembersDialog.svelte:119`
-- **Status:** open
+- **Status:** dismissed
 - **Fix:** Move the representation hint into the picker rows, or accept the drift.
 
 The approved mock renders the hint per row (`/workspace/web · code → detached worktree`); the implementation shows a single note below the picker ("Code members join as detached worktrees."). The plan intent — show the layout a new code member will use — is met; the per-row affordance from the mock is not.
@@ -135,7 +135,7 @@ The approved mock renders the hint per row (`/workspace/web · code → detached
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/folder-registry.ts:846-849`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** After `rm`, run `git worktree prune` in each source.
 
 Two cases leave a prunable entry in the source repo: a `createDetached` that fails midway is never added to `created`, and a swallowed `remove` failure is followed by `rm -rf` of the checkout. Git then reports a missing worktree until someone prunes it.
@@ -145,7 +145,7 @@ Two cases leave a prunable entry in the source repo: a `createDetached` that fai
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/repo-index.ts:419-430`, `server/src/repo-index.ts:614-618`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Evict cache entries for non-listed paths on `invalidateListing`, or after removal and disband.
 
 `enrichStatus` and `refreshRequestedStatus` probe and cache paths the listing does not carry. Paths of removed and disbanded worktrees stay in `statusCache` for the life of the process.

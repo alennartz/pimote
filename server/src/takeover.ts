@@ -39,20 +39,21 @@ interface ExternalPiProcessInfo {
 }
 
 /**
- * Scan /proc for every root external pi process with its working directory.
+ * Scan /proc for external pi processes with their working directories.
  *
- * Excludes:
- * - The current process (pimote server)
- * - Descendants of the current process (sub-agents spawned by this server)
- * - Descendants of any other pi process (sub-agents spawned by an external pi)
- *
- * Only "root" pi processes — those not parented by another pi process or this
- * server — are returned.
+ * `rootsOnly` controls how sub-agents are treated:
+ * - true: exclude descendants of the current process (pimote server) and of
+ *   any other pi process — only "root" pi processes come back. Takeover's
+ *   exact-directory conflict check keeps this rule.
+ * - false: exclude only the current process and its descendants — every
+ *   other pi process counts, including sub-agents spawned by an external pi
+ *   elsewhere. The disband activity guard uses this rule: a sub-agent whose
+ *   cwd sits inside the hub subtree must never be silently ignored.
  *
  * Throws when /proc itself cannot be read: the disband activity guard fails
  * closed rather than treating an unavailable enumeration as "no activity".
  */
-async function scanRootExternalPiProcesses(): Promise<ExternalPiProcessInfo[]> {
+async function scanExternalPiProcesses(rootsOnly: boolean): Promise<ExternalPiProcessInfo[]> {
   const myPid = process.pid;
 
   const entries = await readdir('/proc');
@@ -93,9 +94,10 @@ async function scanRootExternalPiProcesses(): Promise<ExternalPiProcessInfo[]> {
 
   if (allProcesses.length === 0) return [];
 
-  // Second pass: filter out any pi process that is a descendant of
-  // this server or of another pi process in the set.
-  const ancestorPids = new Set([myPid, ...allProcesses.map((processInfo) => processInfo.pid)]);
+  // Second pass: filter out pi processes the requested rule excludes. The
+  // root rule drops any process descended from this server or from another
+  // pi process; the guard rule drops only this server's descendants.
+  const ancestorPids = rootsOnly ? new Set([myPid, ...allProcesses.map((processInfo) => processInfo.pid)]) : new Set([myPid]);
   const rootProcesses: ExternalPiProcessInfo[] = [];
 
   for (const processInfo of allProcesses) {
@@ -109,7 +111,7 @@ async function scanRootExternalPiProcesses(): Promise<ExternalPiProcessInfo[]> {
 /**
  * Find external pi processes whose working directory matches `folderPath`.
  * Scans /proc to find processes running pi-coding-agent in the given folder.
- * Same exclusions as `scanRootExternalPiProcesses`.
+ * Same exclusions as the root-only scan (`rootsOnly: true`).
  */
 export async function findExternalPiProcesses(folderPath: string): Promise<number[]> {
   let resolvedFolder: string;
@@ -121,7 +123,7 @@ export async function findExternalPiProcesses(folderPath: string): Promise<numbe
 
   let processes: ExternalPiProcessInfo[];
   try {
-    processes = await scanRootExternalPiProcesses();
+    processes = await scanExternalPiProcesses(true);
   } catch {
     return [];
   }
@@ -130,12 +132,14 @@ export async function findExternalPiProcesses(folderPath: string): Promise<numbe
 }
 
 /**
- * Working directories of every root external pi process, deduplicated.
- * Supports the disband activity guard's subtree checks; throws when /proc
- * cannot be read so the guard fails closed (never an empty "all clear").
+ * Working directories of every external pi process outside this server,
+ * deduplicated — sub-agents of external pi processes included, so the
+ * disband activity guard's subtree checks cannot miss them. Throws when
+ * /proc cannot be read so the guard fails closed (never an empty "all
+ * clear").
  */
 export async function listExternalPiWorkingDirectories(): Promise<string[]> {
-  const processes = await scanRootExternalPiProcesses();
+  const processes = await scanExternalPiProcesses(false);
   return [...new Set(processes.map((processInfo) => processInfo.cwd))];
 }
 

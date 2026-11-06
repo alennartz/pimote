@@ -17,11 +17,12 @@ import { join, resolve } from 'node:path';
  *   the canonical code member. It does not inspect or modify the member's
  *   branch, stash changes, move changes, or use the pi extension's shared
  *   `.git-worktrees` directory.
- * - `inspectMember` accepts only a top-level hub child. It recognizes a
- *   worktree when the child has a `.git` file and `git worktree list
- *   --porcelain` confirms the exact checkout. It rejects ordinary nested
- *   directories, independent repositories with `.git` directories, and
- *   paths Git cannot verify.
+ * - `recognize` accepts only a top-level hub child. It recognizes a worktree
+ *   when the child has a `.git` file and `git worktree list --porcelain`
+ *   confirms the exact checkout. It rejects ordinary nested directories,
+ *   independent repositories with `.git` directories, and paths that Git
+ *   cannot verify. It runs no status probes, so the listing path never
+ *   blocks on Git beyond the one recognition command.
  * - `validateRemoval` for ordinary member removal requires an empty
  *   `git status --porcelain`. Disband adds the stronger detached-`HEAD`
  *   reachability check: `HEAD` must be reachable from a local
@@ -36,18 +37,15 @@ import { join, resolve } from 'node:path';
  *  and command timeouts. */
 export type WorktreeGitRunner = (args: string[], cwd: string) => Promise<{ stdout: string }>;
 
-/** Status facts for one nested worktree member, derived from Git. */
-export interface WorktreeMemberFacts {
-  /** The canonical source checkout, resolved from Git's worktree set. */
-  sourcePath: string;
+/** Recognition facts for one nested worktree member, without status probes. */
+export interface WorktreeRecognition {
   /** The nested checkout inside the hub. */
   worktreePath: string;
-  /** The checked-out branch; null when detached. */
-  branch: string | null;
-  dirty: boolean;
-  detached: boolean;
-  /** True when `HEAD` is reachable from a local or remote-tracking branch ref. */
-  headReachableFromBranchRef: boolean;
+  /** Candidate canonical sources from Git's worktree set, excluding this
+   *  checkout. The registry resolves the member's canonical identity against
+   *  known folders, preferring a basename match to preserve a selected linked
+   *  worktree's identity. Bare repositories remain candidates. */
+  sourceCandidates: string[];
 }
 
 /** Removal-guard facts for one nested worktree: clean state plus, for
@@ -60,16 +58,22 @@ export interface WorktreeRemovalCheck {
 
 /** The worktree seam the folder registry consumes. */
 export interface HubWorktreePort {
-  /** Recognize a nested detached worktree at a top-level hub child; null
-   *  for ordinary directories, independent repositories, and unverifiable
-   *  paths. */
-  inspectMember(path: string): Promise<WorktreeMemberFacts | null>;
+  /** Recognize a nested worktree at a top-level hub child without probing
+   *  status; null for ordinary directories, independent repositories, and
+   *  unverifiable paths. */
+  recognize(path: string): Promise<WorktreeRecognition | null>;
   /** Create a detached worktree at `worktreePath` from `sourcePath`'s HEAD. */
   createDetached(input: { sourcePath: string; worktreePath: string }): Promise<void>;
   /** Validate removal preconditions without mutating anything. */
   validateRemoval(input: { sourcePath: string; worktreePath: string }): Promise<WorktreeRemovalCheck>;
   /** Remove the nested worktree through Git; the source stays untouched. */
   remove(input: { sourcePath: string; worktreePath: string }): Promise<void>;
+  /** Whether the Git repository at `path` carries uncommitted changes after
+   *  ignoring the named generated top-level files. */
+  isDirty(path: string, allowedPaths?: ReadonlySet<string>): Promise<boolean>;
+  /** Drop stale worktree metadata left behind when a checkout was removed
+   *  behind Git's back. */
+  pruneStale(sourcePath: string): Promise<void>;
 }
 
 const GIT_TIMEOUT_MS = 30_000;
@@ -119,16 +123,20 @@ function parseWorktreeList(stdout: string): WorktreeListEntry[] {
   return entries;
 }
 
-function branchNameFromRef(branchRef: string | null): string | null {
-  const prefix = 'refs/heads/';
-  return branchRef?.startsWith(prefix) ? branchRef.slice(prefix.length) : null;
-}
-
 /** Non-empty `git status --porcelain` — staged, unstaged, and untracked
  *  changes all count as dirty. */
-async function isDirty(run: WorktreeGitRunner, cwd: string): Promise<boolean> {
-  const { stdout } = await run(['status', '--porcelain'], cwd);
-  return stdout.trim() !== '';
+async function isDirty(run: WorktreeGitRunner, cwd: string, allowedPaths: ReadonlySet<string> = new Set()): Promise<boolean> {
+  const { stdout } = await run(['status', '--porcelain', '--untracked-files=all'], cwd);
+  return stdout.split('\n').some((line) => {
+    if (line.trim() === '') return false;
+    const path = line.slice(3).trim().replace(/\/$/, '');
+    // Fresh generated files are intentionally untracked. A staged new
+    // generated file is also safe. Once a generated file is modified or
+    // deleted after staging, it is hub-owned dirty content and must block
+    // destructive disband.
+    const status = line.slice(0, 2);
+    return !allowedPaths.has(path) || (status !== '??' && status !== 'A ');
+  });
 }
 
 /** True when `HEAD` is reachable from some local or remote-tracking branch
@@ -142,7 +150,7 @@ async function isHeadReachableFromBranchRef(run: WorktreeGitRunner, cwd: string)
 export class HubWorktrees implements HubWorktreePort {
   constructor(private readonly run: WorktreeGitRunner) {}
 
-  async inspectMember(path: string): Promise<WorktreeMemberFacts | null> {
+  async recognize(path: string): Promise<WorktreeRecognition | null> {
     // A linked worktree carries `.git` as a file; an independent repository
     // carries it as a directory and never counts as a hub member.
     const gitEntry = await lstat(join(path, '.git')).catch(() => null);
@@ -160,19 +168,11 @@ export class HubWorktrees implements HubWorktreePort {
     }
     const own = entries.find((entry) => resolve(entry.path) === resolve(resolved));
     if (!own) return null;
-    // The main worktree is listed first; that checkout is the canonical
-    // source repository the member was detached from.
-    const source = entries.find((entry) => !entry.bare);
-    if (!source) return null;
-
-    return {
-      sourcePath: source.path,
-      worktreePath: own.path,
-      branch: branchNameFromRef(own.branchRef),
-      dirty: await isDirty(this.run, path),
-      detached: own.detached || own.branchRef === null,
-      headReachableFromBranchRef: await isHeadReachableFromBranchRef(this.run, path),
-    };
+    // Exclude the selected checkout itself. Keep bare entries: a bare source
+    // repository is a valid canonical member even though it has no working
+    // tree of its own.
+    const sourceCandidates = entries.filter((entry) => resolve(entry.path) !== resolve(own.path)).map((entry) => entry.path);
+    return { worktreePath: own.path, sourceCandidates };
   }
 
   async createDetached(input: { sourcePath: string; worktreePath: string }): Promise<void> {
@@ -192,6 +192,14 @@ export class HubWorktrees implements HubWorktreePort {
     // No --force: the clean-state guard is authoritative, and Git's own
     // dirty-worktree refusal is the second line of defense.
     await this.run(['worktree', 'remove', input.worktreePath], input.sourcePath);
+  }
+
+  async isDirty(path: string, allowedPaths?: ReadonlySet<string>): Promise<boolean> {
+    return isDirty(this.run, path, allowedPaths);
+  }
+
+  async pruneStale(sourcePath: string): Promise<void> {
+    await this.run(['worktree', 'prune'], sourcePath);
   }
 
   private async isDetached(cwd: string): Promise<boolean> {

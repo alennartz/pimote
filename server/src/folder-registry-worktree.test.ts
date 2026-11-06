@@ -10,7 +10,7 @@ import { FolderRegistry } from './folder-registry.js';
 import { RepoIndex } from './repo-index.js';
 import { scanFolderModel } from './folder-model/index.js';
 import type { FolderModelPort } from './manager/types.js';
-import type { HubWorktreePort, WorktreeMemberFacts, WorktreeRemovalCheck } from './hub-worktrees.js';
+import type { HubWorktreePort, WorktreeRecognition, WorktreeRemovalCheck } from './hub-worktrees.js';
 import { HubActivity } from './hub-activity.js';
 
 const execFileAsync = promisify(execFile);
@@ -85,7 +85,10 @@ async function gitWorktreeList(cwd: string): Promise<string[]> {
  *  worktree for repo-a. This is the shape the implementation must produce. */
 async function makeWorktreeHub(name = 'platform'): Promise<{ hubPath: string; worktreePath: string }> {
   const hubPath = join(rootDir, name);
-  await initRepo(hubPath);
+  await mkdir(hubPath, { recursive: true });
+  const gitArgs = ['-c', 'init.defaultBranch=main', '-c', 'user.name=t', '-c', 'user.email=t@t'];
+  await execFileAsync('git', [...gitArgs, 'init'], { cwd: hubPath });
+  await execFileAsync('git', [...gitArgs, 'commit', '--allow-empty', '-m', 'init'], { cwd: hubPath });
   await writeFile(join(hubPath, MARKER_FILE), JSON.stringify({ memberRepresentation: 'worktree' }), 'utf8');
   await writeFile(join(hubPath, 'AGENTS.md'), '# platform\n', 'utf8');
   const worktreePath = await addNestedWorktree(hubPath, repoA, 'repo-a');
@@ -109,6 +112,18 @@ async function findRow(registry: FolderRegistry, path: string): Promise<FolderIn
 }
 
 describe('FolderRegistry.createHub — worktree mode', () => {
+  it('preserves a selected linked-worktree source identity', async () => {
+    const linkedSource = join(rootDir, 'linked-source');
+    await execFileAsync('git', ['worktree', 'add', linkedSource], { cwd: repoA });
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree());
+
+    const created = await registry.createHub({ name: 'platform-linked', root: rootDir, memberPaths: [linkedSource], memberRepresentation: 'worktree' });
+    const row = await findRow(registry, created.path);
+
+    expect(row?.members?.find((member) => member.name === 'linked-source')?.path).toBe(linkedSource);
+    expect(row?.repos?.find((repo) => repo.worktreePath === join(created.path, 'linked-source'))?.path).toBe(linkedSource);
+  });
+
   it('materializes code members as detached worktrees and persona members as symlinks', async () => {
     const registry = new FolderRegistry(makeIndex(), storeDir, makeTree());
 
@@ -209,7 +224,7 @@ describe('FolderRegistry.createHub — worktree mode', () => {
   it('rolls back created worktrees and removes the hub when materialization fails', async () => {
     const worktreesPresentBeforeRemoval: string[] = [];
     const worktreePort: HubWorktreePort = {
-      async inspectMember(): Promise<WorktreeMemberFacts | null> {
+      async recognize(): Promise<WorktreeRecognition | null> {
         return null;
       },
       async createDetached(input: { sourcePath: string; worktreePath: string }): Promise<void> {
@@ -223,6 +238,10 @@ describe('FolderRegistry.createHub — worktree mode', () => {
         if (existsSync(input.worktreePath)) worktreesPresentBeforeRemoval.push(input.worktreePath);
         await execFileAsync('git', ['worktree', 'remove', input.worktreePath], { cwd: input.sourcePath });
       },
+      async isDirty(): Promise<boolean> {
+        return false;
+      },
+      async pruneStale(): Promise<void> {},
     };
     const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), worktreePort);
 
@@ -258,9 +277,9 @@ describe('FolderRegistry.addMember — rollback', () => {
     const created = join(hubPath, 'repo-b');
     let createdCheckout = false;
     const worktrees: HubWorktreePort = {
-      async inspectMember(path) {
+      async recognize(path) {
         const sourcePath = path === worktreePath ? repoA : path === created ? repoB : undefined;
-        return sourcePath && existsSync(path) ? { sourcePath, worktreePath: path, branch: null, dirty: false, detached: true, headReachableFromBranchRef: true } : null;
+        return sourcePath && existsSync(path) ? { worktreePath: path, sourceCandidates: [sourcePath] } : null;
       },
       async createDetached({ sourcePath, worktreePath: child }) {
         await execFileAsync('git', ['worktree', 'add', '--detach', child, 'HEAD'], { cwd: sourcePath });
@@ -274,6 +293,10 @@ describe('FolderRegistry.addMember — rollback', () => {
       async remove({ sourcePath, worktreePath: child }) {
         await execFileAsync('git', ['worktree', 'remove', child], { cwd: sourcePath });
       },
+      async isDirty(): Promise<boolean> {
+        return false;
+      },
+      async pruneStale(): Promise<void> {},
     };
     const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), worktrees);
 
@@ -360,17 +383,17 @@ describe('FolderRegistry.disbandHub', () => {
     expect(await gitWorktreeList(repoA)).not.toContain(worktreePath);
   });
 
-  it('accepts a worktree hub identified by a valid nested worktree when the marker is absent', async () => {
+  it('rejects a worktree-shaped directory when the marker is absent', async () => {
     const hubPath = join(rootDir, 'unmarked');
     await initRepo(hubPath);
     await writeFile(join(hubPath, 'AGENTS.md'), '# unmarked\n', 'utf8');
     const worktreePath = await addNestedWorktree(hubPath, repoA, 'repo-a');
     const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
 
-    const result = await registry.disbandHub(hubPath);
+    await expect(registry.disbandHub(hubPath)).rejects.toThrow(/marked worktree hub/i);
 
-    expect(result.removedWorktreePaths).toEqual([worktreePath]);
-    expect(existsSync(hubPath)).toBe(false);
+    expect(existsSync(hubPath)).toBe(true);
+    expect(existsSync(worktreePath)).toBe(true);
   });
 
   it('rejects a symlink hub without a marker or nested worktree', async () => {
@@ -379,6 +402,47 @@ describe('FolderRegistry.disbandHub', () => {
 
     await expect(registry.disbandHub(hubPath)).rejects.toThrow(/worktree hub/i);
     expect(existsSync(hubPath)).toBe(true);
+  });
+
+  it('rejects unexpected hub content and keeps the hub', async () => {
+    const { hubPath } = await makeWorktreeHub();
+    await writeFile(join(hubPath, 'notes.txt'), 'keep me\n', 'utf8');
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
+
+    await expect(registry.disbandHub(hubPath)).rejects.toThrow(/unrecognized content/i);
+    expect(existsSync(hubPath)).toBe(true);
+    expect(existsSync(join(hubPath, 'notes.txt'))).toBe(true);
+  });
+
+  it('rejects tracked edits to generated hub files', async () => {
+    const { hubPath } = await makeWorktreeHub();
+    await execFileAsync('git', ['add', 'AGENTS.md'], { cwd: hubPath });
+    await execFileAsync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'generated'], { cwd: hubPath });
+    await writeFile(join(hubPath, 'AGENTS.md'), '# changed by user\n', 'utf8');
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
+
+    await expect(registry.disbandHub(hubPath)).rejects.toThrow(/hub repository has uncommitted changes/i);
+    expect(existsSync(hubPath)).toBe(true);
+  });
+
+  it('rejects an edited generated gitignore', async () => {
+    const { hubPath } = await makeWorktreeHub();
+    await writeFile(join(hubPath, '.gitignore'), '/.pimote-hub.json\n/repo-a\n/notes.txt\n', 'utf8');
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
+
+    await expect(registry.disbandHub(hubPath)).rejects.toThrow(/gitignore was edited/i);
+    expect(existsSync(hubPath)).toBe(true);
+  });
+
+  it('allows generated hub files and managed worktree children', async () => {
+    const { hubPath, worktreePath } = await makeWorktreeHub();
+    await writeFile(join(hubPath, '.gitignore'), '/.pimote-hub.json\n/repo-a\n', 'utf8');
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
+
+    await registry.disbandHub(hubPath);
+
+    expect(existsSync(hubPath)).toBe(false);
+    expect(existsSync(worktreePath)).toBe(false);
   });
 
   it('rejects when a worktree has uncommitted changes and keeps the hub', async () => {
@@ -437,9 +501,9 @@ describe('FolderRegistry.disbandHub', () => {
     let removedOne = false;
     let failed = false;
     const worktrees: HubWorktreePort = {
-      async inspectMember(path) {
+      async recognize(path) {
         const sourcePath = sources.get(path);
-        return sourcePath && existsSync(path) ? { sourcePath, worktreePath: path, branch: null, dirty: false, detached: true, headReachableFromBranchRef: true } : null;
+        return sourcePath && existsSync(path) ? { worktreePath: path, sourceCandidates: [sourcePath] } : null;
       },
       async createDetached() {
         throw new Error('unexpected creation');
@@ -447,6 +511,10 @@ describe('FolderRegistry.disbandHub', () => {
       async validateRemoval() {
         return { dirty: false, detached: true, headReachableFromBranchRef: true };
       },
+      async isDirty(): Promise<boolean> {
+        return false;
+      },
+      async pruneStale(): Promise<void> {},
       async remove({ sourcePath, worktreePath: child }) {
         if (removedOne && !failed) {
           failed = true;

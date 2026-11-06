@@ -20,7 +20,7 @@ Add a per-hub choice between the existing symlink layout and nested detached Git
 ### New Modules
 
 - **Hub worktree Git adapter and shape probe (`server/src/hub-worktrees.ts`, approximate).** A deep server module that owns the Git CLI seam for detached worktree creation, nested-worktree recognition, status/reachability validation, and removal. It accepts a guarded `execFile` adapter in tests and uses the repository's existing environment protections and command timeouts. It never creates, names, attaches, merges, deletes, or fetches branches.
-- **Hub mode marker seam (within the hub layout module).** Reads and writes `.pimote-hub.json` containing only `{ "memberRepresentation": "worktree" }` for worktree hubs. It has no version, branch, or member list. Membership remains shape-derived; the marker preserves the worktree choice after the last code worktree is removed. A valid nested worktree also proves worktree representation when the marker is absent.
+- **Hub mode marker seam (within the hub layout module).** Reads and writes `.pimote-hub.json` containing only `{ "memberRepresentation": "worktree" }` for worktree hubs. It has no version, branch, or member list. Membership remains shape-derived; the marker preserves the worktree choice after the last code worktree is removed. A valid nested worktree also proves worktree representation when the marker is absent for rows and member edits. Disband is stricter: it requires the marker, so a directory that merely holds a linked worktree cannot be deleted as a hub.
 
 ### Interfaces
 
@@ -55,19 +55,18 @@ The worktree adapter exposes a small interface to the registry:
 
 ```ts
 interface HubWorktreePort {
-  inspectMember(path: string): Promise<WorktreeMemberFacts | null>;
+  recognize(path: string): Promise<WorktreeRecognition | null>;
   createDetached(input: { sourcePath: string; worktreePath: string }): Promise<void>;
   validateRemoval(input: { sourcePath: string; worktreePath: string }): Promise<WorktreeRemovalCheck>;
   remove(input: { sourcePath: string; worktreePath: string }): Promise<void>;
+  isDirty(path: string, allowedPaths?: ReadonlySet<string>): Promise<boolean>;
+  pruneStale(sourcePath: string): Promise<void>;
 }
 
-interface WorktreeMemberFacts {
-  sourcePath: string;
+interface WorktreeRecognition {
   worktreePath: string;
-  branch: string | null;
-  dirty: boolean;
-  detached: boolean;
-  headReachableFromBranchRef: boolean;
+  /** Git worktree-set candidates, excluding the selected checkout. */
+  sourceCandidates: string[];
 }
 
 interface WorktreeRemovalCheck {
@@ -77,7 +76,7 @@ interface WorktreeRemovalCheck {
 }
 ```
 
-`inspectMember` accepts only a top-level hub child. It recognizes a worktree when the child has a `.git` file and `git worktree list --porcelain` confirms the exact checkout. It rejects ordinary nested directories, independent repositories with `.git` directories, and paths that Git cannot verify. The probe derives the source repository from the Git worktree set and returns status for the nested checkout.
+`recognize` accepts only a top-level hub child. It recognizes a worktree when the child has a `.git` file and `git worktree list --porcelain` confirms the exact checkout. It rejects ordinary nested directories, independent repositories with `.git` directories, and paths that Git cannot verify. Recognition does not run status or reachability probes. The registry resolves the canonical member identity from known source candidates, preferring the candidate whose basename matches the selected hub child and rejecting ambiguous candidates instead of choosing an arbitrary main worktree. Status and reachability run later through bounded mutation and enrichment paths.
 
 `createDetached` runs `git worktree add --detach <hub-child> HEAD` from the canonical code member. It does not inspect or modify the member's branch, stash changes, move changes, or use the pi extension's shared `.git-worktrees` directory. `validateRemoval` for ordinary member removal requires an empty `git status --porcelain`. Disband adds the stronger detached-`HEAD` reachability check: `HEAD` must be reachable from a local `refs/heads/*` or remote-tracking `refs/remotes/*` ref. Neither path fetches or performs branch operations.
 
@@ -103,17 +102,17 @@ disbandHub(hubPath: string): Promise<{ removedWorktreePaths: string[] }>;
 
 `addMember` follows the hub representation: persona members always symlink; code members use detached worktrees for a marked or detected worktree hub and symlinks otherwise. If Git creates a worktree and a later `AGENTS.md` or `.gitignore` update fails, the registry removes that worktree before reporting the failure. If rollback itself fails, the remaining worktree shape stays discoverable and the error names it for retry. `removeMember` identifies the member by canonical source path, requires only the clean-state guard for a worktree, removes the nested checkout or symlink, and preserves user-created branches and user prose. Exact managed-line cleanup is best effort after the shape mutation; a write failure may leave stale managed text but never removes the member before its preconditions pass.
 
-`disbandHub` accepts only a worktree hub identified by the marker or a valid nested worktree member. Before mutation it checks the hub subtree for active Pimote sessions and external pi processes, then validates every worktree's clean state and detached-`HEAD` reachability. After all checks pass it removes worktrees through Git, deletes the hub directory, and emits one registry change with the hub path in `removedPaths`. It does not merge, commit, stash, delete branches, or follow member symlinks. A failure during removal leaves the hub and remaining shape discoverable for a retry.
+`disbandHub` accepts only a known hub row carrying the valid worktree marker. A nested worktree still proves worktree representation for rows and member edits, but cannot authorize destructive disband by itself. Before validation it closes idle, observerless Pimote sessions through the canonical close lifecycle, then rejects remaining sessions or external pi processes. It rejects a dirty hub repository, edited generated metadata, and any child that is not generated hub content, a managed member link, or a verified nested worktree. It then validates every worktree's clean state and detached-`HEAD` reachability. After all checks pass it removes worktrees through Git, deletes the hub directory, and emits one registry change with the hub path in `removedPaths`. It does not merge, commit, stash, delete branches, or follow member symlinks. A failure during removal leaves the hub and remaining shape discoverable for a retry.
 
 The registry receives a narrow activity port rather than importing the session manager:
 
 ```ts
 interface HubActivityPort {
-  findBusyPaths(paths: ReadonlyArray<string>): Promise<ReadonlyArray<string>>;
+  closeIdleSessionsAt(paths: ReadonlyArray<string>): Promise<ReadonlyArray<string>>;
 }
 ```
 
-The server adapter checks live session working directories and external pi working directories against each requested path and its descendants. It fails closed when an activity source fails. `HubActivity` implements the port over injected `sessionWorkingDirectories` and `externalPiWorkingDirectories` sources. Production sources enumerate live session and external pi working directories, preserving the existing external-process exclusions. The current exact-directory process probe must also support this subtree check.
+The server adapter closes idle, observerless Pimote slots through the canonical session lifecycle, then checks live session working directories and external pi working directories against each requested path and its descendants. It fails closed when an activity source fails. `HubActivity` implements the port over injected `closeIdleSessionsAt` and `externalPiWorkingDirectories` sources. Production process enumeration excludes only the Pimote server and its descendants for this guard: every other pi process whose cwd is in the subtree counts, including subagents of external pi processes. The existing exact-directory takeover probe retains its root-process exclusions.
 
 #### Wire and manager contracts
 
@@ -146,7 +145,7 @@ Folder rows use the existing context menu. Worktree hubs add `Disband worktree h
 - `shared/src/protocol.ts` — `HubMemberRepresentation`, `HubInfo`, `representation`/`worktreePath` on `FolderMemberInfo`, `hub` on `FolderInfo`, `worktreePath` on `RepoInfo`, `memberRepresentation` on `CreateHubCommand`, `DisbandHubCommand`, `DisbandHubResponseData`, and the `disband_hub` entry in the `PimoteCommand` union
 - `packages/sdk/src/folders/types.ts` — `worktreePath` on the SDK `RepoInfo` twin (key-set parity kept for `sdk-twins.ts`)
 - `server/src/manager/types.ts` — `memberRepresentation` on `FolderRegistryPort.createHub`, `disbandHub` on `FolderRegistryPort`, and the `HubActivityPort` activity seam
-- `server/src/hub-worktrees.ts` — `WorktreeGitRunner`, `WorktreeMemberFacts`, `WorktreeRemovalCheck`, `HubWorktreePort`, and the `HubWorktrees` adapter with `not implemented` stubs
+- `server/src/hub-worktrees.ts` — `WorktreeGitRunner`, `WorktreeRecognition`, `WorktreeRemovalCheck`, `HubWorktreePort`, and the `HubWorktrees` adapter
 - `server/src/hub-activity.ts` — `HubActivitySources` and the `HubActivity` adapter with a `not implemented` stub
 - `server/src/folder-registry.ts` — worktree/activity ports as optional constructor seams, the `memberRepresentation` input, the `disbandHub` stub, and `representation` on merged member rows
 
@@ -165,11 +164,12 @@ Folder rows use the existing context menu. Worktree hubs add `Disband worktree h
 
 #### HubWorktrees (Git adapter)
 
-- `inspectMember` recognizes a nested detached worktree and reports source path, checkout path, branch, dirty state, detached flag, and detached-`HEAD` reachability
-- `inspectMember` returns null for an ordinary nested directory, an independent repository with a `.git` directory, and a path Git cannot verify
+- `recognize` recognizes a nested worktree without running status probes and returns the checkout plus Git source candidates, preserving linked and bare source identities
+- `recognize` returns null for an ordinary nested directory, an independent repository with a `.git` directory, and a path Git cannot verify
 - `createDetached` creates a detached worktree at the hub child from the source `HEAD` and rejects when the target already exists
 - `validateRemoval` reports clean reachable state, dirty state on uncommitted changes, and unreachable `HEAD` for a detached-`HEAD` commit
 - `remove` deletes the nested worktree through Git, leaves the source repository and its `HEAD` intact, and preserves user-created branches
+- `pruneStale` drops Git worktree metadata after a checkout was removed behind Git's back
 - The checkout starts detached at source `HEAD`; staged, unstaged, and untracked states are dirty, and detached commits reachable from local or remote-tracking branch refs pass reachability
 
 #### FolderRegistry — worktree mode
@@ -188,10 +188,11 @@ Folder rows use the existing context menu. Worktree hubs add `Disband worktree h
 #### FolderRegistry — guarded disband
 
 - `disbandHub` removes every nested worktree and the hub directory and returns the removed checkout paths
-- `disbandHub` accepts a worktree hub identified by the marker or by a valid nested worktree when the marker is absent
-- `disbandHub` rejects a symlink hub without a marker or nested worktree and keeps the hub on disk
+- `disbandHub` requires the valid worktree marker even when a nested worktree proves worktree representation for rows and member edits
+- `disbandHub` rejects a symlink hub and an unmarked worktree-shaped directory and keeps the hub on disk
 - `disbandHub` rejects a worktree with uncommitted changes and a detached `HEAD` unreachable from a local or remote-tracking ref, keeping the hub
-- `disbandHub` checks the hub subtree through `HubActivityPort` before validating worktree state and rejects busy paths, keeping the hub
+- `disbandHub` closes idle observerless sessions through `HubActivityPort` before validating content or worktree state, then rejects remaining busy paths
+- `disbandHub` rejects dirty hub content, edited generated metadata, and unexpected children while allowing generated files, managed links, and verified worktree children
 - Every worktree is validated before removal; a partial removal failure leaves remaining members discoverable for retry
 - A successful disband emits a registry change with the removed hub path
 - `HubActivity` reports paths containing live session or external pi working directories, excludes siblings, and fails closed if a source fails
@@ -220,6 +221,8 @@ Folder rows use the existing context menu. Worktree hubs add `Disband worktree h
 
 **Recorded exception:** commit `9308823` corrected the pre-written tool-count assertion in `server/src/index.test.ts` from 8 to 9. Step 9 restores `pimote_disband_hub` as the ninth manager tool, so the pre-written count of 8 contradicted this plan.
 
+**Recorded exception:** DR-085 changed the activity guard to close idle, observerless sessions through the canonical lifecycle before rejecting remaining activity. The guard tests in `server/src/hub-activity.test.ts` and `server/src/folder-registry-worktree.test.ts` were re-frozen at that accepted behavior, and `server/src/session-manager.test.ts` covers the shared busy rule.
+
 **Review status:** approved
 
 ## Steps
@@ -228,16 +231,16 @@ Folder rows use the existing context menu. Worktree hubs add `Disband worktree h
 
 ### Step 1: Implement the Git worktree adapter
 
-Implement `HubWorktrees` in `server/src/hub-worktrees.ts` behind the existing `HubWorktreePort` and `WorktreeGitRunner` interfaces. Recognize only directories with a `.git` file that Git confirms in its worktree list. Return the canonical source checkout, nested checkout, branch, dirty state, detached state, and branch-ref reachability. Reject ordinary directories, independent repositories, and unverifiable paths.
+Implement `HubWorktrees` in `server/src/hub-worktrees.ts` behind the existing `HubWorktreePort` and `WorktreeGitRunner` interfaces. Recognize only directories with a `.git` file that Git confirms in its worktree list. Return the nested checkout and source candidates without status probes; the registry resolves the selected canonical source by known identity and basename, rejecting ambiguity. Reject ordinary directories, independent repositories, and unverifiable paths.
 
-Create detached checkouts from source `HEAD`, validate staged, unstaged, and untracked changes, and remove checkouts through Git. Check reachability against local and remote-tracking branch refs. Do not perform branch operations. Supply a production runner using `execFile`, the existing Git environment protections, and a timeout. Preserve the injected runner for tests.
+Create detached checkouts from source `HEAD`, validate staged, unstaged, and untracked changes, and remove checkouts through Git. Check reachability against local and remote-tracking branch refs. Provide explicit dirty and stale-metadata seams for hub guards and rollback pruning. Do not perform branch operations. Supply a production runner using `execFile`, the existing Git environment protections, and a timeout. Preserve the injected runner for tests.
 
 **Verify:** `npm run build:shared && npm run test --workspace=@pimote/server -- --run src/hub-worktrees.test.ts` passes.
 **Status:** done
 
 ### Step 2: Wire the activity guard
 
-Implement `HubActivity.findBusyPaths` in `server/src/hub-activity.ts`. Normalize requested paths and working directories before matching each requested path against sessions and external pi processes at that path or below it. Reject when either source fails.
+Implement `HubActivity.closeIdleSessionsAt` in `server/src/hub-activity.ts`. Close idle, observerless session slots through the canonical lifecycle, then normalize requested paths and working directories before matching each requested path against sessions and external pi processes at that path or below it. Reject when either source fails.
 
 Extend `server/src/takeover.ts` with an external pi working-directory enumeration that supports subtree checks. Preserve the current process and descendant exclusions and exact-directory behavior for takeover. Preserve the existing per-directory exclusion behavior when enumerating multiple directories. Do not convert an enumeration failure into an empty result for disband.
 
@@ -248,13 +251,13 @@ In `server/src/index.ts`, construct `FolderRegistry` after `PimoteSessionManager
 
 ### Step 3: Derive hub membership from disk shape
 
-Replace the symlink-only inventory in `server/src/folder-registry.ts` with a combined top-level member probe. Retain `readHubLinks` rules for live and dangling symlinks, canonical identity, nature, containment, and managed-line provenance. Probe real child directories through `HubWorktreePort.inspectMember`; do not treat independent nested repositories as members.
+Replace the symlink-only inventory in `server/src/folder-registry.ts` with a combined top-level member probe. Retain `readHubLinks` rules for live and dangling symlinks, canonical identity, nature, containment, and managed-line provenance. Probe real child directories through `HubWorktreePort.recognize`; do not treat independent nested repositories as members. Resolve canonical source identity against known folders without choosing an arbitrary worktree-set entry.
 
 Add the marker read/write seam to `server/src/folder-sources/materialize.ts` for `.pimote-hub.json` containing only `{ "memberRepresentation": "worktree" }`. A valid marker or nested worktree selects worktree mode, including after the last worktree is removed. Source-promised and symlink-shaped hubs select symlink mode otherwise.
 
-Update `FolderViewInputs`, `mergedFolders`, `viewOver`, `update`, and `isManageableHub` in `server/src/folder-registry.ts` to use the combined inventory. Emit `FolderInfo.hub` for discovered and promised hubs, and emit each member's canonical `path`, nature, representation, and optional `worktreePath`. Keep `shortcutCount` as the symlink count. Preserve source promises, canonical source tags, missing-member behavior, and tag-change fan-out.
+Update `FolderViewInputs`, `mergedFolders`, `viewOver`, `update`, and `isManageableHub` in `server/src/folder-registry.ts` to use the combined inventory. Recognition runs with bounded concurrency and does not probe status or reachability, so `listLazy` keeps its no-status-probe contract. Emit `FolderInfo.hub` for discovered and promised hubs, and emit each member's canonical `path`, nature, representation, and optional `worktreePath`. Keep `shortcutCount` as the symlink count. Preserve source promises, canonical source tags, missing-member behavior, and tag-change fan-out.
 
-**Verify:** The row, marker, symlink, and worktree discovery cases in `server/src/folder-registry-worktree.test.ts` pass once creation is implemented in Step 4. Existing `server/src/folder-registry.test.ts` membership and curation cases remain passing.
+**Verify:** The row, marker, symlink, and worktree discovery cases in `server/src/folder-registry-worktree.test.ts` pass once creation is implemented in Step 4. A plain repository holding a top-level linked worktree is not classified as a hub member of itself. Existing `server/src/folder-registry.test.ts` membership and curation cases remain passing.
 **Status:** done
 
 ### Step 4: Materialize both hub layouts
@@ -277,16 +280,16 @@ If an add fails after creating a worktree, remove it through Git. If rollback fa
 
 ### Step 6: Implement guarded disband
 
-Implement `FolderRegistry.disbandHub` in `server/src/folder-registry.ts` through the same serialized mutation seam. Accept only a marked or Git-verified worktree hub. Check activity for the hub and its worktree paths before validating any worktree. Validate every checkout before removing any: reject dirty checkouts and detached `HEAD` commits unreachable from local or remote-tracking branch refs.
+Implement `FolderRegistry.disbandHub` in `server/src/folder-registry.ts` through the same serialized mutation seam. Accept only a known hub row with the valid worktree marker. Close idle observerless sessions through the canonical activity seam, then reject remaining activity. Reject dirty hub content and unexpected children while allowing generated files, managed links, and verified worktree children. Validate every checkout before removing any: reject dirty checkouts and detached `HEAD` commits unreachable from local or remote-tracking branch refs.
 
 After all checks pass, remove worktrees through Git and delete the hub without following member symlinks. Preserve branches. Return `removedWorktreePaths`, invalidate discovery, and emit one change with the hub in `removedPaths`. If removal fails, leave the hub and remaining worktrees discoverable for retry.
 
-**Verify:** `npm run test --workspace=@pimote/server -- --run src/folder-registry-worktree.test.ts src/hub-activity.test.ts` passes all guarded disband, partial-failure, retry, and notification cases.
+**Verify:** `npm run test --workspace=@pimote/server -- --run src/folder-registry-worktree.test.ts src/hub-activity.test.ts` passes all guarded disband, marker, content, partial-failure, retry, and notification cases.
 **Status:** done
 
 ### Step 7: Enrich rows from nested checkout status
 
-Update `server/src/repo-index.ts` to support bounded, cached Git-status probes for requested checkout paths even when discovery did not list those paths. Keep this capability independent of hub membership. Preserve the existing TTL and stale-while-revalidate behavior for ordinary repos.
+Update `server/src/repo-index.ts` to support bounded, cached Git-status probes for requested checkout paths even when discovery did not list those paths. Keep this capability independent of hub membership. Evict nested checkout entries after member removal and disband. Preserve the existing TTL and stale-while-revalidate behavior for ordinary repos.
 
 Update `FolderRegistry.requestStatusRefresh` and `enrichRows` in `server/src/folder-registry.ts` to probe `repo.worktreePath ?? repo.path`. Apply branch, dirty, ahead, and behind from the checkout while keeping `RepoInfo.path` and tags tied to the canonical source. Route asynchronous checkout status changes to the owning hub row without making the repo index own hub membership.
 

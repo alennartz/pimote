@@ -713,6 +713,13 @@ export class RepoIndex {
     this.walkGeneration++;
   }
 
+  /** Drop cached status for paths the listing no longer carries: checkouts
+   *  removed through member removal or disband must not linger in the cache
+   *  for the life of the process. */
+  evictStatus(paths: Iterable<string>): void {
+    for (const path of paths) this.statusCache.delete(path);
+  }
+
   /** Replace extension-owned sources atomically, invalidate discovery, and emit folder deltas. Core sources remain registered. */
   async replaceUserSources(sources: readonly FolderSource[]): Promise<void> {
     const before = this.currentFacts(NO_STATUS_FACTS);

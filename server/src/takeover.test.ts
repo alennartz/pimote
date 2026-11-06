@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
+import { findExternalPiProcesses, killExternalPiProcesses, listExternalPiWorkingDirectories } from './takeover.js';
 
 let tempDir: string;
 const spawnedProcesses: ChildProcess[] = [];
@@ -78,6 +78,9 @@ describe('findExternalPiProcesses', () => {
     await symlink('/usr/bin/sleep', piLink);
 
     const pidFile = join(tempDir, 'pids');
+    const childDir = join(tempDir, 'child');
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(childDir);
 
     // Double-fork script: the intermediate shell exits immediately, causing
     // the real processes to be reparented to init (pid 1). This ensures
@@ -90,7 +93,7 @@ describe('findExternalPiProcesses', () => {
         '#!/bin/sh',
         // Inner layer: runs detached from the test process
         "sh -c '",
-        `  "${piLink}" 60 &`, // child pi (backgrounded)
+        `  (cd "${childDir}" && "${piLink}" 60) &`, // child pi (backgrounded)
         `  child_pid=$!`,
         `  parent_pid=$$`,
         `  echo "$parent_pid $child_pid" > "${pidFile}"`,
@@ -148,10 +151,15 @@ describe('findExternalPiProcesses', () => {
     const pids = await findExternalPiProcesses(tempDir);
 
     // The parent pi is a root external pi process — it should be detected.
-    // The child pi is a sub-process of that parent pi — it should be excluded.
+    // The child pi is a sub-process of that parent pi — exact-directory
+    // takeover keeps excluding it.
     expect(pids).not.toContain(childPid);
     expect(pids).toContain(parentPid);
     expect(pids.length).toBe(1);
+
+    // The subtree guard uses the broader enumeration: it includes the child
+    // process too, so a sub-agent cannot disappear under disband.
+    await expect(listExternalPiWorkingDirectories()).resolves.toContain(childDir);
   });
 
   it('returns empty array when no processes match', async () => {
