@@ -48,3 +48,5 @@ Pimote's folder space was described by three overlapping mechanisms: the repo in
 - Future revisit points if circumstances change: the canonical-path curation key (if moves turn out common) and the strict marker grammar (if real personas keep failing to parse). The DR-047 ephemerality revisit point fired and is resolved by DR-059 (manager sessions persist; persona conferrals stay ephemeral).
 
 > **Amendment (2026-01-14, DR-064):** hub membership is the on-disk symlink inventory for every included folder with shortcut members, not a persisted creator-owned registry row. The curation document now stores overrides only. Source hub promises remain until materialization; then the inventory is authoritative. Hand-built hubs are first-class.
+>
+> **Amendment (DR-080):** the inventory widens to symlink members plus Git-verified nested detached worktrees; a worktree member's identity stays its canonical source checkout, and a `.pimote-hub.json` marker preserves worktree mode after the last worktree is removed. The registry still stores curation only.

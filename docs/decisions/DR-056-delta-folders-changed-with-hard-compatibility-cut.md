@@ -21,3 +21,5 @@ Accepted
 - Dropped deltas leave phantom rows in client caches. Explicit refresh (`repin` cache-replace) and reconnect cache-replace are the heal paths; a delta retry or periodic reconcile is the revisit point if phantom rows ever matter in practice.
 
 > **Amendment (2026-01-14, DR-063/064):** hub disband was removed from every surface. `FolderRegistry.createHub` now invalidates discovery before it emits its creation delta; no `disband_hub` removal delta exists.
+>
+> **Amendment (DR-080):** `disband_hub` returns for worktree hubs only, and its removal delta carries the hub path in `removedPaths`. Symlink hubs still have no disband mutation. The invalidation-before-delta rule stands.

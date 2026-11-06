@@ -145,7 +145,7 @@ An occurrence reached through a top-level symlink in an included folder that poi
 _Avoid_: reference, link
 
 **Hub**:
-A folder composed of member folders through top-level symlinks, with its own `.gitignore` and an `AGENTS.md` that names its members. A hub can be code or persona; members can be any discovered folder-model entries.
+A folder composed of member folders — top-level symlinks or, for code members in a worktree hub, Git-verified nested detached worktrees — with its own `.gitignore` and an `AGENTS.md` that names its members. A hub can be code or persona; members can be any discovered folder-model entries.
 _Avoid_: multi-repo project
 
 **Folder registry**:
@@ -157,7 +157,7 @@ A registration by a Pimote extension that contributes folder entries to Pimote's
 _Avoid_: project source
 
 **Hub member**:
-A discovered folder-model entry linked from a hub by a top-level symlink. Membership does not alter the member folder.
+A discovered folder-model entry joined to a hub by a top-level symlink or, for a code member, a Git-verified nested detached worktree. Membership does not alter the member folder.
 _Avoid_: repo-only member
 
 **Managed member block**:

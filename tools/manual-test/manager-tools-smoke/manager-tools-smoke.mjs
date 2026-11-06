@@ -8,14 +8,21 @@
 // store, and a hub created by the real `createHub` (mkdir + absolute member
 // symlinks + `git init` + `.gitignore` + generated AGENTS.md).
 //
-// Covers, hard and without an LLM: the pinned DR-062 toolset registers by
-// name (eight tools; no `*_projects` or retired persona/search/repo/tree/disband names survive),
+// Covers, hard and without an LLM: the manager toolset registers by name
+// (nine tools, including the restored `pimote_disband_hub`; no `*_projects`
+// or retired persona/search/repo/tree names survive),
 // pimote_find_folders returns complete FolderInfo rows with schema defaults
 // (and the nature filter serves the team view; hub rows carry their member
-// lists), and pimote_create_folder
-// (kind persona) materializes the persona folder (front matter + memory stub)
-// and publishes it exactly on success (discovery invalidation +
-// folders_changed pairing).
+// lists), pimote_create_folder (kind persona) materializes the persona
+// folder (front matter + memory stub) and publishes it exactly on success
+// (discovery invalidation + folders_changed pairing), and the worktree-hub
+// lifecycle runs end-to-end through the manager seams: worktree creation
+// (detached checkouts + mode marker), representation-aware membership edits
+// via pimote_update_hub_members, and the guarded pimote_disband_hub
+// rejections (symlink hub, active session, dirty checkout, unreachable
+// detached HEAD) followed by a successful disband that preserves branches.
+// The destructive disband fixture is always fabricated inside the sandbox —
+// a user-supplied MTMS_ROOT tree never hosts it.
 //
 // Parameterized for reuse: MTMS_ROOT=<dir> uses an existing fixture tree
 // (containing at least two git repos `<root>/alpha`, `<root>/beta` and a
@@ -27,7 +34,7 @@
 // `git` on PATH (the real hub materializer runs `git init`). No server,
 // browser, network, or LLM required.
 
-import { mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { execFile as execFileCb } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve as pathResolve, basename } from 'node:path';
@@ -90,6 +97,21 @@ async function main() {
   const storeDir = join(sandbox, 'store');
   await mkdir(storeDir, { recursive: true });
 
+  // Destructive worktree/disband fixture: always fabricated inside the
+  // sandbox. Disband deletes worktrees and the hub directory, so a
+  // user-supplied MTMS_ROOT tree must never host it.
+  const disbandRoot = join(sandbox, 'disband-fixture');
+  const codeA = join(disbandRoot, 'code-a');
+  const codeB = join(disbandRoot, 'code-b');
+  const guideDir = join(disbandRoot, 'guide');
+  await gitInit(codeA);
+  await gitInit(codeB);
+  await writePersona(guideDir, 'Guide Persona', 'Fixture persona for the worktree probe');
+
+  const git = (cwd, ...args) => execFile('git', ['-C', cwd, ...args]);
+  /** A nested worktree carries `.git` as a file; an independent repo as a directory. */
+  const isWorktreeCheckout = async (dir) => (await lstat(join(dir, '.git')).then((s) => s.isFile(), () => false)) === true;
+
   // --- fixture tree (fabricated unless MTMS_ROOT supplies one) ---
   const alpha = join(root, 'alpha');
   const beta = join(root, 'beta');
@@ -103,9 +125,11 @@ async function main() {
 
   const { scanFolderModel } = await import(dist('folder-model/index.js'));
   const { FolderRegistry } = await import(dist('folder-registry.js'));
+  const { HubWorktrees, defaultWorktreeGitRunner } = await import(dist('hub-worktrees.js'));
+  const { HubActivity } = await import(dist('hub-activity.js'));
   const { createManagerExtension } = await import(dist('manager/extension.js'));
 
-  const tree = { tree: () => scanFolderModel({ roots: [root], onWarning: () => {} }) };
+  const tree = { tree: () => scanFolderModel({ roots: [root, disbandRoot], onWarning: () => {} }) };
   // Duck-typed RepoIndex seam: the probe fabricates the repo rows, the
   // registry and tools consume them through the same narrow port boot wires.
   const invalidations = [];
@@ -119,8 +143,18 @@ async function main() {
     listSourcePersonas: async () => [],
     runOpenHooks: async () => {},
     invalidateListing: () => invalidations.push(Date.now()),
+    // Git facts fill in per served row; the probe stubs the refresh seam.
+    requestStatusRefresh: async () => {},
   };
-  const folders = new FolderRegistry(repos, storeDir, tree);
+  // Live session cwds the activity guard sees — mutated by the disband phase.
+  const busySessionCwds = [];
+  const folders = new FolderRegistry(
+    repos,
+    storeDir,
+    tree,
+    new HubWorktrees(defaultWorktreeGitRunner),
+    new HubActivity({ sessionWorkingDirectories: async () => busySessionCwds, externalPiWorkingDirectories: async () => [] }),
+  );
   const context = {
     folders,
     repos,
@@ -139,12 +173,19 @@ async function main() {
         throw new Error('not used by this probe');
       },
     },
-    config: { roots: [root], managerRoot: sandbox },
+    config: { roots: [root, disbandRoot], managerRoot: sandbox },
     notifyFoldersChanged: (changedPaths) => notifications.push(changedPaths),
   };
 
   // Identity is canonical: compare against real paths everywhere below.
-  const [alphaC, betaC, omegaC] = await Promise.all([realpath(alpha), realpath(beta), realpath(omega)]);
+  const [alphaC, betaC, omegaC, codeAC, codeBC, guideC] = await Promise.all([
+    realpath(alpha),
+    realpath(beta),
+    realpath(omega),
+    realpath(codeA),
+    realpath(codeB),
+    realpath(guideDir),
+  ]);
 
   // --- hub creation through the real registry (hint: self-describing hub) ---
   section('hub materialization (real createHub)');
@@ -192,8 +233,10 @@ async function main() {
     'pimote_create_folder',
     'pimote_update_folder',
     'pimote_update_hub_members',
+    'pimote_disband_hub',
   ];
   for (const name of expected) assert(tools.has(name), `tool registered: ${name}`);
+  assert(names.length === 9, `the toolset registers exactly nine tools (got: ${names.length})`);
   assert(!names.some((name) => name.includes('project')), `no registered tool name contains "project" (got: ${names.join(', ')})`);
   assert(
     ![
@@ -204,16 +247,15 @@ async function main() {
       'pimote_search_sessions',
       'pimote_list_repos',
       'pimote_folder_tree',
-      'pimote_disband_hub',
     ].some((name) => tools.has(name)),
-    'the pre-redesign tool names are gone',
+    'the retired tool names stay gone',
   );
 
   // --- pimote_find_folders: complete FolderInfo rows with schema defaults ---
   section('pimote_find_folders execution');
   const listResult = await tools.get('pimote_find_folders').execute('call-1', {});
   assert(listResult.isError !== true, 'list_folders executes without error');
-  const rows = listResult.structuredContent;
+  const rows = listResult.structuredContent?.folders;
   assert(Array.isArray(rows), 'structured output is a FolderInfo array');
   const byName = new Map(rows.map((row) => [row.path, row]));
   const alphaRow = byName.get(alphaC);
@@ -241,7 +283,7 @@ async function main() {
   section('pimote_find_folders nature filter');
   const personasResult = await tools.get('pimote_find_folders').execute('call-5', { nature: 'persona' });
   assert(personasResult.isError !== true, 'list_folders (nature: persona) executes without error');
-  const personaRows = personasResult.structuredContent;
+  const personaRows = personasResult.structuredContent?.folders;
   assert(Array.isArray(personaRows) && personaRows.every((row) => row.nature === 'persona'), 'every filtered row is a persona');
   const omegaPersona = personaRows?.find((row) => row.path === omegaC);
   assert(omegaPersona?.persona?.name === 'Omega Persona', 'omega row carries the marker name');
@@ -292,7 +334,7 @@ async function main() {
     const outside = await tools.get('pimote_create_folder').execute('call-9', { kind: 'persona', name: 'stray', parentPath: sandbox, description: 'x' });
     assert(outside.isError === true && !(await exists(join(sandbox, 'stray'))), 'parentPath outside the scan roots is rejected with no disk effect');
 
-    const personasAfter = (await tools.get('pimote_find_folders').execute('call-10', { nature: 'persona' })).structuredContent;
+    const personasAfter = (await tools.get('pimote_find_folders').execute('call-10', { nature: 'persona' })).structuredContent?.folders;
     assert(
       personasAfter?.some((row) => row.path === zetaC && row.persona?.name === 'zeta'),
       'the nature-filtered team view picks up the created persona',
@@ -300,6 +342,130 @@ async function main() {
   } else {
     console.log('  ⊝ create_folder execution skipped — MTMS_ROOT fixture tree is user-supplied');
   }
+
+  // ============================================================
+  // Worktree-hub lifecycle through the manager seams. The fixture is the
+  // isolated sandbox root, so these run even when MTMS_ROOT supplies the
+  // scan tree: disband deletes worktrees and the hub directory.
+  // ============================================================
+  section('pimote_create_folder: worktree hub (detached checkouts, marker, row facts)');
+  const wtHub = join(disbandRoot, 'wt-hub');
+  const wtCreate = await tools.get('pimote_create_folder').execute('call-wt1', {
+    kind: 'code-hub',
+    name: 'wt-hub',
+    parentPath: disbandRoot,
+    memberPaths: [codeA],
+    memberRepresentation: 'worktree',
+    body: 'Worktree hub for the disband probe.',
+  });
+  assert(wtCreate.isError !== true, `create_folder (kind code-hub, worktree) executes without error (${JSON.stringify(wtCreate.structuredContent ?? wtCreate.content)})`);
+  const wtHubC = wtCreate.structuredContent?.folderPath;
+  assert(wtHubC === (await realpath(wtHub)), 'the worktree hub result path is canonical');
+  assert((await readFile(join(wtHub, '.pimote-hub.json'), 'utf8').catch(() => '')).trim() === '{"memberRepresentation":"worktree"}', 'the hub carries the minimal worktree-mode marker');
+  assert((await isWorktreeCheckout(join(wtHub, 'code-a'))) === true, 'the code member materializes as a nested worktree (.git file, not a directory)');
+  const checkout = join(wtHubC, 'code-a');
+  const { stdout: checkoutRef } = await git(checkout, 'rev-parse', '--abbrev-ref', 'HEAD');
+  const [{ stdout: checkoutSha }, { stdout: sourceSha }] = await Promise.all([git(checkout, 'rev-parse', 'HEAD'), git(codeAC, 'rev-parse', 'HEAD')]);
+  assert(checkoutRef.trim() === 'HEAD' && checkoutSha.trim() === sourceSha.trim(), 'the checkout is detached exactly at the source HEAD');
+  const { stdout: sourceBranch } = await git(codeAC, 'rev-parse', '--abbrev-ref', 'HEAD');
+  const { stdout: sourceStatus } = await git(codeAC, 'status', '--porcelain');
+  const { stdout: sourceWorktrees } = await git(codeAC, 'worktree', 'list', '--porcelain');
+  assert(sourceBranch.trim() === 'main' && sourceStatus.trim() === '', 'creation leaves the source repository on main and clean');
+  assert(sourceWorktrees.includes(checkout), 'git worktree list confirms the nested checkout from the source repository');
+  const wtRows = (await tools.get('pimote_find_folders').execute('call-wt2', {})).structuredContent?.folders;
+  const wtRow = wtRows?.find((row) => row.path === wtHubC);
+  assert(wtRow?.hub?.representation === 'worktree', 'the folder row carries the worktree hub fact');
+  const wtMember = wtRow?.members?.find((member) => member.path === codeAC);
+  assert(
+    wtMember?.representation === 'worktree' && wtMember?.worktreePath === checkout,
+    'the member row reports worktree representation with its checkout path',
+  );
+  assert(wtRow?.repos?.some((repo) => repo.path === codeAC && repo.worktreePath === checkout), 'the member repo row reports the nested checkout under the canonical source identity');
+  assert(wtRow?.shortcutCount === 0, 'worktree members are not shortcuts (shortcutCount 0)');
+
+  section('pimote_update_hub_members: representation-aware edits in a worktree hub');
+  const addGuide = await tools.get('pimote_update_hub_members').execute('call-wt3', { hubPath: wtHubC, add: [guideC] });
+  assert(addGuide.isError !== true, 'update_hub_members adds the persona member');
+  assert((await readlink(join(wtHub, 'guide')).catch(() => null)) === guideC, 'a persona member joins a worktree hub as a symlink');
+  const wtAgents = await readFile(join(wtHub, 'AGENTS.md'), 'utf8').catch(() => '');
+  assert(wtAgents.includes('- guide (persona): always spin a sub-agent in this folder to interact with it.'), 'the exact seeded persona line lands in the managed block');
+  assert(wtAgents.includes('Code members are nested detached Git worktrees; persona members are symlinks'), 'the generated intro describes the worktree layout');
+
+  const addCodeB = await tools.get('pimote_update_hub_members').execute('call-wt4', { hubPath: wtHubC, add: [codeBC] });
+  assert(addCodeB.isError !== true, 'update_hub_members adds the code member');
+  assert((await isWorktreeCheckout(join(wtHub, 'code-b'))) === true, 'a code member joins a worktree hub as a detached worktree');
+  const wtRows2 = (await tools.get('pimote_find_folders').execute('call-wt5', {})).structuredContent?.folders;
+  const wtMemberB = wtRows2?.find((row) => row.path === wtHubC)?.members?.find((member) => member.path === codeBC);
+  assert(wtMemberB?.representation === 'worktree' && wtMemberB?.worktreePath === join(wtHubC, 'code-b'), 'the added code member reports its checkout path');
+
+  await writeFile(join(checkout, 'scratch.txt'), 'uncommitted\n');
+  const removeDirty = await tools.get('pimote_update_hub_members').execute('call-wt6', { hubPath: wtHubC, remove: [codeAC] });
+  const dirtyOutcome = removeDirty.structuredContent?.results?.[0];
+  assert(
+    removeDirty.isError !== true && dirtyOutcome?.outcome === 'error' && String(dirtyOutcome?.error ?? '').includes('uncommitted changes'),
+    'removing a dirty worktree member reports the clean-state error',
+  );
+  assert((await isWorktreeCheckout(checkout)) === true, 'the dirty member keeps its checkout on disk');
+  await rm(join(checkout, 'scratch.txt'), { force: true });
+
+  const removeCodeB = await tools.get('pimote_update_hub_members').execute('call-wt7', { hubPath: wtHubC, remove: [codeBC] });
+  const codeBOutcome = removeCodeB.structuredContent?.results?.[0];
+  assert(removeCodeB.isError !== true && codeBOutcome?.outcome === 'removed', 'update_hub_members removes the clean code member');
+  assert(!(await exists(join(wtHub, 'code-b'))), 'clean removal deletes the nested checkout');
+  const { stdout: codeBBranch } = await git(codeBC, 'rev-parse', '--abbrev-ref', 'HEAD');
+  const { stdout: codeBStatus } = await git(codeBC, 'status', '--porcelain');
+  assert(codeBBranch.trim() === 'main' && codeBStatus.trim() === '', 'removal leaves the source repository on main and clean');
+  assert(!(await git(codeBC, 'worktree', 'list', '--porcelain')).stdout.includes(join(wtHubC, 'code-b')), 'git no longer lists the removed checkout');
+
+  section('pimote_disband_hub: guarded rejections and a successful disband');
+  const disband = async (callId, hubPath) => tools.get('pimote_disband_hub').execute(callId, { hubPath });
+  const disbandError = (result) => String(result.structuredContent?.error ?? '');
+
+  const disbandSymlink = await disband('call-db1', westC);
+  assert(disbandSymlink.isError === true && disbandError(disbandSymlink).includes('Not a worktree hub'), 'a symlink hub rejects disband');
+  assert(await exists(west), 'the rejected symlink hub stays on disk');
+
+  busySessionCwds.push(checkout);
+  const disbandBusy = await disband('call-db2', wtHubC);
+  assert(disbandBusy.isError === true && disbandError(disbandBusy).includes('in use'), 'a hub with an active session in its subtree rejects disband');
+  assert(await exists(wtHub), 'the busy hub stays on disk');
+  busySessionCwds.length = 0;
+
+  await writeFile(join(checkout, 'scratch.txt'), 'uncommitted\n');
+  const disbandDirty = await disband('call-db3', wtHubC);
+  assert(disbandDirty.isError === true && disbandError(disbandDirty).includes('uncommitted changes'), 'a dirty checkout rejects disband');
+  assert(await exists(wtHub), 'the dirty-rejected hub stays on disk');
+  await rm(join(checkout, 'scratch.txt'), { force: true });
+
+  // A detached HEAD no branch ref reaches: commit work on the detached HEAD.
+  await writeFile(join(checkout, 'lonely.txt'), 'unreachable work\n');
+  await git(checkout, 'add', '.');
+  await git(checkout, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'lonely detached work');
+  const disbandUnreachable = await disband('call-db4', wtHubC);
+  assert(
+    disbandUnreachable.isError === true && disbandError(disbandUnreachable).includes('not reachable from a branch ref'),
+    'a detached HEAD unreachable from any branch ref rejects disband',
+  );
+  assert(await exists(wtHub), 'the unreachable-rejected hub stays on disk');
+
+  // Branch creation is user-owned: naming the detached commit keeps the work.
+  await git(checkout, 'branch', 'feature/keep');
+  const disbandOk = await disband('call-db5', wtHubC);
+  assert(disbandOk.isError !== true, 'disband succeeds once HEAD is reachable from a branch ref');
+  assert(
+    JSON.stringify(disbandOk.structuredContent?.removedWorktreePaths) === JSON.stringify([checkout]),
+    'the response lists the removed checkout path',
+  );
+  assert(!(await exists(wtHub)), 'the hub directory is gone after disband');
+  assert(await exists(guideC), 'disband never follows member symlinks (the persona folder survives)');
+  const { stdout: keptBranch } = await git(codeAC, 'branch', '--list', 'feature/keep');
+  assert(keptBranch.includes('feature/keep'), 'disband never deletes the user-created branch');
+  const { stdout: afterBranch } = await git(codeAC, 'rev-parse', '--abbrev-ref', 'HEAD');
+  const { stdout: afterStatus } = await git(codeAC, 'status', '--porcelain');
+  const { stdout: afterWorktrees } = await git(codeAC, 'worktree', 'list', '--porcelain');
+  assert(afterBranch.trim() === 'main' && afterStatus.trim() === '' && !afterWorktrees.includes(wtHubC), 'the source repository stays on main, clean, with no stale worktree registration');
+  const rowsAfterDisband = (await tools.get('pimote_find_folders').execute('call-db6', {})).structuredContent?.folders;
+  assert(!rowsAfterDisband?.some((row) => row.path === wtHubC), 'the disbanded hub leaves the folder listing');
 
   await rm(sandbox, { recursive: true, force: true }).catch(() => {});
   console.log(`\n[mt-smoke] complete: ${failures === 0 ? 'PASS' : `${failures} FAIL`}`);

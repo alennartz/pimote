@@ -272,18 +272,22 @@ code/persona nature icon in
 four variants (code, code-hub, persona, persona-hub by nature ×
 shortcutCount), favorites, archive/show-archived, inline expansion of
 per-folder sessions loaded only for rendered rows, and repo status chips
-(branch + dirty dot) from plain-row `repo` facts and hub-member `repos`; the hub dialog composes a hub folder from indexed repos (server
-creates the symlink hub + `git init` + `.gitignore` + generated `AGENTS.md`)
-and membership edits reshape it; the New Session dialog hosts the four-kind creation
+(branch + dirty dot) from plain-row `repo` facts and hub-member `repos`; the New Session dialog hosts the four-kind creation
 wizard (kind icon row above the folder picker; identity → members? →
 skippable text step; every flow ends in `open_session` in the new folder; code
 kinds seed `AGENTS.md`, persona kinds seed persona-marker `AGENTS.md` +
-`memory.md`, hub kinds seed member symlinks and nature-worded link lines in
+`memory.md`, hub kinds materialize members per the chosen layout and seed
+nature-worded link lines in
 the `AGENTS.md` managed block); hub rows manage members ("Manage members…":
-add/remove as hub-side symlinks plus exact seeded `AGENTS.md` lines; the
+add/remove per the hub layout — symlink members as hub-side symlinks, worktree
+members as nested detached Git worktrees — plus exact seeded `AGENTS.md` lines; the
 member folder is never touched) and every row archives/restores ("Archive
 project" / "Restore project": folder curation only, session records never
-archive); epoch-stamped `folders_changed` deltas merge `changed`
+archive); worktree hub rows add the guarded "Disband worktree hub…" action
+(the server rejects active sessions or external pi processes in the hub
+subtree, dirty checkouts, and detached HEADs unreachable from a local or
+remote-tracking branch ref; it removes the worktrees and the hub without
+merging, committing, stashing, or deleting branches); epoch-stamped `folders_changed` deltas merge `changed`
 rows and drop `removedPaths` in both clients. Archived-row probes explicitly
 set `includeArchived`. Fresh discovery comparisons explicitly repin. Folder sources contribute repo/hub entries (missing ones
 provision via `onFolderOpen` at open time); the manager is a persisted
@@ -296,7 +300,8 @@ conversation surface, old sessions resume behind the `Previous sessions`
 click and across full server restarts, a disconnect keeps runs processing
 server-side, and reconnect replays from the client's cursor. The
 manager-exclusive pimote toolset (`pimote_find_folders`,
-`pimote_create_folder`, `pimote_update_folder`, `pimote_update_hub_members`, …)
+`pimote_create_folder`, `pimote_update_folder`, `pimote_update_hub_members`,
+`pimote_disband_hub`, …)
 answers over real server APIs; `pimote_create_folder` publishes new persona
 folders via `folders_changed`. Manager folder listings remain complete,
 unwindowed reads with curation, membership, and git facts on each row.
@@ -306,12 +311,20 @@ are the multi-repo model; the manager is the dashboard's second half.
 
 **Driver:** `tools/manual-test/project-management-smoke/` (real sandboxed
 server + `agent-browser` + a second WebSocket probe client, including the
-four-kind creation wizard, hub member add/remove with `FolderInfo.members`
-deltas, folder archive/restore, the
+four-kind creation wizard with the detached-worktree hub layout (wizard
+representation choice, detached checkouts, marker, member representation and
+checkout paths), hub member add/remove with `FolderInfo.members` deltas in
+both layouts, guarded worktree-hub disband at the wire (dirty, active-session,
+and detached-HEAD reachability rejections, then a successful disband that
+preserves branches) and through the dashboard dialog after closing the hub
+session, folder archive/restore, the
 unscanned-cwd session fallback and legacy `multiRepo` registry read-compat
 probes);
 `tools/manual-test/manager-tools-smoke/` drives the manager toolset
-deterministically (registration + execution against real ports, no LLM) to
+deterministically (registration of the nine-tool set + execution against real
+ports, no LLM; worktree creation, representation-aware membership edits, and
+the guarded disband rejections and success run in an isolated fixture, so the
+tree stays intact when `MTMS_ROOT` is set) to
 backstop the LLM-dependent tool-choice assertions in the chat phase;
 `tools/manual-test/manager-lifecycle-smoke/` drives the manager persona-root
 boot lifecycle at the wire level (seeding and user-file preservation,

@@ -442,35 +442,41 @@ and writable `os.tmpdir()`. The voice phase is environment-bounded when the
 host lacks a local `jetson` model catalog. No live LLM or speechmux is needed.
 Tracks and kills only the server and synthetic external process it starts.
 
-### project-management-smoke
-
 **Purpose:** Exercise the folder-management dashboard end-to-end (the
 `project-management` topic, folder-model vocabulary). Boots a real pimote
 server in an isolated HOME against a fabricated two-root folder tree (nested
 entries at arbitrary depth beneath a _skipped_ wrapper — never inside
 included git repos, a dirty repo, named branches, two persona folders via
 `AGENTS.md` marker front matter, a shortcut-linked external repo via a
-top-level out-of-tree symlink, a fabricated pi session), plus a folder-source
-fixture module (missing repo entry provisioned by its `onFolderOpen` hook and
-an unopened hub entry). Seeds a local model via `PI_CODING_AGENT_DIR` for the
-manager LLM, and drives the real PWA via `agent-browser` plus a second
-WebSocket probe client. Covers: sparse discovery shape (no depth bound,
+top-level out-of-tree symlink, a fabricated pi session), plus a Pimote
+extension fixture module (a folder source registered through the extension
+host's `registerSource` seam: a missing repo entry provisioned by its
+`onFolderOpen` hook and an unopened hub entry). Seeds a local model via
+`PI_CODING_AGENT_DIR` for the manager LLM, and drives the real PWA via
+`agent-browser` plus a second WebSocket probe client. Covers: sparse discovery shape (no depth bound,
 skipped wrappers collapse into reach paths), FolderInfo defaults
 (nature/persona/shortcutCount/missing/repo?/repos?/userTags?) and the four row icon
 variants (code, code-hub, persona, persona-hub), `update_folder` /
 epoch-stamped `folders_changed` delta sync (`changed` / `removedPaths`, both
 directions), complete comparisons accumulated from small protocol windows
 under each adopted token, explicit `includeArchived` probes and fresh-order
-repins after discovery mutations, hub create
-round-trips with on-disk symlink + `git init` + root-anchored `.gitignore` +
-`AGENTS.md` assertions and hub member management ("Manage members…"
-add/remove round-trips: symlink and exact seeded `AGENTS.md` line appear and
-disappear, member folder untouched), source-contributed tags and the `onFolderOpen`
+repins after discovery mutations, hub create round-trips in both layouts —
+symlink mode (on-disk symlinks + `git init` + root-anchored `.gitignore` +
+`AGENTS.md`) and worktree mode via `create_hub` with `memberRepresentation:
+'worktree'` (the minimal `.pimote-hub.json` marker, detached code checkouts
+at source HEAD, persona symlinks, member `representation`/`worktreePath` row
+facts, nested-checkout repo facts under canonical source identity) — and hub
+member management in both layouts ("Manage members…" add/remove round-trips:
+the layout-appropriate member materialization and the exact seeded `AGENTS.md`
+line appearing and disappearing; the member folder is never touched),
+source-contributed tags and the `onFolderOpen`
 provisioning hook, favorites (favorites-first ordering), archive/show-
 archived, the four-kind creation wizard (code / persona / code-hub /
-persona-hub flows: seeded `AGENTS.md` / `memory.md` / member symlinks and
-managed-block link lines, each ending in an opened session; the code flow
-skips the text step and still seeds the `AGENTS.md` stub), row-menu "Archive
+persona-hub flows: seeded `AGENTS.md` / `memory.md` / member materialization
+per the chosen layout and nature-worded link lines, each ending in an opened
+session; the code flow skips the text step and still seeds the `AGENTS.md`
+stub; the code-hub flow offers the Symlinks/Detached worktrees choice and the
+worktree choice detaches code members on disk), row-menu "Archive
 project" / "Restore project" (folder curation only — session records stay
 unarchived), wire probes for `create_persona_folder` / `add_hub_member` /
 `remove_hub_member` (duplicate-name rejection, `folders_changed` carrying
@@ -486,13 +492,27 @@ dashboard row plus the `pimote_find_folders` nature-filtered team view), the
 missing-member warning chip, the unscanned-cwd `classifyFolder` session
 fallback (list/open in cwds outside the scan roots never lists or curates
 them), legacy `multiRepo` registry read-compat (loads unchanged; the next
-write persists `hubs`), and the mobile manager affordance. Tool-call and
+write persists curation only — hub lists are retired, DR-064), and the mobile
+manager affordance. Tool-call and
 assistant-reply detection is role-scoped (`.tool-block .tool-name`,
 `.assistant-message`) so user prompt text cannot false-positive it. Manager
 folder-count comparisons include archived rows and accumulate all windows.
 The manager tool itself stays complete and unwindowed. Dashboard DOM rows
 remain bounded, and session lists load only for rendered rows. Open/bound chat
 session restoration stays independent of window fetches.
+
+Guarded worktree-hub disband coverage, wire and dashboard: `disband_hub`
+rejects a dirty checkout (uncommitted changes), a live session in the hub
+subtree (in use), and a detached HEAD no local or remote-tracking branch ref
+reaches; each rejection keeps the hub on disk. Naming the detached commit
+with a user-created branch (branch creation stays user-owned) lets disband
+succeed: the response lists the removed checkout path, `folders_changed`
+drops the hub via `removedPaths`, the hub directory disappears, and the
+source repository stays on its branch, clean, with no stale worktree
+registration and the user branch preserved. The dashboard dialog journey
+repeats the dirty and active-session rejections with the blocking state kept
+visible, then disbands after the hub session closes; symlink hub rows offer
+no disband item.
 
 **Location:** `tools/manual-test/project-management-smoke/project-management-smoke.mjs`
 (shared boot/probe/browser helpers from `tools/manual-test/lib/`).
@@ -575,28 +595,36 @@ failure the sandbox and server log are preserved.
 `PATH`, writable `os.tmpdir()`. Tracks and kills only the child PID it
 spawns. No real LLM, network, or push subscription required.
 
-### manager-tools-smoke
-
 **Purpose:** Deterministic probe for the manager's pimote toolset (the
-`folder-model-foundation` topic). Registers the shipped
-`createManagerExtension` toolset against a capture-only stub pi
-`ExtensionAPI`, then executes the folder-view tools through a real
-`ManagerToolContext`: real `scanFolderModel` over a fixture tree, real
-`FolderRegistry` over a temp store, and a hub built by the real `createHub`
-(mkdir + absolute member symlinks + `git init` + root-anchored `.gitignore`
-
-- generated `AGENTS.md`). Asserts, without any LLM: the registered names are
-  the pinned eight-tool set (no `*_projects`, no retired persona/search/repo/
-  tree/disband names), `pimote_find_folders` returns complete FolderInfo rows
-  with schema defaults (hub rows carry their member repos),
-  `pimote_find_folders` nature-filtered rows serve the persona team view, and
-  `pimote_create_folder` (kind persona) materializes the persona folder
-  (parseable front matter, caller prompt folded in, memory stub, leaf-rule
-  hint on collisions) and publishes it exactly on success (discovery
-  invalidation + `folders_changed` pairing — failed creations publish nothing
-  and leave no disk effects). Complements the
-  LLM-driven manager-chat phase of `project-management-smoke`, which cannot
-  force tool choice.
+`folder-model-foundation` topic, extended by `hub-member-representation`).
+Registers the shipped `createManagerExtension` toolset against a capture-only
+stub pi `ExtensionAPI`, then executes the tools through a real
+`ManagerToolContext`: real `scanFolderModel` over a fixture tree, a real
+`FolderRegistry` over a temp store with the production Git worktree adapter
+and activity guard, and hubs built by the real `createHub` (symlink hub:
+mkdir + absolute member symlinks + `git init` + root-anchored `.gitignore` +
+generated `AGENTS.md`). Asserts, without any LLM: the registered names are
+the nine-tool set including `pimote_disband_hub` (no `*_projects`, no retired
+persona/search/repo/tree names), `pimote_find_folders` returns complete
+FolderInfo rows with schema defaults (hub rows carry their member repos and
+hub facts), `pimote_find_folders` nature-filtered rows serve the persona team
+view, and `pimote_create_folder` (kind persona) materializes the persona
+folder (parseable front matter, caller prompt folded in, memory stub, leaf-rule
+hint on collisions) and publishes it exactly on success (discovery
+invalidation + `folders_changed` pairing — failed creations publish nothing
+and leave no disk effects). The worktree-hub lifecycle runs through the
+manager seams: `pimote_create_folder` (kind code-hub with `memberRepresentation: 'worktree'`)
+materializes detached code checkouts at source HEAD plus the minimal
+`.pimote-hub.json` marker and the worktree row facts; `pimote_update_hub_members`
+adds persona members as symlinks and code members as detached worktrees and
+rejects dirty worktree removal; `pimote_disband_hub` rejects a symlink hub,
+an active session in the hub subtree, a dirty checkout, and a detached HEAD
+unreachable from any branch ref (each rejection keeps the hub on disk), then
+succeeds once the user names the detached commit with a branch: the response
+lists the removed checkout, the hub directory disappears, and the source
+repository keeps its branches with no stale worktree registration.
+Complements the LLM-driven manager-chat phase of `project-management-smoke`,
+which cannot force tool choice.
 
 **Location:** `tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs`
 
@@ -611,7 +639,9 @@ node tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs
 reuses an existing fixture tree containing `<root>/alpha`, `<root>/beta` git
 repos and an `<root>/omega` persona folder instead of fabricating one; the
 `pimote_create_folder` execution is then skipped — it would mutate the
-user-supplied tree).
+user-supplied tree). The destructive worktree and disband flows always run
+against an isolated fixture inside the sandbox, so a user-supplied `MTMS_ROOT`
+tree stays intact.
 
 **Outputs:** per-check ✓/✗ lines on stdout; non-zero exit on any failure.
 

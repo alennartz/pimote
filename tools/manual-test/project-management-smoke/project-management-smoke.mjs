@@ -9,7 +9,10 @@
 // WebSocket probe client (two-client `folders_changed` sync).
 //
 // Folder-UX flows under test: the four-kind creation wizard (code, persona,
-// code-hub, persona-hub), hub member add/remove ("Manage members…"), and
+// code-hub, persona-hub — including the detached-worktree hub layout), hub
+// member add/remove with representation-aware materialization ("Manage
+// members…"), the guarded worktree-hub disband (dirty, active-session, and
+// detached-HEAD reachability rejections, then a successful disband), and
 // folder archive/restore from the row context menu.
 //
 // Discovery semantics under test: sparse scan with no depth bound (nested
@@ -24,10 +27,14 @@
 //   PM_SHOTS=/tmp/dir  keep coherence screenshots outside the disposable sandbox
 //   PM_KEEP=1          keep the sandbox even on a passing run
 
-import { copyFile, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { execFile as execFileCb } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve as pathResolve } from 'node:path';
+import { promisify } from 'node:util';
+
+const execFile = promisify(execFileCb);
 
 import { makeReporter } from '../lib/report.mjs';
 import { freePort, gitInit, writePersona, seedSession, startPimote, stopPimote, waitForListening } from '../lib/sandbox.mjs';
@@ -46,8 +53,10 @@ const { browser, evalBrowser, fillSelector, wait, revealFolder, rowText, rowIcon
 
 // ---------------------------------------------------------------- fixtures
 
+/** A Pimote extension module (default factory) registering the smoke folder
+ *  source through the extension host's `folders.registerSource` seam. */
 function folderSourceModule({ repoDir, hubDir, memberPath, hookLog }) {
-  return `// Smoke fixture folder source — @pimote/sdk/folders vocabulary.
+  return `// Smoke fixture Pimote extension — @pimote/sdk/folders vocabulary.
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -62,7 +71,6 @@ const HOOK_LOG = ${JSON.stringify(hookLog)};
 const smokeSource = {
   id: 'smoke-source',
   async list() {
-    /** @type {import('@pimote/sdk/folders').SourceEntry[]} */
     return [
       { kind: 'repo', path: REPO, name: 'source-repo', branch: null, dirty: false, ahead: 0, behind: 0, tags: ['from-source'] },
       { kind: 'hub', path: HUB, name: 'kiwi', memberPaths: [MEMBER] },
@@ -78,7 +86,10 @@ const smokeSource = {
     }
   },
 };
-export const sources = [smokeSource];
+
+export default function smokeSourceExtension(context) {
+  context.folders.registerSource(smokeSource);
+}
 `;
 }
 
@@ -101,10 +112,18 @@ async function sendSessionPrompt(text) {
   return true;
 }
 
-/** Close the viewed session — back to the dashboard, session untouched. */
+/** Close the viewed session — back to the dashboard, session untouched.
+ *  Closing the viewed session makes the client adopt the next open profile
+ *  session when one exists, so this loops until the close chip clears; every
+ *  session here is smoke-owned. Returns whether the session view closed. */
 async function closeViewedSession() {
-  await evalBrowser(`(() => { const b = document.querySelector('button.bg-primary span[title="Close session"]'); if (!b) return false; b.click(); return true; })()`);
-  await wait(1000);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const open = await evalBrowser(`Boolean(document.querySelector('button.bg-primary span[title="Close session"]'))`);
+    if (open !== true) return true;
+    await evalBrowser(`(() => { const b = document.querySelector('button.bg-primary span[title="Close session"]'); if (!b) return false; b.click(); return true; })()`);
+    await wait(1000);
+  }
+  return false;
 }
 
 /** Reopen the manager record from the dashboard's "Previous sessions" list. */
@@ -128,6 +147,16 @@ async function waitUntil(fact, timeoutMs = 5_000) {
     if (await fact()) return true;
     if (Date.now() >= deadline) return false;
     await wait(250);
+  }
+}
+
+/** Path exists on disk (files, directories, symlink targets). */
+async function exists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -258,14 +287,13 @@ async function main() {
   const sourceRepoDir = join(rootB, 'source-repo');
   const sourceHubDir = join(externalDir, 'kiwi');
   const hookLog = join(sandboxHome, 'folder-source-hooks.log');
-  const sourcesDir = join(sandboxHome, 'folder-sources');
+  const sourcesDir = join(configDir, 'extensions');
   await mkdir(sourcesDir, { recursive: true });
   await writeFile(join(sourcesDir, 'smoke-folder-source.mjs'), folderSourceModule({ repoDir: sourceRepoDir, hubDir: sourceHubDir, memberPath: join(rootB, 'delta'), hookLog }));
 
   const configPath = join(configDir, 'config.json');
   const config = {
     roots: [rootA, rootB],
-    folderSourcesDir: sourcesDir,
     port: 0, // replaced below
     bufferSize: 100,
     updateCheck: false,
@@ -286,13 +314,14 @@ async function main() {
 
   let child;
   const westDir = join(rootA, 'west');
-  const limaDir = join(rootA, 'lima');
   const zuluDir = join(rootA, 'zulu');
   const epsilon = join(rootA, 'epsilon');
   const rhoDir = join(rootA, 'rho');
   const novaDir = join(rootA, 'nova');
   const kappaDir = join(rootA, 'kappa');
   const tauDir = join(rootA, 'tau');
+  const vaneDir = join(rootA, 'vane');
+  const onyxDir = join(rootA, 'onyx');
   const omegaDir = join(rootA, 'omega');
   const sigmaDir = join(rootA, 'sigma');
   const charlieDir = join(externalDir, 'charlie');
@@ -421,11 +450,133 @@ async function main() {
     assert(west?.nature === 'code' && west?.shortcutCount === 2, 'hub classifies as code with shortcutCount = member count');
     assert(west.repos.find((r) => r.path === join(rootA, 'beta'))?.dirty === true, 'member repo chip data carries dirty=true for beta');
 
-    // Hub disband is gone from every surface (DR-063): deletion is a
-    // file-level concern, not a folder-model operation.
-
-    // The hub stays; the browser phase observes it live via folders_changed
+    // The symlink hub stays; the browser phase observes it live via folders_changed
     // (two-client sync in the browser direction).
+
+    // ============================================================
+    section('W — create_hub worktree mode (detached checkouts, marker, row facts)');
+    // ============================================================
+    const alphaWorktree = join(vaneDir, 'alpha');
+    const gitIn = (cwd, ...args) => execFile('git', ['-C', cwd, ...args]);
+    const createWt = await probeB.send({ type: 'create_hub', name: 'vane', root: rootA, memberPaths: [join(rootA, 'alpha'), omegaDir], memberRepresentation: 'worktree' });
+    assert(
+      createWt.success === true && createWt.data?.folderPath === (await realpath(vaneDir)),
+      'worktree create_hub returns the canonical hub folder path',
+    );
+    assert(
+      (await readFile(join(vaneDir, '.pimote-hub.json'), 'utf8').catch(() => '')).trim() === '{"memberRepresentation":"worktree"}',
+      'the worktree hub carries the minimal .pimote-hub.json marker',
+    );
+    assert((await lstat(join(alphaWorktree, '.git')).then((s) => s.isFile(), () => false)) === true, 'the code member materializes as a nested worktree (.git file, not a directory)');
+    const { stdout: checkoutRef } = await gitIn(alphaWorktree, 'rev-parse', '--abbrev-ref', 'HEAD');
+    const [{ stdout: checkoutSha }, { stdout: sourceSha }] = await Promise.all([
+      gitIn(alphaWorktree, 'rev-parse', 'HEAD'),
+      gitIn(join(rootA, 'alpha'), 'rev-parse', 'HEAD'),
+    ]);
+    assert(checkoutRef.trim() === 'HEAD' && checkoutSha.trim() === sourceSha.trim(), 'the checkout is detached exactly at the source HEAD');
+    assert((await readlink(join(vaneDir, 'omega')).catch(() => null)) === omegaDir, 'a persona member in a worktree hub stays a symlink');
+    const vaneIgnore = (await readFile(join(vaneDir, '.gitignore'), 'utf8').catch(() => '')).split('\n').filter(Boolean);
+    assert(
+      vaneIgnore.includes('/.pimote-hub.json') && vaneIgnore.includes('/alpha') && vaneIgnore.includes('/omega'),
+      `.gitignore covers the marker and both member names (got: ${JSON.stringify(vaneIgnore)})`,
+    );
+    const vaneAgents = await readFile(join(vaneDir, 'AGENTS.md'), 'utf8').catch(() => '');
+    assert(
+      vaneAgents.includes('Code members are nested detached Git worktrees; persona members are symlinks'),
+      'the generated AGENTS.md describes the worktree layout',
+    );
+    const vaneDelta = await probeA.waitForEvent('folders_changed', (e) => e.changed?.some((f) => f.path === vaneDir && f.hub?.representation === 'worktree'));
+    assert(Boolean(vaneDelta), 'folders_changed carries the worktree hub fact (two-client sync)');
+    const list4 = await probeA.listFolders({ repin: true });
+    const vane = list4.data.folders.find((f) => f.path === vaneDir);
+    assert(vane?.hub?.representation === 'worktree' && vane?.members?.length === 2, 'the vane row carries the hub fact and both members');
+    const vaneAlpha = vane?.members?.find((m) => m.path === join(rootA, 'alpha'));
+    const vaneOmega = vane?.members?.find((m) => m.path === omegaDir);
+    assert(
+      vaneAlpha?.representation === 'worktree' && vaneAlpha?.worktreePath === alphaWorktree,
+      'the worktree member reports its canonical path, representation, and checkout path',
+    );
+    assert(
+      vaneOmega?.representation === 'symlink' && vaneOmega?.worktreePath === undefined && vaneOmega?.nature === 'persona',
+      'the persona member reports symlink representation without a checkout path',
+    );
+    assert(
+      vane?.repos?.some((r) => r.path === join(rootA, 'alpha') && r.worktreePath === alphaWorktree),
+      'the member repo reports the nested checkout while keeping the canonical source identity (the detached checkout itself has no branch)',
+    );
+    assert(vane?.shortcutCount === 1, 'shortcutCount counts symlink members only (the persona link)');
+    const { stdout: alphaStatusAfterCreate } = await gitIn(join(rootA, 'alpha'), 'status', '--porcelain');
+    assert(alphaStatusAfterCreate.trim() === '', 'worktree creation leaves the source checkout clean');
+
+    // ============================================================
+    section('W — disband_hub guards (dirty, active session, unreachable HEAD) and success');
+    // ============================================================
+    // Dirty guard: an untracked file rejects before any disk change.
+    await writeFile(join(alphaWorktree, 'scratch.txt'), 'uncommitted\n');
+    const dirtyDisband = await probeB.send({ type: 'disband_hub', hubPath: vaneDir });
+    assert(
+      dirtyDisband.success === false && String(dirtyDisband.error ?? '').includes('uncommitted changes'),
+      'disband rejects a dirty worktree (user-presentable)',
+    );
+    assert(
+      await stat(join(vaneDir, 'AGENTS.md')).then(
+        () => true,
+        () => false,
+      ),
+      'the rejected disband keeps the hub on disk',
+    );
+    await rm(join(alphaWorktree, 'scratch.txt'), { force: true });
+
+    // Activity guard: a live session inside the hub subtree rejects.
+    const busyOpen = await probeB.send({ type: 'open_session', folderPath: vaneDir });
+    assert(busyOpen.success === true && Boolean(busyOpen.data?.sessionId), 'a session opens inside the hub for the activity guard');
+    const busyDisband = await probeB.send({ type: 'disband_hub', hubPath: vaneDir });
+    assert(
+      busyDisband.success === false && String(busyDisband.error ?? '').includes('in use'),
+      'disband rejects while a session lives in the hub subtree',
+    );
+    await probeB.send({ type: 'close_session', sessionId: busyOpen.data.sessionId });
+    // close_session resolves after the slot leaves the live set; wait for the
+    // row to report idle before the next guard attempt.
+    assert(
+      await waitUntil(async () => ((await probeA.listFolders({ repin: true })).data.folders.find((f) => f.path === vaneDir)?.activeSessionCount ?? 1) === 0, 10_000),
+      'the hub session released before the next guard attempt',
+    );
+
+    // Reachability guard: a detached HEAD no branch ref reaches.
+    await writeFile(join(alphaWorktree, 'lonely.txt'), 'detached work\n');
+    await gitIn(alphaWorktree, 'add', '.');
+    await gitIn(alphaWorktree, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'lonely detached work');
+    const unreachableDisband = await probeB.send({ type: 'disband_hub', hubPath: vaneDir });
+    assert(
+      unreachableDisband.success === false && String(unreachableDisband.error ?? '').includes('not reachable from a branch ref'),
+      'disband rejects a detached HEAD no branch ref reaches',
+    );
+    assert(await exists(vaneDir), 'the unreachable-rejected hub stays on disk');
+
+    // Branch creation is user-owned: naming the detached commit keeps the work.
+    await gitIn(alphaWorktree, 'branch', 'feature/keep');
+    const disbandMark = Date.now();
+    const disbandResp = await probeB.send({ type: 'disband_hub', hubPath: vaneDir });
+    assert(disbandResp.success === true, 'disband succeeds once HEAD is reachable from a branch ref');
+    assert(
+      JSON.stringify(disbandResp.data?.removedWorktreePaths) === JSON.stringify([alphaWorktree]),
+      'the response lists the removed checkout path',
+    );
+    assert(!(await exists(vaneDir)), 'the hub directory is gone after disband');
+    assert(
+      await waitUntil(async () => probeA.eventsSince(disbandMark, 'folders_changed').some((e) => (e.event.removedPaths ?? []).includes(vaneDir))),
+      'folders_changed drops the hub row via removedPaths (two-client sync)',
+    );
+    const { stdout: keptBranch } = await gitIn(join(rootA, 'alpha'), 'branch', '--list', 'feature/keep');
+    assert(keptBranch.includes('feature/keep'), 'disband never deletes the user-created branch');
+    const { stdout: alphaBranchAfter } = await gitIn(join(rootA, 'alpha'), 'rev-parse', '--abbrev-ref', 'HEAD');
+    const { stdout: alphaStatusAfter } = await gitIn(join(rootA, 'alpha'), 'status', '--porcelain');
+    const { stdout: alphaWorktreesAfter } = await gitIn(join(rootA, 'alpha'), 'worktree', 'list', '--porcelain');
+    assert(
+      alphaBranchAfter.trim() === 'main' && alphaStatusAfter.trim() === '' && !alphaWorktreesAfter.includes(vaneDir),
+      'the source repository stays on main, clean, with no stale worktree registration',
+    );
 
     // ============================================================
     section('W — add_hub_member / remove_hub_member + create_persona_folder');
@@ -543,6 +694,11 @@ async function main() {
 
     const afterFallback = await probeA.listFolders({ repin: true });
     assert(!afterFallback.data.folders.some((f) => f.path === strayCode || f.path === strayPersona), 'unscanned cwds are never listed merely because a session was opened there');
+    // Close the fallback sessions: an open profile session makes the
+    // browser's next viewed-session close adopt it instead of returning to
+    // the dashboard (the shared per-user open-session set).
+    await probeA.send({ type: 'close_session', sessionId: codeOpen.data?.sessionId });
+    await probeA.send({ type: 'close_session', sessionId: personaOpen.data?.sessionId });
 
     // ============================================================
     section('W — legacy registry read-compat (multiRepo → hubs)');
@@ -592,8 +748,8 @@ async function main() {
     assert(migrateResp.success === true, 'curation mutation after legacy load succeeds');
     const persisted = JSON.parse(await readFile(registryPath, 'utf8'));
     assert(
-      Array.isArray(persisted.hubs) && persisted.hubs.some((h) => h.path === westDir) && persisted.multiRepo === undefined,
-      'next write persists the hubs key (multiRepo retired)',
+      persisted.hubs === undefined && persisted.multiRepo === undefined && persisted.overrides?.[join(rootA, 'alpha')]?.tags?.includes('migrated') === true,
+      'the next write persists curation only (hub lists retired — membership lives on disk, DR-064)',
     );
     await probeA.send({ type: 'update_folder', folderPath: join(rootA, 'alpha'), removeTags: ['migrated'] });
 
@@ -622,11 +778,13 @@ async function main() {
     assert(omegaText.includes('Omega') && omegaText.includes('Fixture persona without shortcuts'), 'persona row shows the persona name and description subtitle');
     const sigmaText = await rowText(sigmaDir);
     assert(sigmaText.includes('Sigma Persona') && !sigmaText.includes('sigma'), 'persona row never shows the folder basename as its name');
-    // Hub create lives in the toolbar overflow menu (folder vocabulary).
+    // Hub creation lives in the New-session wizard's four-kind row; the
+    // toolbar overflow menu keeps curation actions only.
     await browser(['click', 'button[title="More folder actions"]']);
     await browser(['wait', 400]);
     const toolbarMenuSnap = (await browser(['snapshot', '-i'])).stdout;
-    assert(toolbarMenuSnap.includes('Create hub'), 'toolbar exposes the hub creation control');
+    assert(toolbarMenuSnap.includes('Show archived'), 'toolbar keeps the curation menu (Show archived)');
+    assert(!toolbarMenuSnap.includes('Create hub'), 'the toolbar menu no longer hosts hub creation (wizard-only)');
     await browser(['press', 'Escape']);
     await browser(['wait', 300]);
     const managerAffordance = await evalBrowser(`Boolean(document.querySelector('button[aria-label="Switch to the manager"]'))`);
@@ -703,7 +861,7 @@ async function main() {
     assert((await rowText(join(rootA, 'beta'))).includes('beta'), 'warm cache: folder list survives session navigation without a reload');
     // Live-session indicator across clients: the probe opens a session in
     // beta; the dashboard (still open in the browser) lights beta's dot.
-    await probeA.send({ type: 'open_session', folderPath: join(rootA, 'beta') });
+    const betaOpen = await probeA.send({ type: 'open_session', folderPath: join(rootA, 'beta') });
     await revealFolder(join(rootA, 'beta'));
     let betaDot = false;
     for (let i = 0; i < 20; i++) {
@@ -714,6 +872,10 @@ async function main() {
       if (betaDot === true) break;
     }
     assert(betaDot === true, 'beta row shows the active-session dot for a session opened by another client');
+    // Close the probe's beta session now: an open profile session would make
+    // the browser's next viewed-session close adopt it instead of returning
+    // to the dashboard (the shared per-user open-session set).
+    await probeA.send({ type: 'close_session', sessionId: betaOpen.data?.sessionId });
 
     // ============================================================
     section('B — resume fabricated session (journey 1/2 settled half)');
@@ -975,6 +1137,165 @@ async function main() {
     await browser(['wait', 300]);
 
     // ============================================================
+    section('B — wizard: detached-worktree hub flow (representation choice)');
+    // ============================================================
+    assert((await openNewSessionDialog()) === true, 'New session dialog opens for the detached-worktree hub flow');
+    assert((await clickWizardKind('code-hub')) === true, 'wizard kind row exposes the code-hub kind button');
+    await pickWizardRoot(rootA);
+    await fillSelector('[role="dialog"] input[placeholder="Folder name"]', 'onyx');
+    assert((await clickDialogButton('Next')) === true, 'identity advances to the member step');
+    assert((await clickDialogFolderRow(join(rootA, 'alpha'))) === 1, 'member picker offers alpha');
+    assert((await clickDialogFolderRow(omegaDir)) === 1, 'member picker offers the persona folder omega');
+    const defaultNote = String(await evalBrowser(`(() => { const d = document.querySelector('[role="dialog"]'); return d ? d.innerText : ''; })()`));
+    assert(defaultNote.includes('Code members stay at their canonical folders'), 'the member step defaults to the symlink layout');
+    const worktreeChoice = await evalBrowser(
+      `(() => { const b = Array.from(document.querySelectorAll('[role="dialog"] button')).find((x) => x.textContent?.trim() === 'Detached worktrees'); if (!b) return false; b.click(); return true; })()`,
+    );
+    assert(worktreeChoice === true, 'the member step offers the Detached worktrees choice');
+    const worktreeNote = String(await evalBrowser(`(() => { const d = document.querySelector('[role="dialog"]'); return d ? d.innerText : ''; })()`));
+    assert(
+      worktreeNote.includes('will use nested detached worktrees') && worktreeNote.includes('Persona members remain symlinked'),
+      'the helper text explains the worktree layout and persona symlinks',
+    );
+    assert((await clickDialogButton('Next')) === true, 'member step advances with the chosen members');
+    await fillSelector('[role="dialog"] textarea', 'Detached hub for the onyx workstream.');
+    assert((await clickDialogButton('Create')) === true, 'worktree hub flow creates from the Vision text step');
+    assert((await waitForSessionSurface()) === true, 'worktree hub flow opens the new session');
+    // The viewed-session close chip detaches (per-user unlink) and leaves the
+    // server runtime running, so the probe ends the slot with close_session
+    // before the guarded disband journey.
+    const onyxSessionId = await evalBrowser(`location.pathname.startsWith('/sessions/') ? location.pathname.split('/')[2] : null`);
+    assert((await closeViewedSession()) === true, 'closing the worktree-hub session returns to the dashboard');
+    await probeA.send({ type: 'close_session', sessionId: onyxSessionId });
+    assert(
+      (await readFile(join(onyxDir, '.pimote-hub.json'), 'utf8').catch(() => '')).trim() === '{"memberRepresentation":"worktree"}',
+      'the wizard-created hub carries the worktree marker',
+    );
+    assert((await lstat(join(onyxDir, 'alpha', '.git')).then((s) => s.isFile(), () => false)) === true, 'wizard creation detached the code member (worktree .git file)');
+    assert((await readlink(join(onyxDir, 'omega')).catch(() => null)) === omegaDir, 'wizard creation symlinked the persona member');
+    assert((await rowText(onyxDir)).includes('onyx'), 'the worktree hub row renders on the dashboard');
+
+    // ============================================================
+    section('B — worktree hub members dialog (representations + edits)');
+    // ============================================================
+    assert((await openRowMenu(onyxDir)) === true, 'row context menu opens on the worktree hub row');
+    assert((await clickMenuItem('Manage members…')) === true, 'worktree hub row menu exposes Manage members…');
+    await browser(['wait', 400]);
+    const wtDialogText = String(await evalBrowser(`(() => { const d = document.querySelector('[role="dialog"]'); return d ? d.innerText : ''; })()`));
+    assert(
+      wtDialogText.includes('Code members use detached worktrees here; persona members use symlinks'),
+      'the members dialog intro describes the worktree layout',
+    );
+    assert(wtDialogText.includes('· detached worktree'), 'the worktree member line reports its representation');
+    assert(wtDialogText.includes(join(onyxDir, 'alpha')), 'the worktree member line shows the nested checkout path');
+    assert(wtDialogText.includes('· symlink'), 'the persona member line reports symlink representation');
+    assert(wtDialogText.includes('Code members join as detached worktrees.'), 'the add picker states the layout new code members get');
+    // Representation-aware edit: a code member detaches, a persona symlinks.
+    assert((await clickDialogFolderRow(join(rootB, 'delta'))) === 1, 'add picker offers the code folder delta');
+    assert(
+      await waitUntil(
+        async () =>
+          (await lstat(join(onyxDir, 'delta', '.git')).then((s) => s.isFile(), () => false)) === true &&
+          (await readFile(join(onyxDir, 'AGENTS.md'), 'utf8').catch(() => '')).includes('- delta (code): read nested AGENTS.md for context.'),
+      ),
+      'adding a code member to a worktree hub detaches it (worktree + seeded line)',
+    );
+    const deltaDialogText = String(await evalBrowser(`(() => { const d = document.querySelector('[role="dialog"]'); return d ? d.innerText : ''; })()`));
+    assert(deltaDialogText.includes(join(onyxDir, 'delta')), 'the dialog lists the new worktree member with its checkout path');
+    assert(
+      (await evalBrowser(`(() => { const b = document.querySelector('[role="dialog"] button[aria-label="Remove delta"]'); if (!b) return false; b.click(); return true; })()`)) === true,
+      'the worktree member row exposes its remove button',
+    );
+    assert(
+      await waitUntil(
+        async () =>
+          !(await exists(join(onyxDir, 'delta'))) &&
+          !(await readFile(join(onyxDir, 'AGENTS.md'), 'utf8').catch(() => '')).includes('- delta (code):'),
+      ),
+      'removing the code member deletes its checkout and seeded line',
+    );
+    const { stdout: deltaStatusAfterRemove } = await execFile('git', ['-C', join(rootB, 'delta'), 'status', '--porcelain']);
+    assert(deltaStatusAfterRemove.trim() === '', 'the removed worktree member leaves its source checkout clean');
+    assert((await clickDialogFolderRow(rhoDir)) === 1, 'add picker offers the persona folder rho');
+    assert(
+      await waitUntil(async () => (await readlink(join(onyxDir, 'rho')).catch(() => null)) === rhoDir),
+      'adding a persona member to a worktree hub still symlinks it',
+    );
+    await browser(['press', 'Escape']);
+    await browser(['wait', 300]);
+
+    // ============================================================
+    section('B — guarded worktree disband from the dashboard (UI)');
+    // ============================================================
+    // Symlink hubs offer no disband item: the lifecycle is worktree-only.
+    assert((await openRowMenu(westDir)) === true, 'row context menu opens on the symlink hub row');
+    const westMenuText = String(
+      await evalBrowser(
+        `(() => Array.from(document.querySelectorAll('[role="menuitem"], [data-slot="context-menu-item"], [data-slot="dropdown-menu-item"]')).map((i) => i.textContent ?? '').join('\\n'))()`,
+      ),
+    );
+    assert(westMenuText.includes('Manage members…'), 'the symlink hub menu opened with its membership item');
+    assert(!westMenuText.includes('Disband worktree hub'), 'symlink hub rows offer no disband item');
+    await browser(['press', 'Escape']);
+    await browser(['wait', 300]);
+
+    // Dirty guard through the dialog: the blocking state stays visible.
+    assert(
+      (await waitUntil(async () => ((await probeA.listFolders({ repin: true })).data.folders.find((f) => f.path === onyxDir)?.activeSessionCount ?? 1) === 0, 10_000)),
+      'the hub is idle before the guarded disband journey',
+    );
+    await writeFile(join(onyxDir, 'alpha', 'uncommitted.txt'), 'uncommitted\n');
+    assert((await openRowMenu(onyxDir)) === true, 'row context menu opens on the worktree hub row');
+    assert((await clickMenuItem('Disband worktree hub…')) === true, 'worktree hub row menu exposes Disband worktree hub…');
+    await browser(['wait', 500]);
+    const disbandDialog = String(await evalBrowser(`(() => { const d = document.querySelector('[role="dialog"]'); return d ? d.innerText : ''; })()`));
+    assert(disbandDialog.includes('Disband onyx?'), 'the disband confirmation dialog names the hub');
+    assert(disbandDialog.includes('does not merge or delete branches'), 'the confirmation states branch preservation');
+    assert(disbandDialog.includes('reachable from a local or remote-tracking branch'), 'the confirmation states the reachability guard');
+    assert((await clickDialogButton('Disband')) === true, 'the dialog offers the destructive Disband button');
+    const dirtyAlert = await waitUntil(
+      async () => String(await evalBrowser(`(() => { const a = document.querySelector('[role="dialog"] p[role="alert"]'); return a ? a.textContent : ''; })()`)).includes('uncommitted changes'),
+      8000,
+    );
+    assert(dirtyAlert, 'a dirty worktree lists its blocking state in the dialog');
+    assert(await exists(onyxDir), 'the rejected disband keeps the hub on disk');
+    assert((await clickDialogButton('Cancel')) === true, 'cancel leaves the hub in place');
+    await browser(['wait', 300]);
+    await rm(join(onyxDir, 'alpha', 'uncommitted.txt'), { force: true });
+
+    // Activity guard through the dialog: a live session in the hub blocks.
+    const onyxOpen = await probeA.send({ type: 'open_session', folderPath: onyxDir });
+    assert(onyxOpen.success === true && Boolean(onyxOpen.data?.sessionId), 'a session opens in the hub for the activity-guard journey');
+    assert((await openRowMenu(onyxDir)) === true, 'the row menu reopens for the activity-guard attempt');
+    assert((await clickMenuItem('Disband worktree hub…')) === true, 'the disband item reopens the dialog');
+    await browser(['wait', 400]);
+    assert((await clickDialogButton('Disband')) === true, 'the disband attempt reaches the server');
+    const busyAlert = await waitUntil(
+      async () => String(await evalBrowser(`(() => { const a = document.querySelector('[role="dialog"] p[role="alert"]'); return a ? a.textContent : ''; })()`)).includes('in use'),
+      8000,
+    );
+    assert(busyAlert, 'a live hub session blocks disband with the in-use error');
+    await probeA.send({ type: 'close_session', sessionId: onyxOpen.data.sessionId });
+    assert(
+      await waitUntil(async () => ((await probeA.listFolders({ repin: true })).data.folders.find((f) => f.path === onyxDir)?.activeSessionCount ?? 1) === 0, 10_000),
+      'the hub session released before the retry',
+    );
+    // The dialog stayed open; the same Disband button retries and succeeds
+    // once the hub session closed.
+    assert((await clickDialogButton('Disband')) === true, 'retrying disband after the hub session closed');
+    const rowGone = await waitUntil(async () => !((await probeA.listFolders({ repin: true })).data.folders.some((f) => f.path === onyxDir)), 10_000);
+    assert(rowGone, 'the disbanded hub row leaves the folder listing');
+    assert(!(await exists(onyxDir)), 'the hub directory is gone after the UI disband');
+    assert(await exists(omegaDir), 'disband never follows member symlinks (the persona folder survives)');
+    const { stdout: onyxAlphaStatus } = await execFile('git', ['-C', join(rootA, 'alpha'), 'status', '--porcelain']);
+    const { stdout: onyxAlphaBranch } = await execFile('git', ['-C', join(rootA, 'alpha'), 'rev-parse', '--abbrev-ref', 'HEAD']);
+    const { stdout: onyxAlphaWorktrees } = await execFile('git', ['-C', join(rootA, 'alpha'), 'worktree', 'list', '--porcelain']);
+    assert(
+      onyxAlphaStatus.trim() === '' && onyxAlphaBranch.trim() === 'main' && !onyxAlphaWorktrees.includes(onyxDir),
+      'the guarded disband leaves the canonical source on main, clean, with no stale worktree registration',
+    );
+
+    // ============================================================
     section('B — Archive project / Restore project (folder curation only)');
     // ============================================================
     // Exercise on alpha: its fabricated session record is a real persisted
@@ -1015,42 +1336,16 @@ async function main() {
     );
 
     // ============================================================
-    section('B — hub creation via UI dialog + member chips');
+    section('B — hub member chips carry nested repo state (dirty dot)');
     // ============================================================
-    await browser(['click', 'button[title="More folder actions"]']);
-    await browser(['wait', 400]);
-    const createHubMenu = await clickMenuItem('Create hub');
-    assert(createHubMenu === true, 'toolbar menu opens the hub dialog');
-    await browser(['wait', 600]);
-    await fillSelector('[role="dialog"] input[placeholder="Hub name"]', 'lima');
-    await browser(['wait', 200]);
-    const rootPick = await evalBrowser(
-      `(() => { const btns = Array.from(document.querySelectorAll('[role="dialog"] button')).filter(b => b.textContent?.trim() === ${JSON.stringify(rootA)}); if (!btns.length) return 0; btns[0].click(); return btns.length; })()`,
-    );
-    assert(Number(rootPick) >= 1, 'hub dialog lists configured roots');
-    const memberClicks = await evalBrowser(
-      `(() => {
-        const rows = Array.from(document.querySelectorAll('[role="dialog"] button')).filter(b => b.textContent?.includes(${JSON.stringify(join(rootA, 'alpha'))}) || b.textContent?.includes(${JSON.stringify(join(rootB, 'delta'))}));
-        rows.forEach(r => r.click());
-        return rows.length;
-      })()`,
-    );
-    assert(Number(memberClicks) === 2, 'member picker lists alpha and delta; both selected');
-    await browser(['screenshot', join(shotsDir, '05-hub-dialog.png')], { allowFailure: true });
-    await clickDialogButton('Create hub');
-    await browser(['wait', 1500]);
-    assert((await rowText(limaDir)).includes('lima'), 'lima appears in the dashboard after UI creation');
-    const limaChips = await rowText(limaDir);
-    assert(limaChips.includes('alpha') && /main/.test(limaChips), 'lima chip: alpha with branch main');
-    assert(limaChips.includes('delta') && /feature\/zebra/.test(limaChips), 'lima chip: delta with branch feature/zebra');
-    await browser(['screenshot', join(shotsDir, '06-hub-chips.png')], { allowFailure: true });
-
-    // Dirty chip visual: west contains beta (dirty).
+    // Hub creation UI coverage lives in the wizard flows (kappa symlinks,
+    // onyx detached worktrees). Here: the member chip's repo facts.
     await revealFolder(westDir);
     const westDirty = await evalBrowser(
       `(() => { const s = document.querySelector('[data-folder-path="' + ${JSON.stringify(westDir)} + '"]'); const row = s?.closest('.group'); const chip = Array.from(row?.querySelectorAll('span[title]') ?? []).find(x => (x.getAttribute('title') ?? '').includes('beta')); return chip?.querySelector('span[title="Uncommitted changes"]') ? 'dirty-dot' : 'no-dirty-dot'; })()`,
     );
     assert(westDirty === 'dirty-dot', 'beta chip in west shows the dirty dot');
+    await browser(['screenshot', join(shotsDir, '05-hub-chips.png')], { allowFailure: true });
 
     // ============================================================
     section('B — source hooks: missing source repo provisions on open');
@@ -1242,11 +1537,14 @@ async function main() {
     section('B — manager session persists across connections (reload reattach)');
     // ============================================================
     // Sessions are server-owned: reload drops only the viewer, and the
-    // reconnect restores the same persisted transcript.
-    await browser(['reload']);
-    await browser(['wait', 3000]);
-    const restoredText = String(await evalBrowser(`Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ')`));
-    assert(/PONG/i.test(restoredText), 'reconnect restores the same manager transcript (persisted, not ephemeral)');
+    // reconnect restores the same persisted transcript. Needs an admitted
+    // manager prompt, so it runs only with a reachable local model.
+    if (jetsonUsable) {
+      await browser(['reload']);
+      await browser(['wait', 3000]);
+      const restoredText = String(await evalBrowser(`Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ')`));
+      assert(/PONG/i.test(restoredText), 'reconnect restores the same manager transcript (persisted, not ephemeral)');
+    }
 
     // ============================================================
     section('B — disconnect during a run keeps processing (reconnect mid-run)');
@@ -1269,21 +1567,23 @@ async function main() {
     // ============================================================
     section('B — manager history reopening (old record resumes)');
     // ============================================================
-    await closeViewedSession();
-    assert((await ensureManagerMode()) === true, 'manager area reachable again from the dashboard');
-    await evalBrowser(
-      `(() => { const b = Array.from(document.querySelectorAll('button')).find((x) => /Previous sessions/.test(x.textContent ?? '')); if (!b) return false; b.click(); return true; })()`,
-    );
-    await wait(1500);
-    const recordClicked = await evalBrowser(
-      `(() => { const row = Array.from(document.querySelectorAll('button')).find((b) => /PONG|Count from 1/.test(b.textContent ?? '')); if (!row) return 'no-record'; row.click(); return 'clicked'; })()`,
-    );
-    assert(recordClicked === 'clicked', `manager session list offers the old record (${recordClicked})`);
-    await browser(['wait', 1500]);
-    const resumedText = String(await evalBrowser(`Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ')`));
-    assert(/PONG/i.test(resumedText), 'selecting the old record resumes its transcript');
-    await browser(['screenshot', join(shotsDir, '07b-manager-history.png')], { allowFailure: true });
-    await closeViewedSession();
+    if (jetsonUsable) {
+      await closeViewedSession();
+      assert((await ensureManagerMode()) === true, 'manager area reachable again from the dashboard');
+      await evalBrowser(
+        `(() => { const b = Array.from(document.querySelectorAll('button')).find((x) => /Previous sessions/.test(x.textContent ?? '')); if (!b) return false; b.click(); return true; })()`,
+      );
+      await wait(1500);
+      const recordClicked = await evalBrowser(
+        `(() => { const row = Array.from(document.querySelectorAll('button')).find((b) => /PONG|Count from 1/.test(b.textContent ?? '')); if (!row) return 'no-record'; row.click(); return 'clicked'; })()`,
+      );
+      assert(recordClicked === 'clicked', `manager session list offers the old record (${recordClicked})`);
+      await browser(['wait', 1500]);
+      const resumedText = String(await evalBrowser(`Array.from(document.querySelectorAll('.assistant-message')).map((e) => e.innerText).join(' ')`));
+      assert(/PONG/i.test(resumedText), 'selecting the old record resumes its transcript');
+      await browser(['screenshot', join(shotsDir, '07b-manager-history.png')], { allowFailure: true });
+      await closeViewedSession();
+    }
 
     // ============================================================
     section('B — manager folder tools (create_folder kind persona → folders_changed → dashboard row)');
