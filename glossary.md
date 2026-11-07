@@ -149,7 +149,7 @@ A folder composed of member folders — top-level symlinks or, for code members 
 _Avoid_: multi-repo project
 
 **Folder registry**:
-Pimote's persisted user curation of folders — favorite/archive state, tags, and hub membership — keyed by canonical folder path.
+Pimote's persisted user curation of folders — favorite/archive state and tags — keyed by canonical folder path.
 _Avoid_: project registry
 
 **Folder source**:
@@ -157,7 +157,7 @@ A registration by a Pimote extension that contributes folder entries to Pimote's
 _Avoid_: project source
 
 **Hub member**:
-A discovered folder-model entry joined to a hub by a top-level symlink or, for a code member, a Git-verified nested detached worktree. Membership does not alter the member folder.
+A discovered folder-model entry joined to a hub by a top-level symlink or, for a code member, a Git-verified nested detached worktree. The canonical identity remains the source folder; a worktree member also has a separate nested checkout.
 _Avoid_: repo-only member
 
 **Managed member block**:
@@ -217,8 +217,8 @@ _Avoid_: tag template
 - A **scan root** anchors discovery: folders are **skipped** until **included** as a **code folder** or **persona folder**
 - A **persona folder**'s `AGENTS.md` is an agent definition — **persona marker** front matter plus persona prompt body
 - A **shortcut** adds **occurrences** of an entry, never new entries; identity is the canonical path
-- A **hub** is an ordinary code folder the folder model discovers like any other; its shortcuts point at its members
-- The **folder registry** curates discovered folders; **folder sources** can contribute additional entries
+- A **hub** is an included folder the folder model discovers like any other; its symlinks or verified nested worktrees represent its **hub members**
+- The **folder registry** curates discovered folders by canonical path; **folder sources** can contribute additional entries
 - A **persona folder** persists by leaving artifacts in its own folder; persona conferrals are ephemeral, **manager sessions** are not
 - The **manager root** is distinct from scan roots; when nested inside one, its entry is excluded from the sparse tree
 - A **manager session** is an ordinary persisted session rooted at the **manager root**

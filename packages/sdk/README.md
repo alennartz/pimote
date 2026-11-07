@@ -169,7 +169,7 @@ interface HubSourceEntry {
 
 ### `RepoInfo`
 
-Repo facts as contributed by sources: `path`, `name`, `branch` (`string | null`), `dirty`, `ahead`, `behind`, and optional `lastActivity` (epoch ms), `missing` (repo path no longer exists on disk), and `tags`. It mirrors pimote's wire `RepoInfo` type — same name, same fields — so extension authors can write `interface MyEntry extends RepoInfo` against the SDK alone.
+Repo facts: `path`, `name`, `branch` (`string | null`), `dirty`, `ahead`, `behind`, and optional `worktreePath`, `lastActivity` (epoch ms), `missing` (repo path no longer exists on disk), and `tags`. In a worktree hub row, `path` stays the canonical source path; `worktreePath` identifies the nested checkout whose Git status Pimote reports. It mirrors Pimote's wire `RepoInfo` type — same name, same fields — so extension authors can write `interface MyEntry extends RepoInfo` against the SDK alone.
 
 ## Activity — `@pimote/sdk/activity`
 

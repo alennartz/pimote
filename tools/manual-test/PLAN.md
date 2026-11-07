@@ -269,8 +269,8 @@ Search matches folders and session text server-side, including unfetched rows.
 Discovery is sparse with no depth bound (nested entries under skipped wrappers
 surface at any depth; included folders stop descent). Rows carry a
 code/persona nature icon in
-four variants (code, code-hub, persona, persona-hub by nature ×
-shortcutCount), favorites, archive/show-archived, inline expansion of
+four variants (code, code-hub, persona, persona-hub by nature and the `hub`
+row fact), favorites, archive/show-archived, inline expansion of
 per-folder sessions loaded only for rendered rows, and repo status chips
 (branch + dirty dot) from plain-row `repo` facts and hub-member `repos`; the New Session dialog hosts the four-kind creation
 wizard (kind icon row above the folder picker; identity → members? →
@@ -284,11 +284,12 @@ members as nested detached Git worktrees — plus exact seeded `AGENTS.md` lines
 member folder is never touched) and every row archives/restores ("Archive
 project" / "Restore project": folder curation only, session records never
 archive); worktree hub rows add the guarded "Disband worktree hub…" action
-(the server closes idle, observerless sessions in the hub subtree first, then
-rejects sessions still working or observed, external pi processes, dirty
-checkouts, and detached HEADs unreachable from a local or remote-tracking
-branch ref; it removes the worktrees and the hub without merging,
-committing, stashing, or deleting branches); epoch-stamped `folders_changed` deltas merge `changed`
+(a valid worktree marker is required; the server closes idle, observerless
+sessions in the hub subtree first, then rejects sessions still working or
+observed, external pi processes, dirty checkout or hub content, edited
+generated metadata, unexpected children, and detached HEADs unreachable from
+a local or remote-tracking branch ref; it removes the worktrees and the hub
+without merging, committing, stashing, or deleting branches); epoch-stamped `folders_changed` deltas merge `changed`
 rows and drop `removedPaths` in both clients. Archived-row probes explicitly
 set `includeArchived`. Fresh discovery comparisons explicitly repin. Folder sources contribute repo/hub entries (missing ones
 provision via `onFolderOpen` at open time); the manager is a persisted

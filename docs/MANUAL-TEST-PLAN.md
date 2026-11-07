@@ -306,8 +306,8 @@ The dashboard's folders column lists every discovered folder; the list loads in 
 - **[P]** Roots contain git repos and persona folders
 - **[S]** Open client; observe the dashboard
 - **[E]** Folder list populates with folders from all configured roots (plus any folder sources)
-- **[E]** Each folder shows its display name (persona name for persona folders, directory basename otherwise) and one of four nature icons (code, code-hub, persona, persona-hub — selected by `nature` × `shortcutCount > 0`); rows show repo status chips with branch and dirty dot (the row's own repo facts for plain code rows, member repos for hub folders)
-- **[E]** Each row carries FolderInfo defaults: `favorite: false`, `archived: false`, `tags: []`, `missing: false`, `shortcutCount`, `persona` iff `nature === 'persona'`
+- **[E]** Each folder shows its display name (persona name for persona folders, directory basename otherwise) and one of four nature icons (code, code-hub, persona, persona-hub — selected by `nature` and the `hub` fact); rows show repo status chips with branch and dirty dot (the row's own repo facts for plain code rows, member repos for hub folders)
+- **[E]** Each row carries FolderInfo defaults: `favorite: false`, `archived: false`, `tags: []`, `missing: false`, `shortcutCount`, `persona` iff `nature === 'persona'`; `shortcutCount` counts symlink shortcuts, while `hub.representation` identifies symlink or worktree hubs
 
 ### TC-04.02 — Empty root directory 🟡
 

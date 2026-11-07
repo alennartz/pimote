@@ -20,7 +20,7 @@ Identity is the canonical real path (`entry.path`). An occurrence is one reach p
 
 ## The leaf and shortcut rule
 
-An included folder, code or persona, yields exactly one occurrence. The walk never descends into its real subfolders. They are invisible to the model, whatever markers they carry. The only children the walk takes from an included folder are its top-level symlinks whose targets lie outside it. Each becomes a shortcut occurrence, and discovery restarts at the target. This is why hub members are symlinked into hubs, and why a persona hub works exactly like a code hub. A worktree hub's nested checkouts are real directories inside an included folder, so the walk never reaches them; the registry's hub probe recognizes them (see Hubs).
+An included folder, code or persona, yields exactly one occurrence. The walk never descends into its real subfolders. They are invisible to the model, whatever markers they carry. The only children the walk takes from an included folder are its top-level symlinks whose targets lie outside it. Each becomes a shortcut occurrence, and discovery restarts at the target. This is how symlink-hub members enter discovery, and why a persona hub works like a code hub. A worktree hub's nested checkouts are real directories inside an included folder, so the walk never reaches them; the registry's hub probe recognizes them (see Hubs).
 
 ## Creation placement
 
@@ -35,9 +35,9 @@ Its rows represent included folders, where real subfolders remain undiscovered.
 
 ## Hubs
 
-A hub is any included folder whose top-level members point to discovered folders outside it. Membership is the on-disk shape, whoever created the folder. A member is a top-level symlink or a verified nested Git worktree. The hub probe recognizes a nested worktree when the child carries a `.git` file and `git worktree list --porcelain` confirms the checkout. Ordinary nested directories and independent repositories are not members.
+A hub is an included folder whose top-level symlinks or verified nested Git worktrees represent discovered folder members. Membership is the on-disk shape, whoever created the folder. The hub probe recognizes a nested worktree when the child carries a `.git` file and `git worktree list --porcelain` confirms the checkout. Ordinary nested directories and independent repositories are not members.
 
-`pimote_create_folder` builds the standard shape: absolute symlinks, a generated `AGENTS.md` with a managed member block, `git init`, and a `.gitignore` that lists member names. A hub is a working folder, not a shell. Code hubs can carry hub-level code. Persona hubs are agents with their own prompt and `memory.md`. Hubs classify as code or persona by their own marker.
+In the default symlink mode, `pimote_create_folder` builds absolute member symlinks, a generated `AGENTS.md` with a managed member block, `git init`, and a `.gitignore` that lists member names. Worktree mode replaces code-member symlinks with nested detached checkouts. A hub is a working folder, not a shell. Code hubs can carry hub-level code. Persona hubs are agents with their own prompt and `memory.md`. Hubs classify as code or persona by their own marker.
 
 The hub fact on a folder row reports the member representation: `symlink` (default) or `worktree`. `shortcutCount` counts symlink members only. Worktree members are real directories, not shortcuts.
 
@@ -55,13 +55,14 @@ Membership edits follow the hub's mode. Adding a code member to a worktree hub d
 
 ## Disbanding a worktree hub
 
-Disband removes every nested worktree through Git, then deletes the hub directory. Only a marked or Git-verified worktree hub accepts it. Symlink hubs reject disband; delete them by hand like any other folder. The guards run before any mutation:
+Disband removes every nested worktree through Git, then deletes the hub directory. It requires a known hub row and a valid `.pimote-hub.json` worktree marker. A Git-verified nested worktree can establish worktree representation for rows and membership edits, but it does not authorize disband by itself. Symlink hubs reject disband; delete them by hand like any other folder. The guards run before any worktree removal:
 
 - Idle sessions with no observers in the hub or any checkout are closed first, through the same lifecycle the idle reaper uses. Disband retires hub sessions the way archiving does. Sessions that are still working or observed keep the hub. The check fails closed when an activity source fails.
 - Every checkout must be clean.
 - Every detached `HEAD` must be reachable from a local or remote-tracking branch ref. Unreachable work blocks disband. Create a branch to keep it.
+- The hub repository must be clean. Disband rejects unexpected files or directories, generated entries with the wrong type, edited generated metadata, or content Git cannot verify.
 
-Every worktree is validated before any is removed. A failure leaves the hub and its remaining shape discoverable for a retry. Disband never follows member symlinks, so persona links unlink with the hub directory.
+Generated-content checks use a stored baseline even for files that Git ignores. Pimote allows changes to the managed member lines, but protects generated instructions and metadata outside that block. It does not treat unrelated hub files as disposable. A failure leaves the hub and its remaining shape discoverable for a retry. Disband never follows member symlinks, so persona links unlink with the hub directory.
 
 ## Curation
 
