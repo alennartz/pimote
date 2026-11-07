@@ -817,6 +817,14 @@ export class FolderRegistry implements FolderRegistryPort {
 
       const members = memberPaths.map((memberPath) => ({ name: basename(memberPath), nature: natures.get(memberPath)! }));
       const representation = input.memberRepresentation ?? 'symlink';
+      if (representation === 'worktree' && this.worktrees.sourceCandidates) {
+        for (const memberPath of memberPaths) {
+          if (natures.get(memberPath) !== 'code') continue;
+          const candidates = await this.worktrees.sourceCandidates(memberPath);
+          const sameName = new Set(await Promise.all(candidates.filter((candidate) => basename(candidate) === basename(memberPath)).map((candidate) => realpath(candidate))));
+          if (sameName.size > 1) throw new Error(`Worktree source identity is ambiguous for ${memberPath}; use a uniquely named checkout.`);
+        }
+      }
       const agentsMd =
         input.personaText !== undefined
           ? hubAgentsMarkdown({ name, members, representation, persona: { description: input.description ?? '', personaText: input.personaText } })
@@ -882,7 +890,20 @@ export class FolderRegistry implements FolderRegistryPort {
       // The persona-hub variant is a persona folder: its marker AGENTS.md
       // (rendered above) plus the memory stub, rolled back with the hub.
       if (personaMemory) await writeFile(join(target, 'memory.md'), MEMORY_STUB, 'utf8');
-      return await realpath(target);
+      if (this.worktrees.stageGenerated) await this.worktrees.stageGenerated(target, ['AGENTS.md', '.gitignore', 'memory.md']);
+      const canonicalTarget = await realpath(target);
+      // Resolve the freshly created shape before reporting success. If a
+      // linked source and its main checkout share the same basename, both
+      // candidates are exact matches and identity is ambiguous. Reject the
+      // creation and roll back instead of publishing a hub whose member
+      // disappears from discovery or points at the wrong source.
+      const expectedSources = new Set(await Promise.all(memberPaths.filter((memberPath) => natures.get(memberPath) === 'code').map((memberPath) => realpath(memberPath))));
+      const shape = (await probeHubShapes([canonicalTarget], this.worktrees, await this.knownFolderNatures())).get(canonicalTarget);
+      const actualSources = new Set(shape?.members.filter((member) => member.representation === 'worktree').map((member) => member.target) ?? []);
+      if (actualSources.size !== expectedSources.size || [...expectedSources].some((source) => !actualSources.has(source))) {
+        throw new Error(`Worktree source identity is ambiguous for ${target}; use a uniquely named checkout.`);
+      }
+      return canonicalTarget;
     } catch (error) {
       for (const worktree of created) await this.worktrees.remove(worktree).catch(() => {});
       await rm(target, { recursive: true, force: true }).catch(() => {});
@@ -939,10 +960,31 @@ export class FolderRegistry implements FolderRegistryPort {
       const generated = new Set(['AGENTS.md', '.gitignore', '.pimote-hub.json', 'memory.md', '.git']);
       const memberNames = new Set(shape.members.map((member) => member.name));
       const memberCheckouts = new Set(worktrees.map((worktree) => resolve(worktree.worktreePath)));
-      const children = await readdir(hubPath, { withFileTypes: true }).catch(() => [] as Dirent[]);
+      let children: Dirent[];
+      try {
+        children = await readdir(hubPath, { withFileTypes: true });
+      } catch (error) {
+        throw new Error(`Cannot enumerate hub content before disbanding: ${hubPath}`, { cause: error });
+      }
       for (const child of children) {
         const childPath = join(hubPath, child.name);
-        if (generated.has(child.name)) continue;
+        if (generated.has(child.name)) {
+          const expectedDirectory = child.name === '.git';
+          if (expectedDirectory ? !child.isDirectory() : !child.isFile()) {
+            throw new Error(`Generated hub entry has the wrong type: ${childPath}; restore it before disbanding the hub.`);
+          }
+          if (child.name === 'memory.md') {
+            const memory = await readTextIfPresent(childPath);
+            if (memory !== MEMORY_STUB) throw new Error(`Generated persona memory was edited: ${childPath}; restore it before disbanding the hub.`);
+          }
+          if (child.name === 'AGENTS.md') {
+            const agents = await readTextIfPresent(childPath);
+            const hasManagedBlock = agents?.includes('<!-- pimote:members (managed block) -->') && agents.includes('<!-- /pimote:members -->');
+            const hasMemberLines = shape.members.every((member) => agents?.includes(seededMemberLine(member.name, member.nature)) === true);
+            if (!hasManagedBlock || !hasMemberLines) throw new Error(`Generated hub instructions were edited: ${childPath}; restore them before disbanding the hub.`);
+          }
+          continue;
+        }
         if (child.isSymbolicLink() && memberNames.has(child.name)) continue;
         if (child.isDirectory()) {
           if (memberCheckouts.has(resolve(childPath))) continue;
@@ -1001,6 +1043,20 @@ export class FolderRegistry implements FolderRegistryPort {
         failed = true;
         throw error;
       } finally {
+        // A partial failure removes some generated member names from the
+        // shape before the hub itself goes away. Reconcile their generated
+        // ignore entries so the retry does not mistake stale registry text
+        // for a user edit.
+        if (failed && removedWorktreePaths.length > 0) {
+          const ignorePath = join(hubPath, '.gitignore');
+          const ignoreBefore = await readTextIfPresent(ignorePath).catch(() => null);
+          if (ignoreBefore !== null) {
+            let ignoreAfter = ignoreBefore;
+            for (const removedPath of removedWorktreePaths) ignoreAfter = deleteExactLine(ignoreAfter, memberIgnoreLine(basename(removedPath)));
+            if (ignoreAfter !== ignoreBefore) await writeFile(ignorePath, ignoreAfter, 'utf8').catch(() => {});
+          }
+          if (this.worktrees.stageGenerated) await this.worktrees.stageGenerated(hubPath, ['.gitignore']).catch(() => {});
+        }
         // A partial failure still changed the shape: refresh discovery, drop
         // the removed checkouts' cached status, and tell clients, so a retry
         // sees what remains.
@@ -1090,6 +1146,7 @@ export class FolderRegistry implements FolderRegistryPort {
       try {
         await writeBack(agentsPath, agentsBefore, injectMemberLine(agentsBefore ?? '', seededMemberLine(name, nature)));
         if (ignoreBefore !== null) await writeBack(ignorePath, ignoreBefore, appendExactLine(ignoreBefore, memberIgnoreLine(name)));
+        if (hub.hub?.representation === 'worktree' && this.worktrees.stageGenerated) await this.worktrees.stageGenerated(hubPath, ['AGENTS.md', '.gitignore']);
       } catch (error) {
         // A rollback failure on a worktree must not hide the stranded
         // checkout: name it so the shape stays discoverable for retry.
@@ -1176,6 +1233,7 @@ export class FolderRegistry implements FolderRegistryPort {
       } catch {
         // Stale managed text is tolerable; the member is already removed.
       }
+      if (this.worktrees.stageGenerated) await this.worktrees.stageGenerated(hubPath, ['AGENTS.md', '.gitignore']).catch(() => {});
       this.repos.invalidateListing();
       this.fireChange({ changedPaths: [hubPath], removedPaths: [] });
     });

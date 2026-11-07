@@ -493,6 +493,41 @@ describe('RepoIndex lazy status enrichment (window path)', () => {
     expect((await index.enrichStatus([repo])).get(repo)?.dirty).toBe(false);
   });
 
+  it('does not let an in-flight probe repopulate evicted status', async () => {
+    const repo = join(tempDir, 'repo');
+    await initRepo(repo);
+    let started!: () => void;
+    let release!: () => void;
+    let calls = 0;
+    const probeStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const probeRelease = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const index = makeIndex([tempDir], {
+      readStatus: async () => {
+        calls += 1;
+        if (calls === 1) {
+          started();
+          await probeRelease;
+          return { branch: 'main', dirty: true, ahead: 0, behind: 0 };
+        }
+        return { branch: 'main', dirty: false, ahead: 0, behind: 0 };
+      },
+    });
+
+    const first = index.requestStatusRefresh([repo]);
+    await probeStarted;
+    index.evictStatus([repo]);
+    release();
+    await first;
+
+    const status = await index.enrichStatus([repo]);
+    expect(calls).toBe(2);
+    expect(status.get(repo)?.dirty).toBe(false);
+  });
+
   it('keeps stale lazy listing refreshes identity-only', async () => {
     const a = join(tempDir, 'a');
     const b = join(tempDir, 'b');

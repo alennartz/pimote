@@ -62,12 +62,19 @@ export interface HubWorktreePort {
    *  status; null for ordinary directories, independent repositories, and
    *  unverifiable paths. */
   recognize(path: string): Promise<WorktreeRecognition | null>;
+  /** List the source repository's registered worktree paths for creation-time
+   *  identity checks. */
+  sourceCandidates?(path: string): Promise<ReadonlyArray<string>>;
   /** Create a detached worktree at `worktreePath` from `sourcePath`'s HEAD. */
   createDetached(input: { sourcePath: string; worktreePath: string }): Promise<void>;
   /** Validate removal preconditions without mutating anything. */
   validateRemoval(input: { sourcePath: string; worktreePath: string }): Promise<WorktreeRemovalCheck>;
   /** Remove the nested worktree through Git; the source stays untouched. */
   remove(input: { sourcePath: string; worktreePath: string }): Promise<void>;
+  /** Stage generated hub files as the baseline for later edit detection.
+   *  The files remain uncommitted, but tracked edits are no longer mistaken
+   *  for fresh generated content. */
+  stageGenerated?(path: string, files: ReadonlyArray<string>): Promise<void>;
   /** Whether the Git repository at `path` carries uncommitted changes after
    *  ignoring the named generated top-level files. */
   isDirty(path: string, allowedPaths?: ReadonlySet<string>): Promise<boolean>;
@@ -175,6 +182,11 @@ export class HubWorktrees implements HubWorktreePort {
     return { worktreePath: own.path, sourceCandidates };
   }
 
+  async sourceCandidates(path: string): Promise<ReadonlyArray<string>> {
+    const { stdout } = await this.run(['worktree', 'list', '--porcelain'], path);
+    return parseWorktreeList(stdout).map((entry) => entry.path);
+  }
+
   async createDetached(input: { sourcePath: string; worktreePath: string }): Promise<void> {
     await this.run(['worktree', 'add', '--detach', input.worktreePath, 'HEAD'], input.sourcePath);
   }
@@ -192,6 +204,15 @@ export class HubWorktrees implements HubWorktreePort {
     // No --force: the clean-state guard is authoritative, and Git's own
     // dirty-worktree refusal is the second line of defense.
     await this.run(['worktree', 'remove', input.worktreePath], input.sourcePath);
+  }
+
+  async stageGenerated(path: string, files: ReadonlyArray<string>): Promise<void> {
+    const present: string[] = [];
+    for (const file of files) {
+      const entry = await lstat(join(path, file)).catch(() => null);
+      if (entry) present.push(file);
+    }
+    if (present.length > 0) await this.run(['add', '-f', '--', ...present], path);
   }
 
   async isDirty(path: string, allowedPaths?: ReadonlySet<string>): Promise<boolean> {

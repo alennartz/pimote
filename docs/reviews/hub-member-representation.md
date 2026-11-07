@@ -47,7 +47,7 @@ The plan now records the accepted `closeIdleSessionsAt` behavior and the guard-t
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/folder-registry.ts:939-975`, `server/src/hub-worktrees.ts:128-142`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Require generated entries to have the expected types and protect edited untracked generated files.
 
 Unexpected names, edited `.gitignore`, independent repositories in ordinary names, and tracked generated-file edits now block disband. However, untracked entries named `AGENTS.md` or `memory.md` are exempted by the clean-state check even when their contents changed. Reproductions deleted an edited persona `memory.md` and an independent repository named `memory.md`, including its uncommitted file.
@@ -57,7 +57,7 @@ Unexpected names, edited `.gitignore`, independent repositories in ordinary name
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/folder-registry.ts:403-418`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Preserve the selected source identity, or reject equal candidates before materialization.
 
 Recognition now returns all source candidates and handles distinct basenames correctly. Main and linked checkouts named `project` in different configured roots still produce two exact candidates. Creation succeeds, but the hub reports no members and removal by the selected canonical path fails.
@@ -87,7 +87,7 @@ Listing recognition performs one `git worktree list` command per candidate, with
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/takeover.ts:94-105`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Include Pimote descendant processes in the destructive subtree guard.
 
 The guard now includes subagents of external pi processes. It still excludes every descendant of a Pimote process, even when that child has a working directory inside the hub. A live child in the hub produced an empty busy result. Exact-directory takeover retains the same global parent exclusion.
@@ -127,7 +127,7 @@ DR-085 now states that the deleted DR-080 worktree decision superseded DR-063 an
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `client/src/lib/components/HubMembersDialog.svelte:118-119`
-- **Status:** open
+- **Status:** dismissed
 - **Fix:** Render the representation hint in each picker row.
 
 The approved mock shows `/workspace/web · code → detached worktree` beside each candidate. The implementation shows one general note below the picker. The broad requirement is met, but the approved per-row affordance remains different.
@@ -147,7 +147,7 @@ Creation rollback, add rollback, and disband cleanup now prune each source repos
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/repo-index.ts:719-721,878-885`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Prevent an evicted probe generation from writing its result into `statusCache`.
 
 Removal and disband now call `evictStatus`, but an in-flight probe can write its result after eviction. A reproduction evicted a path during a probe, then observed the removed entry served again with stale `dirty:true` facts. Removed paths can still remain cached, and reused paths can receive stale facts.
@@ -157,7 +157,7 @@ Removal and disband now call `evictStatus`, but an in-flight probe can write its
 - **Category:** plan deviation
 - **Severity:** critical
 - **Location:** `server/src/hub-worktrees.test.ts:61-143`, `server/src/folder-registry-worktree.test.ts:85-89,114-125,224-245,386-446,503-517`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Record these implementation-time test changes in the plan, or move the new coverage outside the frozen test files.
 
 The fix range modifies two files listed in the plan's frozen `Test Files` section. The amended plan records exceptions for `index.test.ts` and the DR-085 guard-test rewrite, but not for the interface migrations, identity tests, content tests, recognition tests, and rollback tests in these files. This remains a critical test-immutability deviation.
@@ -167,7 +167,7 @@ The fix range modifies two files listed in the plan's frozen `Test Files` sectio
 - **Category:** code correctness
 - **Severity:** critical
 - **Location:** `server/src/folder-registry.ts:942`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Propagate `readdir` failure instead of substituting an empty inventory.
 
 The new content guard treats an unreadable hub as empty. Git does not report unrelated files ignored through `.git/info/exclude`. With one injected `EIO`, disband succeeded and deleted such a file. The guard fails open when the filesystem cannot enumerate the hub.
@@ -177,7 +177,7 @@ The new content guard treats an unreadable hub as empty. Git does not report unr
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/folder-registry.ts:959-968,991-1010`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Reconcile generated `.gitignore` entries with surviving members after partial removal.
 
 Disband removes worktrees without removing their ignore entries. If a later removal fails, the retry compares those entries against the reduced membership and reports `.gitignore` as user-edited. A controlled two-member failure reproduced this retry rejection.

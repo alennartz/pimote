@@ -71,6 +71,8 @@ export interface RepoIndexOptions {
    *  surfaces it (owner ruling on review finding 10: the manager root renders
    *  only as its pinned surface, never as a folder row). */
   excludeEntryPaths?: string[];
+  /** Injectable status seam for deterministic cache-generation tests. */
+  readStatus?: (path: string) => Promise<GitStatus>;
 }
 
 /** Run git in a directory; resolve trimmed stdout, or null on any failure. */
@@ -320,6 +322,9 @@ export class RepoIndex {
   private sourceHubs: { entries: HubSourceEntry[]; at: number } | null = null;
   private personaSources: PersonaSourceEntry[] = [];
   private readonly statusCache = new Map<string, RepoStatus>();
+  /** Incremented whenever cached status is invalidated. In-flight probes carry
+   *  the generation they started in and cannot repopulate a newer generation. */
+  private statusGeneration = 0;
   /** One probe per path at a time, shared by window, refresh, and requested
    *  delivery callers. Git commands stay bounded even when those paths race. */
   private readonly statusProbeInFlight = new Map<string, Promise<RepoStatus>>();
@@ -331,6 +336,7 @@ export class RepoIndex {
   private onRefreshed: ((change: { changedPaths: string[]; removedPaths: string[] }) => void) | null = null;
   private walkGeneration = 0;
   private readonly excludedEntryPaths: ReadonlySet<string>;
+  private readonly readStatus: (path: string) => Promise<GitStatus>;
 
   constructor(
     private readonly _roots: string[],
@@ -340,6 +346,7 @@ export class RepoIndex {
     this.statusTtlMs = options.statusTtlMs ?? DEFAULT_TTL_MS;
     this.now = options.now ?? Date.now;
     this.excludedEntryPaths = new Set(options.excludeEntryPaths ?? []);
+    this.readStatus = options.readStatus ?? readGitStatus;
   }
 
   /** The configured root directories. */
@@ -555,7 +562,11 @@ export class RepoIndex {
    *  nested checkout's movement still reaches its owning row through the
    *  containment fan-out, without the index owning any membership. */
   private async refreshRequestedStatus(path: string): Promise<void> {
+    const generation = this.statusGeneration;
     const stamp = await this.currentStamp(false);
+    // A member removal or disband can evict this path while discovery waits.
+    // Do not let the old request start a fresh probe after that eviction.
+    if (this.statusGeneration !== generation) return;
     const entry = stamp.entries.find((candidate) => candidate.path === path);
     if (entry?.missing) return;
 
@@ -698,7 +709,10 @@ export class RepoIndex {
   invalidate(): void {
     this.listing = null;
     this.walkGeneration++;
+    this.statusGeneration++;
     this.statusCache.clear();
+    this.statusProbeInFlight.clear();
+    this.requestedStatusInFlight.clear();
   }
 
   /**
@@ -717,7 +731,16 @@ export class RepoIndex {
    *  removed through member removal or disband must not linger in the cache
    *  for the life of the process. */
   evictStatus(paths: Iterable<string>): void {
-    for (const path of paths) this.statusCache.delete(path);
+    const evicted = [...new Set(paths)];
+    if (evicted.length === 0) return;
+    this.statusGeneration++;
+    for (const path of evicted) {
+      this.statusCache.delete(path);
+      // Let a new caller start a fresh probe immediately. The old promise
+      // still settles, but its generation cannot write into the cache.
+      this.statusProbeInFlight.delete(path);
+      this.requestedStatusInFlight.delete(path);
+    }
   }
 
   /** Replace extension-owned sources atomically, invalidate discovery, and emit folder deltas. Core sources remain registered. */
@@ -867,20 +890,20 @@ export class RepoIndex {
   private probeStatus(path: string): Promise<RepoStatus> {
     const existing = this.statusProbeInFlight.get(path);
     if (existing) return existing;
-
-    const probe = this.runGitProbe(path).finally(() => {
+    const generation = this.statusGeneration;
+    const probe = this.runGitProbe(path, generation).finally(() => {
       if (this.statusProbeInFlight.get(path) === probe) this.statusProbeInFlight.delete(path);
     });
     this.statusProbeInFlight.set(path, probe);
     return probe;
   }
 
-  private async runGitProbe(path: string): Promise<RepoStatus> {
+  private async runGitProbe(path: string, generation: number): Promise<RepoStatus> {
     await this.acquireGitProbeSlot();
     try {
-      const status = await readGitStatus(path);
+      const status = await this.readStatus(path);
       const entry: RepoStatus = { ...status, at: this.now() };
-      this.statusCache.set(path, entry);
+      if (this.statusGeneration === generation) this.statusCache.set(path, entry);
       return entry;
     } finally {
       const next = this.gitProbeWaiters.shift();

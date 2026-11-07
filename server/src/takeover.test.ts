@@ -66,8 +66,10 @@ describe('findExternalPiProcesses', () => {
 
     const pids = await findExternalPiProcesses(tempDir);
 
-    // This is a child of process.pid (the server), so it should be excluded
+    // This is a child of process.pid (the server), so exact-directory
+    // takeover still excludes it.
     expect(pids).not.toContain(child.pid);
+    await expect(listExternalPiWorkingDirectories()).resolves.toContain(tempDir);
   });
 
   it('excludes pi sub-processes of another pi process (external pi sub-agents)', async () => {

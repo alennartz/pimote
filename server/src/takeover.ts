@@ -45,10 +45,10 @@ interface ExternalPiProcessInfo {
  * - true: exclude descendants of the current process (pimote server) and of
  *   any other pi process — only "root" pi processes come back. Takeover's
  *   exact-directory conflict check keeps this rule.
- * - false: exclude only the current process and its descendants — every
- *   other pi process counts, including sub-agents spawned by an external pi
- *   elsewhere. The disband activity guard uses this rule: a sub-agent whose
- *   cwd sits inside the hub subtree must never be silently ignored.
+ * - false: exclude only the current process — every pi process counts,
+ *   including Pimote-owned children and sub-agents spawned by an external pi.
+ *   The disband activity guard uses this rule: a process whose cwd sits inside
+ *   the hub subtree must never be silently ignored.
  *
  * Throws when /proc itself cannot be read: the disband activity guard fails
  * closed rather than treating an unavailable enumeration as "no activity".
@@ -94,18 +94,18 @@ async function scanExternalPiProcesses(rootsOnly: boolean): Promise<ExternalPiPr
 
   if (allProcesses.length === 0) return [];
 
-  // Second pass: filter out pi processes the requested rule excludes. The
-  // root rule drops any process descended from this server or from another
-  // pi process; the guard rule drops only this server's descendants.
-  const ancestorPids = rootsOnly ? new Set([myPid, ...allProcesses.map((processInfo) => processInfo.pid)]) : new Set([myPid]);
-  const rootProcesses: ExternalPiProcessInfo[] = [];
+  // Second pass: exact-directory takeover keeps the root-process exclusion;
+  // the destructive subtree guard keeps every pi process, including
+  // descendants owned by Pimote or another pi process.
+  const ancestorPids = rootsOnly ? new Set([myPid, ...allProcesses.map((processInfo) => processInfo.pid)]) : new Set<number>();
+  const selected: ExternalPiProcessInfo[] = [];
 
   for (const processInfo of allProcesses) {
-    if (await isDescendantOfAny(processInfo.pid, ancestorPids)) continue;
-    rootProcesses.push(processInfo);
+    if (ancestorPids.size > 0 && (await isDescendantOfAny(processInfo.pid, ancestorPids))) continue;
+    selected.push(processInfo);
   }
 
-  return rootProcesses;
+  return selected;
 }
 
 /**
