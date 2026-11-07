@@ -945,7 +945,7 @@ export class FolderRegistry implements FolderRegistryPort {
     return this.serialized(async () => {
       // The marker is the deliberate worktree-hub act; without it, disband
       // rejects before anything else runs.
-      if (!(await hasWorktreeMarker(hubPath))) throw new Error(`Not a marked worktree hub: ${hubPath}`);
+      if (!(await hasWorktreeMarker(hubPath))) throw new Error(`Not a worktree hub: ${hubPath} (a marked worktree hub is required)`);
       // The same hub-row gate addMember and removeMember apply: an arbitrary
       // path — one the registry does not vouch for as a hub — never qualifies.
       const hub = (await this.listLazy()).find((folder) => folder.path === hubPath);
@@ -1084,7 +1084,7 @@ export class FolderRegistry implements FolderRegistryPort {
         // the removed checkouts' cached status, and tell clients, so a retry
         // sees what remains.
         this.repos.invalidateListing();
-        this.repos.evictStatus(removedWorktreePaths);
+        this.repos.evictStatus?.(removedWorktreePaths);
         await Promise.all(worktrees.map((worktree) => this.worktrees.pruneStale(worktree.sourcePath).catch(() => {})));
         if (failed) this.fireChange({ changedPaths: [hubPath], removedPaths: [] });
       }
@@ -1241,7 +1241,7 @@ export class FolderRegistry implements FolderRegistryPort {
         // stay untouched.
         await this.worktrees.remove({ sourcePath: member.target, worktreePath: member.worktreePath! });
         // The checkout leaves the listing; its cached status must not linger.
-        this.repos.evictStatus([member.worktreePath!]);
+        this.repos.evictStatus?.([member.worktreePath!]);
       } else {
         // Unlink the hub-side symlink ONLY — the member folder is never
         // touched. The probe excludes AGENTS.md, so instruction symlinks are
