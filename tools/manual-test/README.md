@@ -625,9 +625,13 @@ on disk); an idle observerless session closes during the guard, so disband
 proceeds to the worktree checks, then succeeds once the user names the
 detached commit with a branch: the response lists the removed checkout, the
 hub directory disappears, and the source repository keeps its branches with
-no stale worktree registration.
-Complements the LLM-driven manager-chat phase of `project-management-smoke`,
-which cannot force tool choice.
+no stale worktree registration. The final direct-registry phase also edits
+ignored generated hub files and adds an unrelated child, verifying that both
+are rejected without following persona links or deleting source user files.
+A wrapper injects one removal failure after an earlier checkout is removed,
+then retries through the same registry seam and verifies the remaining shape
+and Git metadata. Complements the LLM-driven manager-chat phase of
+`project-management-smoke`, which cannot force tool choice.
 
 **Location:** `tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs`
 

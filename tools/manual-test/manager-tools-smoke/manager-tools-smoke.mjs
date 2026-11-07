@@ -21,7 +21,9 @@
 // via pimote_update_hub_members, and the guarded pimote_disband_hub
 // rejections (symlink hub, working-or-observed session, dirty checkout,
 // unreachable detached HEAD) followed by a successful disband that closes
-// the idle observerless hub session itself and preserves branches.
+// the idle observerless hub session itself and preserves branches. The final
+// direct registry probes also verify generated-content safety and a retry
+// after a deliberately injected partial worktree-removal failure.
 // The destructive disband fixture is always fabricated inside the sandbox —
 // a user-supplied MTMS_ROOT tree never hosts it.
 //
@@ -489,6 +491,75 @@ async function main() {
   assert(afterBranch.trim() === 'main' && afterStatus.trim() === '' && !afterWorktrees.includes(wtHubC), 'the source repository stays on main, clean, with no stale worktree registration');
   const rowsAfterDisband = (await tools.get('pimote_find_folders').execute('call-db6', {})).structuredContent?.folders;
   assert(!rowsAfterDisband?.some((row) => row.path === wtHubC), 'the disbanded hub leaves the folder listing');
+
+  // --- generated-content safety: user files and prose survive every guard.
+  section('generated-content safety (edited files and unrelated source content)');
+  const safeHub = join(disbandRoot, 'safe-hub');
+  const safeCreated = await folders.createHub({ name: 'safe-hub', root: disbandRoot, memberPaths: [codeB, guideDir], memberRepresentation: 'worktree' });
+  assert(safeCreated.path === (await realpath(safeHub)), 'safety fixture creates a worktree hub');
+  const safeAgents = await readFile(join(safeHub, 'AGENTS.md'), 'utf8');
+  const sourceNote = join(guideC, 'keep-user-file.txt');
+  await writeFile(sourceNote, 'user-owned persona content\n', 'utf8');
+  await writeFile(join(safeHub, 'notes.txt'), 'unrelated hub content\n', 'utf8');
+  let unexpectedError = '';
+  try {
+    await folders.disbandHub(safeHub);
+  } catch (error) {
+    unexpectedError = error instanceof Error ? error.message : String(error);
+  }
+  assert(/unrecognized content/i.test(unexpectedError), 'disband rejects an unexpected hub child');
+  assert((await exists(safeHub)) && (await exists(sourceNote)), 'unexpected-content rejection keeps the hub and source user file');
+  await rm(join(safeHub, 'notes.txt'), { force: true });
+  await writeFile(join(safeHub, 'AGENTS.md'), `${safeAgents}\nUser prose\n`, 'utf8');
+  await writeFile(join(safeHub, '.git', 'info', 'exclude'), 'AGENTS.md\n', 'utf8');
+  let editedError = '';
+  try {
+    await folders.disbandHub(safeHub);
+  } catch (error) {
+    editedError = error instanceof Error ? error.message : String(error);
+  }
+  assert(/generated hub instructions|hub repository has uncommitted changes/i.test(editedError), 'disband rejects edited generated instructions even when Git ignores them');
+  assert((await exists(safeHub)) && (await exists(sourceNote)), 'generated-content rejection keeps the hub and unrelated source file');
+  await writeFile(join(safeHub, 'AGENTS.md'), safeAgents, 'utf8');
+  const safeDisband = await folders.disbandHub(safeHub);
+  assert(safeDisband.removedWorktreePaths.length === 1 && !(await exists(safeHub)), 'safe generated content disbands after restoration');
+  assert(await exists(sourceNote), 'disband never follows the persona symlink or destroys its user file');
+
+  // --- partial-failure retry: one Git removal fails after an earlier one.
+  section('partial worktree removal and retry');
+  const retryHub = join(disbandRoot, 'retry-hub');
+  const flakyWorktrees = new HubWorktrees(defaultWorktreeGitRunner);
+  const realRemove = flakyWorktrees.remove.bind(flakyWorktrees);
+  let injectedFailure = true;
+  flakyWorktrees.remove = async (input) => {
+    if (injectedFailure && input.worktreePath === join(retryHub, 'code-b')) {
+      injectedFailure = false;
+      throw new Error('injected worktree removal failure');
+    }
+    await realRemove(input);
+  };
+  const retryRegistry = new FolderRegistry(
+    repos,
+    join(sandbox, 'retry-store'),
+    tree,
+    flakyWorktrees,
+    new HubActivity({ closeIdleSessionsAt: async () => [], externalPiWorkingDirectories: async () => [] }),
+  );
+  const retryCreated = await retryRegistry.createHub({ name: 'retry-hub', root: disbandRoot, memberPaths: [codeA, codeB], memberRepresentation: 'worktree' });
+  let partialError = '';
+  try {
+    await retryRegistry.disbandHub(retryCreated.path);
+  } catch (error) {
+    partialError = error instanceof Error ? error.message : String(error);
+  }
+  assert(/injected worktree removal failure/i.test(partialError), 'a partial Git removal failure is reported');
+  assert((await exists(join(retryHub, 'code-b'))) && !(await exists(join(retryHub, 'code-a'))), 'partial disband leaves the surviving checkout discoverable');
+  const partialRow = (await retryRegistry.list()).find((row) => row.path === retryCreated.path);
+  assert(partialRow?.members?.some((member) => member.path === codeB) && !partialRow?.members?.some((member) => member.path === codeA), 'partial disband refreshes the remaining membership shape');
+  const retryResult = await retryRegistry.disbandHub(retryCreated.path);
+  assert(retryResult.removedWorktreePaths.length === 1 && !(await exists(retryHub)), 'retry removes the remaining checkout and hub');
+  const { stdout: retryWorktrees } = await git(codeB, 'worktree', 'list', '--porcelain');
+  assert(!retryWorktrees.includes(retryHub), 'retry leaves no stale Git worktree registration');
 
   await rm(sandbox, { recursive: true, force: true }).catch(() => {});
   console.log(`\n[mt-smoke] complete: ${failures === 0 ? 'PASS' : `${failures} FAIL`}`);
