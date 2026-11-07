@@ -10,7 +10,7 @@ import { FolderRegistry } from './folder-registry.js';
 import { RepoIndex } from './repo-index.js';
 import { scanFolderModel } from './folder-model/index.js';
 import type { FolderModelPort } from './manager/types.js';
-import type { HubWorktreePort, WorktreeRecognition, WorktreeRemovalCheck } from './hub-worktrees.js';
+import { HubWorktrees, defaultWorktreeGitRunner, type HubWorktreePort, type WorktreeRecognition, type WorktreeRemovalCheck } from './hub-worktrees.js';
 import { HubActivity } from './hub-activity.js';
 import { hubAgentsMarkdown } from './hub-agents-md.js';
 
@@ -92,6 +92,8 @@ async function makeWorktreeHub(name = 'platform'): Promise<{ hubPath: string; wo
   await execFileAsync('git', [...gitArgs, 'commit', '--allow-empty', '-m', 'init'], { cwd: hubPath });
   await writeFile(join(hubPath, MARKER_FILE), JSON.stringify({ memberRepresentation: 'worktree' }), 'utf8');
   await writeFile(join(hubPath, 'AGENTS.md'), hubAgentsMarkdown({ name, members: [{ name: 'repo-a', nature: 'code' }], representation: 'worktree' }), 'utf8');
+  await writeFile(join(hubPath, '.gitignore'), '/.pimote-hub.json\n/repo-a\n', 'utf8');
+  await new HubWorktrees(defaultWorktreeGitRunner).stageGenerated(hubPath, ['AGENTS.md', '.gitignore'], true);
   const worktreePath = await addNestedWorktree(hubPath, repoA, 'repo-a');
   return { hubPath, worktreePath };
 }
@@ -123,6 +125,15 @@ describe('FolderRegistry.createHub — worktree mode', () => {
 
     expect(row?.members?.find((member) => member.name === 'linked-source')?.path).toBe(linkedSource);
     expect(row?.repos?.find((repo) => repo.worktreePath === join(created.path, 'linked-source'))?.path).toBe(linkedSource);
+  });
+
+  it('allows a second hub from the same canonical repository', async () => {
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree());
+    await registry.createHub({ name: 'first', root: rootDir, memberPaths: [repoA], memberRepresentation: 'worktree' });
+    const second = await registry.createHub({ name: 'second', root: rootDir, memberPaths: [repoA], memberRepresentation: 'worktree' });
+
+    const row = await findRow(registry, second.path);
+    expect(row?.members?.find((member) => member.path === repoA)?.worktreePath).toBe(join(second.path, 'repo-a'));
   });
 
   it('rejects equal-basename linked sources before publishing an ambiguous hub', async () => {
@@ -267,6 +278,17 @@ describe('FolderRegistry.createHub — worktree mode', () => {
 });
 
 describe('FolderRegistry.addMember — worktree hubs', () => {
+  it('rejects equal-basename linked sources before creating an ambiguous checkout', async () => {
+    const linkedSource = join(secondRoot, 'repo-a');
+    await execFileAsync('git', ['worktree', 'add', linkedSource], { cwd: repoA });
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree());
+    const created = await registry.createHub({ name: 'empty', root: rootDir, memberPaths: [], memberRepresentation: 'worktree' });
+
+    await expect(registry.addMember(created.path, linkedSource)).rejects.toThrow(/ambiguous/i);
+
+    expect(await gitWorktreeList(repoA)).not.toContain(join(created.path, 'repo-a'));
+  });
+
   it('materializes a code member as a detached worktree in a worktree hub', async () => {
     const { hubPath } = await makeWorktreeHub();
     const registry = new FolderRegistry(makeIndex(), storeDir, makeTree());
@@ -336,6 +358,19 @@ describe('FolderRegistry.addMember — persona members', () => {
 });
 
 describe('FolderRegistry.removeMember — worktree hubs', () => {
+  it('does not stage user prose when removing a symlink member', async () => {
+    const hubPath = await makeSymlinkHub('symlink-prose');
+    await execFileAsync('git', ['add', 'AGENTS.md'], { cwd: hubPath });
+    await execFileAsync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'generated'], { cwd: hubPath });
+    await writeFile(join(hubPath, 'AGENTS.md'), '# plain\nUser prose\n', 'utf8');
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree());
+
+    await registry.removeMember(hubPath, repoA);
+
+    const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: hubPath });
+    expect(status.stdout).toContain(' M AGENTS.md');
+  });
+
   it("removes a worktree member's nested checkout and preserves the source repository", async () => {
     const { hubPath, worktreePath } = await makeWorktreeHub();
     const registry = new FolderRegistry(makeIndex(), storeDir, makeTree());
@@ -426,6 +461,17 @@ describe('FolderRegistry.disbandHub', () => {
     await expect(registry.disbandHub(hubPath)).rejects.toThrow(/unrecognized content/i);
     expect(existsSync(hubPath)).toBe(true);
     expect(existsSync(join(hubPath, 'notes.txt'))).toBe(true);
+  });
+
+  it('does not rebaseline user prose when adding a worktree member', async () => {
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree());
+    const created = await registry.createHub({ name: 'created', root: rootDir, memberPaths: [repoA], memberRepresentation: 'worktree' });
+    await writeFile(join(created.path, 'AGENTS.md'), `${await readFile(join(created.path, 'AGENTS.md'), 'utf8')}\nUser prose\n`, 'utf8');
+
+    await registry.addMember(created.path, repoB);
+
+    await expect(registry.disbandHub(created.path)).rejects.toThrow(/generated hub instructions|hub repository has uncommitted changes/i);
+    expect(existsSync(created.path)).toBe(true);
   });
 
   it('rejects edits to generated files from registry creation', async () => {
@@ -522,6 +568,8 @@ describe('FolderRegistry.disbandHub', () => {
       }),
       'utf8',
     );
+    await writeFile(join(hubPath, '.gitignore'), '/.pimote-hub.json\n/repo-a\n/repo-b\n', 'utf8');
+    await new HubWorktrees(defaultWorktreeGitRunner).stageGenerated(hubPath, ['AGENTS.md', '.gitignore'], false, true);
     await writeFile(join(second, 'scratch.txt'), 'wip\n', 'utf8');
     const registry = new FolderRegistry(makeIndex(), storeDir, makeTree(), undefined, { closeIdleSessionsAt: async () => [] });
 
@@ -561,6 +609,7 @@ describe('FolderRegistry.disbandHub', () => {
       'utf8',
     );
     await writeFile(join(hubPath, '.gitignore'), '/.pimote-hub.json\n/repo-a\n/repo-b\n', 'utf8');
+    await new HubWorktrees(defaultWorktreeGitRunner).stageGenerated(hubPath, ['AGENTS.md', '.gitignore'], false, true);
     const sources = new Map([
       [worktreePath, repoA],
       [second, repoB],

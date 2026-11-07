@@ -47,7 +47,7 @@ The plan records the accepted activity behavior and the guard-test exception. DR
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/folder-registry.ts:982-984,1149`, `server/src/hub-worktrees.ts:135-148,209-216`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Preserve the generated baseline without re-staging unrelated user prose.
 
 Generated files are staged as edit baselines, but `stageGenerated` can re-stage user prose already appended to `AGENTS.md`. The file status becomes an exempt generated entry, so disband deletes the prose. Checking managed markers and member lines does not detect edits outside the managed block.
@@ -57,7 +57,7 @@ Generated files are staged as edit baselines, but `stageGenerated` can re-stage 
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/folder-registry.ts:820-825,1126-1149`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Apply the same source-identity ambiguity validation to worktree member additions.
 
 Creation now rejects equal-basename main and linked sources before materialization. Adding the linked source to an existing hub still succeeds, creates an undiscoverable checkout, and makes removal by the selected canonical path fail.
@@ -127,7 +127,7 @@ DR-085 carries the worktree decision's supersession provenance, and no duplicate
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `client/src/lib/components/HubMembersDialog.svelte:118-119`
-- **Status:** open
+- **Status:** dismissed
 - **Fix:** Render the representation hint in each picker row.
 
 The mock shows `/workspace/web · code → detached worktree` beside each candidate. The implementation keeps one general note below the picker. The broad requirement is met, but the approved per-row affordance remains different.
@@ -147,7 +147,7 @@ Creation, add rollback, and disband cleanup still prune source repositories. No 
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `server/src/repo-index.ts:426-435,893-906`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Capture and check the generation before enrichment awaits discovery.
 
 Started probes now check their generation, but `enrichStatus` can wait for discovery and then start or cache a probe under a newer generation after eviction. A reproduction served stale `dirty:true` facts on the next enrichment without another status read.
@@ -177,7 +177,7 @@ An injected `EIO` now retains the hub and its ignored user file. The plan also r
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/folder-registry.ts:1050-1058`, `server/src/hub-worktrees.ts:135-148`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Distinguish registry-produced retry cleanup from user edits independently of `HEAD`-relative status.
 
 Fresh-hub ignore reconciliation works, but after the initial generated files are committed, partial cleanup stages `.gitignore` as `M `. The retry then reports hub-repository changes even though no user edit occurred.
@@ -187,7 +187,7 @@ Fresh-hub ignore reconciliation works, but after the initial generated files are
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/folder-registry.ts:823-825`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Count only known canonical source candidates, consistent with the shape probe.
 
 Existing hub-child worktrees share their source repository's basename but are not canonical source identities. The new preflight counts those children as competing candidates, so creating a second hub from the same canonical repository now rejects as ambiguous.
@@ -197,7 +197,7 @@ Existing hub-child worktrees share their source repository's basename but are no
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/repo-index.ts:733-742,890-906`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Scope eviction generations to the evicted paths, or retire only probes for those paths.
 
 Evicting one path increments a global generation while retaining unrelated in-flight jobs. Those jobs cannot cache their results, and concurrent enrichment of an unrelated checkout returns no facts. Evicting a different checkout reproduced the loss of status for a still-present path.
@@ -207,7 +207,7 @@ Evicting one path increments a global generation while retaining unrelated in-fl
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `server/src/folder-registry.ts:1236`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Restrict generated-baseline staging to worktree hubs, matching the add-member path.
 
 Removal calls `stageGenerated` for symlink hubs even though they cannot use the disband baseline. Removing a symlink member staged previously unstaged user prose from `AGENTS.md`.

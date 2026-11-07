@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Dirent, Stats } from 'node:fs';
 import { lstat, mkdir, readFile, readdir, readlink, rename, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
-import { basename, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import type { FolderInfo, FolderMemberInfo, HubMemberRepresentation, RepoInfo } from '../../shared/dist/index.js';
 import type { FolderEntry, FolderNature, FolderOccurrence, SparseTree } from './folder-model/index.js';
 import type { FolderRegistryPort, FolderUpdatePatch, HubActivityPort } from './manager/types.js';
@@ -218,6 +218,17 @@ function isInside(target: string, dir: string): boolean {
   return dir === '/' ? target.startsWith('/') : target.startsWith(`${dir}/`);
 }
 
+/** Resolve one Git worktree-set candidate to a known canonical source. A
+ *  nested checkout already owned by a marked hub is a member shape, not a
+ *  second canonical source for identity validation. */
+async function knownCanonicalSource(path: string, knownFolders: ReadonlyMap<string, FolderNature>): Promise<string | null> {
+  const canonical = await realpath(path).catch(() => path);
+  if (!knownFolders.has(canonical) && !knownFolders.has(path)) return null;
+  const gitEntry = await lstat(join(canonical, '.git')).catch(() => null);
+  if (gitEntry?.isFile() && (await hasWorktreeMarker(dirname(canonical)))) return null;
+  return canonical;
+}
+
 /** The hub-management gate the row menu shows ("Manage members…") as a
  *  server invariant: a hub is whatever row carries the shape probe's hub
  *  fact — members, a mode marker, or a source promise. Source hubs may
@@ -402,8 +413,8 @@ async function probeHubShapes(
         if (!recognition) return null;
         const candidates = await Promise.all(
           recognition.sourceCandidates.map(async (candidate) => {
-            const canonical = await realpath(candidate).catch(() => candidate);
-            return knownFolders.has(canonical) || knownFolders.has(candidate) ? { path: canonical, exactName: basename(canonical) === entry.name } : null;
+            const canonical = await knownCanonicalSource(candidate, knownFolders);
+            return canonical ? { path: canonical, exactName: basename(canonical) === entry.name } : null;
           }),
         );
         const known = candidates.filter((candidate): candidate is { path: string; exactName: boolean } => candidate !== null);
@@ -818,10 +829,14 @@ export class FolderRegistry implements FolderRegistryPort {
       const members = memberPaths.map((memberPath) => ({ name: basename(memberPath), nature: natures.get(memberPath)! }));
       const representation = input.memberRepresentation ?? 'symlink';
       if (representation === 'worktree' && this.worktrees.sourceCandidates) {
+        const knownFolders = await this.knownFolderNatures();
         for (const memberPath of memberPaths) {
           if (natures.get(memberPath) !== 'code') continue;
           const candidates = await this.worktrees.sourceCandidates(memberPath);
-          const sameName = new Set(await Promise.all(candidates.filter((candidate) => basename(candidate) === basename(memberPath)).map((candidate) => realpath(candidate))));
+          const sameName = new Set(
+            await Promise.all(candidates.filter((candidate) => basename(candidate) === basename(memberPath)).map((candidate) => knownCanonicalSource(candidate, knownFolders))),
+          );
+          sameName.delete(null);
           if (sameName.size > 1) throw new Error(`Worktree source identity is ambiguous for ${memberPath}; use a uniquely named checkout.`);
         }
       }
@@ -890,7 +905,7 @@ export class FolderRegistry implements FolderRegistryPort {
       // The persona-hub variant is a persona folder: its marker AGENTS.md
       // (rendered above) plus the memory stub, rolled back with the hub.
       if (personaMemory) await writeFile(join(target, 'memory.md'), MEMORY_STUB, 'utf8');
-      if (this.worktrees.stageGenerated) await this.worktrees.stageGenerated(target, ['AGENTS.md', '.gitignore', 'memory.md']);
+      if (this.worktrees.stageGenerated) await this.worktrees.stageGenerated(target, ['AGENTS.md', '.gitignore', 'memory.md'], true);
       const canonicalTarget = await realpath(target);
       // Resolve the freshly created shape before reporting success. If a
       // linked source and its main checkout share the same basename, both
@@ -979,9 +994,16 @@ export class FolderRegistry implements FolderRegistryPort {
           }
           if (child.name === 'AGENTS.md') {
             const agents = await readTextIfPresent(childPath);
-            const hasManagedBlock = agents?.includes('<!-- pimote:members (managed block) -->') && agents.includes('<!-- /pimote:members -->');
-            const hasMemberLines = shape.members.every((member) => agents?.includes(seededMemberLine(member.name, member.nature)) === true);
-            if (!hasManagedBlock || !hasMemberLines) throw new Error(`Generated hub instructions were edited: ${childPath}; restore them before disbanding the hub.`);
+            const open = agents?.indexOf('<!-- pimote:members (managed block) -->') ?? -1;
+            const close = open === -1 ? -1 : (agents?.indexOf('<!-- /pimote:members -->', open + 1) ?? -1);
+            const managed = open === -1 || close === -1 ? null : agents?.slice(open + '<!-- pimote:members (managed block) -->'.length, close);
+            const managedLines =
+              managed
+                ?.split('\n')
+                .map((line) => line.trim())
+                .filter(Boolean) ?? [];
+            const hasMemberLines = shape.members.every((member) => managedLines.includes(seededMemberLine(member.name, member.nature)));
+            if (managed === null || !hasMemberLines) throw new Error(`Generated hub instructions were edited: ${childPath}; restore them before disbanding the hub.`);
           }
           continue;
         }
@@ -1014,7 +1036,7 @@ export class FolderRegistry implements FolderRegistryPort {
       let hubDirty: boolean;
       try {
         const generatedHubPaths = new Set([...generated, ...memberNames]);
-        hubDirty = await this.worktrees.isDirty(hubPath, generatedHubPaths);
+        hubDirty = await this.worktrees.isDirty(hubPath, generatedHubPaths, generated);
       } catch {
         throw new Error(`Cannot verify the state of the hub repository: ${hubPath}`);
       }
@@ -1055,7 +1077,7 @@ export class FolderRegistry implements FolderRegistryPort {
             for (const removedPath of removedWorktreePaths) ignoreAfter = deleteExactLine(ignoreAfter, memberIgnoreLine(basename(removedPath)));
             if (ignoreAfter !== ignoreBefore) await writeFile(ignorePath, ignoreAfter, 'utf8').catch(() => {});
           }
-          if (this.worktrees.stageGenerated) await this.worktrees.stageGenerated(hubPath, ['.gitignore']).catch(() => {});
+          if (this.worktrees.stageGenerated) await this.worktrees.stageGenerated(hubPath, ['.gitignore'], false, true).catch(() => {});
         }
         // A partial failure still changed the shape: refresh discovery, drop
         // the removed checkouts' cached status, and tell clients, so a retry
@@ -1121,8 +1143,18 @@ export class FolderRegistry implements FolderRegistryPort {
       };
 
       // The hub representation decides the layout: code members detach in a
-      // worktree hub, everything else symlinks.
+      // worktree hub, everything else symlinks. Apply the same source-identity
+      // ambiguity guard as creation before Git creates a checkout.
       const asWorktree = hub.hub?.representation === 'worktree' && nature === 'code';
+      if (asWorktree && this.worktrees.sourceCandidates) {
+        const knownFolders = await this.knownFolderNatures();
+        const candidates = await this.worktrees.sourceCandidates(memberPath);
+        const sameName = new Set(
+          await Promise.all(candidates.filter((candidate) => basename(candidate) === name).map((candidate) => knownCanonicalSource(candidate, knownFolders))),
+        );
+        sameName.delete(null);
+        if (sameName.size > 1) throw new Error(`Worktree source identity is ambiguous for ${memberPath}; use a uniquely named checkout.`);
+      }
       let createdWorktree: string | null = null;
       if (asWorktree) {
         const child = join(hubPath, name);
@@ -1146,7 +1178,7 @@ export class FolderRegistry implements FolderRegistryPort {
       try {
         await writeBack(agentsPath, agentsBefore, injectMemberLine(agentsBefore ?? '', seededMemberLine(name, nature)));
         if (ignoreBefore !== null) await writeBack(ignorePath, ignoreBefore, appendExactLine(ignoreBefore, memberIgnoreLine(name)));
-        if (hub.hub?.representation === 'worktree' && this.worktrees.stageGenerated) await this.worktrees.stageGenerated(hubPath, ['AGENTS.md', '.gitignore']);
+        if (hub.hub?.representation === 'worktree' && this.worktrees.stageGenerated) await this.worktrees.stageGenerated(hubPath, ['AGENTS.md', '.gitignore'], false, true);
       } catch (error) {
         // A rollback failure on a worktree must not hide the stranded
         // checkout: name it so the shape stays discoverable for retry.
@@ -1233,7 +1265,8 @@ export class FolderRegistry implements FolderRegistryPort {
       } catch {
         // Stale managed text is tolerable; the member is already removed.
       }
-      if (this.worktrees.stageGenerated) await this.worktrees.stageGenerated(hubPath, ['AGENTS.md', '.gitignore']).catch(() => {});
+      if (member.representation === 'worktree' && hub.hub?.representation === 'worktree' && this.worktrees.stageGenerated)
+        await this.worktrees.stageGenerated(hubPath, ['AGENTS.md', '.gitignore'], false, true).catch(() => {});
       this.repos.invalidateListing();
       this.fireChange({ changedPaths: [hubPath], removedPaths: [] });
     });

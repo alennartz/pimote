@@ -528,6 +528,88 @@ describe('RepoIndex lazy status enrichment (window path)', () => {
     expect(status.get(repo)?.dirty).toBe(false);
   });
 
+  it('does not start enrichment after eviction during discovery', async () => {
+    const repo = join(tempDir, 'repo');
+    await initRepo(repo);
+    let discoveryStarted!: () => void;
+    let releaseDiscovery!: () => void;
+    const discovery = new Promise<void>((resolve) => {
+      discoveryStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseDiscovery = resolve;
+    });
+    let statusReads = 0;
+    const index = makeIndex([tempDir], {
+      readStatus: async () => {
+        statusReads += 1;
+        return { branch: 'main', dirty: true, ahead: 0, behind: 0 };
+      },
+    });
+    index.registerSource({
+      id: 'wait',
+      list: async () => {
+        discoveryStarted();
+        await release;
+        return [];
+      },
+    });
+
+    const enrichment = index.enrichStatus([repo]);
+    await discovery;
+    index.evictStatus([repo]);
+    releaseDiscovery();
+
+    const status = await enrichment;
+    expect(status.has(repo)).toBe(false);
+    expect(statusReads).toBe(0);
+  });
+
+  it('evicting one path does not discard an unrelated in-flight probe', async () => {
+    const a = join(tempDir, 'a');
+    const b = join(tempDir, 'b');
+    await initRepo(a);
+    await initRepo(b);
+    const releases = new Map<string, () => void>();
+    const started = new Map<string, () => void>();
+    const waits = new Map<string, Promise<void>>();
+    for (const path of [a, b]) {
+      waits.set(
+        path,
+        new Promise<void>((resolve) => {
+          releases.set(path, resolve);
+        }),
+      );
+      started.set(path, (() => {}) as () => void);
+    }
+    const startedPromises = new Map<string, Promise<void>>();
+    for (const path of [a, b]) {
+      startedPromises.set(
+        path,
+        new Promise<void>((resolve) => {
+          started.set(path, resolve);
+        }),
+      );
+    }
+    const index = makeIndex([tempDir], {
+      readStatus: async (path) => {
+        started.get(path)?.();
+        await waits.get(path);
+        return { branch: 'main', dirty: true, ahead: 0, behind: 0 };
+      },
+    });
+
+    const enrichment = index.enrichStatus([a, b]);
+    await Promise.all([startedPromises.get(a), startedPromises.get(b)]);
+    index.evictStatus([a]);
+    releases.get(a)?.();
+    releases.get(b)?.();
+
+    const status = await enrichment;
+    expect(status.get(a)).toBeUndefined();
+    expect(status.get(b)?.dirty).toBe(true);
+  });
+
   it('keeps stale lazy listing refreshes identity-only', async () => {
     const a = join(tempDir, 'a');
     const b = join(tempDir, 'b');

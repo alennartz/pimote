@@ -322,9 +322,11 @@ export class RepoIndex {
   private sourceHubs: { entries: HubSourceEntry[]; at: number } | null = null;
   private personaSources: PersonaSourceEntry[] = [];
   private readonly statusCache = new Map<string, RepoStatus>();
-  /** Incremented whenever cached status is invalidated. In-flight probes carry
-   *  the generation they started in and cannot repopulate a newer generation. */
+  /** Incremented when the whole status cache is invalidated. */
   private statusGeneration = 0;
+  /** Per-path generations let eviction retire one checkout without dropping
+   *  unrelated in-flight probes. */
+  private readonly statusPathGenerations = new Map<string, number>();
   /** One probe per path at a time, shared by window, refresh, and requested
    *  delivery callers. Git commands stay bounded even when those paths race. */
   private readonly statusProbeInFlight = new Map<string, Promise<RepoStatus>>();
@@ -425,16 +427,25 @@ export class RepoIndex {
    */
   async enrichStatus(paths: Iterable<string>): Promise<ReadonlyMap<string, GitStatus>> {
     const wanted = new Set(paths);
+    // Discovery can await a cold walk. If member removal or disband evicts a
+    // path while that wait is in flight, that path belongs to the old
+    // generation and must not start or serve a replacement probe. Unrelated
+    // paths keep their own generations and continue enriching.
+    const generations = new Map([...wanted].map((path) => [path, this.statusToken(path)] as const));
     const stamp = await this.currentStamp(false);
+    const active = new Set([...wanted].filter((path) => this.statusToken(path) === generations.get(path)));
     const listed = new Map(stamp.entries.map((entry) => [entry.path, entry] as const));
-    const due = [...wanted].filter((path) => {
+    const due = [...active].filter((path) => {
       const entry = listed.get(path);
       if (entry) return this.statusExpired(entry);
       return this.statusDue(path);
     });
-    await mapWithConcurrency(due, GIT_PROBE_CONCURRENCY, (path) => this.probeStatus(path));
+    await mapWithConcurrency(due, GIT_PROBE_CONCURRENCY, async (path) => {
+      if (this.statusToken(path) !== generations.get(path)) return;
+      await this.probeStatus(path);
+    });
     const resolved = new Map<string, GitStatus>();
-    for (const path of wanted) {
+    for (const path of active) {
       const status = this.statusCache.get(path);
       if (status) resolved.set(path, { branch: status.branch, dirty: status.dirty, ahead: status.ahead, behind: status.behind });
     }
@@ -562,11 +573,11 @@ export class RepoIndex {
    *  nested checkout's movement still reaches its owning row through the
    *  containment fan-out, without the index owning any membership. */
   private async refreshRequestedStatus(path: string): Promise<void> {
-    const generation = this.statusGeneration;
+    const generation = this.statusToken(path);
     const stamp = await this.currentStamp(false);
     // A member removal or disband can evict this path while discovery waits.
     // Do not let the old request start a fresh probe after that eviction.
-    if (this.statusGeneration !== generation) return;
+    if (this.statusToken(path) !== generation) return;
     const entry = stamp.entries.find((candidate) => candidate.path === path);
     if (entry?.missing) return;
 
@@ -710,6 +721,7 @@ export class RepoIndex {
     this.listing = null;
     this.walkGeneration++;
     this.statusGeneration++;
+    this.statusPathGenerations.clear();
     this.statusCache.clear();
     this.statusProbeInFlight.clear();
     this.requestedStatusInFlight.clear();
@@ -733,8 +745,8 @@ export class RepoIndex {
   evictStatus(paths: Iterable<string>): void {
     const evicted = [...new Set(paths)];
     if (evicted.length === 0) return;
-    this.statusGeneration++;
     for (const path of evicted) {
+      this.statusPathGenerations.set(path, (this.statusPathGenerations.get(path) ?? 0) + 1);
       this.statusCache.delete(path);
       // Let a new caller start a fresh probe immediately. The old promise
       // still settles, but its generation cannot write into the cache.
@@ -890,7 +902,7 @@ export class RepoIndex {
   private probeStatus(path: string): Promise<RepoStatus> {
     const existing = this.statusProbeInFlight.get(path);
     if (existing) return existing;
-    const generation = this.statusGeneration;
+    const generation = this.statusToken(path);
     const probe = this.runGitProbe(path, generation).finally(() => {
       if (this.statusProbeInFlight.get(path) === probe) this.statusProbeInFlight.delete(path);
     });
@@ -898,18 +910,22 @@ export class RepoIndex {
     return probe;
   }
 
-  private async runGitProbe(path: string, generation: number): Promise<RepoStatus> {
+  private async runGitProbe(path: string, generation: string): Promise<RepoStatus> {
     await this.acquireGitProbeSlot();
     try {
       const status = await this.readStatus(path);
       const entry: RepoStatus = { ...status, at: this.now() };
-      if (this.statusGeneration === generation) this.statusCache.set(path, entry);
+      if (this.statusToken(path) === generation) this.statusCache.set(path, entry);
       return entry;
     } finally {
       const next = this.gitProbeWaiters.shift();
       if (next) next();
       else this.activeGitProbes -= 1;
     }
+  }
+
+  private statusToken(path: string): string {
+    return `${this.statusGeneration}:${this.statusPathGenerations.get(path) ?? 0}`;
   }
 
   private async acquireGitProbeSlot(): Promise<void> {

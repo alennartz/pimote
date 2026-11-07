@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 /**
@@ -74,10 +74,10 @@ export interface HubWorktreePort {
   /** Stage generated hub files as the baseline for later edit detection.
    *  The files remain uncommitted, but tracked edits are no longer mistaken
    *  for fresh generated content. */
-  stageGenerated?(path: string, files: ReadonlyArray<string>): Promise<void>;
+  stageGenerated?(path: string, files: ReadonlyArray<string>, initialize?: boolean, force?: boolean): Promise<void>;
   /** Whether the Git repository at `path` carries uncommitted changes after
    *  ignoring the named generated top-level files. */
-  isDirty(path: string, allowedPaths?: ReadonlySet<string>): Promise<boolean>;
+  isDirty(path: string, allowedPaths?: ReadonlySet<string>, generatedPaths?: ReadonlySet<string>): Promise<boolean>;
   /** Drop stale worktree metadata left behind when a checkout was removed
    *  behind Git's back. */
   pruneStale(sourcePath: string): Promise<void>;
@@ -130,20 +130,71 @@ function parseWorktreeList(stdout: string): WorktreeListEntry[] {
   return entries;
 }
 
+const GENERATED_BASELINE_FILE = 'pimote-generated-baseline.json';
+const MANAGED_OPEN = '<!-- pimote:members (managed block) -->';
+const MANAGED_CLOSE = '<!-- /pimote:members -->';
+
+type GeneratedBaseline = Record<string, string>;
+
+function generatedBaselinePath(repoPath: string): string {
+  return join(repoPath, '.git', 'info', GENERATED_BASELINE_FILE);
+}
+
+async function readGeneratedBaseline(repoPath: string): Promise<GeneratedBaseline | null> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(generatedBaselinePath(repoPath), 'utf8'));
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    const files = parsed as Record<string, unknown>;
+    if (Object.values(files).some((value) => typeof value !== 'string')) return null;
+    return files as GeneratedBaseline;
+  } catch {
+    return null;
+  }
+}
+
+function outsideManagedBlock(markdown: string): string | null {
+  const open = markdown.indexOf(MANAGED_OPEN);
+  if (open === -1) return null;
+  const close = markdown.indexOf(MANAGED_CLOSE, open + MANAGED_OPEN.length);
+  if (close === -1) return null;
+  return markdown.slice(0, open) + markdown.slice(close + MANAGED_CLOSE.length);
+}
+
+/** Whether a generated file still matches the registry-owned baseline. AGENTS
+ *  may change inside its managed member block; prose outside that block must
+ *  remain byte-identical. Other generated files are exact snapshots. */
+async function generatedMatchesBaseline(repoPath: string, file: string): Promise<boolean> {
+  const baseline = await readGeneratedBaseline(repoPath);
+  if (!baseline || !(file in baseline)) return false;
+  const current = await readFile(join(repoPath, file), 'utf8').catch(() => null);
+  if (current === null) return false;
+  if (file === 'AGENTS.md') return outsideManagedBlock(current) === outsideManagedBlock(baseline[file]);
+  return current === baseline[file];
+}
+
 /** Non-empty `git status --porcelain` — staged, unstaged, and untracked
- *  changes all count as dirty. */
-async function isDirty(run: WorktreeGitRunner, cwd: string, allowedPaths: ReadonlySet<string> = new Set()): Promise<boolean> {
+ *  changes all count as dirty. Generated files are clean only when their
+ *  persisted baseline still matches. */
+async function isDirty(
+  run: WorktreeGitRunner,
+  cwd: string,
+  allowedPaths: ReadonlySet<string> = new Set(),
+  generatedPaths: ReadonlySet<string> = new Set(),
+  generatedMatches: (path: string) => Promise<boolean> = async () => false,
+): Promise<boolean> {
   const { stdout } = await run(['status', '--porcelain', '--untracked-files=all'], cwd);
-  return stdout.split('\n').some((line) => {
-    if (line.trim() === '') return false;
+  for (const line of stdout.split('\n')) {
+    if (line.trim() === '') continue;
     const path = line.slice(3).trim().replace(/\/$/, '');
-    // Fresh generated files are intentionally untracked. A staged new
-    // generated file is also safe. Once a generated file is modified or
-    // deleted after staging, it is hub-owned dirty content and must block
-    // destructive disband.
+    if (!allowedPaths.has(path)) return true;
+    if (generatedPaths.has(path)) {
+      if (!(await generatedMatches(path))) return true;
+      continue;
+    }
     const status = line.slice(0, 2);
-    return !allowedPaths.has(path) || (status !== '??' && status !== 'A ');
-  });
+    if (status !== '??' && status !== 'A ') return true;
+  }
+  return false;
 }
 
 /** True when `HEAD` is reachable from some local or remote-tracking branch
@@ -206,17 +257,42 @@ export class HubWorktrees implements HubWorktreePort {
     await this.run(['worktree', 'remove', input.worktreePath], input.sourcePath);
   }
 
-  async stageGenerated(path: string, files: ReadonlyArray<string>): Promise<void> {
-    const present: string[] = [];
+  async stageGenerated(path: string, files: ReadonlyArray<string>, initialize = false, force = false): Promise<void> {
+    const current: GeneratedBaseline = {};
     for (const file of files) {
-      const entry = await lstat(join(path, file)).catch(() => null);
-      if (entry) present.push(file);
+      const content = await readFile(join(path, file), 'utf8').catch(() => null);
+      if (content !== null) current[file] = content;
     }
-    if (present.length > 0) await this.run(['add', '-f', '--', ...present], path);
+    const baseline = await readGeneratedBaseline(path);
+    if (initialize) {
+      await mkdir(join(path, '.git', 'info'), { recursive: true });
+      await writeFile(generatedBaselinePath(path), `${JSON.stringify(current)}\n`, 'utf8');
+      return;
+    }
+    if (!baseline) return;
+    let changed = false;
+    const next = { ...baseline };
+    for (const file of files) {
+      const content = current[file];
+      const previous = baseline[file];
+      if (content === undefined || previous === undefined) continue;
+      if (file === 'AGENTS.md') {
+        if (outsideManagedBlock(content) !== outsideManagedBlock(previous)) continue;
+        next[file] = content;
+        changed = true;
+      } else if (force || content === previous) {
+        next[file] = content;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await mkdir(join(path, '.git', 'info'), { recursive: true });
+      await writeFile(generatedBaselinePath(path), `${JSON.stringify(next)}\n`, 'utf8');
+    }
   }
 
-  async isDirty(path: string, allowedPaths?: ReadonlySet<string>): Promise<boolean> {
-    return isDirty(this.run, path, allowedPaths);
+  async isDirty(path: string, allowedPaths?: ReadonlySet<string>, generatedPaths?: ReadonlySet<string>): Promise<boolean> {
+    return isDirty(this.run, path, allowedPaths, generatedPaths, (file) => generatedMatchesBaseline(path, file));
   }
 
   async pruneStale(sourcePath: string): Promise<void> {
