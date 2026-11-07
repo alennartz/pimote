@@ -278,6 +278,15 @@ describe('FolderRegistry.createHub — worktree mode', () => {
 });
 
 describe('FolderRegistry.addMember — worktree hubs', () => {
+  it('rejects a selected source identity excluded as another hub child', async () => {
+    const source = await makeWorktreeHub('source-hub');
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree());
+    const target = await registry.createHub({ name: 'target-hub', root: rootDir, memberPaths: [], memberRepresentation: 'worktree' });
+
+    await expect(registry.addMember(target.path, source.worktreePath)).rejects.toThrow(/unknown or excluded/i);
+    expect(await gitWorktreeList(repoA)).not.toContain(join(target.path, 'repo-a'));
+  });
+
   it('rejects equal-basename linked sources before creating an ambiguous checkout', async () => {
     const linkedSource = join(secondRoot, 'repo-a');
     await execFileAsync('git', ['worktree', 'add', linkedSource], { cwd: repoA });
@@ -461,6 +470,27 @@ describe('FolderRegistry.disbandHub', () => {
     await expect(registry.disbandHub(hubPath)).rejects.toThrow(/unrecognized content/i);
     expect(existsSync(hubPath)).toBe(true);
     expect(existsSync(join(hubPath, 'notes.txt'))).toBe(true);
+  });
+
+  it('rejects edited generated instructions even when Git ignores the file', async () => {
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree());
+    const created = await registry.createHub({ name: 'ignored', root: rootDir, memberPaths: [repoA], memberRepresentation: 'worktree' });
+    await writeFile(join(created.path, 'AGENTS.md'), `${await readFile(join(created.path, 'AGENTS.md'), 'utf8')}\nIgnored prose\n`, 'utf8');
+    await writeFile(join(created.path, '.git', 'info', 'exclude'), 'AGENTS.md\n', 'utf8');
+
+    await expect(registry.disbandHub(created.path)).rejects.toThrow(/hub repository has uncommitted changes|generated hub instructions/i);
+    expect(existsSync(created.path)).toBe(true);
+  });
+
+  it('updates a worktree baseline after removing a persona without absorbing prose', async () => {
+    const registry = new FolderRegistry(makeIndex(), storeDir, makeTree());
+    const created = await registry.createHub({ name: 'persona-removal', root: rootDir, memberPaths: [repoA, persona], memberRepresentation: 'worktree' });
+    await writeFile(join(created.path, 'AGENTS.md'), `${await readFile(join(created.path, 'AGENTS.md'), 'utf8')}\nUser prose\n`, 'utf8');
+
+    await registry.removeMember(created.path, persona);
+
+    await expect(registry.disbandHub(created.path)).rejects.toThrow(/generated hub instructions|hub repository has uncommitted changes/i);
+    expect(existsSync(created.path)).toBe(true);
   });
 
   it('does not rebaseline user prose when adding a worktree member', async () => {

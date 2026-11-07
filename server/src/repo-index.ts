@@ -327,6 +327,8 @@ export class RepoIndex {
   /** Per-path generations let eviction retire one checkout without dropping
    *  unrelated in-flight probes. */
   private readonly statusPathGenerations = new Map<string, number>();
+  /** Enrichment callers holding a token while discovery or probes await. */
+  private readonly statusGenerationHolders = new Map<string, number>();
   /** One probe per path at a time, shared by window, refresh, and requested
    *  delivery callers. Git commands stay bounded even when those paths race. */
   private readonly statusProbeInFlight = new Map<string, Promise<RepoStatus>>();
@@ -406,6 +408,7 @@ export class RepoIndex {
       }
       const job = this.refreshRequestedStatus(path).finally(() => {
         if (this.requestedStatusInFlight.get(path) === job) this.requestedStatusInFlight.delete(path);
+        this.retireStatusPathGeneration(path);
       });
       this.requestedStatusInFlight.set(path, job);
       jobs.push(job);
@@ -427,29 +430,42 @@ export class RepoIndex {
    */
   async enrichStatus(paths: Iterable<string>): Promise<ReadonlyMap<string, GitStatus>> {
     const wanted = new Set(paths);
-    // Discovery can await a cold walk. If member removal or disband evicts a
-    // path while that wait is in flight, that path belongs to the old
-    // generation and must not start or serve a replacement probe. Unrelated
-    // paths keep their own generations and continue enriching.
-    const generations = new Map([...wanted].map((path) => [path, this.statusToken(path)] as const));
-    const stamp = await this.currentStamp(false);
-    const active = new Set([...wanted].filter((path) => this.statusToken(path) === generations.get(path)));
-    const listed = new Map(stamp.entries.map((entry) => [entry.path, entry] as const));
-    const due = [...active].filter((path) => {
-      const entry = listed.get(path);
-      if (entry) return this.statusExpired(entry);
-      return this.statusDue(path);
-    });
-    await mapWithConcurrency(due, GIT_PROBE_CONCURRENCY, async (path) => {
-      if (this.statusToken(path) !== generations.get(path)) return;
-      await this.probeStatus(path);
-    });
-    const resolved = new Map<string, GitStatus>();
-    for (const path of active) {
-      const status = this.statusCache.get(path);
-      if (status) resolved.set(path, { branch: status.branch, dirty: status.dirty, ahead: status.ahead, behind: status.behind });
+    for (const path of wanted) this.statusGenerationHolders.set(path, (this.statusGenerationHolders.get(path) ?? 0) + 1);
+    try {
+      // Discovery can await a cold walk. If member removal or disband evicts a
+      // path while that wait is in flight, that path belongs to the old
+      // generation and must not start or serve a replacement probe. Unrelated
+      // paths keep their own generations and continue enriching.
+      const generations = new Map([...wanted].map((path) => [path, this.statusToken(path)] as const));
+      const stamp = await this.currentStamp(false);
+      const active = new Set([...wanted].filter((path) => this.statusToken(path) === generations.get(path)));
+      const listed = new Map(stamp.entries.map((entry) => [entry.path, entry] as const));
+      const due = [...active].filter((path) => {
+        const entry = listed.get(path);
+        if (entry) return this.statusExpired(entry);
+        return this.statusDue(path);
+      });
+      await mapWithConcurrency(due, GIT_PROBE_CONCURRENCY, async (path) => {
+        if (this.statusToken(path) !== generations.get(path)) return;
+        await this.probeStatus(path);
+      });
+      const resolved = new Map<string, GitStatus>();
+      for (const path of active) {
+        // A replacement-generation probe can finish while this caller waits.
+        // Never hand its facts to the old enrichment request.
+        if (this.statusToken(path) !== generations.get(path)) continue;
+        const status = this.statusCache.get(path);
+        if (status) resolved.set(path, { branch: status.branch, dirty: status.dirty, ahead: status.ahead, behind: status.behind });
+      }
+      return resolved;
+    } finally {
+      for (const path of wanted) {
+        const holders = (this.statusGenerationHolders.get(path) ?? 1) - 1;
+        if (holders <= 0) this.statusGenerationHolders.delete(path);
+        else this.statusGenerationHolders.set(path, holders);
+        this.retireStatusPathGeneration(path);
+      }
     }
-    return resolved;
   }
 
   /**
@@ -722,6 +738,7 @@ export class RepoIndex {
     this.walkGeneration++;
     this.statusGeneration++;
     this.statusPathGenerations.clear();
+    this.statusGenerationHolders.clear();
     this.statusCache.clear();
     this.statusProbeInFlight.clear();
     this.requestedStatusInFlight.clear();
@@ -746,12 +763,23 @@ export class RepoIndex {
     const evicted = [...new Set(paths)];
     if (evicted.length === 0) return;
     for (const path of evicted) {
-      this.statusPathGenerations.set(path, (this.statusPathGenerations.get(path) ?? 0) + 1);
+      const generation = (this.statusPathGenerations.get(path) ?? 0) + 1;
+      this.statusPathGenerations.set(path, generation);
       this.statusCache.delete(path);
       // Let a new caller start a fresh probe immediately. The old promise
       // still settles, but its generation cannot write into the cache.
+      const oldPromises: Promise<unknown>[] = [];
+      const oldProbe = this.statusProbeInFlight.get(path);
+      if (oldProbe) oldPromises.push(oldProbe);
+      const oldRequest = this.requestedStatusInFlight.get(path);
+      if (oldRequest) oldPromises.push(oldRequest);
       this.statusProbeInFlight.delete(path);
       this.requestedStatusInFlight.delete(path);
+      if (oldPromises.length === 0) {
+        this.retireStatusPathGeneration(path, generation);
+      } else {
+        void Promise.all(oldPromises.map((promise) => promise.catch(() => undefined))).then(() => this.retireStatusPathGeneration(path, generation));
+      }
     }
   }
 
@@ -905,6 +933,7 @@ export class RepoIndex {
     const generation = this.statusToken(path);
     const probe = this.runGitProbe(path, generation).finally(() => {
       if (this.statusProbeInFlight.get(path) === probe) this.statusProbeInFlight.delete(path);
+      this.retireStatusPathGeneration(path);
     });
     this.statusProbeInFlight.set(path, probe);
     return probe;
@@ -926,6 +955,12 @@ export class RepoIndex {
 
   private statusToken(path: string): string {
     return `${this.statusGeneration}:${this.statusPathGenerations.get(path) ?? 0}`;
+  }
+
+  private retireStatusPathGeneration(path: string, expectedGeneration?: number): void {
+    const generation = this.statusPathGenerations.get(path);
+    if (generation === undefined || (expectedGeneration !== undefined && generation !== expectedGeneration)) return;
+    if (!this.statusProbeInFlight.has(path) && !this.requestedStatusInFlight.has(path) && !this.statusGenerationHolders.has(path)) this.statusPathGenerations.delete(path);
   }
 
   private async acquireGitProbeSlot(): Promise<void> {

@@ -528,6 +528,53 @@ describe('RepoIndex lazy status enrichment (window path)', () => {
     expect(status.get(repo)?.dirty).toBe(false);
   });
 
+  it('does not return replacement-generation facts to an older enrichment', async () => {
+    const repo = join(tempDir, 'repo');
+    await initRepo(repo);
+    let firstStarted!: () => void;
+    let releaseFirst!: () => void;
+    let secondStarted!: () => void;
+    let releaseSecond!: () => void;
+    let calls = 0;
+    const firstReady = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    const firstRelease = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const secondReady = new Promise<void>((resolve) => {
+      secondStarted = resolve;
+    });
+    const secondRelease = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const index = makeIndex([tempDir], {
+      readStatus: async () => {
+        calls += 1;
+        if (calls === 1) {
+          firstStarted();
+          await firstRelease;
+          return { branch: 'main', dirty: true, ahead: 0, behind: 0 };
+        }
+        secondStarted();
+        await secondRelease;
+        return { branch: 'main', dirty: false, ahead: 0, behind: 0 };
+      },
+    });
+
+    const oldEnrichment = index.enrichStatus([repo]);
+    await firstReady;
+    index.evictStatus([repo]);
+    const replacement = index.enrichStatus([repo]);
+    await secondReady;
+    releaseSecond();
+    await replacement;
+    releaseFirst();
+
+    const oldStatus = await oldEnrichment;
+    expect(oldStatus.has(repo)).toBe(false);
+  });
+
   it('does not start enrichment after eviction during discovery', async () => {
     const repo = join(tempDir, 'repo');
     await initRepo(repo);

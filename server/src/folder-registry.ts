@@ -1036,7 +1036,8 @@ export class FolderRegistry implements FolderRegistryPort {
       let hubDirty: boolean;
       try {
         const generatedHubPaths = new Set([...generated, ...memberNames]);
-        hubDirty = await this.worktrees.isDirty(hubPath, generatedHubPaths, generated);
+        const baselineGeneratedPaths = new Set(['AGENTS.md', '.gitignore', 'memory.md']);
+        hubDirty = await this.worktrees.isDirty(hubPath, generatedHubPaths, baselineGeneratedPaths);
       } catch {
         throw new Error(`Cannot verify the state of the hub repository: ${hubPath}`);
       }
@@ -1119,6 +1120,9 @@ export class FolderRegistry implements FolderRegistryPort {
       if (!isManageableHub(hub)) throw new Error(`Not a hub folder: ${hubPath}`);
       if (memberPath === hubPath) throw new Error(`A hub cannot be its own member: ${memberPath}`);
       if (isInside(memberPath, hubPath) || isInside(hubPath, memberPath)) throw new Error(`A hub member cannot contain or live inside the hub: ${memberPath}`);
+      const worktreeHub = hub.hub?.representation === 'worktree' && this.worktrees.sourceCandidates !== undefined;
+      const knownWorktreeFolders = worktreeHub ? await this.knownFolderNatures() : undefined;
+      if (worktreeHub && !(await knownCanonicalSource(memberPath, knownWorktreeFolders!))) throw new Error(`Unknown or excluded worktree source: ${memberPath}`);
       const nature = await candidateFolderNature(memberPath, await this.discoveredNatures());
       if (nature === undefined) throw new Error(`Unknown folder: ${memberPath}`);
       const name = basename(memberPath);
@@ -1147,7 +1151,7 @@ export class FolderRegistry implements FolderRegistryPort {
       // ambiguity guard as creation before Git creates a checkout.
       const asWorktree = hub.hub?.representation === 'worktree' && nature === 'code';
       if (asWorktree && this.worktrees.sourceCandidates) {
-        const knownFolders = await this.knownFolderNatures();
+        const knownFolders = knownWorktreeFolders ?? (await this.knownFolderNatures());
         const candidates = await this.worktrees.sourceCandidates(memberPath);
         const sameName = new Set(
           await Promise.all(candidates.filter((candidate) => basename(candidate) === name).map((candidate) => knownCanonicalSource(candidate, knownFolders))),
@@ -1265,7 +1269,7 @@ export class FolderRegistry implements FolderRegistryPort {
       } catch {
         // Stale managed text is tolerable; the member is already removed.
       }
-      if (member.representation === 'worktree' && hub.hub?.representation === 'worktree' && this.worktrees.stageGenerated)
+      if (hub.hub?.representation === 'worktree' && this.worktrees.stageGenerated)
         await this.worktrees.stageGenerated(hubPath, ['AGENTS.md', '.gitignore'], false, true).catch(() => {});
       this.repos.invalidateListing();
       this.fireChange({ changedPaths: [hubPath], removedPaths: [] });

@@ -165,8 +165,9 @@ function outsideManagedBlock(markdown: string): string | null {
  *  remain byte-identical. Other generated files are exact snapshots. */
 async function generatedMatchesBaseline(repoPath: string, file: string): Promise<boolean> {
   const baseline = await readGeneratedBaseline(repoPath);
-  if (!baseline || !(file in baseline)) return false;
+  if (!baseline) return false;
   const current = await readFile(join(repoPath, file), 'utf8').catch(() => null);
+  if (!(file in baseline)) return current === null;
   if (current === null) return false;
   if (file === 'AGENTS.md') return outsideManagedBlock(current) === outsideManagedBlock(baseline[file]);
   return current === baseline[file];
@@ -193,6 +194,9 @@ async function isDirty(
     }
     const status = line.slice(0, 2);
     if (status !== '??' && status !== 'A ') return true;
+  }
+  for (const path of generatedPaths) {
+    if (!(await generatedMatches(path))) return true;
   }
   return false;
 }
