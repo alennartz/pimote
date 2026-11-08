@@ -925,6 +925,7 @@ describe('SessionRegistry', () => {
         state: {
           model: { provider: 'anthropic', id: 'claude-4', name: 'Claude 4' },
           thinkingLevel: 'high',
+          availableThinkingLevels: ['off', 'minimal', 'low', 'medium', 'high'],
           isStreaming: false,
           isCompacting: false,
           sessionFile: undefined,
@@ -977,6 +978,7 @@ describe('SessionRegistry', () => {
         state: {
           model: null,
           thinkingLevel: 'default',
+          availableThinkingLevels: ['off'],
           isStreaming: false,
           isCompacting: false,
           sessionFile: undefined,
@@ -1003,6 +1005,7 @@ describe('SessionRegistry', () => {
         state: {
           model: null,
           thinkingLevel: 'off',
+          availableThinkingLevels: ['off'],
           isStreaming: false,
           isCompacting: false,
           sessionFile: undefined,
@@ -1063,6 +1066,7 @@ describe('SessionRegistry', () => {
         state: {
           model: null,
           thinkingLevel: 'off',
+          availableThinkingLevels: ['off'],
           isStreaming: false,
           isCompacting: false,
           sessionFile: undefined,
@@ -1449,6 +1453,7 @@ describe('SessionRegistry', () => {
         state: {
           model: null,
           thinkingLevel: 'off',
+          availableThinkingLevels: ['off'],
           isStreaming: false,
           isCompacting: false,
           sessionFile: undefined,
@@ -1562,6 +1567,7 @@ describe('SessionRegistry', () => {
         state: {
           model: null,
           thinkingLevel: 'off',
+          availableThinkingLevels: ['off'],
           isStreaming: false,
           isCompacting: false,
           sessionFile: undefined,
@@ -1793,6 +1799,7 @@ describe('SessionRegistry', () => {
         state: {
           model: null,
           thinkingLevel: 'off',
+          availableThinkingLevels: ['off'],
           isStreaming: false,
           isCompacting: false,
           sessionFile: undefined,

@@ -853,7 +853,7 @@ export class SessionRegistry {
         // reset.
         rebuilt.model = state.model;
         rebuilt.thinkingLevel = state.thinkingLevel;
-        rebuilt.availableThinkingLevels = state.availableThinkingLevels ?? [];
+        rebuilt.availableThinkingLevels = state.availableThinkingLevels;
         rebuilt.isStreaming = state.isStreaming;
         rebuilt.isCompacting = state.isCompacting;
         rebuilt.autoCompactionEnabled = state.autoCompactionEnabled;
@@ -1375,7 +1375,7 @@ async function fetchFullSessionData(sessionId: string): Promise<void> {
       const state = (stateRes.data as { state: SessionState }).state;
       session.model = state.model;
       session.thinkingLevel = state.thinkingLevel;
-      session.availableThinkingLevels = state.availableThinkingLevels ?? [];
+      session.availableThinkingLevels = state.availableThinkingLevels;
       // A lifecycle event or full resync received while these requests were
       // pending is newer than this snapshot. Never resurrect stale streaming.
       if (session === requestedSession && session.streamingRevision === streamingRevision) {

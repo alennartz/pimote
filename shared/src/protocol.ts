@@ -109,9 +109,8 @@ export interface SessionState {
    * Thinking levels supported by the current model, in display order.
    * Server-authoritative (derived from pi-ai's per-model capabilities), so
    * adding new levels (e.g. "xhigh") Just Works without client changes.
-   * May be missing when talking to older servers — clients should fall back.
    */
-  availableThinkingLevels?: string[];
+  availableThinkingLevels: string[];
   isStreaming: boolean;
   isCompacting: boolean;
   sessionFile: string | undefined;
