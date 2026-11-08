@@ -36,6 +36,18 @@ _Avoid_: ephemeral manager session
 A persisted conversation with pi, tied to a working folder. Multiple connected clients can observe and send commands in the same live session.
 _Avoid_: session owner
 
+**Session identity**:
+The Pi session UUID that identifies one persisted conversation, independent of its display name. A different conversation, such as a fork, has a different identity.
+_Avoid_: session name, folder path
+
+**Subagent**:
+A Pi conversation created and lifecycle-managed as another session's child by my-pi's subagents extension. It has its own transcript and live runtime but is not an independent root session.
+_Avoid_: agent (ambiguous with persona), independent session
+
+**Subagent view**:
+A full interactive Pimote chat attached to an existing live subagent session. Opening or closing the view does not create or dispose the runtime.
+_Avoid_: observer-only view, promoted session
+
 **Session settings**:
 The internal runtime state for one session's model, thinking level, and auto-compaction behavior. The web UI presents these controls under **Session details**.
 _Avoid_: global settings
