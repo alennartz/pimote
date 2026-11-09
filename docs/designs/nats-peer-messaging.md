@@ -79,7 +79,7 @@ A_TO_B on A  -- JetStream source/mirror -->  B_FROM_A on B
 B_TO_A on B  -- JetStream source/mirror -->  A_FROM_B on A
 ```
 
-Each sender-owned stream lives in that sender's JetStream domain under the A–B pair account. The sender's local roots write from A-A into A-B through a local account bridge that still needs design. Each destination root has a durable consumer with a non-overlapping subject filter. The source consumer uses flow-controlled acknowledgement so the sender's WorkQueue item remains until the destination stream stores its copy. The root consumer acknowledges only after the message envelope reaches the Pi transcript. This gives three distinct facts:
+Each sender-owned stream lives in that sender's JetStream domain under the A–B pair account. The my-pi peer provider publishes through its A-B account client after checking the root connection. Credential delivery to that provider remains open. Each destination root has a durable consumer with a non-overlapping subject filter. The source consumer uses flow-controlled acknowledgement so the sender's WorkQueue item remains until the destination stream stores its copy. The root consumer acknowledges only after the message envelope reaches the Pi transcript. This gives three distinct facts:
 
 1. The sender's JetStream accepted the message locally.
 2. The destination's JetStream stored a copy.
@@ -91,7 +91,7 @@ This is the current preferred shape because it lets either side queue outbound m
 
 ## Open design decisions
 
-1. **my-pi access to A-B:** How does a root provider obtain authorized access to the pair account from A-A: connect directly with a leaf-user credential, or publish through NATS account imports/exports? Keep permissions scoped to the active root connection.
+1. **Peer credential delivery:** How does Pimote make each A-B account credential available to the direct my-pi provider without exposing signing secrets to the model? Decide whether one credential serves the local node or credentials scope to individual roots. Keep NATS permissions and provider checks scoped to active root connections.
 2. **Pair-account credentials:** Which NATS auth mode does the UI manage? Where does the pair account signing authority live? How does each node receive restricted leaf-user credentials, rotate them, or revoke the peer?
 3. **Directory transfer:** Can filtered sources of the local `DIRECTORY` KV bucket provide each peer account's read-only view, or is a separate peer share stream needed? Define remote tombstones, folder changes, unshare, and archive cleanup.
 4. **Root connection write authority:** `ROOT_CONNECTIONS` would live in a local account and use a canonical root-pair key, but each Pimote has an independent JetStream domain. Two local KV buckets with the same subject are not one shared store, and mirror/source copies do not merge writes. Choose a single home for each edge, directed per-node grants, or another conflict rule. Define what a disconnect on one side means while the peer link is down.
