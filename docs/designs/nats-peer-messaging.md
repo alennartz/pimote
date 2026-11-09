@@ -4,13 +4,13 @@ Status: draft
 
 ## Context
 
-Each Pimote instance runs a local NATS server with JetStream. Pimote provisions a main local account for that instance's roots, directory, and intra-node conversations. When two instances trust each other, Pimote provisions a separate account namespace for that peer pair and links the NATS servers. This note records the current decisions and separates them from the local-to-peer bridge, delivery, and write-authority questions that remain open.
+Each Pimote instance runs a local NATS server with JetStream. Pimote auto-provisions a main local account (`A-A`) for that instance's roots, directory, and intra-node conversations. When two instances trust each other, Pimote's UI provisions a separate account namespace (`A-B`) for that peer pair and links the NATS servers. This note records the current decisions and separates them from the local-to-peer bridge, delivery, and write-authority questions that remain open.
 
 ## Agreed direction
 
 - **One local NATS server per Pimote instance.** JetStream stores local session and peer traffic. A single server is a single replica, not a highly available NATS cluster. File storage supports recovery after a server restart when its disk remains intact.
 - **One leaf link per trusted Pimote pair.** The link is full duplex. One server dials the other server's leaf listener. The dial direction does not determine message direction. A second reciprocal link is not needed.
-- **Two account scopes per node relationship.** Each instance has a Pimote-provisioned local account (`A-A`) for its own roots, directory, and local conversations. Each trusted pair has a separate peer account (`A-B`) for that pair's shared subjects and cross-server traffic. A–C use `A-C`; do not use one account for all peers or one account per root.
+- **Two account scopes per node relationship.** Each instance has an auto-provisioned local account (`A-A`) for its own roots, directory, and intra-node conversations. Pimote's UI creates a separate peer account (`A-B`) for a trusted pair and its cross-server traffic. A–C use `A-C`; do not use one account for all peers or one account per root.
 - **The peer account has a Pimote UI lifecycle.** The UI provisions the pair account and leaf credentials. The account identity, signing-key custody, user-permission shape, rotation, and revocation procedure remain open.
 - **The Pi session UUID identifies a root conversation.** Session names and folder labels are mutable discovery metadata, not identities.
 - **Root messages stay asynchronous across roots.** A recipient can answer with the incoming correlation ID. The sender is not told that the recipient received or processed the message.
@@ -20,7 +20,7 @@ Each Pimote instance runs a local NATS server with JetStream. Pimote provisions 
   - one folder: `$KV.DIRECTORY.<folderShareId>.>`
   - all roots: `$KV.DIRECTORY.>`
 
-  This bucket lives in the instance's local account. The peer account receives only the allowed subject filter as a read-only view. The folder token must be NATS-safe. Whether it is a stable local ID or a derived token remains open. It is not a global folder identity. If a session changes folders or becomes unshared, the sender must propagate an old-key tombstone and any new value.
+  This bucket lives in the instance's A-A local account. The A-B peer account receives only the allowed subject filter as a read-only view. The folder token must be NATS-safe. Whether it is a stable local ID or a derived token remains open. It is not a global folder identity. If a session changes folders or becomes unshared, the sender must propagate an old-key tombstone and any new value.
 
 - **Root messages stay literal.** Incoming cross-root text does not invoke Pi slash commands, skills, prompt templates, or input handlers. The recipient can still read a named skill from the message context.
 - **NATS transport state is not agent presence.** A leaf link or account record does not claim that a Pi process is online. A logical root connection can remain configured while the peer's server is unreachable.
@@ -30,7 +30,7 @@ Each Pimote instance runs a local NATS server with JetStream. Pimote provisions 
 | Layer            | Scope                               | Responsibility                                                                                                                                     |
 | ---------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Leaf link        | One trusted Pimote pair             | Carries subject interest and traffic in both directions. Its account binding and credentials define which peer namespace and subjects can cross.   |
-| Local account    | One Pimote instance                 | Holds local root-directory state and intra-node root messaging. Pimote provisions it automatically.                                                |
+| Local account    | One Pimote instance                 | A-A holds local root-directory state and intra-node root messaging. Pimote provisions it automatically.                                            |
 | Pair account     | One trusted Pimote pair             | Carries only A–B peer subjects. A–C uses another account. It is not a root session and does not provide the root connection graph.                 |
 | Root directory   | One node's registered root sessions | Stores local root metadata. Selected records are copied to peers by folder/root filter.                                                            |
 | Root connection  | One exact pair of root identities   | Authorizes model-facing message tools between two roots. It is separate from the node-level leaf link and discovery policy.                        |
@@ -73,7 +73,7 @@ A_TO_B on A  -- JetStream source/mirror -->  B_FROM_A on B
 B_TO_A on B  -- JetStream source/mirror -->  A_FROM_B on A
 ```
 
-Each sender-owned stream lives in that sender's JetStream domain under the A–B pair account. The sender's local roots write to the pair account through a local account bridge that still needs design. Each destination root has a durable consumer with a non-overlapping subject filter. The source consumer uses flow-controlled acknowledgement so the sender's WorkQueue item remains until the destination stream stores its copy. The root consumer acknowledges only after the message envelope reaches the Pi transcript. This gives three distinct facts:
+Each sender-owned stream lives in that sender's JetStream domain under the A–B pair account. The sender's local roots write from A-A into A-B through a local account bridge that still needs design. Each destination root has a durable consumer with a non-overlapping subject filter. The source consumer uses flow-controlled acknowledgement so the sender's WorkQueue item remains until the destination stream stores its copy. The root consumer acknowledges only after the message envelope reaches the Pi transcript. This gives three distinct facts:
 
 1. The sender's JetStream accepted the message locally.
 2. The destination's JetStream stored a copy.
