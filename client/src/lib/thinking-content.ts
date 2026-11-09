@@ -1,11 +1,12 @@
 /**
- * A reasoning block remains visible while its stream is open, because a later
- * delta may still add text. Once closed, whitespace-only blocks have no UI.
+ * Empty reasoning blocks are common during provider setup. Keep them out of the
+ * transcript until the first non-whitespace token arrives, so they do not flash
+ * and disappear before the answer starts.
  */
 const whitespace = /\s/;
 
-export function shouldRenderThinkingBlock(text: string, streaming: boolean): boolean {
-  return streaming || text.trim().length > 0;
+export function shouldRenderThinkingBlock(text: string, _streaming: boolean): boolean {
+  return text.trim().length > 0;
 }
 
 /** Return a bounded preview without splitting or scanning the full stream. */

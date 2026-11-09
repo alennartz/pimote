@@ -86,6 +86,15 @@ afterEach(async () => {
 });
 
 describe('ThinkingBlock scroll pin', () => {
+  it('does not mount an empty reasoning block while streaming', async () => {
+    await unmount(component!);
+    target.replaceChildren();
+    component = mount(ThinkingBlock, { target, props: { streaming: true, text: '' } });
+    flushSync();
+
+    expect(target.querySelector('.thinking-block')).toBeNull();
+  });
+
   it('follows streamed reasoning while pinned', () => {
     scroller.scrollTop = geometry.scrollHeight;
     scroller.dispatchEvent(new Event('scroll'));

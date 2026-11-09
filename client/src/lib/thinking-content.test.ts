@@ -42,8 +42,9 @@ describe('shouldRenderThinkingBlock', () => {
     expect(shouldRenderThinkingBlock(' \n\t ', false)).toBe(false);
   });
 
-  it('keeps an empty reasoning block visible while it may still receive text', () => {
-    expect(shouldRenderThinkingBlock('', true)).toBe(true);
+  it('hides an empty reasoning block while it waits for its first token', () => {
+    expect(shouldRenderThinkingBlock('', true)).toBe(false);
+    expect(shouldRenderThinkingBlock(' \n\t ', true)).toBe(false);
   });
 
   it('shows completed reasoning that contains text', () => {
