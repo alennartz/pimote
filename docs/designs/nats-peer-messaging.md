@@ -39,6 +39,12 @@ Each Pimote instance runs a local NATS server with JetStream. Pimote auto-provis
 
 A NATS cluster replicates a stream only among servers in that cluster. A gateway super-cluster routes subjects between clusters but does not replicate stream state or provide a per-peer isolation boundary. Leaf links and gateways are transport topologies; JetStream sources/mirrors are separate, asynchronous data-copy mechanisms.
 
+## my-pi messaging integration
+
+The shared my-pi `send`/`respond` tool surface is retained. It uses the existing local provider for parent/subagent routes and a peer-account NATS provider for root-to-root routes. Child contexts keep local parent-tree communication; direct cross-tree NATS messaging is not in this version.
+
+**CLI is the preferred target.** A root Pi session should use the same tools from CLI after peer trust is provisioned, without a Pimote browser client. This requires the my-pi extension to access the local NATS server and the applicable A-B pair account. Pimote stops its local NATS server with Pimote, so peer messaging is unavailable while that server is stopped. The user is willing to revisit CLI support if credential handling or lifecycle makes it impractical.
+
 ## Candidate message envelope and subjects
 
 Exact subject syntax is not locked. The current example uses one account per peer pair and a subject scoped to the target and source root sessions:
@@ -85,7 +91,7 @@ This is the current preferred shape because it lets either side queue outbound m
 
 ## Open design decisions
 
-1. **Local-to-peer account bridge:** How do local roots in A-A publish authorized messages into A-B, and how do received A-B messages enter the recipient's local Pi session? Keep the bridge scoped to the active root connection.
+1. **my-pi access to A-B:** How does a root provider obtain authorized access to the pair account from A-A: connect directly with a leaf-user credential, or publish through NATS account imports/exports? Keep permissions scoped to the active root connection.
 2. **Pair-account credentials:** Which NATS auth mode does the UI manage? Where does the pair account signing authority live? How does each node receive restricted leaf-user credentials, rotate them, or revoke the peer?
 3. **Directory transfer:** Can filtered sources of the local `DIRECTORY` KV bucket provide each peer account's read-only view, or is a separate peer share stream needed? Define remote tombstones, folder changes, unshare, and archive cleanup.
 4. **Root connection write authority:** `ROOT_CONNECTIONS` would live in a local account and use a canonical root-pair key, but each Pimote has an independent JetStream domain. Two local KV buckets with the same subject are not one shared store, and mirror/source copies do not merge writes. Choose a single home for each edge, directed per-node grants, or another conflict rule. Define what a disconnect on one side means while the peer link is down.
