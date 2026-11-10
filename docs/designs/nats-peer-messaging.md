@@ -13,6 +13,7 @@ Each Pimote instance runs a local NATS server with JetStream. Pimote auto-provis
 - **Two account scopes per node relationship.** Each instance has an auto-provisioned local account (`A-A`) for its own roots, directory, and intra-node conversations. Pimote's UI creates a separate peer account (`A-B`) for a trusted pair and its cross-server traffic. A–C use `A-C`; do not use one account for all peers or one account per root.
 - **Pimote provisions peer accounts through static NATS config.** The UI creates the A-B account and leaf-user entries on both nodes, then reloads their NATS servers. In static-config mode, account names are local labels, not cryptographic identities. Each Pimote node uses one restricted NATS user per peer account, not one per root. The my-pi provider keeps the credential; the model does not see it. The provider enforces active root-connection state before sending.
 - **The Pi session UUID identifies a root conversation.** Session names and folder labels are mutable discovery metadata, not identities.
+- **Root connections are single-use.** Each connect creates a unique `connectionId`; the active local `ROOT_CONNECTIONS` view contains that ID. A close references it and deletes it from both local views through the peer control channel. Reconnecting the same root pair creates a new ID. A closed ID never reopens.
 - **Root messages stay asynchronous across roots.** A recipient can answer with the incoming correlation ID. The sender is not told that the recipient received or processed the message.
 - **Root discovery is shared per peer, per side.** Each side chooses which roots it exposes to that peer: selected roots, roots in selected folders, or all roots. Sharing metadata does not open a root-to-root communication connection. A separate root connection authorizes conversation traffic.
 - **A root connection has two logical states.** The canonical root-pair key is present when connected and absent when disconnected. There is no online/pending state; NATS link reachability is separate. A replicated delete marker is synchronization metadata for the absent state.
@@ -52,7 +53,7 @@ The shared my-pi `send`/`respond` tool surface is retained. It uses the existing
 Exact subject syntax is not locked. The current example uses one account per peer pair and a subject scoped to the target and source root sessions:
 
 ```text
-pimote.v1.inbox.<targetSessionUUID>.<sourceSessionUUID>
+pimote.v1.connection.<connectionId>.inbox.<targetSessionUUID>.<sourceSessionUUID>
 ```
 
 The message envelope carries the stable identity that the subject alone does not provide:
@@ -61,6 +62,7 @@ The message envelope carries the stable identity that the subject alone does not
 interface RootMessage {
   protocolVersion: 1;
   messageId: string;
+  connectionId: string;
   kind: 'request' | 'response';
   from: { nodeId: string; sessionId: string };
   to: { nodeId: string; sessionId: string };
@@ -70,7 +72,7 @@ interface RootMessage {
 }
 ```
 
-A response is a new message to the source root's inbox. It includes the request's `correlationId`. Root-session UUIDs identify conversations; session names and folder labels are mutable metadata.
+A response is a new message to the source root's inbox. It includes the request's `correlationId` and the same `connectionId`. Consumers reject messages tied to an ID that has been deleted. Root-session UUIDs identify conversations; session names and folder labels are mutable metadata.
 
 ## Symmetric offline queue requirement
 
@@ -96,7 +98,7 @@ This is the current preferred shape because it lets either side queue outbound m
 1. **Leaf-user credentials:** Choose NKey or password credentials for each node's A-B leaf user. Define where the client credential lives, how the two UIs exchange it, and how Pimote rotates or revokes it.
 2. **Static pair-account configuration:** Define the exact local A-B account labels and leaf authorization entries on each server. The static account name is a local config label; the leaf's local account binding and remote user credential establish the peer path.
 3. **Directory transfer:** Can filtered sources of the local `DIRECTORY` KV bucket provide each peer account's read-only view, or is a separate peer share stream needed? Define remote tombstones, folder changes, unshare, and archive cleanup.
-4. **Root connection synchronization:** Each A-A account stores its own present/absent view keyed by the canonical root pair. Choose the pair-account event stream or source/mirror mechanism that carries connect and close tombstones to the other side. A close updates the local view immediately; the remote view converges when the peer link resumes. Define how a fresh connect after a close is distinguished from stale events, and separately decide whether close purges queued messages or only blocks future sends.
+4. **Connection control-channel ordering:** Each A-A account stores local `ROOT_CONNECTIONS` entries keyed by unique `connectionId`. The pair-account control stream carries connect and close events; a close tombstone names the ID and is applied on both sides. A new connect gets a new ID, so a stale event cannot reopen a closed connection. Define how control events order against queued message events and whether close purges queued messages or only blocks future sends.
 5. **Message subject, stream, and consumer naming:** Finalize account-scoped subject patterns, local-versus-pair account stream placement, root consumer filters, and whether the replication consumer and root consumer share or split stream responsibilities.
 6. **Send acknowledgement and retention:** Decide whether local outbox PubAck counts as accepted, and how to report remote storage separately. Set `MaxAge`, `MaxBytes`, overflow behavior, retries, duplicate handling, reply expiry, archive purge, and disconnected-root queue cleanup.
 7. **Connection availability:** A leaf link needs one reachable listener and one dialer. NATS leaf links do not punch through two-sided NAT. Choose how to support peers where neither side accepts inbound connections.
