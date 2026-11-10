@@ -10,6 +10,7 @@ Each Pimote instance runs a local NATS server with JetStream. Pimote auto-provis
 
 - **One local NATS server per Pimote instance.** JetStream stores local session and peer traffic. A single server is a single replica, not a highly available NATS cluster. File storage supports recovery after a server restart when its disk remains intact.
 - **One leaf link per trusted Pimote pair.** The link is full duplex. One server dials the other server's reachable leaf listener. The dial direction does not determine message direction. A second reciprocal link is not needed. The first version requires one reachable listener; NATS does not punch through two-sided NAT or provide a relay.
+- **Leaf links require verified TLS.** Configure TLS for the leaf connection itself. NKey authenticates the peer user; it does not encrypt traffic or verify the server certificate.
 - **Two account scopes per node relationship.** Each instance has an auto-provisioned local account (`A-A`) for its own roots, directory, and intra-node conversations. Pimote's UI creates a separate peer account (`A-B`) for a trusted pair and its cross-server traffic. A–C use `A-C`; do not use one account for all peers or one account per root.
 - **Pimote provisions peer accounts through static NATS config.** The UI creates the A-B account and leaf-user entries on both nodes, then reloads their NATS servers. In static-config mode, account names are local labels, not cryptographic identities. Each Pimote node generates one restricted NKey user per peer account, not one per root. It shares that user's public key with the peer; NATS config holds the public key, and the private seed stays on its owning node. The model does not see it. The my-pi provider enforces active root-connection state before sending.
 - **Node-level peer trust uses invite and accept.** One Pimote shares a peer invitation; the other imports and accepts it. The pair account and leaf link are installed after acceptance. This is separate from root-session connection creation, which does not require peer-agent acceptance.
@@ -18,9 +19,7 @@ Each Pimote instance runs a local NATS server with JetStream. Pimote auto-provis
 - **Root messages stay asynchronous across roots.** A recipient can answer with the incoming correlation ID. The sender is not told that the recipient received or processed the message.
 - **A root send is accepted at local storage.** The sender reports success after its local outbox receives a JetStream PubAck. Remote stream storage and transcript admission are separate acknowledgements; the tool does not claim either happened.
 - **Outboxes do not expire by age.** WorkQueue messages remain until acknowledged or explicitly cleaned up. Streams use bounded size/count limits with `DiscardNew`; senders stop admitting message data below the hard limit to reserve room for connection-control events.
-- **Peer outboxes do not expire messages by age.** Use bounded `MaxBytes`/`MaxMsgs` with `DiscardNew`, so a full queue rejects new sends rather than silently evicting unread messages. The limits are not yet sized.
 - **Root discovery is shared per peer, per side.** Each side chooses which roots it exposes to that peer: selected roots, roots in selected folders, or all roots. Sharing metadata does not open a root-to-root communication connection. A separate root connection authorizes conversation traffic.
-- **A root connection has two logical states.** The canonical root-pair key is present when connected and absent when disconnected. There is no online/pending state; NATS link reachability is separate. A replicated delete marker is synchronization metadata for the absent state.
 - **Each Pimote keeps a local root-connection view.** The A-A account stores the local `ROOT_CONNECTIONS` view. A connection is either present or absent; it has no online or pending state. A close from either side must propagate a tombstone so both local views remove the pair after synchronization. The two KV buckets are independent copies, not a shared writable store.
 - **Folder scope belongs in the local directory key.** A `DIRECTORY` KV key has the shape `<folderShareId>.<sessionUUID>`. Its backing JetStream stream is `KV_DIRECTORY`; its subject is `$KV.DIRECTORY.<folderShareId>.<sessionUUID>`. Each peer account receives a filtered, read-only JetStream source of this local directory:
   - one root: `$KV.DIRECTORY.<folderShareId>.<sessionUUID>`
@@ -114,13 +113,14 @@ This is the current preferred shape because it lets either side queue outbound m
 4. **Simultaneous connect requests:** Each connection attempt has a unique ID, and a close removes only the ID it names. If both sides independently create a connection for the same root pair during a partition, decide whether to retain both IDs, deterministically select one, or coalesce them as one logical connection.
 5. **Peer stream details:** Finalize control/message subject patterns, stream names, connection-event payloads, source-consumer settings, peer-ingress acknowledgement timing, and per-target message filters.
 6. **Outbox capacity and cleanup:** Choose `MaxBytes`/`MaxMsgs` values and the data high-water mark that reserves control-event capacity. `MaxAge` is not used; accepted messages remain until acknowledged or explicitly cleaned up. Define the local retry path if the hard limit blocks a control event, plus deduplication, reply expiry, and archive cleanup.
-7. **Peer invitation details:** Define invitation fields and validation for node identity, reachable leaf address, TLS identity, and public NKey. The first version requires one reachable listener and does not include a hub, relay, or VPN overlay.
+7. **Peer invitation details:** Define invitation fields and validation for node identity, reachable leaf address, TLS CA or certificate pin, and public NKey. The first version requires one reachable TLS listener and does not include a hub, relay, or VPN overlay.
 8. **Super-cluster alternative:** Gateways can route interest through a cluster mesh, but do not provide peer-pair isolation. If considered, account sharing and gateway reach must preserve the A–B versus A–C boundary.
 
 ## NATS references
 
 - [Leaf nodes and account binding](https://docs.nats.io/learn/topologies/leaf-nodes)
 - [Leaf remote account and credentials](https://docs.nats.io/reference/config/leafnodes/remotes)
+- [TLS for NATS connection types](https://docs.nats.io/learn/security/encryption)
 - [Accounts and multitenancy](https://docs.nats.io/learn/security/accounts-and-multitenancy)
 - [Cross-account exports and imports](https://docs.nats.io/learn/security/cross-account)
 - [KV stream subjects and revisions](https://docs.nats.io/learn/key-value/under-the-hood)
