@@ -30,16 +30,16 @@ Each Pimote instance runs a local NATS server with JetStream. Pimote auto-provis
 
 ## NATS layers
 
-| Layer              | Scope                               | Responsibility                                                                                                                                     |
-| ------------------ | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Leaf link          | One trusted Pimote pair             | Carries subject interest and traffic in both directions. Its account binding and credentials define which peer namespace and subjects can cross.   |
-| Local account      | One Pimote instance                 | A-A holds local root-directory state and intra-node root messaging. Pimote provisions it automatically.                                            |
-| Pair account       | One trusted Pimote pair             | Carries only A–B peer subjects. A–C uses another account. It is not a root session and does not provide the root connection graph.                 |
-| Root directory     | One node's registered root sessions | Stores local root metadata. Selected records are copied to peers by folder/root filter.                                                            |
-| Root connection    | One unique connection ID            | A single-use edge between two root identities. Its presence in each local `ROOT_CONNECTIONS` KV authorizes root messaging.                         |
-| Peer outbox stream | One peer pair and sender direction  | Carries ordered connection control events and root messages for that sender. The peer stores a local copy.                                         |
-| JetStream stream   | One account and JetStream domain    | Owns a durable message or directory log. A stream has one leader in its home cluster/domain. A mirror is read-only; a source is a separate stream. |
-| Durable consumer   | One stream and filter               | Tracks delivery and acknowledgements for a root or a stream-replication task.                                                                      |
+| Layer                 | Scope                               | Responsibility                                                                                                                                     |
+| --------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Leaf link             | One trusted Pimote pair             | Carries subject interest and traffic in both directions. Its account binding and credentials define which peer namespace and subjects can cross.   |
+| Local account         | One Pimote instance                 | A-A holds local root-directory state and intra-node root messaging. Pimote provisions it automatically.                                            |
+| Pair account          | One trusted Pimote pair             | Carries only A–B peer subjects. A–C uses another account. It is not a root session and does not provide the root connection graph.                 |
+| Root directory        | One node's registered root sessions | Stores local root metadata. Selected records are copied to peers by folder/root filter.                                                            |
+| Root connection       | One unique connection ID            | A single-use edge between two root identities. Its presence in each local `ROOT_CONNECTIONS` KV authorizes root messaging.                         |
+| Peer outbox stream    | One peer pair and sender direction  | Carries ordered connection control events and root messages for that sender. The peer stores a local copy.                                         |
+| JetStream stream      | One account and JetStream domain    | Owns a durable message or directory log. A stream has one leader in its home cluster/domain. A mirror is read-only; a source is a separate stream. |
+| Peer ingress consumer | One inbound peer stream             | Applies connection-control events and routes root messages in stream order. A separate source consumer handles stream replication.                 |
 
 A NATS cluster replicates a stream only among servers in that cluster. A gateway super-cluster routes subjects between clusters but does not replicate stream state or provide a per-peer isolation boundary. Leaf links and gateways are transport topologies; JetStream sources/mirrors are separate, asynchronous data-copy mechanisms.
 
@@ -108,7 +108,7 @@ This is the current preferred shape because it lets either side queue outbound m
 2. **Static pair-account configuration:** Define the exact local A-B account labels and leaf authorization entries on each server. The static account name is a local config label; the leaf's local account binding and remote user credential establish the peer path.
 3. **Directory transfer:** Can filtered sources of the local `DIRECTORY` KV bucket provide each peer account's read-only view, or is a separate peer share stream needed? Define remote tombstones, folder changes, unshare, and archive cleanup.
 4. **Connection event convergence:** Each A-A account stores local `ROOT_CONNECTIONS` entries keyed by unique `connectionId`. A peer outbox carries connection events and messages in per-sender order. A close names the single-use ID; a new connection between the same roots gets a new ID. Define how events from opposite-direction streams interact and whether close purges queued messages or only blocks future sends.
-5. **Message subject, stream, and consumer naming:** Finalize account-scoped subject patterns, local-versus-pair account stream placement, root consumer filters, and whether the replication consumer and root consumer share or split stream responsibilities.
+5. **Peer stream details:** Finalize control/message subject patterns, stream names, connection-event payloads, source-consumer settings, peer-ingress acknowledgement timing, and per-target message filters.
 6. **Send acknowledgement and retention:** Decide whether local outbox PubAck counts as accepted, and how to report remote storage separately. Set `MaxAge`, `MaxBytes`, overflow behavior, retries, duplicate handling, reply expiry, archive purge, and disconnected-root queue cleanup.
 7. **Connection availability:** A leaf link needs one reachable listener and one dialer. NATS leaf links do not punch through two-sided NAT. Choose how to support peers where neither side accepts inbound connections.
 8. **Super-cluster alternative:** Gateways can route interest through a cluster mesh, but do not provide peer-pair isolation. If considered, account sharing and gateway reach must preserve the A–B versus A–C boundary.
