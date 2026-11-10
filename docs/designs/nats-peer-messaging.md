@@ -23,7 +23,7 @@ Each Pimote instance runs a local NATS server with JetStream. Pimote auto-provis
   - one folder: `$KV.DIRECTORY.<folderShareId>.>`
   - all roots: `$KV.DIRECTORY.>`
 
-  This bucket lives in the instance's A-A local account; A-A remains the write authority. The A-B peer account receives a read-only source filtered to the selected roots or folder. The folder token must be NATS-safe. Whether it is a stable local ID or a derived token remains open. It is not a global folder identity. A session moving folders produces an old-key tombstone and a new value.
+  This bucket lives in the instance's A-A local account; A-A remains the write authority. The A-B peer account receives a read-only source filtered to the selected roots or folder. The folder token must be NATS-safe. Whether it is a stable local ID or a derived token remains open. It is not a global folder identity. A session moving folders, becoming unshared, or being archived produces an old-key tombstone and any new value. The peer removes its copied record after synchronization; NATS cannot erase information the peer already read or copied elsewhere.
 
 - **Root messages stay literal.** Incoming cross-root text does not invoke Pi slash commands, skills, prompt templates, or input handlers. The recipient can still read a named skill from the message context.
 - **NATS transport state is not agent presence.** A leaf link or account record does not claim that a Pi process is online. A logical root connection can remain configured while the peer's server is unreachable.
@@ -106,7 +106,7 @@ This is the current preferred shape because it lets either side queue outbound m
 
 1. **Leaf-user credentials:** Choose NKey or password credentials for each node's A-B leaf user. Define where the client credential lives, how the two UIs exchange it, and how Pimote rotates or revokes it.
 2. **Static pair-account configuration:** Define the exact local A-B account labels and leaf authorization entries on each server. The static account name is a local config label; the leaf's local account binding and remote user credential establish the peer path.
-3. **Directory revocation:** Define how a peer copy is cleared when a root is unshared, a folder is removed from a share policy, or a root is archived. Changing a source filter alone can leave old values in its destination stream.
+3. **Directory tombstone transport:** Define how root and folder tombstones reach the peer when a source filter changes. Removing a folder from the filter alone leaves earlier copies behind; the peer must apply explicit tombstones to its local directory view.
 4. **Connection event convergence:** Each A-A account stores local `ROOT_CONNECTIONS` entries keyed by unique `connectionId`. A peer outbox carries connection events and messages in per-sender order. A close names the single-use ID; a new connection between the same roots gets a new ID. Define how events from opposite-direction streams interact and whether close purges queued messages or only blocks future sends.
 5. **Peer stream details:** Finalize control/message subject patterns, stream names, connection-event payloads, source-consumer settings, peer-ingress acknowledgement timing, and per-target message filters.
 6. **Send acknowledgement and retention:** Decide whether local outbox PubAck counts as accepted, and how to report remote storage separately. Set `MaxAge`, `MaxBytes`, overflow behavior, retries, duplicate handling, reply expiry, archive purge, and disconnected-root queue cleanup.
