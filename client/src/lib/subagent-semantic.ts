@@ -451,7 +451,9 @@ function projectableBlocks(
     const relatedIndices = matchingIndices(block.relatedPiEvents, entries);
     if (block.relatedPiEvents.length > 0 && relatedIndices.length === 0) return;
     const placementIndex = block.placement.afterPiEvent ? matchingIndices([block.placement.afterPiEvent], entries) : [];
-    const anchor = Math.max(...relatedIndices, ...placementIndex, -1);
+    const matchedAnchor = Math.max(...relatedIndices, ...placementIndex, -1);
+    // A fact without native provenance belongs after the saved transcript.
+    const anchor = matchedAnchor >= 0 ? matchedAnchor : entries.length - 1;
     descriptors.push({ block, anchor, order });
   });
   return Object.freeze(descriptors.sort((left, right) => left.anchor - right.anchor || left.block.placement.sequence - right.block.placement.sequence || left.order - right.order));
