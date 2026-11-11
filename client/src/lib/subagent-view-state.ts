@@ -10,6 +10,13 @@ export interface SubagentUsage {
   readonly costUsd: number;
 }
 
+/** Provider usage field names before panel projection. */
+export interface SubagentWireUsage {
+  readonly input: number;
+  readonly output: number;
+  readonly cost: number;
+}
+
 export interface SubagentNodeMetadata {
   readonly persona?: string;
   readonly personaIcon?: string;
@@ -17,7 +24,7 @@ export interface SubagentNodeMetadata {
   readonly thinkingLevel?: string;
   readonly state: SubagentNodeState;
   readonly activity?: string;
-  readonly usage?: SubagentUsage;
+  readonly usage?: SubagentUsage | SubagentWireUsage;
   readonly contextPercent?: number;
   readonly channels?: readonly string[];
   readonly waitingTargets?: readonly AgentPath[];
@@ -28,9 +35,13 @@ export interface SubagentNodeMetadata {
 
 export interface SubagentHierarchyNode extends SubagentNodeMetadata {
   readonly path: AgentPath;
-  readonly label: string;
+  readonly label?: string;
   readonly task?: string;
   readonly hasChildren?: boolean;
+  /** Wire aliases accepted at the projection seam. */
+  readonly contextFill?: number;
+  readonly waitingFor?: readonly AgentPath[];
+  readonly hasSubgroup?: boolean;
   /** The provider identity is useful when a teardown confirmation is open. */
   readonly incarnation?: string;
 }
@@ -230,14 +241,19 @@ export function reduceSubagentPanelState(state: SubagentPanelState, action: Suba
 
     case 'view_closed': {
       const selected = selectedPath(state);
-      const openChildPaths = withoutPath(state.openChildPaths, action.path);
-      const closesSelection = selected !== null && samePath(action.path, selected);
+      const removeDescendants = action.reason === 'teardown';
+      const openChildPaths = withoutPath(state.openChildPaths, action.path, removeDescendants);
+      const closesSelection = selected !== null && (samePath(action.path, selected) || (removeDescendants && isPathPrefix(action.path, selected)));
       return {
         ...state,
         openChildPaths,
         selectedView: closesSelection ? { kind: 'root' } : state.selectedView,
         notice: { path: copyPath(action.path), reason: action.reason },
-        teardownConfirmation: state.teardownConfirmation && samePath(action.path, state.teardownConfirmation.path) ? null : state.teardownConfirmation,
+        teardownConfirmation:
+          state.teardownConfirmation &&
+          (samePath(action.path, state.teardownConfirmation.path) || (removeDescendants && isPathPrefix(action.path, state.teardownConfirmation.path)))
+            ? null
+            : state.teardownConfirmation,
       };
     }
 
@@ -268,13 +284,7 @@ interface WireNodeProjection {
   readonly thinkingLevel?: string;
   readonly state: SubagentNodeState;
   readonly activity?: string;
-  readonly usage?:
-    | SubagentUsage
-    | {
-        readonly input: number;
-        readonly output: number;
-        readonly cost: number;
-      };
+  readonly usage?: SubagentUsage | SubagentWireUsage;
   readonly contextPercent?: number;
   readonly contextFill?: number;
   readonly channels?: readonly string[];
@@ -304,7 +314,12 @@ function projectUsage(usage: WireNodeProjection['usage']): SubagentUsage | undef
   };
 }
 
-function projectNode(node: SubagentHierarchyNode | WireSubagentNodeSnapshot): SubagentHierarchyNode {
+type ProjectedHierarchyNode = Omit<SubagentHierarchyNode, 'label' | 'usage'> & {
+  readonly label: string;
+  readonly usage?: SubagentUsage;
+};
+
+function projectNode(node: SubagentHierarchyNode | WireSubagentNodeSnapshot): ProjectedHierarchyNode {
   const candidate = node as unknown as WireNodeProjection;
   const path = copyPath(candidate.path);
   const task = candidate.task;
