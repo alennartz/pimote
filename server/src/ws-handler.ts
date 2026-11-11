@@ -66,7 +66,6 @@ import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { CallBindError } from './voice-orchestrator.js';
 import type { ConfigRuntime } from './config-runtime.js';
 import type { SubagentSurfaceCommand, SubagentViewAttachment, SubagentViewChange } from './subagent-host.js';
-import type { SessionSurfaceCallerContext } from './session-surface.js';
 
 export interface WsGlobalSettingsDependencies {
   manifest?: () => Promise<GetGlobalSettingsResponseData>;
@@ -436,7 +435,7 @@ export class WsHandler {
   /** AbortController for the in-flight login flow this connection initiated, if any. */
   private loginAbort: AbortController | null = null;
   private readonly folderConnectionId = randomUUID();
-  private readonly boundSubagentViewListeners = new Map<ManagedSlot, (change: SubagentViewChange, incarnation?: string) => void>();
+  private readonly boundSubagentViewListeners = new Map<ManagedSlot, (change: SubagentViewChange, incarnation?: string, viewCursor?: number) => void>();
   readonly clientId: string;
 
   constructor(
@@ -1361,19 +1360,27 @@ export class WsHandler {
     const listeners = (slot.subagentViewListeners ??= new Map());
     const existing = listeners.get(this.clientId);
     if (existing) return;
-    const listener = (change: SubagentViewChange, incarnation?: string) => this.sendSubagentViewChange(slot, change, incarnation);
+    const listener = (change: SubagentViewChange, incarnation?: string, viewCursor?: number) => this.sendSubagentViewChange(slot, change, incarnation, viewCursor);
     listeners.set(this.clientId, listener);
     this.boundSubagentViewListeners.set(slot, listener);
   }
 
-  private makeSubagentViewSnapshot(rootSessionId: string, attachment: SubagentViewAttachment): SubagentViewSnapshot {
+  private subagentIncarnation(slot: ManagedSlot, path: readonly string[]): string {
+    try {
+      return slot.subagentHost?.snapshot().nodes.find((node) => node.path.length === path.length && node.path.every((part, index) => part === path[index]))?.incarnation ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  private makeSubagentViewSnapshot(rootSessionId: string, attachment: SubagentViewAttachment, incarnation = ''): SubagentViewSnapshot {
     const snapshot = attachment.snapshot;
     return {
       type: 'subagent_view_snapshot',
       sessionId: rootSessionId,
       childSessionId: snapshot.state.sessionId,
       path: attachment.path,
-      incarnation: attachment.incarnation,
+      incarnation,
       attachmentGeneration: attachment.attachmentGeneration,
       viewCursor: snapshot.cursor,
       state: snapshot.state,
@@ -1383,21 +1390,20 @@ export class WsHandler {
     };
   }
 
-  private sendSubagentViewChange(slot: ManagedSlot, change: SubagentViewChange, incarnation?: string): void {
+  private sendSubagentViewChange(slot: ManagedSlot, change: SubagentViewChange, incarnation?: string, viewCursor?: number): void {
     const rootSessionId = slot.sessionState.id;
     if (change.type === 'snapshot') {
       const attachment: SubagentViewAttachment = {
         path: change.path,
-        incarnation: incarnation ?? 'unknown',
         attachmentGeneration: change.attachmentGeneration,
         snapshot: change.snapshot,
       };
-      this.sendEvent(this.makeSubagentViewSnapshot(rootSessionId, attachment));
+      this.sendEvent(this.makeSubagentViewSnapshot(rootSessionId, attachment, incarnation ?? this.subagentIncarnation(slot, change.path)));
       return;
     }
     if (change.type === 'event') {
       const childSessionId = change.event.sessionId;
-      const viewCursor = 'cursor' in change.event && typeof change.event.cursor === 'number' ? change.event.cursor : 0;
+      const cursor = 'cursor' in change.event && typeof change.event.cursor === 'number' ? change.event.cursor : (viewCursor ?? 0);
       const event: SubagentViewEvent = {
         type: 'subagent_view_event',
         sessionId: rootSessionId,
@@ -1405,7 +1411,7 @@ export class WsHandler {
         path: change.path,
         incarnation: incarnation ?? 'unknown',
         attachmentGeneration: change.attachmentGeneration,
-        viewCursor,
+        viewCursor: cursor,
         event: change.event,
       };
       this.sendEvent(event);
@@ -1423,7 +1429,25 @@ export class WsHandler {
   }
 
   private makeSubagentSurfaceCommand(command: SubagentCommand): SubagentSurfaceCommand {
-    const { type, ...rest } = command as SubagentCommand & { type: string };
+    const {
+      type,
+      sessionId: _sessionId,
+      path: _path,
+      incarnation: _incarnation,
+      attachmentGeneration: _attachmentGeneration,
+      ...rest
+    } = command as unknown as {
+      type: string;
+      sessionId?: unknown;
+      path?: unknown;
+      incarnation?: unknown;
+      attachmentGeneration?: unknown;
+      [key: string]: unknown;
+    };
+    void _sessionId;
+    void _path;
+    void _incarnation;
+    void _attachmentGeneration;
     return {
       ...(rest as Omit<SubagentSurfaceCommand, 'type'>),
       type: type.slice('subagent_'.length),
@@ -1438,9 +1462,9 @@ export class WsHandler {
       const attachment = await host.openView(this.clientId, command.path);
       const data: SubagentOpenViewResponseData = {
         path: attachment.path,
-        incarnation: attachment.incarnation,
+        incarnation: this.subagentIncarnation(slot, attachment.path),
         attachmentGeneration: attachment.attachmentGeneration,
-        snapshot: this.makeSubagentViewSnapshot(slot.sessionState.id, attachment),
+        snapshot: this.makeSubagentViewSnapshot(slot.sessionState.id, attachment, this.subagentIncarnation(slot, attachment.path)),
       };
       this.sendResponse(id, true, data);
       return;
@@ -1481,8 +1505,7 @@ export class WsHandler {
       incarnation: command.incarnation,
       attachmentGeneration: command.attachmentGeneration,
     };
-    const caller: SessionSurfaceCallerContext = { clientId: this.clientId };
-    const result = await host.dispatch(this.clientId, view, this.makeSubagentSurfaceCommand(command), undefined, caller);
+    const result = await host.dispatch(this.clientId, view, this.makeSubagentSurfaceCommand(command));
     this.sendResponse(id, true, result);
   }
 
@@ -2052,7 +2075,7 @@ export class WsHandler {
     if (slot.subagentHost) {
       const restored = await slot.subagentHost.reconnect(this.clientId);
       this.sendSubagentSnapshot(slot);
-      for (const attachment of restored) this.sendEvent(this.makeSubagentViewSnapshot(slot.sessionState.id, attachment));
+      for (const attachment of restored) this.sendEvent(this.makeSubagentViewSnapshot(slot.sessionState.id, attachment, this.subagentIncarnation(slot, attachment.path)));
     }
 
     // Note: do NOT touch `idleSince`. Idleness is an agent-level concept driven by

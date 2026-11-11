@@ -108,7 +108,7 @@ export interface SessionState {
   undeliveredDrafts?: Map<string, QueueTexts>;
 }
 
-export type SubagentViewListener = (change: SubagentViewChange, incarnation?: string) => void;
+export type SubagentViewListener = (change: SubagentViewChange, incarnation?: string, viewCursor?: number) => void;
 
 export interface ManagedSlot {
   runtime: AgentSessionRuntime;
@@ -967,8 +967,8 @@ export class PimoteSessionManager {
       emitParentEvent: (event) => {
         slot.sessionState.eventBuffer.appendSemanticEvent(event, slot.sessionState.id, (mapped) => sendSlotEvent(slot, mapped));
       },
-      emitViewChange: (connectionId, change, incarnation) => {
-        slot.subagentViewListeners?.get(connectionId)?.(change, incarnation);
+      emitViewChange: (connectionId, change, incarnation, viewCursor) => {
+        slot.subagentViewListeners?.get(connectionId)?.(change, incarnation, viewCursor);
       },
       reconnectGraceMs: this.subagentReconnectGraceMs,
       childCapabilities: (session) => this.childSurfaceCapabilities(session),
@@ -988,7 +988,7 @@ export class PimoteSessionManager {
     if (slot.subagentClosed || this.findMapKeyForSlot(slot) === undefined) return;
     if (slot.subagentProvider === provider && slot.subagentHost) return;
     const hadHost = slot.subagentHost !== undefined;
-    await this.shutdownSubagentHost(slot);
+    await this.shutdownSubagentHost(slot, 'replaced');
     if (slot.subagentClosed || this.findMapKeyForSlot(slot) === undefined) return;
     const host = this.createSubagentHostForSlot(slot, provider);
     slot.subagentProvider = provider;
@@ -999,25 +999,23 @@ export class PimoteSessionManager {
       return;
     }
     if (hadHost) {
-      await Promise.all(
-        [...slot.observers.values()].map((observer) => observer.onSessionReset?.(slot, { kind: 'unchanged' })),
-      );
+      await Promise.all([...slot.observers.values()].map((observer) => observer.onSessionReset?.(slot, { kind: 'unchanged' })));
     } else {
       this.sendSubagentSnapshotToObservers(slot, started.snapshot);
     }
   }
 
   /** Dispose a host, but keep the discovery listener alive for replacement. */
-  private async shutdownSubagentHost(slot: ManagedSlot): Promise<void> {
+  private async shutdownSubagentHost(slot: ManagedSlot, reason: 'replaced' | 'unavailable' = 'unavailable'): Promise<void> {
     const host = slot.subagentHost;
     slot.subagentHost = undefined;
     slot.subagentProvider = undefined;
     if (!host) return;
-    await host.shutdown();
+    await host.shutdown(reason);
   }
 
   /** Close discovery and the provider host at a root lifecycle boundary. */
-  private async shutdownSubagentIntegration(slot: ManagedSlot): Promise<void> {
+  private async shutdownSubagentIntegration(slot: ManagedSlot, reason: 'replaced' | 'unavailable' = 'unavailable'): Promise<void> {
     slot.subagentClosed = true;
     slot.subagentDiscoveryUnsubscribe?.();
     slot.subagentDiscoveryUnsubscribe = undefined;
@@ -1026,7 +1024,7 @@ export class PimoteSessionManager {
     slot.subagentDiscoveryBus = undefined;
     await slot.subagentTransition?.catch(() => undefined);
     slot.subagentTransition = undefined;
-    await this.shutdownSubagentHost(slot);
+    await this.shutdownSubagentHost(slot, reason);
   }
 
   /** Install discovery before extension binding so session_start registration is observed. */
@@ -1402,7 +1400,7 @@ export class PimoteSessionManager {
     // Rebuild state for every concrete AgentSession replacement, even when its
     // generated session ID happens to be unchanged. Child leases belong to the
     // old runtime and must close before its EventBus is replaced.
-    await this.shutdownSubagentIntegration(slot);
+    await this.shutdownSubagentIntegration(slot, 'replaced');
     this.rebuildSessionState(slot);
 
     // Collision: another live slot already holds newId. This happens when an

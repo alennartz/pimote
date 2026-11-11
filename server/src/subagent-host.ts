@@ -34,7 +34,6 @@ export interface SubagentViewReference {
 }
 
 export interface SubagentViewAttachment extends SubagentViewReference {
-  readonly incarnation: string;
   readonly snapshot: SessionSurfaceSnapshot;
 }
 
@@ -56,7 +55,7 @@ export interface SubagentHostOptions {
   parentSurface: SessionSurface;
   parentCursor: () => number;
   emitParentEvent: ParentSemanticEventSink;
-  emitViewChange: (connectionId: string, change: SubagentViewChange, incarnation?: string) => void;
+  emitViewChange: (connectionId: string, change: SubagentViewChange, incarnation?: string, viewCursor?: number) => void;
   reconnectGraceMs: number;
   childCapabilities: (session: BorrowedAgentSession) => SessionSurfaceCapabilities;
   createChildSurface?: (options: SessionSurfaceOptions) => SessionSurface;
@@ -83,6 +82,8 @@ export interface SubagentHost {
   resurrect(request: import('@pimote/sdk/subagents').SubagentResurrectRequest): Promise<import('@pimote/sdk/subagents').SubagentResurrectResult>;
   /** Release every attachment for one connection without reconnect grace. */
   releaseConnection(connectionId: string, connectionToken?: number): Promise<void>;
+  /** Close all views when the root runtime is replaced or closed. */
+  shutdown(reason?: 'replaced' | 'unavailable'): Promise<void>;
   /** Keep attachments during the grace period for this reconnect identity. */
   disconnect(connectionId: string, connectionToken?: number): void;
   reconnect(connectionId: string, connectionToken?: number): Promise<readonly SubagentViewAttachment[]>;
@@ -218,8 +219,9 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
   };
 
   const emitViewChange = (record: ViewRecord, change: SubagentViewChange, allowClosed = false): void => {
-    if ((!allowClosed && record.closed) || !record.connection.connected) return;
-    options.emitViewChange(record.connection.id, change, record.incarnation);
+    if ((!allowClosed && record.closed) || (!allowClosed && !record.connection.connected)) return;
+    const viewCursor = change.type === 'snapshot' ? change.snapshot.cursor : record.surface?.currentCursor;
+    options.emitViewChange(record.connection.id, change, record.incarnation, viewCursor);
   };
 
   const removeRecord = (record: ViewRecord): void => {
@@ -520,12 +522,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     const key = pathKey(path);
     const existing = connection.attachments.get(key);
     if (existing && !existing.closed && existing.snapshot) {
-      return {
-        path: existing.path,
-        incarnation: existing.incarnation,
-        attachmentGeneration: existing.attachmentGeneration,
-        snapshot: existing.snapshot,
-      };
+      return { path: existing.path, attachmentGeneration: existing.attachmentGeneration, snapshot: existing.snapshot };
     }
     const currentSnapshot = options.provider.snapshot();
     replaceSnapshotNodes(currentSnapshot);
@@ -535,12 +532,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     try {
       const record = await createViewRecord(connection, clonePath(path), node, lease);
       if (!record.snapshot) throw new Error('child surface did not return a snapshot');
-      return {
-        path: record.path,
-        incarnation: record.incarnation,
-        attachmentGeneration: record.attachmentGeneration,
-        snapshot: record.snapshot,
-      };
+      return { path: record.path, attachmentGeneration: record.attachmentGeneration, snapshot: record.snapshot };
     } catch (error) {
       await lease.release();
       throw error;
@@ -614,13 +606,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     const attachments: SubagentViewAttachment[] = [];
     for (const record of records) {
       await refreshAttachment(record).catch(() => undefined);
-      if (!record.closed && record.snapshot)
-        attachments.push({
-          path: record.path,
-          incarnation: record.incarnation,
-          attachmentGeneration: record.attachmentGeneration,
-          snapshot: record.snapshot,
-        });
+      if (!record.closed && record.snapshot) attachments.push({ path: record.path, attachmentGeneration: record.attachmentGeneration, snapshot: record.snapshot });
     }
     return attachments;
   };
@@ -676,7 +662,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     return result;
   };
 
-  const shutdown = async (): Promise<void> => {
+  const shutdown = async (reason: 'replaced' | 'unavailable' = 'unavailable'): Promise<void> => {
     if (closed) return;
     closed = true;
     providerUnsubscribe?.();
@@ -684,10 +670,10 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     for (const connection of connections.values()) {
       if (connection.timer) clearTimeout(connection.timer);
       connection.timer = undefined;
-      connection.connected = false;
     }
     const records = [...recordsByPath.values()].flatMap((records) => [...records]);
-    await Promise.all(records.map((record) => closeRecord(record, 'unavailable', false)));
+    await Promise.all(records.map((record) => closeRecord(record, reason, true)));
+    for (const connection of connections.values()) connection.connected = false;
     recordsByPath.clear();
     connections.clear();
     nodes.clear();
