@@ -121,6 +121,7 @@ export interface SubagentAttachmentState {
   usageBreakdown?: PimoteUsageBreakdown;
   lastBotActivityTimestamp: string | null;
   messageKeys: string[];
+  optimisticEntries: OptimisticEntry[];
   bashExecutions: Record<string, BashExecutionState>;
   messages: PimoteAgentMessage[];
   /** Alias kept for consumers that call the saved transcript `transcript`. */
@@ -390,6 +391,7 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     attachment.messages = [...full.messages];
     attachment.transcript = attachment.messages;
     attachment.messageKeys = attachment.messages.map((_, index) => `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${index}`);
+    attachment.optimisticEntries = [];
     attachment.bashExecutions = {};
     attachment.streamingMessage = full.streamingMessage ? { ...full.streamingMessage, content: full.streamingMessage.content.map((block) => ({ ...block })) } : null;
     attachment.runningToolCallIds = [...(full.runningToolCallIds ?? [])];
@@ -445,9 +447,19 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     }
     case 'message_end': {
       const end = event as MessageEndEvent;
-      attachment.messages = [...attachment.messages, end.message];
+      const ownEntry =
+        end.message.role === 'user' && end.clientMessageId !== undefined ? attachment.optimisticEntries.find((entry) => entry.clientMessageId === end.clientMessageId) : undefined;
+      const ownIndex = ownEntry ? attachment.messageKeys.indexOf(ownEntry.key) : -1;
+      if (ownEntry && ownIndex >= 0) {
+        const messages = [...attachment.messages];
+        messages[ownIndex] = end.message;
+        attachment.messages = messages;
+        attachment.optimisticEntries = attachment.optimisticEntries.filter((entry) => entry !== ownEntry);
+      } else {
+        attachment.messages = [...attachment.messages, end.message];
+        attachment.messageKeys = [...attachment.messageKeys, `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.messages.length - 1}`];
+      }
       attachment.transcript = attachment.messages;
-      attachment.messageKeys = [...attachment.messageKeys, `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.messages.length - 1}`];
       attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
       attachment.streamingMessage = null;
       break;
@@ -860,13 +872,15 @@ export class SessionRegistry {
     attachment.bashExecutions = { ...attachment.bashExecutions, [id]: { ...execution, status: 'error', error } };
   }
 
-  addSubagentOptimisticUserMessage(rootSessionId: string, path: AgentPath, text: string): void {
+  addSubagentOptimisticUserMessage(rootSessionId: string, path: AgentPath, text: string, clientMessageId?: string): void {
     const attachment = this.getSubagentAttachment(rootSessionId, path);
     if (!attachment || attachment.closed) return;
     const message: PimoteAgentMessage = { role: 'user', content: text ? [{ type: 'text', text }] : [] };
+    const key = `child-${rootSessionId}-${JSON.stringify(path)}-${attachment.messages.length}`;
     attachment.messages = [...attachment.messages, message];
     attachment.transcript = attachment.messages;
-    attachment.messageKeys = [...attachment.messageKeys, `child-${rootSessionId}-${JSON.stringify(path)}-${attachment.messages.length - 1}`];
+    attachment.messageKeys = [...attachment.messageKeys, key];
+    if (clientMessageId) attachment.optimisticEntries = [...attachment.optimisticEntries, { key, clientMessageId }];
     attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
   }
 
@@ -945,6 +959,7 @@ export class SessionRegistry {
       lifetimeCostUsd: 0,
       lastBotActivityTimestamp: null,
       messageKeys: messages.map((_, index) => `child-${rootSessionId}-${JSON.stringify(snapshot.path)}-${index}`),
+      optimisticEntries: [],
       bashExecutions: {},
       messages,
       transcript: messages,
@@ -1290,6 +1305,7 @@ export class SessionRegistry {
     attachment.messages = [...(snapshot.messages ?? [])];
     attachment.transcript = attachment.messages;
     attachment.messageKeys = attachment.messages.map((_, index) => `child-${snapshot.sessionId}-${JSON.stringify(snapshot.path)}-${index}`);
+    attachment.optimisticEntries = [];
     attachment.bashExecutions = {};
     attachment.streamingMessage = snapshot.streamingMessage ? { ...snapshot.streamingMessage, content: snapshot.streamingMessage.content.map((block) => ({ ...block })) } : null;
     attachment.runningToolCallIds = [...(snapshot.runningToolCallIds ?? [])];
@@ -1340,7 +1356,8 @@ export class SessionRegistry {
     root.pendingViewEvents[key] = (root.pendingViewEvents[key] ?? []).filter((pending) => pending.attachmentGeneration !== event.attachmentGeneration);
     const attachment = root.attachments[key];
     if (!attachment || attachment.attachmentGeneration !== event.attachmentGeneration) return;
-    this.closeSubagentAttachment(root, attachment, event.reason);
+    const node = root.nodes.find((candidate) => sameAgentPath(candidate.path, event.path));
+    this.closeSubagentAttachment(root, attachment, event.reason, node);
   }
 
   private applySubagentEvent(event: Extract<PimoteEvent, { type: 'subagent_event' }>): void {
