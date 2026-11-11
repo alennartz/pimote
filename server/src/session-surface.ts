@@ -32,8 +32,7 @@ export type SessionSurfaceCommand =
       replaceInstructions?: boolean;
       label?: string;
     }
-  | { type: 'set_tree_label'; id?: string; entryId: string; label?: string }
-  | { type: 'teardown'; id?: string };
+  | { type: 'set_tree_label'; id?: string; entryId: string; label?: string };
 
 /** Full transcript/state snapshot at this surface's own event cursor. */
 export interface SessionSurfaceSnapshot {
@@ -59,10 +58,22 @@ export interface SessionSurfaceAttachment {
 
 export type SessionSurfaceKind = 'root' | 'child';
 
+/** Session-local capabilities that do not belong on the borrowed native session. */
+export interface SessionSurfaceCapabilities {
+  resolveModel(provider: string, modelId: string): Promise<Parameters<BorrowedAgentSession['setModel']>[0] | undefined>;
+  getSettings(): { availableThinkingLevels: string[]; autoCompactionEnabled: boolean; sessionName?: string };
+  getCommands(): Promise<readonly CommandInfo[]>;
+  completeArgs(commandName: string, prefix: string): Promise<readonly AutocompleteResponseItem[]>;
+  completeFileRefs(prefix: string): Promise<readonly AutocompleteResponseItem[]>;
+  executeBash(command: string, options: { id?: string; excludeFromContext?: boolean }): Promise<unknown>;
+  getGitBranch(): string | null;
+}
+
 export interface SessionSurfaceOptions {
   sessionId: string;
   session: BorrowedAgentSession;
   kind: SessionSurfaceKind;
+  capabilities: SessionSurfaceCapabilities;
   /** Parent replay cursor, when this surface is a child view. */
   parentCursor?: number;
 }
@@ -78,6 +89,8 @@ export interface SessionSurface {
   /** Subscribe to native Pi events before taking the first transcript snapshot. */
   initialize(): Promise<SessionSurfaceSnapshot>;
   subscribe(listener: (event: PimoteSessionEvent) => void): () => void;
+  /** Stop observing the native session without disposing it. */
+  close(): void;
   attachObserver(observerId: string, after?: number): Promise<SessionSurfaceAttachment>;
   replay(after?: number): SessionSurfaceReplay;
   dispatch(command: SessionSurfaceCommand): Promise<unknown>;

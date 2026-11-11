@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { projectSubagentPanelRows, reduceSubagentPanelState, type AgentPath, type SubagentPanelSnapshot, type SubagentPanelState } from './subagent-view-state.js';
+import {
+  projectSubagentPanelRows,
+  reduceSubagentPanelState,
+  reduceSubagentTeardown,
+  type AgentPath,
+  type SubagentPanelSnapshot,
+  type SubagentPanelState,
+} from './subagent-view-state.js';
 
 const workerPath: AgentPath = ['worker'];
 const scoutPath: AgentPath = ['worker', 'scout'];
@@ -61,6 +68,10 @@ const rootState: SubagentPanelState = {
   inspectedPath: null,
   openChildPaths: [],
   selectedView: { kind: 'root' },
+  panelPresentation: 'sidebar',
+  panelOpen: true,
+  notice: null,
+  teardownConfirmation: null,
 };
 
 describe('subagent panel and child-view state', () => {
@@ -79,8 +90,25 @@ describe('subagent panel and child-view state', () => {
     expect(state.selectedView).toEqual({ kind: 'child', path: workerPath });
   });
 
+  it('keeps multiple views open while switching and inspecting another child', () => {
+    const worker = reduceSubagentPanelState(rootState, { type: 'open_child_view', path: workerPath });
+    const scout = reduceSubagentPanelState(worker, { type: 'open_child_view', path: scoutPath });
+    const inspected = reduceSubagentPanelState(scout, { type: 'inspect', path: explorerPath });
+    const switched = reduceSubagentPanelState(inspected, { type: 'open_child_view', path: workerPath });
+
+    expect(inspected.selectedView).toEqual({ kind: 'child', path: scoutPath });
+    expect(inspected.openChildPaths).toHaveLength(2);
+    expect(switched.selectedView).toEqual({ kind: 'child', path: workerPath });
+    expect(switched.openChildPaths).toHaveLength(2);
+    expect(switched.openChildPaths).toEqual(expect.arrayContaining([workerPath, scoutPath]));
+    const rows = projectSubagentPanelRows(snapshot, switched);
+    expect(rows.find((row) => row.path.join('/') === 'worker')?.viewOpen).toBe(true);
+    expect(rows.find((row) => row.path.join('/') === 'worker/scout')?.viewOpen).toBe(true);
+  });
+
   it('closes the selected child view and returns the conversation to the root', () => {
     const childState: SubagentPanelState = {
+      ...rootState,
       inspectedPath: workerPath,
       openChildPaths: [workerPath, scoutPath],
       selectedView: { kind: 'child', path: workerPath },
@@ -90,10 +118,117 @@ describe('subagent panel and child-view state', () => {
 
     expect(state.selectedView).toEqual({ kind: 'root' });
     expect(state.openChildPaths).toEqual([scoutPath]);
+    expect(state.notice).toBeNull();
+  });
+
+  it('returns to root and reports removal when the selected view is torn down', () => {
+    const worker = reduceSubagentPanelState(rootState, { type: 'open_child_view', path: workerPath });
+    const scout = reduceSubagentPanelState(worker, { type: 'open_child_view', path: scoutPath });
+    const removed = reduceSubagentPanelState(scout, { type: 'view_closed', path: scoutPath, reason: 'teardown' });
+
+    expect(removed.selectedView).toEqual({ kind: 'root' });
+    expect(removed.openChildPaths).toContainEqual(workerPath);
+    expect(removed.openChildPaths).not.toContainEqual(scoutPath);
+    expect(removed.notice).toMatchObject({ path: scoutPath, reason: 'teardown' });
+    expect(reduceSubagentPanelState(removed, { type: 'dismiss_notice' }).notice).toBeNull();
+  });
+
+  it('keeps the current conversation when a different open view becomes unavailable', () => {
+    const worker = reduceSubagentPanelState(rootState, { type: 'open_child_view', path: workerPath });
+    const scout = reduceSubagentPanelState(worker, { type: 'open_child_view', path: scoutPath });
+    const closed = reduceSubagentPanelState(scout, { type: 'view_closed', path: workerPath, reason: 'unavailable' });
+
+    expect(closed.selectedView).toEqual({ kind: 'child', path: scoutPath });
+    expect(closed.openChildPaths).toContainEqual(scoutPath);
+    expect(closed.openChildPaths).not.toContainEqual(workerPath);
+    expect(closed.notice).toMatchObject({ path: workerPath, reason: 'unavailable' });
+  });
+
+  it('requests confirmation for the selected child, not the differently inspected child', () => {
+    const state: SubagentPanelState = {
+      ...rootState,
+      inspectedPath: workerPath,
+      openChildPaths: [workerPath, scoutPath],
+      selectedView: { kind: 'child', path: scoutPath },
+    };
+    const confirmation = reduceSubagentTeardown(state, { type: 'request_teardown', target: 'selected_view' });
+
+    expect(confirmation.state.teardownConfirmation).toMatchObject({ path: scoutPath });
+    expect(confirmation.request).toBeUndefined();
+  });
+
+  it('cancels teardown without requesting removal or closing the child view', () => {
+    const state: SubagentPanelState = {
+      ...rootState,
+      inspectedPath: workerPath,
+      openChildPaths: [workerPath, scoutPath],
+      selectedView: { kind: 'child', path: scoutPath },
+      teardownConfirmation: { path: scoutPath },
+    };
+    const canceled = reduceSubagentTeardown(state, { type: 'cancel_teardown' });
+
+    expect(canceled.request).toBeUndefined();
+    expect(canceled.state.teardownConfirmation).toBeNull();
+    expect(canceled.state.selectedView).toEqual({ kind: 'child', path: scoutPath });
+    expect(canceled.state.openChildPaths).toEqual(expect.arrayContaining([workerPath, scoutPath]));
+    expect(canceled.state.notice).toBeNull();
+    expect(reduceSubagentTeardown(canceled.state, { type: 'confirm_teardown' }).request).toBeUndefined();
+  });
+
+  it('confirms teardown for the selected child, not the differently inspected child', () => {
+    const state: SubagentPanelState = {
+      ...rootState,
+      inspectedPath: workerPath,
+      openChildPaths: [workerPath, scoutPath],
+      selectedView: { kind: 'child', path: scoutPath },
+      teardownConfirmation: { path: scoutPath },
+    };
+    const confirmed = reduceSubagentTeardown(state, { type: 'confirm_teardown' });
+
+    expect(confirmed.request).toMatchObject({ path: scoutPath });
+    expect(confirmed.state.teardownConfirmation).toBeNull();
+    expect(confirmed.state.openChildPaths).toEqual(expect.arrayContaining([workerPath, scoutPath]));
+    expect(confirmed.state.selectedView).toEqual({ kind: 'child', path: scoutPath });
+  });
+
+  it('requests confirmation for the inspected child when teardown starts from its inspector', () => {
+    const state: SubagentPanelState = {
+      ...rootState,
+      inspectedPath: workerPath,
+      openChildPaths: [workerPath, scoutPath],
+      selectedView: { kind: 'child', path: scoutPath },
+    };
+    const confirmation = reduceSubagentTeardown(state, { type: 'request_teardown', target: 'inspected' });
+
+    expect(confirmation.state.teardownConfirmation).toMatchObject({ path: workerPath });
+    expect(confirmation.request).toBeUndefined();
+  });
+
+  it('uses a dismissible drawer on a narrow screen without changing view selection on inspection', () => {
+    const narrow = reduceSubagentPanelState(rootState, { type: 'set_viewport_width', width: 390 });
+    expect(narrow.panelPresentation).toBe('drawer');
+    expect(narrow.panelOpen).toBe(false);
+    const opened = reduceSubagentPanelState(narrow, { type: 'toggle_panel' });
+    const inspected = reduceSubagentPanelState(opened, { type: 'inspect', path: workerPath });
+    expect(inspected.panelOpen).toBe(true);
+    expect(inspected.selectedView).toEqual({ kind: 'root' });
+    const viewing = reduceSubagentPanelState(inspected, { type: 'open_child_view', path: workerPath });
+    expect(viewing.panelOpen).toBe(false);
+    expect(viewing.selectedView).toEqual({ kind: 'child', path: workerPath });
+    const reopened = reduceSubagentPanelState(viewing, { type: 'toggle_panel' });
+    expect(reduceSubagentPanelState(reopened, { type: 'close_panel' }).panelOpen).toBe(false);
+  });
+
+  it('keeps the sidebar open when opening a child on a wide screen', () => {
+    const wide = reduceSubagentPanelState(rootState, { type: 'set_viewport_width', width: 1120 });
+    const viewing = reduceSubagentPanelState(wide, { type: 'open_child_view', path: workerPath });
+    expect(viewing.panelPresentation).toBe('sidebar');
+    expect(viewing.panelOpen).toBe(true);
   });
 
   it('projects metadata and open markers without adding the root to the hierarchy', () => {
     const rows = projectSubagentPanelRows(snapshot, {
+      ...rootState,
       inspectedPath: scoutPath,
       openChildPaths: [workerPath],
       selectedView: { kind: 'child', path: workerPath },

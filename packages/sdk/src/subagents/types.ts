@@ -21,6 +21,7 @@ export type SubagentEventKind =
   | 'node_added'
   | 'node_updated'
   | 'node_removed'
+  | 'delegation'
   | 'message_thread'
   | 'await_started'
   | 'child_settled'
@@ -31,15 +32,43 @@ export type SubagentEventKind =
   | 'teardown'
   | 'resurrect';
 
+export type SubagentDelegationData = Readonly<{
+  invocationId: string;
+  awaitsResult: boolean;
+  children: readonly Readonly<{ path: AgentPath; task: string; persona?: string }>[];
+}>;
+
+export type SubagentCompletionData = Readonly<{
+  status: 'idle' | 'errored' | 'dead';
+  output?: string;
+  error?: string;
+  usage?: SubagentUsage;
+}> &
+  (Readonly<{ delivery: 'awaited'; invocationId: string }> | Readonly<{ delivery: 'asynchronous'; invocationId?: string }>);
+
+export type SubagentMessageData = Readonly<{
+  from: AgentPath;
+  to: AgentPath;
+  text: string;
+  correlationId?: string;
+  responseExpected: boolean;
+}> &
+  (Readonly<{ phase: 'sent' | 'received' | 'response' }> | Readonly<{ phase: 'failure'; error: string }>);
+
 /** A semantic overlay. Native Pi entries remain the transcript source. */
 export type SubagentEvent = Readonly<{
   eventId: string;
   cursor: FeedCursor;
   path: AgentPath;
-  kind: SubagentEventKind;
   relatedPiEvents: readonly PiEventRef[];
-  data: unknown;
-}>;
+}> &
+  (
+    | Readonly<{ kind: 'node_updated'; data: Readonly<{ sessionId: string }> }>
+    | Readonly<{ kind: 'delegation'; data: SubagentDelegationData }>
+    | Readonly<{ kind: 'message_thread'; data: SubagentMessageData }>
+    | Readonly<{ kind: 'completion'; data: SubagentCompletionData }>
+    | Readonly<{ kind: Exclude<SubagentEventKind, 'node_updated' | 'delegation' | 'message_thread' | 'completion'>; data: unknown }>
+  );
 
 export type SubagentState = 'running' | 'waiting' | 'idle' | 'errored' | 'dead';
 export type SubagentNodeState = SubagentState;
@@ -74,7 +103,7 @@ export type SubagentNodeSnapshot = Readonly<{
   state: SubagentState;
   activity?: string;
   usage: SubagentUsage;
-  /** Context fill as a ratio or percentage chosen by the provider contract. */
+  /** Context fill as an integer percentage from 0 through 100. */
   contextFill?: number;
   channels: readonly string[];
   waitingFor: readonly AgentPath[];
@@ -105,7 +134,10 @@ export type ReplayResult =
     }>;
 
 /** Minimal session-manager projection exposed beside a borrowed native session. */
-export type BorrowedSessionManager = Pick<AgentSession['sessionManager'], 'getEntries' | 'getBranch' | 'buildContextEntries' | 'getTree' | 'getLeafId'>;
+export type BorrowedSessionManager = Pick<
+  AgentSession['sessionManager'],
+  'getEntries' | 'getBranch' | 'buildContextEntries' | 'getTree' | 'getLeafId' | 'getCwd' | 'getLabel' | 'appendLabelChange'
+>;
 
 /**
  * Structural projection of the native child runtime borrowed by a view.
@@ -125,9 +157,16 @@ export type BorrowedAgentSession = Pick<
   | 'isCompacting'
   | 'subscribe'
   | 'prompt'
+  | 'steer'
+  | 'followUp'
   | 'abort'
+  | 'executeBash'
+  | 'abortBash'
   | 'setModel'
+  | 'cycleModel'
   | 'setThinkingLevel'
+  | 'cycleThinkingLevel'
+  | 'setAutoCompactionEnabled'
   | 'compact'
   | 'navigateTree'
   | 'getContextUsage'
@@ -136,10 +175,14 @@ export type BorrowedAgentSession = Pick<
   readonly sessionManager: BorrowedSessionManager;
 };
 
+export type SubagentLeaseEvent = { kind: 'rebound'; session: BorrowedAgentSession } | { kind: 'closed'; reason: 'removed' | 'unavailable' };
+
 /** A borrowed child runtime. Release is idempotent and never disposes it. */
 export interface SubagentLease {
   readonly path: AgentPath;
+  /** The current native session; throws after closure or release. */
   readonly session: BorrowedAgentSession;
+  subscribe(listener: (event: SubagentLeaseEvent) => void): () => void;
   release(): Promise<void>;
 }
 

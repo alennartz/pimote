@@ -1,6 +1,7 @@
-import type { Card, RepoInfo } from '../../shared/dist/index.js';
+import type { Card, RepoInfo, SubagentEvent, SubagentSnapshot } from '../../shared/dist/index.js';
 import type { Card as SdkCard, PanelMessage } from '@pimote/sdk/panels';
 import type { RepoInfo as SdkRepoInfo } from '@pimote/sdk/folders';
+import type { SubagentEvent as SdkSubagentEvent, SubagentSnapshot as SdkSubagentSnapshot } from '@pimote/sdk/subagents';
 
 type AssertEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 
@@ -15,3 +16,5 @@ const _repoInfoKeys: AssertSameKeys<RepoInfo, SdkRepoInfo> = true;
 const _card: AssertEqual<Card, SdkCard> = true;
 const _cardKeys: AssertSameKeys<Card, SdkCard> = true;
 const _panelMsg: AssertEqual<PanelMessage, PanelBusMessage> = true;
+const _subagentEvent: AssertEqual<SubagentEvent, SdkSubagentEvent> = true;
+const _subagentSnapshot: AssertEqual<SubagentSnapshot, SdkSubagentSnapshot> = true;

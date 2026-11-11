@@ -317,7 +317,7 @@ export type SubagentNode = Readonly<{
   state: SubagentState;
   activity?: string;
   usage: SubagentUsage;
-  /** Context fill as a ratio or percentage chosen by the provider contract. */
+  /** Context fill as an integer percentage from 0 through 100. */
   contextFill?: number;
   channels: readonly string[];
   waitingFor: readonly AgentPath[];
@@ -340,6 +340,7 @@ export type SubagentEventKind =
   | 'node_added'
   | 'node_updated'
   | 'node_removed'
+  | 'delegation'
   | 'message_thread'
   | 'await_started'
   | 'child_settled'
@@ -358,15 +359,43 @@ export interface PiEventRef {
   kind: 'message' | 'tool_call' | 'custom_message' | 'lifecycle';
 }
 
+export type SubagentDelegationData = Readonly<{
+  invocationId: string;
+  awaitsResult: boolean;
+  children: readonly Readonly<{ path: AgentPath; task: string; persona?: string }>[];
+}>;
+
+export type SubagentCompletionData = Readonly<{
+  status: 'idle' | 'errored' | 'dead';
+  output?: string;
+  error?: string;
+  usage?: SubagentUsage;
+}> &
+  (Readonly<{ delivery: 'awaited'; invocationId: string }> | Readonly<{ delivery: 'asynchronous'; invocationId?: string }>);
+
+export type SubagentMessageData = Readonly<{
+  from: AgentPath;
+  to: AgentPath;
+  text: string;
+  correlationId?: string;
+  responseExpected: boolean;
+}> &
+  (Readonly<{ phase: 'sent' | 'received' | 'response' }> | Readonly<{ phase: 'failure'; error: string }>);
+
 /** Typed semantic overlay emitted by the provider. */
-export interface SubagentEvent {
+export type SubagentEvent = Readonly<{
   eventId: string;
   cursor: FeedCursor;
   path: AgentPath;
-  kind: SubagentEventKind;
   relatedPiEvents: readonly PiEventRef[];
-  data: unknown;
-}
+}> &
+  (
+    | Readonly<{ kind: 'node_updated'; data: Readonly<{ sessionId: string }> }>
+    | Readonly<{ kind: 'delegation'; data: SubagentDelegationData }>
+    | Readonly<{ kind: 'message_thread'; data: SubagentMessageData }>
+    | Readonly<{ kind: 'completion'; data: SubagentCompletionData }>
+    | Readonly<{ kind: Exclude<SubagentEventKind, 'node_updated' | 'delegation' | 'message_thread' | 'completion'>; data: unknown }>
+  );
 
 /** Result of delegating a live node teardown to my-pi. */
 export type SubagentTeardownResult = Readonly<{
@@ -1450,7 +1479,8 @@ export type PimoteSessionEvent =
   | AutoRetryEndEvent
   | ExtensionErrorEvent
   | TreeNavigationStartEvent
-  | TreeNavigationEndEvent;
+  | TreeNavigationEndEvent
+  | SubagentSemanticEvent;
 
 /** Sent to each other sender when an abort clears the shared queue. The client restores these texts as drafts. */
 export interface QueuedDraftsRestoredEvent {
@@ -1652,16 +1682,13 @@ export interface SubagentViewClosedEvent {
 }
 
 /** Semantic provider event projected into the parent session replay stream. */
-export interface SubagentSemanticEvent extends SessionEventBase {
-  type: 'subagent_event';
-  eventId: string;
-  path: AgentPath;
-  kind: SubagentEventKind;
-  relatedPiEvents: readonly PiEventRef[];
-  data: unknown;
-  /** Provider cursor retained for diagnostics; replay uses the parent cursor above. */
-  providerCursor?: FeedCursor;
-}
+type WithoutProviderCursor<T> = T extends unknown ? Omit<T, 'cursor'> : never;
+export type SubagentSemanticEvent = WithoutProviderCursor<SubagentEvent> &
+  SessionEventBase & {
+    type: 'subagent_event';
+    /** Provider cursor retained for diagnostics; replay uses the parent cursor above. */
+    providerCursor?: FeedCursor;
+  };
 
 export type SubagentWireEvent = SubagentSemanticEvent;
 export type SubagentEventMessage = SubagentSemanticEvent;
@@ -1850,7 +1877,6 @@ export type PimoteEvent =
   | SubagentViewSnapshot
   | SubagentViewEvent
   | SubagentViewClosedEvent
-  | SubagentSemanticEvent
   | PanelUpdateEvent
   | DownloadUpdateEvent
   | NavigateEvent
