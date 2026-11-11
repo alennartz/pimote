@@ -109,13 +109,25 @@ export interface SessionSurfaceStopRequest {
   expectedSessionId: string;
 }
 
+type NativeCommand = {
+  name: string;
+  description?: string;
+  getArgumentCompletions?: (prefix: string) => Promise<readonly AutocompleteResponseItem[] | null> | readonly AutocompleteResponseItem[] | null;
+};
+
 type NativeSessionExtras = {
   modelRuntime?: { getAvailable?: () => Promise<readonly unknown[]> | readonly unknown[] };
   getAvailableThinkingLevels?: () => readonly string[];
   autoCompactionEnabled?: boolean;
   sessionName?: string;
   clearQueue?: () => { steering: string[]; followUp: string[] };
-  extensionRunner?: { getEntryRenderer?: (customType: string) => unknown };
+  extensionRunner?: {
+    getEntryRenderer?: (customType: string) => unknown;
+    getRegisteredCommands?: () => readonly NativeCommand[];
+    getCommand?: (name: string) => NativeCommand | undefined;
+  };
+  resourceLoader?: { getSkills?: () => { skills?: readonly { name: string; description?: string }[] } };
+  promptTemplates?: readonly { name: string; description?: string }[];
 };
 
 type NativeSessionManagerExtras = {
@@ -333,10 +345,34 @@ function defaultCapabilities(session: BorrowedAgentSession): SessionSurfaceCapab
       autoCompactionEnabled: Boolean(native.autoCompactionEnabled),
       ...(typeof native.sessionName === 'string' ? { sessionName: native.sessionName } : {}),
     }),
-    getCommands: async () => [],
-    completeArgs: async () => [],
+    getCommands: async () => {
+      const commands: CommandInfo[] = [];
+      for (const skill of native.resourceLoader?.getSkills?.()?.skills ?? []) {
+        commands.push({ name: `skill:${skill.name}`, description: skill.description ?? '', hasArgCompletions: false });
+      }
+      for (const template of native.promptTemplates ?? []) {
+        commands.push({ name: template.name, description: template.description ?? '', hasArgCompletions: false });
+      }
+      for (const command of native.extensionRunner?.getRegisteredCommands?.() ?? []) {
+        commands.push({ name: command.name, description: command.description ?? '', hasArgCompletions: typeof command.getArgumentCompletions === 'function' });
+      }
+      commands.push(
+        { name: 'new', description: 'Start a new session', hasArgCompletions: false },
+        { name: 'reload', description: 'Reload extensions and skills', hasArgCompletions: false },
+        { name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false },
+        { name: 'login', description: 'Log in to a model provider', hasArgCompletions: false },
+        { name: 'logout', description: 'Log out from a model provider', hasArgCompletions: false },
+        { name: 'compact', description: 'Manually compact the session context', hasArgCompletions: false },
+      );
+      return commands;
+    },
+    completeArgs: async (commandName, prefix) => {
+      const items = await native.extensionRunner?.getCommand?.(commandName)?.getArgumentCompletions?.(prefix);
+      return items ?? [];
+    },
     completeFileRefs: async (prefix) => {
-      const cwd = typeof native.sessionManager?.getCwd === 'function' ? native.sessionManager.getCwd() : process.cwd();
+      const manager = native.sessionManager as unknown as NativeSessionManagerExtras | undefined;
+      const cwd = manager?.getCwd?.() ?? process.cwd();
       return (await completeFileRefs({ prefix, cwd })).items;
     },
     executeBash: async (command, options) => native.executeBash(command, undefined, options),
@@ -706,8 +742,8 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     const filtered = commands.filter((command) => SAFE_CHILD_COMMANDS.has(command.name.replace(/^\//, '').toLowerCase()));
     const names = new Set(filtered.map((command) => command.name.replace(/^\//, '').toLowerCase()));
     const builtins: CommandInfo[] = [
-      { name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false },
-      { name: 'compact', description: 'Manually compact the session context', hasArgCompletions: false },
+      ...(allowedOperation(options, capabilities, 'tree') ? [{ name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false }] : []),
+      ...(allowedOperation(options, capabilities, 'compact') ? [{ name: 'compact', description: 'Manually compact the session context', hasArgCompletions: false }] : []),
     ];
     return [...filtered, ...builtins.filter((command) => !names.has(command.name))];
   };
