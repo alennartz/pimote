@@ -229,6 +229,16 @@ function mapStreamingMessage(value: unknown): StreamingMessage | undefined {
   };
 }
 
+/** A persisted final message already present in a snapshot needs no second
+ * delivery from the listener that observed it at the snapshot boundary. */
+function messageIsInSnapshot(event: PimoteSessionEvent, snapshot: SessionSurfaceSnapshot): boolean {
+  if (event.type !== 'message_end' || event.clientMessageId !== undefined) return false;
+  const encoded = JSON.stringify(event.message);
+  return snapshot.messages.some(
+    (message) => JSON.stringify(message) === encoded || (message.role === event.message.role && JSON.stringify(message.content) === JSON.stringify(event.message.content)),
+  );
+}
+
 function textFromEntry(entry: unknown): string {
   const value = asRecord(entry);
   if (value.type === 'message') {
@@ -736,7 +746,9 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       // retain their own cursors, and replayable events remain in EventBuffer.
       const pending = staged;
       staged = [];
-      for (const event of pending) emit(event);
+      for (const event of pending) {
+        if (!messageIsInSnapshot(event, snapshot)) emit(event);
+      }
       return snapshot;
     } finally {
       initializing = false;
