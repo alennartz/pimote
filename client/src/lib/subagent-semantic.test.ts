@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SubagentSemanticEvent as WireSubagentSemanticEvent } from '../../../shared/src/protocol.js';
+import type { SubagentNodeSnapshot, SubagentSemanticEvent as WireSubagentSemanticEvent } from '../../../shared/src/protocol.js';
 import {
   EMPTY_SEMANTIC_REDUCTION,
   copySubagentTranscript,
@@ -15,6 +15,20 @@ import {
 const sessionId = 'parent-session';
 const workerPath = ['worker'];
 const scoutPath = ['worker', 'scout'];
+const workerNode: SubagentNodeSnapshot = {
+  path: workerPath,
+  incarnation: 'worker-incarnation',
+  sessionId: 'worker-session',
+  task: 'Review callback ownership.',
+  persona: 'reviewer',
+  state: 'running',
+  usage: { input: 1200, output: 300, cacheRead: 0, cacheWrite: 0, cost: 0.04, turns: 1 },
+  contextFill: 31,
+  channels: ['parent'],
+  waitingFor: [],
+  pendingCorrelations: [],
+  hasSubgroup: true,
+};
 const toolCallRef: PiEventRef = { sessionId, entryId: 'tool-1', toolCallId: 'call-1', kind: 'tool_call' };
 const notificationRef: PiEventRef = { sessionId, entryId: 'notice-1', kind: 'custom_message' };
 const nativeEntries: readonly NativeTranscriptEntry[] = [
@@ -557,7 +571,7 @@ describe('subagent wire transcript boundary', () => {
       path: workerPath,
       kind: 'node_updated',
       relatedPiEvents: [notificationRef],
-      data: { sessionId: 'child-replaced' },
+      data: { ...workerNode, sessionId: 'child-replaced', incarnation: 'worker-incarnation' },
     };
     const entries = [...nativeEntries, otherSession];
     const items = projectSubagentWireTranscript(entries, [unmatched, topology]);

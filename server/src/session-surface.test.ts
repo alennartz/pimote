@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { BorrowedAgentSession } from '@pimote/sdk/subagents';
 import type { PimoteSessionEvent } from '../../shared/dist/index.js';
-import { createSessionSurface, type SessionSurfaceCapabilities, type SessionSurfaceCommand } from './session-surface.js';
+import { createSessionSurface, type SessionSurfaceCapabilities, type SessionSurfaceCommand, type SessionSurfaceOptions } from './session-surface.js';
 
 function message(role: 'user' | 'assistant', text: string) {
   return { role, content: [{ type: 'text', text }], timestamp: 1 };
@@ -68,6 +68,11 @@ function fixture() {
       return !data.streaming;
     },
     isCompacting: false,
+    state: {
+      streamingMessage: undefined,
+      pendingToolCalls: new Set<string>(),
+      errorMessage: undefined,
+    },
     subscribe(listener: (event: AgentSessionEvent) => void) {
       listeners.add(listener);
       return () => {
@@ -152,7 +157,15 @@ function fixture() {
     executeBash: async (command) => ({ output: `ran ${command}` }),
     getGitBranch: () => null,
   };
-  const surface = createSessionSurface({ sessionId: 'child-session', session: native, kind: 'child', capabilities, parentCursor: 17 });
+  const stop = async (..._args: readonly unknown[]) => undefined;
+  const surface = createSessionSurface({
+    sessionId: 'child-session',
+    session: native,
+    kind: 'child',
+    capabilities,
+    parentCursor: 17,
+    stop,
+  } as SessionSurfaceOptions & { stop: typeof stop });
   return { surface, data, publish };
 }
 

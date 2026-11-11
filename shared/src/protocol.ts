@@ -187,6 +187,8 @@ export interface PimoteAgentMessage {
   entryId?: string;
   /** Present when role === 'custom' — the extension-defined message type (e.g. 'agent-complete') */
   customType?: string;
+  /** Structured custom-message metadata. This is separate from display text. */
+  details?: unknown;
   /** For custom messages: if false, the message should be hidden from the UI */
   display?: boolean;
   /**
@@ -278,13 +280,17 @@ export interface PimoteTreeNode {
 export type AgentPath = readonly string[];
 
 /** Provider-owned replay position. This is distinct from a Pimote event cursor. */
-export interface FeedCursor {
+export type FeedCursor = Readonly<{
   epoch: string;
   sequence: number;
-}
+}>;
+
+/** Cursor allocated by a child SessionSurface event buffer. */
+export type SubagentViewCursor = number;
 
 export type SubagentState = 'running' | 'waiting' | 'idle' | 'errored' | 'dead';
 export type SubagentNodeState = SubagentState;
+export type SubagentAwaitState = SubagentState | 'stopped';
 
 export type SubagentCostBreakdown = Readonly<{
   input: number;
@@ -307,6 +313,8 @@ export type SubagentUsage = Readonly<{
 /** Root-relative registry node projected by the subagent provider. */
 export type SubagentNode = Readonly<{
   path: AgentPath;
+  /** Opaque identity of this live incarnation at the public path. */
+  incarnation: string;
   /** The current child session. */
   sessionId: string;
   task?: string;
@@ -332,7 +340,7 @@ export type SubagentUsageSnapshot = SubagentUsage;
 
 /** Hierarchy snapshot and provider cursor at one feed boundary. */
 export type SubagentSnapshot = Readonly<{
-  nodes: readonly SubagentNode[];
+  nodes: readonly SubagentNodeSnapshot[];
   cursor: FeedCursor;
 }>;
 
@@ -340,6 +348,7 @@ export type SubagentEventKind =
   | 'node_added'
   | 'node_updated'
   | 'node_removed'
+  | 'runtime_replaced'
   | 'delegation'
   | 'message_thread'
   | 'await_started'
@@ -352,12 +361,12 @@ export type SubagentEventKind =
   | 'resurrect';
 
 /** Native Pi provenance attached to a semantic provider event. */
-export interface PiEventRef {
+export type PiEventRef = Readonly<{
   sessionId: string;
   entryId?: string;
   toolCallId?: string;
   kind: 'message' | 'tool_call' | 'custom_message' | 'lifecycle';
-}
+}>;
 
 export type SubagentDelegationData = Readonly<{
   invocationId: string;
@@ -365,13 +374,19 @@ export type SubagentDelegationData = Readonly<{
   children: readonly Readonly<{ path: AgentPath; task: string; persona?: string }>[];
 }>;
 
+/** Provider naming aliases retained for extension implementations. */
+export type DelegationData = SubagentDelegationData;
+
 export type SubagentCompletionData = Readonly<{
-  status: 'idle' | 'errored' | 'dead';
+  status: 'idle' | 'errored' | 'dead' | 'stopped';
   output?: string;
   error?: string;
   usage?: SubagentUsage;
 }> &
   (Readonly<{ delivery: 'awaited'; invocationId: string }> | Readonly<{ delivery: 'asynchronous'; invocationId?: string }>);
+
+/** Provider naming alias retained for extension implementations. */
+export type CompletionData = SubagentCompletionData;
 
 export type SubagentMessageData = Readonly<{
   from: AgentPath;
@@ -382,27 +397,114 @@ export type SubagentMessageData = Readonly<{
 }> &
   (Readonly<{ phase: 'sent' | 'received' | 'response' }> | Readonly<{ phase: 'failure'; error: string }>);
 
-/** Typed semantic overlay emitted by the provider. */
-export type SubagentEvent = Readonly<{
+/** Provider naming alias retained for extension implementations. */
+export type CommunicationData = SubagentMessageData;
+
+/** One child state included in await progress and settlement facts. */
+export type SubagentAwaitChildStatus = Readonly<{
+  path: AgentPath;
+  state: SubagentAwaitState;
+  output?: string;
+  error?: string;
+  sessionId?: string;
+}>;
+
+/** Progress and settlement data for an await_agents invocation. */
+export type SubagentAwaitData = Readonly<{
+  invocationId?: string;
+  requested?: readonly AgentPath[];
+  statuses?: readonly SubagentAwaitChildStatus[];
+  path?: AgentPath;
+  output?: string;
+  error?: string;
+  reason?: 'settled' | 'detach' | 'stop' | 'message';
+  message?: SubagentMessageData;
+  /** Provider implementations can carry additional typed await facts. */
+  readonly [key: string]: unknown;
+}>;
+
+/** Lifecycle operation details carried by interrupt, teardown, and resurrection facts. */
+export type SubagentLifecycleData = Readonly<{
+  operation?: 'interrupt' | 'teardown' | 'resurrect';
+  outcome?: string;
+  path?: AgentPath;
+  output?: string;
+  error?: string;
+  sessionId?: string;
+  recovery?: Readonly<Record<string, unknown>>;
+  /** Provider implementations can carry operation-specific recovery data. */
+  readonly [key: string]: unknown;
+}>;
+
+export type SubagentRuntimeReplacedData = Readonly<{
+  oldSessionId: string;
+  newSessionId: string;
+}>;
+
+/** A public node projection carried by topology events and snapshots. */
+export type SubagentNodeEventData = SubagentNodeSnapshot | Readonly<{ sessionId: string }>;
+
+export type SubagentEventData =
+  | Readonly<{ kind: 'node_added' | 'node_updated'; data: SubagentNodeEventData }>
+  | Readonly<{ kind: 'node_removed'; data: Readonly<{ node: SubagentNodeSnapshot; reason: string }> }>
+  | Readonly<{ kind: 'runtime_replaced'; data: SubagentRuntimeReplacedData }>
+  | Readonly<{ kind: 'delegation'; data: SubagentDelegationData }>
+  | Readonly<{ kind: 'message_thread'; data: SubagentMessageData }>
+  | Readonly<{
+      kind: 'await_started' | 'child_settled' | 'await_interrupted' | 'await_released';
+      data: SubagentAwaitData;
+    }>
+  | Readonly<{ kind: 'completion'; data: SubagentCompletionData }>
+  | Readonly<{ kind: 'interrupt' | 'teardown' | 'resurrect'; data: SubagentLifecycleData }>;
+
+/** A semantic overlay. Native Pi entries remain the transcript source. */
+export type SubagentSemanticFact = Readonly<{
   eventId: string;
-  cursor: FeedCursor;
   path: AgentPath;
   relatedPiEvents: readonly PiEventRef[];
 }> &
-  (
-    | Readonly<{ kind: 'node_updated'; data: Readonly<{ sessionId: string }> }>
-    | Readonly<{ kind: 'delegation'; data: SubagentDelegationData }>
-    | Readonly<{ kind: 'message_thread'; data: SubagentMessageData }>
-    | Readonly<{ kind: 'completion'; data: SubagentCompletionData }>
-    | Readonly<{ kind: Exclude<SubagentEventKind, 'node_updated' | 'delegation' | 'message_thread' | 'completion'>; data: unknown }>
-  );
+  SubagentEventData;
+
+/** Typed semantic overlay emitted by the provider. */
+export type SubagentEvent = SubagentSemanticFact & Readonly<{ cursor: FeedCursor }>;
+
+export type SubagentTeardownReason = 'not_found' | 'already_removed' | 'removed';
 
 /** Result of delegating a live node teardown to my-pi. */
 export type SubagentTeardownResult = Readonly<{
   path: AgentPath;
   removed: boolean;
   sessionId?: string;
-  reason?: 'not_found' | 'already_removed' | 'removed';
+  incarnation?: string;
+  reason?: SubagentTeardownReason;
+}>;
+
+/** Guarded child-stop request sent through the owning manager. */
+export type SubagentStopRequest = Readonly<{
+  path: AgentPath;
+  incarnation: string;
+  expectedSessionId: string;
+}>;
+
+/** Request to restore a saved child session under a root-relative parent. */
+export type SubagentResurrectRequest = Readonly<{
+  /** Saved child session id returned by teardown. */
+  sessionId: string;
+  /** Owning root-relative parent path. */
+  parentPath: AgentPath;
+  /** New local id under `parentPath`. */
+  localId: string;
+  task: string;
+  channels: readonly string[];
+  model?: string;
+}>;
+
+/** Result of restoring a child session. */
+export type SubagentResurrectResult = Readonly<{
+  path: AgentPath;
+  node?: SubagentNodeSnapshot;
+  sessionId?: string;
+  incarnation?: string;
 }>;
 
 interface CommandBase {
@@ -1041,6 +1143,8 @@ export interface ExtensionUiResponseCommand extends CommandBase {
 interface SubagentCommandBase extends CommandBase {
   sessionId: string;
   path: AgentPath;
+  /** Opaque identity of the child incarnation captured by the view. */
+  incarnation: string;
   /** Opaque generation that prevents a stale view from targeting a replacement runtime. */
   attachmentGeneration: string;
 }
@@ -1076,6 +1180,8 @@ export interface SubagentFollowUpCommand extends SubagentCommandBase {
 
 export interface SubagentAbortCommand extends SubagentCommandBase {
   type: 'subagent_abort';
+  /** Child session identity checked by the owning manager before Stop. */
+  expectedSessionId: string;
 }
 
 export interface SubagentBashCommand extends SubagentCommandBase {
@@ -1171,7 +1277,29 @@ export interface SubagentTeardownCommand extends CommandBase {
   type: 'subagent_teardown';
   sessionId: string;
   path: AgentPath;
+  /** Incarnation captured when the confirmation dialog opened. */
+  incarnation: string;
+  /** Present for a request originating from an attached child view. */
+  attachmentGeneration?: string;
 }
+
+/** Restore a saved child session under a root-relative parent path. */
+export interface SubagentResurrectCommand extends CommandBase {
+  type: 'subagent_resurrect';
+  sessionId: string;
+  savedSessionId: string;
+  parentPath: AgentPath;
+  localId: string;
+  task: string;
+  channels: readonly string[];
+  model?: string;
+}
+
+/** Response data returned by a successful subagent_resurrect command. */
+export type SubagentResurrectResponseData = SubagentResurrectResult;
+
+/** Response data returned by a guarded subagent_teardown command. */
+export type SubagentTeardownResponseData = SubagentTeardownResult;
 
 export type PimoteCommand =
   | PromptCommand
@@ -1260,7 +1388,8 @@ export type PimoteCommand =
   | SubagentGetTreeCommand
   | SubagentNavigateTreeCommand
   | SubagentSetTreeLabelCommand
-  | SubagentTeardownCommand;
+  | SubagentTeardownCommand
+  | SubagentResurrectCommand;
 
 /** All root-scoped child-view commands. */
 export type SubagentCommand = Extract<PimoteCommand, { type: `subagent_${string}` }>;
@@ -1640,9 +1769,22 @@ export interface FullResyncEvent {
   runningToolCallIds?: string[];
 }
 
+/** Root-scoped hierarchy snapshot at a provider cursor boundary. */
+type SubagentSnapshotEventBase = {
+  type: 'subagent_snapshot';
+  sessionId: string;
+};
+
+/**
+ * The wire snapshot is flattened like `full_resync`. The nested form remains
+ * accepted for clients that pass the provider snapshot through unchanged.
+ */
+export type SubagentSnapshotEvent = (SubagentSnapshotEventBase & SubagentSnapshot) | (SubagentSnapshotEventBase & { snapshot: SubagentSnapshot });
+
 /** Response payload returned by subagent_open_view. */
 export interface SubagentOpenViewResponseData {
   path: AgentPath;
+  incarnation: string;
   attachmentGeneration: string;
   snapshot: SubagentViewSnapshot;
 }
@@ -1653,8 +1795,9 @@ export interface SubagentViewSnapshot {
   sessionId: string;
   childSessionId: string;
   path: AgentPath;
+  incarnation: string;
   attachmentGeneration: string;
-  viewCursor: number;
+  viewCursor: SubagentViewCursor;
   state: SessionState;
   messages: PimoteAgentMessage[];
   streamingMessage?: StreamingMessage;
@@ -1667,8 +1810,9 @@ export interface SubagentViewEvent {
   sessionId: string;
   childSessionId: string;
   path: AgentPath;
+  incarnation: string;
   attachmentGeneration: string;
-  viewCursor: number;
+  viewCursor: SubagentViewCursor;
   event: PimoteSessionEvent;
 }
 
@@ -1677,6 +1821,7 @@ export interface SubagentViewClosedEvent {
   type: 'subagent_view_closed';
   sessionId: string;
   path: AgentPath;
+  incarnation: string;
   attachmentGeneration: string;
   reason: 'released' | 'replaced' | 'unavailable' | 'teardown';
 }
@@ -1874,6 +2019,7 @@ export type PimoteEvent =
   | SessionRestoreEvent
   | BufferedEventsEvent
   | FullResyncEvent
+  | SubagentSnapshotEvent
   | SubagentViewSnapshot
   | SubagentViewEvent
   | SubagentViewClosedEvent

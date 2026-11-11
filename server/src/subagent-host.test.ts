@@ -1,16 +1,48 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentPath, BorrowedAgentSession, SubagentEvent, SubagentLease, SubagentLeaseEvent, SubagentProvider } from '@pimote/sdk/subagents';
+import type {
+  AgentPath,
+  BorrowedAgentSession,
+  SubagentCapabilities,
+  SubagentEvent,
+  SubagentLease,
+  SubagentLeaseEvent,
+  SubagentNodeSnapshot,
+  SubagentProvider,
+} from '@pimote/sdk/subagents';
 import type { PimoteSessionEvent, SessionState } from '../../shared/dist/index.js';
 import { createSubagentHost, type SubagentViewChange } from './subagent-host.js';
 import type { SessionSurface, SessionSurfaceOptions } from './session-surface.js';
 
+const worker = ['worker'] as const;
 const scout = ['worker', 'scout'] as const;
 const reviewer = ['worker', 'reviewer'] as const;
 const other = ['other'] as const;
 const key = (path: AgentPath) => JSON.stringify(path);
 
 function session(id: string): BorrowedAgentSession {
-  return { sessionId: id } as BorrowedAgentSession;
+  return {
+    sessionId: id,
+    state: {
+      streamingMessage: undefined,
+      pendingToolCalls: new Set<string>(),
+      errorMessage: undefined,
+    },
+  } as unknown as BorrowedAgentSession;
+}
+
+function node(path: AgentPath, sessionId: string, state: SubagentNodeSnapshot['state'] = 'idle'): SubagentNodeSnapshot {
+  return {
+    path,
+    incarnation: `${sessionId}-incarnation`,
+    sessionId,
+    task: `Task for ${path.join('/')}`,
+    state,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+    channels: ['parent'],
+    waitingFor: [],
+    pendingCorrelations: [],
+    hasSubgroup: path.length === 1,
+  };
 }
 
 function state(id: string): SessionState {
@@ -34,17 +66,23 @@ function semanticEvent(sequence: number): SubagentEvent {
     path: scout,
     kind: 'node_updated',
     relatedPiEvents: [],
-    data: { sessionId: 'scout-1' },
+    data: node(scout, 'scout-1', 'waiting'),
   };
 }
 
 function fixture() {
   const sessions = new Map<string, BorrowedAgentSession>([
+    [key(worker), session('worker-1')],
     [key(scout), session('scout-1')],
     [key(reviewer), session('reviewer-1')],
     [key(other), session('other-1')],
   ]);
-  const leases = new Set<{ path: AgentPath; current: BorrowedAgentSession; notify: (event: SubagentLeaseEvent) => void }>();
+  const leases = new Set<{
+    path: AgentPath;
+    current: BorrowedAgentSession;
+    capabilities: SubagentCapabilities;
+    notify: (event: SubagentLeaseEvent) => void;
+  }>();
   const listeners = new Set<(event: SubagentEvent) => void>();
   type ViewNotification = { connectionId: string; change: SubagentViewChange };
   const viewChanges: ViewNotification[] = [];
@@ -65,16 +103,46 @@ function fixture() {
     },
     snapshot() {
       if (pending.snapshotEvent) publish(pending.snapshotEvent);
-      return { nodes: [], cursor: { epoch: 'epoch-1', sequence: 0 } };
+      const nodes = [...sessions.entries()].map(([storedPath, current]) => node(JSON.parse(storedPath) as AgentPath, current.sessionId));
+      return { nodes, cursor: { epoch: 'epoch-1', sequence: 0 } };
     },
     replay: () => ({ kind: 'events', cursor: { epoch: 'epoch-1', sequence: 0 }, events: [] }),
     async acquire(path) {
       const current = sessions.get(key(path));
       if (!current) throw new Error('unavailable');
       const subscriptions = new Set<(event: SubagentLeaseEvent) => void>();
+      const capabilities: SubagentCapabilities = {
+        operations: [
+          'prompt',
+          'steer',
+          'follow_up',
+          'stop',
+          'bash',
+          'abort_bash',
+          'set_model',
+          'cycle_model',
+          'set_thinking_level',
+          'cycle_thinking_level',
+          'set_auto_compaction',
+          'compact',
+          'tree',
+          'completion',
+          'state',
+          'meta',
+        ],
+        renderer: { visible: true },
+        resolveModel: async () => undefined,
+        getSettings: () => ({ availableThinkingLevels: [], autoCompactionEnabled: true }),
+        nativeBash: { admitted: true, execute: async () => undefined, abort: async () => undefined },
+        executeBash: async () => undefined,
+        getCommands: async () => [],
+        completeArgs: async () => [],
+        completeFileRefs: async () => [],
+      };
       const record = {
         path,
         current,
+        capabilities,
         notify: (event: SubagentLeaseEvent) => {
           for (const listener of subscriptions) listener(event);
         },
@@ -82,6 +150,7 @@ function fixture() {
       leases.add(record);
       return {
         path,
+        capabilities: record.capabilities,
         get session() {
           if (!leases.has(record)) throw new Error('closed');
           return record.current;
@@ -100,7 +169,8 @@ function fixture() {
         },
       } as SubagentLease;
     },
-    async teardown(path) {
+    async teardown(path, _incarnation) {
+      const previous = sessions.get(key(path));
       for (const [stored] of sessions) {
         const parts = JSON.parse(stored) as string[];
         if (path.every((part, index) => parts[index] === part)) sessions.delete(stored);
@@ -111,7 +181,23 @@ function fixture() {
           lease.notify({ kind: 'closed', reason: 'removed' });
         }
       }
-      return { path, removed: true, sessionId: 'scout-1' };
+      return {
+        path,
+        removed: true,
+        sessionId: previous?.sessionId ?? 'scout-1',
+        incarnation: `${previous?.sessionId ?? 'scout-1'}-incarnation`,
+        reason: 'removed',
+      };
+    },
+    async stop(request) {
+      const current = sessions.get(key(request.path));
+      if (!current || current.sessionId !== request.expectedSessionId) throw new Error('stale child');
+    },
+    async resurrect(request) {
+      const path = [...request.parentPath, request.localId];
+      const sessionId = `resurrected-${request.sessionId}`;
+      sessions.set(key(path), session(sessionId));
+      return { path, sessionId, incarnation: `${sessionId}-incarnation`, node: node(path, sessionId) };
     },
   };
 
@@ -119,6 +205,7 @@ function fixture() {
     const observers = new Set<(event: PimoteSessionEvent) => void>();
     const events: PimoteSessionEvent[] = [];
     const id = options.session.sessionId;
+    const stop = (options as SessionSurfaceOptions & { stop?: (...args: readonly unknown[]) => Promise<void> | void }).stop;
     const snapshot = () => ({ cursor: events.length, state: state(id), messages: [] });
     surfaces.set(id, {
       emit: (event) => {
@@ -149,7 +236,10 @@ function fixture() {
         release() {},
       }),
       replay: (after = 0) => ({ kind: 'events', cursor: events.length, events: events.slice(after) }),
-      dispatch: async (command) => `${id}:${command.type}`,
+      dispatch: async (command) => {
+        if (command.type === 'abort') await stop?.(command);
+        return `${id}:${command.type}`;
+      },
       getState: async () => state(id),
       getMeta: async () => ({ gitBranch: null, contextUsage: null, lifetimeCostUsd: 0 }),
       getMessages: async () => [],
@@ -210,7 +300,11 @@ function fixture() {
       for (const lease of leases)
         if (key(lease.path) === key(path)) {
           lease.current = replacement;
-          lease.notify({ kind: 'rebound', session: replacement });
+          lease.capabilities = {
+            ...lease.capabilities,
+            renderer: { visible: true },
+          };
+          lease.notify({ kind: 'rebound', session: replacement, capabilities: lease.capabilities });
         }
     },
     unavailable(path: AgentPath) {
