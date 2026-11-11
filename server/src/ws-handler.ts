@@ -1482,6 +1482,9 @@ export class WsHandler {
   }
 
   private async handleSubagentCommand(command: SubagentCommand, id: string): Promise<void> {
+    // A displaced socket must not borrow the replacement socket's host token.
+    // Reject its command before token lookup or child dispatch.
+    this.assertCurrentConnection();
     const { slot, host } = this.subagentHostFor(command.sessionId);
     this.ensureSubagentViewListener(slot);
 
