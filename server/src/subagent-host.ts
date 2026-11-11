@@ -65,12 +65,14 @@ export interface SubagentHostOptions {
  * events are projected into the parent surface; child transcript events stay
  * on each view surface's cursor.
  */
+export type SubagentSurfaceCommand = SessionSurfaceCommand & { readonly expectedSessionId?: string };
+
 export interface SubagentHost {
   /** Subscribe to provider events before requesting the first hierarchy snapshot. */
   start(): Promise<SubagentHostStartResult>;
   openView(connectionId: string, path: AgentPath, connectionToken?: number): Promise<SubagentViewAttachment>;
   closeView(connectionId: string, view: SubagentViewReference, connectionToken?: number): Promise<void>;
-  dispatch(connectionId: string, view: SubagentViewReference, command: SessionSurfaceCommand, connectionToken?: number): Promise<unknown>;
+  dispatch(connectionId: string, view: SubagentViewReference, command: SubagentSurfaceCommand, connectionToken?: number): Promise<unknown>;
   /** Keep attachments during the grace period for this reconnect identity. */
   disconnect(connectionId: string, connectionToken?: number): void;
   reconnect(connectionId: string, connectionToken?: number): Promise<readonly SubagentViewAttachment[]>;
@@ -525,12 +527,23 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     await closeRecord(record, 'released', false);
   };
 
-  const dispatch = async (connectionId: string, view: SubagentViewReference, command: SessionSurfaceCommand, connectionToken?: number): Promise<unknown> => {
+  const dispatch = async (connectionId: string, view: SubagentViewReference, command: SubagentSurfaceCommand, connectionToken?: number): Promise<unknown> => {
     assertStarted();
     const record = assertReference(connectionId, view, connectionToken);
     assertCurrentIncarnation(record);
     const expectedSessionId = (command as SessionSurfaceCommand & { expectedSessionId?: unknown }).expectedSessionId;
-    if (command.type === 'abort' && expectedSessionId !== undefined && expectedSessionId !== record.lease.session.sessionId) throw new Error('stale child runtime');
+    if (command.type === 'abort' && expectedSessionId !== undefined) {
+      if (typeof expectedSessionId !== 'string' || expectedSessionId !== record.lease.session.sessionId) throw new Error('stale child runtime');
+      // Keep the expected identity in the owner-control request. Calling the
+      // borrowed session's abort directly would allow a replacement runtime to
+      // win a race between validation and dispatch.
+      await options.provider.stop({
+        path: record.path,
+        incarnation: record.incarnation,
+        expectedSessionId,
+      });
+      return { steering: [], followUp: [] };
+    }
     if (!record.surface) throw new Error('child surface is closed');
     return record.surface.dispatch(command);
   };
