@@ -232,6 +232,14 @@
   let mobileHeaderTitle = $derived(getSessionDisplayName(sessionRegistry.viewed) ?? appName);
   let mobileContextDisplay = $derived(getContextDisplay(sessionRegistry.viewed, { compact: true }));
   let mobileContextTone = $derived(getContextTone(sessionRegistry.viewed?.contextUsage?.percent));
+  async function closeSelectedChildView(): Promise<void> {
+    const rootId = sessionRegistry.viewedSessionId;
+    const path = rootId ? sessionRegistry.getSelectedSubagentPath?.(rootId) : null;
+    if (!rootId || !path) return;
+    await sessionRegistry.closeSubagentView(rootId, path);
+    sessionRegistry.selectSubagentView(rootId, null);
+  }
+
   let mobileContextChipClass = $derived(
     mobileContextTone === 'critical'
       ? 'border-red-500/20 bg-red-500/10 text-red-600 dark:text-red-400'
@@ -264,7 +272,16 @@
           <Settings class="size-5" />
         </button>
       {/if}
-      {#if sessionRegistry.viewedSessionId}
+      {#if sessionRegistry.viewedSubagentAttachment}
+        <button
+          class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors"
+          title="Close child view"
+          aria-label="Close child view"
+          onclick={() => void closeSelectedChildView()}
+        >
+          ×
+        </button>
+      {:else if sessionRegistry.viewedSessionId}
         <button
           class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors"
           title="Back to dashboard"
@@ -344,7 +361,7 @@
   <!-- Hierarchy-first panel host. A child hierarchy keeps the host present even
        when no SDK cards exist. The width is measured on the app container in the
        layout observer, not from the viewport media query. -->
-  {#if hasPanels && panelStore.presentation === 'sidebar' && !panelStore.collapsed}
+  {#if hasPanels && panelStore.presentation === 'sidebar' && panelStore.open && !panelStore.collapsed}
     <div class="flex min-h-0 shrink-0 flex-col">
       <Panel />
     </div>

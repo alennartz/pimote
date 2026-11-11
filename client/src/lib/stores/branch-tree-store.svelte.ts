@@ -288,16 +288,17 @@ export class BranchTreeStore {
       const response = await this._transport.send(command, surface ?? (this.state.sessionId === sessionId ? this.state.surface : null));
       if (!response.success || !response.data) {
         if (this.state.sessionId === sessionId) this.state.error = response.error ?? 'Navigation failed.';
-        this.clearNavigationFailure(sessionId);
+        this.clearNavigationFailure(sessionId, surface ?? (this.state.sessionId === sessionId ? this.state.surface : null));
         return null;
       }
       const result = navigationResult(response.data);
-      if (result.cancelled) this.clearNavigationFailure(sessionId);
-      else if (tracksBusy && this.state.sessionId === sessionId && !this.navigationBySession.get(sessionId)?.inProgress) this.state.busy = false;
+      if (result.cancelled) this.clearNavigationFailure(sessionId, surface ?? (this.state.sessionId === sessionId ? this.state.surface : null));
+      else if (tracksBusy && this.state.sessionId === sessionId && !this.navigationBySession.get(cacheKey(sessionId, surface ?? this.state.surface))?.inProgress)
+        this.state.busy = false;
       return result;
     } catch (error) {
       if (this.state.sessionId === sessionId) this.state.error = error instanceof Error ? error.message : 'Navigation failed.';
-      this.clearNavigationFailure(sessionId);
+      this.clearNavigationFailure(sessionId, surface ?? (this.state.sessionId === sessionId ? this.state.surface : null));
       return null;
     }
   }
@@ -382,8 +383,8 @@ export class BranchTreeStore {
     );
   }
 
-  private clearNavigationFailure(sessionId: string): void {
-    this.navigationBySession.delete(sessionId);
+  private clearNavigationFailure(sessionId: string, surface?: BranchTreeSurface | null): void {
+    this.navigationBySession.delete(cacheKey(sessionId, surface));
     if (this.state.sessionId === sessionId) this.state.busy = false;
   }
 

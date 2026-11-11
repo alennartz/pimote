@@ -148,7 +148,7 @@
     teardownConfirmation = null;
   }
 
-  function prepareResurrection(closed: SubagentViewClosedNotice): void {
+  function prepareResurrection(closed: SubagentViewClosedNotice, open = true): void {
     const node = closed.node;
     const path = closed.path;
     resurrectSavedSessionId = node?.sessionId ?? selectedAttachment?.childSessionId ?? '';
@@ -156,7 +156,7 @@
     resurrectTask = node?.task ?? '';
     resurrectChannels = (node?.channels ?? []).join(', ');
     resurrectModel = node?.model ?? '';
-    resurrectOpen = true;
+    if (open) resurrectOpen = true;
   }
 
   async function resurrect(): Promise<void> {
@@ -194,7 +194,7 @@
       if (closed.rootSessionId !== sessionRegistry.viewedSessionId) return;
       notice = closed;
       teardownConfirmation = null;
-      if (closed.reason === 'teardown') prepareResurrection(closed);
+      if (closed.reason === 'teardown') prepareResurrection(closed, false);
     });
     return unsubscribe;
   });
@@ -234,7 +234,7 @@
           class="text-muted-foreground hover:text-foreground hover:bg-accent flex size-7 items-center justify-center rounded-md"
           aria-label="Hide panels"
           title="Hide panels"
-          onclick={() => panelStore.closePanel()}>×</button
+          onclick={() => (panelStore.isDrawer ? panelStore.closePanel() : panelStore.toggleCollapsed())}>×</button
         >
       {/if}
     </header>
