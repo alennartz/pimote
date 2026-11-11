@@ -449,7 +449,12 @@ function projectableBlocks(
   const descriptors: { block: SemanticBlock; anchor: number; order: number }[] = [];
   state.blocks.forEach((block, order) => {
     const relatedIndices = matchingIndices(block.relatedPiEvents, entries);
-    if (block.relatedPiEvents.length > 0 && relatedIndices.length === 0) return;
+    // A custom-message fact can carry semantic provenance without a native
+    // entry ID or tool call. Keep it after the transcript instead of dropping
+    // it as an unmatched native replacement. References with either anchor
+    // field still require a matching native entry.
+    const requiresNativeAnchor = block.relatedPiEvents.some((ref) => ref.entryId !== undefined || ref.toolCallId !== undefined);
+    if (requiresNativeAnchor && relatedIndices.length === 0) return;
     const placementIndex = block.placement.afterPiEvent ? matchingIndices([block.placement.afterPiEvent], entries) : [];
     const matchedAnchor = Math.max(...relatedIndices, ...placementIndex, -1);
     // A fact without native provenance belongs after the saved transcript.

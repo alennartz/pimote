@@ -93,6 +93,24 @@ describe('subagent semantic transcript projection', () => {
     expect(nativeEntries).toEqual(original);
   });
 
+  it('renders entry-free notification facts after the native transcript', () => {
+    const entryFreeRef: PiEventRef = { sessionId, kind: 'custom_message' };
+    const event: SubagentSemanticEvent = {
+      eventId: 'entry-free-notification',
+      kind: 'message_thread',
+      placement: { sequence: 10 },
+      relatedPiEvents: [entryFreeRef],
+      data: { sourcePath: scoutPath, targetPath: workerPath, request: 'The callback route does not own the mutation.' },
+    };
+    const items = projectSubagentTranscript(nativeEntries, reduce(event));
+    const semanticIndex = items.findIndex((item) => item.kind === 'semantic' && item.block.eventId === event.eventId);
+
+    expect(semanticIndex).toBeGreaterThan(-1);
+    expect(semanticIndex).toBe(items.length - 1);
+    expect(items.filter((item) => item.kind === 'native')).toHaveLength(nativeEntries.length);
+    expect(copySubagentTranscript(items)).toContain('The callback route does not own the mutation.');
+  });
+
   it('falls back to native rendering without matching provenance and respects session identity', () => {
     const sameIdOtherSession: NativeTranscriptEntry = {
       sessionId: 'other-session',
