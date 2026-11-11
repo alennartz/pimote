@@ -1,11 +1,28 @@
 // ConnectionStore — Svelte 5 runes-based WebSocket connection manager
-import type { OpenSessionResponseData, PimoteCommand, PimoteResponse, PimoteEvent, PimoteServerMessage, RestoreMode, UserSessionsChangedEvent } from '@pimote/shared';
+import type {
+  AgentPath,
+  OpenSessionResponseData,
+  PimoteCommand,
+  PimoteResponse,
+  PimoteEvent,
+  PimoteServerMessage,
+  RestoreMode,
+  UserSessionsChangedEvent,
+  SubagentViewEvent,
+  SubagentViewSnapshot,
+  SubagentViewClosedEvent,
+} from '@pimote/shared';
 import { SvelteMap } from 'svelte/reactivity';
 import { version } from '$app/environment';
 import { clearActiveSessions, getClientId, getUser, setClientId } from './persistence.js';
 import { updateStore } from './update.svelte.js';
 
 type EventListener = (event: PimoteEvent) => void;
+
+/** Keep child-view cursors in a namespace separate from root replay cursors. */
+function subagentViewKey(rootSessionId: string, path: AgentPath): string {
+  return `${rootSessionId}\u0000${JSON.stringify(path)}`;
+}
 
 /** Errors that mean a request may have reached the server before the socket dropped. */
 export function isConnectionLossError(error: unknown): boolean {
@@ -128,7 +145,32 @@ export class ConnectionStore {
   syncDetail: string | null = $state(null);
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive internal bookkeeping; no template reads it
   private sessionCursors: Map<string, number> = new Map();
+  // A child surface has its own EventBuffer. Never fold these positions into
+  // sessionCursors: doing so makes the next root restore skip parent events.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- cursor bookkeeping, not UI state
+  private subagentViewCursors: Map<string, number> = new Map();
+  /** The server default. The host uses the same grace so local expiry agrees
+   * with a missed `subagent_view_closed` event while the socket is down. */
+  readonly subagentReconnectGraceMs: number;
   subscribedSessions: Map<string, string> = $state(new SvelteMap());
+
+  constructor(options?: { subagentReconnectGraceMs?: number }) {
+    this.subagentReconnectGraceMs = Math.max(0, options?.subagentReconnectGraceMs ?? 15_000);
+  }
+
+  /** Last root replay cursor observed for a session. */
+  getRootCursor(sessionId: string): number | undefined {
+    return this.sessionCursors.get(sessionId);
+  }
+
+  /** Last child-view cursor observed for one root/path attachment. */
+  getSubagentViewCursor(rootSessionId: string, path: AgentPath): number | undefined {
+    return this.subagentViewCursors.get(subagentViewKey(rootSessionId, path));
+  }
+
+  clearSubagentViewCursor(rootSessionId: string, path: AgentPath): void {
+    this.subagentViewCursors.delete(subagentViewKey(rootSessionId, path));
+  }
 
   private ws: WebSocket | null = null;
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
@@ -298,19 +340,36 @@ export class ConnectionStore {
       // Event
       const event = msg as PimoteEvent;
 
-      // Track per-session cursor.
+      // Track root replay cursors only. Child view messages carry a
+      // `viewCursor` and must never advance the root EventBuffer position.
       // For buffered_events envelopes (which have no cursor of their own),
-      // advance to the highest cursor among the sub-events so that a
-      // subsequent reconnect doesn't replay the same events again.
+      // advance to the highest root cursor among the sub-events so a later
+      // reconnect does not replay the same parent events.
       if (event.type === 'buffered_events' && 'events' in event && 'sessionId' in event) {
-        const buffered = event as { sessionId: string; events: Array<{ cursor?: number }> };
+        const buffered = event as { sessionId: string; events: Array<{ cursor?: number; type?: string }> };
         let max = this.sessionCursors.get(buffered.sessionId) ?? 0;
         for (const sub of buffered.events) {
+          if (sub.type === 'subagent_view_event') continue;
           if (typeof sub.cursor === 'number' && sub.cursor > max) {
             max = sub.cursor;
           }
         }
         this.sessionCursors.set(buffered.sessionId, max);
+      } else if (event.type === 'subagent_view_snapshot') {
+        const snapshot = event as SubagentViewSnapshot;
+        const key = subagentViewKey(snapshot.sessionId, snapshot.path);
+        const previous = this.subagentViewCursors.get(key) ?? 0;
+        // Reconnect creates a fresh child surface whose cursor starts at zero.
+        // Reset this independent cursor instead of folding it into root replay.
+        if (snapshot.viewCursor === 0 || snapshot.viewCursor > previous) this.subagentViewCursors.set(key, snapshot.viewCursor);
+      } else if (event.type === 'subagent_view_event') {
+        const viewEvent = event as SubagentViewEvent;
+        const key = subagentViewKey(viewEvent.sessionId, viewEvent.path);
+        const previous = this.subagentViewCursors.get(key) ?? 0;
+        if (viewEvent.viewCursor > previous) this.subagentViewCursors.set(key, viewEvent.viewCursor);
+      } else if (event.type === 'subagent_view_closed') {
+        const closed = event as SubagentViewClosedEvent;
+        this.subagentViewCursors.delete(subagentViewKey(closed.sessionId, closed.path));
       } else if ('cursor' in event && typeof event.cursor === 'number' && 'sessionId' in event && typeof event.sessionId === 'string') {
         this.sessionCursors.set(event.sessionId, event.cursor);
       }
@@ -554,6 +613,10 @@ export class ConnectionStore {
   removeSubscribedSession(id: string): void {
     this.subscribedSessions.delete(id);
     this.sessionCursors.delete(id);
+    const prefix = `${id}\u0000`;
+    for (const key of this.subagentViewCursors.keys()) {
+      if (key.startsWith(prefix)) this.subagentViewCursors.delete(key);
+    }
   }
 
   /** Empty the seed the connect-burst reconcile consumes. A deliberate user

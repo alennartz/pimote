@@ -347,7 +347,7 @@ function blockForEvent(event: SubagentSemanticEvent): SemanticBlock {
             ? event.data.operation === 'teardown'
               ? [{ type: 'resurrect', path: copyPath(event.data.path) }]
               : [{ type: 'open_view', path: copyPath(event.data.path) }]
-            : [],
+            : [{ type: 'retry', path: copyPath(event.data.path) }],
         kind: 'lifecycle',
         data: {
           operation: event.data.operation,
@@ -657,15 +657,20 @@ function mapWireEvent(event: WireSubagentSemanticEvent, threads: Map<string, Thr
   }
 }
 
-/** Project parent-stream semantic events and native entries into a user-facing transcript. */
-export function projectSubagentWireTranscript(nativeEntries: readonly NativeTranscriptEntry[], events: readonly WireSubagentSemanticEvent[]): readonly SemanticTranscriptItem[] {
+/** Reduce parent-stream wire facts into the semantic projection used by the client. */
+export function reduceSubagentWireSemanticEvents(events: readonly WireSubagentSemanticEvent[]): SemanticReductionState {
   const threads = new Map<string, ThreadMemory>();
   let reduction = EMPTY_SEMANTIC_REDUCTION;
   for (const event of events) {
     const mapped = mapWireEvent(event, threads);
     if (mapped) reduction = reduceSubagentSemanticEvent(reduction, mapped);
   }
-  return projectSubagentTranscript(nativeEntries, reduction);
+  return reduction;
+}
+
+/** Project parent-stream semantic events and native entries into a user-facing transcript. */
+export function projectSubagentWireTranscript(nativeEntries: readonly NativeTranscriptEntry[], events: readonly WireSubagentSemanticEvent[]): readonly SemanticTranscriptItem[] {
+  return projectSubagentTranscript(nativeEntries, reduceSubagentWireSemanticEvents(events));
 }
 
 /** Copy user-facing semantic transcript text without provider or attachment mechanics. */
