@@ -4,10 +4,10 @@
   import { formatRelativeTime } from '$lib/format-relative-time.js';
   import type { GetTreeResponseData, PimoteAgentMessage, StreamingMessage, AssistantRowUsage } from '@pimote/shared';
   import { indexToolResultUsage, summarizeAssistantRowUsage } from '$lib/assistant-row-usage.js';
-  import type { BashExecutionState, PerSessionState } from '$lib/stores/session-registry.svelte.js';
+  import type { BashExecutionState, PerSessionState, SubagentAttachmentState } from '$lib/stores/session-registry.svelte.js';
   import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { branchTreeStore } from '$lib/stores/branch-tree-store.svelte.js';
+  import { branchTreeStore, type BranchTreeSurface } from '$lib/stores/branch-tree-store.svelte.js';
   import { abandonedBranchCounts } from '$lib/branch-tree.js';
   import { findInConversation, type FindMatch } from '$lib/conversation-find.js';
   import { previousUserAbove, type UserMessagePosition } from '$lib/transcript-navigation.js';
@@ -33,11 +33,21 @@
      *  floating abort are session-only affordances and are disabled for an
      *  explicit source. */
     source?: PerSessionState | null;
+    /** Explicit child source. Child state stays outside root sessions and URL routing. */
+    child?: SubagentAttachmentState | null;
   }
-  let { readOnly = false, source = null }: Props = $props();
+  let { readOnly = false, source = null, child = null }: Props = $props();
 
-  // The rendered transcript: an explicit source (manager) or the viewed session.
-  let session = $derived(source ?? sessionRegistry.viewed);
+  let childSurface = $derived(child ?? sessionRegistry.viewedSubagentAttachment);
+  // The rendered transcript: an explicit source, selected child, or viewed root.
+  // Child attachments intentionally use the shared render shape at this seam;
+  // command dispatch below still carries the child identity separately.
+  let session = $derived((source ?? childSurface ?? sessionRegistry.viewed) as PerSessionState | null);
+  let childSurfaceRef: BranchTreeSurface | null = $derived.by(() => {
+    const rootSessionId = sessionRegistry.viewedSessionId;
+    const path = rootSessionId ? sessionRegistry.getSelectedSubagentPath?.(rootSessionId) : null;
+    return childSurface && rootSessionId && path ? { rootSessionId, path: [...path] } : null;
+  });
   // Manager sessions use the regular session route, so identify them from the
   // server-owned manager root as well as explicit manager sources.
   let managerTranscript = $derived(
@@ -66,31 +76,35 @@
   }
 
   async function handleRedo(entryId: string, opts?: { compactionPrompt?: string }) {
-    // Redo is a regular-session action. Manager and read-only transcripts have
-    // no writable branch tree.
+    // Child surfaces retain identity-preserving redo and tree navigation. Root
+    // lifecycle actions remain unavailable to a child transcript.
     if (readOnly || source || managerTranscript) return;
-    const viewed = sessionRegistry.viewed;
-    const sessionId = viewed?.sessionId;
+    const root = sessionRegistry.viewed;
+    const sessionId = childSurface ? childSurface.rootSessionId : root?.sessionId;
     if (!sessionId) return;
 
-    const result = await branchTreeStore.navigateInSession(sessionId, entryId, opts);
+    const result = await branchTreeStore.navigateInSession(sessionId, entryId, opts, childSurfaceRef);
     if (!result || result.cancelled || typeof result.editorText !== 'string') return;
 
-    const currentDraft = sessionRegistry.sessions[sessionId]?.draftText ?? '';
+    const currentDraft = childSurface ? childSurface.draftText : (sessionRegistry.sessions[sessionId]?.draftText ?? '');
     const editorText = result.editorText;
     if (needsDraftPrompt(currentDraft, editorText)) {
       const choice = await promptDraftChoice();
       const nextText = applyDraftChoice(currentDraft, editorText, choice);
-      if (nextText !== null) sessionRegistry.setDraftText(sessionId, nextText);
+      if (nextText !== null) {
+        if (childSurface) sessionRegistry.setSubagentDraftText(childSurface.rootSessionId, childSurface.path, nextText);
+        else sessionRegistry.setDraftText(sessionId, nextText);
+      }
     } else {
-      sessionRegistry.setDraftText(sessionId, editorText);
+      if (childSurface) sessionRegistry.setSubagentDraftText(childSurface.rootSessionId, childSurface.path, editorText);
+      else sessionRegistry.setDraftText(sessionId, editorText);
     }
   }
 
   async function handleFork(entryId: string) {
     // Fork is a regular-session action. Manager and read-only transcripts have
     // no forkable tree.
-    if (readOnly || source || managerTranscript) return;
+    if (readOnly || source || childSurface || managerTranscript) return;
     const viewed = sessionRegistry.viewed;
     const sessionId = viewed?.sessionId;
     if (!sessionId) return;
@@ -125,9 +139,17 @@
   }
 
   function handleAbort() {
-    // The manager composer owns abort for an explicit source.
-    const sessionId = sessionRegistry.viewedSessionId;
-    if (!source && sessionId) void abortSession(sessionId);
+    if (source) return;
+    const rootSessionId = sessionRegistry.viewedSessionId;
+    if (!rootSessionId) return;
+    if (childSurface) {
+      void sessionRegistry.sendSubagentCommand(rootSessionId, childSurface.path, {
+        type: 'abort',
+        expectedSessionId: childSurface.childSessionId,
+      });
+    } else {
+      void abortSession(rootSessionId);
+    }
   }
 
   let scrollContainer: HTMLDivElement | undefined = $state();
@@ -269,18 +291,18 @@
   }
 
   $effect(() => {
-    const sessionId = session?.sessionId;
+    const sessionId = childSurface ? childSurface.rootSessionId : session?.sessionId;
     // Message replacement, ordinary turns, and full resync invalidate the tree cache.
     session?.messageCount;
-    if (sessionId) branchTreeStore.cacheVersion(sessionId);
+    if (sessionId) branchTreeStore.cacheVersion(sessionId, childSurfaceRef);
     session?.messages.length;
-    if (!sessionId || source || readOnly || managerTranscript || !session.messages.some((message) => 'entryId' in message && typeof message.entryId === 'string')) {
+    if (!sessionId || !session || source || readOnly || managerTranscript || !session.messages.some((message) => 'entryId' in message && typeof message.entryId === 'string')) {
       treeSnapshot = null;
       return;
     }
     // Session message count changes after navigation and full resync. `load`
     // returns the cached snapshot until branch-tree lifecycle invalidates it.
-    void branchTreeStore.load(sessionId).then((snapshot) => {
+    void branchTreeStore.load(sessionId, childSurfaceRef).then((snapshot) => {
       if (sessionRegistry.viewedSessionId === sessionId) treeSnapshot = snapshot;
     });
   });
@@ -336,7 +358,7 @@
       if (msg.display === false) continue;
       entries.push({
         kind: 'message',
-        key: session.messageKeys[i] ?? `fallback-${i}`,
+        key: session.messageKeys?.[i] ?? `fallback-${i}`,
         message: msg as PimoteAgentMessage | StreamingMessage,
         streaming: false,
         // Keep the source transcript index even when display:false entries are
@@ -353,7 +375,7 @@
         messageIndex: null,
       });
     }
-    for (const execution of Object.values(session.bashExecutions)) {
+    for (const execution of Object.values(session.bashExecutions ?? {})) {
       entries.push({ kind: 'bash', key: `bash-${execution.id}`, execution });
     }
     return entries;
@@ -365,16 +387,16 @@
     if (entry.message.role !== 'assistant' || !session) return null;
     if (entry.streaming) return summarizeAssistantRowUsage(entry.message, session.messages, toolResultUsageIndex);
     if (entry.messageIndex === null) return null;
-    // Explicit sources, such as manager transcripts, are not owned by the
-    // regular session registry. Derive their rows directly from their snapshot.
-    if (source) return summarizeAssistantRowUsage(entry.message, session.messages, toolResultUsageIndex);
+    // Explicit sources and child surfaces are not owned by the root registry.
+    if (source || childSurface) return summarizeAssistantRowUsage(entry.message, session.messages, toolResultUsageIndex);
     return sessionRegistry.getAssistantRowUsage(session.sessionId, entry.messageIndex, toolResultUsageIndex);
   }
 
   // Show streaming indicator when streaming but no content yet
   let showStreamingIndicator = $derived.by(() => {
-    if (!session?.isStreaming) return false;
-    return !session.streamingMessage || session.streamingMessage.content.length === 0;
+    if (!(childSurface?.state.isStreaming ?? session?.isStreaming)) return false;
+    const streamingMessage = childSurface?.streamingMessage ?? session?.streamingMessage;
+    return !streamingMessage || streamingMessage.content.length === 0;
   });
 
   function scrollToBottom() {
@@ -405,10 +427,11 @@
     const viewed = sessionRegistry.viewed;
     if (!viewed?.sessionId) return;
     try {
-      await connection.send({
-        type: 'abort_bash',
-        sessionId: viewed.sessionId,
-      });
+      if (childSurface) {
+        await sessionRegistry.sendSubagentCommand(viewed.sessionId, childSurface.path, { type: 'abort_bash' });
+      } else {
+        await connection.send({ type: 'abort_bash', sessionId: viewed.sessionId });
+      }
     } catch (error) {
       console.error('Failed to send bash abort:', error);
     }
@@ -429,10 +452,11 @@
   let lastActivityText = $derived.by(() => {
     // Touch `now` to re-evaluate on timer ticks
     void now;
-    if (!session?.lastBotActivityTimestamp) return null;
+    const lastActivity = childSurface?.lastBotActivityTimestamp ?? session?.lastBotActivityTimestamp;
+    if (!lastActivity) return null;
     // Don't show during active streaming — the streaming indicator is enough
-    if (session.isStreaming) return null;
-    return formatRelativeTime(session.lastBotActivityTimestamp);
+    if (childSurface?.state.isStreaming ?? session?.isStreaming) return null;
+    return formatRelativeTime(lastActivity);
   });
 </script>
 
@@ -456,13 +480,13 @@
               streaming={entry.streaming}
               messageKey={entry.key}
               {assistantRowUsage}
-              sessionId={session?.sessionId ?? ''}
+              sessionId={childSurface?.childSessionId ?? session?.sessionId ?? ''}
               abandonedBranchCount={alternateCount(entry)}
               manager={Boolean(source || managerTranscript)}
               {readOnly}
               store={branchTreeStore}
               onRedo={source || readOnly || managerTranscript ? undefined : handleRedo}
-              onFork={source || readOnly || managerTranscript ? undefined : handleFork}
+              onFork={source || childSurface || readOnly || managerTranscript ? undefined : handleFork}
             />
           {/if}
         </div>
@@ -489,7 +513,7 @@
         <div class="sticky-host" style={listClientWidth ? `--band-w: ${listClientWidth}px` : undefined}>
           <StickyUserPreview
             message={stickyEntry.message}
-            sessionId={session.sessionId}
+            sessionId={childSurface?.childSessionId ?? session.sessionId}
             abandonedBranchCount={alternateCount(stickyEntry)}
             manager={Boolean(source || managerTranscript)}
             {readOnly}
@@ -513,7 +537,7 @@
   {/if}
 
   <!-- Floating abort button (mobile only) -->
-  {#if !source && session?.isStreaming && !readOnly}
+  {#if !source && (childSurface?.state.isStreaming || session?.isStreaming) && !readOnly}
     <button
       class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 absolute right-3 bottom-3 z-10 flex items-center justify-center rounded-full p-3 shadow-lg transition-colors md:hidden"
       onpointerdown={(e) => e.preventDefault()}

@@ -20,8 +20,15 @@
   let open = $state(false);
 
   let session = $derived(sessionRegistry.viewed);
-  let contextDisplay = $derived(getContextDisplay(session));
-  let contextTone = $derived(getContextTone(session?.contextUsage?.percent));
+  let child = $derived(sessionRegistry.viewedSubagentAttachment);
+  let childNode = $derived.by(() => {
+    const rootId = sessionRegistry.viewedSessionId;
+    const path = rootId ? sessionRegistry.getSelectedSubagentPath?.(rootId) : null;
+    return rootId && path ? sessionRegistry.getSubagentNode?.(rootId, path) : null;
+  });
+  let contextPercent = $derived(child?.contextUsage?.percent ?? childNode?.contextFill ?? session?.contextUsage?.percent);
+  let contextDisplay = $derived(child ? (contextPercent === null || contextPercent === undefined ? null : `${Math.round(contextPercent)}%`) : getContextDisplay(session));
+  let contextTone = $derived(getContextTone(contextPercent));
 
   let connectionLabel = $derived(connection.phaseLabel);
 
@@ -92,25 +99,27 @@
           <ThinkingPicker />
         </div>
 
-        {#if serverCapabilities.voice}
+        {#if !child && serverCapabilities.voice}
           <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
             <span class="text-muted-foreground">Voice call</span>
             <CallButton sessionId={session?.sessionId} variant="dialog-row" onAction={() => (open = false)} />
           </div>
         {/if}
 
-        <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
-          <span class="text-muted-foreground">Folder instructions</span>
-          <Button
-            variant="ghost"
-            class="gap-1.5"
-            disabled={connection.status !== 'connected' || !session?.folderPath || session.isRestoring || session.sessionId.startsWith('pending-')}
-            onclick={() => void openFolderInstructions()}
-          >
-            <FilePen class="size-4" />
-            Edit AGENTS.md
-          </Button>
-        </div>
+        {#if !child}
+          <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
+            <span class="text-muted-foreground">Folder instructions</span>
+            <Button
+              variant="ghost"
+              class="gap-1.5"
+              disabled={connection.status !== 'connected' || !session?.folderPath || session.isRestoring || session.sessionId.startsWith('pending-')}
+              onclick={() => void openFolderInstructions()}
+            >
+              <FilePen class="size-4" />
+              Edit AGENTS.md
+            </Button>
+          </div>
+        {/if}
 
         {#if contextDisplay}
           <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
@@ -121,30 +130,34 @@
           </div>
         {/if}
 
-        {#if session}
+        {#if child}
+          {#if childNode?.usage}<div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
+              <span class="text-muted-foreground">Cost</span><span>${childNode.usage.cost.toFixed(2)}</span>
+            </div>{/if}
+        {:else if session}
           <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
             <span class="text-muted-foreground">Cost</span>
             <CostBreakdownPopover totalCostUsd={session.lifetimeCostUsd} breakdown={session.usageBreakdown} contextLabel="Session" />
           </div>
         {/if}
 
-        {#if session?.gitBranch}
+        {#if !child && session?.gitBranch}
           <div class="border-border/60 flex items-start justify-between gap-3 border-t px-3 py-3">
             <span class="text-muted-foreground">Git branch</span>
             <span class="max-w-[60%] min-w-0 truncate text-right font-medium">{session.gitBranch}</span>
           </div>
         {/if}
 
-        {#if session?.isStreaming || session?.isCompacting}
+        {#if child?.state.isStreaming || child?.state.isCompacting || session?.isStreaming || session?.isCompacting}
           <div class="border-border/60 flex items-start justify-between gap-3 border-t px-3 py-3">
             <span class="text-muted-foreground">Runtime</span>
             <div class="flex flex-wrap justify-end gap-1.5 text-xs">
-              {#if session?.isStreaming}
+              {#if child?.state.isStreaming || (!child && session?.isStreaming)}
                 <span class="inline-flex items-center rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-600 dark:text-emerald-400"
                   >Streaming</span
                 >
               {/if}
-              {#if session?.isCompacting}
+              {#if child?.state.isCompacting || (!child && session?.isCompacting)}
                 <span class="inline-flex items-center rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-600 dark:text-amber-400"
                   >Compacting…</span
                 >

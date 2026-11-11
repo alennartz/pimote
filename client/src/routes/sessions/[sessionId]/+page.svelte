@@ -99,7 +99,7 @@
     }
   });
 
-  let inCall = $derived(voiceCallStore.state.phase !== 'idle' && voiceCallStore.state.sessionId === sessionRegistry.viewedSessionId);
+  let inCall = $derived(!sessionRegistry.viewedSubagentAttachment && voiceCallStore.state.phase !== 'idle' && voiceCallStore.state.sessionId === sessionRegistry.viewedSessionId);
 
   function killConflicts() {
     const sessionId = sessionRegistry.viewedSessionId;
@@ -140,7 +140,7 @@
         <button class="border-destructive/30 hover:bg-destructive/20 rounded border px-3 py-1 text-xs font-medium" onclick={() => dismissConflicts()}> Dismiss </button>
       </div>
     {/if}
-    <MessageList />
+    <MessageList child={sessionRegistry.viewedSubagentAttachment} />
     <InlineSelect />
     <PendingSteeringMessages />
     <ActiveSessionBar />

@@ -11,33 +11,26 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import BrainCog from '@lucide/svelte/icons/brain-cog';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
-  import { connection } from '$lib/stores/connection.svelte.js';
 
-  // The server owns the per-model capability list and its display order.
-  let levels = $derived(sessionRegistry.viewed?.availableThinkingLevels ?? []);
+  let child = $derived(sessionRegistry.viewedSubagentAttachment);
+  let rootSessionId = $derived(sessionRegistry.viewedSessionId);
+  let levels = $derived(child?.state.availableThinkingLevels ?? sessionRegistry.viewed?.availableThinkingLevels ?? []);
+  let selectedLevel = $derived(child?.state.thinkingLevel ?? sessionRegistry.viewed?.thinkingLevel ?? 'off');
 
-  let selectedLevel = $derived(sessionRegistry.viewed?.thinkingLevel ?? 'off');
+  function activePath(): import('@pimote/shared').AgentPath | null {
+    return rootSessionId ? (sessionRegistry.getSelectedSubagentPath?.(rootSessionId) ?? null) : null;
+  }
 
-  // Send command when local selection changes from store value
-  $effect(() => {
-    const viewedLevel = sessionRegistry.viewed?.thinkingLevel ?? 'off';
-    if (selectedLevel !== viewedLevel && sessionRegistry.viewed?.sessionId) {
-      const sid = sessionRegistry.viewed.sessionId;
-      const level = selectedLevel;
-      connection
-        .send({
-          type: 'set_thinking_level',
-          sessionId: sid,
-          level,
-        })
-        .then((res) => {
-          if (res.success) {
-            const session = sessionRegistry.sessions[sid];
-            if (session) session.thinkingLevel = level;
-          }
-        });
-    }
-  });
+  function chooseLevel(level: string): void {
+    const rootId = rootSessionId;
+    const path = activePath();
+    if (!rootId || (child && !path)) return;
+    void sessionRegistry.sendSurfaceCommand(rootId, child ? path : null, { type: 'set_thinking_level', level }).then((res) => {
+      if (!res.success) return;
+      if (child) child.state = { ...child.state, thinkingLevel: level };
+      else if (sessionRegistry.sessions[rootId]) sessionRegistry.sessions[rootId].thinkingLevel = level;
+    });
+  }
 
   function labelFor(level: string): string {
     return level.charAt(0).toUpperCase() + level.slice(1);
@@ -46,15 +39,15 @@
 
 <DropdownMenu>
   <DropdownMenuTrigger>
-    <Button variant="ghost" size="xs" class="text-muted-foreground gap-1" title="Thinking level: {sessionRegistry.viewed?.thinkingLevel ?? 'off'}">
+    <Button variant="ghost" size="xs" class="text-muted-foreground gap-1" title="Thinking level: {selectedLevel}">
       <BrainCog class="size-3" />
-      <span class="text-xs">{labelFor(sessionRegistry.viewed?.thinkingLevel ?? 'off')}</span>
+      <span class="text-xs">{labelFor(selectedLevel)}</span>
     </Button>
   </DropdownMenuTrigger>
   <DropdownMenuContent align="start" class="min-w-36">
     <DropdownMenuLabel>Thinking Level</DropdownMenuLabel>
     <DropdownMenuSeparator />
-    <DropdownMenuRadioGroup bind:value={selectedLevel}>
+    <DropdownMenuRadioGroup bind:value={selectedLevel} onValueChange={(value) => chooseLevel(value)}>
       {#each levels as level (level)}
         <DropdownMenuRadioItem value={level}>
           {labelFor(level)}

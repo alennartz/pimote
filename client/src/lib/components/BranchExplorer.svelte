@@ -179,7 +179,9 @@
     if (!sessionId) return;
     const result = await branchTreeStore.navigate(selectedId, compactionPromptValue === undefined ? undefined : { compactionPrompt: compactionPromptValue });
     if (result && !result.cancelled && typeof result.editorText === 'string') {
-      sessionRegistry.setDraftText(sessionId, result.editorText);
+      const surface = branchTreeStore.state.surface;
+      if (surface) sessionRegistry.setSubagentDraftText(surface.rootSessionId, surface.path, result.editorText);
+      else sessionRegistry.setDraftText(sessionId, result.editorText);
     }
   }
 

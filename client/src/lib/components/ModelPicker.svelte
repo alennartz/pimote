@@ -16,7 +16,6 @@
   import Loader2 from '@lucide/svelte/icons/loader-2';
   import { untrack } from 'svelte';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
-  import { connection } from '$lib/stores/connection.svelte.js';
   import { fuzzyFilter } from '$lib/fuzzy.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import type { SessionMeta } from '@pimote/shared';
@@ -35,6 +34,20 @@
   let contentElement: HTMLDivElement | null = $state(null);
 
   let filteredModels = $derived(fuzzyFilter(models, filterQuery, (model) => `${model.provider}/${model.name} ${model.id}`));
+  let child = $derived(sessionRegistry.viewedSubagentAttachment);
+  let rootSessionId = $derived(sessionRegistry.viewedSessionId);
+  let activeModel = $derived(child?.state.model ?? sessionRegistry.viewed?.model);
+
+  function activePath(): import('@pimote/shared').AgentPath | null {
+    return rootSessionId ? (sessionRegistry.getSelectedSubagentPath?.(rootSessionId) ?? null) : null;
+  }
+
+  function sendSurface(command: Record<string, unknown>): Promise<import('@pimote/shared').PimoteResponse> {
+    const rootId = rootSessionId;
+    const path = activePath();
+    if (!rootId || (child && !path)) return Promise.reject(new Error('No session surface is open'));
+    return sessionRegistry.sendSurfaceCommand(rootId, child ? path : null, command);
+  }
 
   // Group filtered models by provider.
   let grouped = $derived.by(() => {
@@ -77,12 +90,11 @@
     if (loading) return;
     loading = true;
     try {
-      const sessionId = sessionRegistry.viewed?.sessionId;
-      if (!sessionId) {
+      if (!rootSessionId || (child && !activePath())) {
         loading = false;
         return;
       }
-      const res = await connection.send({ type: 'get_available_models', sessionId });
+      const res = await sendSurface({ type: 'get_available_models' });
       if (res.success && res.data) {
         const arr = (res.data as { models?: unknown }).models;
         if (Array.isArray(arr)) {
@@ -97,42 +109,41 @@
   }
 
   async function selectModel(model: AvailableModel) {
-    const sessionId = sessionRegistry.viewed?.sessionId;
-    if (!sessionId) return;
-    const res = await connection.send({
+    if (!rootSessionId || (child && !activePath())) return;
+    const res = await sendSurface({
       type: 'set_model',
-      sessionId,
       provider: model.provider,
       modelId: model.id,
     });
-    if (res.success) {
-      const session = sessionRegistry.sessions[sessionId];
-      if (session) {
-        const state = res.data as {
-          model: { provider: string; id: string; name: string } | null;
-          thinkingLevel: string;
-          availableThinkingLevels: string[];
+    if (res.success && res.data) {
+      const state = res.data as {
+        model: { provider: string; id: string; name: string } | null;
+        thinkingLevel: string;
+        availableThinkingLevels: string[];
+      };
+      if (!child) {
+        const session = sessionRegistry.sessions[rootSessionId];
+        if (session) {
+          session.model = state.model ?? { provider: model.provider, id: model.id, name: model.name };
+          session.thinkingLevel = state.thinkingLevel;
+          session.availableThinkingLevels = state.availableThinkingLevels;
+        }
+      } else {
+        child.state = {
+          ...child.state,
+          model: state.model ?? { provider: model.provider, id: model.id, name: model.name },
+          thinkingLevel: state.thinkingLevel,
+          availableThinkingLevels: state.availableThinkingLevels,
         };
-        session.model = state.model ?? { provider: model.provider, id: model.id, name: model.name };
-        // Changing models can clamp the current thinking level and changes the
-        // capabilities exposed by the thinking-level picker. Apply the
-        // server-authoritative values from the set_model response together.
-        session.thinkingLevel = state.thinkingLevel;
-        session.availableThinkingLevels = state.availableThinkingLevels;
       }
-      // Context window / token capacity is model-specific, so refresh meta now.
-      // Otherwise the displayed capacity stays stale until the next agent turn
-      // (which is the only other thing that refetches get_session_meta).
-      const metaRes = await connection.send({ type: 'get_session_meta', sessionId });
-      if (metaRes.success && metaRes.data) {
-        sessionRegistry.updateMeta(sessionId, (metaRes.data as { meta: SessionMeta }).meta);
-      }
+      const metaRes = await sendSurface({ type: 'get_session_meta' });
+      if (!child && metaRes.success && metaRes.data) sessionRegistry.updateMeta(rootSessionId, (metaRes.data as { meta: SessionMeta }).meta);
     }
     open = false;
   }
 
   function isSelected(model: AvailableModel): boolean {
-    return sessionRegistry.viewed?.model?.provider === model.provider && sessionRegistry.viewed?.model?.id === model.id;
+    return activeModel?.provider === model.provider && activeModel?.id === model.id;
   }
 </script>
 
@@ -142,10 +153,10 @@
       variant="ghost"
       size="xs"
       class="text-muted-foreground max-w-48 gap-1 truncate"
-      title={sessionRegistry.viewed?.model ? `${sessionRegistry.viewed.model.provider}/${sessionRegistry.viewed.model.name}` : 'No model selected'}
+      title={activeModel ? `${activeModel.provider}/${activeModel.name}` : 'No model selected'}
     >
       <span class="truncate text-xs">
-        {sessionRegistry.viewed?.model?.name ?? 'No model'}
+        {activeModel?.name ?? 'No model'}
       </span>
       <ChevronDown class="size-3 shrink-0" />
     </Button>

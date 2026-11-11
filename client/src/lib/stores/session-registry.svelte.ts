@@ -114,6 +114,14 @@ export interface SubagentAttachmentState {
   incarnation: string;
   childSessionId: string;
   state: SessionState;
+  /** Child-local meta is kept beside the native state so inspectors and
+   *  surface controls never need to promote a child into `sessions`. */
+  contextUsage: { percent: number | null; contextWindow: number } | null;
+  lifetimeCostUsd: number;
+  usageBreakdown?: PimoteUsageBreakdown;
+  lastBotActivityTimestamp: string | null;
+  messageKeys: string[];
+  bashExecutions: Record<string, BashExecutionState>;
   messages: PimoteAgentMessage[];
   /** Alias kept for consumers that call the saved transcript `transcript`. */
   transcript: PimoteAgentMessage[];
@@ -149,7 +157,13 @@ export interface SubagentViewClosedNotice {
   readonly rootSessionId: string;
   readonly path: AgentPath;
   readonly reason: SubagentAttachmentCloseReason;
+  /** Last known node metadata, when the provider supplied it before removal. */
+  readonly node?: SubagentNodeSnapshot;
 }
+
+export type ViewedSurface =
+  | { readonly kind: 'root'; readonly rootSessionId: string; readonly session: PerSessionState }
+  | { readonly kind: 'child'; readonly rootSessionId: string; readonly path: AgentPath; readonly attachment: SubagentAttachmentState };
 
 interface PendingNewSessionRequest {
   folderPath: string;
@@ -375,9 +389,12 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     attachment.state = cloneSessionState(full.state);
     attachment.messages = [...full.messages];
     attachment.transcript = attachment.messages;
+    attachment.messageKeys = attachment.messages.map((_, index) => `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${index}`);
+    attachment.bashExecutions = {};
     attachment.streamingMessage = full.streamingMessage ? { ...full.streamingMessage, content: full.streamingMessage.content.map((block) => ({ ...block })) } : null;
     attachment.runningToolCallIds = [...(full.runningToolCallIds ?? [])];
     attachment.toolExecutions = {};
+    attachment.bashExecutions = {};
     return;
   }
   switch (event.type) {
@@ -430,6 +447,7 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
       const end = event as MessageEndEvent;
       attachment.messages = [...attachment.messages, end.message];
       attachment.transcript = attachment.messages;
+      attachment.messageKeys = [...attachment.messageKeys, `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.messages.length - 1}`];
       attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
       attachment.streamingMessage = null;
       break;
@@ -437,7 +455,19 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     case 'custom_entry': {
       attachment.messages = [...attachment.messages, (event as CustomEntryEvent).message];
       attachment.transcript = attachment.messages;
+      attachment.messageKeys = [...attachment.messageKeys, `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.messages.length - 1}`];
       attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
+      break;
+    }
+    case 'bash_execution_update': {
+      const update = event as BashExecutionUpdateEvent;
+      const running = Object.values(attachment.bashExecutions).find((execution) => execution.status === 'running' && (!update.id || execution.id === update.id));
+      if (running) {
+        attachment.bashExecutions = {
+          ...attachment.bashExecutions,
+          [running.id]: { ...running, output: running.output + update.delta },
+        };
+      }
       break;
     }
     case 'tool_execution_start': {
@@ -757,6 +787,35 @@ export class SessionRegistry {
     return path ? copyAgentPath(path) : null;
   }
 
+  /** The currently selected child surface for one root, if it is still live. */
+  getSelectedSubagentAttachment(rootSessionId: string): SubagentAttachmentState | null {
+    const path = this.getSelectedSubagentPath(rootSessionId);
+    if (!path) return null;
+    const attachment = this.getSubagentAttachment(rootSessionId, path);
+    return attachment && !attachment.closed ? attachment : null;
+  }
+
+  /** Root or selected child surface for the current conversation. */
+  get viewedSurface(): ViewedSurface | null {
+    const rootSessionId = this.viewedSessionId;
+    const session = rootSessionId ? this.sessions[rootSessionId] : undefined;
+    if (!rootSessionId || !session) return null;
+    const attachment = this.getSelectedSubagentAttachment(rootSessionId);
+    if (!attachment) return { kind: 'root', rootSessionId, session };
+    return { kind: 'child', rootSessionId, path: copyAgentPath(attachment.path), attachment };
+  }
+
+  get viewedSubagentAttachment(): SubagentAttachmentState | null {
+    const surface = this.viewedSurface;
+    return surface?.kind === 'child' ? surface.attachment : null;
+  }
+
+  /** Return the hierarchy node for an attached child, including metadata that
+   *  is not present on the borrowed native session snapshot. */
+  getSubagentNode(rootSessionId: string, path: AgentPath): SubagentNodeSnapshot | null {
+    return this.subagentRoots[rootSessionId]?.nodes.find((node) => sameAgentPath(node.path, path)) ?? null;
+  }
+
   selectSubagentView(rootSessionId: string, path: AgentPath | null): void {
     this.selectedSubagentPaths[rootSessionId] = path ? copyAgentPath(path) : null;
   }
@@ -773,6 +832,42 @@ export class SessionRegistry {
 
   getSubagentDraftText(rootSessionId: string, path: AgentPath): string {
     return this.getSubagentAttachment(rootSessionId, path)?.draftText ?? '';
+  }
+
+  startSubagentBash(rootSessionId: string, path: AgentPath, execution: Pick<BashExecutionState, 'id' | 'command' | 'excludeFromContext'>): void {
+    const attachment = this.getSubagentAttachment(rootSessionId, path);
+    if (!attachment || attachment.closed) return;
+    attachment.bashExecutions = {
+      ...attachment.bashExecutions,
+      [execution.id]: { ...execution, output: '', status: 'running' },
+    };
+  }
+
+  completeSubagentBash(rootSessionId: string, path: AgentPath, id: string, result: BashResult): void {
+    const attachment = this.getSubagentAttachment(rootSessionId, path);
+    const execution = attachment?.bashExecutions[id];
+    if (!attachment || !execution) return;
+    attachment.bashExecutions = {
+      ...attachment.bashExecutions,
+      [id]: { ...execution, output: result.output, status: result.cancelled ? 'cancelled' : 'complete', result },
+    };
+  }
+
+  failSubagentBash(rootSessionId: string, path: AgentPath, id: string, error: string): void {
+    const attachment = this.getSubagentAttachment(rootSessionId, path);
+    const execution = attachment?.bashExecutions[id];
+    if (!attachment || !execution) return;
+    attachment.bashExecutions = { ...attachment.bashExecutions, [id]: { ...execution, status: 'error', error } };
+  }
+
+  addSubagentOptimisticUserMessage(rootSessionId: string, path: AgentPath, text: string): void {
+    const attachment = this.getSubagentAttachment(rootSessionId, path);
+    if (!attachment || attachment.closed) return;
+    const message: PimoteAgentMessage = { role: 'user', content: text ? [{ type: 'text', text }] : [] };
+    attachment.messages = [...attachment.messages, message];
+    attachment.transcript = attachment.messages;
+    attachment.messageKeys = [...attachment.messageKeys, `child-${rootSessionId}-${JSON.stringify(path)}-${attachment.messages.length - 1}`];
+    attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
   }
 
   /** Keep attachments alive while a socket reconnects. The server preserves
@@ -809,12 +904,12 @@ export class SessionRegistry {
     }
   }
 
-  private notifySubagentClosed(rootSessionId: string, path: AgentPath, reason: SubagentAttachmentCloseReason): void {
+  private notifySubagentClosed(rootSessionId: string, path: AgentPath, reason: SubagentAttachmentCloseReason, node?: SubagentNodeSnapshot): void {
     const selected = this.selectedSubagentPaths[rootSessionId];
     if (selected && (sameAgentPath(selected, path) || pathStartsWith(path, selected))) {
       this.selectedSubagentPaths[rootSessionId] = null;
     }
-    const notice: SubagentViewClosedNotice = { rootSessionId, path: copyAgentPath(path), reason };
+    const notice: SubagentViewClosedNotice = { rootSessionId, path: copyAgentPath(path), reason, ...(node ? { node } : {}) };
     for (const listener of [...this.subagentViewListeners]) {
       try {
         listener(notice);
@@ -824,11 +919,16 @@ export class SessionRegistry {
     }
   }
 
-  private closeSubagentAttachment(root: SubagentRootState, attachment: SubagentAttachmentState, reason: SubagentAttachmentCloseReason): void {
-    if (attachment.closed) return;
+  private closeSubagentAttachment(root: SubagentRootState, attachment: SubagentAttachmentState, reason: SubagentAttachmentCloseReason, node?: SubagentNodeSnapshot): void {
+    if (attachment.closed) {
+      // A topology removal is more specific than an unavailable snapshot that
+      // raced it. Update the stored reason without emitting a duplicate notice.
+      if (reason === 'teardown') attachment.closeReason = reason;
+      return;
+    }
     attachment.closed = true;
     attachment.closeReason = reason;
-    this.notifySubagentClosed(root.rootSessionId, attachment.path, reason);
+    this.notifySubagentClosed(root.rootSessionId, attachment.path, reason, node);
   }
 
   private createSubagentAttachment(rootSessionId: string, snapshot: SubagentViewSnapshot): SubagentAttachmentState {
@@ -841,6 +941,11 @@ export class SessionRegistry {
       incarnation: snapshot.incarnation,
       childSessionId: snapshot.childSessionId,
       state,
+      contextUsage: null,
+      lifetimeCostUsd: 0,
+      lastBotActivityTimestamp: null,
+      messageKeys: messages.map((_, index) => `child-${rootSessionId}-${JSON.stringify(snapshot.path)}-${index}`),
+      bashExecutions: {},
       messages,
       transcript: messages,
       streamingMessage: snapshot.streamingMessage ? { ...snapshot.streamingMessage, content: snapshot.streamingMessage.content.map((block) => ({ ...block })) } : null,
@@ -861,7 +966,7 @@ export class SessionRegistry {
     const persisted = persistedSemanticEvents(attachment.childSessionId, attachment.messages);
     const seen = new SvelteSet<string>();
     const events: WireSubagentSemanticEvent[] = [];
-    for (const event of [...persisted, ...attachment.semanticEvents]) {
+    for (const event of [...persisted, ...root.semanticEvents, ...attachment.semanticEvents]) {
       if (seen.has(event.eventId)) continue;
       seen.add(event.eventId);
       events.push(event);
@@ -1143,7 +1248,7 @@ export class SessionRegistry {
       const removedPath = event.data.node.path;
       root.nodes = root.nodes.filter((node) => !pathStartsWith(removedPath, node.path));
       for (const attachment of Object.values(root.attachments)) {
-        if (pathStartsWith(removedPath, attachment.path)) this.closeSubagentAttachment(root, attachment, 'teardown');
+        if (pathStartsWith(removedPath, attachment.path)) this.closeSubagentAttachment(root, attachment, 'teardown', event.data.node);
       }
     }
   }
@@ -1184,6 +1289,8 @@ export class SessionRegistry {
     attachment.state = cloneSessionState(snapshot.state);
     attachment.messages = [...(snapshot.messages ?? [])];
     attachment.transcript = attachment.messages;
+    attachment.messageKeys = attachment.messages.map((_, index) => `child-${snapshot.sessionId}-${JSON.stringify(snapshot.path)}-${index}`);
+    attachment.bashExecutions = {};
     attachment.streamingMessage = snapshot.streamingMessage ? { ...snapshot.streamingMessage, content: snapshot.streamingMessage.content.map((block) => ({ ...block })) } : null;
     attachment.runningToolCallIds = [...(snapshot.runningToolCallIds ?? [])];
     attachment.viewCursor = snapshot.viewCursor;
@@ -1192,10 +1299,11 @@ export class SessionRegistry {
     attachment.closed = false;
     attachment.closeReason = undefined;
     attachment.semanticEvents = persistedSemanticEvents(snapshot.childSessionId, attachment.messages);
+    attachment.bashExecutions = {};
     attachment.semanticReduction = EMPTY_SEMANTIC_REDUCTION;
     attachment.semanticTranscript = [];
     root.attachments[key] = attachment;
-    const staged = root.pendingViewEvents[key] ?? [];
+    const staged = (root.pendingViewEvents[key] ?? []).filter((pending) => pending.attachmentGeneration === snapshot.attachmentGeneration);
     delete root.pendingViewEvents[key];
     this.rebuildSubagentAttachmentSemantic(root, attachment);
     for (const pending of staged.sort((left, right) => left.viewCursor - right.viewCursor)) this.applySubagentViewEvent(pending);
@@ -1211,10 +1319,14 @@ export class SessionRegistry {
       return;
     }
     if (attachment.closed || attachment.attachmentGeneration !== event.attachmentGeneration || (event.incarnation && attachment.incarnation !== event.incarnation)) return;
-    if (event.viewCursor <= attachment.observerCursor) return;
-    attachment.viewCursor = event.viewCursor;
-    attachment.observerCursor = event.viewCursor;
+    const ephemeral = !('cursor' in event.event) || typeof event.event.cursor !== 'number';
+    if (event.viewCursor < attachment.observerCursor || (event.viewCursor === attachment.observerCursor && !ephemeral)) return;
+    attachment.viewCursor = Math.max(attachment.viewCursor, event.viewCursor);
+    attachment.observerCursor = Math.max(attachment.observerCursor, event.viewCursor);
     applyChildNativeEvent(attachment, event.event);
+    if ('timestamp' in event.event && typeof (event.event as { timestamp?: unknown }).timestamp === 'string') {
+      attachment.lastBotActivityTimestamp = (event.event as { timestamp: string }).timestamp;
+    }
     if (event.event.type === 'subagent_event') {
       const semantic = event.event as unknown as WireSubagentSemanticEvent;
       if (!attachment.semanticEvents.some((candidate) => candidate.eventId === semantic.eventId)) attachment.semanticEvents = [...attachment.semanticEvents, semantic];
@@ -1224,7 +1336,9 @@ export class SessionRegistry {
 
   private applySubagentViewClosed(event: SubagentViewClosedEvent): void {
     const root = this.ensureSubagentRoot(event.sessionId);
-    const attachment = root.attachments[subagentPathKey(event.path)];
+    const key = subagentPathKey(event.path);
+    root.pendingViewEvents[key] = (root.pendingViewEvents[key] ?? []).filter((pending) => pending.attachmentGeneration !== event.attachmentGeneration);
+    const attachment = root.attachments[key];
     if (!attachment || attachment.attachmentGeneration !== event.attachmentGeneration) return;
     this.closeSubagentAttachment(root, attachment, event.reason);
   }
@@ -2122,10 +2236,23 @@ export class SessionRegistry {
     if (running) return running;
     const operation = connection
       .send({ type: 'subagent_open_view', sessionId: rootSessionId, path: copyAgentPath(path) })
-      .then((response) => {
+      .then(async (response) => {
         if (!response.success || !response.data) return null;
         const attachment = this.applySubagentOpenResponse(rootSessionId, response.data as SubagentOpenViewResponseData);
-        if (attachment) this.selectSubagentView(rootSessionId, attachment.path);
+        if (attachment) {
+          this.selectSubagentView(rootSessionId, attachment.path);
+          try {
+            const commands = await this.sendSubagentCommand(rootSessionId, attachment.path, { type: 'get_commands' });
+            if (commands.success && commands.data)
+              commandStore.setCommands(
+                `${rootSessionId}\u0000${subagentPathKey(attachment.path)}`,
+                (commands.data as { commands: import('@pimote/shared').CommandInfo[] }).commands ?? [],
+              );
+          } catch {
+            // The child snapshot remains usable when completion metadata races
+            // a reconnect. The next explicit open refreshes the list.
+          }
+        }
         return attachment;
       })
       .catch((error) => {
@@ -2155,6 +2282,7 @@ export class SessionRegistry {
       if (!response.success) return false;
       const root = this.subagentRoots[rootSessionId];
       if (root) this.closeSubagentAttachment(root, attachment, 'released');
+      if (sameAgentPath(this.getSelectedSubagentPath(rootSessionId), path)) this.selectSubagentView(rootSessionId, null);
       connection.clearSubagentViewCursor(rootSessionId, path);
       return true;
     } catch (error) {
@@ -2163,18 +2291,94 @@ export class SessionRegistry {
     }
   }
 
+  async teardownSubagentView(rootSessionId: string, path: AgentPath, incarnation: string, attachmentGeneration?: string): Promise<PimoteResponse> {
+    return connection.send({
+      type: 'subagent_teardown',
+      sessionId: rootSessionId,
+      path: copyAgentPath(path),
+      incarnation,
+      ...(attachmentGeneration !== undefined ? { attachmentGeneration } : {}),
+    } as PimoteCommand);
+  }
+
+  async resurrectSubagent(request: {
+    rootSessionId: string;
+    savedSessionId: string;
+    parentPath: AgentPath;
+    localId: string;
+    task: string;
+    channels: readonly string[];
+    model?: string;
+  }): Promise<PimoteResponse> {
+    return connection.send({
+      type: 'subagent_resurrect',
+      sessionId: request.rootSessionId,
+      savedSessionId: request.savedSessionId,
+      parentPath: copyAgentPath(request.parentPath),
+      localId: request.localId,
+      task: request.task,
+      channels: [...request.channels],
+      ...(request.model !== undefined && request.model.trim() ? { model: request.model.trim() } : {}),
+    } as PimoteCommand);
+  }
+
   /** Dispatch an identity-preserving child operation with its guarded view
    * identity. The caller supplies the unprefixed surface command fields. */
-  sendSubagentCommand(rootSessionId: string, path: AgentPath, command: Record<string, unknown>): Promise<PimoteResponse> {
+  async sendSubagentCommand(rootSessionId: string, path: AgentPath, command: Record<string, unknown>): Promise<PimoteResponse> {
     const attachment = this.getSubagentAttachment(rootSessionId, path);
     if (!attachment || attachment.closed) return Promise.reject(new Error('child view is closed'));
-    return connection.send({
-      ...command,
+    const { sessionId: _sessionId, path: _path, incarnation: _incarnation, attachmentGeneration: _generation, type: commandType, ...payload } = command;
+    const type = typeof commandType === 'string' && commandType.startsWith('subagent_') ? commandType : `subagent_${String(commandType)}`;
+    const response = await connection.send({
+      ...payload,
+      type,
       sessionId: rootSessionId,
       path: attachment.path,
       incarnation: attachment.incarnation,
       attachmentGeneration: attachment.attachmentGeneration,
     } as PimoteCommand);
+    this.applySubagentCommandResponse(attachment, String(commandType), response);
+    return response;
+  }
+
+  /** Send a root command or an allowlisted child command without making the
+   *  caller know which surface is selected. */
+  sendSurfaceCommand(rootSessionId: string, path: AgentPath | null, command: Record<string, unknown>): Promise<PimoteResponse> {
+    if (path && path.length > 0) return this.sendSubagentCommand(rootSessionId, path, command);
+    return connection.send({ ...command, sessionId: rootSessionId } as PimoteCommand);
+  }
+
+  private applySubagentCommandResponse(attachment: SubagentAttachmentState, commandType: string, response: PimoteResponse): void {
+    if (!response.success || !response.data || typeof response.data !== 'object') return;
+    const data = response.data as Record<string, unknown>;
+    const stateValue = data.state;
+    if (stateValue && typeof stateValue === 'object') {
+      attachment.state = cloneSessionState(stateValue as SessionState);
+      return;
+    }
+    if (commandType === 'set_model' && 'model' in data) {
+      attachment.state = {
+        ...attachment.state,
+        model: (data.model as SessionState['model']) ?? null,
+        thinkingLevel: typeof data.thinkingLevel === 'string' ? data.thinkingLevel : attachment.state.thinkingLevel,
+        availableThinkingLevels: Array.isArray(data.availableThinkingLevels) ? [...(data.availableThinkingLevels as string[])] : attachment.state.availableThinkingLevels,
+      };
+    } else if (commandType === 'set_thinking_level' && typeof data.level === 'string') {
+      attachment.state = { ...attachment.state, thinkingLevel: data.level };
+    }
+    if (commandType === 'get_session_meta' && data.meta && typeof data.meta === 'object') {
+      const meta = data.meta as Partial<SessionMeta>;
+      if (meta.contextUsage) attachment.contextUsage = meta.contextUsage;
+      if (typeof meta.lifetimeCostUsd === 'number') attachment.lifetimeCostUsd = meta.lifetimeCostUsd;
+      if (meta.usageBreakdown !== undefined) attachment.usageBreakdown = meta.usageBreakdown;
+    }
+    if (commandType === 'get_messages' && Array.isArray(data.messages)) {
+      attachment.messages = [...(data.messages as PimoteAgentMessage[])];
+      attachment.transcript = attachment.messages;
+      attachment.messageKeys = attachment.messages.map((_, index) => `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${index}`);
+      attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
+      this.rebuildSubagentAttachmentSemantic(this.subagentRoots[attachment.rootSessionId] ?? this.ensureSubagentRoot(attachment.rootSessionId), attachment);
+    }
   }
 }
 

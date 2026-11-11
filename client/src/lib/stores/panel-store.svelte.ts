@@ -9,6 +9,37 @@ export class PanelStore {
 
   /** Desktop sidepane visibility. Cards stay in the store while collapsed. */
   collapsed: boolean = $state(false);
+  /** The panel host switches to a drawer when its conversation container is narrow. */
+  presentation: 'sidebar' | 'drawer' = $state('sidebar');
+  /** Drawer visibility is separate from desktop collapse so child views can close it. */
+  open: boolean = $state(true);
+  containerWidth: number = $state(Number.POSITIVE_INFINITY);
+
+  get isDrawer(): boolean {
+    return this.presentation === 'drawer';
+  }
+
+  /** Measure the host container, not the viewport. */
+  setContainerWidth(width: number): void {
+    if (!Number.isFinite(width)) return;
+    this.containerWidth = width;
+    const drawer = width <= 620;
+    this.presentation = drawer ? 'drawer' : 'sidebar';
+    if (drawer) this.open = false;
+    else if (!this.collapsed) this.open = true;
+  }
+
+  openPanel(): void {
+    this.open = true;
+  }
+
+  closePanel(): void {
+    this.open = false;
+  }
+
+  togglePanel(): void {
+    this.open = !this.open;
+  }
 
   get hasCards(): boolean {
     return this.cards.length > 0;
@@ -23,6 +54,7 @@ export class PanelStore {
 
   toggleCollapsed(): void {
     this.collapsed = !this.collapsed;
+    if (this.presentation === 'sidebar') this.open = !this.collapsed;
   }
 
   /** Clear all cards (e.g., when active session changes). */

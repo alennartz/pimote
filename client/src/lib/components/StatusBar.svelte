@@ -35,28 +35,58 @@
           : 'bg-red-500',
   );
 
-  let contextPercent = $derived(sessionRegistry.viewed?.contextUsage?.percent);
+  let activeChild = $derived(sessionRegistry.viewedSubagentAttachment);
+  let activeNode = $derived.by(() => {
+    const rootId = sessionRegistry.viewedSessionId;
+    const path = rootId ? sessionRegistry.getSelectedSubagentPath?.(rootId) : null;
+    return rootId && path ? sessionRegistry.getSubagentNode?.(rootId, path) : null;
+  });
+  let isChildSurface = $derived(Boolean(activeChild));
+  let contextPercent = $derived(activeChild?.contextUsage?.percent ?? activeNode?.contextFill ?? sessionRegistry.viewed?.contextUsage?.percent);
 
-  let contextDisplay = $derived(getContextDisplay(sessionRegistry.viewed));
+  let contextDisplay = $derived(
+    activeChild ? (contextPercent === null || contextPercent === undefined ? null : `${Math.round(contextPercent)}%`) : getContextDisplay(sessionRegistry.viewed),
+  );
 
   let contextColor = $derived(
     getContextTone(contextPercent) === 'critical' ? 'text-red-400' : getContextTone(contextPercent) === 'warning' ? 'text-amber-400' : 'text-muted-foreground',
   );
 
-  let sessionDisplayName = $derived(getSessionDisplayName(sessionRegistry.viewed));
+  let sessionDisplayName = $derived(activeNode ? activeNode.path.join('/') : getSessionDisplayName(sessionRegistry.viewed));
+  let hasHierarchy = $derived(Boolean(sessionRegistry.viewedSessionId && (sessionRegistry.subagentRoots?.[sessionRegistry.viewedSessionId]?.nodes.length ?? 0) > 0));
+
+  async function closeChildSurface(): Promise<void> {
+    const rootId = sessionRegistry.viewedSessionId;
+    const path = rootId ? sessionRegistry.getSelectedSubagentPath?.(rootId) : null;
+    if (!rootId || !path) return;
+    await sessionRegistry.closeSubagentView?.(rootId, path);
+    sessionRegistry.selectSubagentView?.(rootId, null);
+  }
 </script>
 
 <div class="border-border bg-muted/30 text-muted-foreground shrink-0 border-b text-xs">
   <div class="flex h-9 items-center gap-1 px-2">
-    <!-- Back to dashboard -->
-    <button
-      class="text-muted-foreground hover:text-foreground hover:bg-accent flex size-7 shrink-0 items-center justify-center rounded-md transition-colors"
-      title="Back to dashboard"
-      aria-label="Back to dashboard"
-      onclick={() => sessionRegistry.goHome()}
-    >
-      <House class="size-4" />
-    </button>
+    <!-- Root navigation stays available on the root surface. Child views close
+         explicitly and return to the root without changing the URL. -->
+    {#if isChildSurface}
+      <button
+        class="text-muted-foreground hover:text-foreground hover:bg-accent flex size-7 shrink-0 items-center justify-center rounded-md transition-colors"
+        title="Close child view"
+        aria-label="Close child view"
+        onclick={() => void closeChildSurface()}
+      >
+        ×
+      </button>
+    {:else}
+      <button
+        class="text-muted-foreground hover:text-foreground hover:bg-accent flex size-7 shrink-0 items-center justify-center rounded-md transition-colors"
+        title="Back to dashboard"
+        aria-label="Back to dashboard"
+        onclick={() => sessionRegistry.goHome()}
+      >
+        <House class="size-4" />
+      </button>
+    {/if}
 
     <Separator orientation="vertical" class="mx-0.5 h-4" />
 
@@ -68,7 +98,9 @@
     <!-- Thinking level picker -->
     <ThinkingPicker />
 
-    {#if !sessionDisplayName}
+    {#if isChildSurface}
+      <div class="text-muted-foreground min-w-0 flex-1 truncate text-xs">{sessionDisplayName}</div>
+    {:else if !sessionDisplayName}
       <div class="flex-1"></div>
     {:else}
       <Separator orientation="vertical" class="mx-0.5 h-4" />
@@ -101,12 +133,14 @@
     {/if}
 
     <!-- Session cost -->
-    {#if sessionRegistry.viewed}
+    {#if isChildSurface}
+      {#if activeNode?.usage}<span class="text-muted-foreground" title="Child cost">${activeNode.usage.cost.toFixed(2)}</span>{/if}
+    {:else if sessionRegistry.viewed}
       <CostBreakdownPopover totalCostUsd={sessionRegistry.viewed.lifetimeCostUsd} breakdown={sessionRegistry.viewed.usageBreakdown} contextLabel="Session" />
     {/if}
 
-    <!-- Git branch -->
-    {#if sessionRegistry.viewed?.gitBranch}
+    <!-- Git branch (root only) -->
+    {#if !isChildSurface && sessionRegistry.viewed?.gitBranch}
       <span class="text-muted-foreground flex items-center gap-1" title="Git branch">
         <GitBranch class="size-3" />
         <span class="max-w-[8rem] truncate">{sessionRegistry.viewed.gitBranch}</span>
@@ -115,30 +149,32 @@
       <Separator orientation="vertical" class="mx-0.5 h-4" />
     {/if}
 
-    {#if sessionRegistry.viewed?.downloads.length}
+    {#if !isChildSurface && sessionRegistry.viewed?.downloads.length}
       <Separator orientation="vertical" class="mx-0.5 h-4" />
       <DownloadInbox />
     {/if}
 
-    <Button
-      variant="ghost"
-      size="xs"
-      class="text-muted-foreground hover:text-foreground gap-1"
-      title="Edit folder AGENTS.md"
-      aria-label="Edit folder AGENTS.md"
-      disabled={connection.status !== 'connected' ||
-        !sessionRegistry.viewed?.folderPath ||
-        sessionRegistry.viewed.isRestoring ||
-        sessionRegistry.viewed.sessionId.startsWith('pending-')}
-      onclick={() => void fileEditorStore.openFolderInstructions(sessionRegistry.viewed!.folderPath)}
-    >
-      <FilePen class="size-3" />
-      AGENTS.md
-    </Button>
+    {#if !isChildSurface}
+      <Button
+        variant="ghost"
+        size="xs"
+        class="text-muted-foreground hover:text-foreground gap-1"
+        title="Edit folder AGENTS.md"
+        aria-label="Edit folder AGENTS.md"
+        disabled={connection.status !== 'connected' ||
+          !sessionRegistry.viewed?.folderPath ||
+          sessionRegistry.viewed.isRestoring ||
+          sessionRegistry.viewed.sessionId.startsWith('pending-')}
+        onclick={() => void fileEditorStore.openFolderInstructions(sessionRegistry.viewed!.folderPath)}
+      >
+        <FilePen class="size-3" />
+        AGENTS.md
+      </Button>
 
-    <!-- Voice call button (hidden when the server has voice disabled) -->
-    {#if serverCapabilities.voice}
-      <CallButton sessionId={sessionRegistry.viewed?.sessionId} />
+      <!-- Voice call button (hidden when the server has voice disabled) -->
+      {#if serverCapabilities.voice}
+        <CallButton sessionId={sessionRegistry.viewed?.sessionId} />
+      {/if}
     {/if}
 
     <!-- Streaming indicator -->
@@ -188,20 +224,20 @@
       <span class="text-xs">{connectionLabel}</span>
     </div>
 
-    <!-- Sidepane toggle (widgets) -->
-    {#if panelStore.hasCards}
+    <!-- Hierarchy-first panel toggle -->
+    {#if panelStore.hasCards || hasHierarchy}
       <Separator orientation="vertical" class="mx-0.5 h-4" />
       <button
         type="button"
         class="text-muted-foreground hover:text-foreground hover:bg-accent relative flex size-7 shrink-0 items-center justify-center rounded-md transition-colors"
-        title={panelStore.collapsed ? 'Show widgets' : 'Hide widgets'}
-        aria-label={panelStore.collapsed ? 'Show widgets' : 'Hide widgets'}
-        aria-pressed={!panelStore.collapsed}
-        onclick={() => panelStore.toggleCollapsed()}
+        title={panelStore.isDrawer ? (panelStore.open ? 'Hide panels' : 'Show panels') : panelStore.collapsed ? 'Show panels' : 'Hide panels'}
+        aria-label={panelStore.isDrawer ? (panelStore.open ? 'Hide panels' : 'Show panels') : panelStore.collapsed ? 'Show panels' : 'Hide panels'}
+        aria-pressed={panelStore.isDrawer ? panelStore.open : !panelStore.collapsed}
+        onclick={() => (panelStore.isDrawer ? panelStore.togglePanel() : panelStore.toggleCollapsed())}
       >
         <PanelRight class="size-4" />
         <span class="bg-primary text-primary-foreground absolute -top-1 -right-1 min-w-4 rounded-full px-1 text-center text-[10px] leading-4 font-medium">
-          {panelStore.cards.length}
+          {hasHierarchy ? (sessionRegistry.subagentRoots[sessionRegistry.viewedSessionId!]?.nodes.length ?? 0) : panelStore.cards.length}
         </span>
       </button>
     {/if}

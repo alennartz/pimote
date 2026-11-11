@@ -10,11 +10,14 @@
     mode: 'command' | 'args' | 'fileRefs';
     sessionId: string;
     commandName: string;
+    /** Surface-local completion keeps child command allowlists on the server. */
+    completeArgs?: (commandName: string, prefix: string) => Promise<AutocompleteResponseItem[]>;
+    completeFileRefs?: (prefix: string) => Promise<AutocompleteResponseItem[]>;
     onselect: (item: { name: string; value?: string; label?: string; description?: string }) => void;
     ondismiss: () => void;
   }
 
-  let { items, query, visible, mode, sessionId, commandName, onselect, ondismiss }: Props = $props();
+  let { items, query, visible, mode, sessionId, commandName, completeArgs, completeFileRefs, onselect, ondismiss }: Props = $props();
 
   let filteredCommands = $derived.by(() => {
     if (mode !== 'command') return [];
@@ -36,6 +39,14 @@
     serverDebounceTimer = setTimeout(async () => {
       const seq = ++serverRequestSeq;
       try {
+        if (currentMode === 'fileRefs' && completeFileRefs) {
+          serverItems = await completeFileRefs(currentQuery);
+          return;
+        }
+        if (currentMode === 'args' && completeArgs) {
+          serverItems = await completeArgs(currentCommandName, currentQuery);
+          return;
+        }
         const res = await (currentMode === 'fileRefs'
           ? connection.send({
               type: 'complete_file_refs',

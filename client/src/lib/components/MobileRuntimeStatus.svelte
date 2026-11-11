@@ -11,8 +11,10 @@
   let chips = $derived.by(() => {
     const next: StatusChip[] = [];
     const session = sessionRegistry.viewed;
+    const child = sessionRegistry.viewedSubagentAttachment;
+    const isCompacting = child?.state.isCompacting ?? session?.isCompacting;
 
-    if (session?.isCompacting) {
+    if (isCompacting) {
       next.push({
         label: 'Compacting…',
         className: 'border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400',

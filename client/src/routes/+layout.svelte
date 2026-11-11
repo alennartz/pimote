@@ -42,8 +42,11 @@
   import { page } from '$app/state';
 
   let { children } = $props();
-  let panelOpen = $state(false);
+  let appShellEl: HTMLDivElement | undefined = $state();
   let appHeight = $state('100dvh');
+  let activeSubagentRoot = $derived(sessionRegistry.viewedSessionId ? sessionRegistry.subagentRoots[sessionRegistry.viewedSessionId] : null);
+  let hasHierarchy = $derived((activeSubagentRoot?.nodes.length ?? 0) > 0);
+  let hasPanels = $derived(panelStore.hasCards || hasHierarchy);
 
   // The registry drives the URL (lib/nav.ts); this closes the loop the other
   // way for the home route. Only the session route adopts its param, so
@@ -125,6 +128,14 @@
 
     scheduleAppHeightUpdate();
 
+    const resizePanelHost = () => {
+      const width = appShellEl?.getBoundingClientRect().width;
+      if (width !== undefined) panelStore.setContainerWidth(width);
+    };
+    resizePanelHost();
+    const panelResizeObserver = typeof ResizeObserver !== 'undefined' && appShellEl ? new ResizeObserver(resizePanelHost) : null;
+    if (panelResizeObserver && appShellEl) panelResizeObserver.observe(appShellEl);
+
     const viewport = window.visualViewport;
     viewport?.addEventListener('resize', scheduleAppHeightUpdate);
     viewport?.addEventListener('scroll', scheduleAppHeightUpdate);
@@ -204,6 +215,7 @@
       window.removeEventListener('focusin', scheduleAppHeightUpdate);
       window.removeEventListener('focusout', scheduleAppHeightUpdate);
       if (delayedAppHeightUpdate) clearTimeout(delayedAppHeightUpdate);
+      panelResizeObserver?.disconnect();
       window.removeEventListener('focus', sendFocusState);
       window.removeEventListener('blur', sendFocusState);
       document.removeEventListener('visibilitychange', sendFocusState);
@@ -231,15 +243,9 @@
   $effect(() => {
     document.title = browserTitle;
   });
-
-  $effect(() => {
-    if (!panelStore.hasCards && panelOpen) {
-      panelOpen = false;
-    }
-  });
 </script>
 
-<div class="bg-background flex overflow-hidden" style={`height: ${appHeight};`}>
+<div bind:this={appShellEl} class="bg-background flex overflow-hidden" style={`height: ${appHeight};`}>
   <!-- Main content -->
   <div class="flex flex-1 flex-col overflow-hidden">
     <NotificationBanner />
@@ -302,15 +308,16 @@
         <DownloadInbox variant="mobile" />
       {/if}
 
-      {#if panelStore.hasCards}
+      {#if hasPanels && panelStore.isDrawer}
         <button
           class="text-muted-foreground hover:text-foreground border-border bg-background relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg border"
-          onclick={() => (panelOpen = true)}
-          title="Open panel"
+          onclick={() => panelStore.openPanel()}
+          title="Open panels"
+          aria-label="Open panels"
         >
           <PanelRight class="size-4" />
           <span class="bg-primary text-primary-foreground absolute -top-1 -right-1 min-w-4 rounded-full px-1 text-center text-[10px] leading-4 font-medium">
-            {panelStore.cards.length}
+            {hasHierarchy ? (activeSubagentRoot?.nodes.length ?? 0) : panelStore.cards.length}
           </span>
         </button>
       {/if}
@@ -334,23 +341,27 @@
     <ExtensionStatus />
   </div>
 
-  <!-- Desktop panel (flex sibling of main content) -->
-  {#if panelStore.hasCards && !panelStore.collapsed}
-    <div class="hidden md:flex md:flex-col">
+  <!-- Hierarchy-first panel host. A child hierarchy keeps the host present even
+       when no SDK cards exist. The width is measured on the app container in the
+       layout observer, not from the viewport media query. -->
+  {#if hasPanels && panelStore.presentation === 'sidebar' && !panelStore.collapsed}
+    <div class="flex min-h-0 shrink-0 flex-col">
       <Panel />
     </div>
   {/if}
 
-  <!-- Mobile panel overlay -->
-  {#if panelStore.hasCards && panelOpen}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="fixed inset-0 z-30 bg-black/50 md:hidden" onclick={() => (panelOpen = false)} onkeydown={(e) => e.key === 'Escape' && (panelOpen = false)}></div>
-    <div class="fixed inset-y-0 right-0 z-40 flex flex-col md:hidden">
-      <Panel />
+  <!-- Narrow containers use a dismissible drawer. Opening a child closes it. -->
+  {#if hasPanels && panelStore.presentation === 'drawer' && panelStore.open}
+    <div
+      class="fixed inset-0 z-30 bg-black/50"
+      role="presentation"
+      onclick={() => panelStore.closePanel()}
+      onkeydown={(event) => event.key === 'Escape' && panelStore.closePanel()}
+    ></div>
+    <div class="fixed inset-y-0 right-0 z-40 flex min-h-0 flex-col" data-panel-drawer>
+      <Panel onClose={() => panelStore.closePanel()} />
     </div>
   {/if}
-
-  <!-- Mobile panel opener now lives in the mobile header to avoid bottom-right control collisions. -->
 
   <!-- Download offer prompt (global overlay) -->
   <DownloadToast />

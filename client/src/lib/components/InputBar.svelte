@@ -5,7 +5,7 @@
   import { commandStore } from '$lib/stores/command-store.svelte.js';
   import { consumeSharedImages, editorTextRequest, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
   import { getExtensionUiQueue } from '$lib/stores/extension-ui-queue.svelte.js';
-  import { branchTreeStore } from '$lib/stores/branch-tree-store.svelte.js';
+  import { branchTreeStore, type BranchTreeSurface } from '$lib/stores/branch-tree-store.svelte.js';
   import { loginStore } from '$lib/stores/login-store.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import CommandAutocomplete from './CommandAutocomplete.svelte';
@@ -23,6 +23,7 @@
   let autocompleteRef: CommandAutocomplete | undefined = $state();
   const uiQueue = getExtensionUiQueue();
   let lastViewedSessionId: string | null | undefined;
+  let lastViewedSurfaceKey: string | null | undefined;
   let sessionBeforePending: string | null = null;
   let pendingFocusOrigin: Element | null = null;
 
@@ -30,9 +31,14 @@
   let stagedImages = $state<string[]>([]);
   let dragOver = $state(false);
 
-  const noSession = $derived(sessionRegistry.viewedSessionId === null);
-  const isPending = $derived(sessionRegistry.viewedSessionId?.startsWith('pending-') ?? false);
-  const canSend = $derived(!noSession && !isPending && connection.ready);
+  const activeChild = $derived(sessionRegistry.viewedSubagentAttachment);
+  const rootSessionId = $derived(sessionRegistry.viewedSessionId);
+  const activeChildPath = $derived(rootSessionId ? sessionRegistry.getSelectedSubagentPath?.(rootSessionId) : null);
+  const activeSurfaceKey = $derived(activeChild && rootSessionId && activeChildPath ? `${rootSessionId}\u0000${JSON.stringify(activeChildPath)}` : (rootSessionId ?? ''));
+  const childSurfaceRef: BranchTreeSurface | null = $derived(activeChild && rootSessionId && activeChildPath ? { rootSessionId, path: [...activeChildPath] } : null);
+  const noSession = $derived(rootSessionId === null);
+  const isPending = $derived(rootSessionId?.startsWith('pending-') ?? false);
+  const canSend = $derived(!noSession && !isPending && connection.ready && (!activeChild || !activeChild.closed));
   const hasContent = $derived(inputText.trim().length > 0 || stagedImages.length > 0);
   // A leading bang switches the composer into shell-command mode. Keep this
   // separate from parsing so the feedback appears as soon as the prefix is
@@ -48,7 +54,25 @@
 
   // The composer owns /new locally, so pi's command stays out of the list —
   // every command shown here still dispatches to the agent.
-  const commandItems = $derived(commandStore.getCommands(sessionRegistry.viewedSessionId ?? '').filter((command) => command.name !== 'new'));
+  const commandItems = $derived(commandStore.getCommands(activeSurfaceKey).filter((command) => activeChild || command.name !== 'new'));
+
+  function setSurfaceDraft(text: string): void {
+    if (activeChild && rootSessionId && activeChildPath) sessionRegistry.setSubagentDraftText(rootSessionId, activeChildPath, text);
+    else if (sessionRegistry.viewed) sessionRegistry.viewed.draftText = text;
+  }
+
+  function getSurfaceDraft(): string {
+    return activeChild && rootSessionId && activeChildPath ? sessionRegistry.getSubagentDraftText(rootSessionId, activeChildPath) : (sessionRegistry.viewed?.draftText ?? '');
+  }
+
+  function sendSurface(command: Record<string, unknown>): Promise<import('@pimote/shared').PimoteResponse> {
+    if (!rootSessionId || (activeChild && !activeChildPath)) return Promise.reject(new Error('No session surface is open'));
+    return sessionRegistry.sendSurfaceCommand(rootSessionId, activeChild ? activeChildPath : null, command);
+  }
+
+  function surfaceStreaming(): boolean {
+    return activeChild?.state.isStreaming ?? sessionRegistry.viewed?.isStreaming ?? false;
+  }
 
   const autocompleteQuery = $derived.by(() => {
     if (!autocompleteVisible) return '';
@@ -69,9 +93,12 @@
   // Tracks viewedSessionId; reads draftText untracked so keystrokes don't re-trigger.
   $effect(() => {
     const sessionId = sessionRegistry.viewedSessionId;
+    const surfaceKey = activeSurfaceKey;
     const previousId = lastViewedSessionId;
+    const previousSurfaceKey = lastViewedSurfaceKey;
     lastViewedSessionId = sessionId;
-    inputText = untrack(() => sessionRegistry.viewed?.draftText ?? '');
+    lastViewedSurfaceKey = surfaceKey;
+    inputText = untrack(() => getSurfaceDraft());
     stagedImages = [];
     autocompleteVisible = false;
     selectedCommand = null;
@@ -85,7 +112,9 @@
       return;
     }
 
-    if (previousId == null) {
+    if (activeChild && previousSurfaceKey !== surfaceKey) {
+      if (document.activeElement === document.body) focusOnSessionOpen(surfaceKey, document.activeElement);
+    } else if (previousId == null) {
       if (document.activeElement === document.body) focusOnSessionOpen(sessionId, document.activeElement);
     } else if (untrack(() => !!sessionRegistry.sessions[previousId])) {
       focusOnSessionOpen(sessionId, document.activeElement);
@@ -262,7 +291,7 @@
 
     void tick().then(() => {
       if (
-        sessionRegistry.viewedSessionId !== sessionId ||
+        (sessionRegistry.viewedSessionId !== sessionId && activeSurfaceKey !== sessionId) ||
         untrack(isMobileViewport) ||
         uiQueue.hasRequestForSession(sessionId) ||
         branchTreeStore.state.open ||
@@ -302,16 +331,14 @@
       const ie = e as InputEvent;
       if (ie.inputType === 'insertText' && ie.data === '/' && textareaEl.selectionStart === 1 && inputText.length > 1 && inputText[1] !== ' ') {
         inputText = '/ ' + inputText.slice(1);
-        if (sessionRegistry.viewed) sessionRegistry.viewed.draftText = inputText;
+        setSurfaceDraft(inputText);
         tick().then(() => {
           textareaEl!.selectionStart = textareaEl!.selectionEnd = 1;
         });
       }
     }
 
-    if (sessionRegistry.viewed) {
-      sessionRegistry.viewed.draftText = inputText;
-    }
+    setSurfaceDraft(inputText);
     updateAutocomplete();
     autoResize();
     restoreTextareaFocus(captureTextareaFocus());
@@ -328,9 +355,7 @@
       selectedCommand = null;
       fileRefPrefix = null;
       if (!preserveImages) stagedImages = [];
-      if (sessionRegistry.viewedSessionId === sessionId) {
-        sessionRegistry.sessions[sessionId]!.draftText = '';
-      }
+      if (sessionRegistry.viewedSessionId === sessionId) setSurfaceDraft('');
       if (messageTextareaEl) messageTextareaEl.style.height = 'auto';
       if (bashTextareaEl) bashTextareaEl.style.height = 'auto';
       restoreTextareaFocus(focusSnapshot);
@@ -338,14 +363,15 @@
 
     function restoreSubmittedComposer(sessionId: string, draft: string, images: string[], clientMessageId?: string, preserveImages = false): void {
       const session = sessionRegistry.sessions[sessionId];
-      if (!session || session.draftText !== '') return;
+      const surfaceDraft = getSurfaceDraft();
+      if (activeChild ? activeChild.closed || surfaceDraft !== '' : !session || session.draftText !== '') return;
       // A later optimistic prompt owns the empty composer. Do not put an older
       // failed submission back on top of it.
-      if (clientMessageId && session.optimisticEntries.some((entry) => entry.clientMessageId !== clientMessageId)) return;
+      if (clientMessageId && session && session.optimisticEntries.some((entry) => entry.clientMessageId !== clientMessageId)) return;
       const retainedImages = preserveImages && stagedImages.length === images.length && stagedImages.every((image, index) => image === images[index]);
       if (sessionRegistry.viewedSessionId === sessionId && (inputText !== '' || (!preserveImages && stagedImages.length > 0) || (preserveImages && !retainedImages))) return;
 
-      session.draftText = draft;
+      setSurfaceDraft(draft);
       if (sessionRegistry.viewedSessionId !== sessionId) return;
       inputText = draft;
       if (!preserveImages) stagedImages = [...images];
@@ -358,14 +384,22 @@
     const parsedBash = parseBangBashCommand(text);
     if (parsedBash) {
       const session = sessionRegistry.viewed;
-      if (!session) return;
+      if (!session || !rootSessionId) return;
       const sessionId = session.sessionId;
       const id = crypto.randomUUID();
-      sessionRegistry.startBash(sessionId, {
-        id,
-        command: parsedBash.command,
-        excludeFromContext: parsedBash.excludeFromContext,
-      });
+      if (activeChild && activeChildPath) {
+        sessionRegistry.startSubagentBash(rootSessionId, activeChildPath, {
+          id,
+          command: parsedBash.command,
+          excludeFromContext: parsedBash.excludeFromContext,
+        });
+      } else {
+        sessionRegistry.startBash(sessionId, {
+          id,
+          command: parsedBash.command,
+          excludeFromContext: parsedBash.excludeFromContext,
+        });
+      }
 
       // Clear the submitted draft immediately. Staged images intentionally stay
       // attached to the next prompt; bang commands never consume prompt images.
@@ -373,27 +407,26 @@
       autocompleteVisible = false;
       selectedCommand = null;
       fileRefPrefix = null;
-      if (sessionRegistry.viewed?.sessionId === sessionId) {
-        sessionRegistry.viewed.draftText = '';
-      }
+      if (sessionRegistry.viewed?.sessionId === sessionId) setSurfaceDraft('');
       if (textareaEl) {
         textareaEl.style.height = 'auto';
       }
       restoreTextareaFocus(focusSnapshot);
 
       try {
-        const response = await connection.send({
+        const response = await sendSurface({
           type: 'bash',
           id,
-          sessionId,
           command: parsedBash.command,
           excludeFromContext: parsedBash.excludeFromContext,
         });
         const data = response.data as BashResponseData | undefined;
         if (response.success && data?.result) {
-          sessionRegistry.completeBash(sessionId, id, data.result);
+          if (activeChild && activeChildPath) sessionRegistry.completeSubagentBash(rootSessionId, activeChildPath, id, data.result);
+          else sessionRegistry.completeBash(sessionId, id, data.result);
         } else {
-          sessionRegistry.failBash(sessionId, id, response.error ?? 'Bash command failed');
+          if (activeChild && activeChildPath) sessionRegistry.failSubagentBash(rootSessionId, activeChildPath, id, response.error ?? 'Bash command failed');
+          else sessionRegistry.failBash(sessionId, id, response.error ?? 'Bash command failed');
         }
       } catch (error) {
         if (isConnectionLossError(error)) {
@@ -404,7 +437,8 @@
           console.warn('Bash command outcome unknown after connection loss; awaiting reconnect:', error);
         } else {
           const message = error instanceof Error ? error.message : String(error);
-          sessionRegistry.failBash(sessionId, id, message);
+          if (activeChild && activeChildPath) sessionRegistry.failSubagentBash(rootSessionId, activeChildPath, id, message);
+          else sessionRegistry.failBash(sessionId, id, message);
           console.error('Failed to send bash command:', error);
         }
       }
@@ -414,14 +448,12 @@
     // Own `/new` locally — it names this client flow, not a pi prompt: start
     // a fresh session in this folder and drop the old one from the user's
     // open-session list on every device.
-    if (/^\/new(?:\s|$)/.test(text)) {
+    if (!activeChild && /^\/new(?:\s|$)/.test(text)) {
       const sessionId = sessionRegistry.viewed?.sessionId;
       inputText = '';
       autocompleteVisible = false;
       selectedCommand = null;
-      if (sessionRegistry.viewed) {
-        sessionRegistry.viewed.draftText = '';
-      }
+      setSurfaceDraft('');
       if (textareaEl) {
         textareaEl.style.height = 'auto';
       }
@@ -433,14 +465,12 @@
     // Intercept the bare `/login` and `/logout` commands client-side: open the
     // providers dialog instead of sending a prompt to the agent. Both open the
     // same picker — tap a provider to log in, tap "Log out" to sign out.
-    if (text === '/login' || text === '/logout') {
+    if (!activeChild && (text === '/login' || text === '/logout')) {
       void loginStore.open();
       inputText = '';
       autocompleteVisible = false;
       selectedCommand = null;
-      if (sessionRegistry.viewed) {
-        sessionRegistry.viewed.draftText = '';
-      }
+      setSurfaceDraft('');
       if (textareaEl) {
         textareaEl.style.height = 'auto';
       }
@@ -451,26 +481,25 @@
     // Intercept `/compact` — triggers manual context compaction with optional
     // custom instructions (e.g. `/compact focus on file diffs and decisions`).
     if (/^\/compact(?:\s|$)/.test(text)) {
-      const originatingSessionId = sessionRegistry.viewed?.sessionId;
+      const originatingSessionId = rootSessionId;
       if (!originatingSessionId) return;
       const submittedDraft = inputText;
+      const originatingChild = activeChild;
       const customInstructions = text.slice('/compact'.length).trim() || undefined;
       try {
-        const response = await connection.send({
-          type: 'compact',
-          sessionId: originatingSessionId,
-          customInstructions,
-        });
+        const response = await sendSurface({ type: 'compact', customInstructions });
         if (!response.success) {
           console.error('Compact rejected:', response.error);
           return;
         }
 
         const originatingSession = sessionRegistry.sessions[originatingSessionId];
-        if (originatingSession?.draftText === submittedDraft) {
+        if (originatingChild) {
+          if (originatingChild.draftText === submittedDraft) originatingChild.draftText = '';
+        } else if (originatingSession?.draftText === submittedDraft) {
           originatingSession.draftText = '';
         }
-        if (!originatingSession || sessionRegistry.viewedSessionId !== originatingSessionId || inputText !== submittedDraft) return;
+        if ((!originatingChild && !originatingSession) || sessionRegistry.viewedSessionId !== originatingSessionId || inputText !== submittedDraft) return;
 
         inputText = '';
         autocompleteVisible = false;
@@ -483,19 +512,19 @@
       return;
     }
 
-    if (sessionRegistry.viewed?.isStreaming) {
+    if (surfaceStreaming()) {
       // Steer the current generation with text and staged images. Image-only
       // steering stays disabled because this branch requires text.
       if (!text) return;
-      const sessionId = sessionRegistry.viewed.sessionId;
+      const sessionId = rootSessionId!;
       const submittedDraft = inputText;
       const submittedImages = [...stagedImages];
       const isSlashCommand = text.startsWith('/');
       // Show the pending pill and clear the submitted draft before the
       // round-trip. Slash input waits for pi's command handling or
       // queue_update: a command may run instead of queueing.
-      const showPill = !isSlashCommand;
-      if (showPill) sessionRegistry.viewed.pendingSteeringMessages.push(text);
+      const showPill = !isSlashCommand && !activeChild;
+      if (showPill && sessionRegistry.viewed) sessionRegistry.viewed.pendingSteeringMessages.push(text);
       clearSubmittedComposer(sessionId, isSlashCommand);
       // Remove the pill when pi will not queue the text. A queued text needs
       // no cleanup: pi's queue_update snapshot already replaced the list.
@@ -506,17 +535,8 @@
       };
       try {
         const dispatchResponse = isSlashCommand
-          ? await connection.send({
-              type: 'prompt',
-              sessionId,
-              message: text,
-            })
-          : await connection.send({
-              type: 'steer',
-              sessionId,
-              message: text,
-              ...(submittedImages.length > 0 ? { images: submittedImages } : {}),
-            });
+          ? await sendSurface({ type: 'prompt', message: text })
+          : await sendSurface({ type: 'steer', message: text, ...(submittedImages.length > 0 ? { images: submittedImages } : {}) });
         if (!dispatchResponse.success) {
           dropPill();
           restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, undefined, isSlashCommand);
@@ -524,10 +544,14 @@
         } else {
           const promptData = dispatchResponse.data as Record<string, unknown> | undefined;
           if (promptData?.tree) {
-            void branchTreeStore.open(sessionId, {
-              tree: promptData.tree as import('@pimote/shared').PimoteTreeNode[],
-              currentLeafId: (promptData.currentLeafId as string) ?? null,
-            });
+            void branchTreeStore.open(
+              sessionId,
+              {
+                tree: promptData.tree as import('@pimote/shared').PimoteTreeNode[],
+                currentLeafId: (promptData.currentLeafId as string) ?? null,
+              },
+              childSurfaceRef,
+            );
           } else if ((dispatchResponse.data as PromptResponseData | undefined)?.outcome !== 'queued') {
             dropPill();
           }
@@ -540,25 +564,27 @@
     } else {
       // Send a new prompt (text and/or images)
       if (!text && stagedImages.length === 0) return;
-      const sessionId = sessionRegistry.viewed!.sessionId;
+      const sessionId = rootSessionId!;
       const submittedDraft = inputText;
       const submittedImages = [...stagedImages];
       // Show the user message and clear the submitted draft before the
       // round-trip. Slash input renders on its echo only: extension commands
       // never echo, and skill or template expansion echoes different text.
       const clientMessageId = text.startsWith('/') ? undefined : crypto.randomUUID();
-      if (clientMessageId) sessionRegistry.addOptimisticUserMessage(sessionId, text, clientMessageId);
+      if (clientMessageId) {
+        if (activeChild && activeChildPath) sessionRegistry.addSubagentOptimisticUserMessage(sessionId, activeChildPath, text);
+        else sessionRegistry.addOptimisticUserMessage(sessionId, text, clientMessageId);
+      }
       clearSubmittedComposer(sessionId);
       try {
-        const promptResponse = await connection.send({
+        const promptResponse = await sendSurface({
           type: 'prompt',
-          sessionId,
           message: text,
           ...(submittedImages.length > 0 ? { images: submittedImages } : {}),
           ...(clientMessageId ? { clientMessageId } : {}),
         });
         if (!promptResponse.success) {
-          if (clientMessageId) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+          if (clientMessageId && !activeChild) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
           restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, clientMessageId);
           console.error('Prompt rejected:', promptResponse.error);
         } else {
@@ -569,14 +595,14 @@
               tree: promptData.tree as import('@pimote/shared').PimoteTreeNode[],
               currentLeafId: (promptData.currentLeafId as string) ?? null,
             });
-          } else if (clientMessageId && (promptData as PromptResponseData | undefined)?.outcome !== 'started') {
+          } else if (clientMessageId && !activeChild && (promptData as PromptResponseData | undefined)?.outcome !== 'started') {
             // Only a started prompt echoes a stamped user message. A queued
             // prompt shows in the steering queue and echoes unstamped later.
             sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
           }
         }
       } catch (e) {
-        if (clientMessageId) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+        if (clientMessageId && !activeChild) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
         restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, clientMessageId);
         console.error('Failed to send prompt:', e);
       }
@@ -584,8 +610,16 @@
   }
 
   function handleAbort() {
-    const sessionId = sessionRegistry.viewedSessionId;
-    if (sessionId) void abortSession(sessionId);
+    const sessionId = rootSessionId;
+    if (!sessionId) return;
+    if (activeChild && activeChildPath) {
+      void sessionRegistry.sendSubagentCommand(sessionId, activeChildPath, {
+        type: 'abort',
+        expectedSessionId: activeChild.childSessionId,
+      });
+    } else {
+      void abortSession(sessionId);
+    }
   }
 
   function handleAutocompleteSelect(item: { name: string; value?: string; label?: string; description?: string }) {
@@ -646,10 +680,20 @@
         }
       });
     }
-    if (sessionRegistry.viewed) {
-      sessionRegistry.viewed.draftText = inputText;
-    }
+    setSurfaceDraft(inputText);
     autoResize();
+  }
+
+  async function completeSurfaceArgs(commandName: string, prefix: string): Promise<import('@pimote/shared').AutocompleteResponseItem[]> {
+    const response = await sendSurface({ type: 'complete_args', commandName, prefix });
+    if (!response.success || !response.data) return [];
+    return (response.data as { items?: import('@pimote/shared').AutocompleteResponseItem[] }).items ?? [];
+  }
+
+  async function completeSurfaceFileRefs(prefix: string): Promise<import('@pimote/shared').AutocompleteResponseItem[]> {
+    const response = await sendSurface({ type: 'complete_file_refs', prefix });
+    if (!response.success || !response.data) return [];
+    return (response.data as { items?: import('@pimote/shared').AutocompleteResponseItem[] }).items ?? [];
   }
 
   function handleAutocompleteDismiss() {
@@ -665,9 +709,7 @@
     const needsSpace = start === 0 && after.length > 0 && after[0] !== ' ';
     inputText = inputText.slice(0, start) + '/' + (needsSpace ? ' ' : '') + after;
     const cursorPos = start + 1;
-    if (sessionRegistry.viewed) {
-      sessionRegistry.viewed.draftText = inputText;
-    }
+    setSurfaceDraft(inputText);
     handleInput();
     autoResize();
     textareaEl.focus();
@@ -681,8 +723,7 @@
     // Textareas handle Escape themselves so autocomplete keeps precedence and
     // the abort command is sent only once. A window listener covers keyboard
     // focus on every other element in the desktop session view.
-    if (e.key !== 'Escape' || e.defaultPrevented || isMobileViewport() || branchTreeStore.state.open || loginStore.state.flow !== 'idle' || !sessionRegistry.viewed?.isStreaming)
-      return;
+    if (e.key !== 'Escape' || e.defaultPrevented || isMobileViewport() || branchTreeStore.state.open || loginStore.state.flow !== 'idle' || !surfaceStreaming()) return;
     e.preventDefault();
     handleAbort();
   }
@@ -710,7 +751,7 @@
       }
     }
 
-    if (e.key === 'Escape' && sessionRegistry.viewed?.isStreaming) {
+    if (e.key === 'Escape' && surfaceStreaming()) {
       e.preventDefault();
       e.stopPropagation();
       handleAbort();
@@ -729,7 +770,7 @@
 <div class="border-border bg-background relative shrink-0 border-t px-3 pt-2 pb-[max(env(safe-area-inset-bottom),8px)]">
   <div class="mx-auto flex max-w-3xl items-end gap-2">
     <!-- Abort button (desktop only, visible when streaming) -->
-    {#if sessionRegistry.viewed?.isStreaming}
+    {#if surfaceStreaming()}
       <button
         class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 mb-1 hidden shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors md:flex"
         onpointerdown={(e) => e.preventDefault()}
@@ -764,6 +805,8 @@
         mode={autocompleteMode}
         sessionId={sessionRegistry.viewedSessionId ?? ''}
         commandName={selectedCommand?.name ?? ''}
+        completeArgs={activeChild ? completeSurfaceArgs : undefined}
+        completeFileRefs={activeChild ? completeSurfaceFileRefs : undefined}
         onselect={handleAutocompleteSelect}
         ondismiss={handleAutocompleteDismiss}
       />
@@ -798,7 +841,7 @@
         tabindex={isBangCommand ? -1 : 0}
         aria-hidden={isBangCommand}
         rows={1}
-        placeholder={noSession ? 'Open a session to start…' : isPending ? 'Starting session…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
+        placeholder={noSession ? 'Open a session to start…' : isPending ? 'Starting session…' : surfaceStreaming() ? 'Steer the conversation…' : 'Send a message…'}
         autocapitalize="sentences"
         spellcheck={!isMobileViewport()}
         aria-label="Message"
@@ -819,7 +862,7 @@
         tabindex={isBangCommand ? 0 : -1}
         aria-hidden={!isBangCommand}
         rows={1}
-        placeholder={noSession ? 'Open a session to start…' : isPending ? 'Starting session…' : sessionRegistry.viewed?.isStreaming ? 'Steer the conversation…' : 'Send a message…'}
+        placeholder={noSession ? 'Open a session to start…' : isPending ? 'Starting session…' : surfaceStreaming() ? 'Steer the conversation…' : 'Send a message…'}
         autocapitalize="none"
         spellcheck={false}
         aria-label="Bash command"
@@ -833,17 +876,17 @@
       <!-- Send / Steer button (inset in textarea) -->
       <button
         class="absolute right-1.5 bottom-1.5 flex items-center justify-center rounded-lg p-1.5 text-sm font-medium transition-colors
-          {!canSend || (sessionRegistry.viewed?.isStreaming ? !inputText.trim() : !hasContent)
+          {!canSend || (surfaceStreaming() ? !inputText.trim() : !hasContent)
           ? 'text-muted-foreground cursor-not-allowed opacity-50'
-          : sessionRegistry.viewed?.isStreaming
+          : surfaceStreaming()
             ? 'bg-status-streaming text-primary-foreground hover:bg-status-streaming/80 active:bg-status-streaming/70'
             : 'bg-primary text-primary-foreground hover:bg-primary/80 active:bg-primary/70'}"
         onpointerdown={(e) => e.preventDefault()}
         onclick={sendMessage}
-        disabled={!canSend || (sessionRegistry.viewed?.isStreaming ? !inputText.trim() : !hasContent)}
-        title={sessionRegistry.viewed?.isStreaming ? 'Steer' : 'Send'}
+        disabled={!canSend || (surfaceStreaming() ? !inputText.trim() : !hasContent)}
+        title={surfaceStreaming() ? 'Steer' : 'Send'}
       >
-        {#if sessionRegistry.viewed?.isStreaming}
+        {#if surfaceStreaming()}
           <MessageSquare class="size-5" />
         {:else}
           <Send class="size-5" />
