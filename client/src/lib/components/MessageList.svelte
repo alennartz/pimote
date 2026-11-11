@@ -5,6 +5,8 @@
   import type { GetTreeResponseData, PimoteAgentMessage, StreamingMessage, AssistantRowUsage } from '@pimote/shared';
   import { indexToolResultUsage, summarizeAssistantRowUsage } from '$lib/assistant-row-usage.js';
   import type { BashExecutionState, PerSessionState, SubagentAttachmentState } from '$lib/stores/session-registry.svelte.js';
+  import type { SemanticBlock, SemanticBlockAction } from '$lib/subagent-semantic.js';
+  import { semanticBlockHasMessageAnchor } from '$lib/subagent-semantic-rendering.js';
   import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { branchTreeStore, type BranchTreeSurface } from '$lib/stores/branch-tree-store.svelte.js';
@@ -15,7 +17,8 @@
   import { needsDraftPrompt, applyDraftChoice, type DraftChoice } from '$lib/draft-policy.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
-  import Message from './Message.svelte';
+  import Message, { type MessageToolExecution } from './Message.svelte';
+  import SubagentSemanticBlock from './SubagentSemanticBlock.svelte';
   import StickyUserPreview from './StickyUserPreview.svelte';
   import ConversationFindBar from './ConversationFindBar.svelte';
   import BashExecution from './BashExecution.svelte';
@@ -35,8 +38,10 @@
     source?: PerSessionState | null;
     /** Explicit child source. Child state stays outside root sessions and URL routing. */
     child?: SubagentAttachmentState | null;
+    /** Optional action handler for semantic open/recovery controls. */
+    onSemanticAction?: (action: SemanticBlockAction) => void;
   }
-  let { readOnly = false, source = null, child = null }: Props = $props();
+  let { readOnly = false, source = null, child = null, onSemanticAction }: Props = $props();
 
   let childSurface = $derived(child ?? sessionRegistry.viewedSubagentAttachment);
   // The rendered transcript: an explicit source, selected child, or viewed root.
@@ -56,6 +61,29 @@
       ((connection.managerRoot !== null && session.folderPath === connection.managerRoot) || session.projectName === 'manager' || session.folder?.persona?.name === 'manager'),
     ),
   );
+
+  // Semantic facts and tool execution state belong to the selected surface.
+  // Never read the root registry when a child attachment is active.
+  let semanticBlocks = $derived.by((): readonly SemanticBlock[] => {
+    if (childSurface) return childSurface.semanticReduction.blocks;
+    const rootSessionId = session?.sessionId;
+    return rootSessionId ? (sessionRegistry.getSubagentRoot(rootSessionId)?.semanticReduction.blocks ?? []) : [];
+  });
+  let surfaceToolExecutions = $derived.by((): Readonly<Record<string, MessageToolExecution>> => {
+    if (childSurface) return childSurface.toolExecutions;
+    return session?.toolExecutions ?? {};
+  });
+
+  function handleSemanticAction(action: SemanticBlockAction): void {
+    if (onSemanticAction) {
+      onSemanticAction(action);
+      return;
+    }
+    if (action.type !== 'open_view' && action.type !== 'retry') return;
+    const rootSessionId = childSurface?.rootSessionId ?? session?.sessionId;
+    if (!rootSessionId) return;
+    void sessionRegistry.openSubagentView(rootSessionId, action.path);
+  }
 
   // ---- Transcript redo and draft flow ----
 
@@ -381,6 +409,18 @@
     return entries;
   });
 
+  /** Events without native provenance render once after the saved transcript. */
+  let unanchoredSemanticBlocks = $derived.by(() => {
+    if (!session || semanticBlocks.length === 0) return [] as readonly SemanticBlock[];
+    const surfaceSessionId = childSurface?.childSessionId ?? session.sessionId;
+    const visibleMessages = displayEntries
+      .filter((entry): entry is Extract<DisplayEntry, { kind: 'message' }> => entry.kind === 'message')
+      .map((entry) => entry.message as PimoteAgentMessage);
+    return semanticBlocks.filter(
+      (block) => block.relatedPiEvents.length === 0 && !visibleMessages.some((message) => semanticBlockHasMessageAnchor(block, message, surfaceSessionId)),
+    );
+  });
+
   let toolResultUsageIndex = $derived.by(() => indexToolResultUsage(session?.messages ?? []));
 
   function getAssistantRowUsage(entry: Extract<DisplayEntry, { kind: 'message' }>): AssistantRowUsage | null {
@@ -484,11 +524,20 @@
               abandonedBranchCount={alternateCount(entry)}
               manager={Boolean(source || managerTranscript)}
               {readOnly}
+              {semanticBlocks}
+              toolExecutions={surfaceToolExecutions}
+              onSemanticAction={handleSemanticAction}
               store={branchTreeStore}
               onRedo={source || readOnly || managerTranscript ? undefined : handleRedo}
               onFork={source || childSurface || readOnly || managerTranscript ? undefined : handleFork}
             />
           {/if}
+        </div>
+      {/each}
+
+      {#each unanchoredSemanticBlocks as block (block.blockId)}
+        <div class="transcript-row semantic-transcript-row" data-semantic-block-id={block.blockId}>
+          <SubagentSemanticBlock {block} onAction={handleSemanticAction} />
         </div>
       {/each}
 

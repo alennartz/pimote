@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { AssistantRowUsage, PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
-  import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import TextBlock from './TextBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import ToolCall from './ToolCall.svelte';
@@ -20,9 +19,23 @@
   import { collapseDuplicateTextBlocks } from '$lib/assistant-text-dedupe.js';
   import CostBreakdownPopover from './CostBreakdownPopover.svelte';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
+  import type { SemanticBlock, SemanticBlockAction } from '$lib/subagent-semantic.js';
+  import { projectSemanticContent, projectSemanticMessage } from '$lib/subagent-semantic-rendering.js';
+  import SubagentSemanticBlock from './SubagentSemanticBlock.svelte';
 
   const MAX_COLLAPSED_LINES = 10;
   const SKILL_COLLAPSED_LINES = 3;
+
+  export type MessageToolExecution = {
+    name: string;
+    args: unknown;
+    partialResult: string;
+    status: 'running' | 'completed';
+    result?: unknown;
+    data?: unknown;
+    isError?: boolean;
+    durationMs?: number;
+  };
 
   let {
     message,
@@ -36,6 +49,9 @@
     store,
     onRedo,
     onFork,
+    semanticBlocks = [],
+    toolExecutions = {},
+    onSemanticAction,
   }: {
     message: PimoteAgentMessage | StreamingMessage;
     streaming?: boolean;
@@ -48,6 +64,11 @@
     store?: Pick<BranchTreeStore, 'navigate' | 'openFocused'>;
     onRedo?: (entryId: string, opts?: { compactionPrompt?: string }) => void | Promise<void>;
     onFork?: (entryId: string) => void | Promise<void>;
+    /** Semantic overlays for this surface. Native entries remain the fallback. */
+    semanticBlocks?: readonly SemanticBlock[];
+    /** Tool executions for the selected surface, not the root registry by default. */
+    toolExecutions?: Readonly<Record<string, MessageToolExecution>>;
+    onSemanticAction?: (action: SemanticBlockAction) => void;
   } = $props();
   let userMenuOpen = $state(false);
   let customExpanded = $state(false);
@@ -61,6 +82,12 @@
   // final answer); collapse the duplicate before rendering, copying, or
   // speaking it.
   let visibleContent = $derived(message.role === 'assistant' ? collapseDuplicateTextBlocks(message.content) : message.content);
+  let nativeMessage = $derived(message as PimoteAgentMessage);
+  let semanticContent = $derived.by(() =>
+    message.role === 'assistant' || message.role === 'toolResult' ? projectSemanticContent(nativeMessage, visibleContent, semanticBlocks, sessionId) : [],
+  );
+  let semanticToolResultBlocks = $derived(semanticContent.filter((item) => item.kind === 'semantic').map((item) => item.block));
+  let semanticMessageBlocks = $derived.by(() => projectSemanticMessage(nativeMessage, semanticBlocks, sessionId));
 
   let hasSpeakableText = $derived(message.role === 'assistant' && !streaming && visibleContent.some((c) => c.type === 'text' && c.text));
 
@@ -77,9 +104,12 @@
   );
 
   let textContent = $derived(
-    visibleContent
-      .filter((c) => c.type === 'text' && c.text)
-      .map((c) => c.text!)
+    semanticContent
+      .map((item) => {
+        if (item.kind === 'semantic') return item.block.transcriptText;
+        return item.content.type === 'text' && item.content.text ? item.content.text : '';
+      })
+      .filter((text) => text.length > 0)
       .join('\n\n'),
   );
 
@@ -140,7 +170,13 @@
 </script>
 
 {#if message.role === 'toolResult'}
-  <!-- Tool results are displayed inline with their tool calls — skip standalone rendering -->
+  {#if semanticToolResultBlocks.length > 0}
+    {#each semanticToolResultBlocks as block (block.blockId)}
+      <SubagentSemanticBlock {block} onAction={onSemanticAction} />
+    {/each}
+  {:else}
+    <!-- Tool results are displayed inline with their tool calls — skip standalone rendering -->
+  {/if}
 {:else if message.role === 'user'}
   <div class="message user-message">
     {#if entryId && showNavigationMenu}
@@ -207,7 +243,6 @@
     </div>
   </div>
 {:else if message.role === 'assistant'}
-  {@const toolExecs = sessionRegistry.viewed?.toolExecutions ?? {}}
   {#if abortedIsEmpty}
     <!-- Empty aborted turn — compact "interrupted" indicator instead of a blank assistant bubble. -->
     <div class="message aborted-indicator text-muted-foreground flex items-center gap-2 px-2 py-1 text-xs italic">
@@ -275,26 +310,31 @@
             {/if}
           </div>
         {/if}
-        {#each visibleContent as block, i (i)}
-          {@const blockStreaming = block.streaming ?? false}
-          {#if block.type === 'text'}
-            <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
-          {:else if block.type === 'thinking'}
-            <ThinkingBlock text={block.text ?? ''} streaming={blockStreaming} />
-          {:else if block.type === 'tool_call'}
-            {@const exec = block.toolCallId ? toolExecs[block.toolCallId] : undefined}
-            <ToolCall
-              content={block}
-              streaming={blockStreaming}
-              inProgress={exec?.status === 'running'}
-              partialResult={exec?.partialResult ?? ''}
-              result={exec?.status === 'completed' ? exec.result : undefined}
-              data={exec?.data}
-              isError={exec?.isError}
-              durationMs={exec?.durationMs}
-            />
-          {:else if block.type === 'tool_result'}
-            <ToolCall content={block} data={block.data} />
+        {#each semanticContent as item, i (item.kind === 'semantic' ? item.block.blockId : `native-${i}`)}
+          {#if item.kind === 'semantic'}
+            <SubagentSemanticBlock block={item.block} onAction={onSemanticAction} />
+          {:else}
+            {@const block = item.content}
+            {@const blockStreaming = block.streaming ?? false}
+            {#if block.type === 'text'}
+              <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
+            {:else if block.type === 'thinking'}
+              <ThinkingBlock text={block.text ?? ''} streaming={blockStreaming} />
+            {:else if block.type === 'tool_call'}
+              {@const exec = block.toolCallId ? toolExecutions[block.toolCallId] : undefined}
+              <ToolCall
+                content={block}
+                streaming={blockStreaming}
+                inProgress={exec?.status === 'running'}
+                partialResult={exec?.partialResult ?? ''}
+                result={exec?.status === 'completed' ? exec.result : undefined}
+                data={exec?.data}
+                isError={exec?.isError}
+                durationMs={exec?.durationMs}
+              />
+            {:else if block.type === 'tool_result'}
+              <ToolCall content={block} data={block.data} />
+            {/if}
           {/if}
         {/each}
         {#if isAbortedAssistant}
@@ -309,38 +349,44 @@
 {:else if message.role === 'bashExecution'}
   <BashExecution execution={message as FinalBashExecutionMessage} />
 {:else if message.role === 'custom'}
-  <!-- Custom message (extension-injected, e.g. subagent results) -->
-  <div class="message custom-message">
-    <div class="custom-body" bind:this={customRootEl}>
-      <button type="button" class="custom-header" aria-expanded={!customCollapsed} onclick={() => (customCollapsed = !customCollapsed)}>
-        <ChevronRight class="shrink-0 transition-transform duration-150 {!customCollapsed ? 'rotate-90' : ''}" size={14} />
-        <span class="custom-label">[{streaming ? 'custom' : 'customType' in message ? (message.customType ?? 'custom') : 'custom'}]</span>
-        {#if !streaming && customNeedsCollapse}
-          <span class="custom-line-count">{customLines.length} lines</span>
-        {/if}
-      </button>
-      {#if !customCollapsed}
-        <div class="custom-content">
-          {#if streaming}
-            <BoundedOutput text={customText} {streaming} accent="purple" />
-          {:else}
-            <div
-              class="custom-text-container"
-              class:custom-text-collapsed={customNeedsCollapse && !customExpanded}
-              class:custom-text-expanded={customNeedsCollapse && customExpanded}
-            >
-              <TextBlock text={customText} />
-            </div>
-            {#if customNeedsCollapse && !customExpanded}
-              <button class="custom-toggle" onclick={() => (customExpanded = true)}> Show more… </button>
-            {:else if customNeedsCollapse && customExpanded}
-              <button class="custom-toggle" onclick={() => (customExpanded = false)}> Show less </button>
-            {/if}
+  {#if semanticMessageBlocks.length > 0}
+    {#each semanticMessageBlocks as block (block.blockId)}
+      <SubagentSemanticBlock {block} onAction={onSemanticAction} />
+    {/each}
+  {:else}
+    <!-- Custom message (extension-injected, e.g. subagent results) -->
+    <div class="message custom-message">
+      <div class="custom-body" bind:this={customRootEl}>
+        <button type="button" class="custom-header" aria-expanded={!customCollapsed} onclick={() => (customCollapsed = !customCollapsed)}>
+          <ChevronRight class="shrink-0 transition-transform duration-150 {!customCollapsed ? 'rotate-90' : ''}" size={14} />
+          <span class="custom-label">[{streaming ? 'custom' : 'customType' in message ? (message.customType ?? 'custom') : 'custom'}]</span>
+          {#if !streaming && customNeedsCollapse}
+            <span class="custom-line-count">{customLines.length} lines</span>
           {/if}
-        </div>
-      {/if}
+        </button>
+        {#if !customCollapsed}
+          <div class="custom-content">
+            {#if streaming}
+              <BoundedOutput text={customText} {streaming} accent="purple" />
+            {:else}
+              <div
+                class="custom-text-container"
+                class:custom-text-collapsed={customNeedsCollapse && !customExpanded}
+                class:custom-text-expanded={customNeedsCollapse && customExpanded}
+              >
+                <TextBlock text={customText} />
+              </div>
+              {#if customNeedsCollapse && !customExpanded}
+                <button class="custom-toggle" onclick={() => (customExpanded = true)}> Show more… </button>
+              {:else if customNeedsCollapse && customExpanded}
+                <button class="custom-toggle" onclick={() => (customExpanded = false)}> Show less </button>
+              {/if}
+            {/if}
+          </div>
+        {/if}
+      </div>
     </div>
-  </div>
+  {/if}
 {:else if message.role === 'system'}
   <!-- System prompt bookkeeping (pi 0.87+): collapsed chip over named prompt-section deltas. -->
   <div class="message system-chip">
