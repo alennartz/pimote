@@ -274,6 +274,108 @@ export interface PimoteTreeNode {
   children: PimoteTreeNode[];
 }
 
+/** Root-relative identity of a my-pi child runtime. */
+export type AgentPath = readonly string[];
+
+/** Provider-owned replay position. This is distinct from a Pimote event cursor. */
+export interface FeedCursor {
+  epoch: string;
+  sequence: number;
+}
+
+export type SubagentState = 'running' | 'waiting' | 'idle' | 'errored' | 'dead';
+export type SubagentNodeState = SubagentState;
+
+export type SubagentCostBreakdown = Readonly<{
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}>;
+
+/** Provider usage accumulated for one child runtime. */
+export type SubagentUsage = Readonly<{
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+  costBreakdown?: SubagentCostBreakdown;
+  turns: number;
+}>;
+
+/** Root-relative registry node projected by the subagent provider. */
+export type SubagentNode = Readonly<{
+  path: AgentPath;
+  /** The current child session. */
+  sessionId: string;
+  task?: string;
+  personaIcon?: string;
+  persona?: string;
+  model?: string;
+  thinkingLevel?: string;
+  state: SubagentState;
+  activity?: string;
+  usage: SubagentUsage;
+  /** Context fill as a ratio or percentage chosen by the provider contract. */
+  contextFill?: number;
+  channels: readonly string[];
+  waitingFor: readonly AgentPath[];
+  pendingCorrelations: readonly string[];
+  hasSubgroup: boolean;
+  lastOutput?: string;
+  lastError?: string;
+}>;
+
+export type SubagentNodeSnapshot = SubagentNode;
+export type SubagentUsageSnapshot = SubagentUsage;
+
+/** Hierarchy snapshot and provider cursor at one feed boundary. */
+export type SubagentSnapshot = Readonly<{
+  nodes: readonly SubagentNode[];
+  cursor: FeedCursor;
+}>;
+
+export type SubagentEventKind =
+  | 'node_added'
+  | 'node_updated'
+  | 'node_removed'
+  | 'message_thread'
+  | 'await_started'
+  | 'child_settled'
+  | 'await_interrupted'
+  | 'await_released'
+  | 'completion'
+  | 'interrupt'
+  | 'teardown'
+  | 'resurrect';
+
+/** Native Pi provenance attached to a semantic provider event. */
+export interface PiEventRef {
+  sessionId: string;
+  entryId?: string;
+  toolCallId?: string;
+  kind: 'message' | 'tool_call' | 'custom_message' | 'lifecycle';
+}
+
+/** Typed semantic overlay emitted by the provider. */
+export interface SubagentEvent {
+  eventId: string;
+  cursor: FeedCursor;
+  path: AgentPath;
+  kind: SubagentEventKind;
+  relatedPiEvents: readonly PiEventRef[];
+  data: unknown;
+}
+
+/** Result of delegating a live node teardown to my-pi. */
+export type SubagentTeardownResult = Readonly<{
+  path: AgentPath;
+  removed: boolean;
+  sessionId?: string;
+  reason?: 'not_found' | 'already_removed' | 'removed';
+}>;
+
 interface CommandBase {
   /** Correlation ID for request/response matching */
   id?: string;
@@ -906,6 +1008,142 @@ export interface ExtensionUiResponseCommand extends CommandBase {
   cancelled?: boolean;
 }
 
+/** Commands addressed to a root session's borrowed child view. */
+interface SubagentCommandBase extends CommandBase {
+  sessionId: string;
+  path: AgentPath;
+  /** Opaque generation that prevents a stale view from targeting a replacement runtime. */
+  attachmentGeneration: string;
+}
+
+export interface SubagentOpenViewCommand extends CommandBase {
+  type: 'subagent_open_view';
+  sessionId: string;
+  path: AgentPath;
+}
+
+export interface SubagentCloseViewCommand extends SubagentCommandBase {
+  type: 'subagent_close_view';
+}
+
+export interface SubagentPromptCommand extends SubagentCommandBase {
+  type: 'subagent_prompt';
+  message: string;
+  images?: string[];
+  streamingBehavior?: 'streaming' | 'blocking';
+  clientMessageId?: string;
+}
+
+export interface SubagentSteerCommand extends SubagentCommandBase {
+  type: 'subagent_steer';
+  message: string;
+  images?: string[];
+}
+
+export interface SubagentFollowUpCommand extends SubagentCommandBase {
+  type: 'subagent_follow_up';
+  message: string;
+}
+
+export interface SubagentAbortCommand extends SubagentCommandBase {
+  type: 'subagent_abort';
+}
+
+export interface SubagentBashCommand extends SubagentCommandBase {
+  type: 'subagent_bash';
+  command: string;
+  excludeFromContext?: boolean;
+}
+
+export interface SubagentAbortBashCommand extends SubagentCommandBase {
+  type: 'subagent_abort_bash';
+}
+
+export interface SubagentSetModelCommand extends SubagentCommandBase {
+  type: 'subagent_set_model';
+  provider: string;
+  modelId: string;
+}
+
+export interface SubagentCycleModelCommand extends SubagentCommandBase {
+  type: 'subagent_cycle_model';
+}
+
+export interface SubagentSetThinkingLevelCommand extends SubagentCommandBase {
+  type: 'subagent_set_thinking_level';
+  level: string;
+}
+
+export interface SubagentCycleThinkingLevelCommand extends SubagentCommandBase {
+  type: 'subagent_cycle_thinking_level';
+}
+
+export interface SubagentCompactCommand extends SubagentCommandBase {
+  type: 'subagent_compact';
+  customInstructions?: string;
+}
+
+export interface SubagentSetAutoCompactionCommand extends SubagentCommandBase {
+  type: 'subagent_set_auto_compaction';
+  enabled: boolean;
+}
+
+export interface SubagentGetStateCommand extends SubagentCommandBase {
+  type: 'subagent_get_state';
+}
+
+export interface SubagentGetMessagesCommand extends SubagentCommandBase {
+  type: 'subagent_get_messages';
+}
+
+export interface SubagentGetSessionStatsCommand extends SubagentCommandBase {
+  type: 'subagent_get_session_stats';
+}
+
+export interface SubagentGetSessionMetaCommand extends SubagentCommandBase {
+  type: 'subagent_get_session_meta';
+}
+
+export interface SubagentGetCommandsCommand extends SubagentCommandBase {
+  type: 'subagent_get_commands';
+}
+
+export interface SubagentCompleteArgsCommand extends SubagentCommandBase {
+  type: 'subagent_complete_args';
+  commandName: string;
+  prefix: string;
+}
+
+export interface SubagentCompleteFileRefsCommand extends SubagentCommandBase {
+  type: 'subagent_complete_file_refs';
+  prefix: string;
+}
+
+export interface SubagentGetTreeCommand extends SubagentCommandBase {
+  type: 'subagent_get_tree';
+}
+
+export interface SubagentNavigateTreeCommand extends SubagentCommandBase {
+  type: 'subagent_navigate_tree';
+  targetId: string;
+  summarize?: boolean;
+  customInstructions?: string;
+  replaceInstructions?: boolean;
+  label?: string;
+}
+
+export interface SubagentSetTreeLabelCommand extends SubagentCommandBase {
+  type: 'subagent_set_tree_label';
+  entryId: string;
+  label?: string;
+}
+
+export interface SubagentTeardownCommand extends CommandBase {
+  type: 'subagent_teardown';
+  sessionId: string;
+  path: AgentPath;
+}
+
 export type PimoteCommand =
   | PromptCommand
   | SteerCommand
@@ -968,7 +1206,35 @@ export type PimoteCommand =
   | LoginBeginCommand
   | LoginInputCommand
   | LoginCancelCommand
-  | LogoutCommand;
+  | LogoutCommand
+  | SubagentOpenViewCommand
+  | SubagentCloseViewCommand
+  | SubagentPromptCommand
+  | SubagentSteerCommand
+  | SubagentFollowUpCommand
+  | SubagentAbortCommand
+  | SubagentBashCommand
+  | SubagentAbortBashCommand
+  | SubagentSetModelCommand
+  | SubagentCycleModelCommand
+  | SubagentSetThinkingLevelCommand
+  | SubagentCycleThinkingLevelCommand
+  | SubagentCompactCommand
+  | SubagentSetAutoCompactionCommand
+  | SubagentGetStateCommand
+  | SubagentGetMessagesCommand
+  | SubagentGetSessionStatsCommand
+  | SubagentGetSessionMetaCommand
+  | SubagentGetCommandsCommand
+  | SubagentCompleteArgsCommand
+  | SubagentCompleteFileRefsCommand
+  | SubagentGetTreeCommand
+  | SubagentNavigateTreeCommand
+  | SubagentSetTreeLabelCommand
+  | SubagentTeardownCommand;
+
+/** All root-scoped child-view commands. */
+export type SubagentCommand = Extract<PimoteCommand, { type: `subagent_${string}` }>;
 
 interface SessionEventBase {
   /** Which session produced this event */
@@ -1344,6 +1610,62 @@ export interface FullResyncEvent {
   runningToolCallIds?: string[];
 }
 
+/** Response payload returned by subagent_open_view. */
+export interface SubagentOpenViewResponseData {
+  path: AgentPath;
+  attachmentGeneration: string;
+  snapshot: SubagentViewSnapshot;
+}
+
+/** Full child transcript and state at an independent view cursor. */
+export interface SubagentViewSnapshot {
+  type: 'subagent_view_snapshot';
+  sessionId: string;
+  childSessionId: string;
+  path: AgentPath;
+  attachmentGeneration: string;
+  viewCursor: number;
+  state: SessionState;
+  messages: PimoteAgentMessage[];
+  streamingMessage?: StreamingMessage;
+  runningToolCallIds?: string[];
+}
+
+/** Native Pi event on a child-view cursor. */
+export interface SubagentViewEvent {
+  type: 'subagent_view_event';
+  sessionId: string;
+  childSessionId: string;
+  path: AgentPath;
+  attachmentGeneration: string;
+  viewCursor: number;
+  event: PimoteSessionEvent;
+}
+
+/** A child view closed because its lease or runtime ended. */
+export interface SubagentViewClosedEvent {
+  type: 'subagent_view_closed';
+  sessionId: string;
+  path: AgentPath;
+  attachmentGeneration: string;
+  reason: 'released' | 'replaced' | 'unavailable' | 'teardown';
+}
+
+/** Semantic provider event projected into the parent session replay stream. */
+export interface SubagentSemanticEvent extends SessionEventBase {
+  type: 'subagent_event';
+  eventId: string;
+  path: AgentPath;
+  kind: SubagentEventKind;
+  relatedPiEvents: readonly PiEventRef[];
+  data: unknown;
+  /** Provider cursor retained for diagnostics; replay uses the parent cursor above. */
+  providerCursor?: FeedCursor;
+}
+
+export type SubagentWireEvent = SubagentSemanticEvent;
+export type SubagentEventMessage = SubagentSemanticEvent;
+
 export interface PanelUpdateEvent {
   type: 'panel_update';
   sessionId: string;
@@ -1525,6 +1847,10 @@ export type PimoteEvent =
   | SessionRestoreEvent
   | BufferedEventsEvent
   | FullResyncEvent
+  | SubagentViewSnapshot
+  | SubagentViewEvent
+  | SubagentViewClosedEvent
+  | SubagentSemanticEvent
   | PanelUpdateEvent
   | DownloadUpdateEvent
   | NavigateEvent

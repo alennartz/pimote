@@ -27,7 +27,8 @@
     "./panels": "./dist/panels/index.js",
     "./activity": "./dist/activity/index.js",
     "./folders": "./dist/folders/index.js",
-    "./pimote": "./dist/pimote/index.js"
+    "./pimote": "./dist/pimote/index.js",
+    "./subagents": "./dist/subagents/index.js"
   },
   "types": "./dist/index.d.ts",
   "files": [
