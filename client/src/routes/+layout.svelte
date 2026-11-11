@@ -375,7 +375,7 @@
       onclick={() => panelStore.closePanel()}
       onkeydown={(event) => event.key === 'Escape' && panelStore.closePanel()}
     ></div>
-    <div class="fixed inset-y-0 right-0 z-40 flex min-h-0 flex-col" data-panel-drawer>
+    <div class="fixed inset-y-0 right-0 z-40 flex min-h-0 w-[88vw] max-w-[340px] flex-col" data-panel-drawer>
       <Panel onClose={() => panelStore.closePanel()} />
     </div>
   {/if}

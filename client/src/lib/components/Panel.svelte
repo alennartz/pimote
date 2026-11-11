@@ -228,6 +228,7 @@
           title="Close panels"
           onclick={onClose}>×</button
         >
+        >
       {:else}
         <button
           type="button"
@@ -235,6 +236,7 @@
           aria-label="Hide panels"
           title="Hide panels"
           onclick={() => (panelStore.isDrawer ? panelStore.closePanel() : panelStore.toggleCollapsed())}>×</button
+        >
         >
       {/if}
     </header>
@@ -495,8 +497,8 @@
   }
   @container (max-width: 620px) {
     .panel-host {
-      width: min(88cqw, 22rem);
-      max-width: 22rem;
+      width: 100%;
+      max-width: none;
       height: 100%;
       border-left: 1px solid var(--border);
       box-shadow: -1rem 0 2.5rem color-mix(in oklch, black 40%, transparent);

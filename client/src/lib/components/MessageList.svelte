@@ -410,15 +410,25 @@
   });
 
   /** Events without native provenance render once after the saved transcript. */
+  function semanticBlocksForEntry(entry: Extract<DisplayEntry, { kind: 'message' }>): readonly SemanticBlock[] {
+    const currentIndex = displayEntries.indexOf(entry);
+    if (currentIndex < 0 || semanticBlocks.length === 0) return [];
+    const surfaceSessionId = childSurface?.childSessionId ?? session?.sessionId ?? '';
+    const previousMessages = displayEntries
+      .slice(0, currentIndex)
+      .filter((candidate): candidate is Extract<DisplayEntry, { kind: 'message' }> => candidate.kind === 'message')
+      .map((candidate) => candidate.message as PimoteAgentMessage);
+    const message = entry.message as PimoteAgentMessage;
+    return semanticBlocks.filter(
+      (block) =>
+        semanticBlockHasMessageAnchor(block, message, surfaceSessionId) && !previousMessages.some((previous) => semanticBlockHasMessageAnchor(block, previous, surfaceSessionId)),
+    );
+  }
+
+  /** Events without native provenance render once after the saved transcript. */
   let unanchoredSemanticBlocks = $derived.by(() => {
     if (!session || semanticBlocks.length === 0) return [] as readonly SemanticBlock[];
-    const surfaceSessionId = childSurface?.childSessionId ?? session.sessionId;
-    const visibleMessages = displayEntries
-      .filter((entry): entry is Extract<DisplayEntry, { kind: 'message' }> => entry.kind === 'message')
-      .map((entry) => entry.message as PimoteAgentMessage);
-    return semanticBlocks.filter(
-      (block) => block.relatedPiEvents.length === 0 && !visibleMessages.some((message) => semanticBlockHasMessageAnchor(block, message, surfaceSessionId)),
-    );
+    return semanticBlocks.filter((block) => block.relatedPiEvents.length === 0);
   });
 
   let toolResultUsageIndex = $derived.by(() => indexToolResultUsage(session?.messages ?? []));
@@ -515,6 +525,7 @@
             <BashExecution execution={entry.execution} onCancel={readOnly ? undefined : () => handleBashCancel(entry.execution.id)} />
           {:else}
             {@const assistantRowUsage = getAssistantRowUsage(entry)}
+            {@const entrySemanticBlocks = semanticBlocksForEntry(entry)}
             <Message
               message={entry.message}
               streaming={entry.streaming}
@@ -524,7 +535,7 @@
               abandonedBranchCount={alternateCount(entry)}
               manager={Boolean(source || managerTranscript)}
               {readOnly}
-              {semanticBlocks}
+              semanticBlocks={entrySemanticBlocks}
               toolExecutions={surfaceToolExecutions}
               onSemanticAction={handleSemanticAction}
               store={branchTreeStore}
