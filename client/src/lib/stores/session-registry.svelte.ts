@@ -392,6 +392,12 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     case 'agent_end':
       if (!(event as AgentEndEvent).willRetry) attachment.streamingMessage = null;
       break;
+    case 'auto_retry_end':
+      if (!(event as AutoRetryEndEvent).success) {
+        attachment.state = { ...attachment.state, isStreaming: false };
+        attachment.streamingMessage = null;
+      }
+      break;
     case 'message_start': {
       const start = event as MessageStartEvent;
       attachment.streamingMessage = { role: start.role, content: [], ...(start.usage ? { usage: start.usage } : {}) };
@@ -483,6 +489,11 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
         availableThinkingLevels: [...settings.availableThinkingLevels],
         autoCompactionEnabled: settings.autoCompactionEnabled,
       };
+      break;
+    }
+    case 'session_state_changed': {
+      const changed = event as SessionStateChangedEvent;
+      if (changed.sessionName !== undefined) attachment.state = { ...attachment.state, sessionName: changed.sessionName || undefined };
       break;
     }
   }
@@ -814,7 +825,7 @@ export class SessionRegistry {
   }
 
   private closeSubagentAttachment(root: SubagentRootState, attachment: SubagentAttachmentState, reason: SubagentAttachmentCloseReason): void {
-    if (attachment.closed && attachment.closeReason === reason) return;
+    if (attachment.closed) return;
     attachment.closed = true;
     attachment.closeReason = reason;
     this.notifySubagentClosed(root.rootSessionId, attachment.path, reason);
