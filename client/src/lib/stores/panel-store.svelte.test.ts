@@ -85,6 +85,15 @@ describe('PanelStore', () => {
       store.toggleCollapsed();
       expect(store.collapsed).toBe(false);
     });
+
+    it('reveals a collapsed or closed panel', () => {
+      store.toggleCollapsed();
+      store.closePanel();
+      store.revealPanel();
+
+      expect(store.collapsed).toBe(false);
+      expect(store.open).toBe(true);
+    });
   });
 
   describe('reset', () => {

@@ -54,7 +54,33 @@ function goHome() {
   sessionRegistry.viewedSessionId = null;
 }
 
+function selectChild() {
+  sessionRegistry.handleEvent({
+    type: 'subagent_view_snapshot',
+    sessionId: 's1',
+    childSessionId: 'child-s1',
+    path: ['worker'],
+    incarnation: 'inc-1',
+    attachmentGeneration: 'gen-1',
+    viewCursor: 1,
+    state: {
+      model: null,
+      thinkingLevel: 'off',
+      availableThinkingLevels: [],
+      isStreaming: false,
+      isCompacting: false,
+      sessionFile: undefined,
+      sessionId: 'child-s1',
+      autoCompactionEnabled: true,
+      messageCount: 0,
+    },
+    messages: [],
+  } as any);
+  sessionRegistry.selectSubagentView('s1', ['worker']);
+}
+
 afterEach(() => {
+  sessionRegistry.clearSubagentRoot('s1');
   sessionRegistry.sessions = {};
   sessionRegistry.viewedSessionId = null;
   connection.ready = false;
@@ -116,6 +142,20 @@ describe('InputBar editor text request replay', () => {
     await tick();
 
     expect(messageTextarea(target).value).toBe('live text');
+    destroy();
+  });
+
+  it('does not apply a root request while a child surface is selected', async () => {
+    const session = setupSession();
+    selectChild();
+    const { target, destroy } = render();
+    await tick();
+
+    sessionRegistry.setDraftText('s1', 'restored root draft');
+    await tick();
+
+    expect(session.draftText).toBe('restored root draft');
+    expect(messageTextarea(target).value).toBe('');
     destroy();
   });
 

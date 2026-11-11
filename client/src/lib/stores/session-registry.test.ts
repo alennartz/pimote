@@ -2167,6 +2167,27 @@ describe('subagent child surface state', () => {
     expect(registry.getSubagentNode('root', ['worker'])?.sessionId).toBe('authoritative');
   });
 
+  it('ignores a late same-epoch topology event at the snapshot cursor', () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const node = (sessionId: string) => ({ path: ['worker'], sessionId, incarnation: 'inc-1', state: 'idle', task: 'review', channels: [] });
+    registry.handleEvent({ type: 'subagent_snapshot', sessionId: 'root', cursor: { epoch: 'epoch-1', sequence: 10 }, nodes: [node('authoritative')] } as unknown as PimoteEvent);
+    registry.handleEvent({
+      type: 'subagent_event',
+      sessionId: 'root',
+      cursor: 11,
+      providerCursor: { epoch: 'epoch-1', sequence: 10 },
+      eventId: 'late-topology',
+      path: ['worker'],
+      kind: 'node_updated',
+      relatedPiEvents: [],
+      data: node('stale'),
+    } as PimoteEvent);
+
+    expect(registry.getSubagentNode('root', ['worker'])?.sessionId).toBe('authoritative');
+    expect(registry.getSubagentSemanticEvents('root')).toHaveLength(0);
+  });
+
   it('bounds child bash deltas at the shared UTF-8 limit', () => {
     const registry = new SessionRegistry();
     registry.addSession('root', '/workspace', 'workspace');

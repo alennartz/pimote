@@ -103,6 +103,10 @@ function sameAgentPath(left: AgentPath | null | undefined, right: AgentPath | nu
   return left !== null && left !== undefined && right !== null && right !== undefined && left.length === right.length && left.every((part, index) => part === right[index]);
 }
 
+function isSubagentTopologyEvent(event: WireSubagentSemanticEvent): boolean {
+  return event.kind === 'node_added' || event.kind === 'node_updated' || event.kind === 'node_removed' || event.kind === 'runtime_replaced';
+}
+
 export type SubagentAttachmentCloseReason = SubagentViewClosedEvent['reason'] | 'expired';
 
 /** Client state for one root-relative child attachment. This state never enters
@@ -955,6 +959,7 @@ export class SessionRegistry {
       ...(node ? { node } : {}),
     };
     this.subagentResurrectionRequests = { ...this.subagentResurrectionRequests, [key]: notice };
+    panelStore.revealPanel();
     for (const listener of [...this.subagentResurrectionListeners]) {
       try {
         listener(notice);
@@ -1378,8 +1383,19 @@ export class SessionRegistry {
     const root = this.ensureSubagentRoot(event.sessionId);
     const existing = root.semanticEvents.some((candidate) => candidate.eventId === event.eventId);
     const providerCursor = event.providerCursor;
+    const current = root.providerCursor;
+    const staleTopology =
+      root.hierarchySnapshotReceived &&
+      isSubagentTopologyEvent(event) &&
+      providerCursor !== undefined &&
+      current !== null &&
+      providerCursor.epoch === current.epoch &&
+      providerCursor.sequence <= current.sequence;
+    // A hierarchy snapshot is authoritative through its provider cursor. A
+    // late topology event at or before that boundary is already represented by
+    // the snapshot and must not roll the tree back or re-enter replay state.
+    if (staleTopology) return;
     if (providerCursor) {
-      const current = root.providerCursor;
       const epochChanged = current !== null && current.epoch !== providerCursor.epoch;
       if (epochChanged) root.semanticEvents = persistedSemanticEvents(event.sessionId, this.sessions[event.sessionId]?.messages ?? []);
       if (current === null || epochChanged || current.epoch !== providerCursor.epoch || providerCursor.sequence > current.sequence) {

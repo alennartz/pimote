@@ -131,8 +131,8 @@
     const { sessionId, text, seq } = editorTextRequest;
     if (seq !== lastSeq) {
       lastSeq = seq;
-      // Only update the live textarea if the request targets the currently viewed session
-      if (sessionId === sessionRegistry.viewedSessionId) {
+      // Root restoration must not replace a selected child's composer.
+      if (sessionId === sessionRegistry.viewedSessionId && !activeChild) {
         inputText = text;
         tick().then(() => autoResize());
       }

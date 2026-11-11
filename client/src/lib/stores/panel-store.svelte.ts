@@ -33,6 +33,12 @@ export class PanelStore {
     this.open = true;
   }
 
+  /** Reveal the host for actions that originate outside the panel. */
+  revealPanel(): void {
+    this.collapsed = false;
+    this.open = true;
+  }
+
   closePanel(): void {
     this.open = false;
   }
