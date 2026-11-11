@@ -1491,6 +1491,8 @@ export interface StreamingMessage {
   /** Latest cumulative provider usage snapshot for the in-flight message. */
   usage?: PimoteUsage;
   customType?: string;
+  /** Structured metadata carried by a live custom-message projection. */
+  details?: unknown;
 }
 
 export interface MessageEndEvent extends SessionEventBase {

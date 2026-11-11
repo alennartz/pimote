@@ -104,6 +104,7 @@ export function customEntryDisplayText(data: unknown): string | undefined {
 /** Map a persisted custom entry to a display-only wire message. */
 export function mapCustomEntry(entry: Extract<SessionEntry, { type: 'custom' }>): PimoteAgentMessage {
   const text = customEntryDisplayText(entry.data);
+  const details = (entry as Extract<SessionEntry, { type: 'custom' }> & { details?: unknown }).details;
   return {
     role: 'custom',
     content: text ? [{ type: 'text', text }] : [],
@@ -111,6 +112,7 @@ export function mapCustomEntry(entry: Extract<SessionEntry, { type: 'custom' }>)
     display: true,
     fromEntry: true,
     entryId: entry.id,
+    ...(details !== undefined ? { details } : {}),
   };
 }
 
@@ -275,7 +277,13 @@ export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
     }
 
     case 'custom':
-      return { role: 'custom', content: mapContentBlocks(msg.content), customType: msg.customType, display: msg.display };
+      return {
+        role: 'custom',
+        content: mapContentBlocks(msg.content),
+        customType: msg.customType,
+        display: msg.display,
+        ...(msg.details !== undefined ? { details: msg.details } : {}),
+      };
 
     case 'assistant': {
       const content = mapContentBlocks(msg.content);

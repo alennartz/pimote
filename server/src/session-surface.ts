@@ -238,6 +238,7 @@ function mapStreamingMessage(value: unknown): StreamingMessage | undefined {
     content: mapped.content,
     ...(mapped.usage ? { usage: mapped.usage } : {}),
     ...(mapped.customType ? { customType: mapped.customType } : {}),
+    ...(mapped.details !== undefined ? { details: mapped.details } : {}),
   };
 }
 

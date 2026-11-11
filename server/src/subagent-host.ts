@@ -16,6 +16,7 @@ import {
   createSessionSurface,
   type SessionSurface,
   type SessionSurfaceCapabilities,
+  type SessionSurfaceCallerContext,
   type SessionSurfaceCommand,
   type SessionSurfaceOptions,
   type SessionSurfaceSnapshot,
@@ -28,9 +29,12 @@ export interface SubagentViewReference {
   readonly path: AgentPath;
   /** Opaque private generation for this connection-scoped attachment. */
   readonly attachmentGeneration: string;
+  /** Optional incarnation guard supplied by newer wire clients. */
+  readonly incarnation?: string;
 }
 
 export interface SubagentViewAttachment extends SubagentViewReference {
+  readonly incarnation: string;
   readonly snapshot: SessionSurfaceSnapshot;
 }
 
@@ -52,7 +56,7 @@ export interface SubagentHostOptions {
   parentSurface: SessionSurface;
   parentCursor: () => number;
   emitParentEvent: ParentSemanticEventSink;
-  emitViewChange: (connectionId: string, change: SubagentViewChange) => void;
+  emitViewChange: (connectionId: string, change: SubagentViewChange, incarnation?: string) => void;
   reconnectGraceMs: number;
   childCapabilities: (session: BorrowedAgentSession) => SessionSurfaceCapabilities;
   createChildSurface?: (options: SessionSurfaceOptions) => SessionSurface;
@@ -72,7 +76,13 @@ export interface SubagentHost {
   start(): Promise<SubagentHostStartResult>;
   openView(connectionId: string, path: AgentPath, connectionToken?: number): Promise<SubagentViewAttachment>;
   closeView(connectionId: string, view: SubagentViewReference, connectionToken?: number): Promise<void>;
-  dispatch(connectionId: string, view: SubagentViewReference, command: SubagentSurfaceCommand, connectionToken?: number): Promise<unknown>;
+  dispatch(connectionId: string, view: SubagentViewReference, command: SubagentSurfaceCommand, connectionToken?: number, caller?: SessionSurfaceCallerContext): Promise<unknown>;
+  /** Return the latest provider hierarchy snapshot at the host boundary. */
+  snapshot(): SubagentSnapshot;
+  /** Delegate resurrection through the provider's owner-control seam. */
+  resurrect(request: import('@pimote/sdk/subagents').SubagentResurrectRequest): Promise<import('@pimote/sdk/subagents').SubagentResurrectResult>;
+  /** Release every attachment for one connection without reconnect grace. */
+  releaseConnection(connectionId: string, connectionToken?: number): Promise<void>;
   /** Keep attachments during the grace period for this reconnect identity. */
   disconnect(connectionId: string, connectionToken?: number): void;
   reconnect(connectionId: string, connectionToken?: number): Promise<readonly SubagentViewAttachment[]>;
@@ -209,7 +219,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
 
   const emitViewChange = (record: ViewRecord, change: SubagentViewChange, allowClosed = false): void => {
     if ((!allowClosed && record.closed) || !record.connection.connected) return;
-    options.emitViewChange(record.connection.id, change);
+    options.emitViewChange(record.connection.id, change, record.incarnation);
   };
 
   const removeRecord = (record: ViewRecord): void => {
@@ -314,7 +324,13 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     if (!connection) throw new Error('unknown connection');
     assertConnectionToken(connection, token);
     const record = connection.attachments.get(pathKey(view.path));
-    if (!record || record.closed || record.attachmentGeneration !== view.attachmentGeneration || pathKey(record.path) !== pathKey(view.path))
+    if (
+      !record ||
+      record.closed ||
+      record.attachmentGeneration !== view.attachmentGeneration ||
+      pathKey(record.path) !== pathKey(view.path) ||
+      (view.incarnation !== undefined && record.incarnation !== view.incarnation)
+    )
       throw new Error('stale child view attachment');
     return record;
   };
@@ -504,7 +520,12 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     const key = pathKey(path);
     const existing = connection.attachments.get(key);
     if (existing && !existing.closed && existing.snapshot) {
-      return { path: existing.path, attachmentGeneration: existing.attachmentGeneration, snapshot: existing.snapshot };
+      return {
+        path: existing.path,
+        incarnation: existing.incarnation,
+        attachmentGeneration: existing.attachmentGeneration,
+        snapshot: existing.snapshot,
+      };
     }
     const currentSnapshot = options.provider.snapshot();
     replaceSnapshotNodes(currentSnapshot);
@@ -514,7 +535,12 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     try {
       const record = await createViewRecord(connection, clonePath(path), node, lease);
       if (!record.snapshot) throw new Error('child surface did not return a snapshot');
-      return { path: record.path, attachmentGeneration: record.attachmentGeneration, snapshot: record.snapshot };
+      return {
+        path: record.path,
+        incarnation: record.incarnation,
+        attachmentGeneration: record.attachmentGeneration,
+        snapshot: record.snapshot,
+      };
     } catch (error) {
       await lease.release();
       throw error;
@@ -527,7 +553,13 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     await closeRecord(record, 'released', false);
   };
 
-  const dispatch = async (connectionId: string, view: SubagentViewReference, command: SubagentSurfaceCommand, connectionToken?: number): Promise<unknown> => {
+  const dispatch = async (
+    connectionId: string,
+    view: SubagentViewReference,
+    command: SubagentSurfaceCommand,
+    connectionToken?: number,
+    caller?: SessionSurfaceCallerContext,
+  ): Promise<unknown> => {
     assertStarted();
     const record = assertReference(connectionId, view, connectionToken);
     assertCurrentIncarnation(record);
@@ -545,7 +577,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
       return { steering: [], followUp: [] };
     }
     if (!record.surface) throw new Error('child surface is closed');
-    return record.surface.dispatch(command);
+    return record.surface.dispatch(command, caller);
   };
 
   const disconnect = (connectionId: string, connectionToken?: number): void => {
@@ -582,9 +614,41 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     const attachments: SubagentViewAttachment[] = [];
     for (const record of records) {
       await refreshAttachment(record).catch(() => undefined);
-      if (!record.closed && record.snapshot) attachments.push({ path: record.path, attachmentGeneration: record.attachmentGeneration, snapshot: record.snapshot });
+      if (!record.closed && record.snapshot)
+        attachments.push({
+          path: record.path,
+          incarnation: record.incarnation,
+          attachmentGeneration: record.attachmentGeneration,
+          snapshot: record.snapshot,
+        });
     }
     return attachments;
+  };
+
+  const snapshot = (): SubagentSnapshot => {
+    assertStarted();
+    const current = options.provider.snapshot();
+    replaceSnapshotNodes(current);
+    return current;
+  };
+
+  const resurrect = async (request: import('@pimote/sdk/subagents').SubagentResurrectRequest): Promise<import('@pimote/sdk/subagents').SubagentResurrectResult> => {
+    assertStarted();
+    return options.provider.resurrect(request);
+  };
+
+  const releaseConnection = async (connectionId: string, connectionToken?: number): Promise<void> => {
+    const connection = connections.get(connectionId);
+    if (!connection || closed) return;
+    assertConnectionToken(connection, connectionToken);
+    if (connection.timer) {
+      clearTimeout(connection.timer);
+      connection.timer = undefined;
+    }
+    connection.connected = false;
+    const records = [...connection.attachments.values()];
+    await Promise.all(records.map((record) => closeRecord(record, 'released', false)));
+    connection.token++;
   };
 
   const teardown = async (
@@ -627,6 +691,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     recordsByPath.clear();
     connections.clear();
     nodes.clear();
+    (options.parentSurface as { close?: () => void }).close?.();
     await (options.provider as ProviderWithShutdown).shutdown?.();
   };
 
@@ -635,6 +700,9 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     openView,
     closeView,
     dispatch,
+    snapshot,
+    resurrect,
+    releaseConnection,
     disconnect,
     reconnect,
     teardown,

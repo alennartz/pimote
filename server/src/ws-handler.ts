@@ -23,6 +23,11 @@ import type {
   GetGlobalSettingsResponseData,
   GetTreeResponseData,
   ServerCapabilitiesEvent,
+  SubagentCommand,
+  SubagentOpenViewResponseData,
+  SubagentViewSnapshot,
+  SubagentViewEvent,
+  SubagentViewClosedEvent,
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome, SessionObserver, EventSocket } from './session-manager.js';
 import {
@@ -60,6 +65,8 @@ import type { AgentSession } from '@earendil-works/pi-coding-agent';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { CallBindError } from './voice-orchestrator.js';
 import type { ConfigRuntime } from './config-runtime.js';
+import type { SubagentSurfaceCommand, SubagentViewAttachment, SubagentViewChange } from './subagent-host.js';
+import type { SessionSurfaceCallerContext } from './session-surface.js';
 
 export interface WsGlobalSettingsDependencies {
   manifest?: () => Promise<GetGlobalSettingsResponseData>;
@@ -429,6 +436,7 @@ export class WsHandler {
   /** AbortController for the in-flight login flow this connection initiated, if any. */
   private loginAbort: AbortController | null = null;
   private readonly folderConnectionId = randomUUID();
+  private readonly boundSubagentViewListeners = new Map<ManagedSlot, (change: SubagentViewChange, incarnation?: string) => void>();
   readonly clientId: string;
 
   constructor(
@@ -1207,6 +1215,37 @@ export class WsHandler {
           break;
         }
 
+        // ---- Root-scoped subagent child-view commands ----
+        case 'subagent_open_view':
+        case 'subagent_close_view':
+        case 'subagent_prompt':
+        case 'subagent_steer':
+        case 'subagent_follow_up':
+        case 'subagent_abort':
+        case 'subagent_bash':
+        case 'subagent_abort_bash':
+        case 'subagent_set_model':
+        case 'subagent_cycle_model':
+        case 'subagent_set_thinking_level':
+        case 'subagent_cycle_thinking_level':
+        case 'subagent_compact':
+        case 'subagent_set_auto_compaction':
+        case 'subagent_get_state':
+        case 'subagent_get_messages':
+        case 'subagent_get_session_stats':
+        case 'subagent_get_session_meta':
+        case 'subagent_get_commands':
+        case 'subagent_complete_args':
+        case 'subagent_complete_file_refs':
+        case 'subagent_get_tree':
+        case 'subagent_navigate_tree':
+        case 'subagent_set_tree_label':
+        case 'subagent_teardown':
+        case 'subagent_resurrect': {
+          await this.handleSubagentCommand(command as SubagentCommand, id);
+          break;
+        }
+
         // ---- Session control commands ----
         case 'prompt':
         case 'steer':
@@ -1308,6 +1347,143 @@ export class WsHandler {
       console.error(`[WsHandler] Error handling command ${command.type}:`, message);
       this.sendResponse(id, false, undefined, message);
     }
+  }
+
+  private subagentHostFor(sessionId: string): { slot: ManagedSlot; host: NonNullable<ManagedSlot['subagentHost']> } {
+    const slot = this.sessionManager.getSession(sessionId);
+    if (!slot) throw new Error(`Session not found: ${sessionId}`);
+    const host = slot.subagentHost;
+    if (!host) throw new Error('Subagent provider is not available for this session');
+    return { slot, host };
+  }
+
+  private ensureSubagentViewListener(slot: ManagedSlot): void {
+    const listeners = (slot.subagentViewListeners ??= new Map());
+    const existing = listeners.get(this.clientId);
+    if (existing) return;
+    const listener = (change: SubagentViewChange, incarnation?: string) => this.sendSubagentViewChange(slot, change, incarnation);
+    listeners.set(this.clientId, listener);
+    this.boundSubagentViewListeners.set(slot, listener);
+  }
+
+  private makeSubagentViewSnapshot(rootSessionId: string, attachment: SubagentViewAttachment): SubagentViewSnapshot {
+    const snapshot = attachment.snapshot;
+    return {
+      type: 'subagent_view_snapshot',
+      sessionId: rootSessionId,
+      childSessionId: snapshot.state.sessionId,
+      path: attachment.path,
+      incarnation: attachment.incarnation,
+      attachmentGeneration: attachment.attachmentGeneration,
+      viewCursor: snapshot.cursor,
+      state: snapshot.state,
+      messages: snapshot.messages,
+      ...(snapshot.streamingMessage ? { streamingMessage: snapshot.streamingMessage } : {}),
+      ...(snapshot.runningToolCallIds ? { runningToolCallIds: snapshot.runningToolCallIds } : {}),
+    };
+  }
+
+  private sendSubagentViewChange(slot: ManagedSlot, change: SubagentViewChange, incarnation?: string): void {
+    const rootSessionId = slot.sessionState.id;
+    if (change.type === 'snapshot') {
+      const attachment: SubagentViewAttachment = {
+        path: change.path,
+        incarnation: incarnation ?? 'unknown',
+        attachmentGeneration: change.attachmentGeneration,
+        snapshot: change.snapshot,
+      };
+      this.sendEvent(this.makeSubagentViewSnapshot(rootSessionId, attachment));
+      return;
+    }
+    if (change.type === 'event') {
+      const childSessionId = change.event.sessionId;
+      const viewCursor = 'cursor' in change.event && typeof change.event.cursor === 'number' ? change.event.cursor : 0;
+      const event: SubagentViewEvent = {
+        type: 'subagent_view_event',
+        sessionId: rootSessionId,
+        childSessionId,
+        path: change.path,
+        incarnation: incarnation ?? 'unknown',
+        attachmentGeneration: change.attachmentGeneration,
+        viewCursor,
+        event: change.event,
+      };
+      this.sendEvent(event);
+      return;
+    }
+    const event: SubagentViewClosedEvent = {
+      type: 'subagent_view_closed',
+      sessionId: rootSessionId,
+      path: change.path,
+      incarnation: incarnation ?? 'unknown',
+      attachmentGeneration: change.attachmentGeneration,
+      reason: change.reason,
+    };
+    this.sendEvent(event);
+  }
+
+  private makeSubagentSurfaceCommand(command: SubagentCommand): SubagentSurfaceCommand {
+    const { type, ...rest } = command as SubagentCommand & { type: string };
+    return {
+      ...(rest as Omit<SubagentSurfaceCommand, 'type'>),
+      type: type.slice('subagent_'.length),
+    } as SubagentSurfaceCommand;
+  }
+
+  private async handleSubagentCommand(command: SubagentCommand, id: string): Promise<void> {
+    const { slot, host } = this.subagentHostFor(command.sessionId);
+    this.ensureSubagentViewListener(slot);
+
+    if (command.type === 'subagent_open_view') {
+      const attachment = await host.openView(this.clientId, command.path);
+      const data: SubagentOpenViewResponseData = {
+        path: attachment.path,
+        incarnation: attachment.incarnation,
+        attachmentGeneration: attachment.attachmentGeneration,
+        snapshot: this.makeSubagentViewSnapshot(slot.sessionState.id, attachment),
+      };
+      this.sendResponse(id, true, data);
+      return;
+    }
+
+    if (command.type === 'subagent_close_view') {
+      await host.closeView(this.clientId, {
+        path: command.path,
+        incarnation: command.incarnation,
+        attachmentGeneration: command.attachmentGeneration,
+      });
+      this.sendResponse(id, true);
+      return;
+    }
+
+    if (command.type === 'subagent_teardown') {
+      const result = await host.teardown(command.path, command.incarnation, command.attachmentGeneration !== undefined ? this.clientId : undefined, command.attachmentGeneration);
+      this.sendResponse(id, true, result);
+      return;
+    }
+
+    if (command.type === 'subagent_resurrect') {
+      const result = await host.resurrect({
+        sessionId: command.savedSessionId,
+        parentPath: command.parentPath,
+        localId: command.localId,
+        task: command.task,
+        channels: command.channels,
+        ...(command.model !== undefined ? { model: command.model } : {}),
+      });
+      this.sendSubagentSnapshot(slot, host.snapshot());
+      this.sendResponse(id, true, result);
+      return;
+    }
+
+    const view = {
+      path: command.path,
+      incarnation: command.incarnation,
+      attachmentGeneration: command.attachmentGeneration,
+    };
+    const caller: SessionSurfaceCallerContext = { clientId: this.clientId };
+    const result = await host.dispatch(this.clientId, view, this.makeSubagentSurfaceCommand(command), undefined, caller);
+    this.sendResponse(id, true, result);
   }
 
   private async handleSessionCommand(command: PimoteCommand, id: string): Promise<void> {
@@ -1872,6 +2048,12 @@ export class WsHandler {
       throw new Error('WebSocket is no longer connected');
     }
     this.subscribedSessions.add(sessionId);
+    this.ensureSubagentViewListener(slot);
+    if (slot.subagentHost) {
+      const restored = await slot.subagentHost.reconnect(this.clientId);
+      this.sendSubagentSnapshot(slot);
+      for (const attachment of restored) this.sendEvent(this.makeSubagentViewSnapshot(slot.sessionState.id, attachment));
+    }
 
     // Note: do NOT touch `idleSince`. Idleness is an agent-level concept driven by
     // agent_start/agent_settled — attaching an observer does not extend its clock.
@@ -2054,6 +2236,12 @@ export class WsHandler {
         if (handler.user !== this.user) continue;
         if (detachSlot?.observers.has(handler.clientId)) {
           this.sessionManager.detachObserver(sessionId, handler.clientId, handler.ws as unknown as EventSocket);
+        }
+        if (detachSlot?.subagentHost) {
+          await detachSlot.subagentHost.releaseConnection(handler.clientId);
+          const listener = handler.boundSubagentViewListeners.get(detachSlot);
+          if (listener && detachSlot.subagentViewListeners?.get(handler.clientId) === listener) detachSlot.subagentViewListeners.delete(handler.clientId);
+          handler.boundSubagentViewListeners.delete(detachSlot);
         }
         handler.subscribedSessions.delete(sessionId);
         if (handler.viewedSessionId === sessionId) handler.viewedSessionId = null;
@@ -2306,10 +2494,28 @@ export class WsHandler {
     };
   }
 
+  /** Send the current provider hierarchy without advancing the root replay cursor. */
+  private sendSubagentSnapshot(slot: ManagedSlot, snapshot?: ReturnType<NonNullable<ManagedSlot['subagentHost']>['snapshot']>): void {
+    if (!snapshot) {
+      try {
+        snapshot = slot.subagentHost?.snapshot();
+      } catch {
+        return;
+      }
+    }
+    if (!snapshot) return;
+    this.sendEvent({
+      type: 'subagent_snapshot',
+      sessionId: slot.sessionState.id,
+      ...snapshot,
+    });
+  }
+
   /** Send a full_resync event to the client for the given managed session.
    *  Used when the underlying pi session is reset (newSession, switchSession, fork, navigateTree). */
   private sendFullResyncForSession(pimoteSessionId: string, slot: ManagedSlot): void {
     this.sendEvent(this.makeFullResyncEvent(pimoteSessionId, slot));
+    this.sendSubagentSnapshot(slot);
     // Always send panel snapshot so the client clears stale cards after reconnect
     this.sendEvent({ type: 'panel_update', sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
   }
@@ -2523,7 +2729,12 @@ export class WsHandler {
     this.loginAbort?.abort();
     this.settlePendingLoginInputs('connection closed');
     for (const sid of this.subscribedSessions) {
+      const slot = this.sessionManager.getSession(sid);
       this.sessionManager.detachObserver(sid, this.clientId, this.ws as unknown as EventSocket);
+      if (slot?.subagentHost) slot.subagentHost.disconnect(this.clientId);
+      const listener = slot ? this.boundSubagentViewListeners.get(slot) : undefined;
+      if (listener && slot?.subagentViewListeners?.get(this.clientId) === listener) slot.subagentViewListeners.delete(this.clientId);
+      if (slot) this.boundSubagentViewListeners.delete(slot);
     }
     this.subscribedSessions.clear();
     this.viewedSessionId = null;
