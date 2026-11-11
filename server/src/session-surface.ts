@@ -147,11 +147,17 @@ export interface SessionSurfaceOptions {
   capabilities?: SessionSurfaceCapabilities;
   /** Parent replay cursor, when this surface is a child view. It is diagnostic only. */
   parentCursor?: number;
+  /** Share an existing event buffer with a root session slot. */
+  eventBuffer?: EventBuffer;
+  /** Root surfaces receive native events from the slot state mapper. */
+  subscribeNative?: boolean;
   /** Provider owner-control stop seam for child views. */
   stop?: (request: SessionSurfaceStopRequest) => Promise<void>;
   /** Public child path and incarnation used by guarded Stop. */
   path?: readonly string[];
   incarnation?: string;
+  /** Cached branch projection for root session metadata. */
+  getGitBranch?: () => string | null;
   /** Buffer capacity for this independent surface. */
   bufferCapacity?: number;
 }
@@ -163,6 +169,10 @@ export interface SessionSurface {
   readonly currentCursor: number;
   /** Subscribe to native Pi events before taking the first transcript snapshot. */
   initialize(): Promise<SessionSurfaceSnapshot>;
+  /** Accept one native Pi event when the owning slot supplies the subscription. */
+  acceptNativeEvent(event: IncomingSdkEvent): void;
+  /** Rebuild the transcript/state snapshot and invalidate prior replay positions. */
+  refreshSnapshot(): SessionSurfaceSnapshot;
   subscribe(listener: (event: PimoteSessionEvent) => void): () => void;
   /** Stop observing the native session without disposing it. */
   close(): void;
@@ -331,7 +341,7 @@ function mapTreeNodes(nodes: readonly unknown[]): PimoteTreeNode[] {
   });
 }
 
-function defaultCapabilities(session: BorrowedAgentSession): SessionSurfaceCapabilities {
+function defaultCapabilities(session: BorrowedAgentSession, getGitBranch?: () => string | null): SessionSurfaceCapabilities {
   const native = session as BorrowedAgentSession & NativeSessionExtras;
   return {
     resolveModel: async (provider, modelId) => {
@@ -377,12 +387,12 @@ function defaultCapabilities(session: BorrowedAgentSession): SessionSurfaceCapab
       return (await completeFileRefs({ prefix, cwd })).items;
     },
     executeBash: async (command, options) => native.executeBash(command, undefined, options),
-    getGitBranch: () => null,
+    getGitBranch: () => getGitBranch?.() ?? null,
   };
 }
 
 function getCapability(options: SessionSurfaceOptions): SessionSurfaceCapabilities {
-  return options.capabilities ?? defaultCapabilities(options.session);
+  return options.capabilities ?? defaultCapabilities(options.session, options.getGitBranch);
 }
 
 function allowedOperation(options: SessionSurfaceOptions, capabilities: SessionSurfaceCapabilities, operation: string): boolean {
@@ -476,7 +486,8 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     const runner = (options.session as unknown as { extensionRunner?: { getEntryRenderer?: (name: string) => unknown } }).extensionRunner;
     return runner?.getEntryRenderer ? Boolean(runner.getEntryRenderer(customType)) : true;
   };
-  const eventBuffer = new EventBuffer(options.bufferCapacity ?? SURFACE_BUFFER_CAPACITY, customEntryVisible);
+  const eventBuffer = options.eventBuffer ?? new EventBuffer(options.bufferCapacity ?? SURFACE_BUFFER_CAPACITY, customEntryVisible);
+  const listensToNative = options.subscribeNative !== false;
   const listeners = new Set<(event: PimoteSessionEvent) => void>();
   const observers = new Map<string, { cursor: number; active: boolean }>();
   let nativeUnsubscribe: (() => void) | undefined;
@@ -498,6 +509,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
   };
 
   const mapAndReceive = (sdkEvent: IncomingSdkEvent): void => {
+    if (closed) return;
     eventBuffer.onEvent(sdkEvent, options.sessionId, receive, () => {
       const messages = options.session.messages;
       const last = messages[messages.length - 1];
@@ -506,7 +518,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
   };
 
   const ensureSubscription = (): void => {
-    if (nativeUnsubscribe || closed) return;
+    if (!listensToNative || nativeUnsubscribe || closed) return;
     nativeUnsubscribe = options.session.subscribe((event) => mapAndReceive(event));
   };
 
@@ -766,6 +778,16 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     return (await capabilities.completeFileRefs(prefix)) ?? [];
   };
 
+  const acceptNativeEvent = (event: IncomingSdkEvent): void => {
+    mapAndReceive(event);
+  };
+
+  const refreshSnapshot = (): SessionSurfaceSnapshot => {
+    if (closed) throw new Error('session surface is closed');
+    eventBuffer.invalidateReplay();
+    return snapshotFor(options, capabilities, eventBuffer.currentCursor);
+  };
+
   const initialize = async (): Promise<SessionSurfaceSnapshot> => {
     if (closed) throw new Error('session surface is closed');
     if (initialized) return snapshotFor(options, capabilities, eventBuffer.currentCursor);
@@ -829,6 +851,8 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       return eventBuffer.currentCursor;
     },
     initialize,
+    acceptNativeEvent,
+    refreshSnapshot,
     subscribe(listener) {
       if (closed) return () => undefined;
       listeners.add(listener);

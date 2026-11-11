@@ -302,6 +302,19 @@ describe('SessionSurface', () => {
     expect(await f.surface.getState()).toMatchObject({ sessionId: 'child-session' });
   });
 
+  it('invalidates the old replay position when a transcript snapshot is refreshed', async () => {
+    const f = fixture();
+    await f.surface.initialize();
+    f.publish(assistantEnd('Before navigation'));
+    const before = f.surface.currentCursor;
+    const snapshot = f.surface.refreshSnapshot();
+    expect(snapshot.cursor).toBeGreaterThan(before);
+    expect(f.surface.replay(before)).toMatchObject({ kind: 'snapshot_required' });
+    expect(snapshot.messages).toEqual(
+      expect.arrayContaining([expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ text: 'Before compaction' })]) })]),
+    );
+  });
+
   it('serves session-local metadata and completion results', async () => {
     const f = fixture();
     await f.surface.initialize();

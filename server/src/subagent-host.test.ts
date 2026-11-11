@@ -89,7 +89,22 @@ function fixture() {
   const waiters = new Set<(notification: ViewNotification) => void>();
   const parentEvents: SubagentEvent[] = [];
   const surfaces = new Map<string, { emit: (event: PimoteSessionEvent) => void }>();
-  const pending = { idleAnswer: 'latest answer', delivered: [] as string[], snapshotEvent: undefined as SubagentEvent | undefined, parentCursor: 41 };
+  const pending: {
+    idleAnswer: string;
+    delivered: string[];
+    snapshotEvent: SubagentEvent | undefined;
+    parentCursor: number;
+    acquireCalls: number;
+    blockAcquire: boolean;
+    releaseAcquire?: () => void;
+  } = {
+    idleAnswer: 'latest answer',
+    delivered: [] as string[],
+    snapshotEvent: undefined as SubagentEvent | undefined,
+    parentCursor: 41,
+    acquireCalls: 0,
+    blockAcquire: false,
+  };
   const publish = (event: SubagentEvent) => {
     for (const listener of listeners) listener(event);
   };
@@ -108,6 +123,8 @@ function fixture() {
     },
     replay: () => ({ kind: 'events', cursor: { epoch: 'epoch-1', sequence: 0 }, events: [] }),
     async acquire(path) {
+      pending.acquireCalls++;
+      if (pending.blockAcquire) await new Promise<void>((resolve) => (pending.releaseAcquire = resolve));
       const current = sessions.get(key(path));
       if (!current) throw new Error('unavailable');
       const subscriptions = new Set<(event: SubagentLeaseEvent) => void>();
@@ -220,6 +237,7 @@ function fixture() {
         return events.length;
       },
       initialize: async () => snapshot(),
+      refreshSnapshot: () => ({ ...snapshot(), cursor: events.length + 1 }),
       subscribe: (listener) => {
         observers.add(listener);
         return () => {
@@ -373,6 +391,21 @@ describe('SubagentHost', () => {
     expect(f.pending.delivered).toEqual(['latest answer']);
   });
 
+  it('deduplicates concurrent opens for one connection and path', async () => {
+    const f = fixture();
+    await f.host.start();
+    f.pending.blockAcquire = true;
+    const first = f.host.openView('connection-1', scout);
+    const second = f.host.openView('connection-1', scout);
+    await Promise.resolve();
+    expect(f.pending.acquireCalls).toBe(1);
+    f.pending.blockAcquire = false;
+    f.pending.releaseAcquire?.();
+    const [one, two] = await Promise.all([first, second]);
+    expect(one.attachmentGeneration).toBe(two.attachmentGeneration);
+    expect(f.active(scout)).toBe(1);
+  });
+
   it('retains all connection attachments during reconnect grace and releases them after expiry', async () => {
     vi.useFakeTimers();
     try {
@@ -399,6 +432,39 @@ describe('SubagentHost', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('resyncs a child transcript after tree navigation', async () => {
+    const f = fixture();
+    await f.host.start();
+    const view = await f.host.openView('connection-1', scout);
+    const refreshed = f.nextViewChange(({ connectionId, change }) => connectionId === 'connection-1' && change.type === 'snapshot');
+    await f.host.dispatch('connection-1', view, { type: 'navigate_tree', targetId: 'entry-1' });
+    expect(await refreshed).toEqual(
+      expect.objectContaining({
+        connectionId: 'connection-1',
+        change: expect.objectContaining({
+          type: 'snapshot',
+          path: scout,
+          attachmentGeneration: view.attachmentGeneration,
+          snapshot: expect.objectContaining({ cursor: 1 }),
+        }),
+      }),
+    );
+  });
+
+  it('rejects stale connection tokens after a reconnect', async () => {
+    const f = fixture();
+    await f.host.start();
+    const view = await f.host.openView('connection-1', scout);
+    const firstToken = f.host.connectionToken?.('connection-1');
+    expect(firstToken).toBeTypeOf('number');
+    f.host.disconnect('connection-1', firstToken);
+    await expect(f.host.reconnect('connection-1', firstToken)).rejects.toThrow('stale connection token');
+    const reconnectToken = f.host.connectionToken?.('connection-1');
+    expect(reconnectToken).not.toBe(firstToken);
+    await f.host.reconnect('connection-1', reconnectToken);
+    await expect(f.host.dispatch('connection-1', view, { type: 'get_state' }, firstToken)).rejects.toThrow('stale connection token');
   });
 
   it('rebinds a live view to a replacement and sends a fresh snapshot', async () => {

@@ -396,6 +396,20 @@ export class BranchTreeStore {
 
   private receiveEvent(event: PimoteEvent): void {
     if (!('sessionId' in event) || typeof event.sessionId !== 'string') return;
+    if (event.type === 'subagent_view_snapshot') {
+      const currentSurface = this.state.surface;
+      if (!currentSurface || event.sessionId !== currentSurface.rootSessionId || JSON.stringify(event.path) !== JSON.stringify(currentSurface.path)) return;
+      const sessionId = currentSurface.rootSessionId;
+      this.invalidateCache(sessionId, currentSurface);
+      const navigation = this.navigationBySession.get(cacheKey(sessionId, currentSurface));
+      if (navigation?.closeOnResync) {
+        this.navigationBySession.delete(cacheKey(sessionId, currentSurface));
+        if (this.state.sessionId === sessionId) this.close();
+      } else if (this.state.sessionId === sessionId && navigation?.inProgress && navigation.summarizing) {
+        this.state.busy = true;
+      }
+      return;
+    }
     let received: PimoteEvent = event as PimoteEvent;
     let surface: BranchTreeSurface | null = null;
     if (event.type === 'subagent_view_event') {

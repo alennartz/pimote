@@ -1204,6 +1204,10 @@ export interface SubagentCycleModelCommand extends SubagentCommandBase {
   type: 'subagent_cycle_model';
 }
 
+export interface SubagentGetAvailableModelsCommand extends SubagentCommandBase {
+  type: 'subagent_get_available_models';
+}
+
 export interface SubagentSetThinkingLevelCommand extends SubagentCommandBase {
   type: 'subagent_set_thinking_level';
   level: string;
@@ -1374,6 +1378,7 @@ export type PimoteCommand =
   | SubagentAbortBashCommand
   | SubagentSetModelCommand
   | SubagentCycleModelCommand
+  | SubagentGetAvailableModelsCommand
   | SubagentSetThinkingLevelCommand
   | SubagentCycleThinkingLevelCommand
   | SubagentCompactCommand

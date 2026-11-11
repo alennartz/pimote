@@ -25,13 +25,14 @@ import { sendSlotEvent } from './session-slot.js';
 export { sendSlotEvent, waitForSlotUiResponse, resolveSlotPendingUi, resolveAllSlotPendingUi, replaySlotPendingUiRequests } from './session-slot.js';
 import { askActivity } from '@pimote/sdk/activity';
 import { getGitBranch } from './git-branch.js';
+import { completeFileRefs } from './file-references.js';
 import { LoginOrchestrator } from './login-orchestrator.js';
 import { createVoiceExtension } from './voice/index.js';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { loadManagerExtension } from './manager/attachment.js';
 import { discoverProvider, type BorrowedAgentSession, type SubagentProvider, type SubagentProviderDiscovery } from '@pimote/sdk/subagents';
 import { createSubagentHost, type SubagentHost, type SubagentViewChange } from './subagent-host.js';
-import { createSessionSurface, type SessionSurfaceCapabilities } from './session-surface.js';
+import { createSessionSurface, type SessionSurface, type SessionSurfaceCapabilities } from './session-surface.js';
 
 /** Narrow interface for the WebSocket used for event routing.
  *  Avoids importing the `ws` package type in session-manager. */
@@ -116,6 +117,9 @@ export interface ManagedSlot {
   eventBusRef: { current: EventBusController | null };
   observers: Map<string, SessionObserver>;
   sessionState: SessionState;
+  /** Shared root session surface used by root and child routing. */
+  sessionSurface?: SessionSurface;
+  sessionSurfaceUnsubscribe?: () => void;
   /** Root-scoped provider host. Children never become managed slots. */
   subagentHost?: SubagentHost;
   subagentProvider?: SubagentProvider;
@@ -626,12 +630,19 @@ export function createSessionState(
       if (!event.aborted && slotRef.slot) callbacks.onSessionIdle?.(sessionId, slotRef.slot);
       callbacks.onStatusChange?.(sessionId, folderPath);
     }
-    eventBuffer.onEvent(
-      event,
-      sessionId,
-      (e) => callbacks.sendEvent(e),
-      () => session.messages[session.messages.length - 1],
-    );
+    const rootSurface = slotRef.slot?.sessionSurface;
+    if (rootSurface) {
+      // The shared root surface owns mapping and the slot event buffer. The
+      // state subscriber still owns status, queue, and idle bookkeeping above.
+      rootSurface.acceptNativeEvent(event);
+    } else {
+      eventBuffer.onEvent(
+        event,
+        sessionId,
+        (e) => callbacks.sendEvent(e),
+        () => session.messages[session.messages.length - 1],
+      );
+    }
   });
 
   state.unsubscribe = unsubscribe;
@@ -943,7 +954,10 @@ export class PimoteSessionManager {
       }),
       getCommands: async () => [],
       completeArgs: async () => [],
-      completeFileRefs: async () => [],
+      completeFileRefs: async (prefix) => {
+        const cwd = native.sessionManager.getCwd();
+        return (await completeFileRefs({ prefix, cwd })).items;
+      },
       executeBash: async (command, options) => {
         if (!native.executeBash) throw new Error('native bash is not available');
         return native.executeBash(command, undefined, options);
@@ -952,13 +966,37 @@ export class PimoteSessionManager {
     };
   }
 
-  /** Create a root host without adding child runtimes to this manager's slots. */
-  private createSubagentHostForSlot(slot: ManagedSlot, provider: SubagentProvider): SubagentHost {
-    const parentSurface = createSessionSurface({
-      sessionId: slot.session.sessionId,
+  /** Ensure one shared root surface for this concrete AgentSession. */
+  private ensureRootSessionSurface(slot: ManagedSlot): SessionSurface {
+    if (slot.sessionSurface) return slot.sessionSurface;
+    const surface = createSessionSurface({
+      sessionId: slot.sessionState.id,
       session: slot.session as unknown as BorrowedAgentSession,
       kind: 'root',
+      eventBuffer: slot.sessionState.eventBuffer,
+      subscribeNative: false,
+      getGitBranch: () => this.getLastKnownGitBranch(slot.sessionState.id),
     });
+    slot.sessionSurface = surface;
+    slot.sessionSurfaceUnsubscribe = surface.subscribe((event) => sendSlotEvent(slot, event));
+    // The slot state owns the native subscription and feeds this surface. The
+    // snapshot is still initialized here so staged events cross one boundary.
+    void surface.initialize().catch((error) => {
+      console.error('[SessionManager] Root session surface initialization failed:', error);
+    });
+    return surface;
+  }
+
+  private closeRootSessionSurface(slot: ManagedSlot): void {
+    slot.sessionSurfaceUnsubscribe?.();
+    slot.sessionSurfaceUnsubscribe = undefined;
+    slot.sessionSurface?.close();
+    slot.sessionSurface = undefined;
+  }
+
+  /** Create a root host without adding child runtimes to this manager's slots. */
+  private createSubagentHostForSlot(slot: ManagedSlot, provider: SubagentProvider): SubagentHost {
+    const parentSurface = this.ensureRootSessionSurface(slot);
     return createSubagentHost({
       rootSessionId: slot.sessionState.id,
       provider,
@@ -1240,6 +1278,7 @@ export class PimoteSessionManager {
       };
       slot.runtime = guardSlotRuntime(slot, runtime, (failedSlot) => this.cleanupFailedReset(failedSlot));
       slotRef.slot = slot;
+      this.ensureRootSessionSurface(slot);
     } catch (error) {
       try {
         await runtime.dispose();
@@ -1340,6 +1379,7 @@ export class PimoteSessionManager {
 
       await this.shutdownSubagentIntegration(slot);
       slot.subagentViewListeners?.clear();
+      this.closeRootSessionSurface(slot);
       teardownSessionState(slot.sessionState);
       slot.eventBusRef.current?.clear();
 
@@ -1401,7 +1441,9 @@ export class PimoteSessionManager {
     // generated session ID happens to be unchanged. Child leases belong to the
     // old runtime and must close before its EventBus is replaced.
     await this.shutdownSubagentIntegration(slot, 'replaced');
+    this.closeRootSessionSurface(slot);
     this.rebuildSessionState(slot);
+    this.ensureRootSessionSurface(slot);
 
     // Collision: another live slot already holds newId. This happens when an
     // extension switches onto a session file that another slot already owns.

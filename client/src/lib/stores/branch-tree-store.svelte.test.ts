@@ -150,6 +150,46 @@ describe('BranchTreeStore', () => {
     expect((harness.commands[1] as { label?: string }).label).toBeUndefined();
   });
 
+  it('invalidates a child tree cache and closes it after a child snapshot resync', async () => {
+    const surface = { rootSessionId: 'root', path: ['worker'] };
+    await store.open('root', undefined, surface);
+    harness.emit({
+      type: 'subagent_view_event',
+      sessionId: 'root',
+      childSessionId: 'child',
+      path: ['worker'],
+      incarnation: 'inc',
+      attachmentGeneration: 'gen',
+      viewCursor: 1,
+      event: { type: 'tree_navigation_start', sessionId: 'child', cursor: 1, targetId: 'u1', summarizing: false },
+    } as PimoteEvent);
+    harness.emit({
+      type: 'subagent_view_event',
+      sessionId: 'root',
+      childSessionId: 'child',
+      path: ['worker'],
+      incarnation: 'inc',
+      attachmentGeneration: 'gen',
+      viewCursor: 2,
+      event: { type: 'tree_navigation_end', sessionId: 'child', cursor: 2 },
+    } as PimoteEvent);
+    expect(store.state.busy).toBe(false);
+    harness.emit({
+      type: 'subagent_view_snapshot',
+      sessionId: 'root',
+      childSessionId: 'child',
+      path: ['worker'],
+      incarnation: 'inc',
+      attachmentGeneration: 'gen',
+      viewCursor: 3,
+      state: {} as never,
+      messages: [],
+    });
+    expect(store.state.open).toBe(false);
+    await store.open('root', undefined, surface);
+    expect(harness.commands.filter((command) => command.type === 'get_tree')).toHaveLength(2);
+  });
+
   it('invalidates the session cache on full resync and tracks tree navigation lifecycle', async () => {
     await store.open('session-1');
     harness.emit({ type: 'tree_navigation_start', sessionId: 'session-1', cursor: 1, targetId: 'u1', summarizing: true });

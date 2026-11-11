@@ -73,13 +73,19 @@ export type SubagentSurfaceCommand = SessionSurfaceCommand & { readonly expected
 export interface SubagentHost {
   /** Subscribe to provider events before requesting the first hierarchy snapshot. */
   start(): Promise<SubagentHostStartResult>;
+  /** Current token for one connection identity. It changes after disconnect/reconnect. */
+  connectionToken?(connectionId: string): number | undefined;
   openView(connectionId: string, path: AgentPath, connectionToken?: number): Promise<SubagentViewAttachment>;
   closeView(connectionId: string, view: SubagentViewReference, connectionToken?: number): Promise<void>;
   dispatch(connectionId: string, view: SubagentViewReference, command: SubagentSurfaceCommand, connectionToken?: number, caller?: SessionSurfaceCallerContext): Promise<unknown>;
   /** Return the latest provider hierarchy snapshot at the host boundary. */
   snapshot(): SubagentSnapshot;
   /** Delegate resurrection through the provider's owner-control seam. */
-  resurrect(request: import('@pimote/sdk/subagents').SubagentResurrectRequest): Promise<import('@pimote/sdk/subagents').SubagentResurrectResult>;
+  resurrect(
+    request: import('@pimote/sdk/subagents').SubagentResurrectRequest,
+    connectionId?: string,
+    connectionToken?: number,
+  ): Promise<import('@pimote/sdk/subagents').SubagentResurrectResult>;
   /** Release every attachment for one connection without reconnect grace. */
   releaseConnection(connectionId: string, connectionToken?: number): Promise<void>;
   /** Close all views when the root runtime is replaced or closed. */
@@ -168,6 +174,7 @@ function providerCapabilities(session: BorrowedAgentSession, leaseCapabilities: 
 export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
   const connections = new Map<string, ConnectionRecord>();
   const recordsByPath = new Map<string, Set<ViewRecord>>();
+  const inFlightOpens = new Map<string, Promise<SubagentViewAttachment>>();
   const nodes = new Map<string, SubagentNodeSnapshot>();
   const seenEventIds = new Set<string>();
   const createSurface = options.createChildSurface ?? createSessionSurface;
@@ -217,6 +224,8 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     connections.set(connectionId, connection);
     return connection;
   };
+
+  const connectionToken = (connectionId: string): number | undefined => connections.get(connectionId)?.token;
 
   const emitViewChange = (record: ViewRecord, change: SubagentViewChange, allowClosed = false): void => {
     if ((!allowClosed && record.closed) || (!allowClosed && !record.connection.connected)) return;
@@ -515,28 +524,50 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     }
   };
 
-  const openView = async (connectionId: string, path: AgentPath, connectionToken?: number): Promise<SubagentViewAttachment> => {
+  const openView = (connectionId: string, path: AgentPath, connectionToken?: number): Promise<SubagentViewAttachment> => {
     assertStarted();
     const connection = getConnection(connectionId);
     assertConnectionToken(connection, connectionToken);
     const key = pathKey(path);
     const existing = connection.attachments.get(key);
     if (existing && !existing.closed && existing.snapshot) {
-      return { path: existing.path, attachmentGeneration: existing.attachmentGeneration, snapshot: existing.snapshot };
+      return Promise.resolve({ path: existing.path, attachmentGeneration: existing.attachmentGeneration, snapshot: existing.snapshot });
     }
-    const currentSnapshot = options.provider.snapshot();
-    replaceSnapshotNodes(currentSnapshot);
-    const node = nodes.get(key);
-    if (!node) throw new Error(`subagent path is unavailable: ${key}`);
-    const lease = await options.provider.acquire(clonePath(path));
-    try {
-      const record = await createViewRecord(connection, clonePath(path), node, lease);
-      if (!record.snapshot) throw new Error('child surface did not return a snapshot');
-      return { path: record.path, attachmentGeneration: record.attachmentGeneration, snapshot: record.snapshot };
-    } catch (error) {
-      await lease.release();
-      throw error;
-    }
+    const inFlightKey = `${connectionId}\u0000${key}`;
+    const pending = inFlightOpens.get(inFlightKey);
+    if (pending) return pending;
+
+    const operation = (async (): Promise<SubagentViewAttachment> => {
+      // A concurrent open can complete between the initial check and this
+      // operation's turn. Reuse its fully initialized attachment if present.
+      const current = connection.attachments.get(key);
+      if (current && !current.closed && current.snapshot) {
+        return { path: current.path, attachmentGeneration: current.attachmentGeneration, snapshot: current.snapshot };
+      }
+      const currentSnapshot = options.provider.snapshot();
+      replaceSnapshotNodes(currentSnapshot);
+      const node = nodes.get(key);
+      if (!node) throw new Error(`subagent path is unavailable: ${key}`);
+      const lease = await options.provider.acquire(clonePath(path));
+      try {
+        const record = await createViewRecord(connection, clonePath(path), node, lease);
+        if (!record.snapshot) throw new Error('child surface did not return a snapshot');
+        return { path: record.path, attachmentGeneration: record.attachmentGeneration, snapshot: record.snapshot };
+      } catch (error) {
+        await lease.release();
+        throw error;
+      }
+    })();
+    inFlightOpens.set(inFlightKey, operation);
+    void operation
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        if (inFlightOpens.get(inFlightKey) === operation) inFlightOpens.delete(inFlightKey);
+      });
+    return operation;
   };
 
   const closeView = async (connectionId: string, view: SubagentViewReference, connectionToken?: number): Promise<void> => {
@@ -569,7 +600,40 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
       return { steering: [], followUp: [] };
     }
     if (!record.surface) throw new Error('child surface is closed');
-    return record.surface.dispatch(command, caller);
+    const result = await record.surface.dispatch(command, caller);
+    if (command.type === 'navigate_tree' && (!result || typeof result !== 'object' || (result as { cancelled?: unknown }).cancelled !== true)) {
+      // Tree navigation changes the saved branch without replacing the child
+      // runtime. Replace the transcript/state snapshot and invalidate the old
+      // view replay position so stale cursors cannot replay the old branch.
+      const refresh = (record.surface as SessionSurface & { refreshSnapshot?: () => SessionSurfaceSnapshot }).refreshSnapshot;
+      const staged: PimoteSessionEvent[] = [];
+      record.stagedEvents = staged;
+      record.ready = false;
+      try {
+        const snapshot = refresh ? refresh.call(record.surface) : await record.surface.initialize();
+        record.snapshot = snapshot;
+        emitViewChange(record, {
+          type: 'snapshot',
+          path: record.path,
+          attachmentGeneration: record.attachmentGeneration,
+          snapshot,
+        });
+        record.ready = true;
+        const pending = [...staged];
+        staged.length = 0;
+        for (const event of pending) {
+          emitViewChange(record, {
+            type: 'event',
+            path: record.path,
+            attachmentGeneration: record.attachmentGeneration,
+            event,
+          });
+        }
+      } finally {
+        if (!record.closed) record.ready = true;
+      }
+    }
+    return result;
   };
 
   const disconnect = (connectionId: string, connectionToken?: number): void => {
@@ -618,8 +682,16 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     return current;
   };
 
-  const resurrect = async (request: import('@pimote/sdk/subagents').SubagentResurrectRequest): Promise<import('@pimote/sdk/subagents').SubagentResurrectResult> => {
+  const resurrect = async (
+    request: import('@pimote/sdk/subagents').SubagentResurrectRequest,
+    connectionId?: string,
+    connectionToken?: number,
+  ): Promise<import('@pimote/sdk/subagents').SubagentResurrectResult> => {
     assertStarted();
+    if (connectionId !== undefined) {
+      const connection = connections.get(connectionId) ?? getConnection(connectionId);
+      assertConnectionToken(connection, connectionToken);
+    }
     return options.provider.resurrect(request);
   };
 
@@ -646,8 +718,10 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
   ): Promise<SubagentTeardownResult> => {
     assertStarted();
     if (connectionId !== undefined) {
-      const connection = connections.get(connectionId);
-      if (!connection) throw new Error('unknown connection');
+      // A hierarchy-only teardown has no attachment yet. Allocate the
+      // connection record so the socket still receives a token guard, while
+      // attached teardown continues to validate its generation.
+      const connection = connections.get(connectionId) ?? getConnection(connectionId);
       assertConnectionToken(connection, connectionToken);
       if (attachmentGeneration !== undefined) assertReference(connectionId, { path, attachmentGeneration }, connectionToken);
     }
@@ -675,14 +749,17 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     await Promise.all(records.map((record) => closeRecord(record, reason, true)));
     for (const connection of connections.values()) connection.connected = false;
     recordsByPath.clear();
+    inFlightOpens.clear();
     connections.clear();
     nodes.clear();
-    (options.parentSurface as { close?: () => void }).close?.();
+    // The root SessionSurface is owned by the session slot. Provider host
+    // replacement must not close it while child views are being rebuilt.
     await (options.provider as ProviderWithShutdown).shutdown?.();
   };
 
   return {
     start,
+    connectionToken,
     openView,
     closeView,
     dispatch,

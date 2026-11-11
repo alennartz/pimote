@@ -66,6 +66,7 @@ import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { CallBindError } from './voice-orchestrator.js';
 import type { ConfigRuntime } from './config-runtime.js';
 import type { SubagentSurfaceCommand, SubagentViewAttachment, SubagentViewChange } from './subagent-host.js';
+import type { SessionSurfaceCallerContext, SessionSurfaceCommand } from './session-surface.js';
 
 export interface WsGlobalSettingsDependencies {
   manifest?: () => Promise<GetGlobalSettingsResponseData>;
@@ -436,6 +437,8 @@ export class WsHandler {
   private loginAbort: AbortController | null = null;
   private readonly folderConnectionId = randomUUID();
   private readonly boundSubagentViewListeners = new Map<ManagedSlot, (change: SubagentViewChange, incarnation?: string, viewCursor?: number) => void>();
+  /** Token owned by this socket for each concrete root host. */
+  private readonly subagentConnectionTokens = new Map<ManagedSlot, { host: NonNullable<ManagedSlot['subagentHost']>; token: number }>();
   readonly clientId: string;
 
   constructor(
@@ -1225,6 +1228,7 @@ export class WsHandler {
         case 'subagent_abort_bash':
         case 'subagent_set_model':
         case 'subagent_cycle_model':
+        case 'subagent_get_available_models':
         case 'subagent_set_thinking_level':
         case 'subagent_cycle_thinking_level':
         case 'subagent_compact':
@@ -1356,6 +1360,29 @@ export class WsHandler {
     return { slot, host };
   }
 
+  private subagentConnectionToken(slot: ManagedSlot): number | undefined {
+    const host = slot.subagentHost;
+    if (!host) return undefined;
+    const known = this.subagentConnectionTokens.get(slot);
+    if (known?.host === host) return known.token;
+    if (known) this.subagentConnectionTokens.delete(slot);
+    const token = host.connectionToken?.(this.clientId);
+    if (token !== undefined) this.subagentConnectionTokens.set(slot, { host, token });
+    return token;
+  }
+
+  private rememberSubagentConnectionToken(slot: ManagedSlot): number | undefined {
+    const host = slot.subagentHost;
+    if (!host) return undefined;
+    const token = host.connectionToken?.(this.clientId);
+    if (token !== undefined) this.subagentConnectionTokens.set(slot, { host, token });
+    return token;
+  }
+
+  private forgetSubagentConnectionToken(slot: ManagedSlot): void {
+    this.subagentConnectionTokens.delete(slot);
+  }
+
   private ensureSubagentViewListener(slot: ManagedSlot): void {
     const listeners = (slot.subagentViewListeners ??= new Map());
     const existing = listeners.get(this.clientId);
@@ -1459,7 +1486,8 @@ export class WsHandler {
     this.ensureSubagentViewListener(slot);
 
     if (command.type === 'subagent_open_view') {
-      const attachment = await host.openView(this.clientId, command.path);
+      const attachment = await host.openView(this.clientId, command.path, this.subagentConnectionToken(slot));
+      this.rememberSubagentConnectionToken(slot);
       const data: SubagentOpenViewResponseData = {
         path: attachment.path,
         incarnation: this.subagentIncarnation(slot, attachment.path),
@@ -1471,30 +1499,40 @@ export class WsHandler {
     }
 
     if (command.type === 'subagent_close_view') {
-      await host.closeView(this.clientId, {
-        path: command.path,
-        incarnation: command.incarnation,
-        attachmentGeneration: command.attachmentGeneration,
-      });
+      await host.closeView(
+        this.clientId,
+        {
+          path: command.path,
+          incarnation: command.incarnation,
+          attachmentGeneration: command.attachmentGeneration,
+        },
+        this.subagentConnectionToken(slot),
+      );
       this.sendResponse(id, true);
       return;
     }
 
     if (command.type === 'subagent_teardown') {
-      const result = await host.teardown(command.path, command.incarnation, command.attachmentGeneration !== undefined ? this.clientId : undefined, command.attachmentGeneration);
+      const result = await host.teardown(command.path, command.incarnation, this.clientId, command.attachmentGeneration, this.subagentConnectionToken(slot));
+      this.rememberSubagentConnectionToken(slot);
       this.sendResponse(id, true, result);
       return;
     }
 
     if (command.type === 'subagent_resurrect') {
-      const result = await host.resurrect({
-        sessionId: command.savedSessionId,
-        parentPath: command.parentPath,
-        localId: command.localId,
-        task: command.task,
-        channels: command.channels,
-        ...(command.model !== undefined ? { model: command.model } : {}),
-      });
+      const result = await host.resurrect(
+        {
+          sessionId: command.savedSessionId,
+          parentPath: command.parentPath,
+          localId: command.localId,
+          task: command.task,
+          channels: command.channels,
+          ...(command.model !== undefined ? { model: command.model } : {}),
+        },
+        this.clientId,
+        this.subagentConnectionToken(slot),
+      );
+      this.rememberSubagentConnectionToken(slot);
       this.sendSubagentSnapshot(slot, host.snapshot());
       this.sendResponse(id, true, result);
       return;
@@ -1505,8 +1543,66 @@ export class WsHandler {
       incarnation: command.incarnation,
       attachmentGeneration: command.attachmentGeneration,
     };
-    const result = await host.dispatch(this.clientId, view, this.makeSubagentSurfaceCommand(command));
+    const caller: SessionSurfaceCallerContext = { clientId: this.clientId, queueOwnership: slot.sessionState.queueOwnership };
+    const result = await host.dispatch(this.clientId, view, this.makeSubagentSurfaceCommand(command), this.subagentConnectionToken(slot), caller);
     this.sendResponse(id, true, result);
+  }
+
+  private rootSurfaceCommand(command: PimoteCommand): SessionSurfaceCommand | undefined {
+    const shared = new Set([
+      'prompt',
+      'steer',
+      'follow_up',
+      'set_model',
+      'cycle_model',
+      'get_available_models',
+      'set_thinking_level',
+      'cycle_thinking_level',
+      'compact',
+      'set_auto_compaction',
+      'get_state',
+      'get_messages',
+      'get_session_stats',
+      'get_session_meta',
+      'get_commands',
+      'complete_args',
+      'complete_file_refs',
+      'get_tree',
+      'navigate_tree',
+      'set_tree_label',
+    ]);
+    if (!shared.has(command.type)) return undefined;
+    const { sessionId: _sessionId, ...surfaceCommand } = command as PimoteCommand & { sessionId?: string };
+    void _sessionId;
+    return surfaceCommand as unknown as SessionSurfaceCommand;
+  }
+
+  private async dispatchRootSurfaceCommand(slot: ManagedSlot, command: PimoteCommand): Promise<{ handled: boolean; data?: unknown }> {
+    const surface = slot.sessionSurface;
+    const surfaceCommand = this.rootSurfaceCommand(command);
+    if (!surface || !surfaceCommand) return { handled: false };
+    const caller: SessionSurfaceCallerContext = { clientId: this.clientId, queueOwnership: slot.sessionState.queueOwnership };
+
+    if (surfaceCommand.type === 'navigate_tree') {
+      if (slot.sessionState.treeNavigationInProgress && !isNestedSlotLifecycle(slot)) throw new Error('Tree navigation already in progress');
+      slot.sessionState.treeNavigationInProgress = true;
+      try {
+        const result = await runSlotLifecycle(slot, 'reset', async () => {
+          const navigation = await surface.dispatch(surfaceCommand, caller);
+          if (!navigation || typeof navigation !== 'object' || (navigation as { cancelled?: unknown }).cancelled !== true) await this.sessionManager.applySessionReset(slot);
+          return navigation;
+        });
+        return { handled: true, data: result };
+      } finally {
+        slot.sessionState.treeNavigationInProgress = false;
+      }
+    }
+
+    const result = await surface.dispatch(surfaceCommand, caller);
+    if (['set_model', 'cycle_model', 'set_thinking_level', 'cycle_thinking_level', 'set_auto_compaction'].includes(surfaceCommand.type)) {
+      this.sendSessionSettingsToObservers(slot.sessionState.id, slot);
+    }
+    return { handled: true, data: result };
   }
 
   private async handleSessionCommand(command: PimoteCommand, id: string): Promise<void> {
@@ -1528,6 +1624,12 @@ export class WsHandler {
     // boundary shared by prompt, steer, and follow-up so a streaming composer
     // cannot turn a built-in command into a queued user message.
     if ((command.type === 'prompt' || command.type === 'steer' || command.type === 'follow_up') && (await this.dispatchPimoteSlashCommand(id, sessionId, slot, command.message))) {
+      return;
+    }
+
+    const sharedRoot = await this.dispatchRootSurfaceCommand(slot, command);
+    if (sharedRoot.handled) {
+      this.sendResponse(id, true, sharedRoot.data);
       return;
     }
 
@@ -2073,7 +2175,8 @@ export class WsHandler {
     this.subscribedSessions.add(sessionId);
     this.ensureSubagentViewListener(slot);
     if (slot.subagentHost) {
-      const restored = await slot.subagentHost.reconnect(this.clientId);
+      const restored = await slot.subagentHost.reconnect(this.clientId, this.subagentConnectionToken(slot));
+      this.rememberSubagentConnectionToken(slot);
       this.sendSubagentSnapshot(slot);
       for (const attachment of restored) this.sendEvent(this.makeSubagentViewSnapshot(slot.sessionState.id, attachment, this.subagentIncarnation(slot, attachment.path)));
     }
@@ -2261,7 +2364,10 @@ export class WsHandler {
           this.sessionManager.detachObserver(sessionId, handler.clientId, handler.ws as unknown as EventSocket);
         }
         if (detachSlot?.subagentHost) {
-          await detachSlot.subagentHost.releaseConnection(handler.clientId);
+          const tokenRecord = handler.subagentConnectionTokens.get(detachSlot);
+          const token = tokenRecord?.host === detachSlot.subagentHost ? tokenRecord.token : undefined;
+          if (token !== undefined) await detachSlot.subagentHost.releaseConnection(handler.clientId, token);
+          handler.forgetSubagentConnectionToken(detachSlot);
           const listener = handler.boundSubagentViewListeners.get(detachSlot);
           if (listener && detachSlot.subagentViewListeners?.get(handler.clientId) === listener) detachSlot.subagentViewListeners.delete(handler.clientId);
           handler.boundSubagentViewListeners.delete(detachSlot);
@@ -2754,7 +2860,21 @@ export class WsHandler {
     for (const sid of this.subscribedSessions) {
       const slot = this.sessionManager.getSession(sid);
       this.sessionManager.detachObserver(sid, this.clientId, this.ws as unknown as EventSocket);
-      if (slot?.subagentHost) slot.subagentHost.disconnect(this.clientId);
+      if (slot?.subagentHost) {
+        const tokenRecord = this.subagentConnectionTokens.get(slot);
+        const token = tokenRecord?.host === slot.subagentHost ? tokenRecord.token : undefined;
+        // A socket that never opened a child view has no host token. Do not
+        // query the host during cleanup, or a displaced socket could obtain
+        // its replacement's token and detach the replacement's views.
+        if (token !== undefined) {
+          try {
+            slot.subagentHost.disconnect(this.clientId, token);
+          } catch {
+            // A replacement socket already advanced the token. Its views stay live.
+          }
+        }
+        this.forgetSubagentConnectionToken(slot);
+      }
       const listener = slot ? this.boundSubagentViewListeners.get(slot) : undefined;
       if (listener && slot?.subagentViewListeners?.get(this.clientId) === listener) slot.subagentViewListeners.delete(this.clientId);
       if (slot) this.boundSubagentViewListeners.delete(slot);
