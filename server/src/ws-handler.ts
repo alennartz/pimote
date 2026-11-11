@@ -1489,8 +1489,11 @@ export class WsHandler {
     this.ensureSubagentViewListener(slot);
 
     if (command.type === 'subagent_open_view') {
-      const attachment = await host.openView(this.clientId, command.path, this.subagentConnectionToken(slot));
+      // Bind the host token before the first await. Cleanup can then invalidate
+      // an in-flight open instead of losing the late lease.
+      const opening = host.openView(this.clientId, command.path, this.subagentConnectionToken(slot));
       this.rememberSubagentConnectionToken(slot);
+      const attachment = await opening;
       const data: SubagentOpenViewResponseData = {
         path: attachment.path,
         incarnation: this.subagentIncarnation(slot, attachment.path),
@@ -1546,7 +1549,9 @@ export class WsHandler {
       incarnation: command.incarnation,
       attachmentGeneration: command.attachmentGeneration,
     };
-    const caller: SessionSurfaceCallerContext = { clientId: this.clientId, queueOwnership: slot.sessionState.queueOwnership };
+    // Child queues belong to the borrowed child surface. Never pass the root
+    // ledger, because child queue updates do not reconcile against it.
+    const caller: SessionSurfaceCallerContext = { clientId: this.clientId };
     const result = await host.dispatch(this.clientId, view, this.makeSubagentSurfaceCommand(command), this.subagentConnectionToken(slot), caller);
     this.sendResponse(id, true, result);
   }
@@ -1556,6 +1561,9 @@ export class WsHandler {
       'prompt',
       'steer',
       'follow_up',
+      'abort',
+      'bash',
+      'abort_bash',
       'set_model',
       'cycle_model',
       'get_available_models',

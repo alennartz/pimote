@@ -145,6 +145,10 @@ export interface SessionSurfaceOptions {
   session: BorrowedAgentSession;
   kind: SessionSurfaceKind;
   capabilities?: SessionSurfaceCapabilities;
+  /** Root-only lifecycle adapters that preserve slot-level queue and bash semantics. */
+  rootAbort?: (caller?: SessionSurfaceCallerContext) => Promise<unknown>;
+  rootBash?: (command: Extract<SessionSurfaceCommand, { type: 'bash' }>, caller?: SessionSurfaceCallerContext) => Promise<unknown>;
+  rootAbortBash?: (caller?: SessionSurfaceCallerContext) => Promise<void>;
   /** Parent replay cursor, when this surface is a child view. It is diagnostic only. */
   parentCursor?: number;
   /** Share an existing event buffer with a root session slot. */
@@ -571,6 +575,17 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
         ensure('steer');
         const slash = commandToken(command.message);
         if (options.kind === 'child' && slash) throw new Error(`slash command /${slash} is not available on a child surface`);
+        if (options.kind === 'root') {
+          const intent = caller?.queueOwnership && caller.clientId ? caller.queueOwnership.intend('steering', caller.clientId, command.message) : undefined;
+          try {
+            const result = await dispatchPrompt(session, command.message, parseDataUrlImages(command.images), 'steer', () => undefined);
+            if (intent && result !== 'queued') caller?.queueOwnership?.cancel(intent);
+            return { outcome: result };
+          } catch (error) {
+            if (intent) caller?.queueOwnership?.cancel(intent);
+            throw error;
+          }
+        }
         const intent = caller?.queueOwnership && caller.clientId ? caller.queueOwnership.intend('steering', caller.clientId, command.message) : undefined;
         try {
           const result = await (session.steer as unknown as (text: string, images?: unknown) => Promise<'queued' | 'handled'>)(command.message, parseDataUrlImages(command.images));
@@ -585,6 +600,17 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
         ensure('follow_up');
         const slash = commandToken(command.message);
         if (options.kind === 'child' && slash) throw new Error(`slash command /${slash} is not available on a child surface`);
+        if (options.kind === 'root') {
+          const intent = caller?.queueOwnership && caller.clientId ? caller.queueOwnership.intend('followUp', caller.clientId, command.message) : undefined;
+          try {
+            const result = await dispatchPrompt(session, command.message, undefined, 'followUp', () => undefined);
+            if (intent && result !== 'queued') caller?.queueOwnership?.cancel(intent);
+            return { outcome: result };
+          } catch (error) {
+            if (intent) caller?.queueOwnership?.cancel(intent);
+            throw error;
+          }
+        }
         const intent = caller?.queueOwnership && caller.clientId ? caller.queueOwnership.intend('followUp', caller.clientId, command.message) : undefined;
         try {
           const result = await (session.followUp as unknown as (text: string) => Promise<'queued' | 'handled'>)(command.message);
@@ -597,6 +623,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       }
       case 'abort': {
         ensure('stop');
+        if (options.kind === 'root' && options.rootAbort) return options.rootAbort(caller);
         if (options.kind === 'child') {
           if (!options.stop) throw new Error('child Stop is not available without owner control');
           await options.stop({ path: options.path ?? [], incarnation: options.incarnation ?? '', expectedSessionId: session.sessionId });
@@ -615,6 +642,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       }
       case 'bash': {
         ensure('bash');
+        if (options.kind === 'root' && options.rootBash) return { result: await options.rootBash(command, caller) };
         if (options.kind === 'child' && capabilities.nativeBash?.admitted === false) throw new Error('native bash is not available on this child surface');
         const bash = options.kind === 'child' && capabilities.nativeBash?.execute ? capabilities.nativeBash.execute : capabilities.executeBash;
         if (!bash) throw new Error('native bash is not available');
@@ -623,6 +651,10 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       }
       case 'abort_bash': {
         ensure('abort_bash');
+        if (options.kind === 'root' && options.rootAbortBash) {
+          await options.rootAbortBash(caller);
+          return undefined;
+        }
         const abortBash = options.kind === 'child' && capabilities.nativeBash?.abort ? capabilities.nativeBash.abort : session.abortBash;
         if (!abortBash) throw new Error('native bash is not available');
         await abortBash.call(options.kind === 'child' && capabilities.nativeBash?.abort ? capabilities.nativeBash : session);

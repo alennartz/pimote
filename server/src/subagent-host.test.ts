@@ -406,6 +406,42 @@ describe('SubagentHost', () => {
     expect(f.active(scout)).toBe(1);
   });
 
+  it('refreshes every live attachment after shared tree navigation', async () => {
+    const f = fixture();
+    await f.host.start();
+    const first = await f.host.openView('connection-1', scout);
+    const second = await f.host.openView('connection-2', scout);
+    const firstRefresh = f.nextViewChange(
+      ({ connectionId, change }) => connectionId === 'connection-1' && change.type === 'snapshot' && change.snapshot.cursor > first.snapshot.cursor,
+    );
+    const secondRefresh = f.nextViewChange(
+      ({ connectionId, change }) => connectionId === 'connection-2' && change.type === 'snapshot' && change.snapshot.cursor > second.snapshot.cursor,
+    );
+    await f.host.dispatch('connection-1', first, { type: 'navigate_tree', targetId: 'entry-1' });
+    await expect(Promise.all([firstRefresh, secondRefresh])).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ connectionId: 'connection-1', change: expect.objectContaining({ type: 'snapshot' }) }),
+        expect.objectContaining({ connectionId: 'connection-2', change: expect.objectContaining({ type: 'snapshot' }) }),
+      ]),
+    );
+  });
+
+  it('releases a lease that finishes after the connection token is invalidated', async () => {
+    const f = fixture();
+    await f.host.start();
+    f.pending.blockAcquire = true;
+    const opening = f.host.openView('connection-1', scout);
+    await Promise.resolve();
+    const token = f.host.connectionToken?.('connection-1');
+    expect(token).toBeTypeOf('number');
+    f.host.disconnect('connection-1', token);
+    f.pending.blockAcquire = false;
+    f.pending.releaseAcquire?.();
+    await expect(opening).rejects.toThrow('stale connection token');
+    expect(f.active(scout)).toBe(0);
+    expect(f.pending.delivered).toEqual(['latest answer']);
+  });
+
   it('retains all connection attachments during reconnect grace and releases them after expiry', async () => {
     vi.useFakeTimers();
     try {

@@ -166,7 +166,7 @@ function fixture() {
     parentCursor: 17,
     stop,
   } as SessionSurfaceOptions & { stop: typeof stop });
-  return { surface, data, publish };
+  return { surface, data, publish, native, capabilities };
 }
 
 function assistantEnd(text: string): AgentSessionEvent {
@@ -251,6 +251,22 @@ describe('SessionSurface', () => {
         }),
       );
     second.release();
+  });
+
+  it('routes root steer and follow-up through prompt preflight', async () => {
+    const f = fixture();
+    const root = createSessionSurface({ sessionId: 'root-session', session: f.native, kind: 'root', capabilities: f.capabilities });
+    await root.initialize();
+    await expect(root.dispatch({ type: 'steer', message: 'Start a root run' })).resolves.toMatchObject({ outcome: 'started' });
+    await expect(root.dispatch({ type: 'follow_up', message: 'Continue the root run' })).resolves.toMatchObject({ outcome: 'started' });
+    expect(f.data.steering).toEqual([]);
+    expect(f.data.followUp).toEqual([]);
+    expect(f.data.branch.filter((saved) => 'message' in saved).map((saved) => (saved as { message: { content: unknown } }).message.content)).toEqual(
+      expect.arrayContaining([
+        expect.arrayContaining([expect.objectContaining({ text: 'Start a root run' })]),
+        expect.arrayContaining([expect.objectContaining({ text: 'Continue the root run' })]),
+      ]),
+    );
   });
 
   it('supports chat and Stop on the same child session', async () => {

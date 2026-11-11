@@ -15,13 +15,13 @@ import {
 import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
-import { QUEUE_KINDS, QueueOwnership, type QueueTexts } from './queue-ownership.js';
+import { attributeDrained, QUEUE_KINDS, QueueOwnership, type QueueTexts } from './queue-ownership.js';
 import { extractMessageEntryIds, rendererRegisteredVisibility } from './message-mapper.js';
 import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, DownloadUpdateEvent, SessionSettingsChangedEvent, SubagentSnapshot } from '../../shared/dist/index.js';
 import type { PushNotificationPayload, PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
-import { sendSlotEvent } from './session-slot.js';
+import { resolveAllSlotPendingUi, sendSlotEvent } from './session-slot.js';
 export { sendSlotEvent, waitForSlotUiResponse, resolveSlotPendingUi, resolveAllSlotPendingUi, replaySlotPendingUiRequests } from './session-slot.js';
 import { askActivity } from '@pimote/sdk/activity';
 import { getGitBranch } from './git-branch.js';
@@ -32,7 +32,7 @@ import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { loadManagerExtension } from './manager/attachment.js';
 import { discoverProvider, type BorrowedAgentSession, type SubagentProvider, type SubagentProviderDiscovery } from '@pimote/sdk/subagents';
 import { createSubagentHost, type SubagentHost, type SubagentViewChange } from './subagent-host.js';
-import { createSessionSurface, type SessionSurface, type SessionSurfaceCapabilities } from './session-surface.js';
+import { createSessionSurface, type SessionSurface, type SessionSurfaceCapabilities, type SessionSurfaceCallerContext, type SessionSurfaceCommand } from './session-surface.js';
 
 /** Narrow interface for the WebSocket used for event routing.
  *  Avoids importing the `ws` package type in session-manager. */
@@ -966,6 +966,78 @@ export class PimoteSessionManager {
     };
   }
 
+  private async rootAbort(slot: ManagedSlot, caller?: SessionSurfaceCallerContext): Promise<QueueTexts> {
+    const session = slot.session;
+    // Read ownership before clearing. The queue_update emitted by clearQueue
+    // removes the ledger entries that let us restore each sender's drafts.
+    const owners = slot.sessionState.queueOwnership.snapshot();
+    slot.eventBusRef.current?.emit('pimote:voice:cancel-pending', undefined);
+    const drained = session.clearQueue();
+    const drafts = attributeDrained(owners, drained, caller?.clientId ?? '');
+    for (const [clientId, group] of drafts) {
+      if (!clientId || clientId === caller?.clientId) continue;
+      const observer = slot.observers.get(clientId);
+      const event = { type: 'queued_drafts_restored' as const, sessionId: slot.sessionState.id, ...group };
+      let delivered = false;
+      if (observer?.ws?.readyState === 1) {
+        try {
+          observer.ws.send(JSON.stringify(event));
+          delivered = true;
+        } catch {
+          delivered = false;
+        }
+      }
+      if (!delivered) {
+        const held = (slot.sessionState.undeliveredDrafts ??= new Map());
+        const prior = held.get(clientId) ?? { steering: [], followUp: [] };
+        held.set(clientId, { steering: [...prior.steering, ...group.steering], followUp: [...prior.followUp, ...group.followUp] });
+      }
+    }
+    resolveAllSlotPendingUi(slot);
+    return (await session.abort(), drafts.get(caller?.clientId ?? '') ?? { steering: [], followUp: [] });
+  }
+
+  private async rootBash(slot: ManagedSlot, command: Extract<SessionSurfaceCommand, { type: 'bash' }>): Promise<unknown> {
+    const session = slot.session;
+    const state = slot.sessionState;
+    if (session.isBashRunning || state.bashDispatchInProgress === true) throw new Error('bash_already_running');
+    state.bashDispatchInProgress = true;
+    state.bashAbortRequested = false;
+    try {
+      let extensionResult: Awaited<ReturnType<AgentSession['extensionRunner']['emitUserBash']>>;
+      try {
+        extensionResult = await session.extensionRunner.emitUserBash({
+          type: 'user_bash',
+          command: command.command,
+          excludeFromContext: command.excludeFromContext === true,
+          cwd: session.sessionManager.getCwd(),
+        });
+      } catch (error) {
+        console.error('[SessionManager] user_bash extension handler failed:', error);
+        throw new Error('bash_extension_error', { cause: error });
+      }
+      if (extensionResult?.result) {
+        session.recordBashResult(command.command, extensionResult.result, { excludeFromContext: command.excludeFromContext === true });
+        return extensionResult.result;
+      }
+      const execution = session.executeBash(command.command, undefined, {
+        id: command.id,
+        excludeFromContext: command.excludeFromContext === true,
+        operations: extensionResult?.operations,
+      });
+      if (state.bashAbortRequested) session.abortBash();
+      return await execution;
+    } finally {
+      state.bashDispatchInProgress = false;
+      state.bashAbortRequested = false;
+    }
+  }
+
+  private async rootAbortBash(slot: ManagedSlot): Promise<void> {
+    if (slot.sessionState.bashDispatchInProgress === true) slot.sessionState.bashAbortRequested = true;
+    slot.session.abortBash();
+  }
+
   /** Ensure one shared root surface for this concrete AgentSession. */
   private ensureRootSessionSurface(slot: ManagedSlot): SessionSurface {
     if (slot.sessionSurface) return slot.sessionSurface;
@@ -975,6 +1047,9 @@ export class PimoteSessionManager {
       kind: 'root',
       eventBuffer: slot.sessionState.eventBuffer,
       subscribeNative: false,
+      rootAbort: (caller) => this.rootAbort(slot, caller),
+      rootBash: (command) => this.rootBash(slot, command),
+      rootAbortBash: () => this.rootAbortBash(slot),
       getGitBranch: () => this.getLastKnownGitBranch(slot.sessionState.id),
     });
     slot.sessionSurface = surface;

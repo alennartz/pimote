@@ -430,6 +430,48 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     }
   };
 
+  const refreshCurrentSnapshot = (record: ViewRecord): void => {
+    if (record.closed || !record.surface) return;
+    const surface = record.surface;
+    const staged: PimoteSessionEvent[] = [];
+    record.stagedEvents = staged;
+    record.ready = false;
+    try {
+      const snapshot = surface.refreshSnapshot();
+      if (record.closed || record.surface !== surface) return;
+      record.snapshot = snapshot;
+      emitViewChange(record, {
+        type: 'snapshot',
+        path: record.path,
+        attachmentGeneration: record.attachmentGeneration,
+        snapshot,
+      });
+      record.ready = true;
+      const pending = [...staged];
+      staged.length = 0;
+      for (const event of pending) {
+        emitViewChange(record, {
+          type: 'event',
+          path: record.path,
+          attachmentGeneration: record.attachmentGeneration,
+          event,
+        });
+      }
+    } finally {
+      if (!record.closed && record.surface === surface) record.ready = true;
+    }
+  };
+
+  const refreshAfterNavigation = (record: ViewRecord): Promise<void> => {
+    const next = record.transition
+      .then(() => refreshCurrentSnapshot(record))
+      .catch(() => {
+        if (!record.closed) return closeRecord(record, 'unavailable', true);
+      });
+    record.transition = next;
+    return next;
+  };
+
   const enqueueTransition = (record: ViewRecord, operation: () => Promise<void>): void => {
     record.transition = record.transition.then(operation).catch(() => {
       if (!record.closed) return closeRecord(record, 'unavailable', true);
@@ -528,6 +570,9 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     assertStarted();
     const connection = getConnection(connectionId);
     assertConnectionToken(connection, connectionToken);
+    // Capture the token synchronously. The WebSocket handler binds it before
+    // awaiting this promise, and a disconnect invalidates this open.
+    const openingToken = connection.token;
     const key = pathKey(path);
     const existing = connection.attachments.get(key);
     if (existing && !existing.closed && existing.snapshot) {
@@ -550,7 +595,14 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
       if (!node) throw new Error(`subagent path is unavailable: ${key}`);
       const lease = await options.provider.acquire(clonePath(path));
       try {
+        // A socket can close while provider.acquire() waits. Do not attach a
+        // late lease to a disconnected or replacement connection.
+        if (!connection.connected || connection.token !== openingToken) throw new Error('stale connection token');
         const record = await createViewRecord(connection, clonePath(path), node, lease);
+        if (!connection.connected || connection.token !== openingToken) {
+          await closeRecord(record, 'released', false);
+          throw new Error('stale connection token');
+        }
         if (!record.snapshot) throw new Error('child surface did not return a snapshot');
         return { path: record.path, attachmentGeneration: record.attachmentGeneration, snapshot: record.snapshot };
       } catch (error) {
@@ -602,36 +654,10 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     if (!record.surface) throw new Error('child surface is closed');
     const result = await record.surface.dispatch(command, caller);
     if (command.type === 'navigate_tree' && (!result || typeof result !== 'object' || (result as { cancelled?: unknown }).cancelled !== true)) {
-      // Tree navigation changes the saved branch without replacing the child
-      // runtime. Replace the transcript/state snapshot and invalidate the old
-      // view replay position so stale cursors cannot replay the old branch.
-      const refresh = (record.surface as SessionSurface & { refreshSnapshot?: () => SessionSurfaceSnapshot }).refreshSnapshot;
-      const staged: PimoteSessionEvent[] = [];
-      record.stagedEvents = staged;
-      record.ready = false;
-      try {
-        const snapshot = refresh ? refresh.call(record.surface) : await record.surface.initialize();
-        record.snapshot = snapshot;
-        emitViewChange(record, {
-          type: 'snapshot',
-          path: record.path,
-          attachmentGeneration: record.attachmentGeneration,
-          snapshot,
-        });
-        record.ready = true;
-        const pending = [...staged];
-        staged.length = 0;
-        for (const event of pending) {
-          emitViewChange(record, {
-            type: 'event',
-            path: record.path,
-            attachmentGeneration: record.attachmentGeneration,
-            event,
-          });
-        }
-      } finally {
-        if (!record.closed) record.ready = true;
-      }
+      // Tree navigation changes the shared saved branch. Refresh every live
+      // attachment so each observer replaces its transcript and replay cursor.
+      const records = [...(recordsByPath.get(record.key) ?? [])].filter((candidate) => !candidate.closed);
+      await Promise.all(records.map((candidate) => refreshAfterNavigation(candidate)));
     }
     return result;
   };
