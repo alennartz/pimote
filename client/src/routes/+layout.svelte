@@ -45,8 +45,9 @@
   let appShellEl: HTMLDivElement | undefined = $state();
   let appHeight = $state('100dvh');
   let activeSubagentRoot = $derived(sessionRegistry.viewedSessionId ? sessionRegistry.subagentRoots[sessionRegistry.viewedSessionId] : null);
+  let pendingSubagentResurrection = $derived(sessionRegistry.viewedSessionId ? sessionRegistry.getPendingSubagentResurrection(sessionRegistry.viewedSessionId) : null);
   let hasHierarchy = $derived((activeSubagentRoot?.nodes.length ?? 0) > 0);
-  let hasPanels = $derived(panelStore.hasCards || hasHierarchy);
+  let hasPanels = $derived(panelStore.hasCards || hasHierarchy || pendingSubagentResurrection !== null);
 
   // The registry drives the URL (lib/nav.ts); this closes the loop the other
   // way for the home route. Only the session route adopts its param, so

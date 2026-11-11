@@ -177,6 +177,7 @@
         ...(resurrectModel.trim() ? { model: resurrectModel.trim() } : {}),
       });
       if (response.success) {
+        if (notice) sessionRegistry.clearPendingSubagentResurrection(notice.rootSessionId, notice.path);
         resurrectOpen = false;
         notice = null;
       }
@@ -186,17 +187,37 @@
   }
 
   function dismissNotice(): void {
+    if (notice?.reason === 'teardown') sessionRegistry.clearPendingSubagentResurrection(notice.rootSessionId, notice.path);
     notice = null;
   }
 
+  function cancelResurrection(): void {
+    if (notice?.reason === 'teardown') sessionRegistry.clearPendingSubagentResurrection(notice.rootSessionId, notice.path);
+    resurrectOpen = false;
+  }
+
   onMount(() => {
+    const pending = rootSessionId ? sessionRegistry.getPendingSubagentResurrection(rootSessionId) : null;
+    if (pending) {
+      notice = pending;
+      prepareResurrection(pending);
+    }
     const unsubscribe = sessionRegistry.onSubagentViewClosed((closed) => {
       if (closed.rootSessionId !== sessionRegistry.viewedSessionId) return;
       notice = closed;
       teardownConfirmation = null;
       if (closed.reason === 'teardown') prepareResurrection(closed, false);
     });
-    return unsubscribe;
+    const unsubscribeResurrection = sessionRegistry.onSubagentResurrectionRequested((requested) => {
+      if (requested.rootSessionId !== sessionRegistry.viewedSessionId) return;
+      notice = requested;
+      teardownConfirmation = null;
+      prepareResurrection(requested);
+    });
+    return () => {
+      unsubscribe();
+      unsubscribeResurrection();
+    };
   });
 
   $effect(() => {
@@ -394,7 +415,7 @@
   <div
     class="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
     role="presentation"
-    onclick={(event) => event.currentTarget === event.target && (resurrectOpen = false)}
+    onclick={(event) => event.currentTarget === event.target && cancelResurrection()}
   >
     <div class="bg-background w-full max-w-md rounded-xl border p-4 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="resurrect-title">
       <h2 id="resurrect-title" class="text-sm font-semibold">Resurrect child session</h2>
@@ -407,7 +428,7 @@
         <label class="field-label">Model <span class="text-muted-foreground">(optional)</span><input bind:value={resurrectModel} aria-label="Model" /></label>
       </div>
       <div class="mt-4 flex justify-end gap-2">
-        <button type="button" class="border-border rounded border px-3 py-1.5 text-xs" onclick={() => (resurrectOpen = false)}>Cancel</button>
+        <button type="button" class="border-border rounded border px-3 py-1.5 text-xs" onclick={cancelResurrection}>Cancel</button>
         <button
           type="button"
           class="bg-primary text-primary-foreground rounded px-3 py-1.5 text-xs"

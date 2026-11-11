@@ -35,7 +35,6 @@
   const rootSessionId = $derived(sessionRegistry.viewedSessionId);
   const activeChildPath = $derived(rootSessionId ? sessionRegistry.getSelectedSubagentPath?.(rootSessionId) : null);
   const activeSurfaceKey = $derived(activeChild && rootSessionId && activeChildPath ? `${rootSessionId}\u0000${JSON.stringify(activeChildPath)}` : (rootSessionId ?? ''));
-  const childSurfaceRef: BranchTreeSurface | null = $derived(activeChild && rootSessionId && activeChildPath ? { rootSessionId, path: [...activeChildPath] } : null);
   const noSession = $derived(rootSessionId === null);
   const isPending = $derived(rootSessionId?.startsWith('pending-') ?? false);
   const canSend = $derived(!noSession && !isPending && connection.ready && (!activeChild || !activeChild.closed));
@@ -347,6 +346,13 @@
   async function sendMessage() {
     const text = inputText.trim();
     if (!canSend) return;
+    // Every continuation below must target the surface that submitted the
+    // request. The user can switch child views while the server responds.
+    const originatingRootSessionId = rootSessionId;
+    const originatingChild = activeChild;
+    const originatingChildPath = activeChildPath ? [...activeChildPath] : null;
+    const originatingSurfaceRef: BranchTreeSurface | null =
+      originatingChild && originatingRootSessionId && originatingChildPath ? { rootSessionId: originatingRootSessionId, path: [...originatingChildPath] } : null;
     const focusSnapshot = captureTextareaFocus();
 
     function clearSubmittedComposer(sessionId: string, preserveImages = false): void {
@@ -363,16 +369,23 @@
 
     function restoreSubmittedComposer(sessionId: string, draft: string, images: string[], clientMessageId?: string, preserveImages = false): void {
       const session = sessionRegistry.sessions[sessionId];
-      const surfaceDraft = getSurfaceDraft();
-      if (activeChild ? activeChild.closed || surfaceDraft !== '' : !session || session.draftText !== '') return;
+      const child = originatingChild;
+      const childPath = originatingChildPath;
+      const surfaceDraft = child && childPath ? sessionRegistry.getSubagentDraftText(sessionId, childPath) : (session?.draftText ?? '');
+      if (child ? child.closed || surfaceDraft !== '' : !session || session.draftText !== '') return;
       // A later optimistic prompt owns the empty composer. Do not put an older
       // failed submission back on top of it.
-      if (clientMessageId && session && session.optimisticEntries.some((entry) => entry.clientMessageId !== clientMessageId)) return;
+      const optimisticEntries = child?.optimisticEntries ?? session?.optimisticEntries;
+      if (clientMessageId && optimisticEntries?.some((entry) => entry.clientMessageId !== clientMessageId)) return;
       const retainedImages = preserveImages && stagedImages.length === images.length && stagedImages.every((image, index) => image === images[index]);
-      if (sessionRegistry.viewedSessionId === sessionId && (inputText !== '' || (!preserveImages && stagedImages.length > 0) || (preserveImages && !retainedImages))) return;
+      const selectedPath = sessionRegistry.getSelectedSubagentPath(sessionId);
+      const sameSurface = child ? !!childPath && !!selectedPath && JSON.stringify(selectedPath) === JSON.stringify(childPath) : !sessionRegistry.viewedSubagentAttachment;
+      if (sessionRegistry.viewedSessionId === sessionId && sameSurface && (inputText !== '' || (!preserveImages && stagedImages.length > 0) || (preserveImages && !retainedImages)))
+        return;
 
-      setSurfaceDraft(draft);
-      if (sessionRegistry.viewedSessionId !== sessionId) return;
+      if (child && childPath) sessionRegistry.setSubagentDraftText(sessionId, childPath, draft);
+      else if (session) sessionRegistry.setDraftText(sessionId, draft);
+      if (sessionRegistry.viewedSessionId !== sessionId || !sameSurface) return;
       inputText = draft;
       if (!preserveImages) stagedImages = [...images];
       tick().then(() => autoResize());
@@ -384,11 +397,11 @@
     const parsedBash = parseBangBashCommand(text);
     if (parsedBash) {
       const session = sessionRegistry.viewed;
-      if (!session || !rootSessionId) return;
+      if (!session || !originatingRootSessionId) return;
       const sessionId = session.sessionId;
       const id = crypto.randomUUID();
-      if (activeChild && activeChildPath) {
-        sessionRegistry.startSubagentBash(rootSessionId, activeChildPath, {
+      if (originatingChild && originatingChildPath) {
+        sessionRegistry.startSubagentBash(originatingRootSessionId, originatingChildPath, {
           id,
           command: parsedBash.command,
           excludeFromContext: parsedBash.excludeFromContext,
@@ -422,10 +435,11 @@
         });
         const data = response.data as BashResponseData | undefined;
         if (response.success && data?.result) {
-          if (activeChild && activeChildPath) sessionRegistry.completeSubagentBash(rootSessionId, activeChildPath, id, data.result);
+          if (originatingChild && originatingChildPath) sessionRegistry.completeSubagentBash(originatingRootSessionId, originatingChildPath, id, data.result);
           else sessionRegistry.completeBash(sessionId, id, data.result);
         } else {
-          if (activeChild && activeChildPath) sessionRegistry.failSubagentBash(rootSessionId, activeChildPath, id, response.error ?? 'Bash command failed');
+          if (originatingChild && originatingChildPath)
+            sessionRegistry.failSubagentBash(originatingRootSessionId, originatingChildPath, id, response.error ?? 'Bash command failed');
           else sessionRegistry.failBash(sessionId, id, response.error ?? 'Bash command failed');
         }
       } catch (error) {
@@ -437,7 +451,7 @@
           console.warn('Bash command outcome unknown after connection loss; awaiting reconnect:', error);
         } else {
           const message = error instanceof Error ? error.message : String(error);
-          if (activeChild && activeChildPath) sessionRegistry.failSubagentBash(rootSessionId, activeChildPath, id, message);
+          if (originatingChild && originatingChildPath) sessionRegistry.failSubagentBash(originatingRootSessionId, originatingChildPath, id, message);
           else sessionRegistry.failBash(sessionId, id, message);
           console.error('Failed to send bash command:', error);
         }
@@ -481,10 +495,9 @@
     // Intercept `/compact` — triggers manual context compaction with optional
     // custom instructions (e.g. `/compact focus on file diffs and decisions`).
     if (/^\/compact(?:\s|$)/.test(text)) {
-      const originatingSessionId = rootSessionId;
+      const originatingSessionId = originatingRootSessionId;
       if (!originatingSessionId) return;
       const submittedDraft = inputText;
-      const originatingChild = activeChild;
       const customInstructions = text.slice('/compact'.length).trim() || undefined;
       try {
         const response = await sendSurface({ type: 'compact', customInstructions });
@@ -515,15 +528,15 @@
     if (surfaceStreaming()) {
       // Steer the current generation with text and staged images. Image-only
       // steering stays disabled because this branch requires text.
-      if (!text) return;
-      const sessionId = rootSessionId!;
+      if (!text || !originatingRootSessionId) return;
+      const sessionId = originatingRootSessionId;
       const submittedDraft = inputText;
       const submittedImages = [...stagedImages];
       const isSlashCommand = text.startsWith('/');
       // Show the pending pill and clear the submitted draft before the
       // round-trip. Slash input waits for pi's command handling or
       // queue_update: a command may run instead of queueing.
-      const showPill = !isSlashCommand && !activeChild;
+      const showPill = !isSlashCommand && !originatingChild;
       if (showPill && sessionRegistry.viewed) sessionRegistry.viewed.pendingSteeringMessages.push(text);
       clearSubmittedComposer(sessionId, isSlashCommand);
       // Remove the pill when pi will not queue the text. A queued text needs
@@ -550,7 +563,7 @@
                 tree: promptData.tree as import('@pimote/shared').PimoteTreeNode[],
                 currentLeafId: (promptData.currentLeafId as string) ?? null,
               },
-              childSurfaceRef,
+              originatingSurfaceRef,
             );
           } else if ((dispatchResponse.data as PromptResponseData | undefined)?.outcome !== 'queued') {
             dropPill();
@@ -564,7 +577,8 @@
     } else {
       // Send a new prompt (text and/or images)
       if (!text && stagedImages.length === 0) return;
-      const sessionId = rootSessionId!;
+      if (!originatingRootSessionId) return;
+      const sessionId = originatingRootSessionId;
       const submittedDraft = inputText;
       const submittedImages = [...stagedImages];
       // Show the user message and clear the submitted draft before the
@@ -572,7 +586,7 @@
       // never echo, and skill or template expansion echoes different text.
       const clientMessageId = text.startsWith('/') ? undefined : crypto.randomUUID();
       if (clientMessageId) {
-        if (activeChild && activeChildPath) sessionRegistry.addSubagentOptimisticUserMessage(sessionId, activeChildPath, text, clientMessageId);
+        if (originatingChild && originatingChildPath) sessionRegistry.addSubagentOptimisticUserMessage(sessionId, originatingChildPath, text, clientMessageId);
         else sessionRegistry.addOptimisticUserMessage(sessionId, text, clientMessageId);
       }
       clearSubmittedComposer(sessionId);
@@ -584,25 +598,29 @@
           ...(clientMessageId ? { clientMessageId } : {}),
         });
         if (!promptResponse.success) {
-          if (clientMessageId && !activeChild) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+          if (clientMessageId && !originatingChild) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
           restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, clientMessageId);
           console.error('Prompt rejected:', promptResponse.error);
         } else {
           // Handle /tree response — open the branch explorer instead of adding a message
           const promptData = promptResponse.data as Record<string, unknown> | undefined;
           if (promptData?.tree) {
-            void branchTreeStore.open(sessionId, {
-              tree: promptData.tree as import('@pimote/shared').PimoteTreeNode[],
-              currentLeafId: (promptData.currentLeafId as string) ?? null,
-            });
-          } else if (clientMessageId && !activeChild && (promptData as PromptResponseData | undefined)?.outcome !== 'started') {
+            void branchTreeStore.open(
+              sessionId,
+              {
+                tree: promptData.tree as import('@pimote/shared').PimoteTreeNode[],
+                currentLeafId: (promptData.currentLeafId as string) ?? null,
+              },
+              originatingSurfaceRef,
+            );
+          } else if (clientMessageId && !originatingChild && (promptData as PromptResponseData | undefined)?.outcome !== 'started') {
             // Only a started prompt echoes a stamped user message. A queued
             // prompt shows in the steering queue and echoes unstamped later.
             sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
           }
         }
       } catch (e) {
-        if (clientMessageId && !activeChild) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+        if (clientMessageId && !originatingChild) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
         restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, clientMessageId);
         console.error('Failed to send prompt:', e);
       }

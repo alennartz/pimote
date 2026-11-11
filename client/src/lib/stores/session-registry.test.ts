@@ -9,6 +9,7 @@ import {
   newSessionInProject,
   closeSession,
   replaceSessionWithFresh,
+  MAX_BASH_LIVE_OUTPUT_BYTES,
 } from './session-registry.svelte.js';
 import { connection } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
@@ -2066,6 +2067,125 @@ describe('SessionRegistry', () => {
 
       expect(registry.sessions['s1'].bashExecutions['bash-1'].output).toBe('hello');
     });
+  });
+});
+
+describe('subagent child surface state', () => {
+  function childState() {
+    return {
+      model: null,
+      thinkingLevel: 'off',
+      availableThinkingLevels: [],
+      isStreaming: true,
+      isCompacting: false,
+      sessionFile: undefined,
+      sessionId: 'child-session',
+      autoCompactionEnabled: true,
+      messageCount: 2,
+    };
+  }
+
+  function childSnapshot(messages: PimoteAgentMessage[], overrides: Record<string, unknown> = {}): PimoteEvent {
+    return {
+      type: 'subagent_view_snapshot',
+      sessionId: 'root',
+      childSessionId: 'child-session',
+      path: ['worker'],
+      incarnation: 'inc-1',
+      attachmentGeneration: 'gen-1',
+      viewCursor: 3,
+      state: childState(),
+      messages,
+      ...overrides,
+    } as PimoteEvent;
+  }
+
+  it('rehydrates child tool executions and gives streaming content a render key', () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const messages: PimoteAgentMessage[] = [
+      { role: 'assistant', content: [{ type: 'tool_call', toolCallId: 'call-1', toolName: 'read', args: { path: 'README.md' } }] },
+      { role: 'toolResult', content: [{ type: 'tool_result', toolCallId: 'call-1', toolName: 'read', result: 'contents', data: { lines: 2 } }] },
+      { role: 'assistant', content: [{ type: 'tool_call', toolCallId: 'call-2', toolName: 'bash', args: { command: 'pwd' } }] },
+    ];
+    registry.handleEvent(
+      childSnapshot(messages, {
+        streamingMessage: { role: 'assistant', content: [{ type: 'text', text: 'partial' }] },
+        runningToolCallIds: ['call-2'],
+      }),
+    );
+
+    const attachment = registry.getSubagentAttachment('root', ['worker']);
+    expect(attachment?.streamingKey).toBe('child-stream-root-["worker"]-child-session');
+    expect(attachment?.toolExecutions['call-1']).toMatchObject({ status: 'completed', result: 'contents', data: { lines: 2 } });
+    expect(attachment?.toolExecutions['call-2']).toMatchObject({ status: 'running', name: 'bash', args: { command: 'pwd' } });
+  });
+
+  it('rehydrates semantic facts from direct, nested, and tool-result metadata', () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const fact = (eventId: string) => ({
+      eventId,
+      kind: 'delegation',
+      path: ['worker'],
+      relatedPiEvents: [],
+      data: { invocationId: eventId, awaitsResult: false, children: [] },
+    });
+    const messages: PimoteAgentMessage[] = [
+      { role: 'custom', details: fact('direct'), content: [] },
+      { role: 'custom', details: { semantic: fact('nested') }, content: [] },
+      { role: 'toolResult', content: [{ type: 'tool_result', toolCallId: 'call', data: { semantic: fact('content') } }] },
+    ];
+    registry.handleEvent({
+      type: 'full_resync',
+      sessionId: 'root',
+      state: { ...childState(), isStreaming: false, sessionId: 'root', messageCount: messages.length },
+      messages,
+    } as PimoteEvent);
+
+    expect(registry.getSubagentSemanticEvents('root').map((event) => event.eventId)).toEqual(['direct', 'nested', 'content']);
+  });
+
+  it('does not replay same-epoch topology events older than a snapshot boundary', () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const node = (sessionId: string) => ({ path: ['worker'], sessionId, incarnation: 'inc-1', state: 'idle', task: 'review', channels: [] });
+    registry.handleEvent({ type: 'subagent_snapshot', sessionId: 'root', cursor: { epoch: 'epoch-1', sequence: 5 }, nodes: [node('base')] } as unknown as PimoteEvent);
+    registry.handleEvent({
+      type: 'subagent_event',
+      sessionId: 'root',
+      cursor: 6,
+      providerCursor: { epoch: 'epoch-1', sequence: 6 },
+      eventId: 'older-topology',
+      path: ['worker'],
+      kind: 'node_updated',
+      relatedPiEvents: [],
+      data: node('stale'),
+    } as PimoteEvent);
+    registry.handleEvent({ type: 'subagent_snapshot', sessionId: 'root', cursor: { epoch: 'epoch-1', sequence: 10 }, nodes: [node('authoritative')] } as unknown as PimoteEvent);
+
+    expect(registry.getSubagentNode('root', ['worker'])?.sessionId).toBe('authoritative');
+  });
+
+  it('bounds child bash deltas at the shared UTF-8 limit', () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    registry.handleEvent(childSnapshot([]));
+    registry.startSubagentBash('root', ['worker'], { id: 'bash-1', command: 'yes', excludeFromContext: false });
+    registry.handleEvent({
+      type: 'subagent_view_event',
+      sessionId: 'root',
+      childSessionId: 'child-session',
+      path: ['worker'],
+      incarnation: 'inc-1',
+      attachmentGeneration: 'gen-1',
+      viewCursor: 4,
+      event: { type: 'bash_execution_update', sessionId: 'child-session', id: 'bash-1', delta: '😀'.repeat(MAX_BASH_LIVE_OUTPUT_BYTES) },
+    } as PimoteEvent);
+
+    const execution = registry.getSubagentAttachment('root', ['worker'])?.bashExecutions['bash-1'];
+    expect(new TextEncoder().encode(execution?.output ?? '').byteLength).toBeLessThanOrEqual(MAX_BASH_LIVE_OUTPUT_BYTES);
+    expect(execution?.outputTruncated).toBe(true);
   });
 });
 

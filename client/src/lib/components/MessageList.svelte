@@ -49,8 +49,8 @@
   // command dispatch below still carries the child identity separately.
   let session = $derived((source ?? childSurface ?? sessionRegistry.viewed) as PerSessionState | null);
   let childSurfaceRef: BranchTreeSurface | null = $derived.by(() => {
-    const rootSessionId = sessionRegistry.viewedSessionId;
-    const path = rootSessionId ? sessionRegistry.getSelectedSubagentPath?.(rootSessionId) : null;
+    const rootSessionId = childSurface?.rootSessionId ?? sessionRegistry.viewedSessionId;
+    const path = childSurface?.path ?? (rootSessionId ? sessionRegistry.getSelectedSubagentPath?.(rootSessionId) : null);
     return childSurface && rootSessionId && path ? { rootSessionId, path: [...path] } : null;
   });
   // Manager sessions use the regular session route, so identify them from the
@@ -79,9 +79,13 @@
       onSemanticAction(action);
       return;
     }
-    if (action.type !== 'open_view' && action.type !== 'retry') return;
     const rootSessionId = childSurface?.rootSessionId ?? session?.sessionId;
     if (!rootSessionId) return;
+    if (action.type === 'resurrect') {
+      sessionRegistry.requestSubagentResurrection(rootSessionId, action.path);
+      return;
+    }
+    if (action.type !== 'open_view' && action.type !== 'retry') return;
     void sessionRegistry.openSubagentView(rootSessionId, action.path);
   }
 

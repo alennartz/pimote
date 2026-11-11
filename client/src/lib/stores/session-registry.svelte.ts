@@ -127,6 +127,8 @@ export interface SubagentAttachmentState {
   /** Alias kept for consumers that call the saved transcript `transcript`. */
   transcript: PimoteAgentMessage[];
   streamingMessage: StreamingMessage | null;
+  /** Stable render key for the child partial, kept separate from the native message. */
+  streamingKey: string | null;
   runningToolCallIds: string[];
   /** Last child EventBuffer position delivered by the server. */
   viewCursor: number;
@@ -139,13 +141,18 @@ export interface SubagentAttachmentState {
   semanticEvents: WireSubagentSemanticEvent[];
   semanticReduction: SemanticReductionState;
   semanticTranscript: readonly SemanticTranscriptItem[];
-  toolExecutions: Record<string, { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown; data?: unknown; isError?: boolean }>;
+  toolExecutions: Record<
+    string,
+    { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown; data?: unknown; isError?: boolean; durationMs?: number }
+  >;
 }
 
 export interface SubagentRootState {
   readonly rootSessionId: string;
   nodes: SubagentNodeSnapshot[];
   providerCursor: FeedCursor | null;
+  /** Distinguishes an empty authoritative tree from the pre-snapshot race. */
+  hierarchySnapshotReceived: boolean;
   semanticEvents: WireSubagentSemanticEvent[];
   semanticReduction: SemanticReductionState;
   semanticTranscript: readonly SemanticTranscriptItem[];
@@ -283,6 +290,56 @@ function reduceEndEventResult(result: unknown): { text: unknown; data: unknown }
   return { text: result, data: undefined };
 }
 
+type ToolExecutionRecord = {
+  name: string;
+  args: unknown;
+  partialResult: string;
+  status: 'running' | 'completed';
+  result?: unknown;
+  data?: unknown;
+  isError?: boolean;
+  durationMs?: number;
+};
+
+function findToolCallInMessages(messages: readonly PimoteAgentMessage[], toolCallId: string): PimoteMessageContent | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const block = messages[index].content.find((candidate) => candidate.type === 'tool_call' && candidate.toolCallId === toolCallId);
+    if (block) return block;
+  }
+  return undefined;
+}
+
+/** Rebuild historical native tool state before applying the live running IDs. */
+function rebuildToolExecutionsFromMessages(messages: readonly PimoteAgentMessage[], runningToolCallIds: readonly string[] = []): Record<string, ToolExecutionRecord> {
+  const executions: Record<string, ToolExecutionRecord> = {};
+  for (const message of messages) {
+    if (message.role !== 'toolResult') continue;
+    for (const block of message.content) {
+      if (block.type !== 'tool_result' || !block.toolCallId) continue;
+      executions[block.toolCallId] = {
+        name: block.toolName ?? 'unknown',
+        args: undefined,
+        partialResult: '',
+        status: 'completed',
+        result: block.result,
+        data: block.data,
+        isError: block.isError,
+        ...(block.durationMs !== undefined ? { durationMs: block.durationMs } : {}),
+      };
+    }
+  }
+  for (const toolCallId of runningToolCallIds) {
+    const call = findToolCallInMessages(messages, toolCallId);
+    executions[toolCallId] = {
+      name: call?.toolName ?? '',
+      args: call?.args,
+      partialResult: '',
+      status: 'running',
+    };
+  }
+  return executions;
+}
+
 function nativeEntriesForMessages(sessionId: string, messages: readonly PimoteAgentMessage[]): NativeTranscriptEntry[] {
   const entries: NativeTranscriptEntry[] = [];
   messages.forEach((message, messageIndex) => {
@@ -315,14 +372,24 @@ function nativeEntriesForMessages(sessionId: string, messages: readonly PimoteAg
 }
 
 function semanticFactCandidates(details: unknown): readonly unknown[] {
-  if (!details || typeof details !== 'object') return [];
-  const record = details as Record<string, unknown>;
-  if (Array.isArray(record.semanticEvents)) return record.semanticEvents;
-  if (record.semanticEvent !== undefined) return [record.semanticEvent];
-  if (typeof record.eventId === 'string' && typeof record.kind === 'string') return [record];
-  return [];
-}
+  if (details === null || typeof details !== 'object') return [];
+  if (Array.isArray(details)) return details.flatMap((value) => semanticFactCandidates(value));
 
+  const record = details as Record<string, unknown>;
+  const candidates: unknown[] = [];
+  const add = (value: unknown): void => {
+    if (Array.isArray(value)) candidates.push(...value);
+    else if (value !== undefined) candidates.push(value);
+  };
+  // Tool results use the result payload as `details`, with semantic facts
+  // nested under `semantic`. Older entries store the fact directly or under
+  // one of the queue's plural/singular wrappers.
+  add(record.semantic);
+  add(record.semanticEvents);
+  add(record.semanticEvent);
+  if (typeof record.eventId === 'string' && typeof record.kind === 'string') candidates.push(record);
+  return candidates;
+}
 function validPath(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((part) => typeof part === 'string');
 }
@@ -332,7 +399,8 @@ function persistedSemanticEvents(sessionId: string, messages: readonly PimoteAge
   const events: WireSubagentSemanticEvent[] = [];
   let sequence = 0;
   for (const message of messages) {
-    for (const candidate of semanticFactCandidates(message.details)) {
+    const candidates = [...semanticFactCandidates(message.details), ...message.content.flatMap((block) => semanticFactCandidates(block.data))];
+    for (const candidate of candidates) {
       if (!candidate || typeof candidate !== 'object') continue;
       const fact = candidate as Record<string, unknown>;
       if (typeof fact.eventId !== 'string' || typeof fact.kind !== 'string' || !validPath(fact.path) || !Array.isArray(fact.relatedPiEvents)) continue;
@@ -394,8 +462,9 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     attachment.optimisticEntries = [];
     attachment.bashExecutions = {};
     attachment.streamingMessage = full.streamingMessage ? { ...full.streamingMessage, content: full.streamingMessage.content.map((block) => ({ ...block })) } : null;
+    attachment.streamingKey = full.streamingMessage ? `child-stream-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.childSessionId}` : null;
     attachment.runningToolCallIds = [...(full.runningToolCallIds ?? [])];
-    attachment.toolExecutions = {};
+    attachment.toolExecutions = rebuildToolExecutionsFromMessages(attachment.messages, attachment.runningToolCallIds);
     attachment.bashExecutions = {};
     return;
   }
@@ -406,19 +475,25 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     case 'agent_settled':
       attachment.state = { ...attachment.state, isStreaming: false, isCompacting: false };
       attachment.streamingMessage = null;
+      attachment.streamingKey = null;
       attachment.runningToolCallIds = [];
       break;
     case 'agent_end':
-      if (!(event as AgentEndEvent).willRetry) attachment.streamingMessage = null;
+      if (!(event as AgentEndEvent).willRetry) {
+        attachment.streamingMessage = null;
+        attachment.streamingKey = null;
+      }
       break;
     case 'auto_retry_end':
       if (!(event as AutoRetryEndEvent).success) {
         attachment.state = { ...attachment.state, isStreaming: false };
         attachment.streamingMessage = null;
+        attachment.streamingKey = null;
       }
       break;
     case 'message_start': {
       const start = event as MessageStartEvent;
+      attachment.streamingKey = `child-stream-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.childSessionId}`;
       attachment.streamingMessage = { role: start.role, content: [], ...(start.usage ? { usage: start.usage } : {}) };
       break;
     }
@@ -462,6 +537,7 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
       attachment.transcript = attachment.messages;
       attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
       attachment.streamingMessage = null;
+      attachment.streamingKey = null;
       break;
     }
     case 'custom_entry': {
@@ -475,9 +551,14 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
       const update = event as BashExecutionUpdateEvent;
       const running = Object.values(attachment.bashExecutions).find((execution) => execution.status === 'running' && (!update.id || execution.id === update.id));
       if (running) {
+        const bounded = appendBoundedBashOutput(running.output, update.delta, MAX_BASH_LIVE_OUTPUT_BYTES);
         attachment.bashExecutions = {
           ...attachment.bashExecutions,
-          [running.id]: { ...running, output: running.output + update.delta },
+          [running.id]: {
+            ...running,
+            output: bounded.output,
+            ...(running.outputTruncated || bounded.truncated ? { outputTruncated: true } : {}),
+          },
         };
       }
       break;
@@ -511,6 +592,7 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
           result: reduced.text,
           ...(reduced.data !== undefined ? { data: reduced.data } : {}),
           ...(end.isError !== undefined ? { isError: end.isError } : {}),
+          ...(end.durationMs !== undefined ? { durationMs: end.durationMs } : {}),
         },
       };
       attachment.runningToolCallIds = attachment.runningToolCallIds.filter((id) => id !== end.toolCallId);
@@ -685,6 +767,13 @@ export class SessionRegistry {
   private selectedSubagentPaths: Record<string, AgentPath | null> = $state({});
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- listeners are an imperative edge, not UI state
   private subagentViewListeners = new Set<(notice: SubagentViewClosedNotice) => void>();
+  // Resurrection actions can originate in the transcript while the panel is
+  // closed. Keep the closed node metadata until the confirmation flow consumes
+  // it, and expose a small bridge for the panel to open that flow.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- listener registry, not UI state
+  private subagentResurrectionListeners = new Set<(notice: SubagentViewClosedNotice) => void>();
+  private subagentClosedNotices: Record<string, SubagentViewClosedNotice> = $state({});
+  private subagentResurrectionRequests: Record<string, SubagentViewClosedNotice> = $state({});
   private subagentReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private subagentConnectionGeneration = 0;
   private subagentReconnectGraceMs: number | null = null;
@@ -698,6 +787,10 @@ export class SessionRegistry {
 
   private bashOutputKey(sessionId: string, executionId: string): string {
     return `${sessionId}\u0000${executionId}`;
+  }
+
+  private subagentNoticeKey(rootSessionId: string, path: AgentPath): string {
+    return `${rootSessionId}\u0000${subagentPathKey(path)}`;
   }
 
   private clearBashOutputBytes(sessionId: string): void {
@@ -727,6 +820,7 @@ export class SessionRegistry {
       rootSessionId,
       nodes: [],
       providerCursor: null,
+      hierarchySnapshotReceived: false,
       semanticEvents: [],
       semanticReduction: EMPTY_SEMANTIC_REDUCTION,
       semanticTranscript: [],
@@ -764,6 +858,9 @@ export class SessionRegistry {
     this.subagentRoots = remaining;
     const { [rootSessionId]: _selected, ...remainingSelected } = this.selectedSubagentPaths;
     this.selectedSubagentPaths = remainingSelected;
+    const prefix = `${rootSessionId}\u0000`;
+    this.subagentClosedNotices = Object.fromEntries(Object.entries(this.subagentClosedNotices).filter(([key]) => !key.startsWith(prefix)));
+    this.subagentResurrectionRequests = Object.fromEntries(Object.entries(this.subagentResurrectionRequests).filter(([key]) => !key.startsWith(prefix)));
   }
 
   getSubagentAttachment(rootSessionId: string, path: AgentPath): SubagentAttachmentState | null {
@@ -837,6 +934,43 @@ export class SessionRegistry {
     return () => this.subagentViewListeners.delete(listener);
   }
 
+  onSubagentResurrectionRequested(listener: (notice: SubagentViewClosedNotice) => void): () => void {
+    this.subagentResurrectionListeners.add(listener);
+    return () => this.subagentResurrectionListeners.delete(listener);
+  }
+
+  getPendingSubagentResurrection(rootSessionId: string): SubagentViewClosedNotice | null {
+    const pending = Object.entries(this.subagentResurrectionRequests).find(([key]) => key.startsWith(`${rootSessionId}\u0000`));
+    return pending?.[1] ?? null;
+  }
+
+  requestSubagentResurrection(rootSessionId: string, path: AgentPath): void {
+    const key = this.subagentNoticeKey(rootSessionId, path);
+    const stored = this.subagentClosedNotices[key];
+    const node = this.getSubagentNode(rootSessionId, path);
+    const notice: SubagentViewClosedNotice = stored ?? {
+      rootSessionId,
+      path: copyAgentPath(path),
+      reason: 'teardown',
+      ...(node ? { node } : {}),
+    };
+    this.subagentResurrectionRequests = { ...this.subagentResurrectionRequests, [key]: notice };
+    for (const listener of [...this.subagentResurrectionListeners]) {
+      try {
+        listener(notice);
+      } catch (error) {
+        console.error('[SessionRegistry] Subagent resurrection listener error:', error);
+      }
+    }
+  }
+
+  clearPendingSubagentResurrection(rootSessionId: string, path: AgentPath): void {
+    const key = this.subagentNoticeKey(rootSessionId, path);
+    if (!this.subagentResurrectionRequests[key]) return;
+    const { [key]: _removed, ...remaining } = this.subagentResurrectionRequests;
+    this.subagentResurrectionRequests = remaining;
+  }
+
   setSubagentDraftText(rootSessionId: string, path: AgentPath, text: string): void {
     const attachment = this.getSubagentAttachment(rootSessionId, path);
     if (attachment) attachment.draftText = text;
@@ -859,9 +993,17 @@ export class SessionRegistry {
     const attachment = this.getSubagentAttachment(rootSessionId, path);
     const execution = attachment?.bashExecutions[id];
     if (!attachment || !execution) return;
+    const bounded = appendBoundedBashOutput('', result.output, MAX_BASH_LIVE_OUTPUT_BYTES);
+    const boundedResult: BashResult = { ...result, output: bounded.output, truncated: result.truncated || bounded.truncated };
     attachment.bashExecutions = {
       ...attachment.bashExecutions,
-      [id]: { ...execution, output: result.output, status: result.cancelled ? 'cancelled' : 'complete', result },
+      [id]: {
+        ...execution,
+        output: bounded.output,
+        status: result.cancelled ? 'cancelled' : 'complete',
+        result: boundedResult,
+        ...(boundedResult.truncated ? { outputTruncated: true } : {}),
+      },
     };
   }
 
@@ -924,6 +1066,10 @@ export class SessionRegistry {
       this.selectedSubagentPaths[rootSessionId] = null;
     }
     const notice: SubagentViewClosedNotice = { rootSessionId, path: copyAgentPath(path), reason, ...(node ? { node } : {}) };
+    if (reason === 'teardown') {
+      const key = this.subagentNoticeKey(rootSessionId, path);
+      this.subagentClosedNotices = { ...this.subagentClosedNotices, [key]: notice };
+    }
     for (const listener of [...this.subagentViewListeners]) {
       try {
         listener(notice);
@@ -964,6 +1110,7 @@ export class SessionRegistry {
       messages,
       transcript: messages,
       streamingMessage: snapshot.streamingMessage ? { ...snapshot.streamingMessage, content: snapshot.streamingMessage.content.map((block) => ({ ...block })) } : null,
+      streamingKey: snapshot.streamingMessage ? `child-stream-${rootSessionId}-${JSON.stringify(snapshot.path)}-${snapshot.childSessionId}` : null,
       runningToolCallIds: [...(snapshot.runningToolCallIds ?? [])],
       viewCursor: snapshot.viewCursor,
       observerCursor: snapshot.viewCursor,
@@ -972,7 +1119,7 @@ export class SessionRegistry {
       semanticEvents: [],
       semanticReduction: EMPTY_SEMANTIC_REDUCTION,
       semanticTranscript: [],
-      toolExecutions: {},
+      toolExecutions: rebuildToolExecutionsFromMessages(messages, snapshot.runningToolCallIds ?? []),
     };
   }
 
@@ -1185,8 +1332,9 @@ export class SessionRegistry {
       root.semanticReduction = EMPTY_SEMANTIC_REDUCTION;
       root.semanticTranscript = [];
     }
-    const shouldApplyNodes = !staleSameEpoch || epochChanged || previousCursor === null || root.nodes.length === 0;
+    const shouldApplyNodes = !root.hierarchySnapshotReceived || !staleSameEpoch || epochChanged;
     if (shouldApplyNodes) {
+      root.hierarchySnapshotReceived = true;
       root.nodes = [...(snapshot.nodes ?? [])].map((node) => ({
         ...node,
         path: copyAgentPath(node.path),
@@ -1197,10 +1345,20 @@ export class SessionRegistry {
       if (!staleSameEpoch || epochChanged || previousCursor === null) {
         root.providerCursor = { epoch: snapshot.cursor.epoch, sequence: snapshot.cursor.sequence };
       }
-      // Replay topology facts that arrived before this first snapshot. The
-      // provider cursor can make that snapshot look stale even though it is
-      // the first node projection this client has seen.
-      for (const semantic of root.semanticEvents) this.applySubagentNodeEvent(root, semantic);
+      // A snapshot is authoritative through its provider cursor. Only replay
+      // topology facts from the same epoch that arrived after that boundary.
+      // Replaying older events can roll a reconnect snapshot backward.
+      for (const semantic of root.semanticEvents) {
+        const providerCursor = semantic.providerCursor;
+        if (
+          providerCursor &&
+          providerCursor.epoch === snapshot.cursor.epoch &&
+          providerCursor.sequence > snapshot.cursor.sequence &&
+          (semantic.kind === 'node_added' || semantic.kind === 'node_updated' || semantic.kind === 'node_removed' || semantic.kind === 'runtime_replaced')
+        ) {
+          this.applySubagentNodeEvent(root, semantic);
+        }
+      }
     }
     // A lower snapshot can race a replay. Do not let it roll an attachment
     // back to an older runtime. Reconciliation below only closes paths that
@@ -1261,6 +1419,13 @@ export class SessionRegistry {
     }
     if (event.kind === 'node_removed') {
       const removedPath = event.data.node.path;
+      const notice: SubagentViewClosedNotice = {
+        rootSessionId: root.rootSessionId,
+        path: copyAgentPath(removedPath),
+        reason: 'teardown',
+        node: event.data.node,
+      };
+      this.subagentClosedNotices = { ...this.subagentClosedNotices, [this.subagentNoticeKey(root.rootSessionId, removedPath)]: notice };
       root.nodes = root.nodes.filter((node) => !pathStartsWith(removedPath, node.path));
       for (const attachment of Object.values(root.attachments)) {
         if (pathStartsWith(removedPath, attachment.path)) this.closeSubagentAttachment(root, attachment, 'teardown', event.data.node);
@@ -1308,6 +1473,7 @@ export class SessionRegistry {
     attachment.optimisticEntries = [];
     attachment.bashExecutions = {};
     attachment.streamingMessage = snapshot.streamingMessage ? { ...snapshot.streamingMessage, content: snapshot.streamingMessage.content.map((block) => ({ ...block })) } : null;
+    attachment.streamingKey = snapshot.streamingMessage ? `child-stream-${snapshot.sessionId}-${JSON.stringify(snapshot.path)}-${snapshot.childSessionId}` : null;
     attachment.runningToolCallIds = [...(snapshot.runningToolCallIds ?? [])];
     attachment.viewCursor = snapshot.viewCursor;
     attachment.observerCursor = snapshot.viewCursor;
@@ -1316,6 +1482,7 @@ export class SessionRegistry {
     attachment.closeReason = undefined;
     attachment.semanticEvents = persistedSemanticEvents(snapshot.childSessionId, attachment.messages);
     attachment.bashExecutions = {};
+    attachment.toolExecutions = rebuildToolExecutionsFromMessages(attachment.messages, attachment.runningToolCallIds);
     attachment.semanticReduction = EMPTY_SEMANTIC_REDUCTION;
     attachment.semanticTranscript = [];
     root.attachments[key] = attachment;
@@ -2066,20 +2233,11 @@ export class SessionRegistry {
   /** Rebuild toolExecutions from a full message history (for rehydration) */
   /** The tool_call block for `toolCallId`, searched from the newest message. */
   private findToolCall(session: PerSessionState, toolCallId: string): PimoteMessageContent | undefined {
-    for (let i = session.messages.length - 1; i >= 0; i--) {
-      const block = session.messages[i].content.find((c) => c.type === 'tool_call' && c.toolCallId === toolCallId);
-      if (block) return block;
-    }
-    return undefined;
+    return findToolCallInMessages(session.messages, toolCallId);
   }
 
   rebuildToolExecutions(session: PerSessionState): void {
-    session.toolExecutions = {};
-    for (const message of session.messages) {
-      if (message.role === 'toolResult') {
-        this.applyToolResults(session, message);
-      }
-    }
+    session.toolExecutions = rebuildToolExecutionsFromMessages(session.messages);
   }
 
   /** Begin tracking a caller-owned native bash execution. */
