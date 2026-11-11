@@ -1,5 +1,6 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import type { SubagentEvent } from '@pimote/sdk/subagents';
 import type { PimoteSessionEvent } from '../../shared/dist/index.js';
 import { mapAgentMessage, mapAgentMessageUsage, mapCustomEntry, type CustomEntryVisibility } from './message-mapper.js';
 
@@ -86,6 +87,32 @@ export class EventBuffer {
     if (!pimoteEvent) return;
     sendLive(pimoteEvent);
     this.bufferIfReplayable(pimoteEvent);
+  }
+
+  /**
+   * Append one provider semantic event to this session's replay stream.
+   *
+   * The provider cursor stays nested in `providerCursor` for diagnostics. The
+   * returned cursor belongs to this parent EventBuffer and is allocated before
+   * the event is fanned out, so observers see one atomic parent ordering.
+   */
+  appendSemanticEvent(semanticEvent: SubagentEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void): number {
+    const cursor = ++this._cursor;
+    const event = {
+      sessionId,
+      cursor,
+      timestamp: new Date().toISOString(),
+      type: 'subagent_event' as const,
+      eventId: semanticEvent.eventId,
+      path: semanticEvent.path,
+      relatedPiEvents: semanticEvent.relatedPiEvents,
+      kind: semanticEvent.kind,
+      data: semanticEvent.data,
+      providerCursor: semanticEvent.cursor,
+    } as PimoteSessionEvent;
+    this.pushToBuffer(event);
+    sendLive(event);
+    return cursor;
   }
 
   /**
