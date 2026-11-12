@@ -198,9 +198,13 @@
 
   onMount(() => {
     const pending = rootSessionId ? sessionRegistry.getPendingSubagentResurrection(rootSessionId) : null;
+    const closed = rootSessionId ? sessionRegistry.getLatestSubagentClosedNotice(rootSessionId) : null;
     if (pending) {
       notice = pending;
       prepareResurrection(pending);
+    } else if (closed) {
+      notice = closed;
+      prepareResurrection(closed, false);
     }
     const unsubscribe = sessionRegistry.onSubagentViewClosed((closed) => {
       if (closed.rootSessionId !== sessionRegistry.viewedSessionId) return;
@@ -218,6 +222,14 @@
       unsubscribe();
       unsubscribeResurrection();
     };
+  });
+
+  $effect(() => {
+    const persisted = rootSessionId ? sessionRegistry.getLatestSubagentClosedNotice(rootSessionId) : null;
+    if (persisted && !notice) {
+      notice = persisted;
+      prepareResurrection(persisted, false);
+    }
   });
 
   $effect(() => {

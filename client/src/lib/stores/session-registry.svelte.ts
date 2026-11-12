@@ -778,6 +778,7 @@ export class SessionRegistry {
   private subagentResurrectionListeners = new Set<(notice: SubagentViewClosedNotice) => void>();
   private subagentClosedNotices: Record<string, SubagentViewClosedNotice> = $state({});
   private subagentResurrectionRequests: Record<string, SubagentViewClosedNotice> = $state({});
+  subagentNoticeVersion = $state(0);
   private subagentReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private subagentConnectionGeneration = 0;
   private subagentReconnectGraceMs: number | null = null;
@@ -865,6 +866,7 @@ export class SessionRegistry {
     const prefix = `${rootSessionId}\u0000`;
     this.subagentClosedNotices = Object.fromEntries(Object.entries(this.subagentClosedNotices).filter(([key]) => !key.startsWith(prefix)));
     this.subagentResurrectionRequests = Object.fromEntries(Object.entries(this.subagentResurrectionRequests).filter(([key]) => !key.startsWith(prefix)));
+    this.subagentNoticeVersion += 1;
   }
 
   getSubagentAttachment(rootSessionId: string, path: AgentPath): SubagentAttachmentState | null {
@@ -948,6 +950,12 @@ export class SessionRegistry {
     return pending?.[1] ?? null;
   }
 
+  getLatestSubagentClosedNotice(rootSessionId: string): SubagentViewClosedNotice | null {
+    const prefix = `${rootSessionId}\u0000`;
+    const notices = Object.entries(this.subagentClosedNotices).filter(([key]) => key.startsWith(prefix));
+    return notices.at(-1)?.[1] ?? null;
+  }
+
   requestSubagentResurrection(rootSessionId: string, path: AgentPath): void {
     const key = this.subagentNoticeKey(rootSessionId, path);
     const stored = this.subagentClosedNotices[key];
@@ -959,6 +967,7 @@ export class SessionRegistry {
       ...(node ? { node } : {}),
     };
     this.subagentResurrectionRequests = { ...this.subagentResurrectionRequests, [key]: notice };
+    this.subagentNoticeVersion += 1;
     panelStore.revealPanel();
     for (const listener of [...this.subagentResurrectionListeners]) {
       try {
@@ -971,9 +980,15 @@ export class SessionRegistry {
 
   clearPendingSubagentResurrection(rootSessionId: string, path: AgentPath): void {
     const key = this.subagentNoticeKey(rootSessionId, path);
-    if (!this.subagentResurrectionRequests[key]) return;
-    const { [key]: _removed, ...remaining } = this.subagentResurrectionRequests;
-    this.subagentResurrectionRequests = remaining;
+    if (this.subagentResurrectionRequests[key]) {
+      const { [key]: _removed, ...remaining } = this.subagentResurrectionRequests;
+      this.subagentResurrectionRequests = remaining;
+    }
+    if (this.subagentClosedNotices[key]) {
+      const { [key]: _removed, ...remaining } = this.subagentClosedNotices;
+      this.subagentClosedNotices = remaining;
+    }
+    this.subagentNoticeVersion += 1;
   }
 
   setSubagentDraftText(rootSessionId: string, path: AgentPath, text: string): void {
@@ -1442,6 +1457,7 @@ export class SessionRegistry {
         node: event.data.node,
       };
       this.subagentClosedNotices = { ...this.subagentClosedNotices, [this.subagentNoticeKey(root.rootSessionId, removedPath)]: notice };
+      this.subagentNoticeVersion += 1;
       root.nodes = root.nodes.filter((node) => !pathStartsWith(removedPath, node.path));
       for (const attachment of Object.values(root.attachments)) {
         if (pathStartsWith(removedPath, attachment.path)) this.closeSubagentAttachment(root, attachment, 'teardown', event.data.node);
