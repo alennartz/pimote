@@ -372,6 +372,28 @@ sessions + user-aware WsProbes over a real sandboxed server; covers the
 wire contract, the two-browser journeys, migration, restart/GC, and the
 settings User pane).
 
+### 15. Inspect and chat with a live subagent view
+
+**What:** In a root conversation, the right-side Panels host shows the
+root-relative subagent hierarchy with state, task, persona, context, cost,
+channels, and wait metadata. Inspecting a row leaves the root transcript
+selected. An explicit Open view action borrows the live child session, shows
+its saved transcript, and lets the user chat with identity-preserving controls.
+Users can switch among open descendants, close a child view without stopping
+its runtime, and return to the root. Narrow containers use a dismissible
+Panels drawer that closes when a child opens. Teardown requires confirmation;
+removal closes the view and leaves a notice with the saved-session resurrection
+path. Generic SDK cards remain below the hierarchy.
+
+**Why:** This is the topic's headline path. A broken hierarchy, borrowed
+transcript, or attachment lifecycle either hides active delegated work or
+creates unsafe duplicate runtimes.
+
+**Driver:** manual-browser against a live Pimote server with a configured
+my-pi provider. A deterministic typed-provider fixture can stand in for a
+live LLM when model streaming is unavailable; it must still exercise the real
+provider discovery, host, wire, and client surfaces.
+
 ## Automation gap (recorded, not an action item for this topic)
 
 Journeys 2–7 currently have no automation driver of their own. This is a
