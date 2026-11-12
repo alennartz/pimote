@@ -64,7 +64,7 @@
 {:else}
   <button
     type="button"
-    class="inline-flex h-9 min-w-32 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 {inCall
+    class="inline-flex h-9 min-w-32 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 max-md:h-11 {inCall
       ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
       : 'bg-emerald-500/90 text-white hover:bg-emerald-500'}"
     title={inCall ? 'End voice call' : 'Start voice call'}

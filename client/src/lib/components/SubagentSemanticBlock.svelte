@@ -1,5 +1,17 @@
 <script lang="ts">
+  import { observeFullyOffscreen } from '$lib/auto-collapse.js';
+  import { Button } from '$lib/components/ui/button/index.js';
   import type { SemanticBlock, SemanticBlockAction, SemanticChildResult, SemanticDelegationChild } from '$lib/subagent-semantic.js';
+  import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
+  import ArrowRight from '@lucide/svelte/icons/arrow-right';
+  import ArrowUp from '@lucide/svelte/icons/arrow-up';
+  import Check from '@lucide/svelte/icons/check';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import CircleAlert from '@lucide/svelte/icons/circle-alert';
+  import Hourglass from '@lucide/svelte/icons/hourglass';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
+  import Square from '@lucide/svelte/icons/square';
+  import X from '@lucide/svelte/icons/x';
 
   let {
     block,
@@ -9,27 +21,53 @@
     onAction?: (action: SemanticBlockAction) => void;
   } = $props();
 
+  let expanded = $state(true);
+  let rootEl: HTMLElement | undefined = $state();
+
+  // Semantic blocks start open so a live event is readable. Once the block has
+  // passed out of the transcript, collapse it like tool and thinking blocks.
+  $effect(() => {
+    if (!expanded || !rootEl) return;
+    return observeFullyOffscreen(rootEl, () => {
+      expanded = false;
+    });
+  });
+
   function pathText(path: readonly string[]): string {
     return path.length > 0 ? path.join('/') : 'root';
   }
 
-  function stateText(state: string): string {
-    return state;
+  function samePath(left: readonly string[], right: readonly string[]): boolean {
+    return left.length === right.length && left.every((part, index) => part === right[index]);
+  }
+
+  function kindLabel(kind: SemanticBlock['kind']): string {
+    switch (kind) {
+      case 'delegation':
+        return 'Delegation';
+      case 'message_thread':
+        return 'Message';
+      case 'await_progress':
+        return 'Progress';
+      case 'completion':
+        return 'Completion';
+      case 'lifecycle':
+        return 'Lifecycle';
+    }
   }
 
   function usageText(result: SemanticChildResult): string {
     const parts: string[] = [];
-    if (result.usage) parts.push(`↑${result.usage.inputTokens} · ↓${result.usage.outputTokens}`);
-    if (result.contextPercent !== undefined) parts.push(`ctx${result.contextPercent}%`);
+    if (result.contextPercent !== undefined) parts.push(`${result.contextPercent}% context`);
     if (result.costUsd !== undefined) parts.push(`$${result.costUsd.toFixed(2)}`);
     return parts.join(' · ');
   }
 
   function childMetadata(child: SemanticDelegationChild): string {
     return [
-      child.persona ? `persona ${child.persona}` : undefined,
-      child.state ? stateText(child.state) : undefined,
-      child.contextPercent === undefined ? undefined : `ctx${child.contextPercent}%`,
+      child.persona,
+      child.state,
+      child.contextPercent === undefined ? undefined : `${child.contextPercent}% context`,
       child.costUsd === undefined ? undefined : `$${child.costUsd.toFixed(2)}`,
     ]
       .filter((value): value is string => value !== undefined)
@@ -60,120 +98,226 @@
   function invokeAction(action: SemanticBlockAction): void {
     onAction?.(action);
   }
+
+  function isFailedBlock(): boolean {
+    if (block.kind === 'message_thread') return block.data.failure !== undefined;
+    if (block.kind === 'completion') return block.data.result.error !== undefined || block.data.result.state === 'errored' || block.data.result.state === 'dead';
+    return block.kind === 'lifecycle' && block.data.outcome === 'failed';
+  }
+
+  function hasInlineOpenAction(action: SemanticBlockAction): boolean {
+    if (action.type !== 'open_view') return false;
+    if (block.kind === 'delegation') {
+      return [...block.data.children, ...(block.data.results ?? [])].some((item) => samePath(item.path, action.path));
+    }
+    if (block.kind === 'await_progress') return block.data.children.some((child) => samePath(child.path, action.path));
+    return false;
+  }
+
+  function hasFooterActions(): boolean {
+    return block.actions.some((action) => !hasInlineOpenAction(action));
+  }
 </script>
 
-<article class="subagent-semantic-block semantic-card" data-semantic-kind={block.kind} data-block-id={block.blockId} aria-label={block.title}>
-  <header class="subagent-semantic-header semantic-head">
-    <span class="subagent-semantic-icon" aria-hidden="true">
-      {#if block.kind === 'delegation'}↗{:else if block.kind === 'message_thread'}↔{:else if block.kind === 'await_progress'}⏳{:else if block.kind === 'completion'}✓{:else if block.data.outcome === 'failed'}!{:else if block.data.operation === 'interrupt'}■{:else if block.data.operation === 'teardown'}×{:else}↻{/if}
-    </span>
-    <strong>{block.title}</strong>
-    <code>subagent.{block.kind}</code>
-  </header>
-
-  <div class="subagent-semantic-body semantic-body">
+<article bind:this={rootEl} class="subagent-semantic-block" class:failed={isFailedBlock()} data-semantic-kind={block.kind} data-block-id={block.blockId} aria-label={block.title}>
+  <button type="button" class="subagent-semantic-header" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
+    <ChevronRight class="shrink-0 transition-transform duration-150 {expanded ? 'rotate-90' : ''}" size={14} />
     {#if block.kind === 'delegation'}
-      <p class="subagent-semantic-summary">
-        {block.data.children.length}
-        {block.data.children.length === 1 ? 'child' : 'children'}{block.data.awaitsResult ? ' · awaiting results' : ''}
-      </p>
-      {#each block.data.children as child (JSON.stringify(child.path))}
-        <div class="subagent-child-row">
-          {#if child.personaIcon || child.persona}
-            <span class="subagent-persona" aria-label={child.persona ?? 'persona'}>{child.personaIcon ?? child.persona?.slice(0, 1)}</span>
-          {/if}
-          <div class="subagent-child-copy">
-            <strong>{pathText(child.path)}</strong>
-            <span class="subagent-prompt">Prompt: {child.prompt}</span>
-            {#if childMetadata(child)}<span class="subagent-metadata">{childMetadata(child)}</span>{/if}
-          </div>
-          <button type="button" class="subagent-action" onclick={() => invokeAction({ type: 'open_view', path: child.path })}>Open view</button>
-        </div>
-      {/each}
-      {#each block.data.results ?? [] as result (JSON.stringify(result.path))}
-        <div class="subagent-result-row">
-          <div class="subagent-child-copy">
-            <strong>{pathText(result.path)}</strong>
-            <span class:error={result.error !== undefined}>{resultDetail(result)}</span>
-          </div>
-          {#if usageText(result)}<span class="subagent-metadata">{usageText(result)}</span>{/if}
-          <button type="button" class="subagent-action" onclick={() => invokeAction({ type: 'open_view', path: result.path })}>Open view</button>
-        </div>
-      {/each}
+      <ArrowUp class="subagent-semantic-icon" size={14} />
     {:else if block.kind === 'message_thread'}
-      <div class="subagent-route route"><span>{pathText(block.data.sourcePath)}</span><span aria-hidden="true">→</span><span>{pathText(block.data.targetPath)}</span></div>
-      <p class="subagent-thread"><strong>Request:</strong> {block.data.request}</p>
-      {#if block.data.reply !== undefined}<p class="subagent-thread"><strong>Reply:</strong> {block.data.reply}</p>{/if}
-      {#if block.data.failure !== undefined}<p class="subagent-thread subagent-error"><strong>Failure:</strong> {block.data.failure}</p>{/if}
+      <ArrowLeftRight class="subagent-semantic-icon" size={14} />
     {:else if block.kind === 'await_progress'}
-      {#each block.data.children as child (JSON.stringify(child.path))}
-        <div class="subagent-child-row">
-          <span class="subagent-state-dot" data-state={child.state}></span>
-          <div class="subagent-child-copy">
-            <strong>{pathText(child.path)}</strong>
-            <span>{stateText(child.state)}</span>
-            {#if child.output}<span class="subagent-output">Output: {child.output}</span>{/if}
-            {#if child.error}<span class="subagent-error">Error: {child.error}</span>{/if}
-          </div>
-          {#if usageText(child)}<span class="subagent-metadata">{usageText(child)}</span>{/if}
-          <button type="button" class="subagent-action" onclick={() => invokeAction({ type: 'open_view', path: child.path })}>Open view</button>
-        </div>
-      {/each}
-      {#if block.data.interruption}
-        <p class="subagent-note">Interrupted by {pathText(block.data.interruption.sourcePath)}: {block.data.interruption.text}</p>
-      {/if}
+      <Hourglass class="subagent-semantic-icon" size={14} />
+    {:else if block.kind === 'completion' && (block.data.result.error !== undefined || block.data.result.state === 'errored' || block.data.result.state === 'dead')}
+      <CircleAlert class="subagent-semantic-icon" size={14} />
     {:else if block.kind === 'completion'}
-      <div class="subagent-route route"><span>{pathText(block.data.result.path)}</span><span>{stateText(block.data.result.state)}</span></div>
-      <p class:error={block.data.result.error !== undefined} class="subagent-output">{resultDetail(block.data.result)}</p>
-      {#if usageText(block.data.result)}<p class="subagent-metadata">{usageText(block.data.result)}</p>{/if}
+      <Check class="subagent-semantic-icon" size={14} />
+    {:else if block.data.outcome === 'failed'}
+      <CircleAlert class="subagent-semantic-icon" size={14} />
+    {:else if block.data.operation === 'interrupt'}
+      <Square class="subagent-semantic-icon" size={14} />
+    {:else if block.data.operation === 'teardown'}
+      <X class="subagent-semantic-icon" size={14} />
     {:else}
-      <p class:error={block.data.outcome === 'failed'} class="subagent-output">
-        {block.data.outcome === 'succeeded' ? 'Succeeded' : 'Failed'}{block.data.output ? `: ${block.data.output}` : ''}{block.data.error ? `: ${block.data.error}` : ''}
-      </p>
+      <RefreshCw class="subagent-semantic-icon" size={14} />
     {/if}
+    <span class="subagent-semantic-title">{block.title}</span>
+    <span class="subagent-semantic-kind">{kindLabel(block.kind)}</span>
+  </button>
 
-    {#if block.actions.length > 0}
-      <div class="subagent-actions">
-        {#each block.actions as action (action.type + ':' + actionPath(action))}
-          <button type="button" class="subagent-action" onclick={() => invokeAction(action)}
-            >{actionLabel(action)}{action.type === 'open_view' ? ` · ${actionPath(action)}` : ''}</button
-          >
+  {#if expanded}
+    <div class="subagent-semantic-body">
+      {#if block.kind === 'delegation'}
+        <p class="subagent-semantic-summary">
+          {block.data.children.length}
+          {block.data.children.length === 1 ? 'child' : 'children'}{block.data.awaitsResult ? ' · waiting for results' : ''}
+        </p>
+        {#each block.data.children as child (JSON.stringify(child.path))}
+          <div class="subagent-child-row">
+            {#if child.personaIcon || child.persona}
+              <span class="subagent-persona" aria-label={child.persona ?? 'role'}>{child.personaIcon ?? child.persona?.slice(0, 1)}</span>
+            {/if}
+            <div class="subagent-child-copy">
+              <strong>{pathText(child.path)}</strong>
+              <span class="subagent-detail subagent-prompt">{child.prompt}</span>
+              {#if childMetadata(child)}<span class="subagent-metadata">{childMetadata(child)}</span>{/if}
+            </div>
+            <Button variant="outline" size="xs" class="ml-auto shrink-0 max-md:min-h-11" onclick={() => invokeAction({ type: 'open_view', path: child.path })}>Open view</Button>
+          </div>
         {/each}
-      </div>
-    {/if}
-  </div>
+        {#each block.data.results ?? [] as result (JSON.stringify(result.path))}
+          <div class="subagent-result-row">
+            <div class="subagent-child-copy">
+              <strong>{pathText(result.path)}</strong>
+              <span class:error={result.error !== undefined || result.state === 'errored' || result.state === 'dead'} class="subagent-detail">{resultDetail(result)}</span>
+            </div>
+            {#if usageText(result)}<span class="subagent-metadata">{usageText(result)}</span>{/if}
+            <Button variant="outline" size="xs" class="ml-auto shrink-0 max-md:min-h-11" onclick={() => invokeAction({ type: 'open_view', path: result.path })}>Open view</Button>
+          </div>
+        {/each}
+      {:else if block.kind === 'message_thread'}
+        <div class="subagent-route">
+          <span>{pathText(block.data.sourcePath)}</span>
+          <ArrowRight class="subagent-route-arrow" size={14} aria-hidden="true" />
+          <span>{pathText(block.data.targetPath)}</span>
+        </div>
+        <p class="subagent-thread subagent-detail"><strong>Request</strong> {block.data.request}</p>
+        {#if block.data.reply !== undefined}<p class="subagent-thread subagent-detail"><strong>Reply</strong> {block.data.reply}</p>{/if}
+        {#if block.data.failure !== undefined}<p class="subagent-thread subagent-detail error"><strong>Failure</strong> {block.data.failure}</p>{/if}
+      {:else if block.kind === 'await_progress'}
+        {#each block.data.children as child (JSON.stringify(child.path))}
+          <div class="subagent-child-row">
+            <span class="subagent-state-dot" data-state={child.state}></span>
+            <div class="subagent-child-copy">
+              <strong>{pathText(child.path)}</strong>
+              <span class:error={child.state === 'errored' || child.state === 'dead'} class="subagent-metadata">{child.state}</span>
+              {#if child.output}<span class="subagent-detail subagent-output">Output: {child.output}</span>{/if}
+              {#if child.error}<span class="subagent-detail error">Error: {child.error}</span>{/if}
+            </div>
+            {#if usageText(child)}<span class="subagent-metadata">{usageText(child)}</span>{/if}
+            <Button variant="outline" size="xs" class="ml-auto shrink-0 max-md:min-h-11" onclick={() => invokeAction({ type: 'open_view', path: child.path })}>Open view</Button>
+          </div>
+        {/each}
+        {#if block.data.interruption}
+          <p class="subagent-note">Interrupted by {pathText(block.data.interruption.sourcePath)}: {block.data.interruption.text}</p>
+        {/if}
+      {:else if block.kind === 'completion'}
+        <div class="subagent-route"><span>{pathText(block.data.result.path)}</span><span>{block.data.result.state}</span></div>
+        <p
+          class:error={block.data.result.error !== undefined || block.data.result.state === 'errored' || block.data.result.state === 'dead'}
+          class="subagent-detail subagent-output"
+        >
+          {resultDetail(block.data.result)}
+        </p>
+        {#if usageText(block.data.result)}<p class="subagent-metadata">{usageText(block.data.result)}</p>{/if}
+      {:else}
+        <p class:error={block.data.outcome === 'failed'} class="subagent-detail subagent-output">
+          {block.data.outcome === 'succeeded' ? 'Succeeded' : 'Failed'}{block.data.output ? `: ${block.data.output}` : ''}{block.data.error ? `: ${block.data.error}` : ''}
+        </p>
+      {/if}
+
+      {#if hasFooterActions()}
+        <div class="subagent-actions">
+          {#each block.actions as action (action.type + ':' + actionPath(action))}
+            {#if !hasInlineOpenAction(action)}
+              <Button variant="outline" size="xs" class="subagent-action max-md:min-h-11" onclick={() => invokeAction(action)}>
+                {actionLabel(action)}{action.type === 'open_view' ? ` · ${actionPath(action)}` : ''}
+              </Button>
+            {/if}
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 </article>
 
 <style>
   .subagent-semantic-block {
-    margin: 0.5rem 0 0.9rem;
+    margin: 0.25em 0;
     overflow: hidden;
-    border: 1px solid color-mix(in oklch, var(--custom-accent) 48%, var(--border));
-    border-radius: 0.65rem;
-    background: color-mix(in oklch, var(--custom-surface) 82%, transparent);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--custom-accent);
+    border-radius: 6px;
+    background: color-mix(in oklch, var(--custom-surface) 50%, transparent);
+  }
+
+  .subagent-semantic-block[data-semantic-kind='await_progress'] {
+    border-left-color: var(--warning);
+  }
+
+  .subagent-semantic-block[data-semantic-kind='completion'] {
+    border-left-color: var(--status-streaming, var(--chart-2));
+  }
+
+  .subagent-semantic-block[data-semantic-kind='lifecycle'] {
+    border-left-color: var(--muted-foreground);
+  }
+
+  .subagent-semantic-block.failed {
+    border-left-color: var(--error-accent);
+  }
+
+  .subagent-semantic-block[data-semantic-kind='await_progress'] :global(.subagent-semantic-icon) {
+    color: var(--warning);
+  }
+
+  .subagent-semantic-block[data-semantic-kind='completion']:not(.failed) :global(.subagent-semantic-icon) {
+    color: var(--status-streaming, var(--chart-2));
+  }
+
+  .subagent-semantic-block.failed :global(.subagent-semantic-icon),
+  .subagent-semantic-block.failed .subagent-semantic-title {
+    color: var(--error-foreground, var(--destructive));
   }
 
   .subagent-semantic-header {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.5rem 0.7rem;
-    border-bottom: 1px solid color-mix(in oklch, var(--custom-accent) 23%, var(--border));
-    color: var(--custom-accent);
-    font-size: 0.75rem;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 10px;
+    border: 0;
+    background: var(--surface-raised);
+    color: var(--custom-foreground);
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s;
   }
 
-  .subagent-semantic-header code {
+  .subagent-semantic-header:hover {
+    background: var(--surface-hover);
+  }
+
+  .subagent-semantic-header:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+  }
+
+  :global(.subagent-semantic-icon) {
+    flex: 0 0 auto;
+  }
+
+  .subagent-semantic-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .subagent-semantic-kind {
+    flex-shrink: 0;
     margin-left: auto;
     color: var(--muted-foreground);
-    font-family: var(--font-mono, monospace);
-    font-size: 0.625rem;
+    font-size: 0.7rem;
     font-weight: 400;
   }
 
   .subagent-semantic-body {
-    padding: 0.6rem 0.7rem;
-    font-size: 0.75rem;
+    padding: 6px 12px;
+    background: var(--surface-sunken);
+    font-size: 0.8rem;
   }
 
   .subagent-semantic-summary,
@@ -182,7 +326,7 @@
   .subagent-output,
   .subagent-metadata {
     margin: 0;
-    line-height: 1.45;
+    line-height: 1.5;
   }
 
   .subagent-semantic-summary,
@@ -194,54 +338,61 @@
   .subagent-route {
     display: flex;
     align-items: center;
-    gap: 0.45rem;
-    margin-bottom: 0.45rem;
+    gap: 6px;
+    margin-bottom: 6px;
     color: var(--foreground);
     font-family: var(--font-mono, monospace);
-    font-size: 0.7rem;
+    font-size: 0.75rem;
   }
 
   .subagent-route span {
-    padding: 0.2rem 0.35rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
-    background: var(--surface-raised);
+    min-width: 0;
+    overflow-wrap: anywhere;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background: var(--surface-subtle);
   }
 
-  .subagent-route span:nth-child(2) {
-    padding: 0;
-    border: 0;
-    color: var(--custom-accent);
-    background: transparent;
+  :global(.subagent-route-arrow) {
+    flex: 0 0 auto;
+    color: var(--muted-foreground);
   }
 
   .subagent-thread + .subagent-thread {
-    margin-top: 0.35rem;
+    margin-top: 6px;
+  }
+
+  .subagent-detail {
+    display: block;
+    max-height: 10rem;
+    overflow: auto;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
   }
 
   .subagent-child-row,
   .subagent-result-row {
     display: flex;
-    align-items: center;
-    gap: 0.45rem;
-    padding: 0.45rem 0;
-    border-top: 1px solid color-mix(in oklch, var(--custom-accent) 16%, var(--border));
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
   }
 
   .subagent-child-row:first-of-type {
-    margin-top: 0.3rem;
+    margin-top: 4px;
   }
 
   .subagent-persona {
     display: grid;
-    width: 1.15rem;
-    height: 1.15rem;
-    flex: 0 0 1.15rem;
+    width: 1.25rem;
+    height: 1.25rem;
+    flex: 0 0 1.25rem;
     place-items: center;
     border: 1px solid color-mix(in oklch, var(--custom-accent) 42%, var(--border));
-    border-radius: 0.3rem;
-    color: var(--custom-accent);
-    font-size: 0.65rem;
+    border-radius: 999px;
+    color: var(--custom-foreground);
+    font-size: 0.7rem;
   }
 
   .subagent-child-copy {
@@ -257,29 +408,29 @@
   .subagent-child-copy strong {
     color: var(--foreground);
     font-family: var(--font-mono, monospace);
-    font-size: 0.68rem;
+    font-size: 0.75rem;
   }
 
   .subagent-prompt,
   .subagent-output {
-    overflow-wrap: anywhere;
     color: var(--muted-foreground);
   }
 
   .subagent-prompt {
-    margin-top: 0.12rem;
+    margin-top: 2px;
   }
 
   .subagent-metadata {
-    white-space: nowrap;
+    max-width: 100%;
     font-family: var(--font-mono, monospace);
-    font-size: 0.62rem;
+    font-size: 0.7rem;
   }
 
   .subagent-state-dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    flex: 0 0 0.45rem;
+    width: 6px;
+    height: 6px;
+    flex: 0 0 6px;
+    margin-top: 6px;
     border-radius: 50%;
     background: var(--muted-foreground);
   }
@@ -292,35 +443,40 @@
     background: var(--status-warning, var(--warning));
   }
 
-  .subagent-state-dot[data-state='errored'] {
+  .subagent-state-dot[data-state='errored'],
+  .subagent-state-dot[data-state='dead'] {
     background: var(--status-error, var(--destructive));
+  }
+
+  .subagent-state-dot[data-state='stopped'] {
+    background: var(--warning);
   }
 
   .subagent-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.35rem;
-    margin-top: 0.55rem;
+    gap: 6px;
+    margin-top: 8px;
   }
 
-  .subagent-action {
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
-    padding: 0.25rem 0.4rem;
-    color: var(--muted-foreground);
-    background: transparent;
-    font-size: 0.65rem;
-  }
-
-  .subagent-action:hover,
-  .subagent-action:focus-visible {
-    color: var(--foreground);
-    background: var(--surface-hover);
-  }
-
-  .subagent-error,
-  .subagent-output.error,
+  .subagent-thread.error,
+  .subagent-detail.error,
   .subagent-output.error {
     color: var(--error-foreground, var(--destructive));
+  }
+
+  @media (max-width: 640px) {
+    .subagent-semantic-header {
+      min-height: 2.75rem;
+    }
+
+    .subagent-child-row,
+    .subagent-result-row {
+      flex-wrap: wrap;
+    }
+
+    .subagent-route {
+      flex-wrap: wrap;
+    }
   }
 </style>

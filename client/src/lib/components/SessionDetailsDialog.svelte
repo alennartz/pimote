@@ -62,7 +62,7 @@
 <Dialog.Root bind:open>
   <Dialog.Trigger>
     {#snippet child({ props })}
-      <Button {...props} variant="ghost" size="icon-sm" class="text-muted-foreground hover:text-foreground" title="Session details">
+      <Button {...props} variant="ghost" size="icon-sm" class="text-muted-foreground hover:text-foreground max-md:size-11" title="Session details">
         <SlidersHorizontal class="size-4" />
         <span class="sr-only">Open session details</span>
       </Button>
@@ -74,8 +74,8 @@
     class="top-auto right-0 bottom-0 left-0 grid max-h-[85dvh] max-w-none translate-x-0 translate-y-0 gap-0 rounded-t-2xl rounded-b-none p-0 sm:top-1/2 sm:left-1/2 sm:max-h-none sm:max-w-md sm:-translate-x-1/2 sm:-translate-y-1/2 sm:gap-4 sm:rounded-xl sm:p-4"
   >
     <div class="border-border flex items-center justify-between border-b px-4 py-3 sm:hidden">
-      <div class="text-sm font-semibold">Session details</div>
-      <Button variant="ghost" size="icon-sm" onclick={() => (open = false)} title="Close session details">
+      <div class="text-sm font-semibold">{child ? 'Child details' : 'Session details'}</div>
+      <Button variant="ghost" size="icon-sm" class="max-md:size-11" onclick={() => (open = false)} title="Close session details">
         <X class="size-4" />
         <span class="sr-only">Close session details</span>
       </Button>
@@ -83,11 +83,17 @@
 
     <div class="hidden sm:block">
       <Dialog.Header>
-        <Dialog.Title>Session details</Dialog.Title>
+        <Dialog.Title>{child ? 'Child details' : 'Session details'}</Dialog.Title>
       </Dialog.Header>
     </div>
 
     <div class="overflow-y-auto px-4 py-4 sm:px-0 sm:py-0">
+      {#if child && childNode}
+        <div class="bg-muted/50 mb-3 rounded-lg border px-3 py-2">
+          <div class="text-muted-foreground text-[11px]">Child view</div>
+          <div class="mt-0.5 truncate font-mono text-xs">{childNode.path.join('/')}</div>
+        </div>
+      {/if}
       <div class="rounded-xl border text-sm">
         <div class="flex items-center justify-between gap-3 px-3 py-3">
           <span class="text-muted-foreground">Model</span>
@@ -111,7 +117,7 @@
             <span class="text-muted-foreground">Folder instructions</span>
             <Button
               variant="ghost"
-              class="gap-1.5"
+              class="gap-1.5 max-md:min-h-11"
               disabled={connection.status !== 'connected' || !session?.folderPath || session.isRestoring || session.sessionId.startsWith('pending-')}
               onclick={() => void openFolderInstructions()}
             >

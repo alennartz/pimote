@@ -39,7 +39,7 @@
 
 <DropdownMenu>
   <DropdownMenuTrigger>
-    <Button variant="ghost" size="xs" class="text-muted-foreground gap-1" title="Thinking level: {selectedLevel}">
+    <Button variant="ghost" size="xs" class="text-muted-foreground gap-1 max-md:min-h-11 max-md:px-3" title="Thinking level: {selectedLevel}">
       <BrainCog class="size-3" />
       <span class="text-xs">{labelFor(selectedLevel)}</span>
     </Button>

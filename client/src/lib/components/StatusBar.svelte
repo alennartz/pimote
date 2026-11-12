@@ -21,6 +21,7 @@
   import DownloadInbox from './DownloadInbox.svelte';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
   import PanelRight from '@lucide/svelte/icons/panel-right';
+  import X from '@lucide/svelte/icons/x';
 
   let restoreLabel = $derived(sessionRegistry.viewed?.isRestoring ? getRestoreModeLabel(sessionRegistry.viewed.restoreMode) : null);
   let connectionLabel = $derived(restoreLabel ?? connection.phaseLabel);
@@ -75,7 +76,7 @@
         aria-label="Close child view"
         onclick={() => void closeChildSurface()}
       >
-        ×
+        <X class="size-4" />
       </button>
     {:else}
       <button
@@ -178,7 +179,7 @@
     {/if}
 
     <!-- Streaming indicator -->
-    {#if sessionRegistry.viewed?.isStreaming}
+    {#if activeChild?.state.isStreaming || (!activeChild && sessionRegistry.viewed?.isStreaming)}
       <Badge variant="secondary" class="gap-1.5 text-xs">
         <span class="relative flex size-2">
           <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
@@ -189,7 +190,7 @@
     {/if}
 
     <!-- Compacting indicator -->
-    {#if sessionRegistry.viewed?.isCompacting}
+    {#if activeChild?.state.isCompacting || (!activeChild && sessionRegistry.viewed?.isCompacting)}
       <Badge variant="secondary" class="gap-1 text-xs">
         <span class="relative flex size-2">
           <span class="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-75"></span>

@@ -152,7 +152,7 @@
     <Button
       variant="ghost"
       size="xs"
-      class="text-muted-foreground max-w-48 gap-1 truncate"
+      class="text-muted-foreground max-w-48 gap-1 truncate max-md:min-h-11 max-md:px-3"
       title={activeModel ? `${activeModel.provider}/${activeModel.name}` : 'No model selected'}
     >
       <span class="truncate text-xs">

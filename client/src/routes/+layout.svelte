@@ -29,6 +29,7 @@
   import PanelRight from '@lucide/svelte/icons/panel-right';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import Settings from '@lucide/svelte/icons/settings';
+  import X from '@lucide/svelte/icons/x';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { globalSettingsStore } from '$lib/stores/global-settings.svelte.js';
   import { routeNotificationIntent, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
@@ -235,9 +236,23 @@
     return extensionTitle ? `${appName} — ${extensionTitle}` : appName;
   });
 
-  let mobileHeaderTitle = $derived(getSessionDisplayName(sessionRegistry.viewed) ?? appName);
-  let mobileContextDisplay = $derived(getContextDisplay(sessionRegistry.viewed, { compact: true }));
-  let mobileContextTone = $derived(getContextTone(sessionRegistry.viewed?.contextUsage?.percent));
+  let mobileChild = $derived(sessionRegistry.viewedSubagentAttachment);
+  let mobileChildNode = $derived.by(() => {
+    const rootId = sessionRegistry.viewedSessionId;
+    const path = rootId ? sessionRegistry.getSelectedSubagentPath?.(rootId) : null;
+    return rootId && path ? sessionRegistry.getSubagentNode?.(rootId, path) : null;
+  });
+  let mobileContextPercent = $derived(mobileChild?.contextUsage?.percent ?? mobileChildNode?.contextFill ?? sessionRegistry.viewed?.contextUsage?.percent);
+  let mobileHeaderTitle = $derived(mobileChildNode ? mobileChildNode.path.join('/') : (getSessionDisplayName(sessionRegistry.viewed) ?? appName));
+  let mobileHeaderSubtitle = $derived(mobileChild ? getSessionDisplayName(sessionRegistry.viewed) : null);
+  let mobileContextDisplay = $derived(
+    mobileChild
+      ? mobileContextPercent === null || mobileContextPercent === undefined
+        ? null
+        : `${Math.round(mobileContextPercent)}%`
+      : getContextDisplay(sessionRegistry.viewed, { compact: true }),
+  );
+  let mobileContextTone = $derived(getContextTone(mobileContextPercent));
   async function closeSelectedChildView(): Promise<void> {
     const rootId = sessionRegistry.viewedSessionId;
     const path = rootId ? sessionRegistry.getSelectedSubagentPath?.(rootId) : null;
@@ -270,7 +285,7 @@
       {#if page.url.pathname === '/'}
         <button
           type="button"
-          class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors"
+          class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors max-md:size-11"
           title="Open Settings"
           aria-label="Open Settings"
           onclick={() => void globalSettingsStore.loadManifest()}
@@ -278,18 +293,18 @@
           <Settings class="size-5" />
         </button>
       {/if}
-      {#if sessionRegistry.viewedSubagentAttachment}
+      {#if mobileChild}
         <button
-          class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors"
+          class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors max-md:size-11"
           title="Close child view"
           aria-label="Close child view"
           onclick={() => void closeSelectedChildView()}
         >
-          ×
+          <X class="size-5" />
         </button>
       {:else if sessionRegistry.viewedSessionId}
         <button
-          class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors"
+          class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors max-md:size-11"
           title="Back to dashboard"
           aria-label="Back to dashboard"
           onclick={() => sessionRegistry.goHome()}
@@ -297,8 +312,8 @@
           <ArrowLeft class="size-5" />
         </button>
       {/if}
-      <div class="min-w-0 flex-1">
-        {#if sessionRegistry.viewedSessionId && sessionRegistry.viewed}
+      <div class="min-w-0 flex-1 leading-tight">
+        {#if sessionRegistry.viewedSessionId && sessionRegistry.viewed && !mobileChild}
           <SessionRenameDialog
             sessionId={sessionRegistry.viewed.sessionId}
             folderPath={sessionRegistry.viewed.folderPath}
@@ -319,6 +334,9 @@
         {:else}
           <div class="text-foreground truncate text-sm font-semibold">{mobileHeaderTitle}</div>
         {/if}
+        {#if mobileHeaderSubtitle}
+          <div class="text-muted-foreground mt-0.5 truncate text-[11px]">Child view · {mobileHeaderSubtitle}</div>
+        {/if}
       </div>
 
       {#if sessionRegistry.viewedSessionId && mobileContextDisplay}
@@ -333,7 +351,7 @@
 
       {#if hasPanels && panelStore.isDrawer}
         <button
-          class="text-muted-foreground hover:text-foreground border-border bg-background relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg border"
+          class="text-muted-foreground hover:text-foreground border-border bg-background relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg border max-md:size-11"
           onclick={() => panelStore.openPanel()}
           title="Open panels"
           aria-label="Open panels"
@@ -381,7 +399,7 @@
       onclick={() => panelStore.closePanel()}
       onkeydown={(event) => event.key === 'Escape' && panelStore.closePanel()}
     ></div>
-    <div class="fixed inset-y-0 right-0 z-40 flex min-h-0 w-[88vw] max-w-[340px] flex-col" data-panel-drawer>
+    <div class="fixed inset-y-0 right-0 z-40 flex min-h-0 w-full max-w-[24rem] flex-col" data-panel-drawer>
       <Panel onClose={() => panelStore.closePanel()} />
     </div>
   {/if}
