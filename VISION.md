@@ -33,7 +33,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 - Sends prompts, runs native shell commands with `!`/`!!`, steers, aborts, and switches models
 - Slash command autocomplete — typing `/` shows a fuzzy-filtered dropdown of available commands (skills, extension commands, prompt templates) with argument completion for extension commands
 - Handles extension UI dialogs (select, confirm, input)
-- Displays live panel cards pushed by extensions (subagent progress, custom dashboards) in a responsive side panel (desktop) or overlay (mobile)
+- Displays extension panel cards in a responsive side panel (desktop) or overlay (mobile), and shows my-pi subagents in a first-party hierarchy with explicit interactive views
 - Receives push notifications when background sessions finish working
 - Persists client identity and active sessions in localStorage — reopening the app restores session tabs and reconnects automatically
 - Reconnects transparently with per-observer gap replay and archived-session restore handling
@@ -48,7 +48,7 @@ Using pi through SSH on a phone doesn't work well — you can't scroll while the
 Phone/Browser ←→ Cloudflare Tunnel ←→ Pimote Server
                                            ↕
                                      AgentSession (pi SDK)
-                                     EventBus (panel cards)
+                                     EventBus (panel cards and subagent providers)
                                      Event Buffer
                                      Folder Model
 ```

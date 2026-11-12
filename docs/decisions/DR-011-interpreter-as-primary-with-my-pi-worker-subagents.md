@@ -11,7 +11,7 @@ Voice-mode needs an LLM behind speechmux's WS `LlmBackend` seam. The same model 
 Voxcoder addressed this by splitting roles: a cheap fast **interpreter** LLM mediates the conversation, and all real coding work happens in a subordinate **worker** agent. We're porting that pattern to pimote + `my-pi`, but the subagent protocols differ in a way that matters:
 
 - Voxcoder's interpreter watches every SDK event the worker emits — a continuous observation stream.
-- `my-pi`'s subagent protocol exposes only `agent_idle`, `agent_message`, and completion notifications to the parent. The parent cannot passively watch the child's internal `tool_call`/`message_update` stream.
+- For the voice interpreter's Pi context, `my-pi` delivers `agent_idle`, `agent_message`, and completion notifications, but not the child's native `tool_call`/`message_update` stream. Separately, Pimote's subagent provider exposes hierarchy and semantic events, and lends the child transcript to an explicitly opened web view.
 
 ## Decision
 
@@ -31,4 +31,4 @@ Rejected alternatives:
 - The interpreter cannot achieve voxcoder-parity observation. Long tool runs risk silent minutes unless the worker is prompted to emit periodic `send` updates or the interpreter is prompted to poll.
 - Voxcoder's `<worker_output>` and `<autonomous_decisions>` prompt sections (which assume continuous SDK visibility) had to be dropped or rewritten. `INTERPRETER_PROMPT` is ~80% portable; the streaming-observation parts are not.
 - Cross-subagent permission/question propagation is unsolved — v1 sidesteps it by disabling the UI bridge during voice calls (see `ui_bridge_disabled_in_voice_mode`). When v2 wants workers to prompt the user over voice, pi's `tool_call` hook would need to propagate across the subagent boundary, or workers would need to raise permission-style `send`s.
-- If `my-pi` later grows a richer subagent-event stream, the interpreter can be upgraded to true passive observation without changing the topology.
+- Pimote's provider gives the web client hierarchy, semantic events, and borrowed child transcripts, but it does not send raw child stream events into the voice interpreter's Pi context. Passive voice observation remains a separate feature.

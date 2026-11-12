@@ -108,6 +108,8 @@ Each conversation with pi is a **session**, tied to a project folder. You can:
 - **Fork from a message** to continue from that point in a new session file while the original session stays untouched and live; the forked prompt text returns to the composer (Replace, Append, Prepend, or Ignore on draft conflict)
 - **Start fresh** with a new session in the same project at any time
 
+When my-pi's subagents extension runs, inspect its root-relative hierarchy in the side panel and open a child as an interactive view of the existing runtime. Child views stay outside root session tabs, archives, and folder counts.
+
 Unarchived session state persists across browser restarts — reopening Pimote restores your open tabs and reconnects automatically. Archived sessions leave the restore set; the dashboard unarchives them, then opens them explicitly, while the manager can resume the original record by session ID.
 
 ### Conversation
@@ -412,7 +414,7 @@ For first-publish steps, see [docs/releasing.md](docs/releasing.md).
 
 ## `@pimote/sdk`
 
-Pimote's SDK exposes APIs for Pi session extensions and process-global Pimote extensions. The `panels` module pushes structured card data into the Pimote side panel; cards appear in a responsive side panel (desktop) or overlay (mobile). See the SDK guide for host scopes and the `@pimote/sdk/pimote` factory API.
+Pimote's SDK exposes APIs for Pi session extensions and process-global Pimote extensions. The `panels` module pushes structured card data into the Pimote side panel; cards appear in a responsive side panel (desktop) or overlay (mobile). The `subagents` module defines the typed provider seam that my-pi uses to publish subagent hierarchies and lend existing child sessions to interactive views. See the SDK guide for host scopes and the `@pimote/sdk/pimote` factory API.
 
 ```ts
 import { detect } from '@pimote/sdk';

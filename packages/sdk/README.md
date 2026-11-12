@@ -5,6 +5,7 @@ Pimote's extensibility SDK provides APIs for [Pi](https://github.com/earendil-wo
 - **`@pimote/sdk/panels`** — push structured card data to the Pimote web client
 - **`@pimote/sdk/folders`** — type-only folder discovery entries for Pimote extensions
 - **`@pimote/sdk/activity`** — answer Pimote's idle-reap background-activity poll
+- **`@pimote/sdk/subagents`** — register or discover a typed per-session subagent provider
 - **`@pimote/sdk/pimote`** — define global `PimoteExtension` factories for sources and Settings files
 
 The root `@pimote/sdk` import re-exports session-scoped modules and Pimote extension types.
@@ -112,6 +113,12 @@ interface BodySection {
 Detection uses pi's EventBus for a synchronous in-process round-trip — pimote's server listens for `pimote:detect:request` and responds on `pimote:detect:response`. Card updates are emitted on the `pimote:panels` channel, which pimote's session manager picks up and pushes to the web client over WebSocket.
 
 When pimote isn't present, the EventBus emit fires with no listener, `detect()` returns `null`, and there's zero overhead.
+
+## Subagents — `@pimote/sdk/subagents`
+
+This module defines the per-session provider seam for interactive subagent views. A provider publishes a root-relative hierarchy, replayable semantic events, and leases to existing child sessions. Pimote discovers providers on the root session's EventBus; child runtimes stay owned by the extension that created them.
+
+Use `registerProvider(pi, provider)` to publish a provider. Use `discoverProvider(pi, onProvider)` or the discovery handle to find providers, including late registration and replacement. Registration and discovery return cleanup functions or handles. Cleanup stops discovery or registration; it does not dispose the provider or child sessions. The `SubagentProvider` contract, event data, cursors, snapshots, and borrowed-session lease types are exported from this module. The my-pi subagents extension implements this provider for Pimote.
 
 ## Pimote extensions — `@pimote/sdk/pimote`
 
