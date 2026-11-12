@@ -17,6 +17,19 @@ function matchesCustomRef(ref: PiEventRef, message: PimoteAgentMessage, sessionI
   return ref.kind === 'custom_message' || ref.kind === 'lifecycle';
 }
 
+function containsSemanticEventId(value: unknown, eventId: string): boolean {
+  if (Array.isArray(value)) return value.some((item) => containsSemanticEventId(item, eventId));
+  if (value === null || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (record.eventId === eventId && typeof record.kind === 'string') return true;
+  return [record.semantic, record.semanticEvents, record.semanticEvent].some((candidate) => containsSemanticEventId(candidate, eventId));
+}
+
+/** True when a semantic block has a native entry or tool-call anchor. */
+export function semanticBlockHasNativeAnchor(block: SemanticBlock): boolean {
+  return block.relatedPiEvents.some((ref) => ref.entryId !== undefined || ref.toolCallId !== undefined);
+}
+
 /** True when a semantic block is allowed to replace this native block. */
 export function semanticBlockMatchesContent(block: SemanticBlock, message: PimoteAgentMessage, content: PimoteMessageContent, sessionId: string): boolean {
   return block.relatedPiEvents.some((ref) => matchesToolRef(ref, message, content, sessionId));
@@ -24,13 +37,62 @@ export function semanticBlockMatchesContent(block: SemanticBlock, message: Pimot
 
 /** True when a semantic block replaces this whole custom-message entry. */
 export function semanticBlockMatchesMessage(block: SemanticBlock, message: PimoteAgentMessage, sessionId: string): boolean {
-  return block.relatedPiEvents.some((ref) => matchesCustomRef(ref, message, sessionId));
+  if (block.relatedPiEvents.some((ref) => matchesCustomRef(ref, message, sessionId))) return true;
+  return message.role === 'custom' && containsSemanticEventId(message.details, block.eventId);
 }
 
 /** True when the block has a visible native anchor in this message. */
 export function semanticBlockHasMessageAnchor(block: SemanticBlock, message: PimoteAgentMessage, sessionId: string): boolean {
   if (semanticBlockMatchesMessage(block, message, sessionId)) return true;
   return message.content.some((content) => semanticBlockMatchesContent(block, message, content, sessionId));
+}
+
+/** Assign each semantic block to its first visible native message. */
+export function indexSemanticAnchors(
+  messages: readonly PimoteAgentMessage[],
+  blocks: readonly SemanticBlock[],
+  sessionId: string,
+): { readonly byMessage: ReadonlyMap<PimoteAgentMessage, readonly SemanticBlock[]>; readonly remaining: readonly SemanticBlock[] } {
+  const customEntries = new Map<string, number>();
+  const toolEntries = new Map<string, number>();
+  const toolCalls = new Map<string, number>();
+  const byMessage = new Map<PimoteAgentMessage, SemanticBlock[]>();
+  const remaining: SemanticBlock[] = [];
+  if (blocks.length === 0) return { byMessage, remaining };
+
+  messages.forEach((message, index) => {
+    if (message.display === false) return;
+    if (message.role === 'custom' && message.entryId !== undefined && !customEntries.has(message.entryId)) customEntries.set(message.entryId, index);
+    for (const content of message.content) {
+      if (content.type !== 'tool_call' && content.type !== 'tool_result') continue;
+      if (content.toolCallId !== undefined && !toolCalls.has(content.toolCallId)) toolCalls.set(content.toolCallId, index);
+      if (message.entryId !== undefined && !toolEntries.has(message.entryId)) toolEntries.set(message.entryId, index);
+    }
+  });
+
+  for (const block of blocks) {
+    let first = Infinity;
+    for (const ref of block.relatedPiEvents) {
+      if (ref.sessionId !== sessionId) continue;
+      let index: number | undefined;
+      if (ref.kind === 'tool_call') {
+        if (ref.toolCallId !== undefined) index = toolCalls.get(ref.toolCallId);
+        else if (ref.entryId !== undefined) index = toolEntries.get(ref.entryId);
+      } else if ((ref.kind === 'custom_message' || ref.kind === 'lifecycle') && ref.entryId !== undefined) {
+        index = customEntries.get(ref.entryId);
+      }
+      if (index !== undefined) first = Math.min(first, index);
+    }
+    if (first === Infinity) {
+      remaining.push(block);
+      continue;
+    }
+    const message = messages[first];
+    const assigned = byMessage.get(message) ?? [];
+    assigned.push(block);
+    byMessage.set(message, assigned);
+  }
+  return { byMessage, remaining };
 }
 
 /**

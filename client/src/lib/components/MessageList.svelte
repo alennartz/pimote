@@ -6,7 +6,7 @@
   import { indexToolResultUsage, summarizeAssistantRowUsage } from '$lib/assistant-row-usage.js';
   import type { BashExecutionState, PerSessionState, SubagentAttachmentState } from '$lib/stores/session-registry.svelte.js';
   import type { SemanticBlock, SemanticBlockAction } from '$lib/subagent-semantic.js';
-  import { semanticBlockHasMessageAnchor } from '$lib/subagent-semantic-rendering.js';
+  import { indexSemanticAnchors, semanticBlockHasMessageAnchor, semanticBlockHasNativeAnchor } from '$lib/subagent-semantic-rendering.js';
   import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { branchTreeStore, type BranchTreeSurface } from '$lib/stores/branch-tree-store.svelte.js';
@@ -379,9 +379,9 @@
     | { kind: 'message'; key: string; message: PimoteAgentMessage | StreamingMessage; streaming: boolean; messageIndex: number | null }
     | { kind: 'bash'; key: string; execution: BashExecutionState };
 
-  // Unified display entries: finalized messages, streaming message, and the
-  // viewed session's transient native bash executions.
-  let displayEntries = $derived.by(() => {
+  const noSemanticBlocks: readonly SemanticBlock[] = Object.freeze([]);
+
+  let savedDisplayEntries = $derived.by(() => {
     if (!session) return [] as DisplayEntry[];
     const entries: DisplayEntry[] = [];
     for (let i = 0; i < session.messages.length; i++) {
@@ -398,6 +398,15 @@
         messageIndex: i,
       });
     }
+    return entries;
+  });
+
+  let savedSemanticAnchors = $derived(indexSemanticAnchors(session?.messages ?? [], semanticBlocks, childSurface?.childSessionId ?? session?.sessionId ?? ''));
+
+  // Keep saved row identities stable while streaming usage snapshots change.
+  let displayEntries = $derived.by(() => {
+    const entries: DisplayEntry[] = [...savedDisplayEntries];
+    if (!session) return entries;
     if (session.streamingMessage && session.streamingKey) {
       entries.push({
         kind: 'message',
@@ -413,26 +422,23 @@
     return entries;
   });
 
-  /** Events without native provenance render once after the saved transcript. */
   function semanticBlocksForEntry(entry: Extract<DisplayEntry, { kind: 'message' }>): readonly SemanticBlock[] {
-    const currentIndex = displayEntries.indexOf(entry);
-    if (currentIndex < 0 || semanticBlocks.length === 0) return [];
-    const surfaceSessionId = childSurface?.childSessionId ?? session?.sessionId ?? '';
-    const previousMessages = displayEntries
-      .slice(0, currentIndex)
-      .filter((candidate): candidate is Extract<DisplayEntry, { kind: 'message' }> => candidate.kind === 'message')
-      .map((candidate) => candidate.message as PimoteAgentMessage);
     const message = entry.message as PimoteAgentMessage;
-    return semanticBlocks.filter(
-      (block) =>
-        semanticBlockHasMessageAnchor(block, message, surfaceSessionId) && !previousMessages.some((previous) => semanticBlockHasMessageAnchor(block, previous, surfaceSessionId)),
-    );
+    if (!entry.streaming) return savedSemanticAnchors.byMessage.get(message) ?? noSemanticBlocks;
+    const surfaceSessionId = childSurface?.childSessionId ?? session?.sessionId ?? '';
+    return savedSemanticAnchors.remaining.filter((block) => semanticBlockHasMessageAnchor(block, message, surfaceSessionId));
   }
 
   /** Events without native provenance render once after the saved transcript. */
   let unanchoredSemanticBlocks = $derived.by(() => {
     if (!session || semanticBlocks.length === 0) return [] as readonly SemanticBlock[];
-    return semanticBlocks.filter((block) => block.relatedPiEvents.length === 0);
+    const surfaceSessionId = childSurface?.childSessionId ?? session?.sessionId ?? '';
+    const transcriptMessages = displayEntries
+      .filter((entry): entry is Extract<DisplayEntry, { kind: 'message' }> => entry.kind === 'message')
+      .map((entry) => entry.message as PimoteAgentMessage);
+    return semanticBlocks.filter(
+      (block) => !semanticBlockHasNativeAnchor(block) && !transcriptMessages.some((message) => semanticBlockHasMessageAnchor(block, message, surfaceSessionId)),
+    );
   });
 
   let toolResultUsageIndex = $derived.by(() => indexToolResultUsage(session?.messages ?? []));
