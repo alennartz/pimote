@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { BorrowedAgentSession } from '@pimote/sdk/subagents';
-import type { PimoteSessionEvent } from '../../shared/dist/index.js';
+import type { PimoteSessionEvent, PimoteTreeNode } from '../../shared/dist/index.js';
 import { createSessionSurface, type SessionSurfaceCapabilities, type SessionSurfaceCommand, type SessionSurfaceOptions } from './session-surface.js';
 
 function message(role: 'user' | 'assistant', text: string) {
@@ -316,6 +316,29 @@ describe('SessionSurface', () => {
       tree: expect.arrayContaining([expect.objectContaining({ label: 'checkpoint' })]),
     });
     expect(await f.surface.getState()).toMatchObject({ sessionId: 'child-session' });
+  });
+
+  it.each(['root', 'child'] as const)('returns complete deep trees through the %s surface', async (kind) => {
+    const f = fixture();
+    const tree: ReturnType<BorrowedAgentSession['sessionManager']['getTree']> = [];
+    let children = tree;
+    for (let index = 0; index < 10_000; index += 1) {
+      const node = { entry: entry(`entry-${index}`, index === 0 ? null : `entry-${index - 1}`, `node ${index}`), children: [] };
+      children.push(node as (typeof tree)[number]);
+      children = node.children;
+    }
+    f.native.sessionManager.getTree = () => tree;
+    f.native.sessionManager.getLeafId = () => 'entry-9999';
+    const surface = createSessionSurface({ sessionId: f.native.sessionId, session: f.native, kind, capabilities: f.capabilities });
+    const result = (await surface.dispatch({ type: 'get_tree' })) as { tree: PimoteTreeNode[]; currentLeafId: string };
+
+    expect(result.currentLeafId).toBe('entry-9999');
+    let node = result.tree[0];
+    for (let index = 1; index < 10_000; index += 1) node = node.children[0];
+    expect(node.id).toBe('entry-9999');
+    expect(node.conversationText).toBe('node 9999');
+    expect(node.children).toEqual([]);
+    surface.close();
   });
 
   it('invalidates the old replay position when a transcript snapshot is refreshed', async () => {

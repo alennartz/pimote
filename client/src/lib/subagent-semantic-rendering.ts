@@ -54,6 +54,7 @@ export function indexSemanticAnchors(
   sessionId: string,
 ): { readonly byMessage: ReadonlyMap<PimoteAgentMessage, readonly SemanticBlock[]>; readonly remaining: readonly SemanticBlock[] } {
   const customEntries = new Map<string, number>();
+  const customMessages: Array<{ message: PimoteAgentMessage; index: number }> = [];
   const toolEntries = new Map<string, number>();
   const toolCalls = new Map<string, number>();
   const byMessage = new Map<PimoteAgentMessage, SemanticBlock[]>();
@@ -62,7 +63,10 @@ export function indexSemanticAnchors(
 
   messages.forEach((message, index) => {
     if (message.display === false) return;
-    if (message.role === 'custom' && message.entryId !== undefined && !customEntries.has(message.entryId)) customEntries.set(message.entryId, index);
+    if (message.role === 'custom') {
+      customMessages.push({ message, index });
+      if (message.entryId !== undefined && !customEntries.has(message.entryId)) customEntries.set(message.entryId, index);
+    }
     for (const content of message.content) {
       if (content.type !== 'tool_call' && content.type !== 'tool_result') continue;
       if (content.toolCallId !== undefined && !toolCalls.has(content.toolCallId)) toolCalls.set(content.toolCallId, index);
@@ -71,7 +75,7 @@ export function indexSemanticAnchors(
   });
 
   for (const block of blocks) {
-    let first = Infinity;
+    let first = customMessages.find(({ message }) => containsSemanticEventId(message.details, block.eventId))?.index ?? Infinity;
     for (const ref of block.relatedPiEvents) {
       if (ref.sessionId !== sessionId) continue;
       let index: number | undefined;

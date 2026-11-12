@@ -15,6 +15,7 @@ import { mapAgentMessage, mapContextEntries, type SdkSessionEntry } from './mess
 import { completeFileRefs } from './file-references.js';
 import { projectSessionUsage } from './session-usage.js';
 import { attributeDrained, type QueueOwnership } from './queue-ownership.js';
+import { mapTreeNodes, type SessionTreeNode } from './session-tree.js';
 
 /** Commands allowed through both root and child session surfaces. */
 export type SessionSurfaceCommand =
@@ -266,34 +267,6 @@ function messageIsInSnapshot(event: PimoteSessionEvent, snapshot: SessionSurface
   );
 }
 
-function textFromEntry(entry: unknown): string {
-  const value = asRecord(entry);
-  if (value.type === 'message') {
-    const message = asRecord(value.message);
-    const content = message.content;
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content)) {
-      return content
-        .map((block) => {
-          const record = asRecord(block);
-          return typeof record.text === 'string' ? record.text : typeof record.thinking === 'string' ? record.thinking : '';
-        })
-        .filter(Boolean)
-        .join('\n');
-    }
-  }
-  if (value.type === 'custom_message') {
-    const content = value.content;
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content))
-      return content
-        .map((block) => (typeof asRecord(block).text === 'string' ? asRecord(block).text : ''))
-        .filter(Boolean)
-        .join('\n');
-  }
-  return typeof value.summary === 'string' ? value.summary : String(value.type ?? 'entry');
-}
-
 /** Map a saved branch without applying compaction's context projection. */
 function mapSavedBranch(entries: readonly SdkSessionEntry[], customVisible: (customType: string) => boolean): PimoteAgentMessage[] {
   let seenLeadingSystem = false;
@@ -318,31 +291,6 @@ function mapSavedBranch(entries: readonly SdkSessionEntry[], customVisible: (cus
     }
   }
   return output;
-}
-
-function mapTreeNodes(nodes: readonly unknown[]): PimoteTreeNode[] {
-  return nodes.map((raw) => {
-    const node = asRecord(raw);
-    const entry = asRecord(node.entry);
-    const id = typeof entry.id === 'string' ? entry.id : '';
-    const type = typeof entry.type === 'string' ? entry.type : 'unknown';
-    const role = type === 'message' && typeof asRecord(entry.message).role === 'string' ? (asRecord(entry.message).role as string) : undefined;
-    const customType = typeof entry.customType === 'string' ? entry.customType : undefined;
-    const label = typeof node.label === 'string' ? node.label : undefined;
-    const labelTimestamp = typeof node.labelTimestamp === 'string' ? node.labelTimestamp : undefined;
-    return {
-      id,
-      type,
-      ...(role ? { role } : {}),
-      ...(customType ? { customType } : {}),
-      preview: textFromEntry(entry).slice(0, 200),
-      ...(type === 'message' && (role === 'user' || role === 'assistant') ? { conversationText: textFromEntry(entry) } : {}),
-      timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : new Date(0).toISOString(),
-      ...(label ? { label } : {}),
-      ...(labelTimestamp ? { labelTimestamp } : {}),
-      children: mapTreeNodes(Array.isArray(node.children) ? node.children : []),
-    };
-  });
 }
 
 function defaultCapabilities(session: BorrowedAgentSession, getGitBranch?: () => string | null): SessionSurfaceCapabilities {
@@ -771,7 +719,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
   const getTree = (): { tree: PimoteTreeNode[]; currentLeafId: string | null } => {
     const manager = options.session.sessionManager as unknown as NativeSessionManagerExtras | undefined;
     const rawTree = manager?.getTree?.();
-    const tree = Array.isArray(rawTree) ? rawTree : [];
+    const tree = Array.isArray(rawTree) ? (rawTree as SessionTreeNode[]) : [];
     const rawLeaf = manager?.getLeafId?.();
     return { tree: mapTreeNodes(tree), currentLeafId: typeof rawLeaf === 'string' ? rawLeaf : null };
   };

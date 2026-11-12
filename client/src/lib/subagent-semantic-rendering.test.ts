@@ -67,7 +67,10 @@ describe('semantic anchor index', () => {
       content: [{ type: 'text', text: 'native notification' }],
     };
 
-    expect(projectSemanticMessage(message, [block], sessionId)).toEqual([block]);
+    const index = indexSemanticAnchors([message], [block], sessionId);
+    expect(index.byMessage.get(message)).toEqual([block]);
+    expect(index.remaining).toEqual([]);
+    expect(projectSemanticMessage(message, index.byMessage.get(message)!, sessionId)).toEqual([block]);
   });
 
   it('respects session identity and does not fall back from an unmatched tool ID to an entry ID', () => {

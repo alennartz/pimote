@@ -431,13 +431,11 @@
 
   /** Events without native provenance render once after the saved transcript. */
   let unanchoredSemanticBlocks = $derived.by(() => {
-    if (!session || semanticBlocks.length === 0) return [] as readonly SemanticBlock[];
-    const surfaceSessionId = childSurface?.childSessionId ?? session?.sessionId ?? '';
-    const transcriptMessages = displayEntries
-      .filter((entry): entry is Extract<DisplayEntry, { kind: 'message' }> => entry.kind === 'message')
-      .map((entry) => entry.message as PimoteAgentMessage);
-    return semanticBlocks.filter(
-      (block) => !semanticBlockHasNativeAnchor(block) && !transcriptMessages.some((message) => semanticBlockHasMessageAnchor(block, message, surfaceSessionId)),
+    if (!session) return noSemanticBlocks;
+    const surfaceSessionId = childSurface?.childSessionId ?? session.sessionId ?? '';
+    const streamingMessage = session.streamingMessage as PimoteAgentMessage | null;
+    return savedSemanticAnchors.remaining.filter(
+      (block) => !semanticBlockHasNativeAnchor(block) && (!streamingMessage || !semanticBlockHasMessageAnchor(block, streamingMessage, surfaceSessionId)),
     );
   });
 

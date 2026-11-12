@@ -12,6 +12,8 @@ import { FolderListing, type FolderListingService } from './folder-listing.js';
 import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
 import { QueueOwnership } from './queue-ownership.js';
+import { createSessionSurface } from './session-surface.js';
+import type { BorrowedAgentSession } from '@pimote/sdk/subagents';
 import type { EventBusController } from '@earendil-works/pi-coding-agent';
 import type { DownloadItem, FolderInfo, PimoteEvent, PimoteResponse, PimoteSessionEvent, PimoteTreeNode } from '../../shared/dist/index.js';
 
@@ -2639,6 +2641,56 @@ describe('WsHandler', () => {
       expect(resp!.success).toBe(true);
       expect((resp!.data as { currentLeafId: string }).currentLeafId).toBe('entry-user');
       expect((resp!.data as { tree: PimoteTreeNode[] }).tree[0].conversationText).toBe('Show the latest tree node');
+    });
+
+    it.each(['root', 'child', 'child /tree'] as const)('sends complete deep tree responses from a %s surface', async (route) => {
+      const kind = route === 'root' ? 'root' : 'child';
+      const slot = createMockSlot({ id: 'session-deep-tree', connectedClientId: 'client-1' });
+      const tree: ReturnType<BorrowedAgentSession['sessionManager']['getTree']> = [];
+      let children = tree;
+      for (let index = 0; index < 10_000; index += 1) {
+        const node = {
+          entry: {
+            id: `entry-${index}`,
+            type: 'message' as const,
+            parentId: index === 0 ? null : `entry-${index - 1}`,
+            message: { role: 'user' as const, content: `node ${index}`, timestamp: 1 },
+            timestamp: '2026-04-11T12:00:00.000Z',
+          },
+          children: [],
+        };
+        children.push(node);
+        children = node.children;
+      }
+      slot.session.sessionManager.getTree = () => tree;
+      slot.session.sessionManager.getLeafId = () => 'entry-9999';
+      const surface = createSessionSurface({ sessionId: slot.session.sessionId, session: slot.session as unknown as BorrowedAgentSession, kind });
+      if (kind === 'root') slot.sessionSurface = surface;
+      else slot.subagentHost = { dispatch: (_connection, _view, command) => surface.dispatch(command) } as NonNullable<ManagedSlot['subagentHost']>;
+      const { handler, sent } = createTestHandler('client-1', { sessions: new Map([['session-deep-tree', slot]]) });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: route === 'root' ? 'get_tree' : route === 'child' ? 'subagent_get_tree' : 'subagent_prompt',
+          ...(route === 'child /tree' ? { message: '/tree' } : {}),
+          sessionId: 'session-deep-tree',
+          path: ['worker'],
+          incarnation: 'incarnation',
+          attachmentGeneration: 'attachment',
+          id: 'req-deep-tree',
+        }),
+      );
+
+      const response = findResponse(sent, 'req-deep-tree');
+      expect(response?.success).toBe(true);
+      const data = response!.data as { tree: PimoteTreeNode[]; currentLeafId: string };
+      expect(data.currentLeafId).toBe('entry-9999');
+      let node = data.tree[0];
+      for (let index = 1; index < 10_000; index += 1) node = node.children[0];
+      expect(node.id).toBe('entry-9999');
+      expect(node.conversationText).toBe('node 9999');
+      expect(node.children).toEqual([]);
+      surface.close();
     });
 
     it('returns mapped tree data when prompt message is /tree', async () => {
