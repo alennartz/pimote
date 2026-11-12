@@ -10,6 +10,8 @@ const harness = vi.hoisted(() => {
   let sequence = 0;
   let nextSessionId: string | undefined;
   let nextBind: (() => Promise<void>) | undefined;
+  let nextServiceGate: (() => Promise<void>) | undefined;
+  let activeServiceCreations = 0;
   let nextBindAction: ((bindings: any) => Promise<void>) | undefined;
 
   const makeSession = (sessionId: string, sessionManager: any): any => {
@@ -52,20 +54,26 @@ const harness = vi.hoisted(() => {
     runtimes,
     bindCalls,
     makeSession,
-    modelRuntime: { getAvailable: vi.fn(async () => []) },
-    modelRuntimeCreate: vi.fn(async () => ({ getAvailable: vi.fn(async () => []) })),
+    modelRuntime: { ready: true, getAvailable: vi.fn(async () => []) },
+    modelRuntimeCreate: vi.fn(async () => ({ ready: true, getAvailable: vi.fn(async () => []) })),
     nextSessionId: (id?: string) => {
       nextSessionId = id;
     },
     gateNextBind: (gate: () => Promise<void>) => {
       nextBind = gate;
     },
+    gateNextService: (gate: () => Promise<void>) => {
+      nextServiceGate = gate;
+    },
+    activeServiceCreations: () => activeServiceCreations,
     runNextBindAction: (action: (bindings: any) => Promise<void>) => {
       nextBindAction = action;
     },
     clearPending: () => {
       nextBind = undefined;
       nextBindAction = undefined;
+      nextServiceGate = undefined;
+      activeServiceCreations = 0;
     },
     createAgentSessionRuntime: vi.fn(async (factory: CreateAgentSessionRuntimeFactory, options: any) => {
       const created = await factory({ ...options, agentDir: '/agent', sessionStartEvent: { type: 'session_start', reason: 'startup' } });
@@ -102,8 +110,24 @@ const harness = vi.hoisted(() => {
       runtimes.push(runtime);
       return runtime;
     }),
-    createAgentSessionServices: vi.fn(async (args: any) => ({ ...args, diagnostics: [] })),
-    createAgentSessionFromServices: vi.fn(async ({ sessionManager }: any) => ({ session: makeSession(nextSessionId ?? `session-${++sequence}`, sessionManager) })),
+    createAgentSessionServices: vi.fn(async (args: any) => {
+      activeServiceCreations++;
+      args.modelRuntime.ready = false;
+      try {
+        const gate = nextServiceGate;
+        nextServiceGate = undefined;
+        if (gate) await gate();
+        return { ...args, diagnostics: [] };
+      } finally {
+        activeServiceCreations--;
+        if (activeServiceCreations === 0) args.modelRuntime.ready = true;
+      }
+    }),
+    createAgentSessionFromServices: vi.fn(async ({ services, sessionManager }: any) => {
+      const session = makeSession(nextSessionId ?? `session-${++sequence}`, sessionManager);
+      session.model = services.modelRuntime.ready ? { provider: 'genetec', id: 'gpt-5.6-luna', name: 'Luna' } : undefined;
+      return { session };
+    }),
   };
 });
 
@@ -136,6 +160,7 @@ beforeEach(() => {
   harness.modelRuntimeCreate.mockClear();
   harness.createAgentSessionRuntime.mockClear();
   harness.nextSessionId();
+  harness.modelRuntime.ready = true;
   harness.clearPending();
 });
 
@@ -148,6 +173,27 @@ describe('manager-owned extension startup', () => {
     expect(harness.bindCalls).toHaveLength(1);
     expect(slot.sessionState.extensionsBound).toBe(true);
     expect(slot.sessionState.sessionIdentity).toBe(slot.session);
+  });
+
+  it('serializes shared model-runtime startup across concurrent session opens', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    harness.gateNextService(async () => gate);
+    const manager = await PimoteSessionManager.create(config, push);
+    const first = manager.openSession('/project', '/tmp/first.jsonl');
+    await vi.waitFor(() => expect(harness.activeServiceCreations()).toBe(1));
+
+    const second = manager.openSession('/project', '/tmp/second.jsonl');
+    await Promise.resolve();
+    expect(harness.activeServiceCreations()).toBe(1);
+
+    release();
+    const [firstId, secondId] = await Promise.all([first, second]);
+    expect(manager.getSlot(firstId)?.session.model?.provider).toBe('genetec');
+    expect(manager.getSlot(secondId)?.session.model?.provider).toBe('genetec');
+    await manager.dispose();
   });
 
   it('coalesces persisted concurrent opens while startup is in flight', async () => {

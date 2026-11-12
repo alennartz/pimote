@@ -780,6 +780,8 @@ export class PimoteSessionManager {
   private readonly sessionOperationLocks = new Map<string, Promise<unknown>>();
   /** Coalesce asynchronous extension startup per concrete AgentSession. */
   private readonly extensionBindFlights = new WeakMap<AgentSession, Promise<void>>();
+  /** Serialize runtime creation because each session registers providers on the shared ModelRuntime. */
+  private modelRuntimeStartup: Promise<void> = Promise.resolve();
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
   private gitBranchCheckHandle: ReturnType<typeof setInterval> | null = null;
   /** Call-active predicate from the latest startIdleCheck; an active voice
@@ -833,6 +835,21 @@ export class PimoteSessionManager {
   /** Return the effective configuration for a new session or extension. */
   private currentConfig(): PimoteConfig {
     return this.configSupplier();
+  }
+
+  /** Run one runtime factory at a time so provider registration and availability refreshes cannot cancel each other. */
+  private async serializeModelRuntimeStartup<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.modelRuntimeStartup;
+    let release!: () => void;
+    this.modelRuntimeStartup = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   /** Initialize the one process-lifetime Pi model/auth runtime before serving sessions. */
@@ -1286,7 +1303,8 @@ export class PimoteSessionManager {
       }
     };
 
-    const runtime = await createAgentSessionRuntime(factory, {
+    const serializedFactory: CreateAgentSessionRuntimeFactory = (options) => this.serializeModelRuntimeStartup(() => factory(options));
+    const runtime = await createAgentSessionRuntime(serializedFactory, {
       cwd: effectiveFolderPath,
       agentDir: getAgentDir(),
       sessionManager,
